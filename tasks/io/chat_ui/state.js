@@ -1,7 +1,7 @@
 // ── Global app state ──
 // These are shared across all JS modules via the global scope.
-const _seenMsgIds = new Set();  // dedup msg_ids across SSE + poll + replay
-const _liveCountedMsgIds = new Set();  // msg_ids already counted into currentOffset from SSE/poll
+const _seenMsgIds = new Set();  // dedup msg_ids across SSE + replay
+const _liveCountedMsgIds = new Set();  // msg_ids already counted into currentOffset from SSE
 const _selectedMsgIds = new Set();  // multiselect for batch delete
 let conversationId = null;
 let sending = false;
@@ -96,8 +96,8 @@ function updatePermissionBadge() {
 let nicknameMap = {};      // { realName: displayName } — agent display names
 let pendingFiles = [];  // [{file, dataUrl, base64, mime_type, filename}]
 let lastSSEActivity = 0;  // timestamp of last SSE event received
-let serverMsgCount = 0;    // last known message_count from server (for poll delta)
-let pollTimer = null;      // 30s fallback poll interval
+let serverMsgCount = 0;    // last known message_count from server
+let sseHealthTimer = null; // SSE health reconnect interval
 let resourcesTimer = null; // 10s resources panel refresh
 let displayWindow = 50;          // messages per page
 let currentOffset = 0;           // how many older messages already loaded

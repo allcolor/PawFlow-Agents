@@ -388,7 +388,7 @@ function connectSSE(cid, onReady, opts) {
     // authoritative "we've rendered this" marker.
     const el = document.querySelector('#messages [data-msgid="' + data.msg_id + '"]');
     if (el) {
-      // DOM element exists — safe to mark as seen so poll/replay won't
+      // DOM element exists — safe to mark as seen so replay won't
       // duplicate it. (addMsg would do this on creation; message_meta is
       // the non-creation path.)
       if (typeof _seenMsgIds !== 'undefined') _seenMsgIds.add(data.msg_id);
@@ -835,6 +835,7 @@ function connectSSE(cid, onReady, opts) {
         _attachToolResult(tcEl, data.result || '');
         if (tcEl.dataset) delete tcEl.dataset.live;
         if (data.msg_id && typeof _seenMsgIds !== 'undefined') _seenMsgIds.add(data.msg_id);
+        if (typeof applyTechnicalMessageGrouping === 'function') applyTechnicalMessageGrouping();
         return;
       }
     }
@@ -1120,7 +1121,7 @@ function connectSSE(cid, onReady, opts) {
     });
     trackAgentDone(doneAgent);
     console.log('[SSE done]', doneAgent, data.response ? data.response.substring(0, 100) : '(empty)');
-    // Sync message count/offset to prevent poll and load-more overlap.
+    // Sync message count/offset to prevent load-more overlap.
     if (typeof _noteLiveHistoryAppend === 'function') {
       _noteLiveHistoryAppend(data.message_count, 0);
     }
@@ -1147,7 +1148,7 @@ function connectSSE(cid, onReady, opts) {
     extra.cost_usd = data.cost_usd || 0;
     extra.duration_ms = data.duration_ms || 0;
     extra.ts = data.ts;
-    // Register ALL msg_ids from this turn (prevents poll/replay duplicates)
+    // Register ALL msg_ids from this turn (prevents replay duplicates)
     const allIds = data.all_msg_ids || [];
     if (extra.msg_id) allIds.push(extra.msg_id);
     if (s.msg_id) allIds.push(s.msg_id);
@@ -1429,7 +1430,7 @@ function connectSSE(cid, onReady, opts) {
   });
 
   let sseHadError = false;  // track any error on this EventSource
-  let sseEverConnected = false;  // only recover after a real disconnect (not initial connect hiccup)
+  let sseEverConnected = false;  // distinguish reconnects from initial connect hiccups
 
   eventSource.onerror = (err) => {
     const state = eventSource ? eventSource.readyState : EventSource.CLOSED;
@@ -1437,8 +1438,8 @@ function connectSSE(cid, onReady, opts) {
     sseHadError = true;
     document.getElementById('status').textContent = t('reconnecting');
     // Do not rely on the browser's opaque EventSource retry after the server
-    // intentionally closes a long-lived stream. Own the reconnect so we also
-    // recover messages that landed while this tab had no subscriber.
+    // intentionally closes a long-lived stream. Own the reconnect so live
+    // rendering stays on the SSE channel instead of falling back to polling.
     if (eventSource) { try { eventSource.close(); } catch (_) {} }
     eventSource = null;
     _scheduleSSEReconnect(cid);
@@ -1452,12 +1453,11 @@ function connectSSE(cid, onReady, opts) {
     sseRetryCount = 0;
     sseHadError = false;
     lastSSEActivity = Date.now();  // prime the watchdog
-    // Fallback disk poll always on — protects even if the conv was opened
-    // via a path that didn't arm it (direct URL, refresh on single-conv view).
-    startPollTimer();
+    // SSE health timer always on — protects paths that open a conversation
+    // without explicitly arming the watchdog (direct URL, refresh).
+    startSSEHealthTimer();
     if (wasDisconnected) {
-      console.log('[SSE] recovering after reconnect...');
-      _recoverConversation(cid);
+      console.log('[SSE] reconnected; continuing with live SSE events');
       syncActiveFromServer();
     }
   };
@@ -1479,10 +1479,25 @@ function connectSSE(cid, onReady, opts) {
   });
 }
 
+function _forceSSEReconnect(cid, opts) {
+  if (!cid || cid !== conversationId) return;
+  if (eventSource) { try { eventSource.close(); } catch (_) {} }
+  eventSource = null;
+  lastSSEActivity = 0;
+  if (sseReconnectTimer) { clearTimeout(sseReconnectTimer); sseReconnectTimer = null; }
+  connectSSE(cid, null, opts || { noReplay: true });
+}
+
+function _ensureSSEBeforeUserAction() {
+  if (!conversationId) return;
+  if (_sseIsHealthy()) return;
+  console.warn('[SSE] user action while stream is stale — reconnecting before send');
+  _forceSSEReconnect(conversationId, { noReplay: true });
+}
+
 // SSE liveness watchdog. Pings arrive every ~15s; if we haven't seen one
 // in 45s the stream is silently dead even if readyState still says OPEN.
-// Close + reconnect forcefully so replay/_recoverConversation can catch
-// us up.
+// Close + reconnect forcefully; event rendering must stay SSE-only.
 var _sseWatchdogTimer = null;
 function _startSSEWatchdog() {
   if (_sseWatchdogTimer) clearInterval(_sseWatchdogTimer);
@@ -1492,11 +1507,7 @@ function _startSSEWatchdog() {
     const silentFor = Date.now() - lastSSEActivity;
     if (silentFor > 45000) {
       console.warn('[SSE] watchdog: no activity for', silentFor, 'ms — forcing reconnect');
-      try { eventSource.close(); } catch (_) {}
-      eventSource = null;
-      lastSSEActivity = 0;
-      if (sseReconnectTimer) { clearTimeout(sseReconnectTimer); sseReconnectTimer = null; }
-      connectSSE(conversationId);
+      _forceSSEReconnect(conversationId, { noReplay: true });
     }
   }, 10000);
 }
@@ -1511,13 +1522,8 @@ _startSSEWatchdog();
 // restarted while the browser wasn't looking — its EventSource may
 // still appear OPEN (half-open TCP) but the new process has no
 // subscribers for this conversation, so events get buffered and the
-// UI never sees them. Force a clean reconnect and let replay deliver
-// the buffered events.
-//
-// We also force-reconnect when we observe *any* response but the
-// EventSource is not in OPEN state — covers the case where the browser
-// is still inside its auto-retry backoff and a fresh reconnect gets us
-// talking to the live backend immediately.
+// UI never sees them. Force a clean reconnect without replaying stale
+// buffered events into the chat renderer.
 var _lastServerStartTime = null;
 var _lastRestartReconnectAt = 0;
 function _checkServerRestart(data) {
@@ -1542,11 +1548,7 @@ function _checkServerRestart(data) {
   if (typeof _reconnectUIActionSSE === 'function') {
     try { _reconnectUIActionSSE(); } catch (_) {}
   }
-  if (conversationId) {
-    if (eventSource) { try { eventSource.close(); } catch (_) {} eventSource = null; }
-    if (sseReconnectTimer) { clearTimeout(sseReconnectTimer); sseReconnectTimer = null; }
-    connectSSE(conversationId);
-  }
+  _forceSSEReconnect(conversationId, { noReplay: true });
 }
 
 function _scheduleSSEReconnect(cid) {
@@ -1558,27 +1560,24 @@ function _scheduleSSEReconnect(cid) {
   sseReconnectTimer = setTimeout(() => {
     sseReconnectTimer = null;
     if (!cid || cid !== conversationId) return;  // conversation changed, skip
-    // Recover missed messages first, then reconnect SSE
-    _recoverConversation(cid).then(() => {
-      if (cid === conversationId) connectSSE(cid);
-    });
+    connectSSE(cid);
   }, delay);
 }
 
-// ── Idle-safe fallback polling ─────────────────────────────────────
+// ── Idle-safe SSE reconnection ─────────────────────────────────────
 function _sseIsHealthy() {
   if (!eventSource || eventSource.readyState !== EventSource.OPEN) return false;
   if (!lastSSEActivity) return false;
   return Date.now() - lastSSEActivity <= 45000;
 }
 
-function startPollTimer() {
-  stopPollTimer();
-  pollTimer = setInterval(() => {
+function startSSEHealthTimer() {
+  stopSSEHealthTimer();
+  sseHealthTimer = setInterval(() => {
     if (!conversationId) return;
     if (typeof document !== 'undefined' && document.hidden && _sseIsHealthy()) return;
     if (_sseIsHealthy()) return;
-    _recoverConversation(conversationId);
+    _forceSSEReconnect(conversationId, { noReplay: true });
   }, 15000);
   // Resource refresh is a fallback hydration path, not a hot idle loop.
   if (!resourcesTimer) {
@@ -1589,8 +1588,8 @@ function startPollTimer() {
     }, 120000);
   }
 }
-function stopPollTimer() {
-  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+function stopSSEHealthTimer() {
+  if (sseHealthTimer) { clearInterval(sseHealthTimer); sseHealthTimer = null; }
   if (resourcesTimer) { clearInterval(resourcesTimer); resourcesTimer = null; }
 }
 

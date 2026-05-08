@@ -621,6 +621,8 @@ class ToolRelayService(BaseService):
                 h._conversation_id = conversation_id
             # Inject live filesystem service where needed
             if fs_svc:
+                if hasattr(h, 'set_fs_resolver'):
+                    h.set_fs_resolver(lambda _svc_id, _fs_svc=fs_svc: _fs_svc)
                 if hasattr(h, 'set_fs_service'):
                     h.set_fs_service(fs_svc)
                 if hasattr(h, '_fs_service') and not getattr(h, '_fs_service', None):

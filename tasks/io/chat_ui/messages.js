@@ -314,12 +314,23 @@ function _markTechnicalGroupSettled(group) {
   });
 }
 
+function _markTechnicalGroupUserIntent(group) {
+  if (!group) return;
+  setTimeout(() => {
+    if (!group.isConnected) return;
+    if (group.hasAttribute('open')) group.dataset.userOpen = '1';
+    else if (group.dataset) delete group.dataset.userOpen;
+  }, 0);
+}
+
 function collapseTechnicalGroups() {
   const container = document.getElementById('messages');
   if (!container) return;
   container.querySelectorAll(':scope > .technical-group').forEach(group => {
+    const keepOpen = group.dataset.userOpen === '1' || _isLiveTechnicalElement(group);
     _markTechnicalGroupSettled(group);
-    group.removeAttribute('open');
+    if (keepOpen) group.setAttribute('open', '');
+    else group.removeAttribute('open');
   });
 }
 
@@ -330,6 +341,7 @@ function _createTechnicalGroupBefore(container, anchor) {
   const summary = document.createElement('summary');
   summary.className = 'technical-group-header';
   summary.textContent = _technicalGroupSummary(0);
+  summary.addEventListener('click', () => _markTechnicalGroupUserIntent(group));
   const body = document.createElement('div');
   body.className = 'technical-group-body';
   group.appendChild(summary);

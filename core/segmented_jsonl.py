@@ -11,6 +11,9 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import threading
+import time
+import uuid
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional
 
@@ -150,9 +153,32 @@ class SegmentedJsonl:
 
     def _write_index(self, index: Dict[str, Any]) -> None:
         self.segment_dir.mkdir(parents=True, exist_ok=True)
-        tmp = self.index_path.with_suffix(".tmp")
+        tmp = self.index_path.with_name(
+            f"{self.index_path.name}.{os.getpid()}.{threading.get_ident()}.{uuid.uuid4().hex}.tmp")
         tmp.write_text(json.dumps(index, ensure_ascii=False, indent=2), encoding="utf-8")
-        tmp.replace(self.index_path)
+        try:
+            self._replace_path(tmp, self.index_path)
+        finally:
+            if tmp.exists():
+                try:
+                    tmp.unlink()
+                except OSError:
+                    pass
+
+    @staticmethod
+    def _replace_path(src: Path, dst: Path) -> None:
+        last_err = None
+        for attempt in range(6):
+            try:
+                src.replace(dst)
+                return
+            except PermissionError as err:
+                last_err = err
+                if os.name != "nt" or attempt == 5:
+                    break
+                time.sleep(0.025 * (attempt + 1))
+        if last_err:
+            raise last_err
 
     def _current_segment(self, index: Dict[str, Any], root: Optional[Path] = None) -> Dict[str, Any]:
         segments = index.setdefault("segments", [])

@@ -213,13 +213,13 @@ async function send() {
   renderAttachments();
 
   // Allow stacking: don't block on 'sending', just track pending count
+  if (typeof _ensureSSEBeforeUserAction === 'function') _ensureSSEBeforeUserAction();
   sending = true;
-  lastSSEActivity = Date.now();
   document.getElementById('status').textContent = t('sending');
   input.value = '';
   input.style.height = 'auto';
 
-  // Generate msg_id client-side so dedup works across SSE + poll recovery
+  // Generate msg_id client-side so dedup works across SSE + replay
   const userMsgId = (crypto.randomUUID ? crypto.randomUUID() : ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c => (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16))).replace(/-/g, '').slice(0, 12);
 
   // Show user message with target badge (all messages explicitly show who they go to)
@@ -290,17 +290,18 @@ async function send() {
     }
 
     const data = await resp.json();
+    if (typeof _checkServerRestart === 'function') _checkServerRestart(data);
     const cid = data.conversation_id || conversationId;
     if (cid && cid !== conversationId) {
       conversationId = cid;
-      // Sync message count/offset from server to prevent poll/load-more overlap.
+      // Sync message count/offset from server to prevent load-more overlap.
       if (typeof _noteLiveHistoryAppend === 'function') {
         _noteLiveHistoryAppend(data.message_count, 1);
       } else {
         serverMsgCount = data.message_count || 1;
       }
       connectSSE(cid);  // Start/reconnect SSE for this conversation
-      startPollTimer();
+      startSSEHealthTimer();
       updateDeleteBtn();
       loadConversations();  // Show new conversation in sidebar immediately
     }

@@ -76,6 +76,7 @@ def test_shipped_themes_are_directory_resources():
         "solarized_dark", "dracula", "midnight_blue", "high_contrast",
         "commodore_64", "amstrad_cpc", "nintendo", "sega",
         "ubuntu_linux", "steam", "bladerunner",
+        "nvidia", "amazon_aws", "windows_11", "kde", "interstellar",
     }
     found = {p.name for p in root.iterdir() if p.is_dir()}
     assert found >= expected
@@ -203,12 +204,18 @@ def test_theme_ui_selector_and_repository_entries_exist():
     assert "onConversationThemeSelectChange" in themes_js
 
 
-def test_shipped_theme_css_only_sets_palette_variables():
+def test_shipped_theme_css_is_complete_theme_package():
     for css_file in Path("data/repository/theme/global").glob("*/theme.css"):
         css = css_file.read_text(encoding="utf-8")
         assert css.strip().startswith(":root {")
-        assert ".msg" not in css
-        assert ".sidebar" not in css
+        assert css.count("{") >= 40
+        assert ".msg.user" in css
+        assert ".msg.assistant" in css
+        assert ".sidebar" in css
+        assert ".header" in css
+        assert ".input-area" in css
+        assert ".dialog" in css
+        assert ".fe-panel" in css
         assert "--pf-bg:" in css
         assert "--pf-accent:" in css
         assert "--pf-code-bg:" in css

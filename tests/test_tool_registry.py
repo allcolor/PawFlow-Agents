@@ -541,6 +541,30 @@ class TestMetaToolAliases(unittest.TestCase):
         assert "local" in read_schema["data"]["parameters"]["properties"]
         assert "max_chars" in fetch_schema["data"]["parameters"]["properties"]
 
+    def test_tool_relay_injects_fs_resolver_for_web_search_style_handlers(self):
+        from services.tool_relay_service import ToolRelayService
+
+        class ResolverHandler(MockHandler):
+            def __init__(self):
+                super().__init__(name="resolver_tool")
+                self.resolver = None
+
+            def set_fs_resolver(self, resolver):
+                self.resolver = resolver
+
+        fake_relay = object()
+        handler = ResolverHandler()
+        registry = ToolRegistry()
+        registry.register(handler)
+        svc = ToolRelayService({})
+
+        with patch("core.tool_registry.create_default_registry", return_value=registry):
+            with patch.object(svc, "_find_filesystem_service", return_value=fake_relay):
+                svc._get_registry("user", "", "assistant")
+
+        assert handler.resolver is not None
+        assert handler.resolver("") is fake_relay
+
     def test_all_filesystem_handlers_expose_relay_and_local(self):
         from core.handlers._fs_base import BaseFsHandler
         from core.handlers.meta_tools import _schema_with_local

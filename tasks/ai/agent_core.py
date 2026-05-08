@@ -638,18 +638,31 @@ class AgentCoreMixin:
                                 "ts": getattr(msg, "timestamp", 0) or None,
                                 "source": msg.source,
                             }})
-                    # role=tool → tool_result SSE. The `_tool_name` attr
-                    # is stamped by the dispatching side (CC turn_callback
-                    # or HTTP tools_exec) so the UI can label the result.
+                    # role=tool → tool_result SSE. Prefer the `_tool_name`
+                    # attr stamped by the dispatching side, but do not make
+                    # live result delivery depend on that optional label: the
+                    # `tool_call_id` is enough for the UI to attach the output
+                    # to the already-rendered tool_call.
                     if msg.role == "tool":
                         _raw_tool_name = getattr(msg, '_tool_name', '')
+                        if not _raw_tool_name and getattr(msg, 'tool_call_id', ''):
+                            _tcid = getattr(msg, 'tool_call_id', '')
+                            for _prev in reversed(messages[:-1]):
+                                if getattr(_prev, 'role', '') != "assistant":
+                                    continue
+                                for _tc in (getattr(_prev, 'tool_calls', None) or []):
+                                    if getattr(_tc, 'id', '') == _tcid:
+                                        _raw_tool_name = getattr(_tc, 'name', '') or ""
+                                        break
+                                if _raw_tool_name:
+                                    break
                         if _raw_tool_name in {
                             "get_tool_schema",
                             "mcp_pawflow_get_tool_schema",
                             "mcp__pawflow__get_tool_schema",
                         }:
                             _raw_tool_name = ""
-                        if _raw_tool_name:
+                        if getattr(msg, 'tool_call_id', ''):
                             _preview = (msg.content if isinstance(msg.content, str)
                                         else str(msg.content))
                             # Strip outer <tool_output tool="..."> wrapper

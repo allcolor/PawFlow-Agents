@@ -62,10 +62,24 @@ PawFlow falls back to the native tool behavior unchanged.
 
 | Tool | Purpose |
 |---|---|
-| `web_search` | Search the web. |
+| `web_search` | Search the web across configurable providers, aggregate results, and deduplicate URLs. |
 | `fetch` | Fetch/extract a web page. |
 | `share_file` | Share a generated file with the user. |
 | `show_file` | Open a file in the user's chat viewer. |
+
+`web_search` accepts `provider` / `search_provider` as a single provider or a
+comma-separated chain. Supported no-key providers are `google`, `bing`, and
+`duckduckgo`; the default chain is `google,bing`. The same default can be set
+with the PawFlow variable `web_search_providers` (conversation → user → global,
+with OS env fallback only after PawFlow variables). Google and Bing use static
+HTML when available and browser stealth fallbacks when needed; Bing falls back to
+RSS only after browser search fails. When a relay is connected, `web_search` runs
+inside that relay so browser/search dependencies match the user's execution
+environment; if no relay is available it runs on the PawFlow server host. Both
+runtimes must have the declared scraping dependencies and managed browser binary
+installed. Results are interleaved across contributing providers, duplicate URLs
+merge provider labels, and ranking is generic: query-term relevance plus text
+pages before image results before video results.
 
 ## Media
 

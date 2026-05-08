@@ -57,6 +57,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
        pyyaml toml python-dotenv msgpack orjson \
        beautifulsoup4 lxml html5lib cssselect \
        cryptography paramiko bcrypt pyjwt \
+       GitPython tiktoken json-repair apscheduler diff-match-patch \
        click typer rich textual prompt-toolkit \
        celery dramatiq \
        docker boto3 google-cloud-storage azure-storage-blob \
@@ -66,6 +67,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
        tenacity backoff \
        tqdm tabulate colorama \
        python-docx openpyxl python-pptx striprtf PyPDF2 ebooklib \
+       playwright patchright 'scrapling[all]>=0.4.0' \
+       sentence-transformers kafka-python paho-mqtt fastavro pyarrow \
        networkx graphifyy tree-sitter \
        pyfuse3 trio \
        tree-sitter-python tree-sitter-javascript tree-sitter-typescript \
@@ -220,6 +223,12 @@ RUN curl -fsSL https://dl.google.com/linux/direct/google-chrome-stable_current_a
        > /opt/google/chrome/google-chrome \
     && chmod +x /opt/google/chrome/google-chrome \
     && ln -sf /usr/bin/google-chrome-stable /usr/bin/chromium-browser
+
+# Python Playwright/Patchright are required by web_search and Scrapling stealth
+# mode; install managed Chromium browsers too so Python tools work even without
+# the desktop Chrome path.
+RUN python3 -m playwright install chromium \
+    && python3 -m patchright install chromium
 
 # ── Docker CLI (for DinD — exec shells via docker.sock) ────────────
 RUN curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg \

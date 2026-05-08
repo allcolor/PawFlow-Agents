@@ -44,6 +44,40 @@ def test_segmented_jsonl_reads_legacy_and_rewrites_to_segments(tmp_path):
     assert [row["seq"] for row in log.iter_rows()] == [1, 2, 3, 4, 5, 6]
 
 
+def test_segmented_jsonl_index_write_uses_unique_temp_path(tmp_path):
+    path = tmp_path / "transcript.jsonl"
+    log = SegmentedJsonl(path, max_rows=2)
+
+    log.append_dicts([{"seq": 1, "content": "one"}])
+
+    assert (tmp_path / "transcript" / "index.json").exists()
+    assert not (tmp_path / "transcript" / "index.tmp").exists()
+
+
+def test_segmented_jsonl_index_replace_retries_transient_windows_permission(monkeypatch, tmp_path):
+    src = tmp_path / "index.json.tmp"
+    dst = tmp_path / "index.json"
+    src.write_text("{}", encoding="utf-8")
+    calls = []
+
+    original_replace = type(src).replace
+
+    def flaky_replace(self, target):
+        calls.append((self, target))
+        if len(calls) == 1:
+            raise PermissionError("transient Windows file lock")
+        return original_replace(self, target)
+
+    monkeypatch.setattr("core.segmented_jsonl.os.name", "nt")
+    monkeypatch.setattr("core.segmented_jsonl.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr(type(src), "replace", flaky_replace)
+
+    SegmentedJsonl._replace_path(src, dst)
+
+    assert len(calls) == 2
+    assert dst.read_text(encoding="utf-8") == "{}"
+
+
 def test_conversation_store_mutates_segmented_transcript(tmp_path):
     ConversationStore.reset()
     store = ConversationStore(store_dir=str(tmp_path / "conversations"))

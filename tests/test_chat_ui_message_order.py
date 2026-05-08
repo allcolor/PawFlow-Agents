@@ -46,6 +46,9 @@ def test_technical_grouping_is_expression_driven_and_post_rendered():
     assert "addMsg('system-compact'" not in SSE_JS
     assert "drop empty technical element" in MESSAGES_JS
     assert "function _markTechnicalGroupSettled(group)" in MESSAGES_JS
+    assert "function _markTechnicalGroupUserIntent(group)" in MESSAGES_JS
+    assert "group.dataset.userOpen === '1' || _isLiveTechnicalElement(group)" in MESSAGES_JS
+    assert "summary.addEventListener('click', () => _markTechnicalGroupUserIntent(group))" in MESSAGES_JS
     assert "t('technicalDetailsSummary'" in MESSAGES_JS
     assert "Technical details ·" not in MESSAGES_JS
     assert "function findToolCallElement(tcId, root)" in MESSAGES_JS
@@ -55,6 +58,8 @@ def test_technical_grouping_is_expression_driven_and_post_rendered():
     assert "te.el.setAttribute('open', '')" in SSE_JS
     assert "String(text || '').trim()) collapseTechnicalGroups()" in MESSAGES_JS
     assert "displayText.trim() && s.el && !s.el.dataset.technicalGroupsCollapsed" in SSE_JS
+    assert "_attachToolResult(tcEl, data.result || '');" in SSE_JS
+    assert "if (typeof applyTechnicalMessageGrouping === 'function') applyTechnicalMessageGrouping();\n        return;" in SSE_JS
     assert "const groupTechnicalMessages = !!data.group_technical_messages" in CONVERSATIONS_JS
     assert "setTechnicalMessageGrouping(groupTechnicalMessages)" in CONVERSATIONS_JS
     assert "updateTechnicalGroupingToggle(groupTechnicalMessages)" in CONVERSATIONS_JS

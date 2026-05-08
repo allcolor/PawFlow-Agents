@@ -279,8 +279,8 @@ function cmdAgentMsg(agentName, text) {
     msgEl.innerHTML = sourceBadge(userSource) + escapeHtml(text) + renderUserAttachments(attachmentsForDisplay);
   }
   clearStream(agentName);
+  if (typeof _ensureSSEBeforeUserAction === 'function') _ensureSSEBeforeUserAction();
   sending = true;
-  lastSSEActivity = Date.now();
   document.getElementById('status').textContent = t('sending');
 
   const body = { message: text, target_agent: agentName };
@@ -320,8 +320,8 @@ function cmdAgentMsgAll(text) {
     return;
   }
   addMsg('user', text, { source: { type: 'user', name: '', target_agent: 'ALL' } });
+  if (typeof _ensureSSEBeforeUserAction === 'function') _ensureSSEBeforeUserAction();
   sending = true;
-  lastSSEActivity = Date.now();
   document.getElementById('status').textContent = 'Broadcasting...';
 
   action$('broadcast_agents', { message: text }).subscribe(data => {

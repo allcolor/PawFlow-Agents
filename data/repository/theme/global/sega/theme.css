@@ -14,4 +14,303 @@
   --pf-warning: #ffcf33;
   --pf-success: #35d07f;
   --pf-shadow: rgba(0,0,0,0.58);
+  --pf-radius: 8px;
+  --pf-radius-sm: 5px;
+  --pf-font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --pf-font-mono: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+}
+
+body {
+  background: var(--pf-bg) !important;
+  color: var(--pf-text) !important;
+  font-family: var(--pf-font-ui) !important;
+}
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at top left, color-mix(in srgb, var(--pf-accent) 18%, transparent), transparent 32rem),
+    radial-gradient(circle at bottom right, color-mix(in srgb, var(--pf-accent-2) 14%, transparent), transparent 30rem);
+  opacity: .55;
+}
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--pf-border) 76%, var(--pf-muted)); border-radius: 999px; }
+::-webkit-scrollbar-thumb:hover { background: var(--pf-accent); }
+
+.sidebar,
+.tab-bar,
+.files-panel,
+.fe-toolbar,
+.fe-table th,
+.fe-status,
+.fe-preview-pane .fe-ph,
+.load-more-banner {
+  background: var(--pf-sidebar) !important;
+  border-color: var(--pf-border) !important;
+  color: var(--pf-text) !important;
+}
+
+.main,
+.messages-wrap,
+.tab-content.active,
+.audio-tab-panel,
+.fe-content {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--pf-bg) 94%, var(--pf-panel)), var(--pf-bg)) !important;
+  color: var(--pf-text) !important;
+}
+
+.header,
+.input-area,
+.action-menu,
+.ctx-menu,
+.dialog,
+.exec-dialog,
+.active-panel,
+.fe-panel,
+.fe-preview-pane,
+.audio-tab-controls,
+.ask-user-box {
+  background: color-mix(in srgb, var(--pf-panel) 94%, var(--pf-bg)) !important;
+  border-color: var(--pf-border) !important;
+  color: var(--pf-text) !important;
+  box-shadow: 0 12px 36px var(--pf-shadow) !important;
+}
+
+.sidebar-header,
+.sidebar-settings,
+.header,
+.input-area,
+.files-table th,
+.files-table td,
+.delegate-body,
+.delegate-sub-body,
+.delegate-message,
+.delegate-response,
+.trace-content,
+.msg-meta,
+.action-menu-sep,
+.fe-ctx hr,
+.technical-group-body { border-color: var(--pf-border) !important; }
+
+.header h1,
+.sidebar-header h2,
+.conv-branch,
+.ami-label,
+.delegate-dst,
+.tc-diff .diff-hunk,
+.tc-grep .grep-loc,
+.fe-status .fe-clip,
+.tab-btn.active,
+.action-menu-item:hover,
+a,
+.msg a { color: var(--pf-accent) !important; }
+
+.status,
+.conv-meta,
+.ami-desc,
+.msg.system,
+.msg.system-compact,
+.msg-time,
+.msg-meta,
+.msg-meta .meta-details,
+.delegate-status,
+.delegate-tool-result,
+.delegate-stats,
+.trace-entry,
+.tc-result,
+.sub-trace-body,
+.tree-body,
+.active-panel-title,
+.active-row .a-time,
+.sidebar-settings label,
+.header .user-info,
+.files-table th,
+.files-table .col-type,
+.files-table .col-date,
+.fe-table th,
+.fe-row td:nth-child(3),
+.fe-row td:nth-child(4),
+.fe-status,
+.fe-loading,
+.terminal-output .term-header,
+.exec-cwd,
+.action-menu-item .ami-desc { color: var(--pf-muted) !important; }
+
+.conv-item,
+.action-menu-item,
+.tab-btn { color: var(--pf-muted) !important; border-color: transparent !important; }
+.conv-item:hover,
+.conv-item.active,
+.action-menu-item:hover,
+.tab-btn:hover,
+.tab-btn.active,
+.dialog-body .btn,
+.fe-row:hover,
+.fe-row.selected {
+  background: color-mix(in srgb, var(--pf-assistant) 88%, var(--pf-accent) 12%) !important;
+  border-color: var(--pf-border) !important;
+  color: var(--pf-text) !important;
+}
+.conv-item.active,
+.tab-btn.active { border-color: var(--pf-accent) !important; }
+
+.msg { color: var(--pf-text) !important; box-shadow: 0 2px 10px color-mix(in srgb, var(--pf-shadow) 70%, transparent); }
+.msg.user {
+  background: linear-gradient(135deg, color-mix(in srgb, var(--pf-user) 88%, var(--pf-accent)), var(--pf-user)) !important;
+  color: var(--pf-text) !important;
+  border-left-color: var(--pf-accent-2) !important;
+}
+.msg.assistant,
+.msg.subagent,
+.msg.agent-result,
+.msg.btw,
+.msg.sub_agent_trace,
+.delegate-block,
+.delegate-sub-block,
+.technical-group {
+  background: color-mix(in srgb, var(--pf-assistant) 94%, var(--pf-bg)) !important;
+  border-color: var(--pf-border) !important;
+  border-left-color: var(--pf-accent) !important;
+  color: var(--pf-text) !important;
+}
+.msg.tool,
+.tc-output,
+.msg pre,
+.tc-md pre,
+.diff-output,
+.terminal-output,
+.exec-cmd,
+.tool-arg-val,
+.msg code,
+.msg pre code {
+  background: var(--pf-code-bg) !important;
+  border-color: var(--pf-border) !important;
+  color: var(--pf-text) !important;
+  font-family: var(--pf-font-mono) !important;
+}
+.tc-output .ln,
+.terminal-output .term-header,
+.tc-diff .diff-ctx { color: var(--pf-muted) !important; }
+.tc-diff .diff-add,
+.terminal-output .term-exit.ok { color: var(--pf-success) !important; background: color-mix(in srgb, var(--pf-success) 12%, transparent) !important; }
+.tc-diff .diff-del,
+.terminal-output .term-stderr,
+.terminal-output .term-exit.fail { color: var(--pf-danger) !important; background: color-mix(in srgb, var(--pf-danger) 12%, transparent) !important; }
+
+textarea,
+input,
+select,
+.input-row textarea,
+.sidebar-settings select,
+.fe-toolbar select,
+.fe-search,
+.fe-inline,
+.exec-cmd textarea {
+  background: color-mix(in srgb, var(--pf-sidebar) 88%, black) !important;
+  color: var(--pf-text) !important;
+  border-color: var(--pf-border) !important;
+  border-radius: var(--pf-radius-sm) !important;
+}
+textarea:focus,
+input:focus,
+select:focus,
+.input-row textarea:focus,
+.fe-search:focus,
+.fe-inline:focus,
+.exec-cmd textarea:focus {
+  border-color: var(--pf-accent) !important;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--pf-accent) 24%, transparent) !important;
+  outline: none !important;
+}
+input::placeholder,
+textarea::placeholder { color: color-mix(in srgb, var(--pf-muted) 78%, transparent) !important; }
+
+button,
+.header .btn,
+.action-menu-btn,
+.sidebar-toggle,
+.btn-attach,
+.btn-folder,
+.scroll-nav button,
+.audio-tab-controls button,
+.ask-user-btn,
+.sidebar-header .btn-new,
+.input-row button {
+  background: color-mix(in srgb, var(--pf-user) 82%, var(--pf-accent) 18%) !important;
+  color: var(--pf-text) !important;
+  border-color: var(--pf-accent) !important;
+  border-radius: var(--pf-radius-sm) !important;
+}
+button:hover,
+.header .btn:hover,
+.action-menu-btn:hover,
+.sidebar-toggle:hover,
+.btn-attach:hover,
+.btn-folder:hover,
+.scroll-nav button:hover,
+.audio-tab-controls button:hover,
+.ask-user-btn:hover,
+.sidebar-header .btn-new:hover,
+.input-row button:hover,
+.dialog-body .btn:hover,
+.dialog-body .btn-primary:hover {
+  background: var(--pf-accent) !important;
+  color: var(--pf-bg) !important;
+  border-color: var(--pf-accent) !important;
+}
+button:disabled,
+.input-row button:disabled {
+  background: color-mix(in srgb, var(--pf-muted) 24%, var(--pf-panel)) !important;
+  color: var(--pf-muted) !important;
+  cursor: not-allowed !important;
+}
+#stopBtn,
+.exec-deny,
+.ctx-menu-item.danger:hover { background: var(--pf-danger) !important; color: var(--pf-bg) !important; }
+.exec-approve { background: var(--pf-success) !important; color: var(--pf-bg) !important; }
+
+.file-chip,
+.sched-chip,
+.att-item,
+.files-table tbody tr:hover,
+.fe-row.selected,
+.active-row .a-actions button {
+  background: color-mix(in srgb, var(--pf-panel) 86%, var(--pf-sidebar)) !important;
+  border-color: var(--pf-border) !important;
+  color: var(--pf-text) !important;
+}
+.file-chip a,
+.files-table .col-name a { color: var(--pf-accent-2) !important; }
+.file-chip .file-status.available,
+.conv-status.active,
+.tc-bullet.pending { background: var(--pf-success) !important; color: var(--pf-success) !important; }
+.file-chip .file-status.expired,
+.msg.error,
+.exec-risk.high { background: color-mix(in srgb, var(--pf-danger) 18%, var(--pf-panel)) !important; color: var(--pf-danger) !important; }
+.conv-status.blocked,
+.exec-risk.medium,
+.sched-chip .sched-icon,
+.delegate-question { color: var(--pf-warning) !important; }
+.exec-risk.low { background: color-mix(in srgb, var(--pf-success) 18%, var(--pf-panel)) !important; color: var(--pf-success) !important; }
+
+.fe-ctx,
+.ctx-menu,
+.action-menu { background: var(--pf-panel) !important; border-color: var(--pf-border) !important; }
+.fe-ctx div:hover,
+.ctx-menu-item:hover { background: var(--pf-user) !important; color: var(--pf-text) !important; }
+
+.msg.msg-selected { outline-color: var(--pf-accent-2) !important; }
+.reply-quote { border-left-color: var(--pf-accent) !important; color: var(--pf-muted) !important; }
+.active-row .a-status,
+.trace-entry.done { color: var(--pf-success) !important; }
+.active-row .a-actions button.btn-stop { border-color: var(--pf-danger) !important; color: var(--pf-danger) !important; }
+
+@media (max-width: 720px) {
+  .msg { max-width: 92% !important; }
+  .header,
+  .input-area { padding-left: 14px !important; padding-right: 14px !important; }
 }

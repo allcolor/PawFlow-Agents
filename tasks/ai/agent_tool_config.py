@@ -105,6 +105,14 @@ class AgentToolConfigMixin:
                     except Exception:
                         return None
                 h.set_fs_resolver(_fs_resolver)
+            elif h.name == "web_search" and hasattr(h, "set_fs_resolver"):
+                def _web_search_fs_resolver(svc_id):
+                    try:
+                        from core.service_registry import ServiceRegistry
+                        return ServiceRegistry.get_instance().resolve(svc_id, user_id=user_id)
+                    except Exception:
+                        return None
+                h.set_fs_resolver(_web_search_fs_resolver)
             elif isinstance(h, (ImageGenerationHandler, EditImageHandler,
                                 ImageModelInfoHandler)):
                 if file_base_url and hasattr(h, 'set_base_url'):

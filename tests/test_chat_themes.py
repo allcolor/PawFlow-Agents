@@ -79,6 +79,7 @@ def test_shipped_themes_are_directory_resources():
         "zx_spectrum", "ega", "nintendo", "sega",
         "ubuntu_linux", "steam", "bladerunner",
         "nvidia", "amazon_aws", "windows_11", "kde", "interstellar",
+        "hell", "heaven",
     }
     found = {p.name for p in root.iterdir() if p.is_dir()}
     assert found >= expected

@@ -189,7 +189,7 @@ The web chat ships with built-in themes (`PawFlow Dark`, `Matrix`, `Mr.Robot`,
 `Solarized Dark`, `Dracula`, `Midnight Blue`, `High Contrast`, `Commodore 64`,
 `Amstrad CPC`, `Amstrad CPC Monochrome`, `Amstrad CPC Amber Monochrome`,
 `Amstrad CPC Blue Monochrome`, `ZX Spectrum`, `EGA`, `Nintendo`, `Sega`,
-`Ubuntu Linux`, `Steam`, `Blade Runner`) and two selectors. The header
+`Ubuntu Linux`, `Steam`, `Blade Runner`, `Hell`, `Heaven`) and two selectors. The header
 selector controls the browser-global theme and stores its ref in a cookie. The
 conversation selector below the expiry control stores per-conversation theme
 refs in a cookie map, with `Use global theme` as the default. When switching

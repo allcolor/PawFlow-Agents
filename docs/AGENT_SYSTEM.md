@@ -196,6 +196,8 @@ Auto-compaction runs when messages exceed 90% of `max_context_size`. It is skipp
 
 Background pyramid buckets are different from hot-path context compaction. They run asynchronously and only submit a summarizer call when the bucket input is useful: at least four times the L1 summary target (`BUCKET_OUTPUT_TARGET`, currently 2000 tokens). This prevents the background worker from spending an LLM call to summarize tiny slices after every few chat messages.
 
+Independent contexts, such as task and isolated delegate sub-conversations, do not use the parent conversation's shared pyramid. When they cross the compact threshold, PawFlow summarizes the older head of that isolated context directly, keeps a raw recent tail, and writes the compacted result to the sub-conversation's private agent context. The transcript remains the faithful audit log; later task iterations resume from the compacted private context when it exists.
+
 ### Context-usage gauge (per-agent)
 
 `tasks.ai.context_usage.compute_context_usage(conversation_id, agent_name, user_id=...)` is the single server-side calculation point for the gauge. It resolves the agent's LLM service, computes the effective context window, loads the current PawFlow agent context (live in-memory context when the agent is running, otherwise the persisted private context or personalized transcript), and returns `used / max / pct`.

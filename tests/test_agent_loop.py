@@ -1549,6 +1549,65 @@ class TestRandomThought(unittest.TestCase):
         assert sched.get("conv1::thought::assistant") is not None
         assert sched.get("conv1::task::t_123") is not None
 
+    def test_task_poll_resumes_private_compacted_context(self):
+        """Task wakes resume from private context.jsonl when it exists."""
+        from core.conversation_store import ConversationStore
+        from core.poll_scheduler import PollScheduler
+        import threading
+        import time
+
+        store = ConversationStore.instance()
+        scheduler = PollScheduler.instance()
+        parent_id = "task_resume_parent"
+        task_id = "t_resume"
+        sub_id = f"{parent_id}::task::{task_id}"
+        store.save(parent_id, [{"role": "user", "content": "parent transcript"}],
+                   user_id="testuser")
+        store.set_extra(parent_id, "agent_tasks", {
+            task_id: {"agent": "worker", "task": "original task", "status": "running"},
+        })
+        store.save(sub_id, [{"role": "user", "content": "raw transcript should not resume"}],
+                   user_id="testuser")
+        store.save_agent_context(sub_id, "worker", [
+            {"role": "user", "content": "compacted private context"},
+        ])
+
+        captured = {}
+        task = self._make_task()
+        task._last_task_watchdog = time.time()
+        task._last_thought_watchdog = time.time()
+
+        def _build_poll_context(conversation_id, messages_data, **kwargs):
+            captured["conversation_id"] = conversation_id
+            captured["messages_data"] = messages_data
+            captured["kwargs"] = kwargs
+            return {"conversation_id": conversation_id}
+
+        def _streaming_agent_loop(ctx, loop_cid, bus):
+            captured["ctx"] = ctx
+            captured["loop_cid"] = loop_cid
+
+        task._build_poll_context = _build_poll_context
+        task._streaming_agent_loop = _streaming_agent_loop
+        task._active_lock = threading.RLock()
+        task._active_conversations = {}
+        task._active_thoughts = set()
+        task._conv_gen_lock = threading.RLock()
+        task._conv_generation = {}
+
+        scheduler.schedule(parent_id, time.time() - 1, key=sub_id,
+                           reason=f"[agent_task:{task_id}] resume")
+        task._poll_once()
+
+        contents = [m["content"] for m in captured["messages_data"]]
+        assert contents == ["compacted private context", "continue"]
+        assert captured["kwargs"]["preloaded_conversation_id"] == sub_id
+        assert captured["kwargs"]["independent_context"] is True
+        assert captured["ctx"]["conversation_id"] == sub_id
+        assert captured["ctx"]["_independent_context"] is True
+        assert captured["loop_cid"] == sub_id
+        assert store.load_agent_context(sub_id, "worker")[-1]["content"] == "continue"
+
     def _setup_agent(self, conv_id):
         """Configure an active agent for the conversation."""
         from core.conversation_store import ConversationStore

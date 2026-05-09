@@ -57,7 +57,9 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
     """Context preparation + user content building."""
 
     def _prepare_agent_context(self, flowfile: FlowFile, *,
-                               preloaded_messages: Optional[List[Dict]] = None):
+                               preloaded_messages: Optional[List[Dict]] = None,
+                               preloaded_conversation_id: str = "",
+                               independent_context: bool = False):
         """Extract common context from flowfile and config for both sync and streaming modes.
 
         Args:
@@ -467,7 +469,9 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
         if preloaded_messages is not None:
             # Caller provided messages (e.g. poller task sub-conversation)
             try:
-                messages = self._deserialize_messages(preloaded_messages, conversation_id=conversation_id)
+                _preloaded_cid = preloaded_conversation_id or conversation_id
+                messages = self._deserialize_messages(
+                    preloaded_messages, conversation_id=_preloaded_cid)
                 # display_only messages already filtered by _deserialize_messages
                 logger.info(f"[context:{(conversation_id or '?')[:8]}] using preloaded messages: "
                             f"{len(messages)} messages")
@@ -477,8 +481,9 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             if messages and not _claude_has_session:
                 _uid_pl = flowfile.get_attribute("http.auth.principal") or ""
                 messages = self._auto_compact_messages(
-                    messages, conversation_id or "", _context_agent, _uid_pl,
-                    max_context=_max_ctx)
+                    messages, preloaded_conversation_id or conversation_id or "",
+                    _context_agent, _uid_pl, max_context=_max_ctx,
+                    independent_context=independent_context)
         elif use_conv_store and conversation_id:
             if _claude_has_session:
                 # CC has an active session — it already has the context.
@@ -1522,7 +1527,8 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                                conversation_id: str, agent_name: str,
                                user_id: str,
                                max_context: int = 200000,
-                               compact_instructions: str = "") -> List[LLMMessage]:
+                               compact_instructions: str = "",
+                               independent_context: bool = False) -> List[LLMMessage]:
         """Auto-compact if the context is past the service trigger threshold.
 
         Delegates to _compact which uses its own trigger_fraction (default
@@ -1541,6 +1547,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             chars_per_token=0,
             compact_instructions=compact_instructions,
             user_id=user_id,
+            independent_context=independent_context,
         )
 
     # ── Context operation pause/resume ─────────────────────────────────

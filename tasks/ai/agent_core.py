@@ -475,6 +475,7 @@ class AgentCoreMixin:
                     chars_per_token=ctx.get("chars_per_token", 0),
                     user_id=user_id,
                     budget_config=getattr(ctx.get("resolved_svc"), "config", None),
+                    independent_context=bool(ctx.get("_independent_context")),
                 )
                 if compacted and len(compacted) <= len(messages):
                     _adopt_compacted_context(
@@ -1033,6 +1034,7 @@ class AgentCoreMixin:
                                 chars_per_token=_cpt,
                                 user_id=user_id,
                                 budget_config=getattr(ctx.get("resolved_svc"), "config", None),
+                                independent_context=bool(ctx.get("_independent_context")),
                             )
 
                             if _messages_changed(compacted_messages, messages):
@@ -1065,6 +1067,7 @@ class AgentCoreMixin:
                                 chars_per_token=_cpt,
                                 user_id=user_id,
                                 budget_config=getattr(ctx.get("resolved_svc"), "config", None),
+                                independent_context=bool(ctx.get("_independent_context")),
                             )
                             if _messages_changed(compacted_messages, messages):
                                 _adopt_compacted_context(
@@ -1117,7 +1120,8 @@ class AgentCoreMixin:
                             conversation_id=conversation_id,
                             agent_name=ctx.get("active_agent_name") or "",
                             user_id=user_id,
-                            budget_config=getattr(ctx.get("resolved_svc"), "config", None)))
+                            budget_config=getattr(ctx.get("resolved_svc"), "config", None),
+                            independent_context=bool(ctx.get("_independent_context"))))
                         _irpt_resp = client.complete_stream(
                             messages=_interrupt_messages,
                             model=model or None,
@@ -1188,6 +1192,7 @@ class AgentCoreMixin:
                                     chars_per_token=ctx.get("chars_per_token", 0),
                                     user_id=user_id,
                                     budget_config=getattr(ctx.get("resolved_svc"), "config", None),
+                                    independent_context=bool(ctx.get("_independent_context")),
                                 )
                                 if _messages_changed(compacted_messages, messages):
                                     _adopt_compacted_context(
@@ -1685,6 +1690,7 @@ class AgentCoreMixin:
                                 force=True,
                                 user_id=user_id,
                                 budget_config=getattr(ctx.get("resolved_svc"), "config", None),
+                                independent_context=bool(ctx.get("_independent_context")),
                             ))
                             _adopt_compacted_context(
                                 _compacted_messages, reason="provider_compact")
@@ -1869,7 +1875,8 @@ class AgentCoreMixin:
                                 tool_defs=ctx.get("tool_defs"),
                                 chars_per_token=ctx.get("chars_per_token", 0),
                                 user_id=user_id,
-                                budget_config=getattr(ctx.get("resolved_svc"), "config", None))
+                                budget_config=getattr(ctx.get("resolved_svc"), "config", None),
+                                independent_context=bool(ctx.get("_independent_context")))
                             _adopt_compacted_context(
                                 _compacted, reason="context_overflow")
                             llm_context = list(messages)

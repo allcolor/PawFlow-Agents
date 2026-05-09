@@ -605,7 +605,8 @@ class ToolRelayService(BaseService):
 
         # Find the default linked filesystem service for this conversation.
         fs_svc = self._find_filesystem_service(user_id, conversation_id)
-        fs_resolver = self._make_filesystem_resolver(user_id, conversation_id)
+        fs_resolver = self._make_filesystem_resolver(
+            user_id, conversation_id, default_service=fs_svc)
 
         # Configure ALL handlers that need user/filesystem context
         for h in registry.list_tools():
@@ -977,7 +978,8 @@ class ToolRelayService(BaseService):
         return available
 
     @staticmethod
-    def _make_filesystem_resolver(user_id: str = "", conversation_id: str = ""):
+    def _make_filesystem_resolver(user_id: str = "", conversation_id: str = "",
+                                  default_service=None):
         def resolver(service_id: str = "", *_args):
             try:
                 from core.service_registry import ServiceRegistry
@@ -985,6 +987,8 @@ class ToolRelayService(BaseService):
                 available = ToolRelayService._list_available_filesystem_services(
                     user_id, conversation_id)
                 allowed = [item.get("id", "") for item in available if item.get("id")]
+                if service_id in ("", "workspace", "ws", "local") and default_service:
+                    return default_service
                 if conversation_id:
                     if service_id in ("", "workspace", "ws", "local"):
                         service_id = allowed[0] if allowed else ""

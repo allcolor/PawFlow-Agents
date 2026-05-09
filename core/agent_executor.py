@@ -724,10 +724,11 @@ class SubAgentExecutor:
                                         "max_context_size", _max_ctx) or _max_ctx)
                                 messages = list(_alt._auto_compact_messages(
                                     messages,
-                                    conversation_id=task.parent_conversation_id or "",
+                                    conversation_id=_delegate_conv_id,
                                     agent_name=task.agent_name,
                                     user_id=task.user_id,
                                     max_context=_max_ctx,
+                                    independent_context=bool(sub_conv_id),
                                 ))
                                 logger.info(
                                     "[sub-agent:%s] PawFlow compact done (%d messages)",

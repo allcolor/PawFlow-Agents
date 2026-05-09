@@ -564,3 +564,112 @@ def test_compact_drops_previous_synthetic_context_from_tail(monkeypatch):
     assert "fresh raw assistant" in joined
     assert "OLD COMPACT BRIDGE" not in joined
     assert "OLD COMPACT ACK" not in joined
+
+
+def test_independent_compact_summarizes_head_without_bucket_store(monkeypatch):
+    """Task/delegate contexts compact locally; they never read the shared pyramid."""
+    from core import bucket_store as _bs_mod
+    from core.llm_client import LLMMessage
+    from tasks.ai.agent_loop import AgentLoopTask
+
+    def _boom_get(_conv_dir):
+        raise AssertionError("independent compact must not load BucketStore")
+
+    persisted = {}
+    monkeypatch.setattr(_bs_mod.BucketStore, "get", staticmethod(_boom_get))
+    monkeypatch.setattr(AgentLoopTask, "_persist_context",
+                        lambda self, msgs, cid, agent: persisted.update(
+                            {"cid": cid, "agent": agent, "messages": msgs}))
+    monkeypatch.setattr(AgentLoopTask, "_cleanup_orphan_files",
+                        staticmethod(lambda *a, **kw: None))
+    monkeypatch.setattr(
+        AgentLoopTask, "_estimate_tokens",
+        lambda self, msgs, **kw: sum(len(str(getattr(m, "content", ""))) // 4 + 4 for m in msgs),
+    )
+    monkeypatch.setattr(
+        AgentLoopTask, "_summarize_messages",
+        lambda self, msgs, *a, **kw: "summary of " + ",".join(
+            str(getattr(m, "content", ""))[:16] for m in msgs),
+    )
+
+    instance = AgentLoopTask.__new__(AgentLoopTask)
+    msgs = [
+        LLMMessage(role="system", content="sys", conversation_id="parent::task::t1"),
+        LLMMessage(role="user", content="old task detail " * 2000,
+                   conversation_id="parent::task::t1", seq=10),
+        LLMMessage(role="assistant", content="old result " * 1000,
+                   conversation_id="parent::task::t1", seq=11),
+        LLMMessage(role="user", content="recent instruction",
+                   conversation_id="parent::task::t1", seq=20),
+    ]
+
+    class _C:
+        api_key = ""
+        base_url = ""
+
+    out = instance._compact(
+        list(msgs), _C(), max_tokens=20_000, force=True,
+        conversation_id="parent::task::t1", agent_name="worker",
+        user_id="uid", independent_context=True,
+    )
+
+    joined = "\n".join(m.content or "" for m in out)
+    assert "[Independent context summary - earlier messages compacted]" in joined
+    assert "old task detail" in joined
+    assert "recent instruction" in joined
+    assert persisted["cid"] == "parent::task::t1"
+    assert persisted["agent"] == "worker"
+
+
+def test_independent_compact_folds_previous_summary(monkeypatch):
+    """Repeated independent compacts replace the old summary instead of stacking it."""
+    from core.llm_client import LLMMessage
+    from tasks.ai.agent_loop import AgentLoopTask
+
+    monkeypatch.setattr(AgentLoopTask, "_persist_context", lambda *a, **kw: None)
+    monkeypatch.setattr(AgentLoopTask, "_cleanup_orphan_files",
+                        staticmethod(lambda *a, **kw: None))
+    monkeypatch.setattr(
+        AgentLoopTask, "_estimate_tokens",
+        lambda self, msgs, **kw: sum(len(str(getattr(m, "content", ""))) // 4 + 4 for m in msgs),
+    )
+
+    summarized_inputs = []
+
+    def _summarize(self, msgs, *a, **kw):
+        text = "\n".join(str(getattr(m, "content", "")) for m in msgs)
+        summarized_inputs.append(text)
+        return "merged summary: OLD SUMMARY + new old work"
+
+    monkeypatch.setattr(AgentLoopTask, "_summarize_messages", _summarize)
+
+    instance = AgentLoopTask.__new__(AgentLoopTask)
+    msgs = [
+        LLMMessage(role="system", content="sys", conversation_id="p::task::t2"),
+        LLMMessage(
+            role="user",
+            content="[Independent context summary - earlier messages compacted]\n\nOLD SUMMARY",
+            source={"type": "independent_compaction"},
+            conversation_id="p::task::t2",
+            seq=2,
+        ),
+        LLMMessage(role="user", content="new old work " * 2000,
+                   conversation_id="p::task::t2", seq=3),
+        LLMMessage(role="assistant", content="recent answer",
+                   conversation_id="p::task::t2", seq=30),
+    ]
+
+    class _C:
+        api_key = ""
+        base_url = ""
+
+    out = instance._compact(
+        list(msgs), _C(), max_tokens=20_000, force=True,
+        conversation_id="p::task::t2", agent_name="worker",
+        user_id="uid", independent_context=True,
+    )
+
+    joined = "\n".join(m.content or "" for m in out)
+    assert joined.count("[Independent context summary - earlier messages compacted]") == 1
+    assert "OLD SUMMARY" in summarized_inputs[0]
+    assert "recent answer" in joined

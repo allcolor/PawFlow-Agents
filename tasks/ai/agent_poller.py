@@ -267,23 +267,32 @@ class AgentPollerMixin:
 
             # For task sub-conversations, load from the sub-conv
             if "::task::" in entry_key:
-                messages_data = store.load(entry_key)
+                _task_id_tmp = entry_key.rsplit("::", 1)[-1]
+                _all_tasks_tmp = store.get_extra(cid, "agent_tasks") or {}
+                _task_data_tmp = _all_tasks_tmp.get(_task_id_tmp, {})
+                _task_agent_tmp = _task_data_tmp.get("agent", "")
+                _task_ctx_data = (store.load_agent_context(entry_key, _task_agent_tmp)
+                                  if _task_agent_tmp else None)
+                messages_data = _task_ctx_data if _task_ctx_data is not None else store.load(entry_key)
                 if messages_data:
                     # Subsequent iteration — append "continue" as user message
                     import uuid as _poll_uuid
                     from core.conversation_writer import ConversationWriter
                     from core.llm_client import stamp_message
+                    _continue_msg = stamp_message({
+                        "role": "user", "content": "continue",
+                        "msg_id": _poll_uuid.uuid4().hex[:12]}, entry_key)
                     ConversationWriter.for_conversation(entry_key).enqueue_message(
-                        stamp_message({"role": "user", "content": "continue",
-                                       "msg_id": _poll_uuid.uuid4().hex[:12]},
-                                      entry_key),
+                        _continue_msg,
                         wait=True)
-                    messages_data = store.load(entry_key)
+                    if _task_ctx_data is not None and _task_agent_tmp:
+                        messages_data = list(_task_ctx_data) + [_continue_msg]
+                        store.save_agent_context(
+                            entry_key, _task_agent_tmp, messages_data)
+                    else:
+                        messages_data = store.load(entry_key)
                 if not messages_data:
                     # First iteration — sub-conv doesn't exist yet.
-                    _task_id_tmp = entry_key.rsplit("::", 1)[-1]
-                    _all_tasks_tmp = store.get_extra(cid, "agent_tasks") or {}
-                    _task_data_tmp = _all_tasks_tmp.get(_task_id_tmp, {})
                     _task_prompt = _task_data_tmp.get("task", "") or _task_data_tmp.get("prompt", "") or reason
                     # Inject task prompt as a normal user message
                     # (as if the human owner sent it directly)
@@ -397,7 +406,9 @@ class AgentPollerMixin:
                 _is_task = "::task::" in entry_key
                 ctx = self._build_poll_context(cid, messages_data,
                                                scheduled_reasons=[reason],
-                                               skip_agent_context=_is_task)
+                                               skip_agent_context=_is_task,
+                                               preloaded_conversation_id=entry_key if _is_task else "",
+                                               independent_context=_is_task)
                 # For task sub-conversations, override the conversation_id
                 # so messages are persisted in the sub-conv, not the parent
                 if _is_task and ctx:
@@ -406,6 +417,7 @@ class AgentPollerMixin:
                     ctx["_claude_has_session"] = False
                     # Track iteration number for transcript grouping (reschedule_count = iteration number)
                     ctx["_task_iteration"] = _task_entry.get("reschedule_count", 0) if _task_entry else 0
+                    ctx["_independent_context"] = True
                 if ctx is None:
                     with self._active_lock:
                         rc = self._active_conversations.get(cid, 1) - 1
@@ -480,6 +492,8 @@ class AgentPollerMixin:
                             messages_data: List[Dict],
                             scheduled_reasons: Optional[List[str]] = None,
                             skip_agent_context: bool = False,
+                            preloaded_conversation_id: str = "",
+                            independent_context: bool = False,
                             ) -> Optional[Dict]:
         """Build an agent context for a poll-triggered run.
 
@@ -512,6 +526,8 @@ class AgentPollerMixin:
             ctx = self._prepare_agent_context(
                 ff,
                 preloaded_messages=messages_data if skip_agent_context else None,
+                preloaded_conversation_id=preloaded_conversation_id,
+                independent_context=independent_context,
             )
         except Exception as e:
             logger.error(f"[poll] _prepare_agent_context failed for {conversation_id[:8]}: {e}")

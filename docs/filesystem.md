@@ -158,8 +158,15 @@ Security rules:
   mounted into relays.
 
 For S3, SFTP, WebDAV, or other rclone backends, create an `rcloneFilesystem`
-service with either key/value rclone fields or a raw `rclone_config`, then link
-that service to the conversation.
+service, then link that service to the conversation. The service form is driven
+by `rclone_type`: selecting `sftp`, `s3`, `webdav`, `ftp`, `azureblob`, or `gcs`
+shows only the guided fields that rclone uses for that backend. Fields that are
+not visible are not saved into the generated rclone config.
+
+`rclone_config` is an advanced escape hatch. If it is set, PawFlow sends that raw
+rclone config body to the relay instead of generating config from the guided
+fields. Use it for OAuth-style remotes such as Google Drive or OneDrive, or for
+backend options that are not exposed by the guided form yet.
 
 ## Server Filesystem (Admin Only)
 

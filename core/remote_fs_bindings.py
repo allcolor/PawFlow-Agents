@@ -1,9 +1,9 @@
-"""Conversation-scoped remote filesystem mount bindings.
+"""Conversation-scoped filesystem bindings.
 
-Remote filesystem bindings describe which user/conv filesystem services should
-be materialized inside every relay linked to a conversation. The binding is
-conversation state; relays are disposable workers that reconcile this manifest
-whenever they connect or when the binding changes.
+Filesystem bindings describe which filesystem services a conversation may use.
+Rclone bindings are additionally materialized inside every relay linked to the
+conversation. Native API-backed filesystem services are not mounted into relays;
+they are simply made available to server-side filesystem tools.
 """
 
 from __future__ import annotations
@@ -16,8 +16,10 @@ logger = logging.getLogger(__name__)
 
 EXTRA_KEY = "remote_fs_bindings"
 REMOTE_ROOT = "/remote"
-_VALID_SCOPES = {"user", "conv"}
+_VALID_SCOPES = {"global", "user", "conv"}
+_FILESYSTEM_SERVICE_TYPES = {"filesystem", "googleDrive", "oneDrive", "rcloneFilesystem"}
 _RCLONE_COMPATIBLE_TYPES = {"rcloneFilesystem"}
+_TOOL_COMPATIBLE_TYPES = _FILESYSTEM_SERVICE_TYPES - _RCLONE_COMPATIBLE_TYPES
 
 
 def sanitize_mount_dir(service_id: str) -> str:
@@ -31,6 +33,10 @@ def sanitize_mount_dir(service_id: str) -> str:
 
 def mount_path_for(service_id: str) -> str:
     return f"{REMOTE_ROOT}/{sanitize_mount_dir(service_id)}"
+
+
+def is_rclone_service(service_type: str) -> bool:
+    return service_type in _RCLONE_COMPATIBLE_TYPES
 
 
 def get_bindings(cid: str) -> Dict[str, Any]:
@@ -65,8 +71,8 @@ def _resolve_service_definition(user_id: str, cid: str, service_id: str, scope: 
     reg = ServiceRegistry.get_instance()
     scope = _normalize_scope(scope)
     if scope == SCOPE_GLOBAL:
-        raise ValueError("Global filesystem services cannot be mounted into relays")
-    if scope == SCOPE_USER:
+        sdef = reg.get_definition(SCOPE_GLOBAL, "", service_id)
+    elif scope == SCOPE_USER:
         sdef = reg.get_definition(SCOPE_USER, user_id, service_id)
     elif scope == SCOPE_CONV:
         sdef = reg.get_definition(SCOPE_CONV, cid, service_id)
@@ -76,18 +82,15 @@ def _resolve_service_definition(user_id: str, cid: str, service_id: str, scope: 
         sdef = reg.resolve_definition(service_id, user_id=user_id, conv_id=cid)
     if sdef is None:
         raise ValueError(f"Filesystem service '{service_id}' not found")
-    if sdef.scope == SCOPE_GLOBAL:
-        raise ValueError("Global filesystem services cannot be mounted into relays")
     if sdef.scope not in _VALID_SCOPES:
         raise ValueError(f"Filesystem service '{service_id}' has unsupported scope '{sdef.scope}'")
-    if sdef.service_type not in _RCLONE_COMPATIBLE_TYPES:
-        raise ValueError(
-            f"Filesystem service '{service_id}' is type '{sdef.service_type}', not rclone-mount compatible")
+    if sdef.service_type not in _FILESYSTEM_SERVICE_TYPES:
+        raise ValueError(f"Filesystem service '{service_id}' not found")
     return sdef
 
 
 def list_available(user_id: str, cid: str) -> List[Dict[str, Any]]:
-    """List non-global rclone-compatible filesystem services visible to a conversation."""
+    """List non-relay filesystem services visible to a conversation."""
     from core.service_registry import ServiceRegistry
     reg = ServiceRegistry.get_instance()
     result = []
@@ -97,14 +100,16 @@ def list_available(user_id: str, cid: str) -> List[Dict[str, Any]]:
             continue
         if sdef.scope not in _VALID_SCOPES:
             continue
-        if sdef.service_type not in _RCLONE_COMPATIBLE_TYPES:
+        if sdef.service_type not in _FILESYSTEM_SERVICE_TYPES:
             continue
         seen.add(sdef.service_id)
+        is_rclone = is_rclone_service(sdef.service_type)
         result.append({
             "service_id": sdef.service_id,
             "service_type": sdef.service_type,
             "scope": sdef.scope,
-            "mount_path": mount_path_for(sdef.service_id),
+            "mount_path": mount_path_for(sdef.service_id) if is_rclone else "",
+            "access": "mounted" if is_rclone else "tools",
             "description": sdef.description,
         })
     return result
@@ -113,6 +118,9 @@ def list_available(user_id: str, cid: str) -> List[Dict[str, Any]]:
 def _check_mount_collision(cid: str, service_id: str) -> None:
     target = sanitize_mount_dir(service_id)
     for item in list_linked(cid):
+        existing_type = item.get("service_type", "")
+        if existing_type and not is_rclone_service(existing_type):
+            continue
         other = item.get("service_id", "")
         if other == service_id:
             continue
@@ -131,12 +139,9 @@ def link_filesystem(cid: str, user_id: str, service_id: str,
     if not service_id:
         raise ValueError("service_id is required")
     sdef = _resolve_service_definition(user_id, cid, service_id, scope)
-    if sdef.scope == "global":
-        raise ValueError("Global filesystem services cannot be mounted into relays")
-    if sdef.service_type not in _RCLONE_COMPATIBLE_TYPES:
-        raise ValueError(
-            f"Filesystem service '{service_id}' is type '{sdef.service_type}', not rclone-mount compatible")
-    _check_mount_collision(cid, service_id)
+    is_rclone = is_rclone_service(sdef.service_type)
+    if is_rclone:
+        _check_mount_collision(cid, service_id)
     mode = mode if mode in {"read", "readwrite"} else "readwrite"
     bindings = get_bindings(cid)
     linked = bindings.setdefault("linked", [])
@@ -145,19 +150,22 @@ def link_filesystem(cid: str, user_id: str, service_id: str,
         "scope": sdef.scope,
         "service_type": sdef.service_type,
         "mode": mode,
-        "backend": "rclone",
+        "backend": "rclone" if is_rclone else "service",
+        "access": "mounted" if is_rclone else "tools",
         "enabled": True,
     }
+    if is_rclone:
+        entry["mount_path"] = mount_path_for(service_id)
     for idx, existing in enumerate(linked):
         if existing.get("service_id") == service_id:
             linked[idx] = {**existing, **entry}
             _store_bindings(cid, bindings)
             notify_linked_relays(cid, user_id)
-            return {**linked[idx], "mount_path": mount_path_for(service_id)}
+            return {**linked[idx], "mount_path": mount_path_for(service_id) if is_rclone else ""}
     linked.append(entry)
     _store_bindings(cid, bindings)
     notify_linked_relays(cid, user_id)
-    return {**entry, "mount_path": mount_path_for(service_id)}
+    return {**entry, "mount_path": mount_path_for(service_id) if is_rclone else ""}
 
 
 def unlink_filesystem(cid: str, user_id: str, service_id: str) -> bool:
@@ -205,7 +213,11 @@ def _rclone_config_for(user_id: str, sdef) -> Dict[str, str]:
         if not rclone_type:
             raise ValueError(f"rcloneFilesystem service '{sdef.service_id}' is missing rclone_type")
         skip = {"rclone_type", "type", "mode", "allowed_paths", "denied_paths"}
-        return {str(k): str(v) for k, v in cfg.items() if k not in skip and v is not None} | {"type": str(rclone_type)}
+        return {
+            str(k): str(v)
+            for k, v in cfg.items()
+            if k not in skip and v not in (None, "")
+        } | {"type": str(rclone_type)}
     raise ValueError(f"Unsupported remote filesystem service type: {sdef.service_type}")
 
 
@@ -240,6 +252,30 @@ def build_manifest_for_conversation(user_id: str, cid: str) -> Dict[str, Any]:
                 "error": str(exc),
             })
     return {"conversation_id": cid, "mounts": mounts}
+
+
+def list_tool_filesystems(user_id: str, cid: str) -> List[Dict[str, Any]]:
+    """Return linked native filesystem services usable by filesystem tools."""
+    result = []
+    for item in list_linked(cid):
+        if item.get("enabled") is False:
+            continue
+        service_id = item.get("service_id", "")
+        if not service_id:
+            continue
+        try:
+            sdef = _resolve_service_definition(user_id, cid, service_id, item.get("scope", ""))
+        except Exception:
+            continue
+        if sdef.service_type not in _TOOL_COMPATIBLE_TYPES:
+            continue
+        result.append({
+            "id": sdef.service_id,
+            "type": sdef.service_type,
+            "scope": sdef.scope,
+            "access": "tools",
+        })
+    return result
 
 
 def build_manifest_for_relay(relay_id: str, user_id: str) -> Dict[str, Any]:
@@ -282,7 +318,12 @@ def summary(user_id: str, cid: str) -> Dict[str, Any]:
     linked = []
     for item in list_linked(cid):
         service_id = item.get("service_id", "")
-        linked.append({**item, "mount_path": mount_path_for(service_id) if service_id else ""})
+        is_rclone = is_rclone_service(item.get("service_type", ""))
+        linked.append({
+            **item,
+            "access": "mounted" if is_rclone else "tools",
+            "mount_path": mount_path_for(service_id) if service_id and is_rclone else "",
+        })
     return {
         "linked": linked,
         "available": list_available(user_id, cid),

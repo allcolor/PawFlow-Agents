@@ -53,6 +53,8 @@ def _admin_get_task_schema(body, exec_reg, deploy_reg, gsvc_reg, tmpl_svc):
 
 def _admin_list_service_types(body, exec_reg, deploy_reg, gsvc_reg, tmpl_svc):
     """List all registered service types."""
+    from tasks.ai.actions.service_flow import _service_category, _service_type_sort_key
+
     result = []
     for svc_type in ServiceFactory.list_types():
         cls = ServiceFactory.get(svc_type)
@@ -60,7 +62,9 @@ def _admin_list_service_types(body, exec_reg, deploy_reg, gsvc_reg, tmpl_svc):
             "type": getattr(cls, 'TYPE', svc_type),
             "name": getattr(cls, 'NAME', svc_type),
             "description": getattr(cls, 'DESCRIPTION', ''),
+            "category": _service_category(svc_type, cls),
         })
+    result.sort(key=_service_type_sort_key)
     return result
 
 

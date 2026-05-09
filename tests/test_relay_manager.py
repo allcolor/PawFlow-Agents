@@ -1,3 +1,4 @@
+import inspect
 from pathlib import Path
 
 import pytest
@@ -169,6 +170,13 @@ def test_relay_docker_loop_treats_400_as_full_reconnect():
     assert 'if "HTTP/1.1 400 Bad Request" in msg:' in source
     assert "_full_reconnect_requested.set()" in source
     assert "self._restart_service_registration()" in source
+
+
+def test_relay_docker_launcher_passes_token_as_equals_arg():
+    source = inspect.getsource(RelayThread._run_docker_relay)
+
+    assert 'f"--token={self.ws_token}"' in source
+    assert '"--token", self.ws_token' not in source
 
 
 def test_relay_manager_start_requires_logged_in_server(monkeypatch, tmp_path):

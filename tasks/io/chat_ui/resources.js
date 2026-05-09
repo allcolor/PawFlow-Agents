@@ -358,13 +358,15 @@ function _doRelayLink(btn) {
 function _showRemoteFsLinkDialog() {
   action$('remote_fs_status', { conversation_id: conversationId }).subscribe(data => {
     if (data.error) { addMsg('error', data.error); return; }
+    var linkedIds = new Set((data.linked || []).map(function(s) { return s.service_id || ''; }));
     var services = (data.available || []).filter(function(s) {
-      return s.service_type === 'rcloneFilesystem';
+      return s.service_id && !linkedIds.has(s.service_id);
     });
     if (!services.length) { addMsg('system', t('noRemoteFilesystemsAvailable')); return; }
     window._remoteFsLinkOptions = services;
     var options = services.map(function(s, idx) {
-      var label = '[' + (s.scope || 'user') + '] ' + s.service_id + ' \u2192 ' + (s.mount_path || '');
+      var access = s.service_type === 'rcloneFilesystem' ? t('mountedInRelays') : t('availableToTools');
+      var label = '[' + (s.scope || 'user') + '] ' + s.service_id + ' (' + s.service_type + ', ' + access + ')';
       return '<option value="' + idx + '">' + escapeHtml(label) + '</option>';
     }).join('');
     var overlay = document.createElement('div');
@@ -743,7 +745,8 @@ async function _renderResourcesData(data) {
       liveHtml += _sectionFooter();
     }
 
-    // Rclone filesystem bindings mounted inside linked relays under /remote.
+    // Filesystem bindings: rclone is mounted inside linked relays; native API
+    // filesystems are made available directly to tools.
     {
       var fsCollapsed = _isSectionCollapsed('_remote_fs');
       var fsArrow = fsCollapsed ? '\u25B6' : '\u25BC';
@@ -754,24 +757,24 @@ async function _renderResourcesData(data) {
         + '<span style="cursor:pointer;font-size:13px;color:var(--pf-accent);padding:0 4px;" onclick="_showRemoteFsLinkDialog()" title="' + escapeHtml(t('linkFilesystem')) + '">+</span>'
         + '</div><div id="res-section-_remote_fs" style="display:' + fsDisplay + ';">';
       var _remoteFs = data.remote_filesystems || { linked: [], available: [] };
-      var _linkedFs = (_remoteFs.linked || []).filter(function(s) {
-        return s.service_type === 'rcloneFilesystem';
-      });
+      var _linkedFs = _remoteFs.linked || [];
       if (_linkedFs.length) {
         _linkedFs.forEach(function(s) {
           var serviceId = escapeHtml(s.service_id || '');
           var scope = escapeHtml(s.scope || 'user');
-          var mountPath = escapeHtml(s.mount_path || '');
+          var isRclone = s.service_type === 'rcloneFilesystem';
+          var mountPath = escapeHtml(isRclone ? (s.mount_path || '') : '');
+          var tag = escapeHtml(isRclone ? 'rclone' : (s.service_type || 'filesystem'));
           var enabledDot = s.enabled === false ? '\u{1F534}' : '\u{1F7E2}';
           liveHtml += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;">'
             + _scopeBadge(scope)
             + '<span style="font-size:11px;">' + enabledDot + '</span>'
             + '<span style="color:var(--pf-text);font-size:12px;flex:1;">' + serviceId + '</span>'
-            + '<span style="font-size:9px;color:var(--pf-muted);background:color-mix(in srgb, var(--pf-muted) 14%, var(--pf-panel));padding:1px 4px;border-radius:3px;">rclone</span>'
+            + '<span style="font-size:9px;color:var(--pf-muted);background:color-mix(in srgb, var(--pf-muted) 14%, var(--pf-panel));padding:1px 4px;border-radius:3px;">' + tag + '</span>'
             + '<span style="cursor:pointer;font-size:11px;color:var(--pf-danger);padding:0 3px;" title="' + escapeHtml(t('unlink')) + '"'
             + ' onclick="_unlinkRemoteFs(this.dataset.serviceId)" data-service-id="' + serviceId + '">&times;</span>'
             + '</div>'
-            + (mountPath ? '<div style="font-size:10px;color:var(--pf-muted);margin-left:24px;"><code>' + mountPath + '</code></div>' : '');
+            + (mountPath ? '<div style="font-size:10px;color:var(--pf-muted);margin-left:24px;"><code>' + mountPath + '</code></div>' : '<div style="font-size:10px;color:var(--pf-muted);margin-left:24px;">' + escapeHtml(t('availableToTools')) + '</div>');
         });
       } else {
         liveHtml += '<div style="color:var(--pf-muted);font-size:10px;margin-left:8px;">' + escapeHtml(t('noRemoteFilesystemsLinked')) + '</div>';
@@ -2658,6 +2661,35 @@ const _svcInputStyle = 'width:100%;background:var(--pf-sidebar);color:var(--pf-t
 const _svcLabelStyle = 'color:var(--pf-muted);font-size:11px;';
 const _svcDescStyle = 'color:var(--pf-muted);font-size:10px;margin-top:1px;';
 
+function _serviceCategoryLabel(category) {
+  const key = 'serviceCategory.' + (category || 'other');
+  const label = t(key);
+  return label === key ? (category || 'Other') : label;
+}
+
+function _renderServiceTypeOptions(serviceTypes) {
+  const groups = [];
+  const byCategory = {};
+  for (const st of serviceTypes) {
+    const category = st.category || 'other';
+    if (!byCategory[category]) {
+      byCategory[category] = [];
+      groups.push(category);
+    }
+    byCategory[category].push(st);
+  }
+  let html = '';
+  for (const category of groups) {
+    html += '<optgroup label="' + escapeHtml(_serviceCategoryLabel(category)) + '">';
+    for (const st of byCategory[category]) {
+      const label = (st.name || st.type) + (st.description ? ' - ' + st.description : '');
+      html += '<option value="' + escapeHtml(st.type) + '">' + escapeHtml(label) + '</option>';
+    }
+    html += '</optgroup>';
+  }
+  return html;
+}
+
 function _renderSchemaFields(schema, values, readonly) {
   let html = '';
   const dis = readonly ? ' disabled' : '';
@@ -2665,9 +2697,12 @@ function _renderSchemaFields(schema, values, readonly) {
   for (const [pname, pdef] of Object.entries(schema)) {
     const val = (values && values[pname] != null) ? values[pname] : (pdef.default != null ? pdef.default : '');
     const escaped = typeof val === 'string' ? val.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') : val;
-    html += '<div class="svc-field" data-field="' + pname + '" style="margin-bottom:8px;">';
-    html += '<label style="' + _svcLabelStyle + '">' + pname + '</label>';
-    if (pdef.description) html += '<div style="' + _svcDescStyle + '">' + pdef.description + '</div>';
+    const label = escapeHtml(pdef.label || pname);
+    const desc = pdef.description ? escapeHtml(pdef.description) : '';
+    const req = pdef.required ? ' data-required="1"' : '';
+    html += '<div class="svc-field" data-field="' + pname + '"' + req + ' style="margin-bottom:8px;">';
+    html += '<label style="' + _svcLabelStyle + '">' + label + (pdef.required ? ' <span class="svc-req" style="color:var(--pf-danger)">*</span>' : '') + '</label>';
+    if (desc) html += '<div style="' + _svcDescStyle + '">' + desc + '</div>';
     const ptype = pdef.type || 'string';
     if (ptype === 'boolean') {
       html += '<label style="display:flex;align-items:center;gap:6px;margin-top:4px;cursor:pointer;"><input id="svc-p-' + pname + '" type="checkbox"' + (val ? ' checked' : '') + dis + ' style="accent-color:var(--pf-accent);"/> <span style="color:var(--pf-text);font-size:12px;">Enabled</span></label>';
@@ -2740,6 +2775,8 @@ function _collectSchemaValues(schema) {
   for (const [pname, pdef] of Object.entries(schema)) {
     const el = document.getElementById('svc-p-' + pname);
     if (!el) continue;
+    const wrapper = el.closest('.svc-field');
+    if (wrapper && wrapper.style.display === 'none') continue;
     const ptype = pdef.type || 'string';
     if (ptype === 'boolean') {
       config[pname] = el.checked;
@@ -2773,7 +2810,12 @@ function _applyRules(container, rules, actions, serviceId) {
     container.querySelectorAll('.svc-field').forEach(f => {
       f.style.display = '';
       const lbl = f.querySelector('label');
-      if (lbl) lbl.querySelector('.svc-req')?.remove();
+      if (lbl) {
+        lbl.querySelector('.svc-req')?.remove();
+        if (f.dataset.required === '1') {
+          lbl.insertAdjacentHTML('beforeend', ' <span class="svc-req" style="color:var(--pf-danger)">*</span>');
+        }
+      }
     });
     // Evaluate rules in order
     for (const rule of rules) {
@@ -3237,10 +3279,7 @@ async function showServiceInstallForm() {
   const panel = document.createElement('div');
   panel.style.cssText = 'background:var(--pf-panel);border-radius:8px;padding:20px;width:540px;max-height:85vh;overflow-y:auto;border:1px solid var(--pf-border);';
 
-  let typeOpts = '';
-  for (const st of serviceTypes) {
-    typeOpts += '<option value="' + st.type + '">' + st.name + (st.description ? ' - ' + st.description : '') + '</option>';
-  }
+  const typeOpts = _renderServiceTypeOptions(serviceTypes);
 
   panel.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">'
     + '<h3 style="margin:0;color:var(--pf-text);font-size:14px;">' + escapeHtml(t('installService')) + '</h3>'

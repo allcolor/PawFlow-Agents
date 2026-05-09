@@ -236,8 +236,23 @@ function renderPanelResult(action, data) {
     var svcSel = document.getElementById('cf-svctype');
     if (svcSel) {
       var types = data.service_types || [];
-      svcSel.innerHTML = types.map(function(t) {
-        return '<option value="' + esc(t.type) + '">' + esc(t.name || t.type) + '</option>';
+      var groups = [];
+      var byCategory = {};
+      types.forEach(function(t) {
+        var category = t.category || 'other';
+        if (!byCategory[category]) {
+          byCategory[category] = [];
+          groups.push(category);
+        }
+        byCategory[category].push(t);
+      });
+      svcSel.innerHTML = groups.map(function(category) {
+        var label = category.replace(/-/g, ' ').replace(/^./, function(c) { return c.toUpperCase(); });
+        return '<optgroup label="' + esc(label) + '">'
+          + byCategory[category].map(function(t) {
+            return '<option value="' + esc(t.type) + '">' + esc(t.name || t.type) + '</option>';
+          }).join('')
+          + '</optgroup>';
       }).join('') || '<option>(no types)</option>';
       var svcLbl = svcSel.previousElementSibling;
       if (svcLbl) svcLbl.textContent = 'Service type';

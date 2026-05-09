@@ -186,6 +186,25 @@ class StorageResolver:
 
     _FS_TYPES = ("relay", "filesystem", "googleDrive", "oneDrive")
 
+    def _allowed_filesystem_ids(self):
+        if not self._conversation_id:
+            return None
+        allowed = []
+        try:
+            from core.relay_bindings import get_linked
+            allowed.extend(get_linked(self._conversation_id))
+        except Exception:
+            pass
+        try:
+            from core.remote_fs_bindings import list_tool_filesystems
+            allowed.extend(
+                item.get("id", "")
+                for item in list_tool_filesystems(self._user_id, self._conversation_id)
+            )
+        except Exception:
+            pass
+        return [sid for sid in dict.fromkeys(allowed) if sid]
+
     def _resolve_fs(self, service_name: str):
         """Resolve a filesystem service by name.
 
@@ -193,9 +212,16 @@ class StorageResolver:
         Named service → look up by exact ID.
         Fallback: if only one FS exists, use it regardless of name.
         """
+        allowed_ids = self._allowed_filesystem_ids()
+
         # Aliases → auto-detect
         if service_name.lower() in self._FS_AUTO_ALIASES:
+            if allowed_ids is not None:
+                return self._lookup_service(allowed_ids[0]) if allowed_ids else None
             return self._find_first_fs()
+
+        if allowed_ids is not None and service_name not in allowed_ids:
+            return None
 
         # Try exact match via resolver or registries
         if self._fs_resolver:
@@ -206,6 +232,9 @@ class StorageResolver:
         svc = self._lookup_service(service_name)
         if svc:
             return svc
+
+        if allowed_ids is not None:
+            return None
 
         # Fallback: if the name is unknown but only one FS exists, use it
         only = self._find_first_fs()
@@ -220,7 +249,7 @@ class StorageResolver:
         try:
             from core.service_registry import ServiceRegistry
             return ServiceRegistry.get_instance().resolve(
-                service_name, user_id=self._user_id)
+                service_name, user_id=self._user_id, conv_id=self._conversation_id)
         except Exception:
             return None
 
@@ -230,8 +259,10 @@ class StorageResolver:
             from core.service_registry import ServiceRegistry
             reg = ServiceRegistry.get_instance()
             for fs_type in self._FS_TYPES:
-                for sdef in reg.resolve_by_type(fs_type, user_id=self._user_id):
-                    svc = reg.resolve(sdef.service_id, user_id=self._user_id)
+                for sdef in reg.resolve_by_type(
+                        fs_type, user_id=self._user_id, conv_id=self._conversation_id):
+                    svc = reg.resolve(
+                        sdef.service_id, user_id=self._user_id, conv_id=self._conversation_id)
                     if svc:
                         return svc
         except Exception:

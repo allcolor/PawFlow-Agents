@@ -75,7 +75,7 @@ def _expand_glob_braces(pattern: str, max_patterns: int = 256) -> List[str]:
     return _expand_one(pattern or "*")[:max_patterns]
 
 
-def find_fs_service(user_id: str, service_name: str = ""):
+def find_fs_service(user_id: str, service_name: str = "", conversation_id: str = ""):
     """Standalone service lookup (for non-handler code like HTTP actions).
 
     Walks conv > user > global scope chain via ServiceRegistry.
@@ -90,13 +90,13 @@ def find_fs_service(user_id: str, service_name: str = ""):
         from core.service_registry import ServiceRegistry
         reg = ServiceRegistry.get_instance()
         if service_name:
-            svc = reg.resolve(service_name, user_id=user_id)
+            svc = reg.resolve(service_name, user_id=user_id, conv_id=conversation_id)
             if svc:
                 return _set_uid(svc)
         else:
             for fs_type in _FS_TYPES:
-                for sdef in reg.resolve_by_type(fs_type, user_id=user_id):
-                    svc = reg.resolve(sdef.service_id, user_id=user_id)
+                for sdef in reg.resolve_by_type(fs_type, user_id=user_id, conv_id=conversation_id):
+                    svc = reg.resolve(sdef.service_id, user_id=user_id, conv_id=conversation_id)
                     if svc:
                         return _set_uid(svc)
     except Exception:
@@ -161,6 +161,7 @@ class BaseFsHandler(ToolHandler):
     def __init__(self):
         self._fs_service = None
         self._available_services = []
+        self._filesystem_scope_enforced = False
         self._user_id = ""
         self._conversation_id = ""
         self._agent_name = ""
@@ -189,6 +190,7 @@ class BaseFsHandler(ToolHandler):
 
     def set_available_services(self, services: List[Dict[str, Any]]):
         self._available_services = services
+        self._filesystem_scope_enforced = True
 
     def set_fs_service(self, svc):
         self._fs_service = svc
@@ -255,21 +257,25 @@ class BaseFsHandler(ToolHandler):
         If _available_services is set (from relay bindings), only allow
         services in that list — reject unlinked relays.
         """
+        if service_name and service_name.lower() in ("workspace", "ws", "local"):
+            return self._find_service("")
+
+        if self._filesystem_scope_enforced:
+            allowed_ids = [s.get("id", "") for s in self._available_services if s.get("id")]
+            if service_name:
+                if service_name not in allowed_ids:
+                    return None
+            elif allowed_ids:
+                service_name = allowed_ids[0]
+            else:
+                return None
+
         if self._fs_service:
             if not service_name or service_name == getattr(
                     self._fs_service, '_service_id', ''):
                 return self._fs_service
 
-        if service_name and service_name.lower() in ("workspace", "ws", "local"):
-            return self._find_service("")
-
-        # Check against linked relays if available
-        if service_name and self._available_services:
-            allowed_ids = {s.get("id", "") for s in self._available_services}
-            if service_name not in allowed_ids:
-                return None  # relay not linked to this conversation
-
-        return find_fs_service(self._user_id, service_name)
+        return find_fs_service(self._user_id, service_name, self._conversation_id)
 
     def _no_target_error(self, fs_param: str = "") -> str:
         """Error message when no FS target could be resolved."""
@@ -277,9 +283,9 @@ class BaseFsHandler(ToolHandler):
         if fs_param:
             names = [s.get("id", "?") for s in available]
             if names:
-                return (f"Error: service '{fs_param}' not found. "
+                return (f"Error: filesystem not found: '{fs_param}'. "
                         f"Available: {', '.join(names)}")
-            return f"Error: service '{fs_param}' not found. No filesystem services available."
+            return f"Error: filesystem not found: '{fs_param}'"
         if available:
             names = [s.get("id", "?") for s in available]
             return (f"Error: no filesystem service specified. "

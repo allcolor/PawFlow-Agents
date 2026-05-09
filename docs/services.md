@@ -2,6 +2,8 @@
 
 Services are reusable integrations configured by id and referenced from flows, agents, handlers, and resource definitions. They are registered through `ServiceFactory` and can be installed globally or per user depending on the resource path.
 
+The chat service installer receives service type metadata grouped by category and renders each category as a separate section in the type selector. Services can declare `CATEGORY`; legacy services are mapped by type so the list stays grouped and sorted instead of falling back to a single alphabetical list.
+
 ## Core Services
 
 | Type | Purpose |

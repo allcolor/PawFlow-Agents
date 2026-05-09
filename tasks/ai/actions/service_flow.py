@@ -47,6 +47,80 @@ def _normalize_service_scope(scope: str) -> str:
     return "user"
 
 
+_SERVICE_CATEGORY_ORDER = {
+    "auth": 0,
+    "ai": 1,
+    "image": 2,
+    "video": 3,
+    "audio": 4,
+    "voice": 5,
+    "3d": 6,
+    "upscale": 7,
+    "try-on": 8,
+    "filesystem": 9,
+    "automation": 10,
+    "messaging": 11,
+    "network": 12,
+    "data": 13,
+    "cache": 14,
+    "security": 15,
+    "system": 16,
+    "other": 99,
+}
+
+_SERVICE_CATEGORY_BY_TYPE = {
+    "authGateway": "auth",
+    "oauthProvider": "auth",
+    "llmConnection": "ai",
+    "llmCredentialOAuthProvider": "ai",
+    "summarizer": "ai",
+    "codexImageGeneration": "image",
+    "openaiImageGeneration": "image",
+    "grokImageGeneration": "image",
+    "grokVideoGeneration": "video",
+    "klingVideoGeneration": "video",
+    "soraVideoGeneration": "video",
+    "sunoAudioGeneration": "audio",
+    "elevenLabsVoiceClone": "voice",
+    "fishAudioVoiceClone": "voice",
+    "filesystem": "filesystem",
+    "rcloneFilesystem": "filesystem",
+    "googleDrive": "filesystem",
+    "oneDrive": "filesystem",
+    "fileTracking": "filesystem",
+    "browser": "automation",
+    "telegramBot": "messaging",
+    "discordBot": "messaging",
+    "slackBot": "messaging",
+    "whatsappCloud": "messaging",
+    "httpClientService": "network",
+    "httpListener": "network",
+    "toolRelay": "network",
+    "dbConnectionPool": "data",
+    "cacheService": "cache",
+    "distributedMapCache": "cache",
+    "httpAuthValidator": "security",
+    "sslContext": "security",
+}
+
+
+def _service_category(service_type: str, service_cls: type) -> str:
+    category = str(getattr(service_cls, "CATEGORY", "") or "").strip().lower()
+    category = {
+        "try_on": "try-on",
+        "lipsync": "video",
+        "trainer": "image",
+    }.get(category, category)
+    if category in _SERVICE_CATEGORY_ORDER:
+        return category
+    return _SERVICE_CATEGORY_BY_TYPE.get(service_type, "other")
+
+
+def _service_type_sort_key(service: Dict[str, Any]):
+    category = service.get("category", "other")
+    return (_SERVICE_CATEGORY_ORDER.get(category, 99), service.get("name", "").lower(), service.get("type", ""))
+
+
 def _credential_provider_for_service(service_id: str, user_id: str = "") -> str:
     from services.llm_credential_oauth import normalize_provider
     from core.service_registry import ServiceRegistry
@@ -438,16 +512,18 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
     if action == "list_service_types":
         from core import ServiceFactory
         types = []
-        for stype in sorted(ServiceFactory.list_types()):
+        for stype in ServiceFactory.list_types():
             try:
                 cls = ServiceFactory.get(stype)
                 types.append({
                     "type": stype,
                     "name": getattr(cls, "NAME", stype),
                     "description": getattr(cls, "DESCRIPTION", ""),
+                    "category": _service_category(stype, cls),
                 })
             except Exception:
-                types.append({"type": stype, "name": stype, "description": ""})
+                types.append({"type": stype, "name": stype, "description": "", "category": "other"})
+        types.sort(key=_service_type_sort_key)
         flowfile.set_content(json.dumps({"service_types": types}).encode())
         return [flowfile]
 

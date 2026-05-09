@@ -568,7 +568,10 @@ class RelayThread:
                 self.docker_image,
                 "python3", "/opt/pawflow/pawflow_relay_launcher.py",
                 "--server", ws_url,
-                "--token", self.ws_token,
+                # token_urlsafe() can generate values beginning with "--".
+                # Pass the token with --token=VALUE so argparse cannot
+                # mistake a random token for another option during reconnect.
+                f"--token={self.ws_token}",
                 "--relay-id", self.relay_id,
                 "--dir", "/workspace",
                 *_relay_permission_args,

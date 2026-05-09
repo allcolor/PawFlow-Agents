@@ -603,8 +603,9 @@ class ToolRelayService(BaseService):
             except Exception as e:
                 logger.debug("[tool-relay] tool availability filter failed: %s", e)
 
-        # Find the live filesystem service (the one with relay connected)
-        fs_svc = self._find_filesystem_service(user_id)
+        # Find the default linked filesystem service for this conversation.
+        fs_svc = self._find_filesystem_service(user_id, conversation_id)
+        fs_resolver = self._make_filesystem_resolver(user_id, conversation_id)
 
         # Configure ALL handlers that need user/filesystem context
         for h in registry.list_tools():
@@ -620,9 +621,9 @@ class ToolRelayService(BaseService):
             if hasattr(h, '_conversation_id'):
                 h._conversation_id = conversation_id
             # Inject live filesystem service where needed
-            if fs_svc:
-                if hasattr(h, 'set_fs_resolver'):
-                    h.set_fs_resolver(lambda _svc_id, _fs_svc=fs_svc: _fs_svc)
+            if fs_svc or fs_resolver:
+                if hasattr(h, 'set_fs_resolver') and fs_resolver:
+                    h.set_fs_resolver(fs_resolver)
                 if hasattr(h, 'set_fs_service'):
                     h.set_fs_service(fs_svc)
                 if hasattr(h, '_fs_service') and not getattr(h, '_fs_service', None):
@@ -742,27 +743,17 @@ class ToolRelayService(BaseService):
                 h.set_service_resolver(
                     self._make_media_resolver(user_id, conversation_id, "upscale"))
 
-        # Populate available services on all BaseFsHandler instances
+        # Populate conversation-linked filesystems on all BaseFsHandler instances.
         from core.handlers._fs_base import BaseFsHandler, _FS_TYPES
         _fs_handlers = [h for h in registry.list_tools() if isinstance(h, BaseFsHandler)]
         if _fs_handlers:
             try:
-                available = []
-                from core.service_registry import ServiceRegistry
-                _sreg = ServiceRegistry.get_instance()
-                for fs_type in _FS_TYPES:
-                    for sdef in _sreg.resolve_by_type(fs_type, user_id=user_id):
-                        svc = _sreg.resolve(sdef.service_id, user_id=user_id)
-                        if svc:
-                            available.append({
-                                "id": sdef.service_id, "type": sdef.service_type,
-                                "root": getattr(svc, "root_path", "?"),
-                            })
-                if available:
-                    for h in _fs_handlers:
-                        h._available_services = available
-                    logger.debug("Filesystem services for user '%s': %s",
-                                 user_id, [s["id"] for s in available])
+                available = self._list_available_filesystem_services(
+                    user_id, conversation_id, _FS_TYPES)
+                for h in _fs_handlers:
+                    h.set_available_services(available)
+                logger.debug("Filesystem services for user '%s': %s",
+                             user_id, [s["id"] for s in available])
             except Exception as e:
                 logger.error("Failed to enumerate filesystem services: %s", e)
 
@@ -861,11 +852,11 @@ class ToolRelayService(BaseService):
                             try:
                                 from core.service_registry import ServiceRegistry
                                 relay_svc = ServiceRegistry.get_instance().resolve(
-                                    _rsid, user_id=user_id)
+                                    _rsid, user_id=user_id, conv_id=conversation_id)
                             except Exception:
                                 pass
                         if not relay_svc:
-                            relay_svc = self._find_filesystem_service(user_id)
+                            relay_svc = self._find_filesystem_service(user_id, conversation_id)
                         if not relay_svc:
                             logger.warning("[tool-relay][mcp] No relay for '%s'", mcp_name)
                             continue
@@ -930,16 +921,100 @@ class ToolRelayService(BaseService):
             logger.warning("[tool-relay] Failed to load MCP tools: %s", e)
 
     @staticmethod
-    def _find_filesystem_service(user_id: str = ""):
+    def _list_available_filesystem_services(user_id: str = "", conversation_id: str = "",
+                                            fs_types=("relay", "filesystem", "googleDrive", "oneDrive")):
+        """List filesystem services explicitly linked to this conversation."""
+        available = []
+        seen = set()
+        try:
+            from core.service_registry import ServiceRegistry
+            reg = ServiceRegistry.get_instance()
+            if conversation_id:
+                try:
+                    from core.relay_bindings import get_linked
+                    for sid in get_linked(conversation_id):
+                        if sid in seen:
+                            continue
+                        sdef = reg.resolve_definition(sid, user_id=user_id, conv_id=conversation_id)
+                        if not sdef or sdef.service_type not in ("relay", "filesystem"):
+                            continue
+                        seen.add(sid)
+                        svc = reg.resolve(sid, user_id=user_id, conv_id=conversation_id)
+                        available.append({
+                            "id": sid,
+                            "type": sdef.service_type,
+                            "scope": sdef.scope,
+                            "root": getattr(svc, "root_path", "?") if svc else "?",
+                        })
+                except Exception:
+                    pass
+                try:
+                    from core.remote_fs_bindings import list_tool_filesystems
+                    for item in list_tool_filesystems(user_id, conversation_id):
+                        sid = item.get("id", "")
+                        if not sid or sid in seen:
+                            continue
+                        seen.add(sid)
+                        available.append(item)
+                except Exception:
+                    pass
+                return available
+
+            for fs_type in fs_types:
+                for sdef in reg.resolve_by_type(fs_type, user_id=user_id):
+                    if sdef.service_id in seen:
+                        continue
+                    svc = reg.resolve(sdef.service_id, user_id=user_id)
+                    if svc:
+                        seen.add(sdef.service_id)
+                        available.append({
+                            "id": sdef.service_id, "type": sdef.service_type,
+                            "scope": sdef.scope,
+                            "root": getattr(svc, "root_path", "?"),
+                        })
+        except Exception:
+            pass
+        return available
+
+    @staticmethod
+    def _make_filesystem_resolver(user_id: str = "", conversation_id: str = ""):
+        def resolver(service_id: str = "", *_args):
+            try:
+                from core.service_registry import ServiceRegistry
+                reg = ServiceRegistry.get_instance()
+                available = ToolRelayService._list_available_filesystem_services(
+                    user_id, conversation_id)
+                allowed = [item.get("id", "") for item in available if item.get("id")]
+                if conversation_id:
+                    if service_id in ("", "workspace", "ws", "local"):
+                        service_id = allowed[0] if allowed else ""
+                    if not service_id or service_id not in allowed:
+                        return None
+                return reg.resolve(service_id, user_id=user_id, conv_id=conversation_id)
+            except Exception:
+                return None
+        return resolver
+
+    @staticmethod
+    def _find_filesystem_service(user_id: str = "", conversation_id: str = ""):
         """Find the first live filesystem service for this user.
 
         Same logic as agent_utils._find_filesystem_service but standalone.
         """
-        fs_types = ("relay", "filesystem", "googleDrive", "oneDrive")
         try:
             from core.service_registry import ServiceRegistry
             reg = ServiceRegistry.get_instance()
-            for fs_type in fs_types:
+            available = ToolRelayService._list_available_filesystem_services(
+                user_id, conversation_id)
+            if available:
+                for item in available:
+                    svc = reg.resolve(
+                        item.get("id", ""), user_id=user_id, conv_id=conversation_id)
+                    if svc:
+                        return svc
+            if conversation_id:
+                return None
+            for fs_type in ("relay", "filesystem", "googleDrive", "oneDrive"):
                 for sdef in reg.resolve_by_type(fs_type, user_id=user_id):
                     svc = reg.resolve(sdef.service_id, user_id=user_id)
                     if svc:

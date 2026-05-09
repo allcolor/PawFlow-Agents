@@ -420,9 +420,9 @@ class _RequestHandler(BaseHTTPRequestHandler):
                 self.wfile.write(b'{"error": "Forbidden: external IP"}')
                 return
 
-        # Private gateway — checks ALL routes (own _EXEMPT_PATHS handles exclusions)
-        from services.private_gateway import check_request as _gw_check
-        if _gw_check(self):
+        # Private gateway - checks all routes when this listener references one.
+        _gateway = getattr(self.server, "_private_gateway", None)
+        if _gateway is not None and _gateway.check_request(self):
             return
 
         # Session auth — skipped for public routes
@@ -824,8 +824,10 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
     allow_reuse_port = True
 
     def __init__(self, server_address, handler_class, route_registry, request_timeout,
-                 max_dispatch_threads=None, header_read_timeout=None):
+                 max_dispatch_threads=None, header_read_timeout=None,
+                 private_gateway=None):
         self._route_registry = route_registry
+        self._private_gateway = private_gateway
         self._pending_requests: Dict[str, PendingRequest] = {}
         self._request_timeout = request_timeout
         self._ssl_ctx: Optional[ssl.SSLContext] = None
@@ -1047,10 +1049,11 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
             except Exception:
                 pass
 
-        # Private gateway — reject banned IPs before any processing
+        # Private gateway - reject banned IPs before any processing.
         try:
-            from services.private_gateway import is_banned, is_enabled
-            if is_enabled() and client_address and is_banned(client_address[0]):
+            _gateway = getattr(self, "_private_gateway", None)
+            if (_gateway is not None and _gateway.is_enabled()
+                    and client_address and _gateway.is_banned(client_address[0])):
                 request.close()
                 return
         except Exception:
@@ -1132,35 +1135,15 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
 
             # Private gateway check for WebSocket connections
             try:
-                from services.private_gateway import is_enabled, is_banned, _verify_cookie, _COOKIE_NAME
-                if is_enabled() and not _internal_ok:
-                    ip = client_address[0] if client_address else "0.0.0.0"
-                    if is_banned(ip):
-                        logger.warning(
-                            "[ws] rejected %s on %s: private gateway banned IP",
-                            _remote, path)
-                        sock.sendall(b"HTTP/1.1 403 Forbidden\r\n\r\n")
-                        sock.close()
-                        return
-                    cookie_header = headers.get("Cookie", "")
-                    gw_ok = False
-                    for part in cookie_header.split(";"):
-                        part = part.strip()
-                        if part.startswith(_COOKIE_NAME + "="):
-                            cookie_val = part[len(_COOKIE_NAME) + 1:]
-                            if _verify_cookie(cookie_val, ip):
-                                gw_ok = True
-                                break
-                    if not gw_ok:
-                        logger.warning(
-                            "[ws] rejected %s on %s: private gateway enabled "
-                            "but %s cookie missing/invalid (cookie_header "
-                            "has %d parts)",
-                            _remote, path, _COOKIE_NAME,
-                            len([p for p in cookie_header.split(";") if p.strip()]))
-                        sock.sendall(b"HTTP/1.1 403 Forbidden\r\n\r\n")
-                        sock.close()
-                        return
+                _gateway = getattr(self, "_private_gateway", None)
+                if (_gateway is not None
+                        and _gateway.check_ws(path, headers, client_address, _internal_ok)):
+                    logger.warning(
+                        "[ws] rejected %s on %s: private gateway check failed",
+                        _remote, path)
+                    sock.sendall(b"HTTP/1.1 403 Forbidden\r\n\r\n")
+                    sock.close()
+                    return
             except Exception as e:
                 logger.error("WS gateway check failed: %s", e, exc_info=True)
                 sock.sendall(b"HTTP/1.1 500 Internal Server Error\r\n\r\n")
@@ -1362,6 +1345,7 @@ class HTTPListenerService(BaseService):
         self._request_timeout = float(self.config.get("request_timeout", 120.0))
         self._max_dispatch_threads = self.config.get("max_dispatch_threads")
         self._header_read_timeout = self.config.get("header_read_timeout")
+        self._private_gateway_service_id = self.config.get("private_gateway_service_id", "")
 
         self._ssl_certfile = self.config.get("ssl_certfile", "")
         self._ssl_keyfile = self.config.get("ssl_keyfile", "")
@@ -1392,6 +1376,7 @@ class HTTPListenerService(BaseService):
             "ssl_keyfile": {"type": "string", "required": False, "default": "", "description": "Path to SSL private key (PEM)"},
             "ssl_keyfile_password": {"type": "string", "required": False, "default": "", "description": "Password for encrypted key"},
             "ssl_service_id": {"type": "string", "required": False, "default": "", "description": "SSLContextService ID (alternative to certfile/keyfile)"},
+            "private_gateway_service_id": {"type": "service_ref", "service_type": "privateGateway", "required": False, "default": "", "description": "PrivateGateway service protecting this listener"},
         }
 
     @property
@@ -1435,6 +1420,7 @@ class HTTPListenerService(BaseService):
 
         # Build default SSL context if configured
         self._default_ssl_ctx = self._build_ssl_context()
+        private_gateway = self._resolve_private_gateway()
 
         self._server = _HTTPServerWithRegistry(
             (self._host, self._port),
@@ -1443,6 +1429,7 @@ class HTTPListenerService(BaseService):
             self._request_timeout,
             max_dispatch_threads=self._max_dispatch_threads,
             header_read_timeout=self._header_read_timeout,
+            private_gateway=private_gateway,
         )
 
         # Auto-detect TLS: don't wrap the server socket globally.
@@ -1463,6 +1450,20 @@ class HTTPListenerService(BaseService):
 
         logger.info(f"HTTPListenerService started on {proto} {self._host}:{self._port}")
         return self._server
+
+    def _resolve_private_gateway(self):
+        service_id = str(self._private_gateway_service_id or "").strip()
+        if not service_id:
+            return None
+        try:
+            from core.service_registry import ServiceRegistry
+            svc = ServiceRegistry.get_instance().resolve(service_id)
+            if svc and hasattr(svc, "check_request") and hasattr(svc, "check_ws"):
+                return svc
+            logger.warning("Private gateway service '%s' was not found or is invalid", service_id)
+        except Exception as exc:
+            logger.warning("Failed to resolve private gateway service '%s': %s", service_id, exc)
+        return None
 
     def _build_ssl_context(self) -> Optional[ssl.SSLContext]:
         """Build default SSL context from config."""

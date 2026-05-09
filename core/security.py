@@ -222,30 +222,58 @@ class SecurityManager:
         logger.info(f"User created: {username} (role={role.value})")
         return user
 
+    def _enabled_admin_count(self) -> int:
+        return sum(
+            1 for user in self._users.values()
+            if user.enabled and user.role == Role.ADMIN
+        )
+
+    def _assert_not_last_admin(self, username: str):
+        user = self._users.get(username)
+        if (user and user.enabled and user.role == Role.ADMIN
+                and self._enabled_admin_count() <= 1):
+            raise ValueError("Cannot remove the last enabled admin")
+
+    def revoke_user_sessions(self, username: str) -> int:
+        to_remove = [sid for sid, session in self._sessions.items()
+                     if session.username == username]
+        for sid in to_remove:
+            self.logout(sid)
+        return len(to_remove)
+
     def update_user(self, username: str, role: Optional[Role] = None,
                     password: Optional[str] = None, enabled: Optional[bool] = None,
-                    email: Optional[str] = None):
+                    email: Optional[str] = None, display_name: Optional[str] = None):
         user = self._users.get(username)
         if not user:
             raise ValueError(f"User '{username}' not found")
+        if ((role is not None and user.role == Role.ADMIN and role != Role.ADMIN)
+                or (enabled is False and user.enabled and user.role == Role.ADMIN)):
+            self._assert_not_last_admin(username)
+        revoke_sessions = False
         if role is not None:
+            revoke_sessions = revoke_sessions or role != user.role
             user.role = role
         if password is not None:
             user.password_hash = _hash_password(password)
+            revoke_sessions = True
         if enabled is not None:
+            revoke_sessions = revoke_sessions or enabled != user.enabled
             user.enabled = enabled
         if email is not None:
             user.email = email
+        if display_name is not None:
+            user.display_name = display_name or username
         self._save_users()
+        if revoke_sessions:
+            self.revoke_user_sessions(username)
 
     def delete_user(self, username: str):
         if username in self._users:
+            self._assert_not_last_admin(username)
             del self._users[username]
             # Invalidate sessions
-            to_remove = [sid for sid, s in self._sessions.items()
-                         if s.username == username]
-            for sid in to_remove:
-                del self._sessions[sid]
+            self.revoke_user_sessions(username)
             self._save_users()
 
     def get_user(self, username: str) -> Optional[User]:

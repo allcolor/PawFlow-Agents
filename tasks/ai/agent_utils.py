@@ -78,8 +78,7 @@ class AgentUtilsMixin:
         if not client and raise_on_missing:
             raise ValueError(
                 f"LLM service '{service_id}' not found. "
-                f"Define it in global services or set 'llm.default.service' "
-                f"in data/config/global_parameters.json."
+                f"Define it in services and reference it explicitly."
             )
         return client, svc
 

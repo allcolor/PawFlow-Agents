@@ -44,9 +44,9 @@ Media tools may send prompts, source images, videos, audio, or voice samples to 
 
 Use PawFlow secret storage or environment variables for API keys. Never hard-code secrets in flows, agent prompts, or docs. When writing examples, use `${SECRET_NAME}` placeholders.
 
-## Private Gateway Skins
+## Private Gateway
 
-The private gateway challenge page is selected by the global `gateway_skin` parameter. Skins are repository resources under `data/repository/private_gateway_skin` with the same scope hierarchy as other resources. Each skin lives in a directory containing `skin.json` metadata and `template.html`; templates can use `{{ next_url }}`, `{{ error }}`, and `{{ cooldown }}` placeholders. Built-in global skins include `default`, `google`, `bing`, `wifi`, `terminal`, `netflix`, `captcha`, `matrix`, and `bladerunner`.
+The private gateway is configured as a `privateGateway` service and enabled for a listener through `httpListener.private_gateway_service_id`. Accepted challenge keys are explicit `secret_refs` on that service. The challenge skin is selected by the service `skin` field and resolved from repository resources under `data/repository/private_gateway_skin`. Each skin lives in a directory containing `skin.json` metadata and `template.html`; templates can use `{{ next_url }}`, `{{ error }}`, and `{{ cooldown }}` placeholders.
 
 ## Production Checklist
 

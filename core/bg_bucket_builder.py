@@ -43,25 +43,6 @@ from core.tool_activity_digest import (
 logger = logging.getLogger(__name__)
 
 
-_BG_COMPACT_DEFAULTS: Dict[str, Any] = {
-    "l1_trigger_msgs": L1_TRIGGER_MSGS,
-    "bucket_target_tokens": BUCKET_OUTPUT_TARGET,
-    "header_budget_tokens": HEADER_BUDGET,
-    "rollup_trigger_count": ROLLUP_TRIGGER_COUNT,
-    "tail_reserve_msgs": TAIL_RESERVE,
-    "tail_token_budget": TAIL_TOKEN_BUDGET,
-    "token_trigger_fraction": 0.7,
-    "bulk_catchup_multiplier": 5,
-    "partial_min_msgs": 5,
-    "min_input_multiplier": 4,
-    "chars_per_token": 3.5,
-    "overshoot_warn_multiplier": 1.5,
-    "header_char_multiplier": 3.0,
-}
-
-_BG_COMPACT_PARAM_PREFIX = "pawflow.bg_compact."
-
-
 def _build_embed_fn(user_id: str = "", conversation_id: str = ""):
     """Return the configured memory embedding function.
 
@@ -175,17 +156,8 @@ class BgBucketBuilder:
         except Exception:
             logger.debug("[bg-bucket] failed to resolve summarizer bg config",
                          exc_info=True)
-        raw = dict(_BG_COMPACT_DEFAULTS)
-        try:
-            from core.expression import resolve_expression
-            for name in list(raw):
-                template = "${" + _BG_COMPACT_PARAM_PREFIX + name + "}"
-                value = resolve_expression(template, owner=user_id, conversation_id=cid)
-                if value not in (None, "", template):
-                    raw[name] = value
-        except Exception:
-            logger.debug("[bg-bucket] failed to resolve bg compact parameters",
-                         exc_info=True)
+        from services.summarizer_service import SummarizerService
+        raw = SummarizerService({"llm_service": "_unused"}).bg_compact_config()
         return {
             "l1_trigger_msgs": self._coerce_positive_int(
                 "l1_trigger_msgs", raw["l1_trigger_msgs"], L1_TRIGGER_MSGS),

@@ -88,8 +88,7 @@ def _capability_store_present() -> bool:
 
 
 def _private_gateway_enabled() -> bool:
-    """Best-effort: the private gateway service writes its enable flag
-    to a known runtime file. Tolerates missing module / file."""
+    """Best-effort: report whether any global privateGateway service is enabled."""
     try:
         from services.private_gateway import PrivateGateway
         return bool(PrivateGateway.is_enabled_static())

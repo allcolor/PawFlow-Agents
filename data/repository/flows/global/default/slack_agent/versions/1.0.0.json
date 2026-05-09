@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "description": "LLM agent accessible via Slack. Messages are processed by the agent and responses are sent back.",
   "parameters": {
-    "llm_service": "${llm.default.service}",
+    "llm_service": "",
     "slack_bot_token": "",
     "slack_app_token": "",
     "conversation_ttl": 0

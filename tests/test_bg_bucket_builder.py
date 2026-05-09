@@ -42,6 +42,24 @@ def _cfg(builder: BgBucketBuilder, **overrides):
     return cfg
 
 
+class _FakeSummarizer:
+    def __init__(self, config):
+        self._config = config
+
+    def bg_compact_config(self):
+        from services.summarizer_service import SummarizerService
+        cfg = SummarizerService({"llm_service": "svc"}).bg_compact_config()
+        cfg.update(self._config)
+        return cfg
+
+
+def _patch_summarizer_config(monkeypatch, **config):
+    monkeypatch.setattr(
+        "core.summarizer_bindings.resolve_service",
+        lambda user_id, cid: (_FakeSummarizer(config), None, True),
+    )
+
+
 # ── helpers ──────────────────────────────────────────────────────
 
 
@@ -317,22 +335,12 @@ def test_pick_chunk_tail_only_returns_empty(fake_builder):
     assert chunk == []
 
 
-def test_bg_compact_config_resolves_pawflow_variables(fake_builder, monkeypatch):
-    calls = []
-
-    def _resolve(template, owner=None, conversation_id=None):
-        calls.append((template, owner, conversation_id))
-        if template == "${pawflow.bg_compact.bucket_target_tokens}":
-            return "1234"
-        return template
-
-    monkeypatch.setattr("core.expression.resolve_expression", _resolve)
+def test_bg_compact_config_uses_summarizer_service(fake_builder, monkeypatch):
+    _patch_summarizer_config(monkeypatch, bucket_target_tokens=1234)
 
     cfg = fake_builder._bg_compact_config("cid_cfg", "user_cfg")
 
     assert cfg["bucket_target_tokens"] == 1234
-    assert ("${pawflow.bg_compact.bucket_target_tokens}",
-            "user_cfg", "cid_cfg") in calls
     assert cfg["l1_trigger_msgs"] == L1_TRIGGER_MSGS
 
 
@@ -371,15 +379,9 @@ def _make_summarize_fn(output: str = "## Narrative\nok\n\n## Files & operations\
 
 
 def test_build_now_sync_passes_configured_target_tokens(fake_builder, monkeypatch):
-    def _resolve(template, owner=None, conversation_id=None):
-        values = {
-            "${pawflow.bg_compact.l1_trigger_msgs}": "8",
-            "${pawflow.bg_compact.tail_reserve_msgs}": "2",
-            "${pawflow.bg_compact.bucket_target_tokens}": "321",
-        }
-        return values.get(template, template)
-
-    monkeypatch.setattr("core.expression.resolve_expression", _resolve)
+    _patch_summarizer_config(
+        monkeypatch, l1_trigger_msgs=8, tail_reserve_msgs=2,
+        bucket_target_tokens=321)
     _write_shared(fake_builder._shared_path, 10)
     summarize_fn, calls = _make_summarize_fn()
     fake_builder.set_summarizer_resolver(
@@ -477,14 +479,8 @@ def test_build_now_sync_no_partial_when_forbidden(fake_builder):
 
 
 def test_build_now_sync_collapses_existing_over_budget_header(fake_builder, monkeypatch):
-    def _resolve(template, owner=None, conversation_id=None):
-        values = {
-            "${pawflow.bg_compact.header_budget_tokens}": "1000",
-            "${pawflow.bg_compact.header_char_multiplier}": "3.0",
-        }
-        return values.get(template, template)
-
-    monkeypatch.setattr("core.expression.resolve_expression", _resolve)
+    _patch_summarizer_config(
+        monkeypatch, header_budget_tokens=1000, header_char_multiplier=3.0)
     store = BucketStore.get(fake_builder._conv_dir)
     store.add_bucket(1, 10, 100.0, 110.0, "old " * 1200,
                      first_msg_id="m000001", last_msg_id="m000010",
@@ -715,15 +711,7 @@ def test_maybe_trigger_async_clears_pending_after_error(monkeypatch):
 def test_maybe_trigger_uses_configured_msg_threshold(tmp_path, monkeypatch):
     bb = BgBucketBuilder(max_workers=1)
     submitted: List[str] = []
-
-    def _resolve(template, owner=None, conversation_id=None):
-        values = {
-            "${pawflow.bg_compact.l1_trigger_msgs}": "10",
-            "${pawflow.bg_compact.tail_reserve_msgs}": "2",
-        }
-        return values.get(template, template)
-
-    monkeypatch.setattr("core.expression.resolve_expression", _resolve)
+    _patch_summarizer_config(monkeypatch, l1_trigger_msgs=10, tail_reserve_msgs=2)
     monkeypatch.setattr(
         bb._executor, "submit",
         lambda *a, **kw: submitted.append(a) or None)

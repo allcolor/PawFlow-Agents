@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "description": "LLM agent accessible via WhatsApp. Messages are processed by the agent and responses are sent back.",
   "parameters": {
-    "llm_service": "${llm.default.service}",
+    "llm_service": "",
     "phone_number_id": "",
     "whatsapp_access_token": "",
     "whatsapp_verify_token": "",

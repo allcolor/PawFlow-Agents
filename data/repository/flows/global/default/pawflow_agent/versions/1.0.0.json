@@ -10,7 +10,7 @@
     "oauth_client_secret": "",
     "oauth_redirect_uri": "http://localhost:9090/auth/callback",
     "oauth_default_role": "operator",
-    "image_service": "${image_default_service}",
+    "private_gateway_service_id": "",
     "poll_interval": 30,
     "poll_recheck_delay": 7200,
     "max_workers": 32,
@@ -23,7 +23,8 @@
       "parameters": {
         "host": "0.0.0.0",
         "port": 9090,
-        "request_timeout": "${http_request_timeout}"
+        "request_timeout": "${http_request_timeout}",
+        "private_gateway_service_id": "${private_gateway_service_id}"
       }
     },
     "oauth": {
@@ -166,8 +167,7 @@
         "conversation_store": true,
         "conversation_ttl": "${conversation_ttl}",
         "file_base_url": "http://localhost:9090",
-        "streaming": true,
-        "image_service": "${image_service}"
+        "streaming": true
       }
     },
     "agent_actions": {

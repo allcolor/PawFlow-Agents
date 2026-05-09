@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "description": "LLM agent accessible via Discord. Messages from Discord are processed by the agent and responses are sent back.",
   "parameters": {
-    "llm_service": "${llm.default.service}",
+    "llm_service": "",
     "bot_token": "",
     "guild_ids": "",
     "conversation_ttl": 0

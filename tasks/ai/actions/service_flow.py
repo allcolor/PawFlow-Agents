@@ -101,6 +101,7 @@ _SERVICE_CATEGORY_BY_TYPE = {
     "distributedMapCache": "cache",
     "httpAuthValidator": "security",
     "sslContext": "security",
+    "privateGateway": "security",
 }
 
 
@@ -2838,9 +2839,27 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
 
     # ── Private gateway admin ────────────────────────────────────────
 
+    def _private_gateway_for_body():
+        service_id = body.get("service_id", "") or body.get("private_gateway_service_id", "")
+        if not service_id:
+            return None
+        from core.service_registry import ServiceRegistry
+        svc = ServiceRegistry.get_instance().resolve(service_id, user_id=user_id)
+        if not svc or getattr(svc, "TYPE", "") != "privateGateway":
+            raise ValueError(f"Private gateway service '{service_id}' not found")
+        return svc
+
     if action == "private_gateway_list_bans":
-        from services.private_gateway import list_bans
-        flowfile.set_content(json.dumps({"bans": list_bans()}).encode())
+        try:
+            svc = _private_gateway_for_body()
+            if svc is not None:
+                bans = svc.list_bans()
+            else:
+                from services.private_gateway import list_bans
+                bans = list_bans()
+            flowfile.set_content(json.dumps({"bans": bans}).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
         return [flowfile]
 
     if action == "private_gateway_unban":
@@ -2849,17 +2868,34 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "Missing ip"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
-        from services.private_gateway import unban_ip
-        was_banned = unban_ip(ip)
-        flowfile.set_content(json.dumps({"ok": True, "was_banned": was_banned}).encode())
+        try:
+            svc = _private_gateway_for_body()
+            if svc is not None:
+                was_banned = svc.unban_ip(ip)
+            else:
+                from services.private_gateway import unban_ip
+                was_banned = unban_ip(ip)
+            flowfile.set_content(json.dumps({"ok": True, "was_banned": was_banned}).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
         return [flowfile]
 
     if action == "private_gateway_status":
-        from services.private_gateway import is_enabled, list_bans
-        flowfile.set_content(json.dumps({
-            "enabled": is_enabled(),
-            "banned_count": len(list_bans()),
-        }).encode())
+        try:
+            svc = _private_gateway_for_body()
+            if svc is not None:
+                enabled = svc.is_enabled()
+                bans = svc.list_bans()
+            else:
+                from services.private_gateway import PrivateGateway, list_bans
+                enabled = PrivateGateway.is_enabled_static()
+                bans = list_bans()
+            flowfile.set_content(json.dumps({
+                "enabled": enabled,
+                "banned_count": len(bans),
+            }).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
         return [flowfile]
 
     # ── Docker VM management ──────────────────────────────────────

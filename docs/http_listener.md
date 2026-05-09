@@ -39,6 +39,7 @@ Shared service (singleton per port). Starts a threaded HTTP server and dispatche
 | request_timeout | float | 30.0 | Response wait timeout for flow-backed requests |
 | max_dispatch_threads | int | 128 | Maximum concurrent HTTP/WebSocket dispatch threads; also configurable with `PAWFLOW_HTTP_MAX_DISPATCH_THREADS` |
 | header_read_timeout | float | 3.0 | Seconds to wait for request headers before closing slow or half-open clients; also configurable with `PAWFLOW_HTTP_HEADER_TIMEOUT` |
+| private_gateway_service_id | service_ref | "" | Optional `privateGateway` service protecting this listener before session auth |
 
 **Key features:**
 - Route registry with `{param}` path parameters
@@ -47,6 +48,7 @@ Shared service (singleton per port). Starts a threaded HTTP server and dispatche
 - 504 when flow doesn't respond in time
 - 503 when service shuts down with pending requests
 - Bounded dispatch threads so browser reconnect storms or half-open sockets cannot allocate unbounded Python threads
+- Optional `privateGateway` service reference for pre-auth challenge protection
 
 ### 2. httpReceiver Task (`tasks/io/http_receiver.py`)
 

@@ -27,6 +27,7 @@ from tasks.ai.actions.memory_prompts import _handle_memory_prompts
 from tasks.ai.actions.cognitive_ui import _handle_cognitive_ui
 from tasks.ai.actions.usage import _handle_usage
 from tasks.ai.actions.plans import _handle_plans
+from tasks.ai.actions.admin_settings import _handle_admin_settings
 from tasks.ai.actions.cc_live import _handle_cc_live
 from tasks.ai.actions.codex_live import _handle_codex_live
 from tasks.ai.actions.gemini_live import _handle_gemini_live
@@ -55,6 +56,7 @@ _ACTION_HANDLERS = [
     _handle_cognitive_ui,
     _handle_usage,
     _handle_plans,
+    _handle_admin_settings,
     _handle_cc_live,
     _handle_codex_live,
     _handle_gemini_live,

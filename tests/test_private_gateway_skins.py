@@ -3,17 +3,10 @@ from pathlib import Path
 from services import private_gateway
 
 
-def test_bladerunner_private_gateway_skin_renders(monkeypatch):
-    from core import expression
-
-    monkeypatch.setattr(
-        expression,
-        "_load_global_parameters",
-        lambda: {"gateway_skin": "bladerunner"},
-    )
-
+def test_bladerunner_private_gateway_skin_renders():
     html = private_gateway.render_challenge(
         error="Denied", cooldown=3, next_url="/chat?x=1&y=2",
+        skin="bladerunner",
     ).decode("utf-8")
 
     assert "Blade Runner Gateway" in html

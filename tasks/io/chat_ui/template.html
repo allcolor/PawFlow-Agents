@@ -663,6 +663,19 @@ if (typeof hljs !== 'undefined') {
         </div>
       </div>
     </div>
+    <div class="action-menu-wrap" id="adminSettingsWrap" style="display:none">
+      <button class="action-menu-btn" onclick="toggleAdminSettingsMenu()" title="Server settings">&#9881;</button>
+      <div class="action-menu" id="adminSettingsMenu">
+        <div class="action-menu-item" onclick="closeAdminSettingsMenu();openAdminUsersDialog()">
+          <span class="ami-icon">U</span>
+          <div><div class="ami-label">User Management</div><div class="ami-desc">Manage local users and linked identities</div></div>
+        </div>
+        <div class="action-menu-item" onclick="closeAdminSettingsMenu();openSystemParamsDialog()">
+          <span class="ami-icon">P</span>
+          <div><div class="ami-label">System Parameters</div><div class="ami-desc">Guided global variables and secrets</div></div>
+        </div>
+      </div>
+    </div>
     <button class="btn" id="logoutBtn" onclick="doLogout()" style="display:none" data-i18n="logout">Logout</button>
   </div>
 </div>

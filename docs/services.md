@@ -15,6 +15,7 @@ The chat service installer receives service type metadata grouped by category an
 | `authGateway` | Login/session gateway with OAuth and built-in auth. |
 | `oauthProvider` | OAuth provider config. |
 | `sslContext` | TLS/SSL context for listener services. |
+| `privateGateway` | Pre-authentication challenge gate referenced by `httpListener`. |
 | `dbConnectionPool` | SQL connection pooling. |
 | `cacheService` | Local cache service. |
 | `distributedMapCache` | Distributed key/value cache. |
@@ -64,6 +65,33 @@ as `bash(run_in_background=true)`.
 | `elevenLabsVoiceClone` | ElevenLabs voice clone/TTS. |
 
 See [Media Tools](media_tools.md), [Voice Clone](voice_clone.md), and [Pixazo](pixazo.md).
+
+## Server Configuration
+
+PawFlow server configuration is service-first. Authentication, OAuth providers,
+HTTP listeners, private gateway protection, summarization, LLMs, media, and
+filesystem access are configured as services and referenced explicitly by flows
+or agents. There is no global `llm.default.service` or `image_default_service`:
+agent LLMs come from the active agent configuration, and media tools discover
+compatible media services.
+
+The chat header admin gear is intentionally limited to objects that are not
+naturally service instances: user management and a guided view over a small
+manifest of global system parameters such as `embedding_llm_service` and
+`PAWFLOW_USE_RTK`. Fields already owned by a service stay in that service.
+
+### `privateGateway`
+
+Install a `privateGateway` service and set `httpListener.private_gateway_service_id`
+to its service id. The service carries `enabled`, `secret_refs`, `skin`,
+`cookie_name`, and `cookie_max_age`. `secret_refs` is a comma-separated list of
+global secret names accepted by the challenge; gateway keys are no longer
+discovered through a global `privategateway.*` convention.
+
+Private gateway skins remain repository resources under
+`data/repository/private_gateway_skin` and are selected by the service `skin`
+field. Built-in skins include `default`, `google`, `bing`, `wifi`, `terminal`,
+`netflix`, `captcha`, `matrix`, and `bladerunner`.
 
 ## Messaging Services
 

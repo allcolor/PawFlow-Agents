@@ -532,6 +532,7 @@ function _loadResourcesNow() {
 function _renderResourcesFromSSE(data) {
   if (!data) return;
   if (data.user_role) window._userRole = data.user_role;
+  if (typeof updateAdminSettingsButton === 'function') updateAdminSettingsButton();
   if (data.tools) { window._cachedTools = data.tools; return; }  // tool schemas response
   _lastResourcesData = data;
   _renderResourcesData(data);

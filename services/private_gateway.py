@@ -1,8 +1,8 @@
-"""Private Gateway \u2014 pre-authentication access gate.
+"""Private Gateway service - pre-authentication access gate.
 
 When enabled, every HTTP request must first pass a secret challenge
-before reaching the login page. Secrets are stored as global secrets
-with the prefix ``privategateway.`` (e.g. ${privategateway.mykey}).
+before reaching the login page. Challenge secrets are referenced
+explicitly from the ``privateGateway`` service configuration.
 
 IP-based rate-limiting and banning:
 - Exponential cooldown on failed attempts (1s, 3s, 10s, 30s).
@@ -12,7 +12,7 @@ IP-based rate-limiting and banning:
 The "passed" state is tracked via an HMAC-signed cookie
 that survives logout/login cycles.
 
-Toggle: global parameter ``private_gateway_enabled`` ("true" / "false").
+HTTP listeners opt in by referencing a ``privateGateway`` service.
 """
 
 import hashlib
@@ -21,13 +21,26 @@ import json
 import logging
 import threading
 import time
-from pathlib import Path
-from typing import Dict
+from typing import Any, Dict, List
+
+from core.base_service import BaseService
 
 logger = logging.getLogger(__name__)
 
 _COOKIE_NAME = "_pf_gw"
 _COOKIE_MAX_AGE = 30 * 86400  # 30 days
+
+
+def _truthy(value: Any) -> bool:
+    return str(value).strip().lower() in ("true", "1", "yes", "on")
+
+
+def _split_refs(raw: Any) -> List[str]:
+    if raw is None:
+        return []
+    if isinstance(raw, (list, tuple, set)):
+        return [str(item).strip() for item in raw if str(item).strip()]
+    return [part.strip() for part in str(raw).split(",") if part.strip()]
 
 
 def _signing_key() -> bytes:
@@ -42,11 +55,11 @@ def _make_cookie_value(ip: str) -> str:
     return f"{ts}.{sig}"
 
 
-def _verify_cookie(value: str, ip: str) -> bool:
+def _verify_cookie(value: str, ip: str, max_age: int = _COOKIE_MAX_AGE) -> bool:
     try:
         ts_str, sig = value.split(".", 1)
         ts = int(ts_str)
-        if time.time() - ts > _COOKIE_MAX_AGE:
+        if time.time() - ts > max_age:
             return False
         payload = f"{ts_str}:{ip}"
         expected = hmac.new(_signing_key(), payload.encode(), hashlib.sha256).hexdigest()[:32]
@@ -237,18 +250,19 @@ def unban_ip(ip: str) -> bool:
         return was_banned
 
 
-def _load_gateway_secrets() -> Dict[str, str]:
-    from core.config_store import ConfigStore
-    from core.paths import GLOBAL_SECRETS_FILE
-    secrets_file = GLOBAL_SECRETS_FILE
-    all_secrets = ConfigStore.load_secrets(secrets_file)
-    return {k: str(v) for k, v in all_secrets.items() if k.startswith("privategateway.")}
+def _load_gateway_secrets(secret_refs: Any = None) -> Dict[str, str]:
+    refs = _split_refs(secret_refs)
+    if not refs:
+        return {}
+    from core.expression import _load_global_secrets
+    all_secrets = _load_global_secrets()
+    return {ref: str(all_secrets[ref]) for ref in refs if ref in all_secrets}
 
 
-def verify_secret(submitted: str) -> bool:
-    gw_secrets = _load_gateway_secrets()
+def verify_secret(submitted: str, secret_refs: Any = None) -> bool:
+    gw_secrets = _load_gateway_secrets(secret_refs)
     if not gw_secrets:
-        logger.warning("Private gateway enabled but no privategateway.* secrets found")
+        logger.warning("Private gateway enabled but no explicit secret_refs resolved")
         return False
     for _name, value in gw_secrets.items():
         if hmac.compare_digest(submitted.strip().encode('utf-8'), value.strip().encode('utf-8')):
@@ -257,27 +271,12 @@ def verify_secret(submitted: str) -> bool:
 
 
 def is_enabled() -> bool:
-    try:
-        from core.expression import _load_global_parameters
-        params = _load_global_parameters()
-        val = str(params.get("private_gateway_enabled", "false")).strip().lower()
-        return val in ("true", "1", "yes")
-    except Exception:
-        return False
+    """Legacy module helper: standalone module state is never enabled."""
+    return False
 
 
 
-def _get_skin() -> str:
-    """Get the gateway skin name from global parameters."""
-    try:
-        from core.expression import _load_global_parameters
-        return str(_load_global_parameters().get("gateway_skin", "matrix")).strip().lower()
-    except Exception:
-        return "matrix"
-
-
-def render_challenge(error="", cooldown=0, next_url="/"):
-    skin = _get_skin()
+def render_challenge(error="", cooldown=0, next_url="/", skin="matrix"):
     try:
         from core.private_gateway_skins import render_skin
         result = render_skin(skin, error=error, cooldown=cooldown, next_url=next_url)
@@ -297,14 +296,14 @@ def render_challenge(error="", cooldown=0, next_url="/"):
     return result.encode("utf-8")
 
 
-def render_failure_redirect(submitted: str) -> str:
+def render_failure_redirect(submitted: str, skin="matrix") -> str:
     """Return a redirect URL for invalid key (skin-dependent).
 
     Returns empty string if no redirect (show error on same page).
     """
     try:
         from core.private_gateway_skins import failure_redirect
-        return failure_redirect(_get_skin(), submitted)
+        return failure_redirect(skin, submitted)
     except Exception as exc:
         logger.debug("Private gateway failure redirect failed: %s", exc, exc_info=True)
         return ""
@@ -321,7 +320,7 @@ def check_request(handler) -> bool:
     Returns False if the request should proceed normally.
     """
     try:
-        return _check_request_inner(handler)
+        return _check_request_inner(handler, {})
     except Exception as e:
         logger.error("Private gateway error: %s", e, exc_info=True)
         try:
@@ -335,12 +334,16 @@ def check_request(handler) -> bool:
         return True
 
 
-def _check_request_inner(handler) -> bool:
-    if not is_enabled():
+def _check_request_inner(handler, config: Dict[str, Any]) -> bool:
+    if not _truthy(config.get("enabled", False)):
         return False
 
     ip = handler.client_address[0] if handler.client_address else "0.0.0.0"
     path = handler.path.split('?', 1)[0]
+    cookie_name = str(config.get("cookie_name") or _COOKIE_NAME)
+    cookie_max_age = int(config.get("cookie_max_age") or _COOKIE_MAX_AGE)
+    skin = str(config.get("skin") or "matrix").strip().lower()
+    secret_refs = config.get("secret_refs", "")
 
     if path in _EXEMPT_PATHS:
         return False
@@ -400,20 +403,21 @@ def _check_request_inner(handler) -> bool:
     cookie_header = handler.headers.get("Cookie", "")
     for part in cookie_header.split(";"):
         part = part.strip()
-        if part.startswith(_COOKIE_NAME + "="):
-            cookie_val = part[len(_COOKIE_NAME) + 1:]
-            if _verify_cookie(cookie_val, ip):
+        if part.startswith(cookie_name + "="):
+            cookie_val = part[len(cookie_name) + 1:]
+            if _verify_cookie(cookie_val, ip, max_age=cookie_max_age):
                 return False
 
     if handler.command == "POST" and path == "/_gateway":
         content_length = int(handler.headers.get('Content-Length', 0))
         body = handler.rfile.read(content_length) if content_length > 0 else b""
-        return _handle_submit(handler, ip, body)
+        return _handle_submit(handler, ip, body, secret_refs, cookie_name,
+                              cookie_max_age, skin)
 
     # Show challenge page, preserving original URL for post-auth redirect
     original_url = handler.path  # includes query string
     cooldown = get_cooldown_remaining(ip)
-    page = render_challenge(cooldown=cooldown, next_url=original_url)
+    page = render_challenge(cooldown=cooldown, next_url=original_url, skin=skin)
     _send_page(handler, 200, page, "text/html; charset=utf-8")
     return True
 
@@ -428,7 +432,9 @@ def _send_page(handler, status, body, content_type):
     handler.wfile.flush()
 
 
-def _handle_submit(handler, ip, body):
+def _handle_submit(handler, ip, body, secret_refs=None,
+                   cookie_name=_COOKIE_NAME, cookie_max_age=_COOKIE_MAX_AGE,
+                   skin="matrix"):
     from urllib.parse import parse_qs
     params = parse_qs(body.decode("utf-8", errors="replace"))
     submitted = params.get("secret", [""])[0]
@@ -440,17 +446,17 @@ def _handle_submit(handler, ip, body):
     cooldown = get_cooldown_remaining(ip)
     if cooldown > 0:
         record_failure(ip)
-        page = render_challenge(error="Too many attempts.", cooldown=get_cooldown_remaining(ip), next_url=next_url)
+        page = render_challenge(error="Too many attempts.", cooldown=get_cooldown_remaining(ip), next_url=next_url, skin=skin)
         _send_page(handler, 429, page, "text/html; charset=utf-8")
         return True
 
-    if not submitted or not verify_secret(submitted):
+    if not submitted or not verify_secret(submitted, secret_refs):
         record_failure(ip)
         if is_banned(ip):
             _send_page(handler, 403, b"Forbidden", "text/plain")
             return True
         # Skin-dependent failure redirect (e.g. Google → real google search)
-        redirect_url = render_failure_redirect(submitted)
+        redirect_url = render_failure_redirect(submitted, skin=skin)
         if redirect_url:
             handler.send_response(302)
             handler.send_header("Location", redirect_url)
@@ -460,14 +466,14 @@ def _handle_submit(handler, ip, body):
             handler.wfile.flush()
             return True
         cooldown = get_cooldown_remaining(ip)
-        page = render_challenge(error="Invalid key.", cooldown=cooldown, next_url=next_url)
+        page = render_challenge(error="Invalid key.", cooldown=cooldown, next_url=next_url, skin=skin)
         _send_page(handler, 200, page, "text/html; charset=utf-8")
         return True
 
     # Success — set cookie and redirect to original URL
     record_success(ip)
     cookie_val = _make_cookie_value(ip)
-    cookie = f"{_COOKIE_NAME}={cookie_val}; Path=/; Max-Age={_COOKIE_MAX_AGE}; HttpOnly; SameSite=Lax"
+    cookie = f"{cookie_name}={cookie_val}; Path=/; Max-Age={cookie_max_age}; HttpOnly; SameSite=Lax"
     handler.send_response(302)
     handler.send_header("Location", next_url)
     handler.send_header("Set-Cookie", cookie)
@@ -476,3 +482,95 @@ def _handle_submit(handler, ip, body):
     handler.end_headers()
     handler.wfile.flush()
     return True
+
+
+class PrivateGateway(BaseService):
+    """Configurable private pre-authentication gateway."""
+
+    TYPE = "privateGateway"
+    VERSION = "1.0.0"
+    NAME = "Private Gateway"
+    DESCRIPTION = "Pre-authentication challenge gate for HTTP listeners"
+    CATEGORY = "security"
+
+    def _create_connection(self):
+        return {"ready": True}
+
+    def _close_connection(self):
+        pass
+
+    def get_parameter_schema(self) -> Dict[str, Any]:
+        return {
+            "enabled": {
+                "type": "boolean", "required": False, "default": False,
+                "description": "Enable the private gateway challenge",
+            },
+            "secret_refs": {
+                "type": "string", "required": True, "default": "",
+                "description": "Comma-separated global secret names accepted by the challenge",
+            },
+            "skin": {
+                "type": "string", "required": False, "default": "matrix",
+                "description": "Private gateway skin resource name",
+            },
+            "cookie_name": {
+                "type": "string", "required": False, "default": _COOKIE_NAME,
+                "description": "Challenge pass cookie name",
+            },
+            "cookie_max_age": {
+                "type": "integer", "required": False, "default": _COOKIE_MAX_AGE,
+                "description": "Challenge pass cookie lifetime in seconds",
+            },
+        }
+
+    def is_enabled(self) -> bool:
+        return _truthy(self.config.get("enabled", False))
+
+    @staticmethod
+    def is_enabled_static() -> bool:
+        try:
+            from core.service_registry import ServiceRegistry
+            reg = ServiceRegistry.get_instance()
+            for service_id, sdef in reg.get_all("global", "").items():
+                if sdef.service_type != PrivateGateway.TYPE:
+                    continue
+                svc = reg.resolve(service_id)
+                if svc and svc.is_enabled():
+                    return True
+        except Exception:
+            logger.debug("PrivateGateway.is_enabled_static failed", exc_info=True)
+        return False
+
+    def check_request(self, handler) -> bool:
+        return _check_request_inner(handler, self.config)
+
+    def check_ws(self, path: str, headers: Dict[str, str], client_address,
+                 internal_ok: bool = False) -> bool:
+        if not self.is_enabled() or internal_ok:
+            return False
+        ip = client_address[0] if client_address else "0.0.0.0"
+        if is_banned(ip):
+            return True
+        cookie_name = str(self.config.get("cookie_name") or _COOKIE_NAME)
+        cookie_max_age = int(self.config.get("cookie_max_age") or _COOKIE_MAX_AGE)
+        cookie_header = headers.get("Cookie", "")
+        for part in cookie_header.split(";"):
+            part = part.strip()
+            if part.startswith(cookie_name + "="):
+                cookie_val = part[len(cookie_name) + 1:]
+                if _verify_cookie(cookie_val, ip, max_age=cookie_max_age):
+                    return False
+        return True
+
+    def is_banned(self, ip: str) -> bool:
+        return is_banned(ip)
+
+    def list_bans(self) -> list:
+        return list_bans()
+
+    def unban_ip(self, ip: str) -> bool:
+        return unban_ip(ip)
+
+
+from core import ServiceFactory
+ServiceFactory.register(PrivateGateway)

@@ -27,6 +27,7 @@ _JS_MODULES = [
     "i18n.js", "state.js", "rxbus.js", "themes.js", "conversations.js", "messages.js",
     "active_agents.js", "typing.js", "notifications.js", "sse.js",
     "dialogs.js",
+    "admin_settings.js",
     "cmd_agent.js", "cmd_context.js", "cmd_resources.js", "cmd_conversation.js", "cmd_misc.js",
     "commands.js", "file_mention.js", "context_editor.js", "memories.js", "diary.js", "knowledge_graph.js", "project_graph.js",
     "secrets.js", "files_panel.js", "plans_panel.js", "attachments.js",

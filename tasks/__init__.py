@@ -17,7 +17,8 @@ def _register_all_services():
     # (llmConnection alone is not enough — image/video may be missing)
     _registered_types = set(ServiceFactory.list_types())
     if ("pixazoImageGeneration" in _registered_types
-            and "codexImageGeneration" in _registered_types):
+            and "codexImageGeneration" in _registered_types
+            and "skillReview" in _registered_types):
         return  # All modules already registered
 
     # Force project root into sys.path — always, no conditional check
@@ -37,6 +38,7 @@ def _register_all_services():
     import services.distributed_cache        # noqa: F401
     import services.llm_connection           # noqa: F401
     import services.summarizer_service       # noqa: F401
+    import services.skill_review_service     # noqa: F401
     import services.private_gateway          # noqa: F401
     import services.llm_credential_oauth     # noqa: F401
     import services.oauth_provider_service   # noqa: F401

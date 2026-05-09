@@ -144,6 +144,8 @@ If a file named `{agent_name}.md` exists in the relay filesystem root, its conte
 
 ### Programmable Skills
 
+Skills are effective only when they are assigned to an agent definition through `assigned_skills`. PawFlow does not inject a separate conversation-level `active_resources.skills` list; legacy activation paths must be treated as inactive UI/API compatibility only. Assign or remove skills with `/skill assign @agent @skill` and `/skill unassign @agent @skill`.
+
 Skills may declare `template_engine: jinja` in their YAML frontmatter. These prompts are rendered only at provider-context construction time, never persisted in JSONL and never sent to the summarizer. The Jinja environment is sandboxed and receives a read-only `pawflow` object scoped to the current user/conversation/agent.
 
 Available dynamic context includes:
@@ -155,6 +157,8 @@ Available dynamic context includes:
 - `pawflow.service(service_id)`.
 
 The exposed data is a sanitized snapshot: no secrets, relay tokens, mutable stores, arbitrary filesystem access, or network calls are available to templates.
+
+Untrusted or imported skills are reviewed before create, update, and import through the configured `skillReview` service when one is available. The `skillReview` service points to an `llmConnection` via `llm_service`; PawFlow passes skill content as data and calls that reviewer with `tools=None`. Without a configured `skillReview`, PawFlow still runs deterministic static checks and blocks obvious unsafe content, but does not persist review metadata for clean low-risk writes. `manage_resource(action="review", resource_type="skill", data={...})` returns the same review report without writing the skill. Executable package content is reported for separate review and never becomes a PawFlow tool automatically.
 
 ### Context Loading
 

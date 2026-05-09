@@ -565,9 +565,10 @@ Sub-agents with their own system prompts and tool access.
 - Fields: prompt (required), model, tools (list), max_depth, timeout, description
 
 ### Skills
-Single-shot LLM transformations (no tools, no loop).
+Prompt modules injected into agents through agent.assigned_skills.
 - Create: `manage_resource(action="create", resource_type="skill", name="summarizer", data={"prompt": "Summarize concisely"})`
-- Fields: prompt (required), description
+- Review untrusted content first: `manage_resource(action="review", resource_type="skill", data={"prompt": "..."})`
+- Fields: prompt (required), description, parameters, extends, template_engine
 
 ### MCP Servers
 Model Context Protocol server connections.
@@ -577,8 +578,8 @@ Model Context Protocol server connections.
 ## Using Resources
 
 ### manage_resource tool
-CRUD operations: create, update, delete, list, get, activate, deactivate
-Activation scopes a resource to the current conversation.
+CRUD operations: create, update, delete, list, get, review, activate, deactivate
+Activation scopes compatible resources to the current conversation. Skills are not activated this way; assign them to an agent instead.
 
 ### delegate tool
 Fire-and-forget delegation to other agents. Returns IMMEDIATELY — you are

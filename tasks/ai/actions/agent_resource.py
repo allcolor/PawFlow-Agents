@@ -302,6 +302,15 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             description = body.get("description", "")
             if description:
                 data["description"] = description
+            from core.skill_review_bindings import attach_review_metadata, review_for_write
+            review_meta = review_for_write(
+                data,
+                operation="create",
+                user_id=uid,
+                conversation_id=conv_id,
+            )
+            if review_meta:
+                data = attach_review_metadata(data, review_meta)
             scope_kwargs = {"conversation_id": conv_id} if scope == "conversation" and conv_id else {}
             if rs.get("skill", skill_name, uid, **scope_kwargs):
                 rs.update("skill", skill_name, uid, data, **scope_kwargs)
@@ -1080,6 +1089,20 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         uid = user_id
         target_uid = "__global__" if scope == "global" else uid
         try:
+            if rtype == "skill":
+                existing = rs.get("skill", rname, target_uid) or {}
+                merged = {k: v for k, v in existing.items()
+                          if not str(k).startswith("_")}
+                merged.update(data if isinstance(data, dict) else {})
+                from core.skill_review_bindings import attach_review_metadata, review_for_write
+                review_meta = review_for_write(
+                    merged,
+                    operation="update",
+                    user_id=target_uid,
+                    conversation_id="",
+                )
+                if review_meta:
+                    data = attach_review_metadata(data, review_meta)
             rs.update(rtype, rname, target_uid, data)
             flowfile.set_content(json.dumps({"ok": True}).encode())
         except Exception as e:
@@ -1108,6 +1131,16 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         if rtype == "task_def":
             data.setdefault("created_by", uid)
         try:
+            if rtype == "skill":
+                from core.skill_review_bindings import attach_review_metadata, review_for_write
+                review_meta = review_for_write(
+                    data,
+                    operation="create",
+                    user_id=target_uid,
+                    conversation_id=conv_id if scope == "conversation" else "",
+                )
+                if review_meta:
+                    data = attach_review_metadata(data, review_meta)
             if rtype == "task_def" and scope == "conversation" and conv_id:
                 from core.conversation_store import ConversationStore
                 cs = ConversationStore.instance()

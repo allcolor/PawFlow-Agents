@@ -455,12 +455,14 @@ Task IDs look like `t_xxxxxxxx`. Tasks survive server restarts and reschedule au
 
 | Subcommand | Description |
 |------------|-------------|
-| `list` | List all skills with active status |
+| `list` | List all skills and their agent assignments |
 | `add @name <prompt>` | Create a skill |
 | `del @name` | Delete a skill |
 | `assign @agent @skill` | Assign a skill to an agent |
 | `unassign @agent @skill` | Remove a skill from an agent |
 | `assigned @agent` | List skills assigned to an agent |
+
+Skills are injected only through an agent's `assigned_skills`. The old generic resource activation path is not used for skills; use `assign` and `unassign` instead. Imported or untrusted skill content can be checked with `manage_resource(action="review", resource_type="skill", data={"prompt": "..."})` before creating or assigning it.
 
 ### /add-skill
 
@@ -676,29 +678,28 @@ Use `/help call` to list all tools, or `/help call <toolname>` to see parameter 
 /resources
 ```
 
-List all defined resources (agents, skills, MCP servers) grouped by type, with activation status.
+List all defined resources (agents, skills, MCP servers) grouped by type, with activation status where applicable.
 
 ### /activate
 
 ```
-/activate <agent|skill|mcp> <name>
+/activate <agent|mcp> <name>
 ```
 
-Activate a resource for the current conversation.
+Activate an agent or MCP resource for the current conversation. Skills are injected only through `/skill assign @agent @skill`.
 
 ```
 /activate agent researcher
-/activate skill summarizer
 /activate mcp my_server
 ```
 
 ### /deactivate
 
 ```
-/deactivate <agent|skill|mcp> <name>
+/deactivate <agent|mcp> <name>
 ```
 
-Deactivate a resource from the current conversation.
+Deactivate an agent or MCP resource from the current conversation. Use `/skill unassign @agent @skill` for skills.
 
 ### /share
 

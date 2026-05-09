@@ -30,6 +30,7 @@ FINAL_PRIVATE_GATEWAY_SERVICE_ID = "_private_gateway"
 AUTH_GATEWAY_SERVICE_ID = "_auth_gateway"
 DEFAULT_LLM_SERVICE_ID = "codex_appserver_llm_service"
 SUMMARIZER_SERVICE_ID = "summarizer_service"
+SKILL_REVIEW_SERVICE_ID = "skill_review_service"
 FIRST_RUN_AGENT = "assistant"
 BOOTSTRAP_CERT_FILE = _paths.SSL_DIR / "bootstrap.crt"
 BOOTSTRAP_KEY_FILE = _paths.SSL_DIR / "bootstrap.key"
@@ -41,6 +42,7 @@ INSTALL_STEPS = [
     "admin",
     "llm_services",
     "summarizer_service",
+    "skill_review_service",
     "variables",
     "secrets",
     "cli_credentials",
@@ -137,6 +139,7 @@ def _public_draft(draft: Dict[str, Any]) -> Dict[str, Any]:
         "auth",
         "llm_services",
         "summarizer_service",
+        "skill_review_service",
         "flows",
         "conversation",
     ):
@@ -329,7 +332,16 @@ def _install_llm_and_summarizer(payload: Dict[str, Any]) -> tuple[str, str]:
         description="Summarizer service for conversation compaction",
         enabled=True,
     )
-    return llm_service_id, SUMMARIZER_SERVICE_ID
+    reg.install(
+        scope=SCOPE_GLOBAL,
+        scope_id="",
+        service_id=SKILL_REVIEW_SERVICE_ID,
+        service_type="skillReview",
+        config={"llm_service": llm_service_id},
+        description="Skill review service for prompt-injection checks",
+        enabled=True,
+    )
+    return llm_service_id, SUMMARIZER_SERVICE_ID, SKILL_REVIEW_SERVICE_ID
 
 
 def _deploy_main_flow(private_gateway_service_id: str) -> str:
@@ -453,7 +465,7 @@ def finalize_install(payload: Dict[str, Any]) -> Dict[str, Any]:
     final_gateway_service_id = _install_final_private_gateway(final_secret_ref)
     admin_user = _configure_admin_user(payload)
     auth_gateway_service_id = _install_auth_gateway()
-    llm_service_id, summarizer_service_id = _install_llm_and_summarizer(payload)
+    llm_service_id, summarizer_service_id, skill_review_service_id = _install_llm_and_summarizer(payload)
     main_instance_id = _deploy_main_flow(final_gateway_service_id)
     first_conversation_id = _create_first_conversation(admin_user, llm_service_id)
 
@@ -478,6 +490,7 @@ def finalize_install(payload: Dict[str, Any]) -> Dict[str, Any]:
     checks["admin_user"] = True
     checks["llm_service"] = True
     checks["summarizer_service"] = True
+    checks["skill_review_service"] = True
     checks["main_flow_deployed"] = True
     checks["first_conversation"] = True
     checks["finalized"] = True
@@ -491,6 +504,7 @@ def finalize_install(payload: Dict[str, Any]) -> Dict[str, Any]:
     draft["auth"] = {"service_id": auth_gateway_service_id, "admin_user": admin_user}
     draft["llm_services"] = {"primary": llm_service_id}
     draft["summarizer_service"] = {"service_id": summarizer_service_id}
+    draft["skill_review_service"] = {"service_id": skill_review_service_id}
     draft["flows"] = {"main_instance_id": main_instance_id}
     draft["conversation"] = {
         "conversation_id": first_conversation_id,

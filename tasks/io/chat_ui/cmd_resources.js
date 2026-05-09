@@ -343,7 +343,7 @@ function cmdResources() {
 function cmdActivate(text, parts) {
   const rtype = parts[1];
   const rname = stripTarget(parts[2]);
-  if (!rtype || !rname) { addMsg('system', t('usageLine', { usage: '/activate <agent|skill|mcp> @<name>' })); return true; }
+  if (!rtype || !rname) { addMsg('system', t('usageLine', { usage: '/activate <agent|mcp> @<name>' })); return true; }
   cmdResourceAction('activate_resource', {resource_type: rtype, name: rname});
   return true;
 }
@@ -351,7 +351,7 @@ function cmdActivate(text, parts) {
 function cmdDeactivate(text, parts) {
   const rtype = parts[1];
   const rname = stripTarget(parts[2]);
-  if (!rtype || !rname) { addMsg('system', t('usageLine', { usage: '/deactivate <agent|skill|mcp> @<name>' })); return true; }
+  if (!rtype || !rname) { addMsg('system', t('usageLine', { usage: '/deactivate <agent|mcp> @<name>' })); return true; }
   cmdResourceAction('deactivate_resource', {resource_type: rtype, name: rname});
   return true;
 }

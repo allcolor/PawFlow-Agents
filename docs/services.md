@@ -9,6 +9,7 @@ The chat service installer receives service type metadata grouped by category an
 | Type | Purpose |
 |---|---|
 | `llmConnection` | Direct API LLM service configuration. |
+| `skillReview` | Selects the no-tool LLM reviewer and policy for skill create/update/import review. |
 | `httpClientService` | Reusable HTTP client. |
 | `httpListener` | Shared listener for inbound HTTP/webhook/SSE/VNC routes. |
 | `httpAuthValidator` | Bearer/basic/custom auth validator. |
@@ -74,6 +75,12 @@ filesystem access are configured as services and referenced explicitly by flows
 or agents. There is no global `llm.default.service` or `image_default_service`:
 agent LLMs come from the active agent configuration, and media tools discover
 compatible media services.
+
+`skillReview` is the service-first configuration point for reviewing untrusted
+skill content. It references an `llmConnection` in `llm_service` and is resolved
+in conversation -> user -> global order, with optional conversation binding via
+`skill_review_binding`. Skill create/update/import paths review through this
+service when configured; the reviewer LLM is called with no tools.
 
 The chat header admin gear is intentionally limited to objects that are not
 naturally service instances: user management and a guided view over a small

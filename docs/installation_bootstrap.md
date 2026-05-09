@@ -110,7 +110,7 @@ rejects keeping `RoyBetty`, requires an admin password, stores only a SHA-256
 digest of the replacement gateway key, writes the final key as encrypted secret
 `privategateway.main`, creates the persistent `_private_gateway`, creates
 `_auth_gateway`, creates the selected `llmConnection`, creates
-`summarizer_service`, deploys `default.pawflow_agent:1.0.0` as
+`summarizer_service`, creates `skill_review_service`, deploys `default.pawflow_agent:1.0.0` as
 `pawflow-agent`, creates a starter conversation with the `assistant` agent
 selected, writes `install_complete=true`, disables `_bootstrap_private_gateway`,
 and marks the installer deployment stopped for restart-safe restoration.
@@ -134,9 +134,11 @@ and marks the installer deployment stopped for restart-safe restoration.
    - store an optional API key as encrypted secret `llm.<service_id>.api_key`
    - assign this explicit service to the starter conversation agent
 
-4. Summarizer service
+4. Summarizer and skill review services
    - create `summarizer_service`
    - point it to the selected LLM service
+   - create `skill_review_service`
+   - point it to the selected LLM service for no-tool skill review
 
 5. Main flow and conversation
    - deploy `default.pawflow_agent:1.0.0` as `pawflow-agent`
@@ -167,6 +169,7 @@ and marks the installer deployment stopped for restart-safe restoration.
    - SSE responds
    - default LLM service responds
    - summarizer service responds
+   - skill review service is installed
    - configured variables resolve
    - configured secret references resolve without leaking values
 
@@ -195,6 +198,7 @@ rollback are possible:
     "admin": {},
     "llm_services": {"primary": "codex_appserver_llm_service"},
     "summarizer_service": {"service_id": "summarizer_service"},
+    "skill_review_service": {"service_id": "skill_review_service"},
     "flows": {"main_instance_id": "pawflow-agent"},
     "conversation": {"conversation_id": "...", "agent": "assistant"}
   },
@@ -204,6 +208,7 @@ rollback are possible:
     "admin_user": true,
     "llm_service": true,
     "summarizer_service": true,
+    "skill_review_service": true,
     "main_flow_deployed": true,
     "first_conversation": true
   }

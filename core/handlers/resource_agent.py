@@ -39,12 +39,13 @@ class ManageResourceHandler(ToolHandler):
             "- delete: Delete a resource\n"
             "- list: List all resources of a type\n"
             "- get: Get details of a specific resource\n"
+            "- review: Review an untrusted skill before import\n"
             "- activate: Activate a resource in the current conversation\n"
             "- deactivate: Deactivate a resource from the current conversation\n\n"
             "Resource types: agent, skill, mcp, task_def, tool\n\n"
             "Agent fields: prompt (required), model, tools (list), "
             "max_depth, timeout, description, llm_service\n"
-            "Skill fields: prompt (required), description, parameters, extends\n"
+            "Skill fields: prompt (required), description, parameters, extends, template_engine\n"
             "MCP fields: url (required), auth (dict)\n"
             "Task def fields: prompt (required), criteria, default_interval, description\n"
             "Tool fields: source (required — Python ToolHandler subclass), "
@@ -59,7 +60,7 @@ class ManageResourceHandler(ToolHandler):
                 "action": {
                     "type": "string",
                     "enum": ["create", "update", "delete", "list",
-                             "get", "activate", "deactivate"],
+                             "get", "review", "activate", "deactivate"],
                     "description": "Action to perform",
                 },
                 "resource_type": {
@@ -116,6 +117,19 @@ class ManageResourceHandler(ToolHandler):
                 if rtype in ("agent", "skill") and self._agent_name:
                     data["_created_by"] = self._agent_name
 
+                if rtype == "skill":
+                    from core.skill_review_bindings import (
+                        attach_review_metadata, review_for_write,
+                    )
+                    review_meta = review_for_write(
+                        data,
+                        operation="create",
+                        user_id=user_id,
+                        conversation_id=self._conversation_id,
+                    )
+                    if review_meta:
+                        data = attach_review_metadata(data, review_meta)
+
                 if rtype == "tool":
                     src = data.get("source", "") if isinstance(data, dict) else ""
                     if not src:
@@ -150,13 +164,32 @@ class ManageResourceHandler(ToolHandler):
                             self._conversation_id, name,
                             llm_service=self._llm_service or "",
                         )
-                self._activate_resource(rtype, name)
+                if rtype != "skill":
+                    self._activate_resource(rtype, name)
                 creator = f" (by {self._agent_name})" if self._agent_name else ""
                 return f"Created {rtype} '{name}' (scope: {scope}).{creator}"
 
             elif action == "update":
                 if not name:
                     return "Error: 'name' is required for update"
+                if rtype == "skill":
+                    existing = store.get_any(
+                        rtype, name, user_id,
+                        conversation_id=self._conversation_id) or {}
+                    merged = {k: v for k, v in existing.items()
+                              if not str(k).startswith("_")}
+                    merged.update(data if isinstance(data, dict) else {})
+                    from core.skill_review_bindings import (
+                        attach_review_metadata, review_for_write,
+                    )
+                    review_meta = review_for_write(
+                        merged,
+                        operation="update",
+                        user_id=user_id,
+                        conversation_id=self._conversation_id,
+                    )
+                    if review_meta:
+                        data = attach_review_metadata(data, review_meta)
                 store.update(rtype, name, user_id, data)
                 return f"Updated {rtype} '{name}'."
 
@@ -200,9 +233,47 @@ class ManageResourceHandler(ToolHandler):
                     return f"{rtype} '{name}' not found."
                 return json.dumps(item, ensure_ascii=False, indent=2)
 
+            elif action == "review":
+                if rtype != "skill":
+                    return "Error: review is only supported for skills"
+                skill_data = dict(data or {}) if isinstance(data, dict) else {}
+                if not skill_data and name:
+                    item = store.get_any(rtype, name, user_id,
+                                         conversation_id=self._conversation_id)
+                    if not item:
+                        return f"skill '{name}' not found."
+                    skill_data = item
+                if not skill_data.get("prompt"):
+                    return "Error: skill prompt is required for review"
+                reviewer_service_id = str(
+                    skill_data.pop("reviewer_service_id", "")
+                    or arguments.get("reviewer_service_id", "")
+                    or "")
+                package_files = skill_data.pop("package_files", {})
+                if reviewer_service_id:
+                    from core.skill_review import review_skill
+                    result = review_skill(
+                        skill_data,
+                        reviewer_service_id=reviewer_service_id,
+                        user_id=user_id,
+                        conversation_id=self._conversation_id,
+                        package_files=package_files if isinstance(package_files, dict) else {},
+                    )
+                else:
+                    from core.skill_review_bindings import review_now
+                    result = review_now(
+                        skill_data,
+                        user_id=user_id,
+                        conversation_id=self._conversation_id,
+                        package_files=package_files if isinstance(package_files, dict) else {},
+                    )
+                return json.dumps(result, ensure_ascii=False, indent=2)
+
             elif action == "activate":
                 if not name:
                     return "Error: 'name' is required for activate"
+                if rtype == "skill":
+                    return "Error: skills are injected only through agent.assigned_skills. Use /skill assign @agent @skill."
                 if store.get_any(rtype, name, user_id) is None:
                     return f"{rtype} '{name}' not found."
                 self._activate_resource(rtype, name)
@@ -211,6 +282,8 @@ class ManageResourceHandler(ToolHandler):
             elif action == "deactivate":
                 if not name:
                     return "Error: 'name' is required for deactivate"
+                if rtype == "skill":
+                    return "Error: skills are injected only through agent.assigned_skills. Use /skill unassign @agent @skill."
                 self._deactivate_resource(rtype, name)
                 return f"Deactivated {rtype} '{name}' from this conversation."
 
@@ -273,6 +346,8 @@ class ManageResourceHandler(ToolHandler):
         """Add resource to conversation's active_resources."""
         if not self._conversation_id:
             return
+        if rtype == "skill":
+            return
         from core.conversation_store import ConversationStore
         cs = ConversationStore.instance()
         active = cs.get_extra(self._conversation_id, "active_resources") or {}
@@ -289,6 +364,8 @@ class ManageResourceHandler(ToolHandler):
     def _deactivate_resource(self, rtype: str, name: str):
         """Remove resource from conversation's active_resources."""
         if not self._conversation_id:
+            return
+        if rtype == "skill":
             return
         from core.conversation_store import ConversationStore
         cs = ConversationStore.instance()

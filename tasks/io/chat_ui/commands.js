@@ -98,13 +98,13 @@ const HELP_DATA = {
     usage: '/skill list | add @name <prompt> | del @name | assign @agent @skill | unassign @agent @skill | assigned @agent',
     short: t('commandShort.9'),
     detail: 'Create, list, assign, or delete skills.\n\n'
-      + '  /skill list                     — List all skills with active status\n'
+      + '  /skill list                     — List all skills and agent assignments\n'
       + '  /skill add @name <prompt>       — Create a skill with given prompt\n'
       + '  /skill del @name                — Delete a skill\n'
       + '  /skill assign @agent @skill     — Assign a skill to an agent\n'
       + '  /skill unassign @agent @skill   — Remove a skill from an agent\n'
       + '  /skill assigned @agent          — List skills assigned to an agent\n\n'
-      + 'Skills are prompt-only resources injected into the system prompt when active.',
+      + 'Skills are prompt resources injected only when assigned to an agent.',
   },
   '/add-skill': {
     usage: '/add-skill <name> <prompt>',
@@ -117,15 +117,15 @@ const HELP_DATA = {
     detail: 'Shows all defined resources grouped by type, with activation status for the current conversation.',
   },
   '/activate': {
-    usage: '/activate <agent|skill|mcp> <name>',
+    usage: '/activate <agent|mcp> <name>',
     short: t('commandShort.12'),
-    detail: 'Activates an agent, skill, or MCP server.\n\n'
+    detail: 'Activates an agent or MCP server.\n\n'
       + '  /activate agent researcher  — Activate the "researcher" agent\n'
-      + '  /activate skill summarizer  — Activate the "summarizer" skill\n'
-      + '  /activate mcp my_server     — Activate an MCP server',
+      + '  /activate mcp my_server     — Activate an MCP server\n\n'
+      + 'Skills are assigned with /skill assign @agent @skill.',
   },
   '/deactivate': {
-    usage: '/deactivate <agent|skill|mcp> <name>',
+    usage: '/deactivate <agent|mcp> <name>',
     short: t('commandShort.13'),
     detail: 'Deactivates an agent, skill, or MCP server for the current conversation.',
   },

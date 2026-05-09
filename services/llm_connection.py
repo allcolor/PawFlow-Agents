@@ -205,6 +205,20 @@ class LLMConnectionService(BaseService):
         except LLMClientError as e:
             raise ServiceError(str(e))
 
+    def embed(self, texts: List[str], model: Optional[str] = None) -> List[List[float]]:
+        """Embedding request through this LLM service.
+
+        Supported by OpenAI-compatible services that expose `/v1/embeddings`.
+        The optional `embedding_model` service parameter overrides the
+        LLM default model for these calls.
+        """
+        self.ensure_connected()
+        try:
+            emb_model = model or str(self.config.get("embedding_model", "") or "")
+            return self._client.embed(texts, model=emb_model or None)
+        except LLMClientError as e:
+            raise ServiceError(str(e))
+
     def _on_client_tokens(self, tokens_in: int, tokens_out: int, model: str):
         """Callback from LLMClient — tracks every LLM call through this service."""
         self._total_tokens_in += tokens_in
@@ -347,6 +361,14 @@ class LLMConnectionService(BaseService):
             "default_model": {
                 "type": "string", "default": "",
                 "description": "Default model name",
+            },
+            "embedding_model": {
+                "type": "string", "default": "",
+                "description": (
+                    "Embedding model used when this service is selected by "
+                    "the embedding_llm_service parameter. Empty uses the "
+                    "client default embedding model."
+                ),
             },
             "fallback_model": {
                 "type": "string", "default": "",

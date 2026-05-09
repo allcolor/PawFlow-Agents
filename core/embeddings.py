@@ -12,6 +12,58 @@ from typing import Callable, Dict, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 
+def _resolve_embedding_llm_service(user_id: str = "",
+                                   conversation_id: str = ""):
+    """Resolve the optional embedding_llm_service parameter."""
+    try:
+        from core.expression import resolve_value
+        svc_id = resolve_value(
+            "${embedding_llm_service}", owner=user_id,
+            conversation_id=conversation_id) or ""
+    except Exception:
+        svc_id = ""
+    if not svc_id or str(svc_id).startswith("${"):
+        return None, ""
+    try:
+        from core.service_registry import ServiceRegistry
+        svc = ServiceRegistry.get_instance().resolve(
+            str(svc_id), user_id=user_id, conv_id=conversation_id)
+    except Exception:
+        logger.debug("embedding_llm_service resolution failed", exc_info=True)
+        return None, str(svc_id)
+    if svc and hasattr(svc, "embed"):
+        return svc, str(svc_id)
+    logger.warning(
+        "embedding_llm_service '%s' is not an embedding-capable LLM service; "
+        "falling back to local embeddings", svc_id)
+    return None, str(svc_id)
+
+
+def build_memory_embed_fn(user_id: str = "", conversation_id: str = ""):
+    """Build the memory embedding function.
+
+    If `${embedding_llm_service}` resolves to an LLM service exposing the
+    OpenAI-compatible embeddings endpoint, use it first. Otherwise, keep the
+    existing local MiniLM fallback as best-effort.
+    """
+    svc, svc_id = _resolve_embedding_llm_service(user_id, conversation_id)
+
+    def _embed(text: str) -> List[float]:
+        if svc is not None:
+            try:
+                vecs = svc.embed([text])
+                if vecs and vecs[0]:
+                    return vecs[0]
+            except Exception:
+                logger.debug(
+                    "embedding_llm_service '%s' embed failed; falling back "
+                    "to local embeddings", svc_id, exc_info=True)
+        vecs = EmbeddingProvider.instance().embed([text], provider="local")
+        return vecs[0] if vecs else []
+
+    return _embed
+
+
 def cosine_similarity(a: List[float], b: List[float]) -> float:
     """Cosine similarity between two vectors. Uses numpy if available."""
     if len(a) != len(b):

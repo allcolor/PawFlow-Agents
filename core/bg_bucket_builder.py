@@ -62,23 +62,16 @@ _BG_COMPACT_DEFAULTS: Dict[str, Any] = {
 _BG_COMPACT_PARAM_PREFIX = "pawflow.bg_compact."
 
 
-def _build_embed_fn(client: Any):
-    """Return a callable that embeds text using `client`'s credentials when
-    available, falling back to the local sentence-transformer otherwise.
-    `EmbeddingProvider.embed(provider="auto", ...)` does that selection.
-    Returns None if `client` is missing so the caller can keep embed_fn=None.
+def _build_embed_fn(user_id: str = "", conversation_id: str = ""):
+    """Return the configured memory embedding function.
+
+    `${embedding_llm_service}` wins when it points to an embedding-capable
+    LLM service. Otherwise PawFlow keeps the existing local MiniLM fallback.
+    The summarizer LLM service is intentionally not reused implicitly for
+    embeddings.
     """
-    api_key = getattr(client, "api_key", "") or ""
-    base_url = getattr(client, "base_url", "") or ""
-
-    def _embed(text: str):
-        from core.embeddings import EmbeddingProvider
-        vecs = EmbeddingProvider.instance().embed(
-            [text], provider="auto", api_key=api_key, base_url=base_url,
-        )
-        return vecs[0] if vecs else []
-
-    return _embed
+    from core.embeddings import build_memory_embed_fn
+    return build_memory_embed_fn(user_id=user_id, conversation_id=conversation_id)
 
 
 # Extra compact_instructions passed to the injected summarize_fn for
@@ -1191,7 +1184,7 @@ class BgBucketBuilder:
             auto_extract_memories(
                 user_id=user_id, summary=summary,
                 agent_name="", llm_client=client,
-                embed_fn=_build_embed_fn(client),
+                embed_fn=_build_embed_fn(user_id=user_id, conversation_id=cid),
                 conversation_id=cid)
         except Exception:
             logger.debug(

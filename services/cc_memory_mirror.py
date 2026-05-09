@@ -104,17 +104,16 @@ def _build_text(fields: dict) -> str:
     return body
 
 
-def _embed(text: str) -> Optional[list]:
-    """Embed with the local provider. Returns None on any failure
-    (missing sentence-transformers, empty text, etc.)."""
+def _embed(text: str, user_id: str = "", conversation_id: str = "") -> Optional[list]:
+    """Embed with configured memory embeddings. Returns None on failure."""
     if not text:
         return None
     try:
-        from core.embeddings import EmbeddingProvider
-        results = EmbeddingProvider.instance().embed([text], provider="local")
-        return results[0] if results else None
+        from core.embeddings import build_memory_embed_fn
+        return build_memory_embed_fn(
+            user_id=user_id, conversation_id=conversation_id)(text)
     except Exception:
-        logger.debug("[cc-mirror] local embedding unavailable", exc_info=True)
+        logger.debug("[cc-mirror] embedding unavailable", exc_info=True)
         return None
 
 
@@ -142,16 +141,15 @@ def mirror_write(user_id: str, rel_path: str, data: bytes) -> None:
         type_tag = f"cc-type:{cc_type}" if cc_type else "cc-type:unknown"
         tags = ["cc-native", type_tag]
 
-        # Embed up front so semantic_recall can find the entry. If the
-        # local provider is unavailable (sentence-transformers not
-        # installed in this env, embedding model missing, etc.), we
-        # still upsert the entry but tag it 'needs-embedding' for a
-        # later backfill pass via MemoryStore.ensure_embeddings(...).
+        # Embed up front so semantic_recall can find the entry. The optional
+        # embedding_llm_service parameter wins; otherwise this falls back to
+        # the local provider. If embedding is unavailable, still upsert the
+        # entry and tag it 'needs-embedding' for later backfill.
         # The previous version silently stored entries with no vector,
         # making them invisible to semantic_recall but visible to
         # text-based recall — a quiet correctness bug for users who
         # rely on semantic search.
-        embedding = _embed(text)
+        embedding = _embed(text, user_id=user_id, conversation_id=conversation_id)
         if embedding is None:
             logger.warning(
                 "[cc-mirror] embedding unavailable for user=%s slug=%s "

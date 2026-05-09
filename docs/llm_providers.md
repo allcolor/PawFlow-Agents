@@ -169,6 +169,8 @@ Operational notes:
 
 All summarizer providers use the same `compact_result` tool contract. Provider call scope (`call_user_id`, `call_conversation_id`, and `call_agent_name`) is passed uniformly so API providers and CLI providers receive equivalent identity context.
 
+`embedding_llm_service` is a separate optional parameter for vector embeddings used by memory tools. Point it at an `llmConnection` service whose provider/base URL exposes an OpenAI-compatible `/v1/embeddings` endpoint. The service's optional `embedding_model` field selects the embedding model; when empty, PawFlow uses the client default embedding model. If `embedding_llm_service` is unset or unusable, memory embedding falls back to the local MiniLM embedder when available.
+
 ## Background Compaction Variables
 
 Background bucket compaction reads optional PawFlow parameters at decision time with the normal expression cascade: conversation -> user -> global -> environment. Define these as parameters named `pawflow.bg_compact.*`; no service restart is required for later decisions to see changed values.

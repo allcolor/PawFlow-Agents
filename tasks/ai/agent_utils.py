@@ -974,27 +974,23 @@ class AgentUtilsMixin:
 
     def _wire_embed_fn(
         self, registry: ToolRegistry, client: LLMClient,
-        user_id: str = "",
+        user_id: str = "", conversation_id: str = "",
     ) -> None:
         """Wire embedding function into RememberHandler and SemanticRecallHandler.
 
-        `EmbeddingProvider.embed(provider="auto", ...)` picks the OpenAI API
-        when `api_key` is set and falls back to the local sentence-transformer
-        otherwise. Claude-Code agents (OAuth, no api_key) get the local model —
-        so `semantic_recall` and embedded `remember` work for every provider.
+        `${embedding_llm_service}` wins when it points to an embedding-capable
+        LLM service. Otherwise PawFlow keeps the local sentence-transformer
+        fallback so `semantic_recall` and embedded `remember` still work.
         Handlers MUST stay registered or the agent never learns the tool exists.
         """
         from core.tool_registry import RememberHandler, SemanticRecallHandler
 
-        _api_key = client.api_key
-        _base_url = client.base_url
+        from core.embeddings import build_memory_embed_fn
+        _embed = build_memory_embed_fn(
+            user_id=user_id, conversation_id=conversation_id)
 
         def embed_fn(text: str) -> List[float]:
-            from core.embeddings import EmbeddingProvider
-            results = EmbeddingProvider.instance().embed(
-                [text], provider="auto", api_key=_api_key, base_url=_base_url,
-            )
-            return results[0] if results else []
+            return _embed(text)
 
         for h in registry.list_tools():
             if isinstance(h, RememberHandler):

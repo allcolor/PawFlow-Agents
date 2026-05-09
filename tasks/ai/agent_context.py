@@ -99,7 +99,9 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
 
         # Wire embedding function for semantic memory handlers
         if client:
-            self._wire_embed_fn(registry, client, user_id=_user_id_for_svc)
+            self._wire_embed_fn(
+                registry, client, user_id=_user_id_for_svc,
+                conversation_id="")
 
         # Set up SubAgentExecutor for delegate
         from core.agent_executor import SubAgentExecutor
@@ -415,6 +417,13 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             raise ValueError(
                 f"No LLM service resolved for agent '{_active_agent_name or '?'}'. "
                 f"Set llm_service in the conversation agent config.")
+
+        # Re-wire memory embeddings now that the conversation id and the final
+        # active agent client are known. This enables conv-scoped
+        # `${embedding_llm_service}` overrides.
+        self._wire_embed_fn(
+            registry, client, user_id=_user_id_for_svc,
+            conversation_id=conversation_id)
 
         # Provider detection (now with the correct resolved service)
         _provider_name = (

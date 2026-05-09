@@ -438,3 +438,74 @@ class TestEmbeddingProvider:
         provider = EmbeddingProvider.instance()
         with pytest.raises((ValueError, KeyError, Exception)):
             provider.embed(["test"], provider="nonexistent_provider_xyz")
+
+    def test_memory_embed_fn_uses_embedding_llm_service(self, monkeypatch):
+        from core.embeddings import EmbeddingProvider, build_memory_embed_fn
+        from core.service_registry import ServiceRegistry
+
+        class _Svc:
+            def embed(self, texts):
+                assert texts == ["hello"]
+                return [[0.1, 0.2]]
+
+        class _Reg:
+            def resolve(self, service_id, user_id="", conv_id=""):
+                assert service_id == "embedder"
+                assert user_id == "u1"
+                assert conv_id == "c1"
+                return _Svc()
+
+        monkeypatch.setattr(
+            "core.expression.resolve_value",
+            lambda value, **kwargs: "embedder",
+        )
+        monkeypatch.setattr(
+            ServiceRegistry, "get_instance", staticmethod(lambda: _Reg()))
+        monkeypatch.setattr(
+            EmbeddingProvider, "instance",
+            staticmethod(lambda: pytest.fail("local embeddings should not load")),
+        )
+
+        assert build_memory_embed_fn("u1", "c1")("hello") == [0.1, 0.2]
+
+    def test_memory_embed_fn_falls_back_local_without_embedding_service(self, monkeypatch):
+        from core.embeddings import EmbeddingProvider, build_memory_embed_fn
+
+        class _Local:
+            def embed(self, texts, provider="auto", **kwargs):
+                assert provider == "local"
+                assert texts == ["hello"]
+                return [[0.3, 0.4]]
+
+        monkeypatch.setattr(
+            "core.expression.resolve_value",
+            lambda value, **kwargs: "${embedding_llm_service}",
+        )
+        monkeypatch.setattr(
+            EmbeddingProvider, "instance", staticmethod(lambda: _Local()))
+
+        assert build_memory_embed_fn("u1", "c1")("hello") == [0.3, 0.4]
+
+
+def test_llm_connection_service_embed_uses_embedding_model(monkeypatch):
+    from services.llm_connection import LLMConnectionService
+
+    svc = LLMConnectionService({
+        "provider": "openai",
+        "api_key": "sk-test",
+        "embedding_model": "text-embedding-3-large",
+    })
+    seen = {}
+
+    def _embed(texts, model=None):
+        seen["texts"] = texts
+        seen["model"] = model
+        return [[1.0, 2.0]]
+
+    monkeypatch.setattr(svc._client, "embed", _embed)
+
+    assert svc.embed(["hello"]) == [[1.0, 2.0]]
+    assert seen == {
+        "texts": ["hello"],
+        "model": "text-embedding-3-large",
+    }

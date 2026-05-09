@@ -86,6 +86,8 @@ Memories are extracted automatically in two situations:
 
 Compaction auto-extract does not write global permanent memories by default. Only durable high/critical user preferences or advice may become global. Project/debug facts are stored in conversation scope with a TTL unless explicitly classified as durable. Existing stale auto-extracted entries can be marked ended with `scripts/memory_gc.py`; ended memories remain in the raw JSON audit trail but are ignored by normal recall and the memory panel.
 
+Memory embeddings are optional and use the normal expression cascade. If `embedding_llm_service` is set to an LLM service that exposes an OpenAI-compatible embeddings endpoint, PawFlow uses that service for `remember`, `semantic_recall`, auto-extracted memories, and mirrored Claude Code memories. If the parameter is absent or unusable, PawFlow falls back to the local MiniLM embedder when it is installed; otherwise memories are stored without vectors and remain available through keyword recall.
+
 ### 1.5 Memory Digest Injection
 
 At every conversation turn, a compact multi-tier digest is built from the user's memories and injected into the system prompt under `## Persistent memory`. The tiers are:

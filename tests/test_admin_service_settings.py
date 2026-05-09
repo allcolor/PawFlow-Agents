@@ -22,9 +22,14 @@ def test_system_params_manifest_excludes_service_owned_defaults():
     assert "pawflow.bg_compact" not in payload
 
 
-def test_last_enabled_admin_cannot_be_deleted_or_disabled():
+def test_last_enabled_admin_cannot_be_deleted_or_disabled(tmp_path, monkeypatch):
+    import core.paths as paths
     from core.security import SecurityManager
 
+    monkeypatch.setattr(paths, "USERS_FILE", tmp_path / "users.json")
+    monkeypatch.setattr(paths, "SESSIONS_FILE", tmp_path / "sessions.json")
+    monkeypatch.setattr(paths, "SECURITY_FILE", tmp_path / "security.json")
+    SecurityManager._instance = None
     sm = SecurityManager.get_instance()
 
     with pytest.raises(ValueError, match="last enabled admin"):
@@ -32,6 +37,8 @@ def test_last_enabled_admin_cannot_be_deleted_or_disabled():
 
     with pytest.raises(ValueError, match="last enabled admin"):
         sm.update_user("admin", enabled=False)
+
+    SecurityManager._instance = None
 
 
 def test_private_gateway_service_registered_and_uses_explicit_secret_refs(monkeypatch):

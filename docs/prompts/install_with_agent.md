@@ -9,12 +9,13 @@ You are installing PawFlow Server on this machine.
 Goal:
 - Start PawFlow Server in Docker.
 - Preserve data in persistent host directories.
-- Stop once the PawFlow bootstrap wizard is reachable in a browser.
-- Do not configure relays during server installation.
+- Stop once the PawFlow bootstrap wizard is reachable in a browser, or after the user asks you to help fill the wizard.
+- Do not configure client relays during server installation.
 
 Safety rules:
 - Do not delete existing PawFlow data without explicit confirmation.
 - Do not print secrets, tokens, OAuth client secrets, or private keys.
+- Do not configure relays during this install; server workspace relays are spawned later by PawFlow and client relays are configured from webchat.
 - Prefer the published Docker image when available.
 - If building from source, clone the official repository and build locally.
 - Use Docker volumes or bind mounts for persistent data.
@@ -26,7 +27,7 @@ Prerequisites to check first:
 4. Verify the selected port is available. Default port: 9090.
 5. Verify internet access to GitHub and the Docker registry.
 6. Prefer running `bash scripts/doctor-pawflow.sh` when this repository is available; follow its OS-specific remediation instructions.
-7. On native Windows before WSL is available, run `powershell -ExecutionPolicy Bypass -File scripts/doctor-pawflow.ps1`; if it reports missing WSL2 or Docker Desktop WSL integration, stop and ask the user to install/enable them.
+7. On Windows, PawFlow requires WSL2 plus Docker Desktop with WSL integration. Run `powershell -ExecutionPolicy Bypass -File scripts/doctor-pawflow.ps1` only as a host prerequisite check; if it reports missing WSL2 or Docker Desktop WSL integration, stop and ask the user to install/enable them, then run the install commands inside WSL.
 
 Install path A: published image, preferred
 1. Create persistent directories:
@@ -70,7 +71,8 @@ After starting:
 4. Use the initial Private Gateway bootstrap key:
    RoyBetty
 5. Tell the user that the bootstrap wizard must replace RoyBetty before finalization.
-6. Stop here. The wizard will configure server settings, final certificates (provided cert/key, ACME/Let's Encrypt, or self-signed), auth, LLM services, summarizer service, variables, secrets, CLI credential pools, and final flows.
+6. If the user asks you to help finish the wizard, collect the final Private Gateway key, admin username/password, LLM service id, provider, model, and optional API key. Do not print the passwords or API key back to the terminal.
+7. After finalization, PawFlow creates the persistent Private Gateway, builtin auth gateway, admin user, selected LLM service, summarizer service (`summarizer_service`), variables, secrets, `pawflow-agent` deployment, and a starter conversation with `assistant` selected. Client relays are still configured later from webchat.
 
 Expected final answer:
 - Whether Docker prerequisites passed.

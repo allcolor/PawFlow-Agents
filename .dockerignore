@@ -3,9 +3,13 @@
 __pycache__
 *.pyc
 .env
-data/config/secret.key
-data/config/users.json
-data/config/security.json
+data/runtime
+data/system
+dist
+graphify-out
+node_modules
+pawflow-relay-desktop/node_modules
+pawflow-vscode/node_modules
 cluster_state/
 *.egg-info
 .mypy_cache

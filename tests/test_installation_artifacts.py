@@ -8,14 +8,32 @@ def test_server_dockerfile_supports_bootstrap_docker_builds():
     src = Path("Dockerfile").read_text(encoding="utf-8")
 
     assert "docker.io" in src
+    assert "gosu" in src
     assert "openssl" in src
     assert "ca-certificates" in src
     assert "curl" in src
     assert "ffmpeg" in src
     assert "PLAYWRIGHT_BROWSERS_PATH" in src
     assert "python -m playwright install --with-deps chromium" in src
+    assert "useradd -u 1000 -g 1000" in src
     assert "/app/data /app/certs" in src
-    assert "USER pawflow" in src
+    assert "/app/default-data" in src
+    assert "/app/default-config" in src
+    assert "server-entrypoint.sh" in src
+
+    entrypoint = Path("docker/server-entrypoint.sh").read_text(encoding="utf-8")
+    assert "seed_missing_tree /app/default-data/repository /app/data/repository" in entrypoint
+    assert "seed_missing_tree /app/default-config /app/config" in entrypoint
+    assert "chown -R pawflow:pawflow" in entrypoint
+    assert "exec gosu pawflow" in entrypoint
+
+    relay_dev = Path("docker/relay-dev/Dockerfile").read_text(encoding="utf-8")
+    assert "COPY tools/ /opt/pawflow/" in relay_dev
+    assert "COPY pawflow_relay/ /opt/pawflow/pawflow_relay/" in relay_dev
+
+    relay_build = Path("docker/relay-dev/build.sh").read_text(encoding="utf-8")
+    assert "-f \"$SCRIPT_DIR/Dockerfile\"" in relay_build
+    assert '"$REPO_DIR"' in relay_build
 
 
 def test_install_scripts_mount_persistent_dirs_and_docker_socket():
@@ -43,6 +61,11 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert "--group-add" in run_src
     assert "$PAWFLOW_HOME/data:/app/data" in run_src
     assert "$PAWFLOW_HOME/certs:/app/certs" in run_src
+
+    dockerignore = Path(".dockerignore").read_text(encoding="utf-8")
+    assert "data/runtime" in dockerignore
+    assert "data/system" in dockerignore
+    assert "pawflow-relay-desktop/node_modules" in dockerignore
 
     install_src = install.read_text(encoding="utf-8")
     assert "printenv PAWFLOW_IMAGE" in install_src
@@ -143,11 +166,21 @@ def test_compose_healthcheck_accepts_bootstrap_tls():
     assert "https://localhost:9090/health" in compose
     assert "ssl._create_unverified_context" in compose
     assert "http://localhost:9090/health" in compose
+    assert "/var/run/docker.sock:/var/run/docker.sock" in compose
 
 
 def test_docker_docs_explain_wsl_vhdx_compaction():
     doc = Path("docs/docker.md").read_text(encoding="utf-8")
 
+    assert "Complete install scenarios" in doc
+    assert "Fresh published-image install" in doc
+    assert "Restart before finalization" in doc
+    assert "Restart after finalization" in doc
+    assert "Docker socket unavailable" in doc
+    assert "Server-side relay after install" in doc
+    assert "Windows host prerequisites" in doc
+    assert "run the normal Linux" in doc
+    assert "install script inside WSL" in doc
     assert "WSL2: Reclaim Docker Build Cache Space" in doc
     assert "docker builder prune -a" in doc
     assert "ext4.vhdx" in doc
@@ -174,11 +207,14 @@ def test_pawflow_installer_flow_template_exists():
     assert flow["id"] == "pawflow-installer"
     assert flow["fqn"] == "default.pawflow_installer:1.0.0"
     assert flow["parameters"]["bootstrap_gateway_key"] == "RoyBetty"
+    assert flow["parameters"]["bootstrap_gateway_secret_ref"] == "privategateway.bootstrap"
+    assert flow["parameters"]["private_gateway_service_id"] == "_bootstrap_private_gateway"
     assert flow["parameters"]["ssl_certfile"] == "data/system/ssl/bootstrap.crt"
     assert flow["parameters"]["ssl_keyfile"] == "data/system/ssl/bootstrap.key"
     listener_params = flow["services"]["http_listener"]["parameters"]
     assert listener_params["ssl_certfile"] == "${ssl_certfile}"
     assert listener_params["ssl_keyfile"] == "${ssl_keyfile}"
+    assert listener_params["private_gateway_service_id"] == "${private_gateway_service_id}"
 
     routes = flow["tasks"]["http_in"]["parameters"]["routes"]
     patterns = {route["pattern"] for route in routes}
@@ -194,3 +230,15 @@ def test_pawflow_installer_flow_template_exists():
     assert "fetch('/install/api'" in ui_content
     assert "fetch('/install/api/finalize'" in ui_content
     assert "new_gateway_key" in ui_content
+    assert "admin_password" in ui_content
+    assert "llm_service_id" in ui_content
+    assert "codex_appserver_llm_service" in ui_content
+
+
+def test_server_relay_uses_embedded_code_by_default():
+    src = Path("core/server_relay_manager.py").read_text(encoding="utf-8")
+
+    assert '"server_relay_mount_code": "0"' in src
+    assert "code_mount_args = []" in src
+    assert "if relay_mount_code:" in src
+    assert "pawflow_relay_launcher.py" in src

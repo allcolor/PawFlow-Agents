@@ -6,7 +6,9 @@ PawFlow supports running agent code in Docker containers for isolation and secur
 
 - Docker installed and running
 - User in the `docker` group (Linux/WSL): `sudo usermod -aG docker $USER && newgrp docker`
-- Docker Desktop (Windows/macOS) or Docker Engine (Linux)
+- Windows requirements: WSL2 plus Docker Desktop with WSL integration enabled.
+  The PawFlow install commands run inside the WSL distro, not in native Windows.
+- Docker Desktop (macOS/Windows host daemon) or Docker Engine (Linux/WSL)
 
 ## 0. PawFlow Server in Docker
 
@@ -23,8 +25,17 @@ bash scripts/install-pawflow.sh
 This pulls `ghcr.io/allcolor/pawflow:latest`, creates persistent directories
 under `~/pawflow`, starts `pawflow-server`, and exposes `https://localhost:9090`.
 When `/var/run/docker.sock` is available on the host, the run script mounts it
-into the PawFlow container so first-run bootstrap can build the Claude/Codex/
-Gemini CLI image and relay image.
+into the PawFlow container so PawFlow can spawn server-side workspace relay
+containers after installation.
+
+The server image keeps repository and config defaults outside the mounted
+runtime directories. On container start, `docker/server-entrypoint.sh` seeds
+missing files into `/app/data/repository` and `/app/config`, fixes ownership for
+the persistent bind mounts, then drops privileges to the `pawflow` user before
+starting the Python server. The `pawflow` user uses UID/GID `1000`, matching the
+default first user on Linux/WSL bind mounts. This makes a fresh empty
+`~/pawflow/data` volume usable without masking the installer flow templates
+baked into the image.
 
 The installer starts with a self-signed bootstrap certificate generated inside
 the persistent data volume. Your browser will warn until the wizard configures
@@ -33,14 +44,18 @@ ACME certificate such as Let's Encrypt, or keeping a self-signed certificate for
 private deployments. The Compose healthcheck probes HTTPS with self-signed trust
 disabled first, then falls back to plain HTTP for non-TLS local runs.
 
-The initial Private Gateway bootstrap key is:
+The installer is protected by a temporary `privateGateway` service wired to the
+bootstrap `httpListener`. The initial Private Gateway bootstrap key is:
 
 ```text
 RoyBetty
 ```
 
-The installer wizard must force the user to replace this key before finalizing
-the installation.
+The installer wizard forces the user to replace this key before finalizing the
+installation. Finalization creates the persistent Private Gateway, builtin auth
+gateway, admin user, selected LLM service, `summarizer_service`, the
+`pawflow-agent` deployment, and a starter conversation with the `assistant`
+agent selected.
 
 ### Build from source
 
@@ -58,14 +73,17 @@ health where applicable, source-install Git availability, Docker socket access
 for first-run image builds, selected port availability, and prints OS-specific
 installation instructions for missing prerequisites.
 
-On native Windows before WSL is available, run:
+On Windows, PawFlow requires WSL2 and Docker Desktop with WSL integration. The
+PowerShell doctor is only a host prerequisite checker before entering WSL:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/doctor-pawflow.ps1
 ```
 
-It validates WSL2, Docker Desktop, Linux-container mode, port availability, and
-explains how to install/enable the missing pieces.
+It validates WSL2, Docker Desktop, Linux-container mode, WSL Docker daemon
+access, and port availability, then explains how to install or enable the
+missing pieces. After those requirements are satisfied, run the Linux install
+commands from inside the WSL distro.
 
 ### Agent-assisted install prompt
 
@@ -78,6 +96,77 @@ docs/prompts/install_with_agent.md
 
 That prompt gets the machine to a running PawFlow bootstrap wizard. It does not
 configure relays; relay onboarding happens later from the webchat.
+
+### Complete install scenarios
+
+These are the supported Docker install scenarios and their expected outcomes.
+
+1. Fresh published-image install on Linux or WSL
+   - Run `bash scripts/doctor-pawflow.sh`, then `bash scripts/install-pawflow.sh`.
+   - The container starts as root only long enough to seed missing defaults and
+     fix persistent directory ownership, then runs PawFlow as UID/GID `1000`.
+   - An empty `~/pawflow/data` receives `data/repository`, so the installer flow
+     is available even though `/app/data` is a bind mount.
+   - Open `https://localhost:9090/install`, accept the self-signed bootstrap
+     certificate warning, enter the current gateway key `RoyBetty`, replace it,
+     create the admin password, and finalize.
+   - Expected result: `_private_gateway`, `_auth_gateway`, the selected
+     `llmConnection`, `summarizer_service`, `pawflow-agent`, and a starter
+     conversation with `assistant` are created; `_bootstrap_private_gateway` is
+     disabled and the installer deployment is stopped.
+
+2. Fresh source build install
+   - Run `bash scripts/doctor-pawflow.sh --source`, then
+     `bash scripts/install-pawflow.sh --source`.
+   - The script clones the repository, builds the PawFlow server image, starts
+     the same persistent layout, and follows the same browser finalization flow
+     as the published image.
+   - Expected result: source-built server behavior matches the published image,
+     including repository/config seeding and UID/GID `1000` runtime ownership.
+
+3. Restart before finalization
+   - Restart `pawflow-server` while the installer is still incomplete.
+   - The entrypoint seeds only missing files and does not overwrite existing
+     user data. The install state remains incomplete and the installer flow is
+     restored behind the bootstrap `privateGateway`.
+   - Expected result: `/install` remains available over bootstrap HTTPS and can
+     continue finalization without losing previous installer state.
+
+4. Restart after finalization
+   - Finalize the wizard, then restart `pawflow-server`.
+   - `install_complete=true` prevents bootstrap redeployment. Normal deployed
+     flows are restored, the installer remains stopped, and the bootstrap
+     gateway remains disabled.
+   - Expected result: the server opens through the final Private Gateway and
+     login/webchat uses the configured admin user and starter conversation.
+
+5. Docker socket unavailable
+   - Run the install on a host where `/var/run/docker.sock` is missing or not
+     writable.
+   - The server installation may still complete, but server-side workspace relay
+     creation is blocked until Docker socket access is provided.
+   - Expected result: the doctor reports the socket issue when asked to require
+     it, and relay creation is treated as a post-install host capability issue,
+     not as a failed PawFlow server install.
+
+6. Server-side relay after install
+   - Provide Docker socket access and use the normal PawFlow UI/API to create a
+     server workspace relay.
+   - PawFlow uses the standalone `pawflow-relay-dev:latest` image with embedded
+     `/opt/pawflow/pawflow_relay_launcher.py` and `pawflow_relay` package code by
+     default. Live source-code mounts are used only when
+     `server_relay_mount_code` is explicitly enabled for local development.
+   - Expected result: relay containers can start even when PawFlow itself runs in
+     Docker, because the host daemon does not need to bind-mount `/app/tools`
+     from inside the server container.
+
+7. Windows host prerequisites
+   - Run `powershell -ExecutionPolicy Bypass -File scripts/doctor-pawflow.ps1`.
+   - The doctor checks the required WSL2 + Docker Desktop WSL integration path:
+     WSL distro availability, Linux-container mode, daemon access from WSL, and
+     port availability.
+   - Expected result: users fix host prerequisites, then run the normal Linux
+     install script inside WSL instead of attempting a native Windows install.
 
 ## 1. Claude Code in Docker
 
@@ -161,6 +250,13 @@ bash docker/relay-dev/build.sh
 Includes: Python 3, Node.js 22 + TypeScript, Rust, Go, C/C++ (gcc/g++/cmake),
 Java 21 + Kotlin + Scala, C# (.NET 9), Ruby, PHP, Perl, Lua, Zig,
 git, make, cmake, curl, wget, jq, sqlite, ssh.
+
+The image also embeds `/opt/pawflow/pawflow_relay_launcher.py` and the
+`pawflow_relay` package. Server-side relays use that embedded code by default,
+which is required when the PawFlow server itself runs in Docker and talks to the
+host daemon through `/var/run/docker.sock`. Local development can opt into live
+code mounts by setting the `server_relay_mount_code` system parameter to a
+truthy value.
 
 ### Building a custom image
 

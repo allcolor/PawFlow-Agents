@@ -109,6 +109,17 @@ def test_relay_worker_handles_remote_mount_manifest():
 
     assert "remote_mount_manifest" in src
     assert "_remote_mount_mgr.reconcile" in src
+    assert "remote-mount-reconcile" in src
+
+
+def test_remote_mount_manager_serializes_reconcile():
+    src = Path("pawflow_relay/remote_mounts.py").read_text(encoding="utf-8")
+
+    assert "self._lock = threading.Lock()" in src
+    assert "with self._lock:" in src
+    assert "def _ensure_mountpoint" in src
+    assert '"chown", f"{uid}:{gid}", str(target)' in src
+    assert "returned success but" in src
 
 
 def test_resource_sidebar_renders_rclone_filesystem_bindings():
@@ -130,17 +141,24 @@ def test_rclone_service_schema_is_backend_dependent():
     rules = svc.get_parameter_rules()
 
     assert schema["rclone_type"]["label"] == "Backend type"
+    assert schema["credential_service_id"]["type"] == "service_ref"
+    assert schema["credential_service_id"]["service_type"] == "rcloneOAuthCredentials"
     assert "url" in schema
     assert "account" in schema
     assert "service_account_file" in schema
 
     by_type = {rule["when"]["rclone_type"]: rule["set"] for rule in rules}
     assert by_type["sftp"]["host"]["required"] is True
+    assert by_type["sftp"]["rclone_config"]["visible"] is True
     assert by_type["sftp"]["provider"]["visible"] is False
     assert by_type["s3"]["provider"]["visible"] is True
     assert by_type["s3"]["host"]["visible"] is False
     assert by_type["webdav"]["url"]["required"] is True
-    assert by_type["drive"]["rclone_config"]["required"] is True
+    assert by_type["drive"]["credential_service_id"]["required"] is True
+    assert by_type["drive"]["rclone_config"]["visible"] is False
+    assert by_type["onedrive"]["credential_service_id"]["required"] is True
+    assert by_type["onedrive"]["rclone_config"]["visible"] is False
+    assert RcloneFilesystemService({}).get_service_actions() == []
 
 
 def test_rclone_config_omits_empty_guided_fields():
@@ -159,11 +177,90 @@ def test_rclone_config_omits_empty_guided_fields():
         },
     )
 
-    assert _rclone_config_for("user1", sdef) == {
+    assert _rclone_config_for("user1", "conv1", sdef) == {
         "type": "s3",
         "provider": "AWS",
         "access_key_id": "AKIA...",
     }
+
+
+def test_rclone_oauth_config_comes_from_credential_service(monkeypatch):
+    from core.remote_fs_bindings import _rclone_config_for
+
+    marker = "$" + "{rclone_body}"
+    sdef = SimpleNamespace(
+        service_id="gdrive",
+        service_type="rcloneFilesystem",
+        config={"rclone_type": "drive", "credential_service_id": "gdrive_creds"},
+    )
+    cred = SimpleNamespace(
+        service_id="gdrive_creds",
+        service_type="rcloneOAuthCredentials",
+        config={"provider": "drive", "rclone_config": marker},
+    )
+
+    def fake_resolve(value, **kwargs):
+        assert kwargs["owner"] == "user1"
+        assert kwargs["conversation_id"] == "conv1"
+        return "type = drive\ntoken = {...}"
+
+    monkeypatch.setattr("core.remote_fs_bindings._resolve_rclone_credential_definition", lambda *_args: cred)
+    monkeypatch.setattr("core.expression.resolve_expression", fake_resolve)
+
+    assert _rclone_config_for("user1", "conv1", sdef) == {
+        "_raw": "type = drive\ntoken = {...}",
+    }
+
+
+def test_rclone_oauth_credentials_expose_login_action_and_sensitive_config():
+    from services.rclone_oauth_credentials import RcloneOAuthCredentialsService
+
+    svc = RcloneOAuthCredentialsService({"provider": "drive"})
+    schema = svc.get_parameter_schema()
+    actions = svc.get_service_actions()
+
+    assert schema["rclone_config"]["sensitive"] is True
+    login = next(a for a in actions if a["id"] == "rclone_server_login")
+    assert login["server_action"] == "rclone_server_login"
+    assert login["flow"] == "rclone_login_server"
+    assert login["when"] == {"provider": ["drive", "onedrive"]}
+
+
+def test_chat_ui_routes_rclone_oauth_through_vnc_dialog():
+    src = Path("tasks/io/chat_ui/resources.js").read_text(encoding="utf-8")
+    sse = Path("tasks/io/chat_ui/sse.js").read_text(encoding="utf-8")
+
+    assert "svc-install-login-btn" in src
+    assert "_submitServiceInstall(true)" in src
+    assert "typeEl.value === 'rcloneOAuthCredentials'" in src
+    assert "fireAction('rclone_server_login', { service_id: name, scope });" in src
+    assert "'rclone': 'rclone_server_login_status'" in src
+    assert "'rclone': 'rclone_server_login_cleanup'" in src
+    assert "flow === 'rclone_login_server'" in src
+    assert "if (scope) payload.scope = scope;" in src
+    assert "data.scope || ''" in sse
+
+
+def test_service_flow_saves_rclone_login_result_into_sensitive_service_config():
+    src = Path("tasks/ai/actions/service_flow.py").read_text(encoding="utf-8")
+
+    assert 'action == "rclone_server_login"' in src
+    assert '"cli": "rclone"' in src
+    assert 'sdef.service_type != "rcloneOAuthCredentials"' in src
+    assert "PAWFLOW_RCLONE_TYPE" in src
+    assert 'action == "rclone_server_login_status"' in src
+    assert 'result_dir = "/tmp/pawflow-rclone-login"' in src
+    assert '"rclone_config": rclone_config' in src
+    assert "notify_linked_relays" in src
+
+
+def test_service_flow_notifies_relays_after_rclone_service_update():
+    src = Path("tasks/ai/actions/service_flow.py").read_text(encoding="utf-8")
+
+    assert "def _notify_remote_mounts_after_service_change" in src
+    assert '"rcloneFilesystem", "rcloneOAuthCredentials"' in src
+    assert "sdef = registry.get_definition(scope, scope_id, sid)" in src
+    assert "_notify_remote_mounts_after_service_change(sdef, conv_id, user_id)" in src
 
 
 def test_manifest_skips_stale_non_rclone_bindings(monkeypatch):
@@ -184,7 +281,58 @@ def test_manifest_skips_stale_non_rclone_bindings(monkeypatch):
     assert manifest["mounts"] == []
 
 
+def test_relay_worker_reconciles_remote_mount_manifest_in_background_thread():
+    src = Path("pawflow_relay/worker.py").read_text(encoding="utf-8")
+    runtime = Path("pawflow-relay-desktop/runtime/pawflow_relay/worker.py").read_text(encoding="utf-8")
+
+    for text in (src, runtime):
+        assert '_mtype == "remote_mount_manifest"' in text
+        assert "target=_reconcile_remote_mounts" in text
+        assert 'name="remote-mount-reconcile"' in text
+
+
+def test_remote_mount_manager_does_not_mark_false_daemon_success_active(monkeypatch, tmp_path):
+    from pawflow_relay.remote_mounts import RemoteMountManager
+
+    manager = RemoteMountManager(
+        remote_root=str(tmp_path / "remote"),
+        state_dir=str(tmp_path / "state"),
+    )
+    monkeypatch.setattr("pawflow_relay.remote_mounts.shutil.which", lambda name: "/usr/bin/rclone")
+    monkeypatch.setattr(manager, "_ensure_root", lambda: True)
+    monkeypatch.setattr(manager, "_ensure_mountpoint", lambda target: True)
+    monkeypatch.setattr(manager, "_run", lambda argv, what: True)
+    monkeypatch.setattr(manager, "_is_mounted", lambda name: False)
+
+    manager.reconcile({"mounts": [{
+        "remote_name": "MyGDrive",
+        "mode": "readwrite",
+        "rclone_config": {"_raw": "[MyGDrive]\ntype = drive\ntoken = {}"},
+    }]})
+
+    assert manager._active == {}
+
+
 def test_relay_image_installs_rclone():
     src = Path("docker/relay-dev/Dockerfile").read_text(encoding="utf-8")
 
-    assert " rclone " in src
+    assert "downloads.rclone.org/rclone-${DOWNLOAD_RCLONE_VERSION}-linux-amd64.zip" in src
+    assert "install -m 0755 /tmp/rclone-dist/*/rclone /usr/local/bin/rclone" in src
+    assert "ARG RCLONE_" not in src
+    assert " zip rclone " not in src
+
+
+def test_agent_login_image_installs_rclone_and_copies_login_script():
+    src = Path("docker/claude-code/Dockerfile").read_text(encoding="utf-8")
+    script = Path("docker/claude-code/rclone_auth_login.sh").read_text(encoding="utf-8")
+
+    assert "downloads.rclone.org/rclone-${DOWNLOAD_RCLONE_VERSION}-linux-amd64.zip" in src
+    assert "install -m 0755 /tmp/rclone-dist/*/rclone /usr/local/bin/rclone" in src
+    assert "ARG RCLONE_" not in src
+    assert "PAWFLOW_RCLONE_TYPE" in script
+    assert " chrony rclone " not in src
+    assert "rclone_auth_login.sh" in src
+    assert "rclone config create" in script
+    assert "/workspace/rclone" not in script
+    assert "/tmp/pawflow-rclone-login" in script
+    assert "rclone_config_body.txt" in script

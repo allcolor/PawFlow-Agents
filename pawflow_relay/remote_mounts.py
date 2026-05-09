@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from typing import Any, Dict
 
@@ -20,32 +21,34 @@ class RemoteMountManager:
         self.state_dir = Path(state_dir)
         self.config_path = self.state_dir / "rclone.conf"
         self._active: Dict[str, str] = {}
+        self._lock = threading.Lock()
 
     def reconcile(self, manifest: Dict[str, Any]) -> None:
-        desired = {}
-        for mount in manifest.get("mounts") or []:
-            name = mount.get("remote_name") or ""
-            if not name:
-                continue
-            if mount.get("error"):
-                sys.stderr.write(
-                    f"[RemoteFS] skipping {name}: {mount.get('error')}\n")
-                continue
-            desired[name] = mount
+        with self._lock:
+            desired = {}
+            for mount in manifest.get("mounts") or []:
+                name = mount.get("remote_name") or ""
+                if not name:
+                    continue
+                if mount.get("error"):
+                    sys.stderr.write(
+                        f"[RemoteFS] skipping {name}: {mount.get('error')}\n")
+                    continue
+                desired[name] = mount
 
-        for name in sorted(set(self._active) - set(desired)):
-            self._unmount(name)
-            self._active.pop(name, None)
-
-        self._write_config(desired)
-        for name, mount in desired.items():
-            digest = self._digest_mount(mount)
-            if self._active.get(name) == digest and self._is_mounted(name):
-                continue
-            if name in self._active:
+            for name in sorted(set(self._active) - set(desired)):
                 self._unmount(name)
-            if self._mount(name, mount):
-                self._active[name] = digest
+                self._active.pop(name, None)
+
+            self._write_config(desired)
+            for name, mount in desired.items():
+                digest = self._digest_mount(mount)
+                if self._active.get(name) == digest and self._is_mounted(name):
+                    continue
+                if name in self._active:
+                    self._unmount(name)
+                if self._mount(name, mount):
+                    self._active[name] = digest
 
     def _digest_mount(self, mount: Dict[str, Any]) -> str:
         payload = repr({
@@ -79,6 +82,16 @@ class RemoteMountManager:
     def _ensure_root(self) -> bool:
         return self._run(self._sudo(["mkdir", "-p", self.remote_root]),
                          f"mkdir {self.remote_root}")
+
+    def _ensure_mountpoint(self, target: Path) -> bool:
+        if not self._run(self._sudo(["mkdir", "-p", str(target)]),
+                         f"mkdir {target}"):
+            return False
+        uid, gid = os.geteuid(), os.getegid()
+        if uid != 0:
+            return self._run(self._sudo(["chown", f"{uid}:{gid}", str(target)]),
+                             f"chown {target}")
+        return True
 
     def _write_config(self, mounts: Dict[str, Dict[str, Any]]) -> None:
         self.state_dir.mkdir(parents=True, exist_ok=True)
@@ -119,8 +132,7 @@ class RemoteMountManager:
         if not self._ensure_root():
             return False
         target = Path(self.remote_root) / name
-        if not self._run(self._sudo(["mkdir", "-p", str(target)]),
-                         f"mkdir {target}"):
+        if not self._ensure_mountpoint(target):
             return False
         cmd = [
             "rclone", "mount", f"{name}:", str(target),
@@ -132,6 +144,10 @@ class RemoteMountManager:
             cmd.append("--read-only")
         ok = self._run(cmd, f"rclone mount {name}")
         if ok:
+            if not self._is_mounted(name):
+                sys.stderr.write(
+                    f"[RemoteFS] rclone mount {name} returned success but {target} is not mounted\n")
+                return False
             sys.stderr.write(f"[RemoteFS] mounted {name} at {target}\n")
         return ok
 

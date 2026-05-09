@@ -85,6 +85,7 @@ def _register_all_services():
     import services.gdrive_filesystem_service  # noqa: F401
     import services.onedrive_filesystem_service  # noqa: F401
     import services.rclone_filesystem_service  # noqa: F401
+    import services.rclone_oauth_credentials  # noqa: F401
 
 
 def register_all_tasks():

@@ -20,8 +20,9 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-docker build -t pawflow-relay-dev:latest "$SCRIPT_DIR"
+docker build -f "$SCRIPT_DIR/Dockerfile" -t pawflow-relay-dev:latest "$REPO_DIR"
 
 echo ""
 echo "Built pawflow-relay-dev:latest"

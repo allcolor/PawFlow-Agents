@@ -106,11 +106,18 @@ class LazyResolveDict(dict):
         except KeyError:
             return default
 
-    @staticmethod
-    def _resolve(val):
+    def _resolve(self, val):
         if isinstance(val, str) and "${" in val:
             try:
-                return resolve_expression(val)
+                scope = dict.get(self, "_scope", "")
+                scope_id = dict.get(self, "_scope_id", "")
+                owner = scope_id if scope == "user" else None
+                conversation_id = scope_id if scope == "conv" else None
+                return resolve_expression(
+                    val,
+                    owner=owner,
+                    conversation_id=conversation_id,
+                )
             except Exception:
                 return val
         return val

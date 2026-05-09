@@ -2864,12 +2864,13 @@ function _applyRules(container, rules, actions, serviceId) {
   apply();
 }
 
-function _renderServiceActions(actions, serviceId) {
+function _renderServiceActions(actions, serviceId, scope) {
   if (!actions || !actions.length) return '';
+  scope = scope || '';
   let html = '<div class="svc-actions" style="margin-top:12px;padding-top:8px;border-top:1px solid var(--pf-border);">';
   for (const a of actions) {
     const whenAttr = a.when ? ' data-action-when=\'' + JSON.stringify(a.when).replace(/'/g, '&#39;') + '\'' : '';
-    html += '<button type="button" onclick="_executeServiceAction(\'' + a.id + '\',\'' + serviceId + '\',\'' + (a.flow || 'simple') + '\',\'' + (a.server_action || '') + '\')"'
+    html += '<button type="button" onclick="_executeServiceAction(\'' + a.id + '\',\'' + serviceId + '\',\'' + (a.flow || 'simple') + '\',\'' + (a.server_action || '') + '\',\'' + scope + '\')"'
       + whenAttr + ' style="background:color-mix(in srgb, var(--pf-accent) 14%, var(--pf-panel));color:var(--pf-accent);border:1px solid var(--pf-accent);border-radius:4px;padding:6px 12px;cursor:pointer;font-size:12px;margin-right:8px;">'
       + (a.icon || '') + ' ' + (a.label || a.id) + '</button>';
   }
@@ -2967,27 +2968,31 @@ function cmdClaudeLoginCredentials(text, parts) {
   return true;
 }
 
-// `cli` is one of: 'claude' | 'codex' | 'gemini' — picks the right server
+// `cli` is one of: 'claude' | 'codex' | 'gemini' | 'rclone' — picks the right server
 // status/cleanup actions (each CLI has its own dedicated namespace).
 // `token` is the capability token issued by the backend at session
 // register time; without it the iframe URL will 401/403 — leaving it
 // empty is only valid in legacy-tooling test paths.
-function _openVncLoginDialog(sessionId, serviceId, token, triggerBtn, cli) {
+function _openVncLoginDialog(sessionId, serviceId, token, triggerBtn, cli, scope) {
   cli = cli || 'claude';
+  scope = scope || '';
   const _statusAction = {
     'claude': 'claude_code_server_login_status',
     'codex':  'codex_server_login_status',
     'gemini': 'gemini_server_login_status',
+    'rclone': 'rclone_server_login_status',
   }[cli] || 'claude_code_server_login_status';
   const _cleanupAction = {
     'claude': 'claude_code_server_login_cleanup',
     'codex':  'codex_server_login_cleanup',
     'gemini': 'gemini_server_login_cleanup',
+    'rclone': 'rclone_server_login_cleanup',
   }[cli] || 'claude_code_server_login_cleanup';
   const _title = {
     'claude': 'Claude Code Login',
     'codex':  'Codex Login',
     'gemini': 'Gemini Login',
+    'rclone': 'Rclone Login',
   }[cli] || t('loginTitle');
 
   window._clsLoginPending = false;
@@ -3036,7 +3041,7 @@ function _openVncLoginDialog(sessionId, serviceId, token, triggerBtn, cli) {
   const pollInterval = setInterval(async () => {
     try {
       const st = await rxjs.firstValueFrom(action$(_statusAction, {
-        session_id: sessionId, service_id: serviceId }));
+        session_id: sessionId, service_id: serviceId, scope }));
       if (st.ok) { closeDialog(st.message || t('loginSuccessful', { title: _title })); }
       else if (st.error) { closeDialog(t('loginError', { error: st.error })); }
       else if (st.status === 'starting') { status.textContent = t('startingContainer'); }
@@ -3068,6 +3073,7 @@ function _startRelayLogin(serviceId, relayId, cli) {
 function _flowToCli(flow) {
   if (flow.indexOf('codex_') === 0) return 'codex';
   if (flow.indexOf('gemini_') === 0) return 'gemini';
+  if (flow.indexOf('rclone_') === 0) return 'rclone';
   return 'claude';
 }
 
@@ -3134,22 +3140,24 @@ async function _renderCredentialPoolTable(serviceId, anchorBtn) {
   await load();
 }
 
-async function _executeServiceAction(actionId, serviceId, flow, serverAction) {
+async function _executeServiceAction(actionId, serviceId, flow, serverAction, scope) {
   const btn = event && event.target ? event.target : null;
   const _cli = _flowToCli(flow);
+  const payload = { service_id: serviceId };
+  if (scope) payload.scope = scope;
   if (flow === 'credential_table') {
     try { await _renderCredentialPoolTable(serviceId, btn); }
     catch (e) { addMsg('error', t('actionFailed', { error: e.message })); }
-  } else if (flow === 'claude_login_server' || flow === 'codex_login_server' || flow === 'gemini_login_server') {
+  } else if (flow === 'claude_login_server' || flow === 'codex_login_server' || flow === 'gemini_login_server' || flow === 'rclone_login_server') {
     try {
       if (btn) { btn.disabled = true; btn.textContent = t('starting'); }
-      fireAction(serverAction, { service_id: serviceId });
+      fireAction(serverAction, payload);
       // Dialog opens when SSE vnc_login_ready arrives (with `cli` field)
     } catch (e) { addMsg('error', t('actionFailed', { error: e.message })); }
   } else if (flow === 'claude_login_relay' || flow === 'codex_login_relay' || flow === 'gemini_login_relay') {
     try {
       // Step 1: list relays
-      const resp = await rxjs.firstValueFrom(action$(serverAction, { service_id: serviceId }));
+      const resp = await rxjs.firstValueFrom(action$(serverAction, payload));
       if (resp.error) { addMsg('error', resp.error); return; }
       const relays = resp.relays || [];
       if (relays.length === 0) {
@@ -3199,7 +3207,7 @@ async function _executeServiceAction(actionId, serviceId, flow, serverAction) {
   } else if (flow === 'oauth_code') {
     try {
       // Step 1: get instructions
-      const resp = await rxjs.firstValueFrom(action$(serverAction, { service_id: serviceId }));
+      const resp = await rxjs.firstValueFrom(action$(serverAction, payload));
       if (resp.error) { addMsg('error', resp.error); return; }
 
       // Step 2: show instructions + textarea for credentials
@@ -3220,7 +3228,7 @@ async function _executeServiceAction(actionId, serviceId, flow, serverAction) {
           submitBtn.textContent = '...';
           submitBtn.disabled = true;
           try {
-            const result = await rxjs.firstValueFrom(action$(serverAction.replace('_url', '_code'), { service_id: serviceId, credentials: creds }));
+            const result = await rxjs.firstValueFrom(action$(serverAction.replace('_url', '_code'), { ...payload, credentials: creds }));
             if (result.ok) {
               loginDiv.innerHTML = '<span style="color:var(--pf-success);font-size:12px;">\u2714 ' + escapeHtml(result.message || t('saved')) + '</span>';
             } else {
@@ -3238,7 +3246,7 @@ async function _executeServiceAction(actionId, serviceId, flow, serverAction) {
   } else {
     if (flow === 'confirm' && !confirm(t('executeActionConfirm', { action: actionId }))) return;
     try {
-      const resp = await rxjs.firstValueFrom(action$(serverAction, { service_id: serviceId }));
+      const resp = await rxjs.firstValueFrom(action$(serverAction, payload));
       addMsg('system', resp.message || resp.error || JSON.stringify(resp));
     } catch (e) { addMsg('error', e.message); }
   }
@@ -3299,6 +3307,7 @@ async function showServiceInstallForm() {
     + '<div id="svc-install-params" style="border-top:1px solid var(--pf-border);padding-top:8px;margin-top:8px;"></div>'
     + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">'
     + '<button onclick="document.getElementById(\'resourceEditorOverlay\').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">' + escapeHtml(t('cancel')) + '</button>'
+    + '<button id="svc-install-login-btn" onclick="_submitServiceInstall(true)" style="display:none;background:color-mix(in srgb, var(--pf-accent) 16%, var(--pf-panel));color:var(--pf-accent);border:1px solid var(--pf-accent);padding:8px 16px;border-radius:4px;cursor:pointer;">Installer + login</button>'
     + '<button id="svc-install-btn" onclick="_submitServiceInstall()" style="background:var(--pf-accent);color:var(--pf-bg);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">' + escapeHtml(t('install')) + '</button>'
     + '</div>';
   overlay.appendChild(panel);
@@ -3317,18 +3326,32 @@ async function showServiceInstallForm() {
       paramsDiv.innerHTML = '<div style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('noConfigurableParametersForServiceType')) + '</div>';
     } else {
       paramsDiv.innerHTML = '<div style="color:var(--pf-muted);font-size:11px;margin-bottom:6px;font-weight:600;">' + escapeHtml(t('parameters')) + '</div>'
-        + _renderSchemaFields(params, {})
-        + _renderServiceActions(schemaData.actions || [], '');
+        + _renderSchemaFields(params, {});
       _applyRules(paramsDiv, schemaData.rules || [], schemaData.actions || [], '');
       _populateServiceRefs(paramsDiv);
+      paramsDiv.addEventListener('change', _updateServiceInstallLoginButton);
     }
+    _updateServiceInstallLoginButton();
   };
-  typeSelect.addEventListener('change', loadParams);
+  typeSelect.addEventListener('change', async () => { await loadParams(); _updateServiceInstallLoginButton(); });
   await loadParams();
   document.getElementById('svc-install-name').focus();
 }
 
-async function _submitServiceInstall() {
+function _updateServiceInstallLoginButton() {
+  const typeEl = document.getElementById('svc-install-type');
+  const btn = document.getElementById('svc-install-login-btn');
+  if (!typeEl || !btn) return;
+  const panel = document.querySelector('#resourceEditorOverlay > div');
+  let schema = {};
+  try { schema = JSON.parse(panel.dataset.schema || '{}'); } catch (_) { schema = {}; }
+  const config = _collectSchemaValues(schema);
+  const provider = String(config.provider || '').trim();
+  const eligible = typeEl.value === 'rcloneOAuthCredentials' && (provider === 'drive' || provider === 'onedrive');
+  btn.style.display = eligible ? '' : 'none';
+}
+
+async function _submitServiceInstall(loginAfterInstall) {
   const name = (document.getElementById('svc-install-name').value || '').trim();
   const svcType = document.getElementById('svc-install-type').value;
   const desc = (document.getElementById('svc-install-desc').value || '').trim();
@@ -3338,14 +3361,28 @@ async function _submitServiceInstall() {
   const schema = JSON.parse(panel.dataset.schema || '{}');
   const config = _collectSchemaValues(schema);
   const btn = document.getElementById('svc-install-btn');
+  const loginBtn = document.getElementById('svc-install-login-btn');
   btn.disabled = true; btn.textContent = t('installing');
+  if (loginBtn) { loginBtn.disabled = true; loginBtn.textContent = t('installing'); }
   try {
     const data = await rxjs.firstValueFrom(action$('service_install', { service_name: name, service_type: svcType, description: desc, config, scope, conversation_id: conversationId }));
-    if (data.error) { addMsg('error', data.error); btn.disabled = false; btn.textContent = t('install'); return; }
+    if (data.error) {
+      addMsg('error', data.error);
+      btn.disabled = false; btn.textContent = t('install');
+      if (loginBtn) { loginBtn.disabled = false; loginBtn.textContent = 'Installer + login'; }
+      return;
+    }
     addMsg('system', t('serviceInstalledSuccessfully', { service: name }));
     document.getElementById('resourceEditorOverlay').remove();
     loadResources();
-  } catch (e) { addMsg('error', e.message); btn.disabled = false; btn.textContent = t('install'); }
+    if (loginAfterInstall) {
+      fireAction('rclone_server_login', { service_id: name, scope });
+    }
+  } catch (e) {
+    addMsg('error', e.message);
+    btn.disabled = false; btn.textContent = t('install');
+    if (loginBtn) { loginBtn.disabled = false; loginBtn.textContent = 'Installer + login'; }
+  }
 }
 
 async function showServiceEditForm(serviceId, scope, readonly) {
@@ -3383,7 +3420,7 @@ async function showServiceEditForm(serviceId, scope, readonly) {
       formHtml += '<div style="border-top:1px solid var(--pf-border);padding-top:8px;margin-top:8px;">'
         + '<div style="color:var(--pf-muted);font-size:11px;margin-bottom:6px;font-weight:600;">' + escapeHtml(t('parameters')) + '</div>'
         + _renderSchemaFields(schema, config, ro)
-        + (ro ? '' : _renderServiceActions(actions, serviceId))
+        + (ro ? '' : _renderServiceActions(actions, serviceId, scope))
         + '</div>';
     } else {
       for (const [k, v] of Object.entries(config)) {

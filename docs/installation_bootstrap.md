@@ -1,7 +1,7 @@
 # PawFlow Installation Bootstrap
 
-This document defines the intended first-run installation flow for a self-hosted
-PawFlow server.
+This document defines the first-run installation flow for a self-hosted PawFlow
+server.
 
 ## Goals
 
@@ -19,18 +19,21 @@ Before starting either install path, run:
 bash scripts/doctor-pawflow.sh
 ```
 
-On Windows before WSL is installed, run the native PowerShell doctor instead:
+On Windows, PawFlow requires WSL2 plus Docker Desktop with WSL integration. Run
+the native PowerShell doctor only to verify or remediate those host
+prerequisites before entering WSL:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/doctor-pawflow.ps1
 ```
 
-For source builds, run `bash scripts/doctor-pawflow.sh --source`. The doctor
-checks Docker CLI/daemon access, WSL/Docker Desktop integration on Windows,
-Git for source installs, Docker socket availability for first-run runtime image
-builds, selected port availability, and prints OS-specific remediation steps.
-The PowerShell doctor specifically tells users to install WSL2 and Docker
-Desktop with WSL integration when those prerequisites are missing.
+For source builds, run `bash scripts/doctor-pawflow.sh --source` from inside the
+Linux/WSL environment. The doctor checks Docker CLI/daemon access, WSL/Docker
+Desktop integration on Windows, Git for source installs, Docker socket
+availability for first-run runtime image builds, selected port availability, and
+prints OS-specific remediation steps. The PowerShell doctor specifically tells
+users to install WSL2 and Docker Desktop with WSL integration when those
+requirements are missing; it is not a native Windows install path.
 
 ### Published image
 
@@ -42,6 +45,10 @@ bash scripts/install-pawflow.sh
 
 By default this pulls `ghcr.io/allcolor/pawflow:latest`, creates persistent
 volumes under `~/pawflow`, starts `pawflow-server`, and exposes port `9090`.
+The Docker entrypoint seeds missing repository/config defaults from the image
+into the persistent bind mounts before the server starts, so an empty
+`~/pawflow/data` directory still contains the installer flow templates after
+startup.
 
 Override values with flags or environment variables:
 
@@ -63,101 +70,96 @@ server image, then starts it with the same persistent volume layout.
 
 ## First Run Contract
 
-On a fresh server data volume, PawFlow should start in bootstrap mode:
+On a fresh server data volume, PawFlow starts in bootstrap mode:
 
-1. Build or verify required runtime images:
-   - `pawflow-claude-code:latest`
-   - `pawflow-relay-dev:latest`
-2. Deploy only the `PawFlow Installer` flow.
-3. Protect the installer with Private Gateway key `RoyBetty`.
+1. Deploy only the `PawFlow Installer` flow.
+2. Store the temporary bootstrap gateway key as an encrypted global secret.
+3. Protect the installer with a global `privateGateway` service referenced by
+   the installer `httpListener`.
 4. Generate and use a bootstrap self-signed TLS certificate.
 5. Persist installer progress in a server-side install state file.
 6. Never create a default user relay during bootstrap.
+7. Use the standalone relay runtime image for server workspaces; local source
+   mounts are opt-in development behavior only.
 
-The server container receives the host Docker socket when available so the
-bootstrap can build those runtime images from inside the PawFlow container. The
-install script mounts `/var/run/docker.sock` and adds the socket group ID as a
-supplemental group. If the socket is unavailable, bootstrap must surface a
-clear blocking error and instruct the user to mount Docker or build the images
-manually.
+The server container receives the host Docker socket when available so server
+workspace relays can be spawned later. The install script mounts
+`/var/run/docker.sock` and adds the socket group ID as a supplemental group. If
+the socket is unavailable, the server still installs, but server-side workspace
+creation remains blocked until Docker socket access is provided.
 
 `RoyBetty` is a temporary bootstrap key. The installer must force a replacement
-before finalization.
+before finalization. The bootstrap `privateGateway` service is disabled when the
+installer finalizes.
 
 Bootstrap HTTPS is mandatory. A first-run self-signed certificate is generated
 under `data/system/ssl/bootstrap.crt` with key
 `data/system/ssl/bootstrap.key`. The browser will show a trust warning until the
-wizard installs final certificates. If the bootstrap certificate cannot be
-generated, startup must fail loudly instead of falling back to plain HTTP.
+wizard installs final certificates. Final certificate configuration can use
+mounted cert/key files, a retained private self-signed certificate, or an
+ACME-compatible issuer such as Let's Encrypt; ZeroSSL and other ACME CAs can use
+the same abstraction. If the bootstrap certificate cannot be generated, startup
+must fail loudly instead of falling back to plain HTTP.
 
 The installer template is stored at
 `data/repository/flows/global/default/pawflow_installer/versions/1.0.0.json`.
 It defines `/install`, dynamic status at `GET /install/api`, and finalization at
-`POST /install/api/finalize`. Finalization requires the current bootstrap key,
-rejects keeping `RoyBetty`, stores only a SHA-256 digest of the replacement key,
-writes `install_complete=true`, and marks the installer deployment stopped for
-the next restart.
+`POST /install/api/finalize`. These routes sit behind the bootstrap
+`privateGateway` service. Finalization requires the current bootstrap key,
+rejects keeping `RoyBetty`, requires an admin password, stores only a SHA-256
+digest of the replacement gateway key, writes the final key as encrypted secret
+`privategateway.main`, creates the persistent `_private_gateway`, creates
+`_auth_gateway`, creates the selected `llmConnection`, creates
+`summarizer_service`, deploys `default.pawflow_agent:1.0.0` as
+`pawflow-agent`, creates a starter conversation with the `assistant` agent
+selected, writes `install_complete=true`, disables `_bootstrap_private_gateway`,
+and marks the installer deployment stopped for restart-safe restoration.
 
 ## Wizard Steps
 
-1. Server endpoint
-   - public base URL
-   - HTTP/HTTPS port
-   - certificate upload, generated certificate, or mounted cert path
-   - ACME-compatible certificate generation, starting with Let's Encrypt
-     support; ZeroSSL and other ACME CAs can use the same abstraction later
-   - self-signed certificate generation for private/local deployments
-   - bind and certificate validation
-
-2. Private Gateway
+1. Private Gateway
    - configure final gateway key
    - reject `RoyBetty` as a final key
-   - validate access through the final gateway
+   - persist only `privategateway.main` plus a digest in install state
 
-3. Authentication
+2. Authentication
    - internal auth
-   - Google OAuth
-   - OAuth secrets stored through the secret store
-   - redirect URI validation
+   - create or update the local admin user
+   - reject admin passwords shorter than 12 characters
 
-4. Admin user
-   - create local admin
-   - optionally link the admin to Google OAuth
-   - validate login
+3. LLM service
+   - create the selected LLM service ID
+   - default wizard values are `codex_appserver_llm_service`, provider
+     `codex-app-server`, and model `gpt-5.5`
+   - store an optional API key as encrypted secret `llm.<service_id>.api_key`
+   - assign this explicit service to the starter conversation agent
 
-5. LLM services
-   - create one or more LLM services
-   - store provider secrets through the secret store
-   - test each service
-   - select the default service for the PawFlow Agent
+4. Summarizer service
+   - create `summarizer_service`
+   - point it to the selected LLM service
 
-6. Summarizer service
-   - choose the service used by compaction/background summaries
-   - restrict choices to configured LLM services that can handle summarization
-   - validate the summarizer with a short smoke summary
-   - persist the selected service in server/flow parameters
+5. Main flow and conversation
+   - deploy `default.pawflow_agent:1.0.0` as `pawflow-agent`
+   - pass the final Private Gateway service explicitly to the listener
+   - create a starter conversation for the admin user
+   - add `assistant` to `conv_agents` with the selected LLM service
+   - set `active_resources.agent=assistant`
 
-7. Variables and secrets
-   - create server/global variables used by deployed flows
-   - create required secrets through the secret store
-   - support OAuth client secrets, provider API keys, gateway material, and flow-specific secrets
-   - store only secret IDs/references in installer state
-   - validate references resolve without exposing secret values
+6. Variables and secrets
+   - gateway material and optional provider API keys are stored through the
+     encrypted secret store
+   - installer state stores only secret IDs/references and non-secret digests
+   - additional variables and secrets remain configurable from the normal
+     system settings and services UI after installation
 
-8. CLI credential pools
-   - Claude Code, Codex, and Gemini login workflows
-   - run login inside the CLI container image
-   - verify provider auth status
-   - store credentials only in the intended runtime/session directories
-
-9. Relay image profiles
+7. Relay image profiles
    - server relays use the official `server-full` relay image profile
    - client relays are configured later by the user from selectable capabilities
    - expose `client-minimal`, language presets, desktop/browser presets, and advanced per-feature checkboxes
    - always include the required PawFlow relay base with Python runtime, FUSE mounts, and `/workspace`/`/cc_sessions`/`/filestore` mountpoints
    - generate a Dockerfile, build script, run/register script, and manifest from `config/relay_image_catalog.json`
 
-10. Final review and smoke tests
+8. Final review and smoke tests
    - gateway final key works
    - login works
    - `/chat` responds
@@ -168,14 +170,12 @@ the next restart.
    - configured variables resolve
    - configured secret references resolve without leaking values
 
-11. Finalize
+9. Finalize
    - write final config
-   - deploy `http_listener`
    - deploy `PawFlow Agent`
-   - start both flows
    - mark `install_complete=true`
    - disable the installer flow
-   - redirect to gateway -> login -> empty webchat
+   - redirect to gateway -> login -> webchat with a starter conversation
 
 ## Install State
 
@@ -193,16 +193,19 @@ rollback are possible:
     "gateway": {},
     "auth": {},
     "admin": {},
-    "llm_services": [],
-    "summarizer_service": "claude_code_llm_service",
-    "variables": {},
-    "secrets": [],
-    "cli_credentials": []
+    "llm_services": {"primary": "codex_appserver_llm_service"},
+    "summarizer_service": {"service_id": "summarizer_service"},
+    "flows": {"main_instance_id": "pawflow-agent"},
+    "conversation": {"conversation_id": "...", "agent": "assistant"}
   },
   "checks": {
-    "docker_images_built": true,
-    "gateway_tested": true,
-    "oauth_tested": false
+    "final_private_gateway": true,
+    "auth_gateway": true,
+    "admin_user": true,
+    "llm_service": true,
+    "summarizer_service": true,
+    "main_flow_deployed": true,
+    "first_conversation": true
   }
 }
 ```

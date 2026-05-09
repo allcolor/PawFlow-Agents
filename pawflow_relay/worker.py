@@ -1866,10 +1866,15 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                     continue
                 if _mtype == "remote_mount_manifest":
                     if _remote_mount_mgr is not None:
-                        try:
-                            _remote_mount_mgr.reconcile(msg.get("manifest") or {})
-                        except Exception as _rme:
-                            sys.stderr.write(f"[RemoteFS] reconcile failed: {_rme}\n")
+                        _manifest = msg.get("manifest") or {}
+                        def _reconcile_remote_mounts(_m=_manifest):
+                            try:
+                                _remote_mount_mgr.reconcile(_m)
+                            except Exception as _rme:
+                                sys.stderr.write(f"[RemoteFS] reconcile failed: {_rme}\n")
+                        _threading.Thread(
+                            target=_reconcile_remote_mounts, daemon=True,
+                            name="remote-mount-reconcile").start()
                     continue
                 if _mtype == "spawn_relay":
                     # Server asks us to create a child relay for a different root

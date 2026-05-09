@@ -365,6 +365,79 @@ class TestPersistence:
         sdef = self.reg.get_definition(self.SCOPE, "alice", "mydb")
         assert sdef.config["password"] == "${db_pass}"
 
+    def test_sensitive_expression_reference_is_encrypted_on_disk(self):
+        from core.service_registry import ServiceRegistry, SCOPE_USER
+
+        self.reg.install(
+            self.SCOPE,
+            "alice",
+            "drive1",
+            "rcloneFilesystem",
+            config={"rclone_type": "sftp", "pass": "${rclone_pass}"},
+            enabled=False,
+        )
+        filepath = self.mod._user_services_dir() / "alice" / "drive1.json"
+        data = json.loads(filepath.read_text(encoding="utf-8"))
+
+        assert data["config"]["pass"].startswith("enc:")
+        assert data["config"]["pass"] != "${rclone_pass}"
+
+        ServiceRegistry.reset()
+        reg2 = ServiceRegistry.get_instance()
+        sdef = reg2.get_definition(SCOPE_USER, "alice", "drive1")
+        assert sdef.config["pass"] == "${rclone_pass}"
+
+    def test_live_service_resolves_sensitive_expression_after_decrypt(self, monkeypatch):
+        marker = "$" + "{rclone_pass}"
+        monkeypatch.setattr(
+            "core.expression._load_user_secrets",
+            lambda username: {"rclone_pass": "resolved-pass"},
+        )
+
+        self.reg.install(
+            self.SCOPE,
+            "alice",
+            "drive1",
+            "rcloneFilesystem",
+            config={"rclone_type": "sftp", "pass": marker},
+            enabled=True,
+        )
+        svc = self.reg.get_live_instance(self.SCOPE, "alice", "drive1")
+
+        assert svc.config.get("pass") == "resolved-pass"
+
+    def test_conversation_service_sensitive_fields_are_encrypted_in_extras(self, monkeypatch):
+        from core.service_registry import ServiceRegistry, SCOPE_CONV, CONV_EXTRAS_KEY
+
+        class _Store:
+            def __init__(self):
+                self.extras = {}
+
+            def get_extra(self, cid, key, default=None):
+                return self.extras.get((cid, key), default)
+
+            def set_extra(self, cid, key, value):
+                self.extras[(cid, key)] = value
+
+        store = _Store()
+        monkeypatch.setattr("core.conversation_store.ConversationStore.instance", staticmethod(lambda: store))
+
+        self.reg.install(
+            SCOPE_CONV,
+            "conv1",
+            "drive1",
+            "rcloneFilesystem",
+            config={"rclone_type": "sftp", "pass": "${rclone_pass}"},
+            enabled=False,
+        )
+        stored = store.extras[("conv1", CONV_EXTRAS_KEY)]["drive1"]
+        assert stored["config"]["pass"].startswith("enc:")
+
+        ServiceRegistry.reset()
+        reg2 = ServiceRegistry.get_instance()
+        sdef = reg2.get_definition(SCOPE_CONV, "conv1", "drive1")
+        assert sdef.config["pass"] == "${rclone_pass}"
+
 
 # ── ServiceDef ────────────────────────────────────────────────────
 

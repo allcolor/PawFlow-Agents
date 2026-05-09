@@ -38,6 +38,7 @@ All backends are wrapped in `PermissionEnforcedFilesystem` which enforces:
 | `filesystem` | Server disk (admin only) | Yes | Admin role |
 | `googleDrive` | Google Drive via REST API | No | OAuth2 authorization |
 | `oneDrive` | OneDrive via Graph API | No | OAuth2 authorization |
+| `rcloneOAuthCredentials` | Encrypted rclone OAuth credentials for Drive/OneDrive mounts | No | noVNC login or raw rclone config body |
 | `rcloneFilesystem` | Rclone remote config for relay-side native mounts | No | user/conversation scope service |
 
 ## Quick Start — Local Filesystem (HTTP Relay)
@@ -146,6 +147,11 @@ The link is conversation-scoped, not relay-scoped. When a relay reconnects,
 PawFlow rebuilds the manifest from the conversation bindings and asks the relay
 to reconcile `/remote` with `rclone mount`.
 
+Relay images install rclone from the official upstream binary, not the Ubuntu
+package. The distro package can lag behind upstream and has produced noisy FUSE
+`Input/output error` messages for SELinux/ACL extended-attribute probes during
+commands such as `ls -l`, even while normal `stat` and file reads succeed.
+
 Security rules:
 
 - Linking a remote filesystem sends the relay the credentials required by
@@ -157,16 +163,33 @@ Security rules:
   Native `googleDrive` and `oneDrive` services stay API-backed and are not
   mounted into relays.
 
-For S3, SFTP, WebDAV, or other rclone backends, create an `rcloneFilesystem`
-service, then link that service to the conversation. The service form is driven
-by `rclone_type`: selecting `sftp`, `s3`, `webdav`, `ftp`, `azureblob`, or `gcs`
-shows only the guided fields that rclone uses for that backend. Fields that are
-not visible are not saved into the generated rclone config.
+For S3, SFTP, WebDAV, or other non-OAuth rclone backends, create an
+`rcloneFilesystem` service, then link that service to the conversation. The
+service form is driven by `rclone_type`: selecting `sftp`, `s3`, `webdav`, `ftp`,
+`azureblob`, or `gcs` shows only the guided fields that rclone uses for that
+backend. Fields that are not visible are not saved into the generated rclone
+config.
 
-`rclone_config` is an advanced escape hatch. If it is set, PawFlow sends that raw
-rclone config body to the relay instead of generating config from the guided
-fields. Use it for OAuth-style remotes such as Google Drive or OneDrive, or for
-backend options that are not exposed by the guided form yet.
+`rclone_config` on `rcloneFilesystem` is an advanced escape hatch for non-OAuth
+backends. If it is set, PawFlow sends that raw rclone config body to the relay
+instead of generating config from the guided fields. Paste only the body of the
+rclone remote, not the `[remote]` header. The field is sensitive: PawFlow encrypts
+it at rest. It may also contain a secret reference such as `${sftp_rclone_config}`;
+the service value is decrypted first, then normal expression resolution resolves
+the referenced secret.
+
+OAuth-backed rclone backends (`drive` and `onedrive`) use two services:
+
+1. Create a `rcloneOAuthCredentials` service with provider `drive` or `onedrive`.
+   This service owns the encrypted rclone OAuth config fragment and exposes
+   **Login via server**. PawFlow starts a temporary noVNC desktop, runs
+   `rclone config create`, opens the provider browser authorization flow, then
+   stores the generated remote body back into the credential service. Closing
+   the dialog cleans up the temporary container.
+2. Create an `rcloneFilesystem` service with the same `rclone_type` and set
+   `credential_service_id` to the credentials service. Link the filesystem
+   service to the conversation; the relay manifest combines the filesystem
+   mount settings with the referenced credential service to build `rclone.conf`.
 
 ## Server Filesystem (Admin Only)
 

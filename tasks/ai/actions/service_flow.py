@@ -23,6 +23,18 @@ def _publish_command_result(conversation_id: str, result: dict):
         bus.publish_event(conversation_id, "command_result",
                           {"result": json.dumps(result, ensure_ascii=False)})
 
+
+def _notify_remote_mounts_after_service_change(sdef, conversation_id: str, user_id: str) -> None:
+    if not conversation_id or not user_id:
+        return
+    if getattr(sdef, "service_type", "") not in {"rcloneFilesystem", "rcloneOAuthCredentials"}:
+        return
+    try:
+        from core.remote_fs_bindings import notify_linked_relays
+        notify_linked_relays(conversation_id, user_id)
+    except Exception:
+        logger.debug("Remote FS relay notification after service update failed", exc_info=True)
+
 # Pending OAuth flows (in-memory, keyed by service_id)
 _oauth_pending: Dict[str, Dict[str, str]] = {}
 
@@ -85,6 +97,7 @@ _SERVICE_CATEGORY_BY_TYPE = {
     "fishAudioVoiceClone": "voice",
     "filesystem": "filesystem",
     "rcloneFilesystem": "filesystem",
+    "rcloneOAuthCredentials": "filesystem",
     "googleDrive": "filesystem",
     "oneDrive": "filesystem",
     "fileTracking": "filesystem",
@@ -177,6 +190,20 @@ def _store_gemini_tokens(service_id, access_token, refresh_token, expires_at,
         access_token, refresh_token, expires_at,
         account=account, service_id=service_id)
     logger.info("Gemini credential added to pool for '%s'", service_id)
+
+
+def _resolve_service_definition_for_action(service_id: str, user_id: str,
+                                           conversation_id: str = "",
+                                           scope_arg: str = ""):
+    from core.service_registry import ServiceRegistry
+    reg = ServiceRegistry.get_instance()
+    scope_arg = (scope_arg or "").strip()
+    if scope_arg:
+        scope = _normalize_service_scope(scope_arg)
+        return reg.get_definition(
+            scope, _service_scope_id(scope, user_id, conversation_id), service_id)
+    return reg.resolve_definition(
+        service_id, user_id=user_id, conv_id=conversation_id)
 
 
 _PARAM_SCHEMA_KEYS = {
@@ -901,8 +928,12 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             return [flowfile]
         try:
             from core.service_registry import ServiceRegistry
-            ServiceRegistry.get_instance().update_config(
-                scope, _service_scope_id(scope, user_id, conv_id), sid, config)
+            registry = ServiceRegistry.get_instance()
+            scope_id = _service_scope_id(scope, user_id, conv_id)
+            sdef = registry.get_definition(scope, scope_id, sid)
+            registry.update_config(scope, scope_id, sid, config)
+            if sdef:
+                _notify_remote_mounts_after_service_change(sdef, conv_id, user_id)
             flowfile.set_content(json.dumps({"ok": True}).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
@@ -3402,6 +3433,242 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             return [flowfile]
         flowfile.set_content(json.dumps({
             "ok": True, "message": "Gemini credentials saved!",
+        }).encode())
+        return [flowfile]
+
+    # -- Rclone OAuth login via server (noVNC) ------------------------
+
+    if action == "rclone_server_login":
+        service_id = body.get("service_id", "")
+        conversation_id = body.get("conversation_id", "")
+        scope_arg = body.get("scope", "")
+        if not service_id:
+            flowfile.set_content(json.dumps({"error": "Missing service_id"}).encode())
+            return [flowfile]
+        try:
+            sdef = _resolve_service_definition_for_action(
+                service_id, user_id, conversation_id, scope_arg)
+            if not sdef:
+                flowfile.set_content(json.dumps({"error": f"Service '{service_id}' not found"}).encode())
+                return [flowfile]
+            if sdef.service_type != "rcloneOAuthCredentials":
+                flowfile.set_content(json.dumps({"error": f"Service '{service_id}' is not an rclone OAuth credential service"}).encode())
+                return [flowfile]
+            if sdef.scope == "global" and not _is_admin(flowfile):
+                flowfile.set_content(json.dumps({"error": "Requires admin role for global rclone credential login"}).encode())
+                flowfile.set_attribute("http.response.status", "403")
+                return [flowfile]
+            cfg = sdef.config or {}
+            rclone_type = str(cfg.get("provider") or "").strip()
+            if rclone_type not in {"drive", "onedrive"}:
+                flowfile.set_content(json.dumps({
+                    "error": "Server login is only available for drive and onedrive rclone OAuth credentials",
+                }).encode())
+                return [flowfile]
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": f"Cannot verify service: {e}"}).encode())
+            return [flowfile]
+
+        try:
+            import uuid as _uuid
+            from pawflow_relay.utils import find_free_port as _find_free_port
+            session_id = _uuid.uuid4().hex[:12]
+            free_port = _find_free_port()
+            container_name = f"pawflow-rclone-login-{session_id}"
+            image = "pawflow-claude-code:latest"
+            logger.info("[rclone-login] Creating session %s (port %d)", session_id, free_port)
+            from services.vnc_proxy import register_session, vnc_ws_proxy, vnc_http_proxy
+            _vnc_token = register_session(
+                session_id, free_port,
+                owner_user_id=user_id,
+                conversation_id=conversation_id,
+                login_session_id=flowfile.get_attribute("auth.session_id") or "",
+                container=container_name, service_id=service_id,
+                service_scope=sdef.scope, service_scope_id=sdef.scope_id,
+                rclone_type=rclone_type, user_id=user_id,
+                launch_time=time.time(), ready=False)
+        except Exception as e:
+            logger.error("[rclone-login] Setup failed: %s", e, exc_info=True)
+            flowfile.set_content(json.dumps({"error": f"Login setup failed: {e}"}).encode())
+            return [flowfile]
+
+        def _bg_setup_rclone():
+            import os as _os
+            import subprocess as _sp
+            from core.docker_utils import (
+                docker_cmd as _docker_cmd,
+                to_host_path as _to_host_path,
+                translate_path as _translate_path,
+            )
+            try:
+                _project_root = _os.path.dirname(_os.path.dirname(
+                    _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))
+                _script_src = _os.path.join(
+                    _project_root, "docker", "claude-code", "rclone_auth_login.sh")
+                _script_mount = []
+                if _os.path.exists(_script_src):
+                    _script_mount = [
+                        "-v",
+                        f"{_translate_path(_to_host_path(_script_src))}:/opt/pawflow/rclone_auth_login.sh:ro",
+                    ]
+                docker_cmd = _docker_cmd() + [
+                    "run", "--rm", "--detach",
+                    "--name", container_name,
+                    "-p", f"{free_port}:6080",
+                    "--shm-size", "512m",
+                    "-e", "HOME=/home/pawflow",
+                    "-e", f"PAWFLOW_RCLONE_TYPE={rclone_type}",
+                    *_script_mount,
+                    "--entrypoint", "bash",
+                    image,
+                    "/opt/pawflow/rclone_auth_login.sh",
+                ]
+                logger.info("[rclone-login] Starting container %s on port %d", container_name, free_port)
+                result = _sp.run(docker_cmd, capture_output=True, text=True, timeout=30)
+                if result.returncode != 0:
+                    logger.error("[rclone-login] Docker failed: %s", result.stderr[:300])
+                    from services.vnc_proxy import update_session_error
+                    update_session_error(session_id, f"Docker failed: {result.stderr[:200]}")
+                    _publish_command_result(_conv_id, {"error": f"Docker failed: {result.stderr[:200]}"})
+                    return
+            except Exception as e:
+                logger.error("[rclone-login] Docker error: %s", e)
+                from services.vnc_proxy import update_session_error
+                update_session_error(session_id, str(e))
+                _publish_command_result(_conv_id, {"error": f"Login failed: {e}"})
+                return
+
+            import urllib.request
+            for _attempt in range(15):
+                try:
+                    urllib.request.urlopen(f"http://127.0.0.1:{free_port}/", timeout=2)
+                    logger.info("[rclone-login] noVNC ready on port %d", free_port)
+                    break
+                except Exception:
+                    time.sleep(1)
+
+            try:
+                svc = _find_http_listener()
+                if svc:
+                    _vnc_owner = "_vnc_proxy"
+                    existing = [r for r in svc.get_routes() if r.get("owner") == _vnc_owner]
+                    if not existing:
+                        svc.register_route("GET", "/vnc/{session_id}/{token}/websockify",
+                                           _vnc_owner, callback=lambda req: None,
+                                           ws_handler=vnc_ws_proxy)
+                        svc.register_route("GET", "/vnc/{session_id}/{token}/{path+}",
+                                           _vnc_owner, callback=vnc_http_proxy)
+                else:
+                    logger.warning("[rclone-login] HTTPListenerService NOT FOUND")
+            except Exception as e:
+                logger.warning("[rclone-login] Route registration failed: %s", e)
+
+            from services.vnc_proxy import update_session_ready
+            update_session_ready(session_id)
+            from core.conversation_event_bus import ConversationEventBus
+            ConversationEventBus.instance().publish_event(
+                conversation_id, "vnc_login_ready", {
+                    "session_id": session_id,
+                    "service_id": service_id,
+                    "scope": sdef.scope,
+                    "token": _vnc_token,
+                    "cli": "rclone",
+                })
+
+        _conv_id = conversation_id
+        threading.Thread(target=_bg_setup_rclone, daemon=True, name=f"rclone-login-{session_id}").start()
+        flowfile.set_content(json.dumps({
+            "ok": True, "message": "Starting rclone login container...",
+        }).encode())
+        return [flowfile]
+
+    if action == "rclone_server_login_cleanup":
+        session_id = body.get("session_id", "")
+        from services.vnc_proxy import _sessions as _vnc_sessions, unregister_session
+        session = _vnc_sessions.get(session_id)
+        if session:
+            import subprocess as _sp
+            from core.docker_utils import docker_cmd as _docker_cmd
+            try:
+                _sp.run(_docker_cmd() + ["rm", "-f", session.get("container", "")],
+                        capture_output=True, timeout=10)
+            except Exception:
+                pass
+            unregister_session(session_id)
+        flowfile.set_content(json.dumps({"ok": True}).encode())
+        return [flowfile]
+
+    if action == "rclone_server_login_status":
+        session_id = body.get("session_id", "")
+        service_id = body.get("service_id", "")
+        from services.vnc_proxy import _sessions as _vnc_sessions, unregister_session
+        session = _vnc_sessions.get(session_id)
+        if not session:
+            flowfile.set_content(json.dumps({"error": "Unknown session"}).encode())
+            return [flowfile]
+        if session.get("error"):
+            unregister_session(session_id)
+            flowfile.set_content(json.dumps({"error": session["error"]}).encode())
+            return [flowfile]
+        if not session.get("ready"):
+            flowfile.set_content(json.dumps({"status": "starting"}).encode())
+            return [flowfile]
+
+        import subprocess as _sp
+        from core.docker_utils import docker_cmd as _docker_cmd
+        container = session["container"]
+        try:
+            result_dir = "/tmp/pawflow-rclone-login"
+            error_result = _sp.run(
+                _docker_cmd() + ["exec", container, "bash", "-c", f"cat {result_dir}/rclone_error.txt 2>/dev/null"],
+                capture_output=True, text=True)
+            if error_result.returncode == 0 and error_result.stdout.strip():
+                flowfile.set_content(json.dumps({"error": error_result.stdout.strip()[:500]}).encode())
+                return [flowfile]
+            stat_result = _sp.run(
+                _docker_cmd() + ["exec", container, "bash", "-c", f"test -s {result_dir}/rclone_config_body.txt"],
+                capture_output=True, text=True)
+            if stat_result.returncode != 0:
+                flowfile.set_content(json.dumps({"status": "pending"}).encode())
+                return [flowfile]
+            read_result = _sp.run(
+                _docker_cmd() + ["exec", container, "bash", "-c", f"cat {result_dir}/rclone_config_body.txt"],
+                capture_output=True, text=True)
+            rclone_config = read_result.stdout.strip()
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": f"Failed to read rclone config: {e}"}).encode())
+            return [flowfile]
+
+        if not rclone_config or "type =" not in rclone_config:
+            flowfile.set_content(json.dumps({"error": "Generated rclone config is empty or invalid"}).encode())
+            return [flowfile]
+
+        try:
+            from core.service_registry import ServiceRegistry
+            reg = ServiceRegistry.get_instance()
+            service_scope = session.get("service_scope", "") or _normalize_service_scope(body.get("scope", ""))
+            service_scope_id = session.get("service_scope_id", "") or _service_scope_id(
+                service_scope, user_id, body.get("conversation_id", ""))
+            reg.update_config(service_scope, service_scope_id, service_id, {
+                "rclone_config": rclone_config,
+            })
+            try:
+                from core.remote_fs_bindings import notify_linked_relays
+                notify_linked_relays(session.get("conversation_id", ""), user_id)
+            except Exception:
+                logger.debug("Remote FS relay notification after rclone login failed", exc_info=True)
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": f"Failed to save rclone config: {e}"}).encode())
+            return [flowfile]
+
+        try:
+            _sp.run(_docker_cmd() + ["rm", "-f", container], capture_output=True, timeout=10)
+        except Exception:
+            pass
+        unregister_session(session_id)
+        flowfile.set_content(json.dumps({
+            "ok": True,
+            "message": "Rclone config saved in service.",
         }).encode())
         return [flowfile]
 

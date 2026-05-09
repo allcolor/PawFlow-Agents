@@ -36,6 +36,13 @@ class RcloneFilesystemService(BaseService):
                 "options": ["read", "readwrite"],
                 "description": "Default mount mode when linked to a conversation",
             },
+            "credential_service_id": {
+                "type": "service_ref", "required": False,
+                "service_type": "rcloneOAuthCredentials",
+                "provider_field": "rclone_type",
+                "label": "OAuth credential service",
+                "description": "Rclone OAuth credential service used for drive and onedrive mounts",
+            },
             "host": {"type": "string", "required": False, "label": "Host", "description": "Server hostname for SFTP or FTP"},
             "port": {"type": "integer", "required": False, "label": "Port", "description": "Server port. Defaults are backend-specific when left empty."},
             "user": {"type": "string", "required": False, "label": "Username", "description": "Remote username"},
@@ -56,7 +63,7 @@ class RcloneFilesystemService(BaseService):
             "rclone_config": {
                 "type": "textarea", "required": False, "sensitive": True,
                 "label": "Raw rclone config",
-                "description": "Advanced override. Paste the body of an rclone config for this remote; when set, it replaces the guided fields above.",
+                "description": "Advanced override. Paste the body of an rclone config for this remote, without the [remote] header; when set, it replaces the guided fields above. Sensitive values are encrypted at rest and may also reference secrets with ${name}.",
             },
         }
 
@@ -65,7 +72,8 @@ class RcloneFilesystemService(BaseService):
             "host", "port", "user", "pass", "key_file", "provider",
             "access_key_id", "secret_access_key", "endpoint", "region",
             "url", "vendor", "account", "key", "sas_url",
-            "service_account_file", "project_number",
+            "service_account_file", "project_number", "credential_service_id",
+            "rclone_config",
         ]
 
         def rule(rclone_type: str, visible: list[str], required: list[str] | None = None,
@@ -80,15 +88,18 @@ class RcloneFilesystemService(BaseService):
             return {"when": {"rclone_type": rclone_type}, "set": fields}
 
         return [
-            rule("sftp", ["host", "port", "user", "pass", "key_file"], ["host", "user"], {"port": "22"}),
-            rule("ftp", ["host", "port", "user", "pass"], ["host"], {"port": "21"}),
-            rule("webdav", ["url", "vendor", "user", "pass"], ["url"], {"vendor": "other"}),
-            rule("s3", ["provider", "access_key_id", "secret_access_key", "endpoint", "region"], ["provider"], {"provider": "AWS"}),
-            rule("azureblob", ["account", "key", "sas_url", "endpoint"], ["account"]),
-            rule("gcs", ["service_account_file", "project_number"], []),
-            rule("drive", [], ["rclone_config"]),
-            rule("onedrive", [], ["rclone_config"]),
+            rule("sftp", ["host", "port", "user", "pass", "key_file", "rclone_config"], ["host", "user"], {"port": "22"}),
+            rule("ftp", ["host", "port", "user", "pass", "rclone_config"], ["host"], {"port": "21"}),
+            rule("webdav", ["url", "vendor", "user", "pass", "rclone_config"], ["url"], {"vendor": "other"}),
+            rule("s3", ["provider", "access_key_id", "secret_access_key", "endpoint", "region", "rclone_config"], ["provider"], {"provider": "AWS"}),
+            rule("azureblob", ["account", "key", "sas_url", "endpoint", "rclone_config"], ["account"]),
+            rule("gcs", ["service_account_file", "project_number", "rclone_config"], []),
+            rule("drive", ["credential_service_id"], ["credential_service_id"]),
+            rule("onedrive", ["credential_service_id"], ["credential_service_id"]),
         ]
+
+    def get_service_actions(self) -> list:
+        return []
 
     def _create_connection(self):
         return self

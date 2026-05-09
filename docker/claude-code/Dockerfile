@@ -2,9 +2,18 @@ FROM node:22-slim
 
 # System deps for Claude Code + Python for MCP bridge + display for auth login
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 python3-pip git ca-certificates curl chrony \
+    python3 python3-pip git ca-certificates curl unzip chrony \
     xvfb x11vnc novnc websockify chromium dbus-x11 xterm \
     && rm -rf /var/lib/apt/lists/*
+
+# Use upstream rclone instead of the distro package so OAuth config generation
+# and relay-side mount behavior match current rclone releases.
+ARG DOWNLOAD_RCLONE_VERSION=current
+RUN curl -fsSL "https://downloads.rclone.org/rclone-${DOWNLOAD_RCLONE_VERSION}-linux-amd64.zip" -o /tmp/rclone.zip \
+    && unzip -q /tmp/rclone.zip -d /tmp/rclone-dist \
+    && install -m 0755 /tmp/rclone-dist/*/rclone /usr/local/bin/rclone \
+    && rclone version \
+    && rm -rf /tmp/rclone.zip /tmp/rclone-dist
 
 # Install agent CLIs (Claude Code + Codex + Gemini) — single image hosts all three;
 # the pool decides which binary to exec per-spawn so they share base layers + caches.
@@ -39,7 +48,8 @@ ENV CI=true
 COPY auth_login.sh /opt/pawflow/auth_login.sh
 COPY codex_auth_login.sh /opt/pawflow/codex_auth_login.sh
 COPY gemini_auth_login.sh /opt/pawflow/gemini_auth_login.sh
-RUN chmod +x /opt/pawflow/auth_login.sh /opt/pawflow/codex_auth_login.sh /opt/pawflow/gemini_auth_login.sh
+COPY rclone_auth_login.sh /opt/pawflow/rclone_auth_login.sh
+RUN chmod +x /opt/pawflow/auth_login.sh /opt/pawflow/codex_auth_login.sh /opt/pawflow/gemini_auth_login.sh /opt/pawflow/rclone_auth_login.sh
 
 # Browser wrapper for Claude Code auth login (Chromium with Docker-safe flags)
 RUN printf '#!/bin/bash\nexec chromium --no-sandbox --disable-gpu --disable-dev-shm-usage --disable-software-rasterizer --window-size=1280,800 "$@"\n' \

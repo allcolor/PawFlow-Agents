@@ -30,7 +30,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends sudo \
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git curl wget ca-certificates gnupg2 software-properties-common \
     build-essential make cmake pkg-config autoconf automake libtool \
-    jq sqlite3 libsqlite3-dev openssh-client unzip zip rclone \
+    jq sqlite3 libsqlite3-dev openssh-client unzip zip \
     ripgrep fd-find bat tree htop strace ltrace \
     file less man-db chrony \
     libffi-dev libssl-dev zlib1g-dev libbz2-dev libreadline-dev \
@@ -38,6 +38,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libfontconfig1-dev libxkbcommon-dev libgtk-3-dev libayatana-appindicator3-dev \
     fuse3 libfuse3-dev \
     && rm -rf /var/lib/apt/lists/*
+
+# Ubuntu's rclone package can lag behind upstream and has produced noisy FUSE
+# xattr EIOs on long listings. Use the official static binary for mounts.
+ARG DOWNLOAD_RCLONE_VERSION=current
+RUN curl -fsSL "https://downloads.rclone.org/rclone-${DOWNLOAD_RCLONE_VERSION}-linux-amd64.zip" -o /tmp/rclone.zip \
+    && unzip -q /tmp/rclone.zip -d /tmp/rclone-dist \
+    && install -m 0755 /tmp/rclone-dist/*/rclone /usr/local/bin/rclone \
+    && rclone version \
+    && rm -rf /tmp/rclone.zip /tmp/rclone-dist
 
 # ── Python ──────────────────────────────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -255,11 +264,13 @@ RUN mkdir -p /workspace /cc_sessions /filestore \
     && (groupadd -f docker; usermod -aG docker pawflow) 2>/dev/null || true
 
 # ── PawFlow relay + SDK ────────────────────────────────────────────
-# Scripts are no longer baked into the image — pawflow_relay/thread.py
-# dev-mounts the current tree from the host onto /opt/pawflow/*.py at
-# container start, so iteration is instant (no rebuild needed). We just
-# prep the target directory so the binds land somewhere.
+# The published relay image must be standalone: Docker socket users run the
+# daemon on the host, so it cannot bind-mount /app/tools from inside the
+# PawFlow server container. Local dev can still opt into code mounts at runtime.
 RUN mkdir -p /opt/pawflow
+COPY tools/ /opt/pawflow/
+COPY pawflow_relay/ /opt/pawflow/pawflow_relay/
+RUN chown -R pawflow:pawflow /opt/pawflow
 # /workspace/.pylib is the host-mounted vendored deps dir — putting it on
 # PYTHONPATH means any python invocation inside the container (including
 # the relay itself and user scripts) sees the pinned/vendored packages

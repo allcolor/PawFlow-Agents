@@ -29,15 +29,18 @@ logger = logging.getLogger(__name__)
 #
 # Keys in global_parameters.json:
 #   server_relay_image      — Docker image (default: pawflow-relay-dev:latest)
-#   server_relay_tools_dir  — Path to tools/ dir on the server (relative to CWD),
-#                               mounted as /opt/pawflow/ so relay changes are live
-#                               without image rebuild (default: tools)
+#   server_relay_mount_code — truthy only for local dev. When enabled, mounts
+#                               server_relay_tools_dir and pawflow_relay/ over
+#                               the code embedded in the relay image.
+#   server_relay_tools_dir  — Path to tools/ dir on the server when dev mounts
+#                               are enabled (default: tools)
 #   server_relay_workspace  — Workspace dir in container (default: /workspace)
 #   server_relay_cpus       — CPU limit (default: 2)
 #   server_relay_memory     — Memory limit (default: 2g)
 
 _DEFAULTS = {
     "server_relay_image":     "pawflow-relay-dev:latest",
+    "server_relay_mount_code": "0",
     "server_relay_tools_dir": "tools",
     "server_relay_workspace": "/workspace",
     "server_relay_cpus":      "2",
@@ -52,6 +55,10 @@ def _cfg(key: str) -> str:
         return _load_global_parameters().get(key, _DEFAULTS[key])
     except Exception:
         return _DEFAULTS[key]
+
+
+def _truthy(value: str) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 from core.docker_utils import docker_cmd, get_host_ip, to_host_path
@@ -135,28 +142,33 @@ class ServerRelayManager:
 
         # Read config live from global_parameters.json
         relay_image = _cfg("server_relay_image")
+        relay_mount_code = _truthy(_cfg("server_relay_mount_code"))
         relay_tools_dir = _cfg("server_relay_tools_dir")  # relative to server CWD
         relay_workspace = _cfg("server_relay_workspace")
         relay_cpus = _cfg("server_relay_cpus")
         relay_memory = _cfg("server_relay_memory")
 
-        # Resolve tools/ dir to absolute path (relative to server CWD)
+        # The published relay image embeds the launcher and pawflow_relay package
+        # under /opt/pawflow. Dev mounts are opt-in because a PawFlow server
+        # running in Docker talks to the host daemon through docker.sock; the
+        # daemon cannot see /app/tools inside the server container.
         import os as _os
-        tools_abs = _os.path.abspath(relay_tools_dir)
-        # In DinD, translate container path to host path for Docker daemon
-        tools_host = to_host_path(tools_abs)
-        # tools/ is mounted as /opt/pawflow/ — same location as in the image.
-        # This means relay changes are live without rebuilding the image.
         _TOOLS_IN_CONTAINER = "/opt/pawflow"
         _SCRIPT_IN_CONTAINER = f"{_TOOLS_IN_CONTAINER}/pawflow_relay_launcher.py"
-
-        # Also mount pawflow_relay/ (the package) inside /opt/pawflow so the
-        # worker script can `from pawflow_relay.* import ...` as code moves
-        # out of the monolithic tools/pawflow_relay.py. Python's file finder
-        # prefers a package dir over a single-file module with the same name.
-        _pkg_abs = _os.path.abspath(
-            _os.path.join(_os.path.dirname(tools_abs), "pawflow_relay"))
-        _pkg_host = to_host_path(_pkg_abs) if _os.path.isdir(_pkg_abs) else ""
+        code_mount_args = []
+        if relay_mount_code:
+            tools_abs = _os.path.abspath(relay_tools_dir)
+            tools_host = to_host_path(tools_abs)
+            _pkg_abs = _os.path.abspath(
+                _os.path.join(_os.path.dirname(tools_abs), "pawflow_relay"))
+            _pkg_host = to_host_path(_pkg_abs) if _os.path.isdir(_pkg_abs) else ""
+            code_mount_args.extend([
+                "--volume", f"{tools_host}:{_TOOLS_IN_CONTAINER}:ro",
+            ])
+            if _pkg_host:
+                code_mount_args.extend([
+                    "--volume", f"{_pkg_host}:{_TOOLS_IN_CONTAINER}/pawflow_relay:ro",
+                ])
 
         # Register the relay service on the server BEFORE spawning the container.
         # RelayService.connect() registers /ws/relay/<service_id> on the main
@@ -174,9 +186,7 @@ class ServerRelayManager:
             "--name", container_name,
             "--volume", f"{volume}:{relay_workspace}",
             "--volume", f"pawflow_home_{relay_id}:/home/pawflow",
-            "--volume", f"{tools_host}:{_TOOLS_IN_CONTAINER}:ro",
-            *(["--volume", f"{_pkg_host}:{_TOOLS_IN_CONTAINER}/pawflow_relay:ro"]
-              if _pkg_host else []),
+            *code_mount_args,
             "--add-host", "host.docker.internal:host-gateway",
             "--cpus", relay_cpus,
             "--memory", relay_memory,

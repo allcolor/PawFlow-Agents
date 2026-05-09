@@ -19,7 +19,18 @@ INSTALL_STATE_FILE = _paths.RUNTIME_DIR / "install_state.json"
 INSTALLER_INSTANCE_ID = "pawflow-installer"
 INSTALLER_FLOW_FQN = "default.pawflow_installer:1.0.0"
 INSTALLER_TEMPLATE = _paths.flow_version_file("default", "pawflow_installer", "1.0.0")
+MAIN_INSTANCE_ID = "pawflow-agent"
+MAIN_FLOW_FQN = "default.pawflow_agent:1.0.0"
+MAIN_TEMPLATE = _paths.flow_version_file("default", "pawflow_agent", "1.0.0")
 DEFAULT_BOOTSTRAP_GATEWAY_KEY = "RoyBetty"
+BOOTSTRAP_GATEWAY_SECRET_REF = "privategateway.bootstrap"
+BOOTSTRAP_PRIVATE_GATEWAY_SERVICE_ID = "_bootstrap_private_gateway"
+FINAL_GATEWAY_SECRET_REF = "privategateway.main"
+FINAL_PRIVATE_GATEWAY_SERVICE_ID = "_private_gateway"
+AUTH_GATEWAY_SERVICE_ID = "_auth_gateway"
+DEFAULT_LLM_SERVICE_ID = "codex_appserver_llm_service"
+SUMMARIZER_SERVICE_ID = "summarizer_service"
+FIRST_RUN_AGENT = "assistant"
 BOOTSTRAP_CERT_FILE = _paths.SSL_DIR / "bootstrap.crt"
 BOOTSTRAP_KEY_FILE = _paths.SSL_DIR / "bootstrap.key"
 INSTALL_STEPS = [
@@ -120,7 +131,15 @@ def is_install_complete() -> bool:
 
 def _public_draft(draft: Dict[str, Any]) -> Dict[str, Any]:
     public: Dict[str, Any] = {}
-    for section in ("server", "gateway"):
+    for section in (
+        "server",
+        "gateway",
+        "auth",
+        "llm_services",
+        "summarizer_service",
+        "flows",
+        "conversation",
+    ):
         value = draft.get(section)
         if isinstance(value, dict):
             public[section] = dict(value)
@@ -142,6 +161,242 @@ def get_install_status() -> Dict[str, Any]:
         "checks": checks,
         "draft": draft,
     }
+
+
+def _store_global_secret(secret_ref: str, value: str) -> str:
+    """Persist a global secret value without rewriting unrelated raw entries."""
+    from core.config_store import ConfigStore
+    from core.secrets import get_secrets_manager
+
+    _paths.GLOBAL_SECRETS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    raw = ConfigStore.load_secrets_raw(_paths.GLOBAL_SECRETS_FILE)
+    sm = get_secrets_manager()
+    current = raw.get(secret_ref)
+    if isinstance(current, str) and current:
+        try:
+            if sm.decrypt(current) == value:
+                return secret_ref
+        except Exception:
+            pass
+    raw[secret_ref] = sm.encrypt(value)
+    _paths.GLOBAL_SECRETS_FILE.write_text(
+        json.dumps(raw, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return secret_ref
+
+
+def _store_bootstrap_gateway_secret(bootstrap_key: str) -> str:
+    """Persist the temporary bootstrap gateway key as an encrypted secret."""
+    _store_global_secret(BOOTSTRAP_GATEWAY_SECRET_REF, bootstrap_key)
+    return BOOTSTRAP_GATEWAY_SECRET_REF
+
+
+def _install_bootstrap_private_gateway(secret_ref: str) -> str:
+    """Install the global privateGateway used only by the first-run installer."""
+    from tasks import _register_all_services
+    from core.service_registry import ServiceRegistry, SCOPE_GLOBAL
+
+    _register_all_services()
+    ServiceRegistry.get_instance().install(
+        scope=SCOPE_GLOBAL,
+        scope_id="",
+        service_id=BOOTSTRAP_PRIVATE_GATEWAY_SERVICE_ID,
+        service_type="privateGateway",
+        config={
+            "enabled": True,
+            "secret_refs": secret_ref,
+            "skin": "matrix",
+        },
+        description="Temporary private gateway for first-run installation",
+        enabled=True,
+    )
+    return BOOTSTRAP_PRIVATE_GATEWAY_SERVICE_ID
+
+
+def _install_final_private_gateway(secret_ref: str) -> str:
+    """Install the persistent Private Gateway used by the normal PawFlow flow."""
+    from tasks import _register_all_services
+    from core.service_registry import ServiceRegistry, SCOPE_GLOBAL
+
+    _register_all_services()
+    ServiceRegistry.get_instance().install(
+        scope=SCOPE_GLOBAL,
+        scope_id="",
+        service_id=FINAL_PRIVATE_GATEWAY_SERVICE_ID,
+        service_type="privateGateway",
+        config={
+            "enabled": True,
+            "secret_refs": secret_ref,
+            "skin": "matrix",
+        },
+        description="Persistent private gateway for PawFlow",
+        enabled=True,
+    )
+    return FINAL_PRIVATE_GATEWAY_SERVICE_ID
+
+
+def _configure_admin_user(payload: Dict[str, Any]) -> str:
+    """Create or update the first admin user from installer input."""
+    from core.security import SecurityManager, Role
+
+    username = str(payload.get("admin_username") or "admin").strip()
+    password = str(payload.get("admin_password") or "")
+    if not username:
+        raise ValueError("admin_username is required")
+    if not password:
+        raise ValueError("admin_password is required")
+    if len(password) < 12:
+        raise ValueError("admin_password must be at least 12 characters")
+
+    sm = SecurityManager.get_instance()
+    if sm.get_user(username):
+        sm.update_user(username, role=Role.ADMIN, password=password, enabled=True)
+    else:
+        sm.create_user(username, password, Role.ADMIN, display_name=username)
+
+    if username != "admin" and sm.get_user("admin"):
+        try:
+            sm.update_user("admin", enabled=False)
+        except ValueError:
+            pass
+    return username
+
+
+def _install_auth_gateway() -> str:
+    from tasks import _register_all_services
+    from core.service_registry import ServiceRegistry, SCOPE_GLOBAL
+
+    _register_all_services()
+    ServiceRegistry.get_instance().install(
+        scope=SCOPE_GLOBAL,
+        scope_id="",
+        service_id=AUTH_GATEWAY_SERVICE_ID,
+        service_type="authGateway",
+        config={
+            "providers": {"builtin": {"enabled": True}},
+            "session_ttl": 86400,
+        },
+        description="Builtin authentication for the installed PawFlow server",
+        enabled=True,
+    )
+    return AUTH_GATEWAY_SERVICE_ID
+
+
+def _install_llm_and_summarizer(payload: Dict[str, Any]) -> tuple[str, str]:
+    from tasks import _register_all_services
+    from core.service_registry import ServiceRegistry, SCOPE_GLOBAL
+
+    _register_all_services()
+    provider = str(payload.get("llm_provider") or "codex-app-server").strip()
+    model = str(payload.get("llm_model") or "gpt-5.5").strip()
+    llm_service_id = str(payload.get("llm_service_id") or DEFAULT_LLM_SERVICE_ID).strip()
+    if not provider:
+        raise ValueError("llm_provider is required")
+    if not llm_service_id:
+        raise ValueError("llm_service_id is required")
+
+    llm_config: Dict[str, Any] = {
+        "provider": provider,
+        "default_model": model,
+        "timeout": 600,
+    }
+    base_url = str(payload.get("llm_base_url") or "").strip()
+    if base_url:
+        llm_config["base_url"] = base_url
+    api_key = str(payload.get("llm_api_key") or "").strip()
+    if api_key:
+        secret_ref = f"llm.{llm_service_id}.api_key"
+        _store_global_secret(secret_ref, api_key)
+        llm_config["api_key"] = "${" + secret_ref + "}"
+
+    reg = ServiceRegistry.get_instance()
+    reg.install(
+        scope=SCOPE_GLOBAL,
+        scope_id="",
+        service_id=llm_service_id,
+        service_type="llmConnection",
+        config=llm_config,
+        description="Default installed LLM service for the first PawFlow agent",
+        enabled=True,
+    )
+    reg.install(
+        scope=SCOPE_GLOBAL,
+        scope_id="",
+        service_id=SUMMARIZER_SERVICE_ID,
+        service_type="summarizer",
+        config={"llm_service": llm_service_id},
+        description="Summarizer service for conversation compaction",
+        enabled=True,
+    )
+    return llm_service_id, SUMMARIZER_SERVICE_ID
+
+
+def _deploy_main_flow(private_gateway_service_id: str) -> str:
+    from core.deployment_registry import DeploymentRegistry
+
+    if not MAIN_TEMPLATE.exists():
+        raise ValueError(f"main PawFlow flow template is missing: {MAIN_TEMPLATE}")
+    reg = DeploymentRegistry.get_instance()
+    params = {"private_gateway_service_id": private_gateway_service_id}
+    inst = reg.get(MAIN_INSTANCE_ID)
+    if inst is None:
+        reg.deploy(
+            template_path=str(MAIN_TEMPLATE),
+            owner=None,
+            parameters=params,
+            source="bootstrap",
+            instance_id=MAIN_INSTANCE_ID,
+        )
+    else:
+        inst.parameters.update(params)
+        inst.source = "bootstrap"
+        reg._save_instance(inst)
+    reg.update_status(MAIN_INSTANCE_ID, "running")
+    return MAIN_INSTANCE_ID
+
+
+def _create_first_conversation(admin_user: str, llm_service_id: str) -> str:
+    from core.conversation_store import ConversationStore
+    from core.conv_agent_config import add_agent_to_conv
+    from core.resource_store import ResourceStore, GLOBAL_USER_ID
+
+    rs = ResourceStore.instance()
+    if rs.get_any("agent", FIRST_RUN_AGENT, admin_user) is None:
+        rs.create(
+            "agent",
+            FIRST_RUN_AGENT,
+            GLOBAL_USER_ID,
+            {
+                "prompt": "You are ${agent.name}, a helpful assistant.",
+                "description": "General-purpose assistant.",
+                "parameters": {
+                    "name": {
+                        "required": True,
+                        "description": "Agent display name",
+                    }
+                },
+            },
+        )
+
+    store = ConversationStore.instance()
+    conv_id = store.generate_id()
+    store.save(conv_id, [], user_id=admin_user)
+    store.set_extra(conv_id, "title", "Welcome to PawFlow")
+    store.set_extra(
+        conv_id,
+        "active_resources",
+        {"agents": [FIRST_RUN_AGENT], "agent": FIRST_RUN_AGENT},
+    )
+    add_agent_to_conv(
+        conv_id,
+        FIRST_RUN_AGENT,
+        llm_service=llm_service_id,
+        definition=FIRST_RUN_AGENT,
+        params={"name": FIRST_RUN_AGENT},
+        max_depth=1000,
+    )
+    return conv_id
 
 
 def finalize_install(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -179,6 +434,29 @@ def finalize_install(payload: Dict[str, Any]) -> Dict[str, Any]:
     if len(new_key) < 16:
         raise ValueError("new_gateway_key must be at least 16 characters")
 
+    admin_username = str(payload.get("admin_username") or "admin").strip()
+    admin_password = str(payload.get("admin_password") or "")
+    if not admin_username:
+        raise ValueError("admin_username is required")
+    if not admin_password:
+        raise ValueError("admin_password is required")
+    if len(admin_password) < 12:
+        raise ValueError("admin_password must be at least 12 characters")
+    if not str(payload.get("llm_provider") or "codex-app-server").strip():
+        raise ValueError("llm_provider is required")
+    if not str(payload.get("llm_service_id") or DEFAULT_LLM_SERVICE_ID).strip():
+        raise ValueError("llm_service_id is required")
+    if not MAIN_TEMPLATE.exists():
+        raise ValueError(f"main PawFlow flow template is missing: {MAIN_TEMPLATE}")
+
+    final_secret_ref = _store_global_secret(FINAL_GATEWAY_SECRET_REF, new_key)
+    final_gateway_service_id = _install_final_private_gateway(final_secret_ref)
+    admin_user = _configure_admin_user(payload)
+    auth_gateway_service_id = _install_auth_gateway()
+    llm_service_id, summarizer_service_id = _install_llm_and_summarizer(payload)
+    main_instance_id = _deploy_main_flow(final_gateway_service_id)
+    first_conversation_id = _create_first_conversation(admin_user, llm_service_id)
+
     now = time.time()
     state.setdefault("version", 1)
     state["install_complete"] = True
@@ -195,12 +473,29 @@ def finalize_install(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     checks = state.setdefault("checks", {})
     checks["gateway_replaced"] = True
+    checks["final_private_gateway"] = True
+    checks["auth_gateway"] = True
+    checks["admin_user"] = True
+    checks["llm_service"] = True
+    checks["summarizer_service"] = True
+    checks["main_flow_deployed"] = True
+    checks["first_conversation"] = True
     checks["finalized"] = True
 
     draft = state.setdefault("draft", {})
     gateway = draft.setdefault("gateway", {})
+    gateway["service_id"] = final_gateway_service_id
+    gateway["secret_ref"] = final_secret_ref
     gateway["key_sha256"] = hashlib.sha256(new_key.encode("utf-8")).hexdigest()
     gateway["replaced_at"] = now
+    draft["auth"] = {"service_id": auth_gateway_service_id, "admin_user": admin_user}
+    draft["llm_services"] = {"primary": llm_service_id}
+    draft["summarizer_service"] = {"service_id": summarizer_service_id}
+    draft["flows"] = {"main_instance_id": main_instance_id}
+    draft["conversation"] = {
+        "conversation_id": first_conversation_id,
+        "agent": FIRST_RUN_AGENT,
+    }
 
     _write_state(state)
 
@@ -209,6 +504,13 @@ def finalize_install(payload: Dict[str, Any]) -> Dict[str, Any]:
         DeploymentRegistry.get_instance().update_status(INSTALLER_INSTANCE_ID, "stopped")
     except Exception:
         logger.warning("Install bootstrap finalized but installer status update failed", exc_info=True)
+
+    try:
+        from core.service_registry import ServiceRegistry, SCOPE_GLOBAL
+        ServiceRegistry.get_instance().disable(
+            SCOPE_GLOBAL, "", BOOTSTRAP_PRIVATE_GATEWAY_SERVICE_ID)
+    except Exception:
+        logger.warning("Install bootstrap finalized but bootstrap gateway disable failed", exc_info=True)
 
     logger.info("Install bootstrap finalized")
     return get_install_status()
@@ -249,10 +551,13 @@ def ensure_install_bootstrap(port: int = 9090) -> bool:
         "PAWFLOW_BOOTSTRAP_GATEWAY_KEY",
         DEFAULT_BOOTSTRAP_GATEWAY_KEY,
     )
+    bootstrap_secret_ref = _store_bootstrap_gateway_secret(bootstrap_key)
+    private_gateway_service_id = _install_bootstrap_private_gateway(bootstrap_secret_ref)
     ssl_params = ensure_bootstrap_self_signed_cert()
     installer_params = {
         "port": port,
-        "bootstrap_gateway_key": bootstrap_key,
+        "bootstrap_gateway_secret_ref": bootstrap_secret_ref,
+        "private_gateway_service_id": private_gateway_service_id,
         **ssl_params,
     }
 
@@ -284,8 +589,14 @@ def ensure_install_bootstrap(port: int = 9090) -> bool:
         "ssl_certfile": ssl_params["ssl_certfile"],
         "ssl_keyfile": ssl_params["ssl_keyfile"],
     })
+    state["draft"].setdefault("gateway", {})
+    state["draft"]["gateway"].update({
+        "service_id": private_gateway_service_id,
+        "secret_ref": bootstrap_secret_ref,
+    })
     state.setdefault("checks", {})
     state["checks"]["bootstrap_self_signed_cert"] = True
+    state["checks"]["bootstrap_private_gateway"] = True
     _write_state(state)
     logger.info("Install bootstrap active: %s", INSTALLER_INSTANCE_ID)
     return True

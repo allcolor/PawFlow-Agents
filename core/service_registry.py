@@ -709,30 +709,36 @@ class ServiceRegistry:
             return set()
 
     @staticmethod
-    def _encrypt_config(config: dict, sensitive_keys: set) -> dict:
+    def _encrypted_prefix() -> str:
+        return "enc" + ":"
+
+    @classmethod
+    def _encrypt_config(cls, config: dict, sensitive_keys: set) -> dict:
         """Return a copy of config with sensitive values encrypted."""
         if not sensitive_keys:
             return config
         from core.secrets import get_secrets_manager
         sm = get_secrets_manager()
         out = dict(config)
+        prefix = cls._encrypted_prefix()
         for k in sensitive_keys:
             v = out.get(k)
-            if isinstance(v, str) and v and not v.startswith("enc:") and not v.startswith("${"):
+            if isinstance(v, str) and v and not v.startswith(prefix):
                 out[k] = sm.encrypt(v)
         return out
 
-    @staticmethod
-    def _decrypt_config(config: dict, sensitive_keys: set) -> dict:
+    @classmethod
+    def _decrypt_config(cls, config: dict, sensitive_keys: set) -> dict:
         """Return a copy of config with sensitive values decrypted."""
         if not sensitive_keys:
             return config
         from core.secrets import get_secrets_manager
         sm = get_secrets_manager()
         out = dict(config)
+        prefix = cls._encrypted_prefix()
         for k in sensitive_keys:
             v = out.get(k)
-            if isinstance(v, str) and v.startswith("enc:"):
+            if isinstance(v, str) and v.startswith(prefix):
                 try:
                     out[k] = sm.decrypt(v)
                 except Exception:
@@ -868,9 +874,14 @@ class ServiceRegistry:
         raw = store.get_extra(scope_id, CONV_EXTRAS_KEY) or {}
         defs = {}
         for sid, data in raw.items():
+            data = dict(data)
             data["service_id"] = sid
             data["scope"] = SCOPE_CONV
             data["scope_id"] = scope_id
+            stype = data.get("service_type", "")
+            sk = self._sensitive_keys(stype)
+            if sk and "config" in data:
+                data["config"] = self._decrypt_config(data["config"], sk)
             defs[sid] = ServiceDef.from_dict(data)
         self._definitions[scope_id] = defs
         if defs:
@@ -935,10 +946,13 @@ class ServiceRegistry:
             store = ConversationStore.instance()
             with self._data_lock:
                 conv_defs = self._definitions.get(scope_id, {})
-                data = {
-                    sid: sdef.to_dict()
-                    for sid, sdef in conv_defs.items()
-                }
+                data = {}
+                for sid, sdef in conv_defs.items():
+                    d = sdef.to_dict()
+                    sk = self._sensitive_keys(sdef.service_type)
+                    if sk:
+                        d["config"] = self._encrypt_config(d.get("config", {}), sk)
+                    data[sid] = d
             store.set_extra(scope_id, CONV_EXTRAS_KEY, data)
         except Exception as e:
             logger.error("Failed to save conv services for '%s': %s", scope_id[:8], e)

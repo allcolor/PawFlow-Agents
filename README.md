@@ -48,11 +48,18 @@ python cli.py start --host 0.0.0.0 --port 9090
 ```bash
 git clone https://github.com/allcolor/PawFlow-Agents.git
 cd PawFlow-Agents
-cp .env.example .env   # edit .env with your secrets
 
-docker compose up -d
-# Web chat available at http://localhost:9090/chat
+bash scripts/doctor-pawflow.sh
+bash scripts/install-pawflow.sh
+# Installer available at https://localhost:9090/install
 ```
+
+The Docker installer creates persistent data under `~/pawflow`, starts a
+bootstrap HTTPS server, and opens the first-run installer behind the temporary
+Private Gateway key `RoyBetty`. Finalizing the wizard replaces that key, creates
+the admin user, installs the selected LLM and summarizer services, deploys the
+main PawFlow Agent flow, and creates a starter conversation with the `assistant`
+agent selected.
 
 ### PawCode CLI
 

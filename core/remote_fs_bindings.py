@@ -204,20 +204,58 @@ def conversation_ids_for_relay(relay_id: str, user_id: str) -> List[str]:
     return result
 
 
-def _rclone_config_for(user_id: str, sdef) -> Dict[str, str]:
+def _resolve_rclone_value(value: Any, user_id: str, cid: str) -> str:
+    text = str(value)
+    if "$" + "{" not in text:
+        return text
+    from core.expression import resolve_expression
+    return str(resolve_expression(text, owner=user_id, conversation_id=cid))
+
+
+def _resolve_rclone_credential_definition(user_id: str, cid: str, service_id: str):
+    if not service_id:
+        return None
+    from core.service_registry import ServiceRegistry
+    reg = ServiceRegistry.get_instance()
+    return reg.resolve_definition(service_id, user_id=user_id, conv_id=cid)
+
+
+def _rclone_config_for(user_id: str, cid: str, sdef) -> Dict[str, str]:
     cfg = dict(sdef.config or {})
     if sdef.service_type == "rcloneFilesystem":
-        if cfg.get("rclone_config"):
-            return {"_raw": str(cfg["rclone_config"])}
         rclone_type = cfg.get("rclone_type") or cfg.get("type")
         if not rclone_type:
             raise ValueError(f"rcloneFilesystem service '{sdef.service_id}' is missing rclone_type")
-        skip = {"rclone_type", "type", "mode", "allowed_paths", "denied_paths"}
+        if str(rclone_type) in {"drive", "onedrive"}:
+            credential_service_id = (cfg.get("credential_service_id") or "").strip()
+            if not credential_service_id:
+                raise ValueError(
+                    f"rcloneFilesystem service '{sdef.service_id}' is missing credential_service_id")
+            cred = _resolve_rclone_credential_definition(user_id, cid, credential_service_id)
+            if not cred:
+                raise ValueError(
+                    f"rclone OAuth credential service '{credential_service_id}' not found")
+            if cred.service_type != "rcloneOAuthCredentials":
+                raise ValueError(
+                    f"Service '{credential_service_id}' is not an rclone OAuth credential service")
+            cred_cfg = dict(cred.config or {})
+            provider = str(cred_cfg.get("provider") or "").strip()
+            if provider and provider != str(rclone_type):
+                raise ValueError(
+                    f"Credential service '{credential_service_id}' provider '{provider}' does not match rclone_type '{rclone_type}'")
+            raw = cred_cfg.get("rclone_config")
+            if not raw:
+                raise ValueError(
+                    f"rclone OAuth credential service '{credential_service_id}' has no saved credentials")
+            return {"_raw": _resolve_rclone_value(raw, user_id, cid)}
+        if cfg.get("rclone_config"):
+            return {"_raw": _resolve_rclone_value(cfg["rclone_config"], user_id, cid)}
+        skip = {"rclone_type", "type", "mode", "allowed_paths", "denied_paths", "credential_service_id"}
         return {
-            str(k): str(v)
+            str(k): _resolve_rclone_value(v, user_id, cid)
             for k, v in cfg.items()
             if k not in skip and v not in (None, "")
-        } | {"type": str(rclone_type)}
+        } | {"type": _resolve_rclone_value(rclone_type, user_id, cid)}
     raise ValueError(f"Unsupported remote filesystem service type: {sdef.service_type}")
 
 
@@ -241,7 +279,7 @@ def build_manifest_for_conversation(user_id: str, cid: str) -> Dict[str, Any]:
                 "remote_name": sanitize_mount_dir(service_id),
                 "mount_path": mount_path_for(service_id),
                 "mode": item.get("mode", "readwrite"),
-                "rclone_config": _rclone_config_for(user_id, sdef),
+                "rclone_config": _rclone_config_for(user_id, cid, sdef),
             })
         except Exception as exc:
             mounts.append({

@@ -174,6 +174,30 @@ class AgentCoreMixin:
             f"errors), not from the user or the system."
         )
 
+    @staticmethod
+    def _tool_result_display_call(tc):
+        """Return the inner tool call used for result display/wrapping.
+
+        Lazy providers call `use_tool`, but the returned payload belongs to the
+        inner tool (`fetch`, `read`, etc.). Security wrapping must use that inner
+        name; otherwise the trusted `use_tool` wrapper would leave external
+        content unwrapped.
+        """
+        from core.llm_client import LLMToolCall, unwrap_mcp_tool
+
+        name, args = unwrap_mcp_tool(
+            getattr(tc, "name", "") or "",
+            getattr(tc, "arguments", {}) or {},
+        )
+        if name == getattr(tc, "name", "") and args == getattr(tc, "arguments", {}):
+            return tc
+        return LLMToolCall(
+            id=getattr(tc, "id", ""),
+            name=name,
+            arguments=args,
+            timestamp=getattr(tc, "timestamp", 0.0) or 0.0,
+        )
+
     def _run_agent_loop(self, ctx: Dict, emitter: AgentEmitter) -> AgentResult:
         """The ONE agent execution loop — used by both sync and streaming."""
         conversation_id = ctx.get("conversation_id", "")
@@ -2129,8 +2153,9 @@ class AgentCoreMixin:
                         event_cid=ctx.get("_event_cid", ""))
 
                     for tc, result_text in results:
-                        tools_called.append(tc.name)
-                        ctx["_last_tool"] = tc.name
+                        display_tc = self._tool_result_display_call(tc)
+                        tools_called.append(display_tc.name)
+                        ctx["_last_tool"] = display_tc.name
                         emitter.check_cancelled()  # check after each tool
                         # schedule_continuation persists its wake-up in the
                         # handler itself. Do not also sleep/re-enter inline here;
@@ -2139,16 +2164,16 @@ class AgentCoreMixin:
                         # Wrap tool output in an untrusted-content envelope so
                         # any instructions embedded in file contents, web pages,
                         # grep matches, etc. are read as data, not as orders.
-                        _wrapped = self._wrap_tool_output(tc.name, result_text)
+                        _wrapped = self._wrap_tool_output(display_tc.name, result_text)
                         _tr_msg = LLMMessage(role="tool", content=_wrapped, tool_call_id=tc.id,
                                               conversation_id=conversation_id)
-                        _tr_msg._tool_name = tc.name
+                        _tr_msg._tool_name = display_tc.name
                         _append(_tr_msg)
                         # Preview for SSE — result_text is raw from the
                         # tool executor (wrap above is on _wrapped, not
                         # result_text), so no strip is needed.
                         _prev = result_text[:2000] if isinstance(result_text, str) else str(result_text)[:2000]
-                        emitter.on_tool_result(tc, result_text, _prev)
+                        emitter.on_tool_result(display_tc, result_text, _prev)
 
                     # Per-turn aggregate cap: if total tool results > 200K chars,
                     # persist the largest to FileStore to avoid context bloat

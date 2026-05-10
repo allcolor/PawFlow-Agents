@@ -134,7 +134,7 @@ and marks the installer deployment stopped for restart-safe restoration.
    - store an optional API key as encrypted secret `llm.<service_id>.api_key`
    - assign this explicit service to the starter conversation agent
 
-4. Summarizer and skill review services
+4. Summarizer service and skill review service
    - create `summarizer_service`
    - point it to the selected LLM service
    - create `skill_review_service`

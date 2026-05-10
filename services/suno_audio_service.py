@@ -10,6 +10,7 @@ import time
 import http.client
 import ssl
 import urllib.request
+from urllib.parse import urlparse
 
 from core import ServiceFactory, ServiceError
 from services.base_audio_generation import BaseAudioGenerationService
@@ -43,6 +44,13 @@ class SunoAudioService(BaseAudioGenerationService):
                 "type": "integer", "required": False, "default": 10,
                 "description": "Seconds between status polls",
             },
+            "callback_url": {
+                "type": "string", "required": False, "default": "",
+                "description": (
+                    "Absolute callback URL required by Suno. When omitted, "
+                    "PawFlow derives one from the runtime file_base_url."
+                ),
+            },
         }
 
     def __init__(self, config):
@@ -50,6 +58,11 @@ class SunoAudioService(BaseAudioGenerationService):
         self.api_key = self.config.get("api_key", "")
         self.model = self.config.get("model", "V4_5ALL")
         self.poll_interval = int(self.config.get("poll_interval", 10))
+        self.callback_url = (self.config.get("callback_url", "") or "").strip()
+        self._callback_base_url = ""
+
+    def set_callback_base_url(self, base_url: str):
+        self._callback_base_url = (base_url or "").rstrip("/")
 
     def _create_connection(self):
         if not self.api_key:
@@ -78,6 +91,25 @@ class SunoAudioService(BaseAudioGenerationService):
             raise ServiceError(f"Suno API error ({resp.status}): {resp_body[:300]}")
         return json.loads(resp_body) if resp_body.strip() else {}
 
+    def _callback_url(self, kwargs: dict) -> str:
+        url = (
+            kwargs.get("callBackUrl")
+            or kwargs.get("callback_url")
+            or self.callback_url
+        )
+        url = (url or "").strip()
+        if not url and self._callback_base_url:
+            url = f"{self._callback_base_url}/webhooks/suno/callback"
+
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            raise ServiceError(
+                "Suno callback_url is required; configure callback_url on "
+                "the sunoAudioGeneration service or provide a file_base_url "
+                "so PawFlow can derive callBackUrl."
+            )
+        return url
+
     def generate(self, prompt="", lyrics="", duration=None,
                  instrumental=False, style="", title="", **kwargs) -> dict:
         if not prompt and not lyrics:
@@ -90,6 +122,7 @@ class SunoAudioService(BaseAudioGenerationService):
             "model": self.model,
             "customMode": custom_mode,
             "instrumental": bool(instrumental),
+            "callBackUrl": self._callback_url(kwargs),
         }
 
         if custom_mode:
@@ -102,7 +135,9 @@ class SunoAudioService(BaseAudioGenerationService):
 
         # Pass through extra kwargs (negativeTags, vocalGender, etc.)
         for k, v in kwargs.items():
-            if k not in body and k not in ("destination", "path", "_service", "duration"):
+            if k not in body and k not in (
+                "destination", "path", "_service", "duration", "callback_url"
+            ):
                 body[k] = v
 
         logger.info("[SUNO] Generating: prompt=%s..., model=%s, instrumental=%s, style=%s",

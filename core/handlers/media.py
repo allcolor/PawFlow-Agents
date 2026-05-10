@@ -667,6 +667,10 @@ class AudioGenerationHandler(ToolHandler):
                     "type": "string",
                     "description": "Override the active audio model for this call (e.g. 'lyria-2', 'minimax-music', 'eleven-v3-alpha-954', 'chatterbox-text-to-speech').",
                 },
+                "callback_url": {
+                    "type": "string",
+                    "description": "Optional provider callback URL override for audio services that require one, such as Suno.",
+                },
             },
             "required": ["prompt"],
         }
@@ -715,6 +719,8 @@ class AudioGenerationHandler(ToolHandler):
                     user_id=self._user_id,
                     conversation_id=getattr(self, "_conversation_id", "") or "",
                 )
+            if hasattr(service, "set_callback_base_url"):
+                service.set_callback_base_url(self._base_url)
             gen_args = {k: v for k, v in arguments.items()
                         if k not in ("destination", "path", "_service", "service", "audio_service")}
             result = service.generate(**gen_args)

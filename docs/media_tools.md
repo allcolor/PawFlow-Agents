@@ -102,6 +102,10 @@ Supported service families include:
 
 For Pixazo model-specific schemas and pricing notes, see [Pixazo](pixazo.md). For voice clone internals, see [Voice Clone](voice_clone.md).
 
+### Suno Audio Service
+
+`sunoAudioGeneration` sends Suno's required `callBackUrl` on generation requests. Configure the service `callback_url` when the PawFlow server has a public webhook URL. If `callback_url` is omitted, the tool derives `callBackUrl` from the runtime `file_base_url` as `/webhooks/suno/callback` and still polls Suno for completion before returning generated audio files.
+
 ### Codex CLI Image Service
 
 `codexImageGeneration` runs a fresh isolated `codex exec` job through PawFlow's server-side Codex CLI Docker pool and asks Codex to use the built-in `$imagegen` skill. It is not tied to a PawFlow agent conversation and does not expose a relay, local, or binary path knob. Authentication and provider settings come from the selected `llmConnection` service.

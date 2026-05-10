@@ -737,6 +737,12 @@ class AudioGenerationHandler(ToolHandler):
             from core.storage_resolver import StorageResolver
             resolver = StorageResolver(user_id=self._user_id, conversation_id=getattr(self, "_conversation_id", "") or "")
 
+            def _audio_variation_name(base_name: str, idx: int, vext: str) -> str:
+                stem, sep, tail = base_name.rpartition(".")
+                if sep and "/" not in tail and "\\" not in tail:
+                    return f"{stem}_v{idx}.{tail}"
+                return f"{base_name}_v{idx}.{vext}"
+
             # Store all variations (Suno returns 2, others return 1)
             variations = result.get("variations", [result])
             output_lines = []
@@ -749,8 +755,9 @@ class AudioGenerationHandler(ToolHandler):
                 }.get(_vct.split(";")[0].strip(), ext)
                 _vtitle = var.get("title", "")
                 _vdur = var.get("duration", 0)
-                if len(variations) > 1:
-                    _vname = arguments.get("path") or f"generated_{int(_time.time())}_{hash(prompt) & 0xFFFF:04x}_v{i+1}.{_vext}"
+                _variation_idx = int(var.get("variation_index") or 0)
+                if len(variations) > 1 or _variation_idx:
+                    _vname = _audio_variation_name(filename, _variation_idx or i + 1, _vext)
                 else:
                     _vname = filename
                 _vresult = resolver.write(destination, _vname, _vbytes, _vct)

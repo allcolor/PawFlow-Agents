@@ -28,6 +28,12 @@ _FAILURE_STATES = {
     "generate_audio_failed",
     "sensitive_word_error",
 }
+_SUCCESS_STATES = {
+    "complete",
+    "completed",
+    "success",
+    "succeeded",
+}
 
 
 class SunoAudioService(BaseAudioGenerationService):
@@ -184,30 +190,46 @@ class SunoAudioService(BaseAudioGenerationService):
             if not isinstance(response, dict):
                 response = {}
             suno_data = response.get("sunoData") or []
+            state = (data.get("status", "") or "").lower()
 
-            # Suno generates 2 songs per request — return the first,
-            # include info about the second in metadata
-            ready = [s for s in suno_data if s.get("audioUrl")]
-            if ready:
+            # Check for errors before accepting any partial provider payload.
+            if state in _FAILURE_STATES:
+                raise ServiceError(f"Suno generation failed: {data.get('errorMessage', state)}")
+
+            # Suno normally generates 2 songs per request. Some record-info
+            # responses expose the first audioUrl before the task is terminal;
+            # keep polling then so the second variation is not dropped.
+            ready = []
+            seen_urls = set()
+            for s in suno_data:
+                audio_url = (s.get("audioUrl") or "").strip()
+                if not audio_url or audio_url in seen_urls:
+                    continue
+                seen_urls.add(audio_url)
+                ready.append((s, audio_url))
+            if ready and (state in _SUCCESS_STATES or len(ready) >= 2):
                 logger.info("[SUNO] Complete (%ds): %d variation(s)",
                             elapsed, len(ready))
                 # Download ALL variations
                 variations = []
-                for s in ready:
-                    dl = self._download_audio(s["audioUrl"])
+                for idx, (s, audio_url) in enumerate(ready, start=1):
+                    dl = self._download_audio(audio_url)
                     dl["title"] = s.get("title", "")
                     dl["duration"] = s.get("duration", 0)
                     dl["tags"] = s.get("tags", "")
+                    dl["source_url"] = audio_url
+                    dl["variation_index"] = idx
                     variations.append(dl)
                 # Primary result = first variation
-                result = variations[0]
+                result = dict(variations[0])
                 result["variations"] = variations
                 return result
 
-            # Check for errors
-            state = data.get("status", "").lower()
-            if state in _FAILURE_STATES:
-                raise ServiceError(f"Suno generation failed: {data.get('errorMessage', state)}")
+            if ready:
+                logger.info(
+                    "[SUNO] Poll %s (%ds): %d variation(s) ready, waiting for terminal status",
+                    task_id[:16], elapsed, len(ready))
+                continue
 
             logger.info("[SUNO] Poll %s (%ds): waiting...", task_id[:16], elapsed)
 

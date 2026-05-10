@@ -736,8 +736,6 @@ class AudioGenerationHandler(ToolHandler):
 
             from core.storage_resolver import StorageResolver
             resolver = StorageResolver(user_id=self._user_id, conversation_id=getattr(self, "_conversation_id", "") or "")
-            write_result = resolver.write(destination, filename,
-                                           result["audio_bytes"], ct)
 
             # Store all variations (Suno returns 2, others return 1)
             variations = result.get("variations", [result])

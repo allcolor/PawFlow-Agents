@@ -10,7 +10,7 @@ import time
 import http.client
 import ssl
 import urllib.request
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 from core import ServiceFactory, ServiceError
 from services.base_audio_generation import BaseAudioGenerationService
@@ -19,7 +19,15 @@ logger = logging.getLogger(__name__)
 
 _API_HOST = "api.sunoapi.org"
 
-SUNO_MODELS = ["V5", "V4_5PLUS", "V4_5ALL", "V4_5", "V4"]
+SUNO_MODELS = ["V5_5", "V5", "V4_5PLUS", "V4_5ALL", "V4_5", "V4"]
+_FAILURE_STATES = {
+    "callback_exception",
+    "create_task_failed",
+    "error",
+    "failed",
+    "generate_audio_failed",
+    "sensitive_word_error",
+}
 
 
 class SunoAudioService(BaseAudioGenerationService):
@@ -144,11 +152,16 @@ class SunoAudioService(BaseAudioGenerationService):
                     (prompt or lyrics)[:80], self.model, instrumental, style or "auto")
 
         # Submit
-        result = self._api_request("POST", "/api/v1/generate", body)
+        result = self._api_request("POST", "/api/v1/generate", body) or {}
+        if not isinstance(result, dict):
+            raise ServiceError(f"Unexpected Suno response: {json.dumps(result)[:300]}")
         if result.get("code") != 200:
             raise ServiceError(f"Suno generation failed: {result.get('msg', 'unknown error')}")
 
-        task_id = result.get("data", {}).get("taskId", "")
+        submit_data = result.get("data") or {}
+        if not isinstance(submit_data, dict):
+            submit_data = {}
+        task_id = submit_data.get("taskId", "")
         if not task_id:
             raise ServiceError(f"No taskId in response: {json.dumps(result)[:300]}")
 
@@ -156,12 +169,21 @@ class SunoAudioService(BaseAudioGenerationService):
         start = time.time()
         while True:
             time.sleep(self.poll_interval)
-            status = self._api_request("GET", f"/api/v1/music/{task_id}")
+            status = self._api_request(
+                "GET",
+                f"/api/v1/generate/record-info?taskId={quote(task_id, safe='')}",
+            )
             elapsed = int(time.time() - start)
 
-            data = status.get("data", {})
-            response = data.get("response", {})
-            suno_data = response.get("sunoData", [])
+            if not isinstance(status, dict):
+                status = {}
+            data = status.get("data") or {}
+            if not isinstance(data, dict):
+                data = {}
+            response = data.get("response") or {}
+            if not isinstance(response, dict):
+                response = {}
+            suno_data = response.get("sunoData") or []
 
             # Suno generates 2 songs per request — return the first,
             # include info about the second in metadata
@@ -184,7 +206,7 @@ class SunoAudioService(BaseAudioGenerationService):
 
             # Check for errors
             state = data.get("status", "").lower()
-            if state in ("failed", "error"):
+            if state in _FAILURE_STATES:
                 raise ServiceError(f"Suno generation failed: {data.get('errorMessage', state)}")
 
             logger.info("[SUNO] Poll %s (%ds): waiting...", task_id[:16], elapsed)

@@ -1197,15 +1197,113 @@ function isVideoFile(name) {
   return /\.(mp4|webm|mov|m4v)$/i.test(name || '');
 }
 
+var _inlineAudioEl = null;
+var _inlineAudioUrl = '';
+var _inlineAudioTimer = null;
+
+function _inlineAudioFormat(seconds) {
+  const n = Number(seconds);
+  if (!Number.isFinite(n) || n < 0) return '--:--';
+  const total = Math.floor(n);
+  const m = Math.floor(total / 60);
+  const s = String(total % 60).padStart(2, '0');
+  return m + ':' + s;
+}
+
+function _inlineAudioWrappers(url) {
+  return Array.from(document.querySelectorAll('.inline-audio'))
+    .filter(el => !url || el.dataset.audioUrl === url);
+}
+
+function _inlineAudioSync(url) {
+  const audio = _inlineAudioEl;
+  const isCurrent = !!audio && _inlineAudioUrl === url;
+  const duration = isCurrent && Number.isFinite(audio.duration) ? audio.duration : 0;
+  const current = isCurrent ? audio.currentTime || 0 : 0;
+  const playing = isCurrent && !audio.paused && !audio.ended;
+  for (const wrapper of _inlineAudioWrappers(url)) {
+    const btn = wrapper.querySelector('.inline-audio-play');
+    const range = wrapper.querySelector('.inline-audio-progress');
+    const time = wrapper.querySelector('.inline-audio-time');
+    if (btn) {
+      btn.innerHTML = playing ? '&#10074;&#10074;' : '&#9658;';
+      btn.title = playing ? 'Pause' : 'Play';
+    }
+    if (range) {
+      range.value = duration > 0 ? String(Math.min(1000, Math.round((current / duration) * 1000))) : '0';
+      range.disabled = duration <= 0;
+    }
+    if (time) time.textContent = _inlineAudioFormat(current) + ' / ' + _inlineAudioFormat(duration);
+  }
+}
+
+function _inlineAudioStartTimer() {
+  if (_inlineAudioTimer) return;
+  _inlineAudioTimer = setInterval(function() {
+    if (!_inlineAudioEl || _inlineAudioEl.paused || _inlineAudioEl.ended) {
+      clearInterval(_inlineAudioTimer);
+      _inlineAudioTimer = null;
+    }
+    if (_inlineAudioUrl) _inlineAudioSync(_inlineAudioUrl);
+  }, 250);
+}
+
+function _inlineAudioFor(url) {
+  if (_inlineAudioEl && _inlineAudioUrl === url) return _inlineAudioEl;
+  if (_inlineAudioEl) {
+    try { _inlineAudioEl.pause(); } catch(e) {}
+    if (_inlineAudioUrl) _inlineAudioSync(_inlineAudioUrl);
+  }
+  const audio = new Audio(url);
+  audio.preload = 'metadata';
+  _inlineAudioEl = audio;
+  _inlineAudioUrl = url;
+  ['loadedmetadata', 'durationchange', 'timeupdate', 'play', 'pause', 'ended', 'error'].forEach(function(ev) {
+    audio.addEventListener(ev, function() { _inlineAudioSync(url); });
+  });
+  return audio;
+}
+
+function pawflowInlineAudioToggle(btn) {
+  const wrapper = btn && btn.closest ? btn.closest('.inline-audio') : null;
+  const url = wrapper && wrapper.dataset ? wrapper.dataset.audioUrl : '';
+  if (!url) return;
+  const audio = _inlineAudioFor(url);
+  if (!audio.paused && !audio.ended) {
+    audio.pause();
+    _inlineAudioSync(url);
+    return;
+  }
+  audio.play().then(function() {
+    _inlineAudioStartTimer();
+    _inlineAudioSync(url);
+  }).catch(function(err) {
+    console.warn('[inline-audio] play failed', err);
+    _inlineAudioSync(url);
+  });
+}
+
+function pawflowInlineAudioSeek(input) {
+  const wrapper = input && input.closest ? input.closest('.inline-audio') : null;
+  const url = wrapper && wrapper.dataset ? wrapper.dataset.audioUrl : '';
+  if (!url) return;
+  const audio = _inlineAudioFor(url);
+  if (!Number.isFinite(audio.duration) || audio.duration <= 0) return;
+  audio.currentTime = (Number(input.value) / 1000) * audio.duration;
+  _inlineAudioSync(url);
+}
+
 function inlineAudioHtml(url, filename) {
-  // Native HTML5 player — browser handles authentication via cookie/header
-  // (same-origin /files/<id> URLs).
-  return '<div class="audio-wrapper" style="margin:6px 0;">'
-    + '<audio controls preload="metadata" src="' + url + '" '
-    + 'style="max-width:512px;border-radius:6px;"></audio>'
+  const safeUrl = escapeHtml(url || '');
+  return '<div class="audio-wrapper inline-audio" data-audio-url="' + safeUrl + '" style="margin:6px 0;max-width:512px;">'
+    + '<div style="display:flex;align-items:center;gap:8px;background:rgba(255,255,255,0.7);border-radius:999px;padding:8px 10px;">'
+    + '<button class="inline-audio-play" type="button" onclick="pawflowInlineAudioToggle(this)" title="Play" style="width:28px;height:28px;border:0;border-radius:50%;background:#eef4ff;color:#1f2937;cursor:pointer;">&#9658;</button>'
+    + '<span class="inline-audio-time" style="font-size:12px;color:#374151;min-width:72px;text-align:center;">0:00 / --:--</span>'
+    + '<input class="inline-audio-progress" type="range" min="0" max="1000" value="0" disabled oninput="pawflowInlineAudioSeek(this)" style="flex:1;min-width:90px;">'
+    + '</div>'
     + '<div style="font-size:11px;color:#6c6c8a;margin-top:2px;">'
     + '\uD83D\uDD0A ' + escapeHtml(filename || 'audio')
-    + ' <a class="flink" href="#" onclick="event.preventDefault();openFileViewer(\'' + url + '\')" style="color:#6c5ce7;">open</a>'
+    + ' <a class="flink" href="#" onclick="event.preventDefault();openFileViewer(this.closest(\'.inline-audio\').dataset.audioUrl)" style="color:#6c5ce7;">open</a>'
     + '</div></div>';
 }
 

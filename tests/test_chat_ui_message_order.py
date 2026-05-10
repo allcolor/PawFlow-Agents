@@ -97,6 +97,15 @@ def test_autoscroll_only_stops_on_user_scroll_intent():
     assert "container.scrollTop = container.scrollHeight - prevHeight" not in CONVERSATIONS_JS
 
 
+def test_inline_audio_uses_stable_global_player():
+    assert "function pawflowInlineAudioToggle(btn)" in MESSAGES_JS
+    assert "function pawflowInlineAudioSeek(input)" in MESSAGES_JS
+    assert "var _inlineAudioEl = null" in MESSAGES_JS
+    assert "new Audio(url)" in MESSAGES_JS
+    assert "data-audio-url" in MESSAGES_JS
+    assert "<audio controls" not in MESSAGES_JS
+
+
 def test_primary_chat_controls_are_i18n_bound():
     assert 'id="input"' in TEMPLATE_HTML
     assert 'data-i18n-placeholder="placeholder"' in TEMPLATE_HTML

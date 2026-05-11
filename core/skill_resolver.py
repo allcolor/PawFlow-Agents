@@ -7,6 +7,7 @@ agent_executor.py (delegate sub-agents).
 import json
 import logging
 import re
+import shlex
 from typing import Any, Dict, List, Tuple
 
 logger = logging.getLogger(__name__)
@@ -378,10 +379,102 @@ def _substitute_params(prompt: str, params: Dict[str, str],
     return re.sub(r'\$\{([a-zA-Z_][a-zA-Z0-9_]*)\}', _replace, prompt)
 
 
+def _safe_skill_path_part(value: str, fallback: str) -> str:
+    safe = re.sub(r'[^a-zA-Z0-9_.-]+', '-', str(value or '')).strip('.-')
+    return safe or fallback
+
+
+def skill_mount_dir(skill_name: str, skill_def: Dict[str, Any]) -> str:
+    """Return the stable relay-visible path advertised for a skill package."""
+    resource_id = (
+        skill_def.get("resource_id") or skill_def.get("_resource_id")
+        or skill_def.get("id") or f"{skill_def.get('_scope', 'user')}:{skill_name}"
+    )
+    return (
+        "/pawflow/skills/"
+        f"{_safe_skill_path_part(resource_id, 'resource')}/"
+        f"{_safe_skill_path_part(skill_name, 'skill')}"
+    )
+
+
+def _split_skill_arguments(arguments: str) -> List[str]:
+    if not arguments:
+        return []
+    try:
+        return [str(v) for v in shlex.split(arguments)]
+    except ValueError:
+        return [v for v in arguments.split() if v]
+
+
+def _declared_param_names(declared_params: Any) -> List[str]:
+    if isinstance(declared_params, dict):
+        return [str(k) for k in declared_params.keys()]
+    if isinstance(declared_params, list):
+        names = []
+        for item in declared_params:
+            if isinstance(item, str):
+                names.append(item)
+            elif isinstance(item, dict) and item.get("name"):
+                names.append(str(item["name"]))
+        return names
+    return []
+
+
+def _run_params(arguments: str, args: List[str],
+                declared_params: Any) -> Dict[str, str]:
+    params = {str(idx): value for idx, value in enumerate(args)}
+    for name, value in zip(_declared_param_names(declared_params), args):
+        params[name] = value
+    params["arguments"] = arguments or ""
+    return params
+
+
+def _substitute_run_placeholders(prompt: str, arguments: str,
+                                 args: List[str], params: Dict[str, str],
+                                 skill_dir: str) -> str:
+    """Render Agent Skills style placeholders used by imported skills."""
+    replacements = {
+        "ARGUMENTS": arguments or "",
+        "PAWFLOW_SKILL_DIR": skill_dir,
+        "CLAUDE_SKILL_DIR": skill_dir,
+        "CODEX_SKILL_DIR": skill_dir,
+    }
+    for key, value in params.items():
+        if re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', key):
+            replacements.setdefault(key, value)
+
+    def _replace_index(match):
+        idx = int(match.group(1))
+        return args[idx] if idx < len(args) else match.group(0)
+
+    prompt = re.sub(r'\$ARGUMENTS\[(\d+)\]', _replace_index, prompt)
+    prompt = re.sub(r'\$([0-9]+)', _replace_index, prompt)
+
+    def _replace_name(match):
+        key = match.group(1) or match.group(2)
+        return replacements.get(key, match.group(0))
+
+    return re.sub(
+        r'\$\{([a-zA-Z_][a-zA-Z0-9_]*)\}|\$([a-zA-Z_][a-zA-Z0-9_]*)',
+        _replace_name,
+        prompt,
+    )
+
+
 _MAX_EXTENDS_DEPTH = 5
 
 
+def _get_skill_any(rs, skill_name: str, user_id: str,
+                   conversation_id: str = ""):
+    try:
+        return rs.get_any(
+            "skill", skill_name, user_id, conversation_id=conversation_id)
+    except TypeError:
+        return rs.get_any("skill", skill_name, user_id)
+
+
 def _resolve_prompt_chain(skill_name: str, rs, user_id: str,
+                          conversation_id: str = "",
                           depth: int = 0) -> str:
     """Resolve a skill's prompt including its extends chain.
 
@@ -389,13 +482,14 @@ def _resolve_prompt_chain(skill_name: str, rs, user_id: str,
     """
     if depth >= _MAX_EXTENDS_DEPTH:
         return ""
-    skill_def = rs.get_any("skill", skill_name, user_id)
+    skill_def = _get_skill_any(rs, skill_name, user_id, conversation_id)
     if not skill_def or not skill_def.get("prompt"):
         return ""
     parent_prompt = ""
     extends = skill_def.get("extends", "")
     if extends:
-        parent_prompt = _resolve_prompt_chain(extends, rs, user_id, depth + 1)
+        parent_prompt = _resolve_prompt_chain(
+            extends, rs, user_id, conversation_id, depth + 1)
     prompt = skill_def["prompt"]
     if parent_prompt:
         return parent_prompt + "\n\n" + prompt
@@ -405,7 +499,10 @@ def _resolve_prompt_chain(skill_name: str, rs, user_id: str,
 def _render_dynamic_skill_prompt(prompt: str, skill_def: Dict[str, Any],
                                  user_id: str, conversation_id: str,
                                  agent_name: str,
-                                 params: Dict[str, str]) -> str:
+                                 params: Dict[str, str],
+                                 args: List[str] = None,
+                                 arguments: str = "",
+                                 skill_dir: str = "") -> str:
     engine = (skill_def.get("template_engine") or "").lower().strip()
     if engine not in ("jinja", "jinja2"):
         return prompt
@@ -418,6 +515,12 @@ def _render_dynamic_skill_prompt(prompt: str, skill_def: Dict[str, Any],
         return env.from_string(prompt).render(
             pawflow=_DynamicSkillPawFlow(ctx),
             params=params or {},
+            args=args or [],
+            arguments=arguments or "",
+            skill_dir=skill_dir or "",
+            PAWFLOW_SKILL_DIR=skill_dir or "",
+            CLAUDE_SKILL_DIR=skill_dir or "",
+            CODEX_SKILL_DIR=skill_dir or "",
         )
     except Exception as exc:
         logger.warning("Dynamic skill template render failed: %s", exc,
@@ -453,10 +556,11 @@ def resolve_skill_prompts(
         seen.add(name)
         if condition and not _evaluate_condition(condition, user_id):
             continue
-        skill_def = rs.get_any("skill", name, user_id)
+        skill_def = _get_skill_any(rs, name, user_id, conversation_id)
         if not skill_def or not skill_def.get("prompt"):
             continue
-        prompt = _resolve_prompt_chain(name, rs, user_id)
+        prompt = _resolve_prompt_chain(
+            name, rs, user_id, conversation_id=conversation_id)
         declared_params = skill_def.get("parameters") or {}
         if params or declared_params:
             prompt = _substitute_params(prompt, params, declared_params)
@@ -469,6 +573,48 @@ def resolve_skill_prompts(
             f"{prompt}"
         )
     return blocks
+
+
+def resolve_runnable_skill_prompt(skill_name: str, user_id: str,
+                                  conversation_id: str,
+                                  agent_name: str,
+                                  arguments: str = "") -> str:
+    """Resolve a visible skill for immediate one-shot invocation.
+
+    Unlike load_skill, this does not require the skill to be assigned to the
+    target agent. It is used for explicit user commands such as
+    `/skill run [@agent] name args...`.
+    """
+    from core.resource_store import ResourceStore
+    rs = ResourceStore.instance()
+    skill_def = _get_skill_any(rs, skill_name, user_id, conversation_id)
+    if not skill_def or not skill_def.get("prompt"):
+        return ""
+    declared_params = skill_def.get("parameters") or {}
+    args = _split_skill_arguments(arguments or "")
+    params = _run_params(arguments or "", args, declared_params)
+    prompt = _resolve_prompt_chain(
+        skill_name, rs, user_id, conversation_id=conversation_id)
+    if params or declared_params:
+        prompt = _substitute_params(prompt, params, declared_params)
+    skill_dir = skill_mount_dir(skill_name, skill_def)
+    prompt = _substitute_run_placeholders(
+        prompt, arguments or "", args, params, skill_dir)
+    prompt = _render_dynamic_skill_prompt(
+        prompt, skill_def, user_id, conversation_id, agent_name, params,
+        args=args, arguments=arguments or "", skill_dir=skill_dir)
+    desc = skill_def.get("description", "")
+    arg_line = arguments or ""
+    return (
+        f"## Skill Invocation: {skill_name}\n"
+        f"Target agent: {agent_name}\n"
+        f"Arguments: {arg_line}\n"
+        f"Skill directory: {skill_dir}\n\n"
+        f"{desc}\n\n"
+        f"{prompt}\n\n"
+        "Run this skill now for the provided arguments. "
+        "Use normal PawFlow tools if the skill requires files, commands, or scripts."
+    )
 
 
 def _skill_summary(skill_def: Dict[str, Any]) -> str:

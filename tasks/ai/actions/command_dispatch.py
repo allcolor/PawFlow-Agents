@@ -304,12 +304,13 @@ HELP: Dict[str, Dict[str, str]] = {
         ),
     },
     "/skill": {
-        "usage": "/skill list | add <name> <prompt> | del <name>",
+        "usage": "/skill list | add <name> <prompt> | del <name> | run [@agent] <name> [args...]",
         "short": "Manage skills",
         "detail": (
-            "  /skill list              — List all skills\n"
-            "  /skill add <name> <prompt> — Create a skill\n"
-            "  /skill del <name>        — Delete a skill"
+            "  /skill list                    — List all skills\n"
+            "  /skill add <name> <prompt>     — Create a skill\n"
+            "  /skill del <name>              — Delete a skill\n"
+            "  /skill run [@agent] <name> [args...] — Invoke a skill now"
         ),
     },
     "/task": {
@@ -931,7 +932,7 @@ def _parse_command(text: str, conversation_id: str, user_id: str,
         return {"action": "user_tool_call", "call_text": arg, **base}
 
     if cmd == "/skill":
-        return _parse_skill_command(arg, base)
+        return _parse_skill_command(arg, base, agent_name)
 
     if cmd == "/task":
         return _parse_task_command(arg, base)
@@ -1265,7 +1266,7 @@ def _parse_agent_command(arg: str, base: dict, agent_name: str) -> dict:
     return {"action": "select_agent", "agent_name": agt, **base}
 
 
-def _parse_skill_command(arg: str, base: dict) -> dict:
+def _parse_skill_command(arg: str, base: dict, agent_name: str = "") -> dict:
     p = arg.split(None, 2)
     subcmd = p[0] if p else "list"
     if subcmd == "list":
@@ -1276,6 +1277,19 @@ def _parse_skill_command(arg: str, base: dict) -> dict:
     if subcmd == "del":
         return {"action": "delete_skill", "name": p[1] if len(p) > 1 else "",
                 **base}
+    if subcmd == "run":
+        rest = arg[len(subcmd):].strip()
+        target, rest = _extract_at_agent(rest, agent_name)
+        parts = rest.split(None, 1)
+        skill_name = parts[0].lstrip("@") if parts else ""
+        arguments = parts[1] if len(parts) > 1 else ""
+        return {
+            "action": "run_skill",
+            "target_agent": target,
+            "skill_name": skill_name,
+            "arguments": arguments,
+            **base,
+        }
     return {"action": "list_skills", **base}
 
 

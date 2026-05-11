@@ -469,6 +469,99 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         }).encode())
         return [flowfile]
 
+    if action == "run_skill":
+        conv_id = body.get("conversation_id", "")
+        agent_name = (
+            body.get("target_agent", "") or body.get("agent_name", "")
+        ).strip()
+        skill_name = body.get("skill_name", "").strip().lstrip("@")
+        arguments = body.get("arguments", "") or ""
+        if not conv_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        if agent_name:
+            agent_name = self._resolve_agent_name(agent_name, conv_id)
+        else:
+            active = store.get_extra(conv_id, "active_resources", user_id=user_id) or {}
+            agent_name = (active.get("agent", "") or "").strip()
+        if not agent_name:
+            flowfile.set_content(json.dumps({
+                "error": "Missing target agent. Select an agent or use /skill run @agent <skill> [args...]",
+            }).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        if not skill_name:
+            flowfile.set_content(json.dumps({"error": "Missing skill name"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+
+        from core.conv_agent_config import require_agent_member
+        member_error = require_agent_member(conv_id, agent_name, user_id=user_id)
+        if member_error:
+            flowfile.set_content(json.dumps({"error": member_error}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+
+        from core.resource_store import ResourceStore
+        rs = ResourceStore.instance()
+        skill_def = rs.get_any(
+            "skill", skill_name, user_id, conversation_id=conv_id)
+        if not skill_def:
+            flowfile.set_content(json.dumps({
+                "error": f"Skill '{skill_name}' not found",
+            }).encode())
+            flowfile.set_attribute("http.response.status", "404")
+            return [flowfile]
+
+        from core.skill_resolver import resolve_runnable_skill_prompt
+        prompt = resolve_runnable_skill_prompt(
+            skill_name, user_id, conv_id, agent_name, arguments)
+        if not prompt:
+            flowfile.set_content(json.dumps({
+                "error": f"Skill '{skill_name}' has no runnable prompt",
+            }).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+
+        from core.conversation_writer import ConversationWriter
+        from core.llm_client import stamp_message
+        from core.pending_queue import PendingQueue
+        msg = stamp_message({
+            "role": "user",
+            "content": prompt,
+            "source": {
+                "type": "user",
+                "name": user_id,
+                "target_agent": agent_name,
+                "skill_run": {
+                    "skill": skill_name,
+                    "arguments": arguments,
+                },
+            },
+            "channel": "web",
+        }, conv_id)
+        ConversationWriter.for_conversation(conv_id).enqueue_message(
+            dict(msg), agent_name=agent_name, user_id=user_id)
+        PendingQueue.for_agent(conv_id, agent_name).enqueue(
+            dict(msg), source="skill_run")
+        try:
+            from tasks.ai.agent_loop import AgentLoopTask
+            AgentLoopTask.wake_agent(
+                conv_id, agent_name,
+                reason=f"[skill-run] {skill_name}", user_id=user_id,
+                delay=0.0)
+        except Exception:
+            logger.debug("skill run wake failed", exc_info=True)
+        flowfile.set_content(json.dumps({
+            "ok": True,
+            "agent": agent_name,
+            "skill": skill_name,
+            "arguments": arguments,
+            "message": f"Skill '{skill_name}' queued for agent '{agent_name}'",
+        }, ensure_ascii=False).encode())
+        return [flowfile]
+
     if action == "list_agent_skills":
         agent_name = body.get("agent_name", "").strip()
         if not agent_name:

@@ -146,9 +146,9 @@ If a file named `{agent_name}.md` exists in the relay filesystem root, its conte
 
 Skills are effective only when they are assigned to an agent definition through `assigned_skills`. PawFlow does not inject a separate conversation-level `active_resources.skills` list; legacy activation paths must be treated as inactive UI/API compatibility only. Assign or remove skills with `/skill assign @agent @skill` and `/skill unassign @agent @skill`.
 
-Assigned skills are lazy-loaded. Assigning a skill writes a lightweight context message to the target agent and rebuilt system prompts include only an availability manifest with the skill name and description. The full skill prompt is returned only when the agent calls `load_skill(name="skill-name")`, and `load_skill` refuses skills that are not assigned to the current agent.
+Assigned skills are lazy-loaded. Assigning a skill writes a lightweight context message to the target agent and rebuilt system prompts include only an availability manifest with the skill name and description. The full skill prompt is returned only when the agent calls `load_skill(name="skill-name")`, and `load_skill` refuses skills that are not assigned to the current agent. Users can also invoke a visible skill immediately with `/skill run [@agent] <skill> [args...]`; this does not persist assignment, and queues the rendered skill prompt as a user message for the selected or explicit target agent.
 
-Skills may declare `template_engine: jinja` in their YAML frontmatter. These prompts are rendered only when the full skill is loaded through `load_skill`. The Jinja environment is sandboxed and receives a read-only `pawflow` object scoped to the current user/conversation/agent.
+Skills may declare `template_engine: jinja` in their YAML frontmatter. These prompts are rendered when the full skill is loaded through `load_skill` or invoked through `/skill run`. The Jinja environment is sandboxed and receives a read-only `pawflow` object scoped to the current user/conversation/agent. Skill runs additionally expose `args`, `arguments`, and `skill_dir`; Agent Skills style placeholders such as `$ARGUMENTS`, `$0`, `${PAWFLOW_SKILL_DIR}`, `${CLAUDE_SKILL_DIR}`, and `${CODEX_SKILL_DIR}` are substituted for one-shot invocation compatibility.
 
 Available dynamic context includes:
 

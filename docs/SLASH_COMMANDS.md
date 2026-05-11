@@ -467,7 +467,7 @@ Supported task options mirror `/task assign`: `--criteria`, `--interval`, `--ver
 ### /skill
 
 ```
-/skill list | add @name <prompt> | del @name | assign @agent @skill | unassign @agent @skill | assigned @agent
+/skill list | add @name <prompt> | del @name | assign @agent @skill | unassign @agent @skill | assigned @agent | run [@agent] <skill> [args...]
 ```
 
 | Subcommand | Description |
@@ -478,8 +478,9 @@ Supported task options mirror `/task assign`: `--criteria`, `--interval`, `--ver
 | `assign @agent @skill` | Assign a skill to an agent |
 | `unassign @agent @skill` | Remove a skill from an agent |
 | `assigned @agent` | List skills assigned to an agent |
+| `run [@agent] <skill> [args...]` | Invoke a visible skill immediately in the current conversation |
 
-Skills are assigned only through an agent's `assigned_skills`. The old generic resource activation path is not used for skills; use `assign` and `unassign` instead. Assigning a skill advertises it to the agent with a lightweight context message; the full prompt is loaded only when the agent calls `load_skill(name="skill-name")`. Imported or untrusted skill content can be checked with `manage_resource(action="review", resource_type="skill", data={"prompt": "..."})` before creating or assigning it.
+Skills are assigned only through an agent's `assigned_skills`. The old generic resource activation path is not used for skills; use `assign` and `unassign` instead. Assigning a skill advertises it to the agent with a lightweight context message; the full prompt is loaded only when the agent calls `load_skill(name="skill-name")`. `/skill run [@agent] <skill> [args...]` is a one-shot invocation: it renders a visible skill immediately and queues it as a user message for the target agent, defaulting to the selected conversation agent when `@agent` is omitted. Imported or untrusted skill content can be checked with `manage_resource(action="review", resource_type="skill", data={"prompt": "..."})` before creating or assigning it.
 
 ### /add-skill
 

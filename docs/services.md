@@ -62,10 +62,19 @@ as `bash(run_in_background=true)`.
 | `pixazoTryOn` | Pixazo virtual try-on. |
 | `pixazoLipsync` | Pixazo lipsync. |
 | `pixazoTrainer` | Pixazo model/LoRA training. |
+| `wavespeedImageGeneration` | WaveSpeedAI image catalog dispatch. |
+| `wavespeedVideoGeneration` | WaveSpeedAI video catalog dispatch. |
+| `wavespeedAudioGeneration` | WaveSpeedAI audio catalog dispatch. |
+| `wavespeed3DGeneration` | WaveSpeedAI 3D generation. |
+| `wavespeedUpscale` | WaveSpeedAI image/video upscaling and background removal where supported. |
+| `wavespeedTryOn` | WaveSpeedAI virtual try-on. |
+| `wavespeedLipsync` | WaveSpeedAI lipsync. |
+| `wavespeedTrainer` | WaveSpeedAI model/LoRA training. |
 | `fishAudioVoiceClone` | Fish Audio zero-shot voice clone/TTS. |
 | `elevenLabsVoiceClone` | ElevenLabs voice clone/TTS. |
+| `wavespeedVoiceClone` | WaveSpeedAI zero-shot voice clone/TTS. |
 
-See [Media Tools](media_tools.md), [Voice Clone](voice_clone.md), and [Pixazo](pixazo.md).
+See [Media Tools](media_tools.md), [Voice Clone](voice_clone.md), [Pixazo](pixazo.md), and [WaveSpeedAI](wavespeed.md).
 
 ## Server Configuration
 

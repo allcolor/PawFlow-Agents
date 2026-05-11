@@ -59,6 +59,7 @@ def _register_all_services():
 
     # Image generation services
     import services.pixazo_image_service      # noqa: F401
+    import services.wavespeed_image_service   # noqa: F401
     import services.grok_image_service        # noqa: F401
     import services.openai_image_service      # noqa: F401
     import services.codex_image_service       # noqa: F401
@@ -66,19 +67,23 @@ def _register_all_services():
     # Video generation services
     import services.kling_video_service       # noqa: F401
     import services.pixazo_video_service      # noqa: F401
+    import services.wavespeed_video_service   # noqa: F401
     import services.grok_video_service        # noqa: F401
     import services.sora_video_service        # noqa: F401
 
     # Audio generation services
     import services.pixazo_audio_service       # noqa: F401
+    import services.wavespeed_audio_service    # noqa: F401
     import services.suno_audio_service         # noqa: F401  — sunoapi.org wrapper
 
     # Voice-cloning TTS services
     import services.fish_audio_voice_clone_service  # noqa: F401
     import services.elevenlabs_voice_clone_service  # noqa: F401
+    import services.wavespeed_voice_clone_service   # noqa: F401
 
-    # Extra Pixazo capability services (3D, upscale, try-on, lipsync, trainer)
+    # Extra media capability services (3D, upscale, try-on, lipsync, trainer)
     import services.pixazo_capability_services  # noqa: F401
+    import services.wavespeed_capability_services  # noqa: F401
 
     # Relay & filesystem services
     import services.filesystem_service         # noqa: F401  — relay service (WS)

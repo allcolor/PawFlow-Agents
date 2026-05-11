@@ -904,9 +904,11 @@ class SpeakHandler(_CapabilityHandlerBase):
             kwargs = {}
             if entry.get("voice_id"):
                 kwargs["voice_id"] = entry["voice_id"]
-            # Rebuild a usable URL only if the service needs one.
+            # Rebuild a usable URL when the service cannot use cached bytes
+            # directly (for example WaveSpeedAI prediction inputs expect a
+            # URL string, not a raw/base64 sample in this call path).
             ref_url = ""
-            if not ref_bytes and ref_fid:
+            if (not ref_bytes or getattr(svc, "REQUIRES_REFERENCE_AUDIO_URL", False)) and ref_fid:
                 ref_url = f"{self._base_url.rstrip('/')}/files/{ref_fid}"
             r = svc.clone_speak(
                 text=text,

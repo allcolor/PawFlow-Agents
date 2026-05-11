@@ -46,7 +46,7 @@ voice, and finally the repository entry. Mirrors the UI
 
 ## Paradigms
 
-Two concrete providers are wired, one per paradigm.
+Three concrete providers are wired across the two paradigms.
 
 ### Paradigm A — persistent voice_id (ElevenLabs)
 
@@ -59,7 +59,7 @@ config — the sample is never re-sent. Quota-bounded by the
 ElevenLabs plan (Starter 10, Creator 30, Pro 160) — deleting a
 clone calls `DELETE /v1/voices/{voice_id}` to free the slot.
 
-### Paradigm B — zero-shot per request (Fish Audio)
+### Paradigm B — zero-shot per request (Fish Audio, WaveSpeedAI)
 
 `services/fish_audio_voice_clone_service.py` — every `speak` call
 posts `/v1/tts` with the raw reference audio (base64) and the
@@ -68,6 +68,13 @@ no up-front registration step. `ensure_voice_id` returns `""`,
 `delete_voice_id` is a no-op. Cheap and stateless, at the cost of
 re-uploading the sample on every call. Good default for one-off
 or short-lived clones.
+
+`services/wavespeed_voice_clone_service.py` — every `speak` call
+submits a WaveSpeedAI prediction using the configured voice-clone
+model (for example Qwen3 TTS, OmniVoice, or MiniMax voice clone),
+the reference audio URL, and the target text. The rendered audio URL
+is returned through `data.outputs[]`; PawFlow stores and caches the
+bytes exactly like other zero-shot providers.
 
 ### Deciding which paradigm the handler uses
 

@@ -97,10 +97,19 @@ Supported service families include:
 - `pixazoTryOn`
 - `pixazoLipsync`
 - `pixazoTrainer`
+- `wavespeedImageGeneration`
+- `wavespeedVideoGeneration`
+- `wavespeedAudioGeneration`
+- `wavespeed3DGeneration`
+- `wavespeedUpscale`
+- `wavespeedTryOn`
+- `wavespeedLipsync`
+- `wavespeedTrainer`
 - `fishAudioVoiceClone`
 - `elevenLabsVoiceClone`
+- `wavespeedVoiceClone`
 
-For Pixazo model-specific schemas and pricing notes, see [Pixazo](pixazo.md). For voice clone internals, see [Voice Clone](voice_clone.md).
+For Pixazo model-specific schemas and pricing notes, see [Pixazo](pixazo.md). For WaveSpeedAI model-specific schemas and pricing notes, see [WaveSpeedAI](wavespeed.md). For voice clone internals, see [Voice Clone](voice_clone.md).
 
 ### Suno Audio Service
 

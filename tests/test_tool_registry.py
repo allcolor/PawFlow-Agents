@@ -450,6 +450,7 @@ class TestMetaToolAliases(unittest.TestCase):
 
         schema = json.loads(GetToolSchemaHandler(reg).execute({"tool_name": "bash"}))
         assert "local" in schema["parameters"]["properties"]
+        assert "cmd" in schema["parameters"]["properties"]
 
         result = UseToolHandler(reg).execute({
             "tool_name": "bash",
@@ -457,6 +458,14 @@ class TestMetaToolAliases(unittest.TestCase):
         })
         assert result == "bash-ok"
         assert received == {"command": "pwd", "local": True}
+
+        received.clear()
+        result = UseToolHandler(reg).execute({
+            "tool_name": "bash",
+            "arguments": {"cmd": "git status"},
+        })
+        assert result == "bash-ok"
+        assert received == {"command": "git status"}
 
     def test_fs_meta_schema_exposes_relay_and_normalizes_to_source(self):
         from core.handlers.meta_tools import GetToolSchemaHandler, UseToolHandler
@@ -956,6 +965,23 @@ class TestArgumentValidation(unittest.TestCase):
         result = reg.execute("output_limited", {"command": "git status", "max_chars": 1200})
         assert result == "mock_result"
         assert handler.received_args == {"command": "git status", "max_output": 1200}
+
+    def test_command_alias_normalized_before_validation(self):
+        reg = ToolRegistry()
+        handler = CapturingHandler(
+            name="command_tool",
+            schema={
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string"},
+                },
+                "required": ["command"],
+            },
+        )
+        reg.register(handler)
+        result = reg.execute("command_tool", {"cmd": "git status"})
+        assert result == "mock_result"
+        assert handler.received_args == {"command": "git status"}
 
     def test_edit_schema_accepts_old_new_aliases(self):
         schema = EditHandler().parameters_schema

@@ -46,7 +46,7 @@ Editing preference: use `apply_patch` for patch-shaped changes and `batch_edit` 
 
 | Tool | Purpose |
 |---|---|
-| `bash` | Run a shell command through the relay. |
+| `bash` | Run a shell command through the relay. Accepts `command` or `cmd`. |
 | `Monitor` | Run a command and return early on exit or regex match. |
 | `execute_script` | Execute a script/tool-backed snippet. |
 | `run_tests` | Run tests through the project environment. |

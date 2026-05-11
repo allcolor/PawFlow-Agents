@@ -40,6 +40,7 @@ _RELAY_FILESYSTEM_TOOLS = {
 }
 
 _COMMON_ARG_ALIASES = {
+    "command": ("cmd",),
     "limit": (
         "max_results", "maxResults", "max_result", "maxResult",
         "result_limit", "resultLimit", "max_items", "maxItems",

@@ -81,6 +81,7 @@ class BashHandler(BaseFsHandler):
             " - Write files: Use filesystem tools (NOT echo >/cat <<EOF)\n\n"
             "Parameters:\n"
             " - command: The shell command to execute.\n"
+            " - cmd: Alias for command.\n"
             " - description: A short description of what the command does. "
             "This is logged for auditability but NOT executed.\n"
             " - timeout: Optional timeout in milliseconds. No default — "
@@ -109,6 +110,7 @@ class BashHandler(BaseFsHandler):
             "type": "object",
             "properties": {
                 "command": {"type": "string", "description": "Shell command to execute"},
+                "cmd": {"type": "string", "description": "Alias for command."},
                 "description": {"type": "string", "description": "Short description of what the command does."},
                 "timeout": {"type": "integer", "description": "Optional timeout in milliseconds. Omit for no timeout (command runs until it exits)."},
                 "run_in_background": {"type": "boolean", "description": "Run command in background. Use read to check output later."},
@@ -221,6 +223,9 @@ class BashHandler(BaseFsHandler):
     def execute(self, arguments: Dict[str, Any]) -> str:
         arguments = self._unwrap_json(arguments)
         arguments = self._resolve_expressions(arguments)
+        if "command" not in arguments and "cmd" in arguments:
+            arguments = dict(arguments)
+            arguments["command"] = arguments.pop("cmd")
         command = arguments.get("command", "")
         if not command:
             logger.warning("[bash] called with empty command. raw args: %s", repr(arguments)[:300])

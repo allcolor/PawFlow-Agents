@@ -608,6 +608,50 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         }, ensure_ascii=False).encode())
         return [flowfile]
 
+    if action == "search_skill_marketplace":
+        source = body.get("source", "all") or "all"
+        query = body.get("query", "") or ""
+        try:
+            from core.skill_marketplace import search_marketplace
+            result = search_marketplace(source=source, query=query, limit=10)
+            flowfile.set_content(json.dumps(result, ensure_ascii=False).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+        return [flowfile]
+
+    if action == "import_skill_marketplace":
+        ref = body.get("ref", "") or ""
+        if body.get("error"):
+            flowfile.set_content(json.dumps({"error": body.get("error")}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        if not ref:
+            flowfile.set_content(json.dumps({
+                "error": "Missing ref. Usage: /skill import [--source src] [--review-only] [--force] <ref>",
+            }).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        try:
+            from core.skill_marketplace import import_marketplace_skill
+            result = import_marketplace_skill(
+                source=body.get("source", "") or "",
+                ref=ref,
+                name=body.get("name", "") or "",
+                user_id=user_id,
+                conversation_id=body.get("conversation_id", "") or "",
+                review_only=bool(body.get("review_only", False)),
+                force=bool(body.get("force", False)),
+                scope=body.get("scope", "user") or "user",
+            )
+            flowfile.set_content(json.dumps(result, ensure_ascii=False).encode())
+            if result.get("blocked"):
+                flowfile.set_attribute("http.response.status", "400")
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+        return [flowfile]
+
     if action == "check_files":
         file_ids = body.get("file_ids", [])
         if not file_ids:

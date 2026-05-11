@@ -304,10 +304,12 @@ HELP: Dict[str, Dict[str, str]] = {
         ),
     },
     "/skill": {
-        "usage": "/skill list | add <name> <prompt> | del <name> | run [@agent] <name> [args...]",
+        "usage": "/skill list | search [--source src] <query> | import [--source src] [--review-only] [--force] <ref> | add <name> <prompt> | del <name> | run [@agent] <name> [args...]",
         "short": "Manage skills",
         "detail": (
             "  /skill list                    — List all skills\n"
+            "  /skill search [--source src] <query> — Search external skill marketplaces\n"
+            "  /skill import [--source src] [--review-only] [--force] <ref> — Review/import an external skill\n"
             "  /skill add <name> <prompt>     — Create a skill\n"
             "  /skill del <name>              — Delete a skill\n"
             "  /skill run [@agent] <name> [args...] — Invoke a skill now"
@@ -1277,6 +1279,76 @@ def _parse_skill_command(arg: str, base: dict, agent_name: str = "") -> dict:
     if subcmd == "del":
         return {"action": "delete_skill", "name": p[1] if len(p) > 1 else "",
                 **base}
+    if subcmd == "search":
+        rest = arg[len(subcmd):].strip()
+        try:
+            tokens = shlex.split(rest)
+        except ValueError:
+            tokens = rest.split()
+        source = "all"
+        query_parts = []
+        i = 0
+        while i < len(tokens):
+            tok = tokens[i]
+            if tok == "--source" and i + 1 < len(tokens):
+                source = tokens[i + 1]
+                i += 2
+                continue
+            query_parts.append(tok)
+            i += 1
+        return {
+            "action": "search_skill_marketplace",
+            "source": source,
+            "query": " ".join(query_parts).strip(),
+            **base,
+        }
+    if subcmd == "import":
+        rest = arg[len(subcmd):].strip()
+        try:
+            tokens = shlex.split(rest)
+        except ValueError as exc:
+            return {"action": "import_skill_marketplace", "ref": "", "error": str(exc), **base}
+        source = ""
+        review_only = False
+        force = False
+        scope = "user"
+        name = ""
+        ref_parts = []
+        i = 0
+        while i < len(tokens):
+            tok = tokens[i]
+            if tok == "--source" and i + 1 < len(tokens):
+                source = tokens[i + 1]
+                i += 2
+                continue
+            if tok == "--review-only":
+                review_only = True
+                i += 1
+                continue
+            if tok == "--force":
+                force = True
+                i += 1
+                continue
+            if tok == "--scope" and i + 1 < len(tokens):
+                scope = tokens[i + 1]
+                i += 2
+                continue
+            if tok == "--name" and i + 1 < len(tokens):
+                name = tokens[i + 1]
+                i += 2
+                continue
+            ref_parts.append(tok)
+            i += 1
+        return {
+            "action": "import_skill_marketplace",
+            "source": source,
+            "ref": " ".join(ref_parts).strip(),
+            "name": name,
+            "review_only": review_only,
+            "force": force,
+            "scope": scope,
+            **base,
+        }
     if subcmd == "run":
         rest = arg[len(subcmd):].strip()
         target, rest = _extract_at_agent(rest, agent_name)

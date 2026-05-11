@@ -40,6 +40,8 @@ class ManageResourceHandler(ToolHandler):
             "- list: List all resources of a type\n"
             "- get: Get details of a specific resource\n"
             "- review: Review an untrusted skill before import\n"
+            "- search_marketplace: Search external skill marketplaces\n"
+            "- import_marketplace: Review/import an external Agent Skill\n"
             "- activate: Activate a resource in the current conversation\n"
             "- deactivate: Deactivate a resource from the current conversation\n\n"
             "Resource types: agent, skill, mcp, task_def, tool\n\n"
@@ -60,7 +62,8 @@ class ManageResourceHandler(ToolHandler):
                 "action": {
                     "type": "string",
                     "enum": ["create", "update", "delete", "list",
-                             "get", "review", "activate", "deactivate"],
+                             "get", "review", "search_marketplace",
+                             "import_marketplace", "activate", "deactivate"],
                     "description": "Action to perform",
                 },
                 "resource_type": {
@@ -75,6 +78,26 @@ class ManageResourceHandler(ToolHandler):
                 "data": {
                     "type": "object",
                     "description": "Resource data (for create/update). Must include required fields.",
+                },
+                "source": {
+                    "type": "string",
+                    "description": "Marketplace source for skill search/import: codex, claude, hermes, openclaw, all.",
+                },
+                "query": {
+                    "type": "string",
+                    "description": "Search query for skill marketplace search.",
+                },
+                "ref": {
+                    "type": "string",
+                    "description": "Marketplace skill ref or GitHub tree URL for skill import.",
+                },
+                "review_only": {
+                    "type": "boolean",
+                    "description": "Only fetch and review; do not create the skill.",
+                },
+                "force": {
+                    "type": "boolean",
+                    "description": "Allow importing a reviewed skill that requires human review. Blocked reviews still fail.",
                 },
             },
             "required": ["action", "resource_type"],
@@ -267,6 +290,36 @@ class ManageResourceHandler(ToolHandler):
                         conversation_id=self._conversation_id,
                         package_files=package_files if isinstance(package_files, dict) else {},
                     )
+                return json.dumps(result, ensure_ascii=False, indent=2)
+
+            elif action == "search_marketplace":
+                if rtype != "skill":
+                    return "Error: search_marketplace is only supported for skills"
+                from core.skill_marketplace import search_marketplace
+                result = search_marketplace(
+                    source=str(arguments.get("source", "all") or "all"),
+                    query=str(arguments.get("query", "") or ""),
+                    limit=int(arguments.get("limit", 10) or 10),
+                )
+                return json.dumps(result, ensure_ascii=False, indent=2)
+
+            elif action == "import_marketplace":
+                if rtype != "skill":
+                    return "Error: import_marketplace is only supported for skills"
+                ref = str(arguments.get("ref", "") or "")
+                if not ref:
+                    return "Error: 'ref' is required for import_marketplace"
+                from core.skill_marketplace import import_marketplace_skill
+                result = import_marketplace_skill(
+                    source=str(arguments.get("source", "") or ""),
+                    ref=ref,
+                    name=name,
+                    user_id=user_id,
+                    conversation_id=self._conversation_id,
+                    review_only=bool(arguments.get("review_only", False)),
+                    force=bool(arguments.get("force", False)),
+                    scope=str(arguments.get("scope", "user") or "user"),
+                )
                 return json.dumps(result, ensure_ascii=False, indent=2)
 
             elif action == "activate":

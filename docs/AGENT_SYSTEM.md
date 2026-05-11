@@ -162,6 +162,8 @@ The exposed data is a sanitized snapshot: no secrets, relay tokens, mutable stor
 
 Untrusted or imported skills are reviewed before create, update, and import through the configured `skillReview` service when one is available. The `skillReview` service points to an `llmConnection` via `llm_service`; PawFlow passes skill content as data and calls that reviewer with `tools=None`. Without a configured `skillReview`, PawFlow still runs deterministic static checks and blocks obvious unsafe content, but does not persist review metadata for clean low-risk writes. `manage_resource(action="review", resource_type="skill", data={...})` returns the same review report without writing the skill. Executable package content is reported for separate review and never becomes a PawFlow tool automatically.
 
+External Agent Skills can be discovered with `/skill search` or `manage_resource(action="search_marketplace", resource_type="skill", source="codex|claude|hermes|openclaw|all", query="...")`. Import uses `/skill import` or `manage_resource(action="import_marketplace", resource_type="skill", source="...", ref="...")`. The importer accepts known marketplace refs and GitHub tree URLs, fetches only bounded text files, requires a root `SKILL.md`, stores provenance and package hashes, and reviews the full package before writing. `allowed-tools` and bundled scripts are never trusted as permissions; review-blocked packages cannot be imported, and packages requiring human review need an explicit force flag after inspection.
+
 ### Context Loading
 
 Messages are loaded from the conversation store with these strategies:

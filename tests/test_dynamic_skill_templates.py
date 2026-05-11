@@ -75,6 +75,60 @@ def test_static_skill_prompt_still_uses_param_substitution(monkeypatch):
     assert "Use generate_image carefully." in blocks[0]
 
 
+def test_skill_manifest_advertises_without_prompt_body(monkeypatch):
+    from core import skill_resolver
+
+    class Store:
+        def get_any(self, rtype, name, user_id):
+            return {
+                "description": "Static skill",
+                "prompt": "SECRET FULL PROMPT BODY",
+            }
+
+    from core.resource_store import ResourceStore
+    monkeypatch.setattr(ResourceStore, "instance", staticmethod(lambda: Store()))
+
+    lines = skill_resolver.resolve_skill_manifests(["static"], "alice")
+
+    assert "Static skill" in lines[0]
+    assert "load_skill" in lines[0]
+    assert "SECRET FULL PROMPT BODY" not in lines[0]
+
+
+def test_load_skill_only_returns_assigned_skill(monkeypatch):
+    from core.handlers.skills import LoadSkillHandler
+
+    class Store:
+        def get_any(self, rtype, name, user_id, conversation_id=""):
+            if rtype == "agent":
+                return {
+                    "assigned_skills": [
+                        {"name": "static", "params": {"tool_name": "bash"}},
+                    ],
+                }
+            if rtype == "skill" and name == "static":
+                return {
+                    "description": "Static skill",
+                    "prompt": "Use ${tool_name} carefully.",
+                    "parameters": {"tool_name": {"default": "read"}},
+                }
+            return None
+
+    from core.resource_store import ResourceStore
+    monkeypatch.setattr(ResourceStore, "instance", staticmethod(lambda: Store()))
+
+    handler = LoadSkillHandler()
+    handler.set_user_id("alice")
+    handler.set_agent_name("assistant")
+
+    loaded = handler.execute({"name": "static"})
+    denied = handler.execute({"name": "other"})
+
+    assert "## Skill: static" in loaded
+    assert "Use bash carefully." in loaded
+    assert "not assigned" in denied
+
+
 def test_default_media_service_uses_agent_preference(monkeypatch):
     from core import skill_resolver
 

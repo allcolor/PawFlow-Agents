@@ -452,6 +452,7 @@ class AssignTaskHandler(ToolHandler):
         # Also check task definition for auto_allow default
         if not auto_allow and definition.get("auto_allow"):
             auto_allow = True
+        interactive = bool(arguments.get("interactive", False) or definition.get("interactive"))
 
         # Parse interval: plain seconds or frequency spec (3/5m, 2-4/h)
         interval_data = self._parse_interval(interval_spec)
@@ -508,6 +509,7 @@ class AssignTaskHandler(ToolHandler):
             "total_cost": 0.0,
             "reschedule_count": 0,
             "auto_allow": auto_allow,
+            "interactive": interactive,
             "skills": self._merge_task_skills(
                 definition.get("skills") or [],
                 arguments.get("skills") or [],

@@ -103,9 +103,14 @@ def test_agent_skills_use_assigned_skills_as_single_source():
 
     assert 'get("assigned_skills")' in context_src
     assert 'agent_def.get("assigned_skills")' in executor_src
+    assert "inject_available_skills_into_prompt" in context_src
+    assert "inject_available_skills_into_prompt" in executor_src
+    assert "from core.skill_resolver import inject_skills_into_prompt" not in context_src
+    assert "from core.skill_resolver import inject_skills_into_prompt" not in executor_src
     assert '"skills": []' not in config_src
     assert '"skills": skills or []' not in add_src
     assert '"assigned_skills"' in resource_src
+    assert "invalidate_claude_session_for_agent" not in resource_src
 
 
 def test_compaction_does_not_persist_provider_system_prompt():

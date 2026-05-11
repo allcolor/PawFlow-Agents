@@ -82,6 +82,7 @@ def _create_and_assign_task_def(self, body: Dict[str, Any], store,
         "verifier": body.get("verifier", "") or "",
         "skills": skills,
         "description": body.get("description", "") or "",
+        "interactive": bool(body.get("interactive", False)),
         "created_by": user_id,
         "inline": True,
         "kind": "goal" if goal_mode else body.get("kind", "inline_task"),
@@ -107,6 +108,7 @@ def _create_and_assign_task_def(self, body: Dict[str, Any], store,
         "max_total_time": body.get("max_total_time", ""),
         "max_reschedules": body.get("max_reschedules", 0),
         "auto_allow": bool(body.get("auto_allow", False)),
+        "interactive": bool(body.get("interactive", False)),
         "depends_on": body.get("depends_on") or [],
         "skills": skills,
     }
@@ -404,6 +406,7 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
             "max_total_time": body.get("max_total_time", ""),
             "max_reschedules": body.get("max_reschedules", 0),
             "auto_allow": bool(body.get("auto_allow", False)),
+            "interactive": bool(body.get("interactive", False)),
             "depends_on": body.get("depends_on") or [],
         })
         # Ensure poller is running (task needs it for scheduled wake-ups)

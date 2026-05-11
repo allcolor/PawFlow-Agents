@@ -5,7 +5,7 @@
 
 function _parseTaskAssignOptions(qargs, startIndex) {
   let interval = null, maxIter = 0, verifier = '', criteria = '';
-  let maxBudget = '', maxTurnTime = '', maxTotalTime = '', maxReschedules = 0, autoAllow = false, context = '';
+  let maxBudget = '', maxTurnTime = '', maxTotalTime = '', maxReschedules = 0, autoAllow = false, interactive = false, context = '';
   const variables = {};
   for (let i = startIndex; i < qargs.length; i++) {
     if (qargs[i] === '--criteria' && qargs[i+1]) { criteria = qargs[++i]; }
@@ -18,13 +18,14 @@ function _parseTaskAssignOptions(qargs, startIndex) {
     else if (qargs[i] === '--max-reschedules' && qargs[i+1]) { maxReschedules = parseInt(qargs[++i]) || 0; }
     else if (qargs[i] === '--context' && qargs[i+1]) { context = qargs[++i]; }
     else if (qargs[i] === '--auto-allow') { autoAllow = true; }
+    else if (qargs[i] === '--interactive') { interactive = true; }
     else if (qargs[i] === '--var' && qargs[i+1]) {
       const kv = qargs[++i];
       const eq = kv.indexOf('=');
       if (eq > 0) variables[kv.substring(0, eq)] = kv.substring(eq + 1);
     }
   }
-  return { interval, maxIter, verifier, criteria, maxBudget, maxTurnTime, maxTotalTime, maxReschedules, autoAllow, context, variables };
+  return { interval, maxIter, verifier, criteria, maxBudget, maxTurnTime, maxTotalTime, maxReschedules, autoAllow, interactive, context, variables };
 }
 
 function _applyTaskAssignOptions(params, opts) {
@@ -39,6 +40,7 @@ function _applyTaskAssignOptions(params, opts) {
   if (opts.maxTotalTime) params.max_total_time = opts.maxTotalTime;
   if (opts.maxReschedules) params.max_reschedules = opts.maxReschedules;
   if (opts.autoAllow) params.auto_allow = true;
+  if (opts.interactive) params.interactive = true;
   return params;
 }
 
@@ -83,14 +85,14 @@ function cmdTask(text, parts) {
     let taskPrompt = extractOpt(afterName, 'prompt');
     let criteria = extractOpt(afterName, 'criteria');
     let interval = extractOpt(afterName, 'interval');
+    let interactive = /(?:^|\s)--interactive(?:\s|$)/.test(afterName);
     if (!taskPrompt) {
       const qargs = parseQuotedArgs(text);
       taskPrompt = qargs[3] || '';
-      if (!criteria) {
-        for (let i = 4; i < qargs.length; i++) {
-          if (qargs[i] === '--criteria' && qargs[i+1]) criteria = qargs[++i];
-          else if (qargs[i] === '--interval' && qargs[i+1]) interval = qargs[++i];
-        }
+      for (let i = 4; i < qargs.length; i++) {
+        if (qargs[i] === '--criteria' && qargs[i+1]) { if (!criteria) criteria = qargs[i+1]; i++; }
+        else if (qargs[i] === '--interval' && qargs[i+1]) { if (!interval) interval = qargs[i+1]; i++; }
+        else if (qargs[i] === '--interactive') interactive = true;
       }
     }
     if (!taskName || !taskPrompt) {
@@ -99,7 +101,7 @@ function cmdTask(text, parts) {
     }
     action$('create_task_def', {
       name: taskName,
-      data: { prompt: taskPrompt, criteria, default_interval: interval || '6/1m' },
+      data: { prompt: taskPrompt, criteria, default_interval: interval || '6/1m', interactive },
     }).subscribe(data => {
       if (data.error) addMsg('error', data.error);
       else addMsg('system', t('taskDefinitionCreated', { name: taskName }));

@@ -334,7 +334,7 @@ HELP: Dict[str, Dict[str, str]] = {
             "unless --criteria is provided.\n\n"
             "Options mirror /task assign: --criteria, --interval, --verifier, "
             "--budget, --turn-time, --total-time, --max-reschedules, --max, "
-            "--context, --var, --auto-allow."
+            "--context, --var, --auto-allow, --interactive."
         ),
     },
     "/permission": {
@@ -1344,6 +1344,8 @@ def _parse_goal_command(arg: str, base: dict, agent_name: str) -> dict:
             i += 2; continue
         if tok == "--auto-allow":
             result["auto_allow"] = True; i += 1; continue
+        if tok == "--interactive":
+            result["interactive"] = True; i += 1; continue
         prompt_parts.append(tok)
         i += 1
     result["agent_name"] = target or agent_name

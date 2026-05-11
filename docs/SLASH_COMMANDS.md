@@ -402,7 +402,7 @@ Remove all queued file attachments (pending uploads). Alias: `/detach`
 **Library (reusable definitions):**
 
 ```
-/task create <name> "<prompt>" [--criteria "..."] [--interval XX]
+/task create <name> "<prompt>" [--criteria "..."] [--interval XX] [--interactive]
 /task delete <name>
 /task list
 ```
@@ -413,7 +413,7 @@ Remove all queued file attachments (pending uploads). Alias: `/detach`
 /task assign @<agent> <taskname>
 /task assign @<agent> <taskname> --var nbr_images=20 --var style=cyberpunk
 /task assign @<agent> <taskname> --interval XX
-/task assign @<agent> "<inline task>" [--criteria "..."] [--interval XX] [--verifier @<agent>]
+/task assign @<agent> "<inline task>" [--criteria "..."] [--interval XX] [--verifier @<agent>] [--interactive]
 ```
 
 **Limits (on assign or edit):**
@@ -428,6 +428,7 @@ Remove all queued file attachments (pending uploads). Alias: `/detach`
 | `--verifier @agent` | Agent that verifies completion |
 | `--var key=val` | Variable substitution in task prompt |
 | `--auto-allow` | Auto-approve plan steps |
+| `--interactive` | Mark scheduled wake-ups as system-prefixed context instead of bare user `continue` |
 
 **Control:**
 
@@ -452,7 +453,7 @@ Task IDs look like `t_xxxxxxxx`. Tasks survive server restarts and reschedule au
 
 Creates a conversation-scoped task definition with a generated name and assigns it immediately. If `@agent` is omitted, PawFlow uses the selected agent for the current conversation. `/goal` is an alias over tasks: the objective is stored as the task prompt, and unless `--criteria` is provided, the same objective is also used as the task criteria.
 
-Supported task options mirror `/task assign`: `--criteria`, `--interval`, `--verifier`, `--budget`, `--turn-time`, `--total-time`, `--max-reschedules`, `--max`, `--context`, `--var`, and `--auto-allow`.
+Supported task options mirror `/task assign`: `--criteria`, `--interval`, `--verifier`, `--budget`, `--turn-time`, `--total-time`, `--max-reschedules`, `--max`, `--context`, `--var`, `--auto-allow`, and `--interactive`.
 
 ```
 /goal @grok "Migrate X until tests pass and final audit is done" --interval 120 --verifier @claude
@@ -478,7 +479,7 @@ Supported task options mirror `/task assign`: `--criteria`, `--interval`, `--ver
 | `unassign @agent @skill` | Remove a skill from an agent |
 | `assigned @agent` | List skills assigned to an agent |
 
-Skills are injected only through an agent's `assigned_skills`. The old generic resource activation path is not used for skills; use `assign` and `unassign` instead. Imported or untrusted skill content can be checked with `manage_resource(action="review", resource_type="skill", data={"prompt": "..."})` before creating or assigning it.
+Skills are assigned only through an agent's `assigned_skills`. The old generic resource activation path is not used for skills; use `assign` and `unassign` instead. Assigning a skill advertises it to the agent with a lightweight context message; the full prompt is loaded only when the agent calls `load_skill(name="skill-name")`. Imported or untrusted skill content can be checked with `manage_resource(action="review", resource_type="skill", data={"prompt": "..."})` before creating or assigning it.
 
 ### /add-skill
 

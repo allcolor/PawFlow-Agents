@@ -1904,7 +1904,7 @@ const _RESOURCE_FIELDS = {
   agent:    [['prompt','textarea'],['description','text']],
   skill:    [['prompt','textarea'],['description','text']],
   mcp:      [['transport','mcp_transport'],['via','mcp_via'],['relay_service','mcp_relay'],['local','checkbox'],['url','text'],['command','text'],['args','json'],['env','json'],['auth','json'],['description','text']],
-  task_def: [['prompt','textarea'],['criteria','textarea'],['default_interval','text'],['verifier','text'],['skills','skills_picker'],['description','text']],
+  task_def: [['prompt','textarea'],['criteria','textarea'],['default_interval','text'],['verifier','text'],['interactive','checkbox'],['skills','skills_picker'],['description','text']],
   prompt:   [['prompt','textarea'],['parameters','params_editor'],['title','text'],['category','text'],['description','text']],
   _tool:    [['tool_description','text'],['parameters','textarea'],['code','textarea']],
 };
@@ -1943,7 +1943,12 @@ function _buildResourceForm(rtype, data, isNew, readonly) {
       html += `<textarea id="res-${key}"${dis} data-json="1" style="width:100%;min-height:70px;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;font-family:monospace;font-size:12px;resize:vertical;${roS}">${String(jsonVal).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</textarea>`;
     } else if (type === 'checkbox') {
       const checkedAttr = (val === true || val === 'true') ? ' checked' : '';
-      html += `<label style="display:flex;align-items:center;gap:6px;margin-top:4px;cursor:pointer;"><input id="res-${key}" type="checkbox"${checkedAttr}${dis} style="accent-color:var(--pf-accent);"/> <span style="color:var(--pf-text);font-size:12px;">Run stdio on relay host helper</span></label>`;
+      const checkboxText = key === 'local'
+        ? 'Run stdio on relay host helper'
+        : (key === 'interactive'
+          ? 'Interactive task: scheduled wake-ups are system-marked, not user input'
+          : key);
+      html += `<label style="display:flex;align-items:center;gap:6px;margin-top:4px;cursor:pointer;"><input id="res-${key}" type="checkbox"${checkedAttr}${dis} style="accent-color:var(--pf-accent);"/> <span style="color:var(--pf-text);font-size:12px;">${escapeHtml(checkboxText)}</span></label>`;
     } else if (type === 'mcp_transport') {
       const httpSelected = (val === 'http' || !val) ? ' selected' : '';
       const stdioSelected = val === 'stdio' ? ' selected' : '';

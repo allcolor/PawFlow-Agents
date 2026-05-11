@@ -138,6 +138,7 @@ pages before image results before video results.
 | `delegate` | Spawn/delegate work to another agent. |
 | `flash_delegate` | Create temporary task-specific agents for independent parallel work; they use the caller's LLM service and disappear after completion. |
 | `manage_resource` | Create/update/delete/list agents, skills, tools, services, resources. Creates resources in conversation scope when called from an active conversation. |
+| `load_skill` | Load the full prompt for a skill assigned to the current agent. |
 | `assign_task` | Assign a recurring autonomous task. |
 | `complete_task` | Report task progress/completion. |
 | `verify_task` | Verify a completed task. |

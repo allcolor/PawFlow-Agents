@@ -471,13 +471,104 @@ def resolve_skill_prompts(
     return blocks
 
 
-def inject_skills_into_prompt(system_prompt: str, skill_entries: List,
-                              user_id: str, conversation_id: str = "",
-                              agent_name: str = "") -> str:
-    """Append resolved skill blocks to system prompt. Returns modified prompt."""
-    blocks = resolve_skill_prompts(
-        skill_entries, user_id, conversation_id=conversation_id,
-        agent_name=agent_name)
-    if blocks:
-        system_prompt += "\n\n# Assigned Skills\n\n" + "\n\n".join(blocks)
+def _skill_summary(skill_def: Dict[str, Any]) -> str:
+    desc = str(skill_def.get("description", "") or "").strip()
+    if desc:
+        return desc[:500]
+    return "No description provided."
+
+
+def resolve_skill_manifests(
+    skill_entries: List,
+    user_id: str,
+) -> List[str]:
+    """Resolve assigned skills to lightweight availability manifest lines."""
+    from core.resource_store import ResourceStore
+    rs = ResourceStore.instance()
+    lines = []
+    seen = set()
+    for entry in skill_entries:
+        name, _params, condition = normalize_skill_entry(entry)
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        if condition and not _evaluate_condition(condition, user_id):
+            continue
+        skill_def = rs.get_any("skill", name, user_id)
+        if not skill_def:
+            continue
+        summary = _skill_summary(skill_def)
+        lines.append(
+            f"- {name}: {summary}\n"
+            f"  Use `load_skill(name=\"{name}\")` to load the full skill when relevant."
+        )
+    return lines
+
+
+def available_skill_context_message(skill_name: str,
+                                    skill_def: Dict[str, Any]) -> str:
+    """Return the context delta sent when a skill becomes available."""
+    summary = _skill_summary(skill_def or {})
+    return (
+        f"Skill available: {skill_name}\n"
+        f"Description: {summary}\n"
+        f"Use `load_skill(name=\"{skill_name}\")` to load the full skill when relevant."
+    )
+
+
+def removed_skill_context_message(skill_name: str) -> str:
+    """Return the context delta sent when a skill is removed."""
+    return (
+        f"Skill removed: {skill_name}\n"
+        "This skill is no longer available to this agent."
+    )
+
+
+def inject_available_skills_into_prompt(system_prompt: str, skill_entries: List,
+                                        user_id: str) -> str:
+    """Append only lightweight skill manifests to the provider system prompt."""
+    lines = resolve_skill_manifests(skill_entries, user_id)
+    if lines:
+        system_prompt += "\n\n# Available Skills\n\n" + "\n".join(lines)
     return system_prompt
+
+
+def _agent_assigned_skill_entry(skill_name: str, user_id: str,
+                                conversation_id: str,
+                                agent_name: str):
+    if not skill_name or not agent_name:
+        return None
+    from core.resource_store import ResourceStore
+    rs = ResourceStore.instance()
+    def_name = agent_name
+    if conversation_id:
+        try:
+            from core.conv_agent_config import get_agent_config
+            def_name = get_agent_config(conversation_id, agent_name).get("definition") or agent_name
+        except Exception:
+            def_name = agent_name
+    agent_def = rs.get_any("agent", def_name, user_id,
+                           conversation_id=conversation_id) or rs.get_any(
+                               "agent", def_name, user_id) or {}
+    for entry in agent_def.get("assigned_skills") or []:
+        name, _params, condition = normalize_skill_entry(entry)
+        if name != skill_name:
+            continue
+        if condition and not _evaluate_condition(condition, user_id):
+            return None
+        return entry
+    return None
+
+
+def resolve_assigned_skill_prompt(skill_name: str, user_id: str,
+                                  conversation_id: str,
+                                  agent_name: str) -> str:
+    """Resolve a full skill prompt only if assigned to the current agent."""
+    entry = _agent_assigned_skill_entry(
+        skill_name, user_id, conversation_id, agent_name)
+    if not entry:
+        return ""
+    blocks = resolve_skill_prompts(
+        [entry], user_id, conversation_id=conversation_id,
+        agent_name=agent_name)
+    return blocks[0] if blocks else ""

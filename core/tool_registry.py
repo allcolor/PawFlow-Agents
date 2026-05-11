@@ -91,6 +91,7 @@ from core.handlers.meta_tools import (  # noqa: F401
     GetToolSchemaHandler,
     UseToolHandler,
 )
+from core.handlers.skills import LoadSkillHandler  # noqa: F401
 from core.handlers.plan_handlers import (  # noqa: F401
     ApprovePlanHandler,
     AssignPlanHandler,
@@ -398,6 +399,7 @@ def create_default_registry() -> ToolRegistry:
     registry.register(RememberHandler())
     registry.register(RecallHandler())
     registry.register(SemanticRecallHandler())
+    registry.register(LoadSkillHandler())
     registry.register(LinkTaskHandler())
     registry.register(AssignTaskHandler())
     registry.register(CompleteTaskHandler())

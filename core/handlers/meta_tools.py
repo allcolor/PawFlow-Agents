@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 _TOOL_ALIASES = {
     "read_file": "read",
+    "loadskill": "load_skill",
 }
 
 _WRAPPER_TOOL_NAMES = {

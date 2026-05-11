@@ -372,7 +372,7 @@ class TestToolRegistry(unittest.TestCase):
     def test_get_tool_definitions(self):
         registry = create_default_registry()
         defs = registry.get_tool_definitions()
-        assert len(defs) == 95  # + search
+        assert len(defs) == 96  # + search + load_skill
         assert any(d.get("name") == "flash_delegate" for d in defs)
         assert all("name" in d and "description" in d and "parameters" in d for d in defs)
 
@@ -451,7 +451,7 @@ class TestAgentLoopTask(unittest.TestCase):
         task = AgentLoopTask({"api_key": "test"})
         registry = task.get_tool_registry()
         tools = registry.list_tools()
-        assert len(tools) == 95  # + search
+        assert len(tools) == 96  # + search + load_skill
         assert any(t.name == "flash_delegate" for t in tools)
 
     def test_tool_registry_custom(self):
@@ -1607,6 +1607,66 @@ class TestRandomThought(unittest.TestCase):
         assert captured["ctx"]["_independent_context"] is True
         assert captured["loop_cid"] == sub_id
         assert store.load_agent_context(sub_id, "worker")[-1]["content"] == "continue"
+
+    def test_interactive_task_poll_uses_system_wakeup_message(self):
+        """Interactive task wakes must not inject a bare user 'continue'."""
+        from core.conversation_store import ConversationStore
+        from core.poll_scheduler import PollScheduler
+        import threading
+        import time
+
+        store = ConversationStore.instance()
+        scheduler = PollScheduler.instance()
+        parent_id = "interactive_task_parent"
+        task_id = "t_interactive"
+        sub_id = f"{parent_id}::task::{task_id}"
+        store.save(parent_id, [{"role": "user", "content": "parent transcript"}],
+                   user_id="testuser")
+        store.set_extra(parent_id, "agent_tasks", {
+            task_id: {
+                "agent": "worker",
+                "task": "Ask for my name, then greet me",
+                "status": "active",
+                "interactive": True,
+            },
+        })
+        store.save(sub_id, [{"role": "user", "content": "raw transcript"}],
+                   user_id="testuser")
+        store.save_agent_context(sub_id, "worker", [
+            {"role": "user", "content": "Ask for my name, then greet me"},
+            {"role": "assistant", "content": "What is your name?"},
+        ])
+
+        captured = {}
+        task = self._make_task()
+        task._last_task_watchdog = time.time()
+        task._last_thought_watchdog = time.time()
+
+        def _build_poll_context(conversation_id, messages_data, **kwargs):
+            captured["messages_data"] = messages_data
+            return {"conversation_id": conversation_id}
+
+        def _streaming_agent_loop(ctx, loop_cid, bus):
+            captured["ctx"] = ctx
+            captured["loop_cid"] = loop_cid
+
+        task._build_poll_context = _build_poll_context
+        task._streaming_agent_loop = _streaming_agent_loop
+        task._active_lock = threading.RLock()
+        task._active_conversations = {}
+        task._active_thoughts = set()
+        task._conv_gen_lock = threading.RLock()
+        task._conv_generation = {}
+
+        scheduler.schedule(parent_id, time.time() - 1, key=sub_id,
+                           reason=f"[agent_task:{task_id}] continue (worker)")
+        task._poll_once()
+
+        last_content = captured["messages_data"][-1]["content"]
+        assert last_content.startswith("[System: Scheduled task wake-up.")
+        assert "No new user message was provided" in last_content
+        assert last_content != "continue"
+        assert store.load_agent_context(sub_id, "worker")[-1]["content"] == last_content
 
     def _setup_agent(self, conv_id):
         """Configure an active agent for the conversation."""

@@ -1394,10 +1394,9 @@ class FlashAgentHandler(SpawnAgentsHandler):
             system_prompt = inject_common_agent_system_prompt(identity + prompt)
             skills = normalize_string_list(spec.get("skills"))
             if skills:
-                from core.skill_resolver import inject_skills_into_prompt
-                system_prompt = inject_skills_into_prompt(
-                    system_prompt, skills, user_id,
-                    conversation_id=parent_conv_id, agent_name=runtime_name)
+                from core.skill_resolver import inject_available_skills_into_prompt
+                system_prompt = inject_available_skills_into_prompt(
+                    system_prompt, skills, user_id)
             tools = normalize_string_list(spec.get("tools")) or None
             task = AgentTask(
                 id=task_id,

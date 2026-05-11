@@ -93,7 +93,7 @@ class TestFlashDelegate:
         h = _make_flash_handler()
         h.set_delegate_tc_id("tc_001")
         with patch("core.agent_executor.get_live_delegate", return_value=None), \
-             patch("core.skill_resolver.inject_skills_into_prompt",
+             patch("core.skill_resolver.inject_available_skills_into_prompt",
                    side_effect=lambda prompt, *_args, **_kwargs: prompt + "\nSKILL"), \
              patch("core.agent_executor.SubAgentExecutor") as mock_exec:
             mock_exec.return_value.spawn.return_value = [

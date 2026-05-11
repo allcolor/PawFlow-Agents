@@ -275,12 +275,22 @@ class AgentPollerMixin:
                                   if _task_agent_tmp else None)
                 messages_data = _task_ctx_data if _task_ctx_data is not None else store.load(entry_key)
                 if messages_data:
-                    # Subsequent iteration — append "continue" as user message
+                    # Subsequent iteration. Interactive tasks must not receive
+                    # a bare "continue" because it can be mistaken for user data.
                     import uuid as _poll_uuid
                     from core.conversation_writer import ConversationWriter
                     from core.llm_client import stamp_message
+                    _continue_content = "continue"
+                    if _task_data_tmp.get("interactive"):
+                        _continue_content = (
+                            "[System: Scheduled task wake-up. No new user message "
+                            "was provided. Continue only if the task can progress "
+                            "without user input. If you are waiting for the user, "
+                            "report that you are still waiting and do not invent "
+                            "the missing answer.]"
+                        )
                     _continue_msg = stamp_message({
-                        "role": "user", "content": "continue",
+                        "role": "user", "content": _continue_content,
                         "msg_id": _poll_uuid.uuid4().hex[:12]}, entry_key)
                     ConversationWriter.for_conversation(entry_key).enqueue_message(
                         _continue_msg,

@@ -43,21 +43,22 @@ const HELP_DATA = {
     short: t('commandShort.6'),
     detail: 'Task library + autonomous task assignment. Tasks can be reusable definitions or inline.\n\n'
       + '**Library (reusable definitions):**\n'
-      + '  /task create <name> "<prompt>" [--criteria "..."] [--interval XX]\n'
+      + '  /task create <name> "<prompt>" [--criteria "..."] [--interval XX] [--interactive]\n'
       + '  /task delete <name>           \u2014 Delete a task definition\n'
       + '  /task list                    \u2014 Show library + running tasks\n\n'
       + '**Assignment (from library or inline):**\n'
       + '  /task assign @<agent> <taskname>              \u2014 From library\n'
       + '  /task assign @<agent> <taskname> --var nbr_images=20 --var style=cyberpunk\n'
       + '  /task assign @<agent> <taskname> --interval XX \u2014 Override interval\n'
-      + '  /task assign @<agent> "<inline task>" [--criteria "..."] [--interval XX] [--verifier @<agent>]\n\n'
+      + '  /task assign @<agent> "<inline task>" [--criteria "..."] [--interval XX] [--verifier @<agent>] [--interactive]\n\n'
       + 'Variables: use ${name} in task definitions, resolved at assign time.\n'
       + 'Use \\${...} to keep literal ${...}. Cascade: secrets → params → env.\n\n'
       + '**Limits (on assign or edit):**\n'
       + '  --budget $5          \u2014 Cancel if cost exceeds\n'
       + '  --turn-time 5m       \u2014 Interrupt if a single turn takes too long\n'
       + '  --total-time 1h      \u2014 Cancel if total elapsed time exceeds\n'
-      + '  --max-reschedules 20 \u2014 Cancel after N reschedules\n\n'
+      + '  --max-reschedules 20 \u2014 Cancel after N reschedules\n'
+      + '  --interactive       \u2014 Scheduled wakes are system-marked, not user input\n\n'
       + '**Control:**\n'
       + '  /task edit <task_id> [--budget $X] [--turn-time Xm] [--total-time Xh] [--max-reschedules N]\n'
       + '  /task pause <task_id|agent>   \u2014 Pause a task or all tasks of an agent\n'
@@ -71,7 +72,7 @@ const HELP_DATA = {
     usage: '/goal [@agent] "<objective>" [task options]',
     short: 'Create and assign a conversation goal task',
     detail: 'Creates a conversation-scoped task definition with a generated name and assigns it immediately. If @agent is omitted, the selected conversation agent is used. The objective is copied to criteria unless --criteria is provided.\n\n'
-      + 'Options: --criteria, --interval, --verifier, --budget, --turn-time, --total-time, --max-reschedules, --max, --context, --var, --auto-allow.\n\n'
+      + 'Options: --criteria, --interval, --verifier, --budget, --turn-time, --total-time, --max-reschedules, --max, --context, --var, --auto-allow, --interactive.\n\n'
       + 'Example: /goal @grok "Migrate X until tests pass and final audit is done" --interval 120 --verifier @assistant',
   },
   '/imgservice': {

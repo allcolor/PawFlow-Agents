@@ -386,16 +386,32 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         if not skill_def:
             flowfile.set_content(json.dumps({"error": f"Skill '{skill_name}' not found"}).encode())
             return [flowfile]
-        assigned = agent_def.get("assigned_skills", [])
-        if skill_name not in assigned:
+        assigned = list(agent_def.get("assigned_skills", []) or [])
+        newly_assigned = skill_name not in assigned
+        if newly_assigned:
             assigned.append(skill_name)
         # Update agent in the correct scope
         _scope = agent_def.get("_scope", "user")
         _uid = uid if _scope == "user" else "__global__"
         rs.update("agent", _def_name, _uid, {"assigned_skills": assigned})
-        # Invalidate this agent's CLI session so the new skill is injected.
-        if conv_id:
-            store.invalidate_claude_session_for_agent(conv_id, agent_name)
+        if conv_id and newly_assigned:
+            try:
+                from core.llm_client import stamp_message
+                from core.pending_queue import PendingQueue
+                from core.skill_resolver import available_skill_context_message
+                content = available_skill_context_message(skill_name, skill_def)
+                msg = stamp_message({
+                    "role": "system",
+                    "content": content,
+                    "source": {"type": "context", "name": "pawflow"},
+                }, conv_id)
+                store.append_message(conv_id, msg, agent_name=agent_name,
+                                     user_id=uid)
+                PendingQueue.for_agent(conv_id, agent_name).enqueue(
+                    dict(msg), source="skill_assign")
+            except Exception:
+                logger.debug("skill availability context injection failed",
+                             exc_info=True)
         flowfile.set_content(json.dumps({
             "assigned": True, "agent": agent_name, "skill": skill_name,
             "message": f"Skill '{skill_name}' assigned to agent '{agent_name}'",
@@ -423,15 +439,30 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         if not agent_def:
             flowfile.set_content(json.dumps({"error": f"Agent '{agent_name}' not found"}).encode())
             return [flowfile]
-        assigned = agent_def.get("assigned_skills", [])
-        if skill_name in assigned:
+        assigned = list(agent_def.get("assigned_skills", []) or [])
+        was_assigned = skill_name in assigned
+        if was_assigned:
             assigned.remove(skill_name)
         _scope = agent_def.get("_scope", "user")
         _uid = uid if _scope == "user" else "__global__"
         rs.update("agent", _def_name, _uid, {"assigned_skills": assigned})
-        # Invalidate this agent's CLI session so the removed skill takes effect.
-        if conv_id:
-            store.invalidate_claude_session_for_agent(conv_id, agent_name)
+        if conv_id and was_assigned:
+            try:
+                from core.llm_client import stamp_message
+                from core.pending_queue import PendingQueue
+                from core.skill_resolver import removed_skill_context_message
+                msg = stamp_message({
+                    "role": "system",
+                    "content": removed_skill_context_message(skill_name),
+                    "source": {"type": "context", "name": "pawflow"},
+                }, conv_id)
+                store.append_message(conv_id, msg, agent_name=agent_name,
+                                     user_id=uid)
+                PendingQueue.for_agent(conv_id, agent_name).enqueue(
+                    dict(msg), source="skill_unassign")
+            except Exception:
+                logger.debug("skill removal context injection failed",
+                             exc_info=True)
         flowfile.set_content(json.dumps({
             "unassigned": True, "agent": agent_name, "skill": skill_name,
             "message": f"Skill '{skill_name}' removed from agent '{agent_name}'",
@@ -1438,15 +1469,50 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         set_agent_config(conv_id, aname, merged)
         if "skills" in cfg:
             from core.resource_store import ResourceStore
+            from core.skill_resolver import normalize_skill_entry
             _def_name = merged.get("definition", aname)
             _skills = cfg.get("skills") or []
             _agent_def = ResourceStore.instance().get_any("agent", _def_name, user_id)
+            _old_skills = [normalize_skill_entry(s)[0]
+                           for s in ((_agent_def or {}).get("assigned_skills") or [])]
+            _new_skills = [normalize_skill_entry(s)[0] for s in _skills]
             if _agent_def is not None:
                 _scope = _agent_def.get("_scope", "user")
                 _uid = user_id if _scope == "user" else "__global__"
                 ResourceStore.instance().update(
                     "agent", _def_name, _uid, {"assigned_skills": list(_skills)})
-            store.invalidate_claude_session_for_agent(conv_id, aname)
+            try:
+                from core.llm_client import stamp_message
+                from core.pending_queue import PendingQueue
+                from core.skill_resolver import (
+                    available_skill_context_message,
+                    removed_skill_context_message,
+                )
+                for _skill in [s for s in _new_skills if s and s not in _old_skills]:
+                    _skill_def = ResourceStore.instance().get_any(
+                        "skill", _skill, user_id) or {}
+                    _msg = stamp_message({
+                        "role": "system",
+                        "content": available_skill_context_message(_skill, _skill_def),
+                        "source": {"type": "context", "name": "pawflow"},
+                    }, conv_id)
+                    store.append_message(conv_id, _msg, agent_name=aname,
+                                         user_id=user_id)
+                    PendingQueue.for_agent(conv_id, aname).enqueue(
+                        dict(_msg), source="skill_config")
+                for _skill in [s for s in _old_skills if s and s not in _new_skills]:
+                    _msg = stamp_message({
+                        "role": "system",
+                        "content": removed_skill_context_message(_skill),
+                        "source": {"type": "context", "name": "pawflow"},
+                    }, conv_id)
+                    store.append_message(conv_id, _msg, agent_name=aname,
+                                         user_id=user_id)
+                    PendingQueue.for_agent(conv_id, aname).enqueue(
+                        dict(_msg), source="skill_config")
+            except Exception:
+                logger.debug("skill config context injection failed",
+                             exc_info=True)
         flowfile.set_content(json.dumps({"ok": True}).encode())
         return [flowfile]
 

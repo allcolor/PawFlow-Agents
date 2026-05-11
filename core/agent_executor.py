@@ -1364,17 +1364,14 @@ def resolve_agent_task(
     else:
         _sys_prompt = _raw_prompt
 
-    # 4) Inject skills. The agent definition's assigned_skills is the
-    # single persistent source of truth. Delegate extra_skills are an
-    # explicit per-task addition, not a second stored assignment path.
+    # 4) Advertise skills. Full skill prompts are loaded lazily through
+    # load_skill; assigned_skills remains the persistent source of truth.
     _assigned_skills = agent_def.get("assigned_skills") or []
     _all_skills = list(_assigned_skills) + list(extra_skills or [])
     if _all_skills:
-        from core.skill_resolver import inject_skills_into_prompt
-        _sys_prompt = inject_skills_into_prompt(
-            _sys_prompt, _all_skills, user_id,
-            conversation_id=conversation_id,
-            agent_name=agent_name)
+        from core.skill_resolver import inject_available_skills_into_prompt
+        _sys_prompt = inject_available_skills_into_prompt(
+            _sys_prompt, _all_skills, user_id)
 
     # 5) Identity injection
     _nick = None

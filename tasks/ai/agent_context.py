@@ -716,16 +716,14 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 if _agent_md_content:
                     system_prompt += _agent_md_content
 
-                # Inject skills into system prompt. The agent definition's
-                # assigned_skills is the single source of truth; per-conv
-                # runtime config must not carry a parallel skills list.
+                # Advertise assigned skills without loading their full prompts.
+                # Active CLI sessions receive assignment deltas via context;
+                # cold/rebuilt contexts get this lightweight manifest.
                 _agent_skills = (agent_def or {}).get("assigned_skills") or []
                 if _agent_skills:
-                    from core.skill_resolver import inject_skills_into_prompt
-                    system_prompt = inject_skills_into_prompt(
-                        system_prompt, _agent_skills, _uid,
-                        conversation_id=conversation_id,
-                        agent_name=selected)
+                    from core.skill_resolver import inject_available_skills_into_prompt
+                    system_prompt = inject_available_skills_into_prompt(
+                        system_prompt, _agent_skills, _uid)
                 # Auto-load tools from all MCP servers accessible in scope
                 # (global + user + conversation). No linking needed: any MCP
                 # visible via rs.list_all is automatically active in this conv.

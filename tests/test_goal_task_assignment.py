@@ -50,6 +50,7 @@ class TestGoalTaskAssignment:
             "prompt": objective,
             "interval": "120",
             "max_budget": "$5",
+            "interactive": True,
         })
 
         assert data["ok"] is True
@@ -59,6 +60,7 @@ class TestGoalTaskAssignment:
         assert task_def["prompt"] == objective
         assert task_def["criteria"] == objective
         assert task_def["kind"] == "goal"
+        assert task_def["interactive"] is True
 
         tasks = store.get_extra("goal-conv", "agent_tasks")
         assigned = next(iter(tasks.values()))
@@ -66,6 +68,7 @@ class TestGoalTaskAssignment:
         assert assigned["task_def_name"] == data["name"]
         assert assigned["completion_criteria"] == objective
         assert assigned["max_budget"] == 5.0
+        assert assigned["interactive"] is True
 
     def test_inline_task_without_criteria_stays_open_ended(self):
         from core.conversation_store import ConversationStore

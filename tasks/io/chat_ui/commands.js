@@ -67,6 +67,13 @@ const HELP_DATA = {
       + 'Tasks survive server restarts and reschedule automatically.\n\n'
       + 'Example: /task assign @grok "Scrape the top 100 HN posts" --verifier claude --interval 120 --criteria "all 100 posts summarized"',
   },
+  '/goal': {
+    usage: '/goal [@agent] "<objective>" [task options]',
+    short: 'Create and assign a conversation goal task',
+    detail: 'Creates a conversation-scoped task definition with a generated name and assigns it immediately. If @agent is omitted, the selected conversation agent is used. The objective is copied to criteria unless --criteria is provided.\n\n'
+      + 'Options: --criteria, --interval, --verifier, --budget, --turn-time, --total-time, --max-reschedules, --max, --context, --var, --auto-allow.\n\n'
+      + 'Example: /goal @grok "Migrate X until tests pass and final audit is done" --interval 120 --verifier @assistant',
+  },
   '/imgservice': {
     usage: '/imgservice [list | select <name> [@agent] | clear [@agent]]',
     short: t('commandShort.7'),
@@ -669,6 +676,7 @@ const _CMD_HANDLERS = {
 
   // Resources (cmd_resources.js)
   '/task':        (text, parts, cmd) => cmdTask(text, parts),
+  '/goal':        (text, parts, cmd) => cmdGoal(text, parts),
   '/vidservice':  (text, parts, cmd) => cmdVidservice(text, parts),
   '/imgservice':  (text, parts, cmd) => cmdImgservice(text, parts),
   '/skill':       (text, parts, cmd) => cmdSkill(text, parts),

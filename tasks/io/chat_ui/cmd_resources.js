@@ -3,6 +3,71 @@
 // /share, /prompt, /service, /imgservice, /vidservice, /view
 // Loaded before commands.js — all functions are global.
 
+function _parseTaskAssignOptions(qargs, startIndex) {
+  let interval = null, maxIter = 0, verifier = '', criteria = '';
+  let maxBudget = '', maxTurnTime = '', maxTotalTime = '', maxReschedules = 0, autoAllow = false, context = '';
+  const variables = {};
+  for (let i = startIndex; i < qargs.length; i++) {
+    if (qargs[i] === '--criteria' && qargs[i+1]) { criteria = qargs[++i]; }
+    else if (qargs[i] === '--interval' && qargs[i+1]) { interval = qargs[++i]; }
+    else if (qargs[i] === '--max' && qargs[i+1]) { maxIter = parseInt(qargs[++i]) || 0; }
+    else if (qargs[i] === '--verifier' && qargs[i+1]) { verifier = stripTarget(qargs[++i]); }
+    else if (qargs[i] === '--budget' && qargs[i+1]) { maxBudget = qargs[++i]; }
+    else if (qargs[i] === '--turn-time' && qargs[i+1]) { maxTurnTime = qargs[++i]; }
+    else if (qargs[i] === '--total-time' && qargs[i+1]) { maxTotalTime = qargs[++i]; }
+    else if (qargs[i] === '--max-reschedules' && qargs[i+1]) { maxReschedules = parseInt(qargs[++i]) || 0; }
+    else if (qargs[i] === '--context' && qargs[i+1]) { context = qargs[++i]; }
+    else if (qargs[i] === '--auto-allow') { autoAllow = true; }
+    else if (qargs[i] === '--var' && qargs[i+1]) {
+      const kv = qargs[++i];
+      const eq = kv.indexOf('=');
+      if (eq > 0) variables[kv.substring(0, eq)] = kv.substring(eq + 1);
+    }
+  }
+  return { interval, maxIter, verifier, criteria, maxBudget, maxTurnTime, maxTotalTime, maxReschedules, autoAllow, context, variables };
+}
+
+function _applyTaskAssignOptions(params, opts) {
+  if (opts.criteria) params.criteria = opts.criteria;
+  if (opts.interval != null) params.interval = opts.interval;
+  if (opts.maxIter) params.max_iterations = opts.maxIter;
+  if (opts.verifier) params.verifier = opts.verifier;
+  if (opts.context) params.context = opts.context;
+  if (Object.keys(opts.variables).length) params.variables = opts.variables;
+  if (opts.maxBudget) params.max_budget = opts.maxBudget;
+  if (opts.maxTurnTime) params.max_turn_time = opts.maxTurnTime;
+  if (opts.maxTotalTime) params.max_total_time = opts.maxTotalTime;
+  if (opts.maxReschedules) params.max_reschedules = opts.maxReschedules;
+  if (opts.autoAllow) params.auto_allow = true;
+  return params;
+}
+
+function _taskAssignLooksInline(text) {
+  const rest = text.replace(/^\/task\s+assign\s+/i, '');
+  return /^(?:@"[^"]+"|@'[^']+'|@\S+|"[^"]+"|'[^']+'|\S+)\s+["']/.test(rest);
+}
+
+function cmdGoal(text, parts) {
+  const qargs = parseQuotedArgs(text);
+  let idx = 1;
+  let agent = '';
+  if (qargs[idx] && qargs[idx].startsWith('@')) agent = stripTarget(qargs[idx++]);
+  const prompt = qargs[idx++] || '';
+  if (!prompt) {
+    addMsg('system', t('usageLine', { usage: '/goal [@agent] "objective" [--criteria "..."] [--interval XX] [--verifier @agent]' }));
+    return true;
+  }
+  const opts = _parseTaskAssignOptions(qargs, idx);
+  const params = _applyTaskAssignOptions({ prompt }, opts);
+  if (agent) params.agent_name = agent;
+  action$('goal', params).subscribe(data => {
+    if (data.error) addMsg('error', data.error);
+    else addMsg('system', data.result || t('taskAssigned'));
+    loadResources();
+  });
+  return true;
+}
+
 function cmdTask(text, parts) {
   const sub = (parts[1] || 'status').toLowerCase();
   if (sub === 'create') {
@@ -47,37 +112,15 @@ function cmdTask(text, parts) {
       addMsg('system', t('usageLine', { usage: '/task assign @<agent> <task_def_name> [--interval N] [--max N] [--verifier @agent] [--var key=val]' }));
       return true;
     }
-    let interval = null, maxIter = 0, verifier = '';
-    let maxBudget = '', maxTurnTime = '', maxTotalTime = '', maxReschedules = 0, autoAllow = false;
-    const variables = {};
-    for (let i = 4; i < qargs.length; i++) {
-      if (qargs[i] === '--interval' && qargs[i+1]) { interval = qargs[++i]; }
-      else if (qargs[i] === '--max' && qargs[i+1]) { maxIter = parseInt(qargs[++i]) || 0; }
-      else if (qargs[i] === '--verifier' && qargs[i+1]) { verifier = stripTarget(qargs[++i]); }
-      else if (qargs[i] === '--budget' && qargs[i+1]) { maxBudget = qargs[++i]; }
-      else if (qargs[i] === '--turn-time' && qargs[i+1]) { maxTurnTime = qargs[++i]; }
-      else if (qargs[i] === '--total-time' && qargs[i+1]) { maxTotalTime = qargs[++i]; }
-      else if (qargs[i] === '--max-reschedules' && qargs[i+1]) { maxReschedules = parseInt(qargs[++i]) || 0; }
-      else if (qargs[i] === '--auto-allow') { autoAllow = true; }
-      else if (qargs[i] === '--var' && qargs[i+1]) {
-        const kv = qargs[++i];
-        const eq = kv.indexOf('=');
-        if (eq > 0) variables[kv.substring(0, eq)] = kv.substring(eq + 1);
-      }
-    }
-    action$('assign_task', {
-      agent_name: taskAgent, max_iterations: maxIter, verifier,
-      task_def_name: taskArg,
-      ...(interval != null ? { interval } : {}),
-      ...(Object.keys(variables).length ? { variables } : {}),
-      ...(maxBudget ? { max_budget: maxBudget } : {}),
-      ...(maxTurnTime ? { max_turn_time: maxTurnTime } : {}),
-      ...(maxTotalTime ? { max_total_time: maxTotalTime } : {}),
-      ...(maxReschedules ? { max_reschedules: maxReschedules } : {}),
-      ...(autoAllow ? { auto_allow: true } : {}),
-    }).subscribe(data => {
+    const opts = _parseTaskAssignOptions(qargs, 4);
+    const actionName = _taskAssignLooksInline(text) ? 'create_and_assign_task_def' : 'assign_task';
+    const params = _applyTaskAssignOptions({ agent_name: taskAgent }, opts);
+    if (actionName === 'create_and_assign_task_def') params.prompt = taskArg;
+    else params.task_def_name = taskArg;
+    action$(actionName, params).subscribe(data => {
       if (data.error) { addMsg('error', data.error); }
       else { addMsg('system', data.result || t('taskAssigned')); }
+      loadResources();
     });
   } else if (sub === 'delete' || sub === 'del') {
     const taskName = parts[2] || '';

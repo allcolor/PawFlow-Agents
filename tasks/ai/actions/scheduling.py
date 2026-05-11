@@ -13,6 +13,121 @@ from core.tool_registry import ToolRegistry
 logger = logging.getLogger(__name__)
 
 
+def _generated_task_def_name(prefix: str, prompt: str,
+                             existing: Optional[dict] = None) -> str:
+    """Return a short conversation-scoped task definition name."""
+    import re
+    import uuid
+    slug = re.sub(r"[^a-zA-Z0-9]+", "_", (prompt or "task").strip()).strip("_").lower()
+    if not slug:
+        slug = "task"
+    slug = slug[:32].strip("_") or "task"
+    existing = existing or {}
+    for _ in range(20):
+        name = f"{prefix}_{slug}_{uuid.uuid4().hex[:8]}"
+        if name not in existing:
+            return name
+    return f"{prefix}_{uuid.uuid4().hex[:12]}"
+
+
+def _active_agent_for_conversation(store, conv_id: str) -> str:
+    active = store.get_extra(conv_id, "active_resources") or {}
+    return active.get("agent", "") or ""
+
+
+def _create_and_assign_task_def(self, body: Dict[str, Any], store,
+                                user_id: str, conv_id: str,
+                                *, goal_mode: bool = False) -> Dict[str, Any]:
+    """Create a conversation-scoped task definition and assign it immediately."""
+    if not conv_id:
+        return {"error": "Missing conversation_id"}
+
+    prompt = (body.get("prompt") or body.get("task") or "").strip()
+    if not prompt:
+        return {"error": "Missing prompt"}
+
+    agent = (body.get("agent_name") or body.get("agent") or "").strip()
+    if agent.startswith("@"):
+        agent = agent[1:]
+    if not agent:
+        agent = _active_agent_for_conversation(store, conv_id)
+    if not agent:
+        return {"error": "Missing agent_name and no selected agent in this conversation"}
+
+    conv_defs = store.get_extra(conv_id, "conversation_task_defs") or {}
+    name = (body.get("name") or "").strip()
+    if not name:
+        name = _generated_task_def_name("goal" if goal_mode else "task", prompt, conv_defs)
+    if name in conv_defs:
+        return {"error": f"Task definition '{name}' already exists in this conversation"}
+
+    criteria = body.get("criteria", body.get("completion_criteria", ""))
+    if criteria is None:
+        criteria = ""
+    criteria = str(criteria)
+    if goal_mode and not criteria.strip():
+        # /goal is an objective: the objective text is also the default stop
+        # condition. Plain /task inline may intentionally stay open-ended.
+        criteria = prompt
+
+    interval = body.get("default_interval") or body.get("interval") or "6/1m"
+    skills = body.get("skills") or []
+    if isinstance(skills, str):
+        skills = [s.strip() for s in skills.split(",") if s.strip()]
+
+    data = {
+        "prompt": prompt,
+        "criteria": criteria,
+        "default_interval": interval,
+        "verifier": body.get("verifier", "") or "",
+        "skills": skills,
+        "description": body.get("description", "") or "",
+        "created_by": user_id,
+        "inline": True,
+        "kind": "goal" if goal_mode else body.get("kind", "inline_task"),
+    }
+    conv_defs[name] = data
+    store.set_extra(conv_id, "conversation_task_defs", conv_defs)
+
+    from core.tool_registry import AssignTaskHandler
+    h = AssignTaskHandler()
+    h.set_conversation_id(conv_id)
+    h.set_agent_name("user")
+    h.set_user_id(user_id)
+    assign_args = {
+        "agent": agent,
+        "task_def_name": name,
+        "interval": body.get("interval"),
+        "max_iterations": int(body.get("max_iterations", 50) or 0),
+        "verifier": body.get("verifier", ""),
+        "variables": body.get("variables"),
+        "context": body.get("context", "isolated"),
+        "max_turn_time": body.get("max_turn_time", ""),
+        "max_budget": body.get("max_budget", ""),
+        "max_total_time": body.get("max_total_time", ""),
+        "max_reschedules": body.get("max_reschedules", 0),
+        "auto_allow": bool(body.get("auto_allow", False)),
+        "depends_on": body.get("depends_on") or [],
+        "skills": skills,
+    }
+    result = h.execute(assign_args)
+
+    poll_interval = int(self.config.get("poll_interval", 0))
+    if poll_interval > 0 and not self._poller_started:
+        self._poller_started = True
+        poller_thread = threading.Thread(
+            target=self._poll_conversations,
+            args=(poll_interval,),
+            daemon=True,
+            name="agent-poller",
+        )
+        poller_thread.start()
+        logger.info("Agent poller started (triggered by inline task assignment)")
+
+    return {"ok": True, "name": name, "agent": agent, "result": result,
+            "task_def": data}
+
+
 def _kill_running_task_agent(self, conv_id: str, task_id: str, agent_name: str, force: bool = True):
     """Kill the running agent thread for a task sub-conversation.
 
@@ -219,6 +334,14 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
             {"ok": True, "deleted": deleted}).encode())
         return [flowfile]
 
+    if action in ("create_and_assign_task_def", "goal"):
+        result = _create_and_assign_task_def(
+            self, body, store, user_id, conv_id, goal_mode=(action == "goal"))
+        flowfile.set_content(json.dumps(result, ensure_ascii=False).encode())
+        if result.get("error"):
+            flowfile.set_attribute("http.response.status", "400")
+        return [flowfile]
+
     if action == "promote_task_def":
         name = body.get("name", "").strip()
         target_scope = body.get("target_scope", "user")
@@ -275,10 +398,13 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
             "max_iterations": body.get("max_iterations", 50),
             "verifier": body.get("verifier", ""),
             "variables": body.get("variables"),
+            "context": body.get("context", "isolated"),
             "max_turn_time": body.get("max_turn_time", ""),
             "max_budget": body.get("max_budget", ""),
             "max_total_time": body.get("max_total_time", ""),
             "max_reschedules": body.get("max_reschedules", 0),
+            "auto_allow": bool(body.get("auto_allow", False)),
+            "depends_on": body.get("depends_on") or [],
         })
         # Ensure poller is running (task needs it for scheduled wake-ups)
         poll_interval = int(self.config.get("poll_interval", 0))

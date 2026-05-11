@@ -324,6 +324,19 @@ HELP: Dict[str, Dict[str, str]] = {
             "  /task cancel <id>     — Cancel a task"
         ),
     },
+    "/goal": {
+        "usage": "/goal [@agent] \"<objective>\" [task options]",
+        "short": "Create and assign a conversation-scoped goal task",
+        "detail": (
+            "Create a conversation-scoped task definition with a generated name "
+            "and assign it immediately. If no agent is provided, the selected "
+            "conversation agent is used. The objective is also used as criteria "
+            "unless --criteria is provided.\n\n"
+            "Options mirror /task assign: --criteria, --interval, --verifier, "
+            "--budget, --turn-time, --total-time, --max-reschedules, --max, "
+            "--context, --var, --auto-allow."
+        ),
+    },
     "/permission": {
         "usage": "/permission [default | approve_edits | read_only | auto | tool <name> allow|deny|confirm|reset | tools]",
         "short": "Set tool permission mode or per-tool permissions",
@@ -923,6 +936,9 @@ def _parse_command(text: str, conversation_id: str, user_id: str,
     if cmd == "/task":
         return _parse_task_command(arg, base)
 
+    if cmd == "/goal":
+        return _parse_goal_command(arg, base, agent_name)
+
     if cmd == "/permission":
         parts = arg.strip().split() if arg.strip() else []
         if not parts:
@@ -1273,6 +1289,68 @@ def _parse_task_command(arg: str, base: dict) -> dict:
     if subcmd in ("create", "assign", "delete", "pause", "resume", "cancel"):
         return {"action": f"task_{subcmd}", "args": rest, **base}
     return {"action": "list_tasks", **base}
+
+
+def _parse_goal_command(arg: str, base: dict, agent_name: str) -> dict:
+    import shlex
+    try:
+        tokens = shlex.split(arg or "")
+    except ValueError as e:
+        return {"action": "goal", "prompt": "", "error": str(e), **base}
+    target = ""
+    prompt_parts = []
+    variables = {}
+    result = {"action": "goal", **base}
+    i = 0
+    if tokens and tokens[0].startswith("@"):
+        target = tokens[0][1:]
+        i = 1
+    while i < len(tokens):
+        tok = tokens[i]
+        if tok == "--criteria" and i + 1 < len(tokens):
+            result["criteria"] = tokens[i + 1]; i += 2; continue
+        if tok == "--interval" and i + 1 < len(tokens):
+            result["interval"] = tokens[i + 1]; i += 2; continue
+        if tok == "--verifier" and i + 1 < len(tokens):
+            v = tokens[i + 1]
+            result["verifier"] = v[1:] if v.startswith("@") else v
+            i += 2; continue
+        if tok == "--budget" and i + 1 < len(tokens):
+            result["max_budget"] = tokens[i + 1]; i += 2; continue
+        if tok == "--turn-time" and i + 1 < len(tokens):
+            result["max_turn_time"] = tokens[i + 1]; i += 2; continue
+        if tok == "--total-time" and i + 1 < len(tokens):
+            result["max_total_time"] = tokens[i + 1]; i += 2; continue
+        if tok == "--max-reschedules" and i + 1 < len(tokens):
+            try:
+                result["max_reschedules"] = int(tokens[i + 1])
+            except ValueError:
+                result["max_reschedules"] = 0
+            i += 2; continue
+        if tok == "--max" and i + 1 < len(tokens):
+            try:
+                result["max_iterations"] = int(tokens[i + 1])
+            except ValueError:
+                result["max_iterations"] = 0
+            i += 2; continue
+        if tok == "--context" and i + 1 < len(tokens):
+            result["context"] = tokens[i + 1]; i += 2; continue
+        if tok == "--var" and i + 1 < len(tokens):
+            kv = tokens[i + 1]
+            if "=" in kv:
+                k, v = kv.split("=", 1)
+                if k:
+                    variables[k] = v
+            i += 2; continue
+        if tok == "--auto-allow":
+            result["auto_allow"] = True; i += 1; continue
+        prompt_parts.append(tok)
+        i += 1
+    result["agent_name"] = target or agent_name
+    result["prompt"] = " ".join(prompt_parts).strip()
+    if variables:
+        result["variables"] = variables
+    return result
 
 
 def _parse_service_command(arg: str, base: dict, user_id: str) -> dict:

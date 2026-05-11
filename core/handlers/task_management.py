@@ -439,7 +439,7 @@ class AssignTaskHandler(ToolHandler):
         _raw_iv = arguments.get("interval")
         interval_spec = str(_raw_iv) if _raw_iv else "6/1m"
         max_iter = int(arguments.get("max_iterations", 0))
-        verifier = arguments.get("verifier", "")
+        verifier = arguments.get("verifier", "") or definition.get("verifier", "")
         # max_turn_time supersedes deprecated timeout
         _turn_time_raw = arguments.get("max_turn_time", "") or arguments.get("timeout", "")
         timeout_secs = self._parse_timeout(_turn_time_raw)

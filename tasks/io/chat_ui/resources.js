@@ -2141,12 +2141,16 @@ async function showResourceCreator(rtype) {
   overlay.style.cssText = 'position:fixed;inset:0;background:var(--pf-shadow);display:flex;align-items:center;justify-content:center;z-index:9999;';
   const panel = document.createElement('div');
   panel.style.cssText = 'background:var(--pf-panel);border-radius:8px;padding:20px;width:500px;max-height:80vh;overflow-y:auto;border:1px solid var(--pf-border);';
+  const createAssignBtn = rtype === 'task_def'
+    ? '<button onclick="_saveResourceCreate(\'' + rtype + '\', true)" style="background:color-mix(in srgb, var(--pf-accent) 16%, var(--pf-panel));color:var(--pf-accent);border:1px solid var(--pf-accent);padding:8px 16px;border-radius:4px;cursor:pointer;">' + escapeHtml(t('create')) + ' + ' + escapeHtml(t('assign')) + '</button>'
+    : '';
   panel.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
     <h3 style="margin:0;color:var(--pf-text);font-size:14px;">${escapeHtml(t('newResourceTitle', { type: rtype === '_tool' ? t('tool') : rtype }))}</h3>
     <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:none;border:none;color:var(--pf-muted);cursor:pointer;font-size:18px;">&times;</button>
   </div>` + _buildResourceForm(rtype, {}, true)
     + `<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
     <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">${escapeHtml(t('contextCancel'))}</button>
+    ${createAssignBtn}
     <button onclick="_saveResourceCreate('${rtype}')" style="background:var(--pf-accent);color:var(--pf-bg);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">${escapeHtml(t('create'))}</button>
   </div>`;
   overlay.appendChild(panel);
@@ -2156,7 +2160,7 @@ async function showResourceCreator(rtype) {
   if (skPicker) _loadSkillsPicker(skPicker, [], false);
 }
 
-function _saveResourceCreate(rtype) {
+function _saveResourceCreate(rtype, assignAfterCreate) {
   const nameEl = document.getElementById('res-name');
   const scopeEl = document.getElementById('res-scope');
   const name = (nameEl && nameEl.value || '').trim();
@@ -2192,7 +2196,14 @@ function _saveResourceCreate(rtype) {
   }
   action$('create_resource', { resource_type: rtype, name, scope, data }).subscribe(d => {
     if (d.error) addMsg('error', d.error);
-    else { addMsg('system', t('resourceCreated', { type: rtype, name: name })); document.getElementById('resourceEditorOverlay').remove(); loadResources(); }
+    else {
+      addMsg('system', t('resourceCreated', { type: rtype, name: name }));
+      document.getElementById('resourceEditorOverlay').remove();
+      loadResources();
+      if (assignAfterCreate && rtype === 'task_def') {
+        setTimeout(function() { _showAssignDialog(name); }, 0);
+      }
+    }
   });
 }
 
@@ -2371,12 +2382,16 @@ function _showAssignDialog(taskDefName) {
   overlay.style.cssText = 'position:fixed;inset:0;background:var(--pf-shadow);display:flex;align-items:center;justify-content:center;z-index:9999;';
   const panel = document.createElement('div');
   panel.style.cssText = 'background:var(--pf-panel);border-radius:8px;padding:20px;width:420px;border:1px solid var(--pf-border);';
+  const convAgents = ((_lastResourcesData || {}).agents || []).map(function(a) { return a.name || ''; }).filter(Boolean);
+  const agentField = convAgents.length
+    ? `<select id="assign-agent" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;">${convAgents.map(function(a) { return `<option value="${escapeHtml(a)}">${escapeHtml(a)}</option>`; }).join('')}</select>`
+    : `<input id="assign-agent" value="" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;"/>`;
   panel.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
     <h3 style="margin:0;color:var(--pf-text);font-size:14px;">${escapeHtml(t('assignTitle', { name: taskDefName }))}</h3>
     <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:none;border:none;color:var(--pf-muted);cursor:pointer;font-size:18px;">&times;</button>
   </div>
   <div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">${escapeHtml(t('agent'))}</label>
-    <input id="assign-agent" value="" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;"/></div>
+    ${agentField}</div>
   <div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">${escapeHtml(t('contextMode'))}</label>
     <select id="assign-context" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;">
       <option value="isolated">${escapeHtml(t('contextModeIsolated'))}</option>

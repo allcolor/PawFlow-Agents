@@ -13,6 +13,7 @@ All commands are typed in the chat input, prefixed with `/`. Commands are proces
 | `/call` | Call a tool directly |
 | `/tool-metrics` (`/toolmetrics`) | Show tool execution metrics |
 | `/task` | Create, assign, and manage agent tasks |
+| `/goal` | Create and assign a conversation-scoped goal task |
 | `/skill` | Manage skills |
 | `/memory` | Manage agent memories |
 | `/relay` | Manage relay bindings |
@@ -441,6 +442,21 @@ Task IDs look like `t_xxxxxxxx`. Tasks survive server restarts and reschedule au
 
 ```
 /task assign @grok "Scrape the top 100 HN posts" --verifier @claude --interval 120 --criteria "all 100 posts summarized"
+```
+
+### /goal
+
+```
+/goal [@agent] "<objective>" [task options]
+```
+
+Creates a conversation-scoped task definition with a generated name and assigns it immediately. If `@agent` is omitted, PawFlow uses the selected agent for the current conversation. `/goal` is an alias over tasks: the objective is stored as the task prompt, and unless `--criteria` is provided, the same objective is also used as the task criteria.
+
+Supported task options mirror `/task assign`: `--criteria`, `--interval`, `--verifier`, `--budget`, `--turn-time`, `--total-time`, `--max-reschedules`, `--max`, `--context`, `--var`, and `--auto-allow`.
+
+```
+/goal @grok "Migrate X until tests pass and final audit is done" --interval 120 --verifier @claude
+/goal "Keep checking the deployment and report when it is healthy" --interval 60
 ```
 
 ---

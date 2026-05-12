@@ -69,6 +69,22 @@ def _get_flow_templates_cached(user_id: str) -> List[Dict[str, Any]]:
             return cached
         _FLOW_TEMPLATES_REFRESHING.add(key)
 
+    if not cached:
+        try:
+            data = _scan_flow_templates(key)
+            with _FLOW_TEMPLATES_LOCK:
+                _FLOW_TEMPLATES_CACHE[key] = {
+                    "data": data,
+                    "expires": time.monotonic() + _FLOW_TEMPLATES_TTL,
+                }
+                _FLOW_TEMPLATES_REFRESHING.discard(key)
+            return data
+        except Exception as exc:
+            logger.debug("list_resources flow_templates cold scan failed: %s", exc)
+            with _FLOW_TEMPLATES_LOCK:
+                _FLOW_TEMPLATES_REFRESHING.discard(key)
+            return cached
+
     def _refresh() -> None:
         try:
             data = _scan_flow_templates(key)
@@ -646,6 +662,141 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             )
             flowfile.set_content(json.dumps(result, ensure_ascii=False).encode())
             if result.get("blocked"):
+                flowfile.set_attribute("http.response.status", "400")
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+        return [flowfile]
+
+    if action.startswith("pfp_"):
+        try:
+            from core import pfp_package
+            pfp_action = action[4:]
+            if pfp_action == "error":
+                result = {"error": body.get("error", "Invalid /pfp command")}
+            elif pfp_action == "key_create":
+                result = pfp_package.create_signing_key()
+            elif pfp_action == "build":
+                result = pfp_package.build_pfp(
+                    body.get("source_dir") or body.get("path") or "",
+                    body.get("output_path") or "",
+                    private_key=body.get("private_key") or "",
+                    private_key_env=body.get("private_key_env") or "",
+                )
+            elif pfp_action == "inspect":
+                from core import pfp_registry
+                resolved = pfp_registry.resolve_package_path(
+                    body.get("path") or body.get("ref") or "",
+                    user_id=user_id,
+                    expected_sha256=body.get("sha256") or "",
+                )
+                result = pfp_package.inspect_pfp(
+                    resolved["path"],
+                    user_id=user_id,
+                    conversation_id=body.get("conversation_id", "") or "",
+                    scope=body.get("scope") or "user",
+                )
+                result["display"] = pfp_package.format_inspection_display(result)
+                if resolved.get("downloaded"):
+                    result["download"] = resolved
+            elif pfp_action == "install":
+                from core import pfp_registry
+                resolved = pfp_registry.resolve_package_path(
+                    body.get("path") or body.get("ref") or "",
+                    user_id=user_id,
+                    expected_sha256=body.get("sha256") or "",
+                )
+                result = pfp_package.install_pfp(
+                    resolved["path"],
+                    user_id=user_id,
+                    conversation_id=body.get("conversation_id", "") or "",
+                    scope=body.get("scope") or "user",
+                    include=body.get("include") or None,
+                    exclude=body.get("exclude") or None,
+                    force=bool(body.get("force", False)),
+                    replace=bool(body.get("replace", False)),
+                    dry_run=bool(body.get("dry_run", False)),
+                    secret_bindings=body.get("secret_bindings") or {},
+                )
+                if resolved.get("downloaded"):
+                    result["download"] = resolved
+            elif pfp_action == "update":
+                from core import pfp_registry
+                resolved = pfp_registry.resolve_package_path(
+                    body.get("path") or body.get("ref") or "",
+                    user_id=user_id,
+                    expected_sha256=body.get("sha256") or "",
+                )
+                result = pfp_package.update_pfp(
+                    resolved["path"],
+                    user_id=user_id,
+                    conversation_id=body.get("conversation_id", "") or "",
+                    scope=body.get("scope") or "user",
+                    include=body.get("include") or None,
+                    exclude=body.get("exclude") or None,
+                    force=bool(body.get("force", False)),
+                    dry_run=bool(body.get("dry_run", False)),
+                    secret_bindings=body.get("secret_bindings") or {},
+                )
+                if resolved.get("downloaded"):
+                    result["download"] = resolved
+            elif pfp_action == "uninstall":
+                result = pfp_package.uninstall_pfp(
+                    body.get("package") or "",
+                    user_id=user_id,
+                    conversation_id=body.get("conversation_id", "") or "",
+                    scope=body.get("scope") or "user",
+                    force=bool(body.get("force", False)),
+                )
+            elif pfp_action == "list_installed":
+                result = pfp_package.list_installed_packages(
+                    user_id=user_id,
+                    conversation_id=body.get("conversation_id", "") or "",
+                    scope=body.get("scope") or "user",
+                )
+            elif pfp_action == "reload_tasks":
+                result = pfp_package.load_installed_package_tasks(
+                    user_id=user_id,
+                    conversation_id=body.get("conversation_id", "") or "",
+                    scope=body.get("scope") or "user",
+                )
+            elif pfp_action == "export":
+                result = pfp_package.export_pfpdir(
+                    body.get("package") or "",
+                    body.get("version") or "",
+                    body.get("include") or [],
+                    output_dir=body.get("output_dir") or body.get("path") or "",
+                    user_id=user_id,
+                    conversation_id=body.get("conversation_id", "") or "",
+                )
+            elif pfp_action == "registry_add":
+                from core import pfp_registry
+                result = pfp_registry.add_registry(
+                    body.get("url") or body.get("path") or "",
+                    user_id=user_id,
+                    name=body.get("name") or "",
+                    trusted=bool(body.get("trusted", False)),
+                )
+            elif pfp_action == "registry_remove":
+                from core import pfp_registry
+                result = pfp_registry.remove_registry(
+                    body.get("name") or body.get("url") or body.get("path") or "",
+                    user_id=user_id,
+                )
+            elif pfp_action == "registry_list":
+                from core import pfp_registry
+                result = pfp_registry.list_registries(user_id=user_id)
+            elif pfp_action == "search":
+                from core import pfp_registry
+                result = pfp_registry.search_registries(
+                    body.get("query") or "",
+                    user_id=user_id,
+                    limit=int(body.get("limit") or 20),
+                )
+            else:
+                result = {"error": f"Unknown /pfp action: {pfp_action}"}
+            flowfile.set_content(json.dumps(result, ensure_ascii=False).encode())
+            if result.get("error"):
                 flowfile.set_attribute("http.response.status", "400")
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())

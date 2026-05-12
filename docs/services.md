@@ -21,6 +21,7 @@ The chat service installer receives service type metadata grouped by category an
 | `cacheService` | Local cache service. |
 | `distributedMapCache` | Distributed key/value cache. |
 | `fileTracking` | Tracks processed files for list/watch flows. |
+| `packageRuntime` | Non-executing proxy for PFP `service_provider` objects until the out-of-process package runtime bridge is available. |
 
 ## Filesystem and Relay Services
 

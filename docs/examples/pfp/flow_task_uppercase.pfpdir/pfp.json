@@ -1,0 +1,24 @@
+{
+  "format": "pawflow.package.v1",
+  "package": "examples.uppercase-task",
+  "version": "0.1.0",
+  "description": "Minimal PFP flow task example",
+  "developer": {
+    "email": "dev@example.com",
+    "public_key": "ed25519:REPLACE_WITH_PUBLIC_KEY"
+  },
+  "origin": {"source": "docs/examples/pfp/flow_task_uppercase.pfpdir"},
+  "objects": [
+    {
+      "id": "flow_task:uppercase",
+      "type": "flow_task",
+      "name": "exampleUppercase",
+      "task_type": "exampleUppercase",
+      "path": "content/flow-tasks/uppercase/task.py",
+      "runner": "python_subprocess",
+      "description": "Uppercase FlowFile content",
+      "parameters": {},
+      "allowed_tools": []
+    }
+  ]
+}

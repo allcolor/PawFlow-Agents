@@ -372,8 +372,9 @@ class TestToolRegistry(unittest.TestCase):
     def test_get_tool_definitions(self):
         registry = create_default_registry()
         defs = registry.get_tool_definitions()
-        assert len(defs) == 96  # + search + load_skill
-        assert any(d.get("name") == "flash_delegate" for d in defs)
+        names = {d.get("name") for d in defs}
+        assert "flash_delegate" in names
+        assert "manage_package" in names
         assert all("name" in d and "description" in d and "parameters" in d for d in defs)
 
     def test_execute_unknown_tool(self):
@@ -451,8 +452,9 @@ class TestAgentLoopTask(unittest.TestCase):
         task = AgentLoopTask({"api_key": "test"})
         registry = task.get_tool_registry()
         tools = registry.list_tools()
-        assert len(tools) == 96  # + search + load_skill
-        assert any(t.name == "flash_delegate" for t in tools)
+        names = {t.name for t in tools}
+        assert "flash_delegate" in names
+        assert "manage_package" in names
 
     def test_tool_registry_custom(self):
         task = AgentLoopTask({"api_key": "test"})

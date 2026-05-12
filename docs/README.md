@@ -20,6 +20,8 @@
 | [Task Catalog](tasks.md) | Built-in flow tasks and `tool.*` flow task adapter |
 | [Agent Tool Catalog](tool_catalog.md) | Agent-facing tools grouped by purpose |
 | [Services Catalog](services.md) | Service types: LLM, relay, media, messaging, auth, storage |
+| [PawFlow Packages](PFP_PACKAGES.md) | Signed `.pfp` package format, install plan, export/build workflow, and security model |
+| [PFP Publisher Guide](PFP_PUBLISHER_GUIDE.md) | Registry publishing, release versioning, SHA pinning, and key rotation |
 | [Cognitive Tools](COGNITIVE_TOOLS.md) | Memory, Knowledge Graph, Diary, Project Graph |
 | [Expression Language](EXPRESSION_LANGUAGE.md) | `${scope.key}` syntax, operators, cascade |
 | [Slash Commands](SLASH_COMMANDS.md) | Webchat/CLI/VS Code command surface |

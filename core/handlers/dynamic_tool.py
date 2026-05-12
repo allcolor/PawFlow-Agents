@@ -86,6 +86,60 @@ class DynamicToolHandler(ToolHandler):
         )
 
 
+class PfpToolProxyHandler(ToolHandler):
+    """Declarative placeholder for a package tool until the PFP runtime bridge exists."""
+
+    def __init__(self, tool_name: str, tool_description: str,
+                 tool_parameters: Dict[str, Any], package_runtime: Dict[str, Any],
+                 installed_from: Dict[str, Any] | None = None):
+        self._name = tool_name
+        self._description = tool_description
+        self._parameters = _as_json_schema(tool_parameters)
+        self._package_runtime = package_runtime or {}
+        self._installed_from = installed_from or {}
+        self._user_id = ""
+        self._conversation_id = ""
+        self._is_dynamic = True
+        self._is_pfp_tool = True
+
+    def set_user_id(self, uid: str):
+        self._user_id = uid or ""
+
+    def set_conversation_id(self, cid: str):
+        self._conversation_id = cid or ""
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def description(self) -> str:
+        return self._description
+
+    @property
+    def parameters_schema(self) -> Dict[str, Any]:
+        return self._parameters
+
+    def execute(self, arguments: Dict[str, Any]) -> str:
+        from core import pfp_runtime
+        try:
+            return pfp_runtime.invoke_tool(
+                self._package_runtime, self._installed_from, arguments, {
+                    "user_id": self._user_id,
+                    "conversation_id": self._conversation_id,
+                    "scope": "conversation" if self._conversation_id else "user",
+                })
+        except pfp_runtime.PackageRuntimeError as exc:
+            return f"Error: {exc}"
+
+
+def _as_json_schema(parameters: Dict[str, Any]) -> Dict[str, Any]:
+    params = parameters or {}
+    if params.get("type") == "object" and isinstance(params.get("properties", {}), dict):
+        return params
+    return {"type": "object", "properties": params}
+
+
 class CreateToolHandler(ToolHandler):
     """Meta-tool: create a dynamic tool at runtime."""
 

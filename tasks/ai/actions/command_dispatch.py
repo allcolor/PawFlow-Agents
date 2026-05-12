@@ -315,6 +315,24 @@ HELP: Dict[str, Dict[str, str]] = {
             "  /skill run [@agent] <name> [args...] — Invoke a skill now"
         ),
     },
+    "/pfp": {
+        "usage": "/pfp inspect|install|update|build|export|uninstall|list|reload-tasks|search|registry|key-create ...",
+        "short": "Manage PawFlow packages",
+        "detail": (
+            "  /pfp key-create                         — Create an Ed25519 signing key\n"
+            "  /pfp build <pfpdir> --key-env VAR [--out file.pfp]\n"
+            "  /pfp inspect <file.pfp|pfpdir>          — Verify and preview objects/capabilities\n"
+            "  /pfp install <file.pfp> [--scope user|conversation] [--include ids] [--secret logical=stored_key] [--force]\n"
+            "  /pfp update <file.pfp|package@version> [--include ids] [--exclude ids] [--force]\n"
+            "  /pfp search <query>                     — Search configured decentralized registries\n"
+            "  /pfp registry add <url> [--name name] [--trusted] — Add a static registry index\n"
+            "  /pfp registry list|remove <name-or-url> — Manage configured registries\n"
+            "  /pfp uninstall <package> [--scope user|conversation]\n"
+            "  /pfp list [--scope user|conversation]   — List installed packages\n"
+            "  /pfp reload-tasks [--scope user|conversation] — Reload installed package task proxies\n"
+            "  /pfp export --package id --version v --include type:name[,type:name] --out dir"
+        ),
+    },
     "/task": {
         "usage": "/task create | assign | list | delete | pause | resume | cancel",
         "short": "Manage agent tasks",
@@ -936,6 +954,9 @@ def _parse_command(text: str, conversation_id: str, user_id: str,
     if cmd == "/skill":
         return _parse_skill_command(arg, base, agent_name)
 
+    if cmd == "/pfp":
+        return _parse_pfp_command(arg, base)
+
     if cmd == "/task":
         return _parse_task_command(arg, base)
 
@@ -1363,6 +1384,173 @@ def _parse_skill_command(arg: str, base: dict, agent_name: str = "") -> dict:
             **base,
         }
     return {"action": "list_skills", **base}
+
+
+def _parse_pfp_command(arg: str, base: dict) -> dict:
+    try:
+        tokens = shlex.split(arg or "")
+    except ValueError as exc:
+        return {"action": "pfp_error", "error": str(exc), **base}
+    subcmd = tokens[0].lower() if tokens else "list"
+    rest = tokens[1:]
+    result = {"action": f"pfp_{subcmd.replace('-', '_')}", **base}
+    if subcmd in ("key-create", "key_create"):
+        result["action"] = "pfp_key_create"
+        return result
+    if subcmd in ("list", "list-installed", "list_installed"):
+        result["action"] = "pfp_list_installed"
+        result.update(_parse_pfp_flags(rest))
+        return result
+    if subcmd in ("reload-tasks", "reload_tasks"):
+        result["action"] = "pfp_reload_tasks"
+        result.update(_parse_pfp_flags(rest))
+        return result
+    if subcmd == "search":
+        flags = _parse_pfp_flags(rest)
+        result.update(flags)
+        result["query"] = " ".join(flags.get("_positionals", [])).strip()
+        return result
+    if subcmd == "registry":
+        return _parse_pfp_registry_command(rest, base)
+    if subcmd == "inspect":
+        flags = _parse_pfp_flags(rest)
+        result.update(flags)
+        result["path"] = flags.get("path", "")
+        return result
+    if subcmd == "build":
+        flags = _parse_pfp_flags(rest)
+        result.update(flags)
+        result["source_dir"] = flags.get("path", "")
+        return result
+    if subcmd == "install":
+        flags = _parse_pfp_flags(rest)
+        result.update(flags)
+        result["path"] = flags.get("path", "")
+        return result
+    if subcmd == "update":
+        flags = _parse_pfp_flags(rest)
+        result.update(flags)
+        result["path"] = flags.get("path", "")
+        return result
+    if subcmd == "uninstall":
+        flags = _parse_pfp_flags(rest)
+        result.update(flags)
+        result["package"] = flags.get("path", "")
+        return result
+    if subcmd == "export":
+        result.update(_parse_pfp_flags(rest))
+        return result
+    return {"action": "pfp_error", "error": f"Unknown /pfp subcommand: {subcmd}", **base}
+
+
+def _parse_pfp_flags(tokens: List[str]) -> dict:
+    data = {
+        "scope": "user",
+        "include": [],
+        "exclude": [],
+        "force": False,
+        "replace": False,
+        "dry_run": False,
+        "path": "",
+        "secret_bindings": {},
+    }
+    positional = []
+    i = 0
+    while i < len(tokens):
+        tok = tokens[i]
+        if tok == "--scope" and i + 1 < len(tokens):
+            data["scope"] = tokens[i + 1]
+            i += 2
+            continue
+        if tok == "--include" and i + 1 < len(tokens):
+            data["include"].extend(_split_csv(tokens[i + 1]))
+            i += 2
+            continue
+        if tok == "--exclude" and i + 1 < len(tokens):
+            data["exclude"].extend(_split_csv(tokens[i + 1]))
+            i += 2
+            continue
+        if tok == "--out" and i + 1 < len(tokens):
+            data["output_path"] = tokens[i + 1]
+            data["output_dir"] = tokens[i + 1]
+            i += 2
+            continue
+        if tok == "--key" and i + 1 < len(tokens):
+            data["private_key"] = tokens[i + 1]
+            i += 2
+            continue
+        if tok == "--key-env" and i + 1 < len(tokens):
+            data["private_key_env"] = tokens[i + 1]
+            i += 2
+            continue
+        if tok == "--package" and i + 1 < len(tokens):
+            data["package"] = tokens[i + 1]
+            i += 2
+            continue
+        if tok == "--version" and i + 1 < len(tokens):
+            data["version"] = tokens[i + 1]
+            i += 2
+            continue
+        if tok == "--name" and i + 1 < len(tokens):
+            data["name"] = tokens[i + 1]
+            i += 2
+            continue
+        if tok == "--sha256" and i + 1 < len(tokens):
+            data["sha256"] = tokens[i + 1]
+            i += 2
+            continue
+        if tok == "--secret" and i + 1 < len(tokens):
+            name, _, key = tokens[i + 1].partition("=")
+            if name.strip() and key.strip():
+                data["secret_bindings"][name.strip()] = key.strip()
+            i += 2
+            continue
+        if tok == "--limit" and i + 1 < len(tokens):
+            try:
+                data["limit"] = int(tokens[i + 1])
+            except ValueError:
+                data["limit"] = tokens[i + 1]
+            i += 2
+            continue
+        if tok == "--force":
+            data["force"] = True
+            i += 1
+            continue
+        if tok == "--replace":
+            data["replace"] = True
+            i += 1
+            continue
+        if tok == "--trusted":
+            data["trusted"] = True
+            i += 1
+            continue
+        if tok == "--dry-run":
+            data["dry_run"] = True
+            i += 1
+            continue
+        positional.append(tok)
+        i += 1
+    if positional and not data.get("path"):
+        data["path"] = positional[0]
+    data["_positionals"] = positional
+    return data
+
+
+def _split_csv(value: str) -> List[str]:
+    return [part.strip() for part in str(value or "").split(",") if part.strip()]
+
+
+def _parse_pfp_registry_command(tokens: List[str], base: dict) -> dict:
+    subcmd = tokens[0].lower() if tokens else "list"
+    rest = tokens[1:]
+    flags = _parse_pfp_flags(rest)
+    if subcmd == "add":
+        return {"action": "pfp_registry_add", "url": flags.get("path", ""), **flags, **base}
+    if subcmd in ("remove", "rm", "delete", "del"):
+        return {"action": "pfp_registry_remove", "name": flags.get("path", ""), **flags, **base}
+    if subcmd == "list":
+        return {"action": "pfp_registry_list", **flags, **base}
+    return {"action": "pfp_error", "error": f"Unknown /pfp registry subcommand: {subcmd}", **base}
 
 
 def _parse_task_command(arg: str, base: dict) -> dict:

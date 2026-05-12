@@ -6,8 +6,13 @@ Provides and registers all available tasks.
 """
 
 from typing import Dict, Any, List
+import logging
+
 from core import TaskFactory
 from core import FlowFile
+
+
+logger = logging.getLogger(__name__)
 
 
 def _register_all_services():
@@ -40,6 +45,7 @@ def _register_all_services():
     import services.summarizer_service       # noqa: F401
     import services.skill_review_service     # noqa: F401
     import services.private_gateway          # noqa: F401
+    import services.package_runtime_service  # noqa: F401
     import services.llm_credential_oauth     # noqa: F401
     import services.oauth_provider_service   # noqa: F401
     import services.auth_gateway_service    # noqa: F401
@@ -101,6 +107,7 @@ def register_all_tasks():
     _register_all_services()
 
     if "log" in TaskFactory.list_types():
+        _register_installed_package_tasks()
         return  # Already registered tasks
 
     # System tasks
@@ -238,6 +245,19 @@ def register_all_tasks():
     # Auto-register ToolHandlers as flow tasks (tool.*)
     from core.tool_task_adapter import register_tool_tasks
     register_tool_tasks()
+
+    _register_installed_package_tasks()
+
+
+def _register_installed_package_tasks():
+    """Reload installed PFP task proxies after builtin tasks are available."""
+    try:
+        from core import pfp_package
+        result = pfp_package.load_all_installed_package_tasks()
+        if result.get("errors"):
+            logger.debug("PFP task proxy reload had errors: %s", result["errors"])
+    except Exception as exc:
+        logger.debug("PFP task proxy reload failed: %s", exc)
 
 
 

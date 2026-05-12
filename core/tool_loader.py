@@ -30,7 +30,7 @@ def load_tools_into_registry(registry, user_id: str,
         return 0
     try:
         from core.resource_store import ResourceStore
-        from core.handlers.dynamic_tool import DynamicToolHandler
+        from core.handlers.dynamic_tool import DynamicToolHandler, PfpToolProxyHandler
         rs = ResourceStore.instance()
         entries = rs.list_all("tool", user_id,
                                 conversation_id=conversation_id) or []
@@ -47,12 +47,21 @@ def load_tools_into_registry(registry, user_id: str,
         if existing and not getattr(existing, "_is_dynamic", False):
             continue
         try:
-            handler = DynamicToolHandler(
-                tool_name=name,
-                tool_description=entry.get("description", ""),
-                tool_parameters=entry.get("parameters", {}) or {},
-                code=entry.get("source", "") or entry.get("code", ""),
-            )
+            if entry.get("package_runtime"):
+                handler = PfpToolProxyHandler(
+                    tool_name=name,
+                    tool_description=entry.get("description", ""),
+                    tool_parameters=entry.get("parameters", {}) or {},
+                    package_runtime=entry.get("package_runtime", {}) or {},
+                    installed_from=entry.get("installed_from", {}) or {},
+                )
+            else:
+                handler = DynamicToolHandler(
+                    tool_name=name,
+                    tool_description=entry.get("description", ""),
+                    tool_parameters=entry.get("parameters", {}) or {},
+                    code=entry.get("source", "") or entry.get("code", ""),
+                )
             handler._origin = "dynamic"
             handler._origin_scope = entry.get("_scope", "") or "user"
             registry.register(handler)

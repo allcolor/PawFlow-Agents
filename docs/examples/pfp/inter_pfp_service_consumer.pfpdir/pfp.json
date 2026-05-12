@@ -1,0 +1,33 @@
+{
+  "format": "pawflow.package.v1",
+  "package": "examples.text-service",
+  "version": "0.1.0",
+  "description": "Service provider that calls a tool from another PFP package",
+  "developer": {
+    "email": "dev@example.com",
+    "public_key": "ed25519:REPLACE_WITH_PUBLIC_KEY"
+  },
+  "origin": {"source": "docs/examples/pfp/inter_pfp_service_consumer.pfpdir"},
+  "dependencies": [
+    {"package": "examples.text-core", "version": "^0.1.0", "object": "tool:normalize_text"}
+  ],
+  "objects": [
+    {
+      "id": "service_provider:text-cleaner",
+      "type": "service_provider",
+      "name": "example-text-cleaner",
+      "service_id": "example-text-cleaner",
+      "path": "content/service-providers/text/provider.py",
+      "runner": "python_subprocess_host",
+      "description": "Normalize text through examples.text-core/tool:normalize_text",
+      "provides": ["text.normalization"],
+      "operations": {
+        "clean": {"description": "Normalize a text string"}
+      },
+      "allowed_tools": [
+        {"package": "examples.text-core", "version": "^0.1.0", "object": "tool:normalize_text"}
+      ],
+      "allowed_services": []
+    }
+  ]
+}

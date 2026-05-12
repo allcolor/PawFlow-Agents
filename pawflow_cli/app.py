@@ -33,7 +33,7 @@ _COMMANDS = [
     "/new", "/conv", "/resume", "/history", "/delete", "/export",
     "/agent", "/msg", "/message", "/btw", "/stop", "/interrupt",
     "/compact", "/rebuild", "/restart", "/summary", "/context",
-    "/memory", "/skill", "/task", "/service", "/flow",
+    "/memory", "/skill", "/pfp", "/task", "/service", "/flow",
     "/resources", "/activate", "/deactivate",
     "/tools", "/call", "/model", "/llm",
     "/files", "/upload", "/paste", "/view", "/prompt",

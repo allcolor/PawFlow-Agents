@@ -1,0 +1,26 @@
+{
+  "format": "pawflow.package.v1",
+  "package": "examples.text-core",
+  "version": "0.1.0",
+  "description": "Base text utilities package used by inter-PFP examples",
+  "developer": {
+    "email": "dev@example.com",
+    "public_key": "ed25519:REPLACE_WITH_PUBLIC_KEY"
+  },
+  "origin": {"source": "docs/examples/pfp/inter_pfp_base_tool.pfpdir"},
+  "objects": [
+    {
+      "id": "tool:normalize_text",
+      "type": "tool",
+      "name": "normalize_text",
+      "path": "content/tools/normalize_text/main.py",
+      "runner": "python_subprocess",
+      "description": "Normalize whitespace and casing in text",
+      "parameters": {
+        "text": {"type": "string", "required": true},
+        "uppercase": {"type": "boolean", "default": false}
+      },
+      "allowed_tools": []
+    }
+  ]
+}

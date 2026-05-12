@@ -33,6 +33,7 @@ import ssl
 import struct
 import uuid
 import base64
+import sys
 from urllib.parse import urlparse
 
 _RELAY_URL = os.environ.get("PAWFLOW_TOOL_RELAY_URL", "")
@@ -267,6 +268,102 @@ class _Filesystem:
         return self._call("git_commit", path=path, message=message, **kwargs)
 
 
+_PFP_INVOKE_FORMAT = "pawflow.package.runtime.invoke.v1"
+_PFP_RESULT_FORMAT = "pawflow.package.runtime.result.v1"
+_PFP_HOST_CALL_FORMAT = "pawflow.package.runtime.host_call.v1"
+
+
+class _PfpRuntime:
+    """Small runtime helper for PawFlow Package entrypoints."""
+
+    def __init__(self):
+        self._request = None
+
+    def input(self) -> dict:
+        """Read and cache the invocation envelope from stdin."""
+        if self._request is not None:
+            return self._request
+        line = sys.stdin.readline()
+        if not line:
+            raise RuntimeError("missing PFP invocation envelope")
+        request = json.loads(line)
+        if not isinstance(request, dict) or request.get("format") != _PFP_INVOKE_FORMAT:
+            raise RuntimeError("invalid PFP invocation envelope")
+        self._request = request
+        return request
+
+    @property
+    def kind(self) -> str:
+        return str(self.input().get("kind") or "")
+
+    @property
+    def payload(self) -> dict:
+        payload = self.input().get("payload") or {}
+        return payload if isinstance(payload, dict) else {}
+
+    @property
+    def package(self) -> dict:
+        package = self.input().get("package") or {}
+        return package if isinstance(package, dict) else {}
+
+    @property
+    def context(self) -> dict:
+        context = self.input().get("context") or {}
+        return context if isinstance(context, dict) else {}
+
+    def result(self, value=None, *, flowfiles=None) -> None:
+        envelope = {"format": _PFP_RESULT_FORMAT, "ok": True}
+        if flowfiles is not None:
+            envelope["flowfiles"] = flowfiles
+        else:
+            envelope["result"] = value
+        self._emit(envelope)
+
+    def error(self, message: str) -> None:
+        self._emit({"format": _PFP_RESULT_FORMAT, "ok": False, "error": str(message)})
+
+    def call_tool(self, tool_name: str, **arguments):
+        return self._host_call("tool", tool_name, arguments=arguments)
+
+    def call_service(self, service_name: str, operation: str, **arguments):
+        return self._host_call("service", service_name, operation=operation, arguments=arguments)
+
+    def flowfile(self, content=b"", attributes=None) -> dict:
+        if isinstance(content, str):
+            content = content.encode("utf-8")
+        if content is None:
+            content = b""
+        return {
+            "content_b64": base64.b64encode(bytes(content)).decode("ascii"),
+            "attributes": {str(k): str(v) for k, v in (attributes or {}).items()},
+        }
+
+    def _host_call(self, kind: str, target: str, *, operation: str = "",
+                   arguments=None):
+        request = {
+            "format": _PFP_HOST_CALL_FORMAT,
+            "kind": kind,
+            "target": target,
+            "arguments": arguments or {},
+        }
+        if operation:
+            request["operation"] = operation
+        self._emit(request)
+        line = sys.stdin.readline()
+        if not line:
+            raise RuntimeError("missing PFP host-call response")
+        response = json.loads(line)
+        if not isinstance(response, dict) or response.get("format") != _PFP_RESULT_FORMAT:
+            raise RuntimeError("invalid PFP host-call response")
+        if not response.get("ok", True):
+            raise RuntimeError(str(response.get("error") or "PFP host-call failed"))
+        return response.get("result")
+
+    def _emit(self, envelope: dict) -> None:
+        print(json.dumps(envelope, ensure_ascii=False), flush=True)
+
+
 # Module-level singletons
 tools = _Tools()
 fs = _Filesystem()
+pfp = _PfpRuntime()

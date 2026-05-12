@@ -15,6 +15,7 @@ All commands are typed in the chat input, prefixed with `/`. Commands are proces
 | `/task` | Create, assign, and manage agent tasks |
 | `/goal` | Create and assign a conversation-scoped goal task |
 | `/skill` | Manage skills |
+| `/pfp` | Build, inspect, install, export, and uninstall PawFlow packages |
 | `/memory` | Manage agent memories |
 | `/relay` | Manage relay bindings |
 | `/flow` | Manage data flows |
@@ -485,6 +486,18 @@ Supported task options mirror `/task assign`: `--criteria`, `--interval`, `--ver
 Skills are assigned only through an agent's `assigned_skills`. The old generic resource activation path is not used for skills; use `assign` and `unassign` instead. Assigning a skill advertises it to the agent with a lightweight context message; the full prompt is loaded only when the agent calls `load_skill(name="skill-name")`. `/skill run [@agent] <skill> [args...]` is a one-shot invocation: it renders a visible skill immediately and queues it as a user message for the target agent, defaulting to the selected conversation agent when `@agent` is omitted. Imported or untrusted skill content can be checked with `manage_resource(action="review", resource_type="skill", data={"prompt": "..."})` before creating or assigning it.
 
 Marketplace import supports Codex (`openai/skills`), Claude/Anthropic plugin marketplaces, HermesHub, and OpenClaw GitHub tree URLs. Imports fetch only bounded text packages with a root `SKILL.md`; binary files, oversized packages, unsafe paths, and blocked review findings are rejected. Package scripts and `allowed-tools` declarations are treated as untrusted content: they are reviewed and stored as package data, but never executed automatically and never grant tool approval. Skills that require human review are not created unless `--force` is provided after review; blocked skills cannot be imported with `--force`.
+
+### /pfp
+
+```
+/pfp key-create | build <pfpdir> --key-env VAR [--out file.pfp] | inspect <file.pfp|pfpdir|package@version> | install <file.pfp|url|package@version> [--scope user|conversation] [--include ids] [--exclude ids] [--force] [--replace] | update <file.pfp|package@version> [--include ids] [--exclude ids] [--force] | search <query> | registry add|list|remove | list | reload-tasks [--scope user|conversation] | uninstall <package> | export --package id --version v --include type:name[,type:name] --out dir
+```
+
+PawFlow Package files are signed `.pfp` zip artifacts. `inspect` verifies the signature and returns an object-by-object install plan with risk, status, dependencies, and selectable IDs. `install` only writes selected objects and records provenance under the local package install registry. `tool` and `service_provider` objects are reported but not executed until the package runtime proxy is available; config-only `service_definition` objects install through `ServiceRegistry`.
+
+For signing, prefer `--key-env VAR` so private key material is read from an environment variable and is not pasted into chat history.
+
+Decentralized registries are static JSON indexes. Add one with `/pfp registry add https://example.com/pawflow/index.json --name example`, search with `/pfp search media provider`, then inspect/install/update a result by `package@version`. Registry-provided SHA-256 values pin downloads, but every install still verifies the `.pfp` signature and file lock. `/pfp update` updates previously installed objects and skips local modifications unless `--force` is provided. `/pfp reload-tasks` rebuilds installed package task proxies after a process restart or explicit runtime reset.
 
 ### /add-skill
 

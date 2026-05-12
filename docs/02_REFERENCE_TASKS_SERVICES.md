@@ -2,6 +2,14 @@
 
 ## 11. Complete Task Reference
 
+PawFlow Package (`.pfp`) files can add flow processor types through `flow_task`
+or `task_provider` objects. Installed package tasks are registered in
+`TaskFactory` as fail-closed proxies: flows can parse and validate the new task
+type immediately, but execution raises a controlled error until the package
+runtime bridge executes package code out of process. Use `task_def` only for
+agent/task-definition resources; use `flow_task`/`task_provider` for flow
+processors.
+
 ### 11.1. Base Tasks (System)
 
 #### 11.1.1. Log Task (`log`)

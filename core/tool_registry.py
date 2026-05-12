@@ -107,6 +107,7 @@ from core.handlers.resource_agent import (  # noqa: F401
     ShowFileHandler,
     SpawnAgentsHandler,
 )
+from core.handlers.packages import ManagePackageHandler  # noqa: F401
 from core.handlers.task_management import (  # noqa: F401
     AssignTaskHandler,
     CompleteTaskHandler,
@@ -446,6 +447,7 @@ def create_default_registry() -> ToolRegistry:
     registry.register(StoreSecretHandler())
     registry.register(ListSecretsHandler())
     registry.register(ManageResourceHandler())
+    registry.register(ManagePackageHandler())
     registry.register(SpawnAgentsHandler())
     registry.register(FlashAgentHandler())
     registry.register(ShowFileHandler())

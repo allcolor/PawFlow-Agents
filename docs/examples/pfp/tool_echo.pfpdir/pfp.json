@@ -1,0 +1,25 @@
+{
+  "format": "pawflow.package.v1",
+  "package": "examples.echo-tool",
+  "version": "0.1.0",
+  "description": "Minimal PFP tool example",
+  "developer": {
+    "email": "dev@example.com",
+    "public_key": "ed25519:REPLACE_WITH_PUBLIC_KEY"
+  },
+  "origin": {"source": "docs/examples/pfp/tool_echo.pfpdir"},
+  "objects": [
+    {
+      "id": "tool:echo",
+      "type": "tool",
+      "name": "echo",
+      "path": "content/tools/echo/main.py",
+      "runner": "python_subprocess",
+      "description": "Return the provided text",
+      "parameters": {
+        "text": {"type": "string", "required": true}
+      },
+      "allowed_tools": []
+    }
+  ]
+}

@@ -1,6 +1,8 @@
 from pathlib import Path
 import json
+import os
 import subprocess
+import sys
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -138,6 +140,7 @@ def test_relay_desktop_prepare_runtime_script_declares_required_payload():
     assert "config', 'relay_image_catalog.json'" in script
     assert "scripts', 'generate-relay-image.py'" in script
     assert "copyDir(path.join(repoRoot, 'pawflow_relay')" in script
+    assert "copyDir(path.join(repoRoot, 'pawflow_cli')" in script
     assert "__pycache__" in script
     portable = (DESKTOP / "scripts" / "package-portable.js").read_text(encoding="utf-8")
     assert "prepare-runtime.js" in portable
@@ -155,6 +158,15 @@ def test_relay_desktop_generated_runtime_has_required_payload():
     assert (runtime / "config" / "relay_image_catalog.json").is_file()
     assert (runtime / "scripts" / "generate-relay-image.py").is_file()
     assert (runtime / "pawflow_relay" / "thread.py").is_file()
+    assert (runtime / "pawflow_cli" / "auth.py").is_file()
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(runtime)
+    subprocess.run(
+        [sys.executable, "-c", "import pawflow_cli.auth; import pawflow_relay.manager_cli"],
+        cwd=DESKTOP,
+        env=env,
+        check=True,
+    )
 
 
 def test_relay_client_doc_mentions_desktop_app():

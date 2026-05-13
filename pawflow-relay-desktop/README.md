@@ -49,8 +49,8 @@ $env:PAWFLOW_RELAY_WSL_DISTRO = "Ubuntu-24.04"
 ## Portable Runtime
 
 `npm run prepare-runtime` creates `pawflow-relay-desktop/runtime/` with the
-Python relay package, relay tool scripts, and PawFlow SDK shim required by the
-Docker relay. For a copyable dev bundle, run:
+Python relay package, PawCode login helpers, relay tool scripts, and PawFlow SDK
+shim required by the Docker relay. For a copyable dev bundle, run:
 
 ```bash
 npm run package:portable
@@ -68,6 +68,7 @@ A copied desktop directory must contain:
 ```text
 runtime/tools/
 runtime/pawflow_relay/
+runtime/pawflow_cli/
 runtime/docker/pawflow_sdk/pawflow.py
 ```
 

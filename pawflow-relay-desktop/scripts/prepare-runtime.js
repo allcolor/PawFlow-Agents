@@ -68,5 +68,6 @@ copyFile(
   path.join(runtimeRoot, 'scripts', 'generate-relay-image.py'),
 );
 copyDir(path.join(repoRoot, 'pawflow_relay'), path.join(runtimeRoot, 'pawflow_relay'));
+copyDir(path.join(repoRoot, 'pawflow_cli'), path.join(runtimeRoot, 'pawflow_cli'));
 
 console.log(`Prepared PawFlow Relay Desktop runtime at ${runtimeRoot}`);

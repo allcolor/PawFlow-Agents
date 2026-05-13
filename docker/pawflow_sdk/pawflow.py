@@ -338,6 +338,18 @@ class _PfpRuntime:
             "attributes": {str(k): str(v) for k, v in (attributes or {}).items()},
         }
 
+    def artifact(self, kind: str, path: str, content_type: str = "",
+                 filename: str = "") -> dict:
+        data = {
+            "kind": str(kind or ""),
+            "path": str(path or ""),
+        }
+        if content_type:
+            data["content_type"] = str(content_type)
+        if filename:
+            data["filename"] = str(filename)
+        return {"artifact": data}
+
     def _host_call(self, kind: str, target: str, *, operation: str = "",
                    arguments=None):
         request = {

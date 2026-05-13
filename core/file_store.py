@@ -122,6 +122,55 @@ class FileStore:
         self._save_index()
         return file_id
 
+    def store_file(self, filename: str, source_path: str,
+                   content_type: str = "application/octet-stream",
+                   conversation_id: str = "",
+                   user_id: str = "",
+                   ttl: int = 0,
+                   agent_name: str = "",
+                   category: str = "") -> str:
+        """Store a file by copying it from disk. Returns file_id."""
+        if not user_id:
+            raise ValueError(f"FileStore.store_file: user_id is required (filename={filename!r})")
+        if not conversation_id:
+            raise ValueError(f"FileStore.store_file: conversation_id is required (filename={filename!r})")
+        src = Path(source_path).expanduser().resolve()
+        if not src.is_file():
+            raise FileNotFoundError(f"FileStore.store_file: source file not found: {source_path}")
+        file_id = uuid.uuid4().hex[:12]
+        safe_name = Path(filename).name or src.name or "file"
+        disk_name = f"{file_id}_{safe_name}"
+
+        scope_dir = self._scope_dir(user_id, conversation_id)
+        bucket = self._pick_bucket(scope_dir)
+        bucket_dir = scope_dir / bucket
+        bucket_dir.mkdir(parents=True, exist_ok=True)
+
+        file_path = bucket_dir / disk_name
+        with src.open("rb") as inp, file_path.open("wb") as out:
+            shutil.copyfileobj(inp, out, length=1024 * 1024)
+        size = file_path.stat().st_size
+
+        with self._store_lock:
+            self._ensure_loaded()
+            self._entries[file_id] = {
+                "filename": safe_name,
+                "path": str(file_path),
+                "content_type": content_type,
+                "size": size,
+                "created_at": time.time(),
+                "conversation_id": conversation_id,
+                "user_id": user_id,
+                "access": ACCESS_PRIVATE,
+                "shared_with": [],
+                "ttl": ttl,
+                "agent_name": agent_name,
+                "category": category,
+            }
+
+        self._save_index()
+        return file_id
+
     # ── Retrieve ─────────────────────────────────────────────────
 
     def get(self, file_id: str, user_id: str = "",

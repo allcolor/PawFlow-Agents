@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 import re
 import threading
 from typing import Dict, Any, List, Optional
@@ -9,6 +10,28 @@ from typing import Dict, Any, List, Optional
 from core.tool_handler import ToolHandler
 
 logger = logging.getLogger(__name__)
+
+
+def _media_bytes_or_path(result: Dict[str, Any], byte_key: str, path_key: str) -> Dict[str, Any]:
+    if result.get(path_key):
+        return {"path": str(result[path_key])}
+    return {"bytes": result[byte_key]}
+
+
+def _write_media_result(resolver, destination: str, filename: str,
+                        result: Dict[str, Any], byte_key: str,
+                        path_key: str, content_type: str) -> Dict[str, Any]:
+    payload = _media_bytes_or_path(result, byte_key, path_key)
+    if "path" in payload:
+        try:
+            return resolver.write_file(destination, filename, payload["path"], content_type)
+        finally:
+            if result.get("_delete_media_path"):
+                try:
+                    os.unlink(payload["path"])
+                except OSError:
+                    pass
+    return resolver.write(destination, filename, payload["bytes"], content_type)
 
 
 def _resolve_explicit_media_service(service_id: str, user_id: str = "", conversation_id: str = ""):
@@ -177,8 +200,9 @@ class ImageGenerationHandler(ToolHandler):
 
             from core.storage_resolver import StorageResolver
             resolver = StorageResolver(user_id=self._user_id, conversation_id=getattr(self, "_conversation_id", "") or "")
-            write_result = resolver.write(destination, filename,
-                                           result["image_bytes"], ct)
+            write_result = _write_media_result(
+                resolver, destination, filename, result,
+                "image_bytes", "image_path", ct)
 
             if write_result.get("file_id"):
                 url = f"fs://filestore/{write_result['file_id']}/{filename}"
@@ -349,8 +373,9 @@ class EditImageHandler(ToolHandler):
             resolver = StorageResolver(
                 user_id=self._user_id,
                 conversation_id=getattr(self, "_conversation_id", "") or "")
-            write_result = resolver.write(destination, filename,
-                                          result["image_bytes"], ct)
+            write_result = _write_media_result(
+                resolver, destination, filename, result,
+                "image_bytes", "image_path", ct)
 
             if write_result.get("file_id"):
                 url = f"fs://filestore/{write_result['file_id']}/{filename}"
@@ -589,8 +614,9 @@ class VideoGenerationHandler(ToolHandler):
 
             from core.storage_resolver import StorageResolver
             resolver = StorageResolver(user_id=self._user_id, conversation_id=getattr(self, "_conversation_id", "") or "")
-            write_result = resolver.write(destination, filename,
-                                           result["video_bytes"], ct)
+            write_result = _write_media_result(
+                resolver, destination, filename, result,
+                "video_bytes", "video_path", ct)
 
             if write_result.get("file_id"):
                 url = f"fs://filestore/{write_result['file_id']}/{filename}"
@@ -748,6 +774,7 @@ class AudioGenerationHandler(ToolHandler):
             output_lines = []
             for i, var in enumerate(variations):
                 _vbytes = var.get("audio_bytes", result.get("audio_bytes"))
+                _vpath = var.get("audio_path", result.get("audio_path"))
                 _vct = var.get("content_type", ct)
                 _vext = {
                     "audio/mpeg": "mp3", "audio/mp3": "mp3",
@@ -760,7 +787,15 @@ class AudioGenerationHandler(ToolHandler):
                     _vname = _audio_variation_name(filename, _variation_idx or i + 1, _vext)
                 else:
                     _vname = filename
-                _vresult = resolver.write(destination, _vname, _vbytes, _vct)
+                _payload = {
+                    "audio_bytes": _vbytes,
+                    "audio_path": _vpath,
+                    "_delete_media_path": var.get(
+                        "_delete_media_path", result.get("_delete_media_path")),
+                }
+                _vresult = _write_media_result(
+                    resolver, destination, _vname, _payload,
+                    "audio_bytes", "audio_path", _vct)
                 if _vresult.get("file_id"):
                     _vurl = f"fs://filestore/{_vresult['file_id']}/{_vname}"
                     _label = f"{_vtitle} ({_vdur:.0f}s)" if _vtitle else f"variation {i+1}"

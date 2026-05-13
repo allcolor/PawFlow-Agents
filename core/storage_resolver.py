@@ -10,6 +10,7 @@ Targets:
 """
 
 import logging
+from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -51,6 +52,23 @@ class StorageResolver:
         else:
             return self._write_filesystem(target, path, data)
 
+    def write_file(self, destination: str, path: str, source_path: str,
+                   content_type: str = "") -> Dict[str, Any]:
+        """Write a local source file to a destination.
+
+        FileStore copies in chunks to avoid materializing large generated media
+        in Python memory. Filesystem destinations fall back to bytes because the
+        current relay filesystem service API is bytes-oriented.
+        """
+        target = self._normalize(destination)
+        source = Path(source_path).expanduser().resolve()
+        if not source.is_file():
+            raise FileNotFoundError(f"Source file not found: {source_path}")
+
+        if target in _FILESTORE_ALIASES:
+            return self._write_filestore_file(path, str(source), content_type)
+        return self._write_filesystem(target, path, source.read_bytes())
+
     def read(self, source: str, path: str) -> Tuple[bytes, str]:
         """Read data from a source.
 
@@ -88,6 +106,24 @@ class StorageResolver:
                               content_type=content_type,
                               user_id=self._user_id,
                               conversation_id=self._conversation_id)
+        base_url = store.get_base_url() if hasattr(store, 'get_base_url') else ""
+        url = f"{base_url}/files/{file_id}" if base_url else f"/files/{file_id}"
+        return {
+            "file_id": file_id,
+            "url": url,
+            "path": filename,
+            "destination": "filestore",
+        }
+
+    def _write_filestore_file(self, filename: str, source_path: str,
+                              content_type: str = "") -> Dict[str, Any]:
+        """Write a source file to FileStore without loading it all at once."""
+        from core.file_store import FileStore
+        store = FileStore.instance()
+        file_id = store.store_file(filename, source_path,
+                                   content_type=content_type,
+                                   user_id=self._user_id,
+                                   conversation_id=self._conversation_id)
         base_url = store.get_base_url() if hasattr(store, 'get_base_url') else ""
         url = f"{base_url}/files/{file_id}" if base_url else f"/files/{file_id}"
         return {

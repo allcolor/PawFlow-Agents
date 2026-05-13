@@ -23,7 +23,7 @@ class ManagePackageHandler(ToolHandler):
     def description(self) -> str:
         return (
             "Manage PawFlow packages (.pfp). Actions: key_create, build, "
-            "inspect, install, update, uninstall, list_installed, export, registry_add, "
+            "inspect, install, update, uninstall, list_installed, export, dev_load, dev_unload, registry_add, "
             "registry_remove, registry_list, search, reload_tasks. Packages are "
             "signed zip artifacts; install is selective and records provenance."
         )
@@ -54,6 +54,7 @@ class ManagePackageHandler(ToolHandler):
                 "replace": {"type": "boolean"},
                 "dry_run": {"type": "boolean"},
                 "output_dir": {"type": "string"},
+                "secret_bindings": {"type": "object"},
             },
             "required": ["action"],
         }
@@ -100,6 +101,7 @@ class ManagePackageHandler(ToolHandler):
                     force=bool(arguments.get("force", False)),
                     replace=bool(arguments.get("replace", False)),
                     dry_run=bool(arguments.get("dry_run", False)),
+                    secret_bindings=arguments.get("secret_bindings") or {},
                 )
                 if resolved.get("downloaded"):
                     result["download"] = resolved
@@ -114,6 +116,7 @@ class ManagePackageHandler(ToolHandler):
                     exclude=arguments.get("exclude") or None,
                     force=bool(arguments.get("force", False)),
                     dry_run=bool(arguments.get("dry_run", False)),
+                    secret_bindings=arguments.get("secret_bindings") or {},
                 )
                 if resolved.get("downloaded"):
                     result["download"] = resolved
@@ -130,6 +133,27 @@ class ManagePackageHandler(ToolHandler):
                     user_id=self._user_id,
                     conversation_id=self._conversation_id,
                     scope=arguments.get("scope") or "user",
+                )
+            elif action in {"dev_load", "dev-load"}:
+                result = pfp_package.dev_load_pfp(
+                    arguments.get("source_dir") or arguments.get("path") or "",
+                    user_id=self._user_id,
+                    conversation_id=self._conversation_id,
+                    scope=arguments.get("scope") or "conversation",
+                    include=arguments.get("include") or None,
+                    exclude=arguments.get("exclude") or None,
+                    force=bool(arguments.get("force", True)),
+                    replace=bool(arguments.get("replace", True)),
+                    dry_run=bool(arguments.get("dry_run", False)),
+                    secret_bindings=arguments.get("secret_bindings") or {},
+                )
+            elif action in {"dev_unload", "dev-unload"}:
+                result = pfp_package.dev_unload_pfp(
+                    arguments.get("package") or arguments.get("name") or "",
+                    user_id=self._user_id,
+                    conversation_id=self._conversation_id,
+                    scope=arguments.get("scope") or "conversation",
+                    force=bool(arguments.get("force", True)),
                 )
             elif action == "reload_tasks":
                 result = pfp_package.load_installed_package_tasks(

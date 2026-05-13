@@ -740,6 +740,27 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                 )
                 if resolved.get("downloaded"):
                     result["download"] = resolved
+            elif pfp_action == "dev_load":
+                result = pfp_package.dev_load_pfp(
+                    body.get("source_dir") or body.get("path") or "",
+                    user_id=user_id,
+                    conversation_id=body.get("conversation_id", "") or "",
+                    scope=body.get("scope") or "conversation",
+                    include=body.get("include") or None,
+                    exclude=body.get("exclude") or None,
+                    force=bool(body.get("force", True)),
+                    replace=bool(body.get("replace", True)),
+                    dry_run=bool(body.get("dry_run", False)),
+                    secret_bindings=body.get("secret_bindings") or {},
+                )
+            elif pfp_action == "dev_unload":
+                result = pfp_package.dev_unload_pfp(
+                    body.get("package") or "",
+                    user_id=user_id,
+                    conversation_id=body.get("conversation_id", "") or "",
+                    scope=body.get("scope") or "conversation",
+                    force=bool(body.get("force", True)),
+                )
             elif pfp_action == "uninstall":
                 result = pfp_package.uninstall_pfp(
                     body.get("package") or "",

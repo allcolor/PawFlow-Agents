@@ -316,13 +316,15 @@ HELP: Dict[str, Dict[str, str]] = {
         ),
     },
     "/pfp": {
-        "usage": "/pfp inspect|install|update|build|export|uninstall|list|reload-tasks|search|registry|key-create ...",
+        "usage": "/pfp inspect|install|update|build|dev-load|dev-unload|export|uninstall|list|reload-tasks|search|registry|key-create ...",
         "short": "Manage PawFlow packages",
         "detail": (
             "  /pfp key-create                         — Create an Ed25519 signing key\n"
             "  /pfp build <pfpdir> --key-env VAR [--out file.pfp]\n"
             "  /pfp inspect <file.pfp|pfpdir>          — Verify and preview objects/capabilities\n"
             "  /pfp install <file.pfp> [--scope user|conversation] [--include ids] [--secret logical=stored_key] [--force]\n"
+            "  /pfp dev-load <pfpdir> [--scope conversation|user] [--include ids] [--exclude ids] [--secret logical=stored_key] [--replace]\n"
+            "  /pfp dev-unload <package> [--scope conversation|user]\n"
             "  /pfp update <file.pfp|package@version> [--include ids] [--exclude ids] [--force]\n"
             "  /pfp search <query>                     — Search configured decentralized registries\n"
             "  /pfp registry add <url> [--name name] [--trusted] — Add a static registry index\n"
@@ -1426,6 +1428,22 @@ def _parse_pfp_command(arg: str, base: dict) -> dict:
         flags = _parse_pfp_flags(rest)
         result.update(flags)
         result["path"] = flags.get("path", "")
+        return result
+    if subcmd in ("dev-load", "dev_load"):
+        flags = _parse_pfp_flags(rest)
+        if "--scope" not in rest:
+            flags["scope"] = "conversation"
+        result["action"] = "pfp_dev_load"
+        result.update(flags)
+        result["source_dir"] = flags.get("path", "")
+        return result
+    if subcmd in ("dev-unload", "dev_unload"):
+        flags = _parse_pfp_flags(rest)
+        if "--scope" not in rest:
+            flags["scope"] = "conversation"
+        result["action"] = "pfp_dev_unload"
+        result.update(flags)
+        result["package"] = flags.get("path", "")
         return result
     if subcmd == "update":
         flags = _parse_pfp_flags(rest)

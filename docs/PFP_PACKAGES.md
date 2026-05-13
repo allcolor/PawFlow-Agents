@@ -2,7 +2,7 @@
 
 PawFlow Package files are signed zip artifacts for distributing PawFlow resources. A package can contain multiple objects, and install always goes through inspection plus a selectable install plan. The trust boundary is pre-install review: after a package object is installed, it is expected to behave like an installed PawFlow tool, service, or flow task, constrained by the capabilities the user accepted during installation.
 
-For publisher operations such as registry hosting, artifact release, versioning, and key rotation, see [PFP Publisher Guide](PFP_PUBLISHER_GUIDE.md).
+For local package development workflows such as `dev-load`, service provider testing, and file-backed media artifacts, see [PFP Developer Guide](PFP_DEVELOPER_GUIDE.md). For publisher operations such as registry hosting, artifact release, versioning, and key rotation, see [PFP Publisher Guide](PFP_PUBLISHER_GUIDE.md).
 
 ## Artifact Layout
 
@@ -89,6 +89,8 @@ Dependency `version` accepts exact versions and simple ranges: `>=1.0.0,<2.0.0`,
 /pfp build ./my-package.pfpdir --key-env PAWFLOW_PFP_SIGNING_KEY [--out dist/pkg.pfp]
 /pfp inspect ./dist/pkg.pfp
 /pfp install ./dist/pkg.pfp --include skill:x,service:y --exclude flow:z --secret api_key=my_provider_key --force
+/pfp dev-load ./my-package.pfpdir --include service_provider:image --secret api_key=my_provider_key
+/pfp dev-unload community.wavespeed
 /pfp update ./dist/pkg-1.1.0.pfp --force
 /pfp registry add https://example.com/pawflow/index.json --name example --trusted
 /pfp search wavespeed image
@@ -99,7 +101,9 @@ Dependency `version` accepts exact versions and simple ranges: `>=1.0.0,<2.0.0`,
 /pfp export --package my.bundle --version 0.1.0 --include skill:a,agent:b --out ./my.bundle.pfpdir
 ```
 
-The `manage_package` agent tool exposes the same actions: `key_create`, `build`, `inspect`, `install`, `update`, `uninstall`, `list_installed`, `export`, `registry_add`, `registry_remove`, `registry_list`, `search`, and `reload_tasks`. `reload_tasks` rebuilds `TaskFactory` proxies from installed package records after a process restart or explicit runtime reset.
+The `manage_package` agent tool exposes the same actions: `key_create`, `build`, `inspect`, `install`, `update`, `uninstall`, `list_installed`, `export`, `dev_load`, `dev_unload`, `registry_add`, `registry_remove`, `registry_list`, `search`, and `reload_tasks`. `reload_tasks` rebuilds `TaskFactory` proxies from installed package records after a process restart or explicit runtime reset.
+
+`dev_load`/`/pfp dev-load` is the unsigned development loop for local `.pfpdir` sources. It accepts the same `include`, `exclude`, `scope`, and `--secret name=stored_key` bindings as install, defaults to conversation scope when a conversation id is available, marks the package record as `dev: true`, and points runtime proxies directly at the source directory instead of copying to the signed content store. Use it while editing provider/tool/task code; Python subprocess runners read the entrypoint from the source tree on every invocation. Re-run `dev-load --replace` after manifest changes. `dev_unload`/`/pfp dev-unload` removes the dev package objects from the selected scope without deleting the source directory.
 
 The web Resources sidebar exposes installed packages in a dedicated Packages section. Its install dialog calls the same inspect/install/update actions, shows selectable package objects, aggregate capabilities, required secret bindings, and update diffs before applying the selected plan. The same dialog can list/add/remove the user's configured registries, search them, show each result's source URL, SHA-256 pin, and developer key metadata, then inspect a selected result with its registry SHA pin before install. Installed package rows can be uninstalled from the sidebar; regular uninstall keeps dependency protection, while force uninstall uses the same explicit override as `/pfp uninstall --force`.
 
@@ -141,7 +145,7 @@ Registry metadata is not trusted as executable authority. It is used for discove
 - Installation writes only selected objects from the install plan.
 - When at least one object is installed, the verified package payload is copied into a scoped local content store under the package repository. Runtime proxies reference that stable `content_dir` plus their signed entrypoint path; they never depend on the original `.pfp` file remaining on disk.
 - Installed resources receive `installed_from` provenance with package id, version, object id, file hash, package hash, and developer public key.
-- PFP runtime proxies validate their installed entrypoint before invocation: the file must still live under the scoped package content directory and its SHA-256 must match the signed install provenance.
+- PFP runtime proxies validate their installed entrypoint before invocation: the file must still live under the scoped package content directory and its SHA-256 must match the signed install provenance. Dev-loaded `.pfpdir` packages still enforce path containment, but skip hash mismatch failures so source edits take effect immediately.
 - Skills still pass the existing skill review pipeline. Review-required skills need an explicit `--force` after inspection; blocked skills cannot be installed.
 - Third-party code-bearing objects execute only through a declared runtime runner. The default runner currently uses a Python subprocess and the host-call protocol; package code is not imported into the PawFlow server process.
 - Package tools/services may only call builtin or package-provided tools/services that were declared in `allowed_tools`/`allowed_services` and accepted during install; package-qualified grants require the referenced package and object dependency to be installed.
@@ -160,7 +164,26 @@ Registry metadata is not trusted as executable authority. It is used for discove
 6. Build with `/pfp build ... --key-env ENV_NAME` so the private signing key stays outside chat and shell history.
 7. Inspect the signed `.pfp`, verify capabilities and update diff, then install selected objects.
 
-Python entrypoints can import the lightweight SDK with `from pawflow import pfp`. The SDK exposes `pfp.input()` plus cached `pfp.payload`, `pfp.package`, and `pfp.context`; `pfp.result(value)` and `pfp.error(message)` emit `result.v1`; `pfp.call_tool(name, **arguments)` and `pfp.call_service(name, operation, **arguments)` emit brokered `host_call.v1` requests; and `pfp.flowfile(content, attributes)` builds task result descriptors for `pfp.result(flowfiles=[...])`.
+Python entrypoints can import the lightweight SDK with `from pawflow import pfp`. The SDK exposes `pfp.input()` plus cached `pfp.payload`, `pfp.package`, and `pfp.context`; `pfp.result(value)` and `pfp.error(message)` emit `result.v1`; `pfp.call_tool(name, **arguments)` and `pfp.call_service(name, operation, **arguments)` emit brokered `host_call.v1` requests; `pfp.flowfile(content, attributes)` builds task result descriptors for `pfp.result(flowfiles=[...])`; and `pfp.artifact(kind, path, content_type, filename)` builds file artifact descriptors for large media results.
+
+Media service providers should not return image/video/audio bytes or base64 in JSON. For `media.image_generation`, `media.video_generation`, and `media.audio_generation`, PawFlow passes a controlled `pfp.context["output_dir"]` to the subprocess. The provider writes large output files under that directory and returns a relative artifact path:
+
+```python
+from pathlib import Path
+from pawflow import pfp
+
+out = Path(pfp.context["output_dir"]) / "image.png"
+# call_provider(..., output_path=out)
+
+pfp.result(pfp.artifact(
+    "image",
+    "image.png",
+    "image/png",
+    filename="image.png",
+))
+```
+
+The package runtime resolves the relative path, rejects escapes outside `output_dir`, records size and SHA-256 metadata, and returns an `image_path`, `video_path`, or `audio_path` to PawFlow media handlers. FileStore destinations copy that file in chunks, avoiding JSON/base64 expansion and avoiding an extra full-size media buffer in memory.
 
 Example inter-PFP grant:
 
@@ -193,7 +216,7 @@ After installation PawFlow refreshes the relevant resource and service registrie
 
 PFP `flow_task`/`task_provider` proxies are also refreshed into `TaskFactory` immediately after install. On process startup, `register_all_tasks()` reloads installed package task proxies from package install records after builtin tasks are registered. Use `manage_package(action="reload_tasks")` or `/pfp reload-tasks` only after an explicit runtime reset where you need to rebuild proxies without restarting.
 
-The future out-of-process runtime bridge uses deterministic JSON envelopes. PawFlow prepares package invocations as `pawflow.package.runtime.invoke.v1` after verifying the installed entrypoint and provenance hash. Each invocation carries a `context` object with `user_id`, `conversation_id`, and `scope` so the bridge can resolve host tools and services in the same scope as the caller. The invocation package section also carries the signed runtime metadata needed by the bridge: dependencies, `allowed_tools`, `allowed_services`, and provided capabilities. Runtime results use `pawflow.package.runtime.result.v1`; task results rebuild `FlowFile` objects from base64 content plus attributes. Package code must request host tool/service calls through `pawflow.package.runtime.host_call.v1`; PawFlow reconstructs and authorizes those calls with `PackageCapabilityBroker` before executing a host tool or service, so package-supplied `grant` fields are never trusted. All PFP proxies call a single process-wide runtime bridge interface; without a configured bridge, invocation fails closed after validation.
+The future out-of-process runtime bridge uses deterministic JSON envelopes. PawFlow prepares package invocations as `pawflow.package.runtime.invoke.v1` after verifying the installed entrypoint and provenance hash. Each invocation carries a `context` object with `user_id`, `conversation_id`, and `scope` so the bridge can resolve host tools and services in the same scope as the caller. Media service invocations also carry `output_dir` when the service is called through the media adapter. The invocation package section also carries the signed runtime metadata needed by the bridge: dependencies, `allowed_tools`, `allowed_services`, and provided capabilities. Runtime results use `pawflow.package.runtime.result.v1`; task results rebuild `FlowFile` objects from base64 content plus attributes, while large media service results should use artifact file descriptors. Package code must request host tool/service calls through `pawflow.package.runtime.host_call.v1`; PawFlow reconstructs and authorizes those calls with `PackageCapabilityBroker` before executing a host tool or service, so package-supplied `grant` fields are never trusted. All PFP proxies call a single process-wide runtime bridge interface; without a configured bridge, invocation fails closed after validation.
 
 `PythonSubprocessPackageRuntimeBridge` is the minimal opt-in executable runner for Python entrypoints. It is not installed automatically for every package: a runtime object (`tool`, `service_provider`, `flow_task`, or `task_provider`) must declare `runner: "python_subprocess"` for one-shot execution, or `runner: "python_subprocess_host"` for interactive host-call IPC. One-shot mode passes the `invoke.v1` envelope on stdin and requires exactly one `result.v1` JSON envelope on stdout. Host mode uses stdout as a line-delimited protocol channel: `host_call.v1` lines are executed through the brokered host and answered on stdin, while one final `result.v1` line completes the invocation. Debug output must go to stderr or into a structured `ok: false` result envelope.
 

@@ -490,10 +490,12 @@ Marketplace import supports Codex (`openai/skills`), Claude/Anthropic plugin mar
 ### /pfp
 
 ```
-/pfp key-create | build <pfpdir> --key-env VAR [--out file.pfp] | inspect <file.pfp|pfpdir|package@version> | install <file.pfp|url|package@version> [--scope user|conversation] [--include ids] [--exclude ids] [--force] [--replace] | update <file.pfp|package@version> [--include ids] [--exclude ids] [--force] | search <query> | registry add|list|remove | list | reload-tasks [--scope user|conversation] | uninstall <package> | export --package id --version v --include type:name[,type:name] --out dir
+/pfp key-create | build <pfpdir> --key-env VAR [--out file.pfp] | inspect <file.pfp|pfpdir|package@version> | install <file.pfp|url|package@version> [--scope user|conversation] [--include ids] [--exclude ids] [--force] [--replace] | dev-load <pfpdir> [--scope user|conversation] [--include ids] [--exclude ids] [--secret logical=stored_key] [--replace] | dev-unload <package> [--scope user|conversation] | update <file.pfp|package@version> [--include ids] [--exclude ids] [--force] | search <query> | registry add|list|remove | list | reload-tasks [--scope user|conversation] | uninstall <package> | export --package id --version v --include type:name[,type:name] --out dir
 ```
 
 PawFlow Package files are signed `.pfp` zip artifacts. `inspect` verifies the signature and returns an object-by-object install plan with risk, status, dependencies, and selectable IDs. `install` only writes selected objects and records provenance under the local package install registry. `tool` and `service_provider` objects are reported but not executed until the package runtime proxy is available; config-only `service_definition` objects install through `ServiceRegistry`.
+
+Use `/pfp dev-load <pfpdir>` while developing package runtime objects. It loads an unsigned source directory directly, defaults to conversation scope, and lets edited source files take effect on the next runtime call. Use `/pfp dev-unload <package>` to remove the dev package without deleting the source directory. See [PFP Developer Guide](PFP_DEVELOPER_GUIDE.md) for the full local development workflow and file-backed media provider pattern.
 
 For signing, prefer `--key-env VAR` so private key material is read from an environment variable and is not pasted into chat history.
 

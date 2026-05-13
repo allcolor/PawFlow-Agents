@@ -427,6 +427,30 @@ def test_pfp_install_command_parses_secret_bindings():
     assert parsed["secret_bindings"] == {"api_key": "wavespeed_key"}
 
 
+def test_pfp_dev_load_command_defaults_to_conversation_scope():
+    parsed = _parse_command(
+        "/pfp dev-load ./pkg.pfpdir --include service_provider:image --secret api_key=provider_key",
+        "conv1", "alice", "assistant",
+    )
+
+    assert parsed["action"] == "pfp_dev_load"
+    assert parsed["source_dir"] == "./pkg.pfpdir"
+    assert parsed["scope"] == "conversation"
+    assert parsed["include"] == ["service_provider:image"]
+    assert parsed["secret_bindings"] == {"api_key": "provider_key"}
+
+
+def test_pfp_dev_unload_command_defaults_to_conversation_scope():
+    parsed = _parse_command(
+        "/pfp dev-unload community.wavespeed",
+        "conv1", "alice", "assistant",
+    )
+
+    assert parsed["action"] == "pfp_dev_unload"
+    assert parsed["package"] == "community.wavespeed"
+    assert parsed["scope"] == "conversation"
+
+
 def test_pfp_tool_proxy_rejects_tampered_entrypoint(tmp_path, monkeypatch):
     _reset_repo(tmp_path, monkeypatch)
     keypair = pfp_package.create_signing_key()
@@ -1192,6 +1216,68 @@ def test_pfp_service_provider_exposes_lifecycle_status_and_operations(tmp_path, 
         raise AssertionError("undeclared service operation should fail")
     live.disconnect()
     assert live.is_connected() is False
+
+
+def test_pfp_dev_load_service_provider_uses_source_dir_and_file_artifacts(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    keypair = pfp_package.create_signing_key()
+    pkgdir = _write_package_dir(
+        tmp_path, keypair, include_service_provider=True,
+        service_runner="python_subprocess")
+    manifest_path = pkgdir / "pfp.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    provider = next(obj for obj in manifest["objects"] if obj["id"] == "service_provider:image")
+    provider["operations"] = {"generate": {"description": "Generate an image"}}
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    entrypoint = pkgdir / "content" / "service-providers" / "image" / "provider.py"
+    entrypoint.write_text(
+        "from pathlib import Path\n"
+        "from pawflow import pfp\n"
+        "out = Path(pfp.context['output_dir']) / 'image.png'\n"
+        "out.write_bytes(b'PNG1')\n"
+        "pfp.result(pfp.artifact('image', 'image.png', 'image/png'))\n",
+        encoding="utf-8",
+    )
+
+    loaded = pfp_package.dev_load_pfp(
+        str(pkgdir), user_id="alice", conversation_id="conv1",
+        include=["service_provider:image"])
+    assert loaded["ok"] is True
+    assert loaded["dev"] is True
+
+    from core.service_registry import ServiceRegistry, SCOPE_CONV
+    live = ServiceRegistry.get_instance().get_live_instance(
+        SCOPE_CONV, "conv1", "wavespeed-image-provider")
+    live.set_runtime_context(user_id="alice", conversation_id="conv1")
+    first = live.generate(prompt="cat")
+    try:
+        assert Path(first["image_path"]).read_bytes() == b"PNG1"
+        assert first["content_type"] == "image/png"
+        assert first["artifact"]["size"] == 4
+        assert first["artifact"]["sha256"].startswith("sha256:")
+        assert "image_bytes" not in first
+    finally:
+        Path(first["image_path"]).unlink(missing_ok=True)
+
+    entrypoint.write_text(
+        "from pathlib import Path\n"
+        "from pawflow import pfp\n"
+        "out = Path(pfp.context['output_dir']) / 'image.png'\n"
+        "out.write_bytes(b'PNG2')\n"
+        "pfp.result(pfp.artifact('image', 'image.png', 'image/png'))\n",
+        encoding="utf-8",
+    )
+    second = live.generate(prompt="cat")
+    try:
+        assert Path(second["image_path"]).read_bytes() == b"PNG2"
+    finally:
+        Path(second["image_path"]).unlink(missing_ok=True)
+
+    unloaded = pfp_package.dev_unload_pfp(
+        "community.wavespeed", user_id="alice", conversation_id="conv1")
+    assert unloaded["ok"] is True
+    assert ServiceRegistry.get_instance().get_definition(
+        SCOPE_CONV, "conv1", "wavespeed-image-provider") is None
 
 
 def test_pfp_installs_flow_task_as_taskfactory_proxy(tmp_path, monkeypatch):

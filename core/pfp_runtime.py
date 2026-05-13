@@ -221,7 +221,7 @@ def prepare_runtime_entrypoint(runtime: Dict[str, Any],
 
     expected_hash = str(installed_from.get("hash") or runtime.get("hash") or "")
     actual_hash = _sha256_file(entrypoint_path)
-    if expected_hash and actual_hash != expected_hash:
+    if expected_hash and actual_hash != expected_hash and not bool(installed_from.get("dev") or runtime.get("dev")):
         raise PackageRuntimeError(
             f"PFP runtime entrypoint hash mismatch for {package}:{object_id}")
 
@@ -241,6 +241,7 @@ def prepare_runtime_entrypoint(runtime: Dict[str, Any],
         "provides": _list_value(runtime.get("provides")),
         "secrets": _list_value(runtime.get("secrets")),
         "secret_bindings": dict(runtime.get("secret_bindings") or {}),
+        "dev": bool(runtime.get("dev") or installed_from.get("dev")),
     }
 
 
@@ -593,11 +594,15 @@ def _runtime_context(context: Dict[str, Any]) -> Dict[str, str]:
         scope = "conversation"
     elif scope != "user":
         scope = "user" if context.get("user_id") else ""
-    return {
+    result = {
         "user_id": str(context.get("user_id") or ""),
         "conversation_id": str(context.get("conversation_id") or ""),
         "scope": scope,
     }
+    for key in ("output_dir", "max_artifact_bytes"):
+        if context.get(key) is not None:
+            result[key] = str(context.get(key) or "")
+    return result
 
 
 def _list_value(value: Any) -> list:

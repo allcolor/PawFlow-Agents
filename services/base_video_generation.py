@@ -1,6 +1,7 @@
 """Base interface for video generation services.
 
 Contract: generate(**kwargs) -> {"video_bytes": bytes, "content_type": str}
+or {"video_path": str, "content_type": str} for file-backed providers.
 The tool handler calls generate(), each provider implements its own logic.
 """
 

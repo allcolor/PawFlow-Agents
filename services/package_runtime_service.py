@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
+import shutil
+import tempfile
 import time
+from pathlib import Path, PurePosixPath
 from typing import Any, Dict, List
 
 from core import Service, ServiceError, ServiceFactory
@@ -25,6 +29,7 @@ class PackageRuntimeService(Service):
         self._connected = False
         self._last_error = ""
         self._connected_at = 0.0
+        self._runtime_context: Dict[str, Any] = {}
 
     def get_parameter_schema(self) -> Dict[str, Any]:
         return {
@@ -93,6 +98,17 @@ class PackageRuntimeService(Service):
             "operations": self.get_operations(),
         }
 
+    def set_runtime_context(self, *, user_id: str = "", conversation_id: str = "",
+                            scope: str = "") -> None:
+        self._runtime_context = {
+            "user_id": user_id,
+            "conversation_id": conversation_id,
+            "scope": scope or ("conversation" if conversation_id else "user"),
+        }
+
+    def generate(self, **kwargs) -> Dict[str, Any]:
+        return self._invoke_media_operation("generate", kwargs)
+
     def invoke(self, operation: str, arguments: Dict[str, Any] | None = None) -> Dict[str, Any]:
         operation = str(operation or "").strip()
         if not operation:
@@ -110,11 +126,86 @@ class PackageRuntimeService(Service):
                 self.config.get("installed_from") or {},
                 operation,
                 arguments or {},
-                self.config.get("package_runtime_context") or {},
+                self._merged_runtime_context(),
             )
         except Exception as exc:
             self._last_error = str(exc)
             raise ServiceError(f"PFP service operation failed: {exc}") from exc
+
+    def _invoke_media_operation(self, operation: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        with tempfile.TemporaryDirectory(prefix="pawflow-pfp-artifacts-") as tmp:
+            previous_context = dict(self._runtime_context)
+            self._runtime_context = {**previous_context, "output_dir": tmp}
+            try:
+                result = self.invoke(operation, arguments)
+            finally:
+                self._runtime_context = previous_context
+            return self._normalize_media_result(result, Path(tmp))
+
+    def _merged_runtime_context(self) -> Dict[str, Any]:
+        context = dict(self.config.get("package_runtime_context") or {})
+        context.update({k: v for k, v in self._runtime_context.items() if v})
+        return context
+
+    def _normalize_media_result(self, result: Dict[str, Any], output_dir: Path) -> Dict[str, Any]:
+        artifact = result.get("artifact") if isinstance(result, dict) else None
+        if not isinstance(artifact, dict):
+            return result
+        source = self._artifact_path(output_dir, artifact)
+        content_type = str(artifact.get("content_type") or result.get("content_type") or "application/octet-stream")
+        copied = tempfile.NamedTemporaryFile(prefix="pawflow-pfp-media-", delete=False)
+        copied_path = Path(copied.name)
+        copied.close()
+        size = source.stat().st_size
+        sha256 = _sha256_file(source)
+        shutil.move(str(source), str(copied_path))
+        artifact_info = dict(artifact)
+        artifact_info["size"] = size
+        artifact_info["sha256"] = sha256
+        filename = str(artifact.get("filename") or source.name)
+        media_key = self._media_path_key(artifact_info)
+        normalized = {k: v for k, v in result.items() if k != "artifact"}
+        normalized.update({
+            media_key: str(copied_path),
+            "content_type": content_type,
+            "filename": filename,
+            "artifact": artifact_info,
+            "_delete_media_path": True,
+        })
+        return normalized
+
+    def _artifact_path(self, output_dir: Path, artifact: Dict[str, Any]) -> Path:
+        rel = str(artifact.get("path") or "").replace("\\", "/").strip("/")
+        if not rel:
+            raise ServiceError("PFP media artifact.path is required")
+        parsed = PurePosixPath(rel)
+        if parsed.is_absolute() or any(part in {"", ".", ".."} for part in parsed.parts):
+            raise ServiceError("PFP media artifact.path must be relative to output_dir")
+        source = (output_dir / rel).resolve()
+        try:
+            source.relative_to(output_dir.resolve())
+        except ValueError as exc:
+            raise ServiceError("PFP media artifact escapes output_dir") from exc
+        if not source.is_file():
+            raise ServiceError(f"PFP media artifact is missing: {rel}")
+        return source
+
+    def _media_path_key(self, artifact: Dict[str, Any]) -> str:
+        kind = str(artifact.get("kind") or "").lower()
+        provides = set(self.status().get("provides") or [])
+        if kind == "video" or "media.video_generation" in provides:
+            return "video_path"
+        if kind == "audio" or "media.audio_generation" in provides:
+            return "audio_path"
+        return "image_path"
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return "sha256:" + digest.hexdigest()
 
 
 ServiceFactory.register(PackageRuntimeService)

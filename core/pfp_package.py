@@ -282,6 +282,101 @@ def install_pfp(path: str, *, user_id: str, conversation_id: str = "",
     }
 
 
+def dev_load_pfp(source_dir: str, *, user_id: str, conversation_id: str = "",
+                 scope: str = "conversation", include: Optional[Iterable[str]] = None,
+                 exclude: Optional[Iterable[str]] = None, force: bool = True,
+                 replace: bool = True, dry_run: bool = False,
+                 secret_bindings: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    """Load an unsigned .pfpdir directly for local package development."""
+    if not user_id:
+        raise PfpError("user_id is required")
+    if scope in {"", "conversation", "conv"} and not conversation_id:
+        scope = "user"
+    scope = _normalize_scope(scope, conversation_id)
+    package = _load_package(source_dir, require_verified=False)
+    if package["source_type"] != "pfpdir":
+        raise PfpError("dev_load requires an unsigned .pfpdir source directory")
+    package["dev"] = True
+    package["content_dir"] = package["path"]
+    manifest = package["manifest"]
+    if replace and not dry_run:
+        record_path = _install_record_path(manifest["package"], user_id, conversation_id, scope)
+        if record_path.exists():
+            uninstall_pfp(manifest["package"], user_id=user_id,
+                          conversation_id=conversation_id, scope=scope, force=True)
+    plan = inspect_pfp(source_dir, user_id=user_id, conversation_id=conversation_id, scope=scope)
+    selected = _selected_ids(plan["objects"], include, exclude)
+    secret_bindings = _normalize_secret_bindings(secret_bindings or {})
+    installed = []
+    skipped = []
+    errors = []
+    records = []
+    for row in plan["objects"]:
+        obj_id = row["id"]
+        if obj_id not in selected:
+            skipped.append({"id": obj_id, "reason": "not_selected"})
+            continue
+        if row["status"] in {"blocked", "missing_dependency", "unsupported_runtime"}:
+            skipped.append({"id": obj_id, "reason": row["status"]})
+            continue
+        if row["status"] == "conflict" and not replace:
+            skipped.append({"id": obj_id, "reason": "conflict"})
+            continue
+        missing_secret_bindings = _missing_secret_bindings(row, secret_bindings)
+        if missing_secret_bindings:
+            skipped.append({
+                "id": obj_id,
+                "reason": "missing_secret_binding",
+                "missing_secrets": missing_secret_bindings,
+            })
+            continue
+        unavailable_secret_bindings = _unavailable_secret_bindings(
+            row, secret_bindings, user_id, conversation_id)
+        if unavailable_secret_bindings:
+            skipped.append({
+                "id": obj_id,
+                "reason": "unavailable_secret_binding",
+                "missing_secret_keys": unavailable_secret_bindings,
+            })
+            continue
+        try:
+            if dry_run:
+                installed.append({"id": obj_id, "dry_run": True, "dev": True})
+                continue
+            object_secret_bindings = _object_secret_bindings(row, secret_bindings)
+            record = _install_object(
+                row["object"], package, user_id, conversation_id, scope, force,
+                replace, object_secret_bindings)
+            record["dev"] = True
+            records.append(record)
+            installed.append({"id": obj_id, **record})
+        except Exception as exc:
+            errors.append({"id": obj_id, "error": str(exc)})
+    if not dry_run and records:
+        _write_install_record(package, user_id, conversation_id, scope, records)
+        _refresh_runtime(scope, user_id, conversation_id, records)
+    return {
+        "ok": not errors,
+        "dev": True,
+        "package": manifest["package"],
+        "version": manifest["version"],
+        "scope": scope,
+        "source_dir": package["path"],
+        "installed": installed,
+        "skipped": skipped,
+        "errors": errors,
+    }
+
+
+def dev_unload_pfp(package_id: str, *, user_id: str, conversation_id: str = "",
+                   scope: str = "conversation", force: bool = True) -> Dict[str, Any]:
+    """Unload a development package loaded from .pfpdir."""
+    if scope in {"", "conversation", "conv"} and not conversation_id:
+        scope = "user"
+    return uninstall_pfp(package_id, user_id=user_id,
+                         conversation_id=conversation_id, scope=scope, force=force)
+
+
 def update_pfp(path: str, *, user_id: str, conversation_id: str = "",
                scope: str = "user", include: Optional[Iterable[str]] = None,
                exclude: Optional[Iterable[str]] = None, force: bool = False,
@@ -1144,6 +1239,7 @@ def _load_tool_proxy_data(obj: Dict[str, Any], package: Dict[str, Any], rel: str
             "allowed_services": obj.get("allowed_services", []),
             "secrets": _declared_secret_requirements(manifest, obj),
             "secret_bindings": dict(secret_bindings or {}),
+            "dev": bool(package.get("dev")),
         },
     }
 
@@ -1174,6 +1270,7 @@ def _load_service_provider_proxy_data(obj: Dict[str, Any], package: Dict[str, An
         "allowed_services": obj.get("allowed_services", []),
         "secrets": _declared_secret_requirements(manifest, obj),
         "secret_bindings": dict(secret_bindings or {}),
+        "dev": bool(package.get("dev")),
     }
     return {
         "service_id": service_id,
@@ -1222,6 +1319,7 @@ def _load_flow_task_proxy_data(obj: Dict[str, Any], package: Dict[str, Any],
         "allowed_services": obj.get("allowed_services", []),
         "secrets": _declared_secret_requirements(manifest, obj),
         "secret_bindings": dict(secret_bindings or {}),
+        "dev": bool(package.get("dev")),
     }
     return {
         "task_type": task_type,
@@ -1448,6 +1546,10 @@ def _write_install_record(package: Dict[str, Any], user_id: str, conversation_id
         "updated_at": time.time(),
         "package_sha256": package.get("sha256", ""),
         "content_dir": package.get("content_dir", ""),
+        "source_dir": package.get("path", "") if package.get("dev") else "",
+        "source_type": package.get("source_type", ""),
+        "verified": bool(package.get("verified")),
+        "dev": bool(package.get("dev")),
         "objects": merged,
     })
 
@@ -2117,6 +2219,10 @@ def _provenance(package: Dict[str, Any], obj_id: str, rel: str) -> Dict[str, Any
         "hash": package["lock"]["files"].get(rel, ""),
         "package_sha256": package.get("sha256", ""),
         "content_dir": package.get("content_dir", ""),
+        "source_dir": package.get("path", "") if package.get("dev") else "",
+        "source_type": package.get("source_type", ""),
+        "verified": bool(package.get("verified")),
+        "dev": bool(package.get("dev")),
         "developer_key": (manifest.get("developer") or {}).get("public_key", ""),
     }
 

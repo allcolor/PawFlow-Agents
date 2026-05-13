@@ -1816,6 +1816,34 @@ class TestImageServiceResolution(unittest.TestCase):
         assert "file123" in result
         assert "Image generated" in result
 
+    def test_image_handler_writes_file_backed_result_by_path(self):
+        """ImageGenerationHandler stores file-backed provider results without bytes."""
+        import tempfile
+        from pathlib import Path
+
+        from core.tool_registry import ImageGenerationHandler
+
+        handler = ImageGenerationHandler()
+        tmp = tempfile.NamedTemporaryFile(delete=False)
+        tmp.write(b"\x89PNG path")
+        tmp.close()
+        mock_service = MagicMock()
+        mock_service.generate.return_value = {
+            "image_path": tmp.name,
+            "content_type": "image/png",
+        }
+        handler.set_service_resolver(lambda: (mock_service, None))
+
+        with patch("core.storage_resolver.StorageResolver") as mock_storage:
+            mock_storage.return_value.write_file.return_value = {"file_id": "path-file"}
+            result = handler.execute({"prompt": "a cat", "width": 512})
+
+        mock_storage.return_value.write.assert_not_called()
+        mock_storage.return_value.write_file.assert_called_once()
+        assert "path-file" in result
+        assert Path(tmp.name).exists()
+        Path(tmp.name).unlink(missing_ok=True)
+
     def test_image_handler_service_arg_overrides_resolver(self):
         """Explicit service=<id> resolves that media service for this call."""
         from core.tool_registry import ImageGenerationHandler

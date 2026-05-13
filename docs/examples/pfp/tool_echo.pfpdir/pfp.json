@@ -14,7 +14,7 @@
       "type": "tool",
       "name": "echo",
       "path": "content/tools/echo/main.py",
-      "runner": "python_subprocess",
+      "runner": "python",
       "description": "Return the provided text",
       "parameters": {
         "text": {"type": "string", "required": true}

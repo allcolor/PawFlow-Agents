@@ -8,16 +8,17 @@ from tasks.ai.actions.command_dispatch import _parse_command
 
 
 class _Response:
-    def __init__(self, content, status_code=200):
+    def __init__(self, content, status_code=200, headers=None):
         self.content = content
         self.status_code = status_code
+        self.headers = headers or {}
 
 
 def _write_package_dir(root, keypair, version="1.0.0", skill_body="Use the package skill safely.",
                        package_id="community.wavespeed", skill_name="pkg-skill",
                        dependencies=None, tool_allowed_tools=None,
                        include_service_provider=False, include_flow_task=False,
-                       tool_runner="", service_runner="", flow_task_runner="",
+                       tool_runner="python", service_runner="python", flow_task_runner="python",
                        tool_secrets=None):
     pkg = root / "wavespeed-provider.pfpdir"
     skill_dir = pkg / "content" / "skills" / skill_name
@@ -125,6 +126,7 @@ def _write_package_dir(root, keypair, version="1.0.0", skill_body="Use the packa
 
 def _reset_repo(tmp_path, monkeypatch):
     import core.paths as paths
+    import core.package_review as package_review
     from core.repository import ScopedRepository
     from core.resource_store import ResourceStore
     from core.service_registry import ServiceRegistry
@@ -139,6 +141,25 @@ def _reset_repo(tmp_path, monkeypatch):
     TaskFactory._tasks.pop("packageResizeImage", None)
     agent_resource._FLOW_TEMPLATES_CACHE.clear()
     agent_resource._FLOW_TEMPLATES_REFRESHING.clear()
+
+    class _ReviewLLM:
+        def complete(self, **kwargs):
+            class _Response:
+                content = json.dumps({
+                    "risk": "low",
+                    "allowed": True,
+                    "requires_human_review": False,
+                    "findings": [],
+                    "sanitized_summary": "ok",
+                    "recommended_changes": [],
+                })
+            return _Response()
+
+    monkeypatch.setattr(
+        package_review,
+        "_resolve_review_llm",
+        lambda user_id, conversation_id: (_ReviewLLM(), None, "review_llm"),
+    )
 
 
 def test_pfp_build_inspect_and_selective_install(tmp_path, monkeypatch):
@@ -200,12 +221,33 @@ def test_pfp_inspect_exposes_capability_summary_for_preinstall_review(tmp_path, 
     display = pfp_package.format_inspection_display(plan)
     assert "PFP community.wavespeed@1.0.0" in display
     assert "runtime objects: tool:reader, service_provider:image" in display
-    assert "allowed tools: read, community.base/tool:normalize" in display
+    assert "brokered tools: read, community.base/tool:normalize" in display
     assert "dependencies: community.base@1.0.0" in display
     assert "secrets: api_key->PROVIDER_API_KEY" in display
 
 
-def test_pfp_installs_tool_as_non_executing_proxy(tmp_path, monkeypatch):
+def test_pfp_inspect_exposes_package_size_without_size_cap(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    keypair = pfp_package.create_signing_key()
+    pkgdir = _write_package_dir(tmp_path, keypair)
+    large_payload = b"x" * 600_000
+    (pkgdir / "content" / "bin" / "linux-amd64").mkdir(parents=True)
+    (pkgdir / "content" / "bin" / "linux-amd64" / "tail").write_bytes(large_payload)
+
+    built = pfp_package.build_pfp(str(pkgdir), private_key=keypair["private_key"])
+    plan = pfp_package.inspect_pfp(built["path"], user_id="alice")
+
+    assert built["content_size"] >= len(large_payload)
+    assert built["package_size"] > 0
+    assert plan["content_size"] >= len(large_payload)
+    assert plan["package_size"] == built["package_size"]
+    assert plan["file_count"] >= 1
+    display = pfp_package.format_inspection_display(plan)
+    assert "Size:" in display
+    assert "content" in display
+
+
+def test_pfp_installs_tool_as_relay_runtime_proxy(tmp_path, monkeypatch):
     _reset_repo(tmp_path, monkeypatch)
     keypair = pfp_package.create_signing_key()
     pkgdir = _write_package_dir(tmp_path, keypair)
@@ -220,6 +262,7 @@ def test_pfp_installs_tool_as_non_executing_proxy(tmp_path, monkeypatch):
     stored = ResourceStore.instance().get("tool", "reader", "alice")
     assert stored["source"] == ""
     assert stored["installed_from"]["package"] == "community.wavespeed"
+    assert stored["package_runtime"]["runner"] == "python"
     assert stored["package_runtime"]["allowed_tools"] == [{"name": "read"}]
     content_dir = Path(stored["package_runtime"]["content_dir"])
     assert (content_dir / stored["package_runtime"]["entrypoint"]).exists()
@@ -232,92 +275,11 @@ def test_pfp_installs_tool_as_non_executing_proxy(tmp_path, monkeypatch):
     handler = registry.get("reader")
     assert handler is not None
     assert getattr(handler, "_is_pfp_tool", False) is True
-    assert "PFP runtime bridge is not implemented yet" in handler.execute({})
+    assert "PFP runtime requires user_id and conversation_id" in handler.execute({})
 
     removed = pfp_package.uninstall_pfp("community.wavespeed", user_id="alice", force=True)
     assert removed["ok"] is True
     assert not content_dir.exists()
-
-
-def test_pfp_tool_proxy_executes_declared_python_subprocess_runner(tmp_path, monkeypatch):
-    _reset_repo(tmp_path, monkeypatch)
-    keypair = pfp_package.create_signing_key()
-    pkgdir = _write_package_dir(tmp_path, keypair, tool_runner="python_subprocess")
-    entrypoint = pkgdir / "content" / "tools" / "reader" / "main.py"
-    entrypoint.write_text(
-        "import json, sys\n"
-        "request = json.load(sys.stdin)\n"
-        "name = request['payload']['arguments']['name']\n"
-        "print(json.dumps({\n"
-        "    'format': 'pawflow.package.runtime.result.v1',\n"
-        "    'ok': True,\n"
-        "    'result': 'hello ' + name,\n"
-        "}))\n",
-        encoding="utf-8",
-    )
-    built = pfp_package.build_pfp(str(pkgdir), private_key=keypair["private_key"])
-
-    pfp_package.install_pfp(
-        built["path"], user_id="alice", include=["tool:reader"], force=True)
-
-    from core.tool_loader import load_tools_into_registry
-    from core.tool_registry import ToolRegistry
-
-    registry = ToolRegistry()
-    assert load_tools_into_registry(registry, "alice") == 1
-    handler = registry.get("reader")
-    handler.set_user_id("alice")
-
-    assert handler.execute({"name": "Ada"}) == "hello Ada"
-
-
-def test_pfp_tool_proxy_executes_declared_python_subprocess_host_runner(tmp_path, monkeypatch):
-    _reset_repo(tmp_path, monkeypatch)
-    keypair = pfp_package.create_signing_key()
-    pkgdir = _write_package_dir(tmp_path, keypair, tool_runner="python_subprocess_host")
-    entrypoint = pkgdir / "content" / "tools" / "reader" / "main.py"
-    entrypoint.write_text(
-        "import json, sys\n"
-        "request = json.loads(sys.stdin.readline())\n"
-        "print(json.dumps({\n"
-        "    'format': 'pawflow.package.runtime.host_call.v1',\n"
-        "    'kind': 'tool',\n"
-        "    'target': 'read',\n"
-        "    'arguments': {'path': request['payload']['arguments']['path']},\n"
-        "}), flush=True)\n"
-        "response = json.loads(sys.stdin.readline())\n"
-        "print(json.dumps({\n"
-        "    'format': 'pawflow.package.runtime.result.v1',\n"
-        "    'ok': response['ok'],\n"
-        "    'result': response['result'],\n"
-        "}), flush=True)\n",
-        encoding="utf-8",
-    )
-    built = pfp_package.build_pfp(str(pkgdir), private_key=keypair["private_key"])
-
-    pfp_package.install_pfp(
-        built["path"], user_id="alice", include=["tool:reader"], force=True)
-
-    from core.tool_loader import load_tools_into_registry
-    from core.tool_registry import ToolRegistry
-
-    class _ReadTool:
-        @property
-        def name(self):
-            return "read"
-
-        def execute(self, arguments):
-            assert arguments == {"path": "input.txt"}
-            return "file-content"
-
-    registry = ToolRegistry()
-    registry.register(_ReadTool())
-    monkeypatch.setattr(ToolRegistry, "_live_registry", registry)
-    assert load_tools_into_registry(registry, "alice") == 1
-    handler = registry.get("reader")
-    handler.set_user_id("alice")
-
-    assert handler.execute({"path": "input.txt"}) == "file-content"
 
 
 def test_pfp_install_requires_secret_binding_for_required_secret(tmp_path, monkeypatch):
@@ -373,22 +335,12 @@ def test_pfp_install_rejects_binding_to_missing_secret_key(tmp_path, monkeypatch
     }
 
 
-def test_pfp_tool_runner_injects_bound_secret_env(tmp_path, monkeypatch):
+def test_pfp_tool_runner_stores_bound_secret_env(tmp_path, monkeypatch):
     _reset_repo(tmp_path, monkeypatch)
     keypair = pfp_package.create_signing_key()
     pkgdir = _write_package_dir(
-        tmp_path, keypair, tool_runner="python_subprocess",
+        tmp_path, keypair,
         tool_secrets=[{"name": "api_key", "env": "WAVESPEED_API_KEY"}])
-    entrypoint = pkgdir / "content" / "tools" / "reader" / "main.py"
-    entrypoint.write_text(
-        "import json, os\n"
-        "print(json.dumps({\n"
-        "    'format': 'pawflow.package.runtime.result.v1',\n"
-        "    'ok': True,\n"
-        "    'result': os.environ['WAVESPEED_API_KEY'],\n"
-        "}))\n",
-        encoding="utf-8",
-    )
     built = pfp_package.build_pfp(str(pkgdir), private_key=keypair["private_key"])
 
     from core.config_store import ConfigStore
@@ -404,17 +356,9 @@ def test_pfp_tool_runner_injects_bound_secret_env(tmp_path, monkeypatch):
 
     from core.resource_store import ResourceStore
     stored = ResourceStore.instance().get("tool", "reader", "alice")
+    assert stored["package_runtime"]["runner"] == "python"
     assert stored["package_runtime"]["secret_bindings"] == {"api_key": "wavespeed_key"}
     assert stored["package_runtime"]["secrets"][0]["env"] == "WAVESPEED_API_KEY"
-
-    from core.tool_loader import load_tools_into_registry
-    from core.tool_registry import ToolRegistry
-    registry = ToolRegistry()
-    load_tools_into_registry(registry, "alice")
-    handler = registry.get("reader")
-    handler.set_user_id("alice")
-
-    assert handler.execute({}) == "sk-test"
 
 
 def test_pfp_install_command_parses_secret_bindings():
@@ -494,12 +438,36 @@ def test_pfp_runtime_builds_tool_invocation_envelope(tmp_path, monkeypatch):
     assert request["package"]["package"] == "community.wavespeed"
     assert request["package"]["object_id"] == "tool:reader"
     assert request["package"]["entrypoint"] == "content/tools/reader/main.py"
+    assert request["package"]["runner"] == "python"
     assert request["package"]["allowed_tools"] == [{"name": "read"}]
     assert request["package"]["allowed_services"] == []
     assert request["payload"] == {"arguments": {"path": "in.txt"}}
 
 
-def test_pfp_runtime_bridge_receives_verified_tool_envelope(tmp_path, monkeypatch):
+def test_pfp_runtime_rejects_missing_runner(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    content_dir = tmp_path / "runtime-content"
+    content_dir.mkdir()
+    entrypoint = content_dir / "main.py"
+    entrypoint.write_text("print('unused')\n", encoding="utf-8")
+
+    from core import pfp_runtime
+    try:
+        pfp_runtime.invoke_tool({
+            "package": "community.runner",
+            "version": "1.0.0",
+            "object_id": "tool:hello",
+            "content_dir": str(content_dir),
+            "entrypoint": "main.py",
+            "runtime": "python",
+        }, {}, {}, {"user_id": "alice", "conversation_id": "conv1"})
+    except pfp_runtime.PackageRuntimeError as exc:
+        assert "unsupported PFP runtime runner" in str(exc)
+    else:
+        raise AssertionError("runtime objects must declare runner='python'")
+
+
+def test_pfp_runtime_uses_relay_bridge_for_verified_tool_envelope(tmp_path, monkeypatch):
     _reset_repo(tmp_path, monkeypatch)
     keypair = pfp_package.create_signing_key()
     pkgdir = _write_package_dir(tmp_path, keypair)
@@ -512,17 +480,14 @@ def test_pfp_runtime_bridge_receives_verified_tool_envelope(tmp_path, monkeypatc
     stored = ResourceStore.instance().get("tool", "reader", "alice")
     calls = []
 
-    class _Bridge(pfp_runtime.PackageRuntimeBridge):
-        def invoke(self, request):
-            calls.append(request)
-            return "bridge-result"
+    def _invoke(self, request):
+        calls.append(request)
+        return {"format": pfp_runtime.RUNTIME_RESULT_FORMAT, "ok": True, "result": "bridge-result"}
 
-    pfp_runtime.set_runtime_bridge(_Bridge())
-    try:
-        result = pfp_runtime.invoke_tool(
-            stored["package_runtime"], stored["installed_from"], {"path": "in.txt"})
-    finally:
-        pfp_runtime.set_runtime_bridge(None)
+    monkeypatch.setattr(pfp_runtime.RelayPackageRuntimeBridge, "invoke", _invoke)
+    result = pfp_runtime.invoke_tool(
+        stored["package_runtime"], stored["installed_from"], {"path": "in.txt"},
+        {"user_id": "alice", "conversation_id": "conv1"})
 
     assert result == "bridge-result"
     assert len(calls) == 1
@@ -530,259 +495,6 @@ def test_pfp_runtime_bridge_receives_verified_tool_envelope(tmp_path, monkeypatc
     assert calls[0]["kind"] == "tool"
     assert calls[0]["package"]["object_id"] == "tool:reader"
     assert calls[0]["payload"] == {"arguments": {"path": "in.txt"}}
-
-
-def test_pfp_python_subprocess_bridge_executes_entrypoint(tmp_path, monkeypatch):
-    import hashlib
-
-    _reset_repo(tmp_path, monkeypatch)
-    content_dir = tmp_path / "runtime-content"
-    content_dir.mkdir()
-    entrypoint = content_dir / "main.py"
-    entrypoint.write_text(
-        "import json, sys\n"
-        "request = json.load(sys.stdin)\n"
-        "name = request['payload']['arguments']['name']\n"
-        "print(json.dumps({\n"
-        "    'format': 'pawflow.package.runtime.result.v1',\n"
-        "    'ok': True,\n"
-        "    'result': 'hello ' + name,\n"
-        "}))\n",
-        encoding="utf-8",
-    )
-    digest = "sha256:" + hashlib.sha256(entrypoint.read_bytes()).hexdigest()
-
-    from core import pfp_runtime
-    pfp_runtime.set_runtime_bridge(pfp_runtime.PythonSubprocessPackageRuntimeBridge())
-    try:
-        result = pfp_runtime.invoke_tool({
-            "package": "community.runner",
-            "version": "1.0.0",
-            "object_id": "tool:hello",
-            "content_dir": str(content_dir),
-            "entrypoint": "main.py",
-            "runtime": "python",
-        }, {"hash": digest}, {"name": "Ada"}, {"user_id": "alice"})
-    finally:
-        pfp_runtime.set_runtime_bridge(None)
-
-    assert result == "hello Ada"
-
-
-def test_pfp_python_subprocess_bridge_rejects_noisy_stdout(tmp_path, monkeypatch):
-    import hashlib
-
-    _reset_repo(tmp_path, monkeypatch)
-    content_dir = tmp_path / "runtime-content"
-    content_dir.mkdir()
-    entrypoint = content_dir / "main.py"
-    entrypoint.write_text(
-        "import json\n"
-        "print('debug noise')\n"
-        "print(json.dumps({'format': 'pawflow.package.runtime.result.v1', 'ok': True, 'result': 'ok'}))\n",
-        encoding="utf-8",
-    )
-    digest = "sha256:" + hashlib.sha256(entrypoint.read_bytes()).hexdigest()
-
-    from core import pfp_runtime
-    pfp_runtime.set_runtime_bridge(pfp_runtime.PythonSubprocessPackageRuntimeBridge())
-    try:
-        try:
-            pfp_runtime.invoke_tool({
-                "package": "community.runner",
-                "version": "1.0.0",
-                "object_id": "tool:noisy",
-                "content_dir": str(content_dir),
-                "entrypoint": "main.py",
-                "runtime": "python",
-            }, {"hash": digest}, {}, {"user_id": "alice"})
-        except pfp_runtime.PackageRuntimeError as exc:
-            assert "exactly one JSON result line" in str(exc)
-        else:
-            raise AssertionError("noisy subprocess stdout should be rejected")
-    finally:
-        pfp_runtime.set_runtime_bridge(None)
-
-
-def test_pfp_python_subprocess_bridge_propagates_structured_error(tmp_path, monkeypatch):
-    import hashlib
-
-    _reset_repo(tmp_path, monkeypatch)
-    content_dir = tmp_path / "runtime-content"
-    content_dir.mkdir()
-    entrypoint = content_dir / "main.py"
-    entrypoint.write_text(
-        "import json\n"
-        "print(json.dumps({'format': 'pawflow.package.runtime.result.v1', 'ok': False, 'error': 'bad input'}))\n",
-        encoding="utf-8",
-    )
-    digest = "sha256:" + hashlib.sha256(entrypoint.read_bytes()).hexdigest()
-
-    from core import pfp_runtime
-    pfp_runtime.set_runtime_bridge(pfp_runtime.PythonSubprocessPackageRuntimeBridge())
-    try:
-        try:
-            pfp_runtime.invoke_tool({
-                "package": "community.runner",
-                "version": "1.0.0",
-                "object_id": "tool:error",
-                "content_dir": str(content_dir),
-                "entrypoint": "main.py",
-                "runtime": "python",
-            }, {"hash": digest}, {}, {"user_id": "alice"})
-        except pfp_runtime.PackageRuntimeError as exc:
-            assert "bad input" in str(exc)
-        else:
-            raise AssertionError("runtime result ok=false should raise")
-    finally:
-        pfp_runtime.set_runtime_bridge(None)
-
-
-def test_pfp_python_subprocess_bridge_handles_host_call_ipc(tmp_path, monkeypatch):
-    import hashlib
-
-    _reset_repo(tmp_path, monkeypatch)
-    content_dir = tmp_path / "runtime-content"
-    content_dir.mkdir()
-    entrypoint = content_dir / "main.py"
-    entrypoint.write_text(
-        "import json, sys\n"
-        "request = json.loads(sys.stdin.readline())\n"
-        "print(json.dumps({\n"
-        "    'format': 'pawflow.package.runtime.host_call.v1',\n"
-        "    'kind': 'tool',\n"
-        "    'target': 'read',\n"
-        "    'arguments': {'path': request['payload']['arguments']['path']},\n"
-        "}), flush=True)\n"
-        "response = json.loads(sys.stdin.readline())\n"
-        "print(json.dumps({\n"
-        "    'format': 'pawflow.package.runtime.result.v1',\n"
-        "    'ok': response['ok'],\n"
-        "    'result': 'host returned ' + response['result'],\n"
-        "}), flush=True)\n",
-        encoding="utf-8",
-    )
-    digest = "sha256:" + hashlib.sha256(entrypoint.read_bytes()).hexdigest()
-
-    from core import pfp_runtime
-
-    class _Tool:
-        def execute(self, arguments):
-            assert arguments == {"path": "input.txt"}
-            return "file-content"
-
-    class _Registry:
-        def get(self, name):
-            return _Tool() if name == "read" else None
-
-    host = pfp_runtime.PackageRuntimeHost(
-        user_id="alice",
-        caller_runtime={
-            "package": "community.runner",
-            "version": "1.0.0",
-            "object_id": "tool:hosted",
-            "allowed_tools": [{"name": "read"}],
-        },
-        tool_registry=_Registry(),
-    )
-    pfp_runtime.set_runtime_bridge(pfp_runtime.PythonSubprocessPackageRuntimeBridge(host=host))
-    try:
-        result = pfp_runtime.invoke_tool({
-            "package": "community.runner",
-            "version": "1.0.0",
-            "object_id": "tool:hosted",
-            "content_dir": str(content_dir),
-            "entrypoint": "main.py",
-            "runtime": "python",
-        }, {"hash": digest}, {"path": "input.txt"}, {"user_id": "alice"})
-    finally:
-        pfp_runtime.set_runtime_bridge(None)
-
-    assert result == "host returned file-content"
-
-
-def test_pfp_python_subprocess_bridge_exposes_pfp_sdk(tmp_path, monkeypatch):
-    import hashlib
-
-    _reset_repo(tmp_path, monkeypatch)
-    content_dir = tmp_path / "runtime-content"
-    content_dir.mkdir()
-    entrypoint = content_dir / "main.py"
-    entrypoint.write_text(
-        "from pawflow import pfp\n"
-        "name = pfp.payload['arguments']['name']\n"
-        "pfp.result('hello ' + name)\n",
-        encoding="utf-8",
-    )
-    digest = "sha256:" + hashlib.sha256(entrypoint.read_bytes()).hexdigest()
-
-    from core import pfp_runtime
-    pfp_runtime.set_runtime_bridge(pfp_runtime.PythonSubprocessPackageRuntimeBridge())
-    try:
-        result = pfp_runtime.invoke_tool({
-            "package": "community.runner",
-            "version": "1.0.0",
-            "object_id": "tool:sdk",
-            "content_dir": str(content_dir),
-            "entrypoint": "main.py",
-            "runtime": "python",
-        }, {"hash": digest}, {"name": "Ada"}, {"user_id": "alice"})
-    finally:
-        pfp_runtime.set_runtime_bridge(None)
-
-    assert result == "hello Ada"
-
-
-def test_pfp_python_subprocess_bridge_sdk_calls_host_tool(tmp_path, monkeypatch):
-    import hashlib
-
-    _reset_repo(tmp_path, monkeypatch)
-    content_dir = tmp_path / "runtime-content"
-    content_dir.mkdir()
-    entrypoint = content_dir / "main.py"
-    entrypoint.write_text(
-        "from pawflow import pfp\n"
-        "result = pfp.call_tool('read', path=pfp.payload['arguments']['path'])\n"
-        "pfp.result('host returned ' + result)\n",
-        encoding="utf-8",
-    )
-    digest = "sha256:" + hashlib.sha256(entrypoint.read_bytes()).hexdigest()
-
-    from core import pfp_runtime
-
-    class _Tool:
-        def execute(self, arguments):
-            assert arguments == {"path": "input.txt"}
-            return "file-content"
-
-    class _Registry:
-        def get(self, name):
-            return _Tool() if name == "read" else None
-
-    host = pfp_runtime.PackageRuntimeHost(
-        user_id="alice",
-        caller_runtime={
-            "package": "community.runner",
-            "version": "1.0.0",
-            "object_id": "tool:sdk-host",
-            "allowed_tools": [{"name": "read"}],
-        },
-        tool_registry=_Registry(),
-    )
-    pfp_runtime.set_runtime_bridge(pfp_runtime.PythonSubprocessPackageRuntimeBridge(host=host))
-    try:
-        result = pfp_runtime.invoke_tool({
-            "package": "community.runner",
-            "version": "1.0.0",
-            "object_id": "tool:sdk-host",
-            "content_dir": str(content_dir),
-            "entrypoint": "main.py",
-            "runtime": "python",
-        }, {"hash": digest}, {"path": "input.txt"}, {"user_id": "alice"})
-    finally:
-        pfp_runtime.set_runtime_bridge(None)
-
-    assert result == "host returned file-content"
 
 
 def test_pfp_tool_proxy_passes_runtime_context(tmp_path, monkeypatch):
@@ -798,10 +510,9 @@ def test_pfp_tool_proxy_passes_runtime_context(tmp_path, monkeypatch):
     from core.tool_registry import ToolRegistry
     calls = []
 
-    class _Bridge(pfp_runtime.PackageRuntimeBridge):
-        def invoke(self, request):
-            calls.append(request)
-            return "ok"
+    def _invoke(self, request):
+        calls.append(request)
+        return {"format": pfp_runtime.RUNTIME_RESULT_FORMAT, "ok": True, "result": "ok"}
 
     registry = ToolRegistry()
     load_tools_into_registry(registry, "alice", conversation_id="conv1")
@@ -809,17 +520,16 @@ def test_pfp_tool_proxy_passes_runtime_context(tmp_path, monkeypatch):
     handler.set_user_id("alice")
     handler.set_conversation_id("conv1")
 
-    pfp_runtime.set_runtime_bridge(_Bridge())
-    try:
-        assert handler.execute({"path": "in.txt"}) == "ok"
-    finally:
-        pfp_runtime.set_runtime_bridge(None)
+    monkeypatch.setattr(pfp_runtime.RelayPackageRuntimeBridge, "invoke", _invoke)
+    assert handler.execute({"path": "in.txt"}) == "ok"
 
     assert calls[0]["context"] == {
         "user_id": "alice",
         "conversation_id": "conv1",
         "scope": "conversation",
     }
+
+
 
 
 def test_pfp_runtime_task_envelope_carries_flowfile_content(tmp_path, monkeypatch):
@@ -895,22 +605,18 @@ def test_pfp_runtime_task_result_rebuilds_flowfiles(tmp_path, monkeypatch):
     from core import FlowFile, TaskFactory, pfp_runtime
     task_cls = TaskFactory.get("packageResizeImage")
 
-    class _Bridge(pfp_runtime.PackageRuntimeBridge):
-        def invoke(self, request):
-            return {
-                "format": "pawflow.package.runtime.result.v1",
-                "ok": True,
-                "flowfiles": [{
-                    "content_b64": "b3V0",
-                    "attributes": {"result": "ok"},
-                }],
-            }
+    def _invoke(self, request):
+        return {
+            "format": "pawflow.package.runtime.result.v1",
+            "ok": True,
+            "flowfiles": [{
+                "content_b64": "b3V0",
+                "attributes": {"result": "ok"},
+            }],
+        }
 
-    pfp_runtime.set_runtime_bridge(_Bridge())
-    try:
-        result = task_cls({"width": 64}).execute(FlowFile(content=b"in"))
-    finally:
-        pfp_runtime.set_runtime_bridge(None)
+    monkeypatch.setattr(pfp_runtime.RelayPackageRuntimeBridge, "invoke", _invoke)
+    result = task_cls({"width": 64}).execute(FlowFile(content=b"in"))
 
     assert len(result) == 1
     assert result[0].get_content() == b"out"
@@ -971,6 +677,7 @@ def test_pfp_runtime_host_from_invocation_uses_envelope_context_and_grants(tmp_p
     assert host.scope == "conversation"
     assert host.caller_runtime["allowed_tools"] == [{"name": "read"}]
     assert host.build_tool_call("read", {})["target"]["name"] == "read"
+
 
 
 def test_pfp_runtime_host_executes_authorized_tool_call(tmp_path, monkeypatch):
@@ -1129,17 +836,17 @@ def test_pfp_installs_service_provider_as_package_runtime_proxy(tmp_path, monkey
     try:
         live.invoke("generate", {})
     except ServiceError as exc:
-        assert "PFP runtime bridge is not implemented yet" in str(exc)
+        assert "PFP runtime requires user_id and conversation_id" in str(exc)
     else:
         raise AssertionError("package runtime proxy should fail closed")
 
 
-def test_pfp_service_provider_executes_declared_python_subprocess_runner(tmp_path, monkeypatch):
+def test_pfp_service_provider_executes_declared_python_runner(tmp_path, monkeypatch):
     _reset_repo(tmp_path, monkeypatch)
     keypair = pfp_package.create_signing_key()
     pkgdir = _write_package_dir(
         tmp_path, keypair, include_service_provider=True,
-        service_runner="python_subprocess")
+        service_runner="python")
     entrypoint = pkgdir / "content" / "service-providers" / "image" / "provider.py"
     entrypoint.write_text(
         "import json, sys\n"
@@ -1164,6 +871,20 @@ def test_pfp_service_provider_executes_declared_python_subprocess_runner(tmp_pat
 
     live = ServiceRegistry.get_instance().get_live_instance(
         SCOPE_USER, "alice", "wavespeed-image-provider")
+    from core import pfp_runtime
+
+    def _invoke(self, request):
+        payload = request["payload"]
+        return {
+            "format": pfp_runtime.RUNTIME_RESULT_FORMAT,
+            "ok": True,
+            "result": {
+                "operation": payload["operation"],
+                "prompt": payload["arguments"]["prompt"],
+            },
+        }
+
+    monkeypatch.setattr(pfp_runtime.RelayPackageRuntimeBridge, "invoke", _invoke)
     assert live.invoke("generate", {"prompt": "cat"}) == {
         "operation": "generate",
         "prompt": "cat",
@@ -1175,7 +896,7 @@ def test_pfp_service_provider_exposes_lifecycle_status_and_operations(tmp_path, 
     keypair = pfp_package.create_signing_key()
     pkgdir = _write_package_dir(
         tmp_path, keypair, include_service_provider=True,
-        service_runner="python_subprocess")
+        service_runner="python")
     manifest_path = pkgdir / "pfp.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     provider = next(obj for obj in manifest["objects"] if obj["id"] == "service_provider:image")
@@ -1202,6 +923,16 @@ def test_pfp_service_provider_exposes_lifecycle_status_and_operations(tmp_path, 
     from core.service_registry import ServiceRegistry, SCOPE_USER
     live = ServiceRegistry.get_instance().get_live_instance(
         SCOPE_USER, "alice", "wavespeed-image-provider")
+    from core import pfp_runtime
+
+    def _invoke(self, request):
+        return {
+            "format": pfp_runtime.RUNTIME_RESULT_FORMAT,
+            "ok": True,
+            "result": {"ok": True, "operation": request["payload"]["operation"]},
+        }
+
+    monkeypatch.setattr(pfp_runtime.RelayPackageRuntimeBridge, "invoke", _invoke)
 
     assert live.is_connected() is True
     assert live.get_operations() == {"generate": {"description": "Generate an image"}}
@@ -1223,7 +954,7 @@ def test_pfp_dev_load_service_provider_uses_source_dir_and_file_artifacts(tmp_pa
     keypair = pfp_package.create_signing_key()
     pkgdir = _write_package_dir(
         tmp_path, keypair, include_service_provider=True,
-        service_runner="python_subprocess")
+        service_runner="python")
     manifest_path = pkgdir / "pfp.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     provider = next(obj for obj in manifest["objects"] if obj["id"] == "service_provider:image")
@@ -1249,6 +980,25 @@ def test_pfp_dev_load_service_provider_uses_source_dir_and_file_artifacts(tmp_pa
     live = ServiceRegistry.get_instance().get_live_instance(
         SCOPE_CONV, "conv1", "wavespeed-image-provider")
     live.set_runtime_context(user_id="alice", conversation_id="conv1")
+    from core import pfp_runtime
+
+    def _invoke(self, request):
+        output_dir = Path(request["context"]["output_dir"])
+        output_dir.mkdir(parents=True, exist_ok=True)
+        provider_source = entrypoint.read_text(encoding="utf-8")
+        payload = b"PNG2" if "PNG2" in provider_source else b"PNG1"
+        (output_dir / "image.png").write_bytes(payload)
+        return {
+            "format": pfp_runtime.RUNTIME_RESULT_FORMAT,
+            "ok": True,
+            "result": {"artifact": {
+                "kind": "image",
+                "path": "image.png",
+                "content_type": "image/png",
+            }},
+        }
+
+    monkeypatch.setattr(pfp_runtime.RelayPackageRuntimeBridge, "invoke", _invoke)
     first = live.generate(prompt="cat")
     try:
         assert Path(first["image_path"]).read_bytes() == b"PNG1"
@@ -1336,7 +1086,7 @@ def test_pfp_installs_flow_task_as_taskfactory_proxy(tmp_path, monkeypatch):
     try:
         task_cls({"width": 64}).execute(FlowFile(content=b"img"))
     except TaskError as exc:
-        assert "PFP runtime bridge is not implemented yet" in str(exc)
+        assert "PFP runtime requires user_id and conversation_id" in str(exc)
     else:
         raise AssertionError("package flow task proxy should fail closed")
 
@@ -1346,12 +1096,12 @@ def test_pfp_installs_flow_task_as_taskfactory_proxy(tmp_path, monkeypatch):
     assert not content_dir.exists()
 
 
-def test_pfp_flow_task_executes_declared_python_subprocess_runner(tmp_path, monkeypatch):
+def test_pfp_flow_task_executes_declared_python_runner(tmp_path, monkeypatch):
     _reset_repo(tmp_path, monkeypatch)
     keypair = pfp_package.create_signing_key()
     pkgdir = _write_package_dir(
         tmp_path, keypair, include_flow_task=True,
-        flow_task_runner="python_subprocess")
+        flow_task_runner="python")
     entrypoint = pkgdir / "content" / "flow-tasks" / "image-resize" / "task.py"
     entrypoint.write_text(
         "import base64\n"
@@ -1367,7 +1117,21 @@ def test_pfp_flow_task_executes_declared_python_subprocess_runner(tmp_path, monk
     pfp_package.install_pfp(
         built["path"], user_id="alice", include=["flow_task:resize-image"], force=True)
 
-    from core import FlowFile, TaskFactory
+    from core import FlowFile, TaskFactory, pfp_runtime
+
+    def _invoke(self, request):
+        import base64
+        payload = request["payload"]
+        content = base64.b64decode(payload["flowfile"]["content_b64"]).decode("utf-8")
+        width = payload["task_config"]["width"]
+        return {
+            "format": pfp_runtime.RUNTIME_RESULT_FORMAT,
+            "ok": True,
+            "flowfiles": [pfp_runtime._flowfile_descriptor(
+                FlowFile(content=f"{content}:{width}".encode("utf-8"), attributes={"resized": str(width)}))],
+        }
+
+    monkeypatch.setattr(pfp_runtime.RelayPackageRuntimeBridge, "invoke", _invoke)
 
     task_cls = TaskFactory.get("packageResizeImage")
     result = task_cls({"width": 64}).execute(FlowFile(content=b"img"))
@@ -1382,7 +1146,7 @@ def test_pfp_flow_task_runs_through_continuous_flow_executor(tmp_path, monkeypat
     keypair = pfp_package.create_signing_key()
     pkgdir = _write_package_dir(
         tmp_path, keypair, include_flow_task=True,
-        flow_task_runner="python_subprocess")
+        flow_task_runner="python")
     entrypoint = pkgdir / "content" / "flow-tasks" / "image-resize" / "task.py"
     entrypoint.write_text(
         "import base64\n"
@@ -1399,9 +1163,25 @@ def test_pfp_flow_task_runs_through_continuous_flow_executor(tmp_path, monkeypat
     pfp_package.install_pfp(
         built["path"], user_id="alice", include=["flow_task:resize-image"], force=True)
 
-    from core import FlowFile
+    from core import FlowFile, pfp_runtime
     from engine.continuous_executor import ContinuousFlowExecutor
     from engine.parser import FlowParser
+
+    def _invoke(self, request):
+        import base64
+        payload = request["payload"]
+        content = base64.b64decode(payload["flowfile"]["content_b64"]).decode("utf-8")
+        width = payload["task_config"]["width"]
+        attrs = dict(payload["flowfile"].get("attributes") or {})
+        attrs["resized"] = str(width)
+        return {
+            "format": pfp_runtime.RUNTIME_RESULT_FORMAT,
+            "ok": True,
+            "flowfiles": [pfp_runtime._flowfile_descriptor(
+                FlowFile(content=f"{content}:{width}".encode("utf-8"), attributes=attrs))],
+        }
+
+    monkeypatch.setattr(pfp_runtime.RelayPackageRuntimeBridge, "invoke", _invoke)
 
     flow = FlowParser.parse({
         "id": "pfp-flow-task-e2e",
@@ -1439,7 +1219,7 @@ def test_pfp_package_installs_and_runs_flow_with_packaged_resources(tmp_path, mo
     keypair = pfp_package.create_signing_key()
     pkgdir = _write_package_dir(
         tmp_path, keypair, include_service_provider=True, include_flow_task=True,
-        flow_task_runner="python_subprocess")
+        flow_task_runner="python")
     entrypoint = pkgdir / "content" / "flow-tasks" / "image-resize" / "task.py"
     entrypoint.write_text(
         "import base64\n"
@@ -1493,11 +1273,25 @@ def test_pfp_package_installs_and_runs_flow_with_packaged_resources(tmp_path, mo
         "flow:resize-demo",
     ]
 
-    from core import FlowFile
+    from core import FlowFile, pfp_runtime
     from core.repository import ScopedRepository
     from core.service_registry import ServiceRegistry, SCOPE_USER
     from engine.continuous_executor import ContinuousFlowExecutor
     from engine.parser import FlowParser
+
+    def _invoke(self, request):
+        import base64
+        payload = request["payload"]
+        content = base64.b64decode(payload["flowfile"]["content_b64"]).decode("utf-8")
+        width = payload["task_config"]["width"]
+        return {
+            "format": pfp_runtime.RUNTIME_RESULT_FORMAT,
+            "ok": True,
+            "flowfiles": [pfp_runtime._flowfile_descriptor(
+                FlowFile(content=f"{content}:{width}".encode("utf-8"), attributes={"flow": "installed"}))],
+        }
+
+    monkeypatch.setattr(pfp_runtime.RelayPackageRuntimeBridge, "invoke", _invoke)
 
     service = ServiceRegistry.get_instance().get_live_instance(
         SCOPE_USER, "alice", "wavespeed-image-provider")
@@ -1905,6 +1699,7 @@ def test_pfp_registry_search_and_install_ref(tmp_path, monkeypatch):
             "description": "WaveSpeed media provider",
             "pfp_url": "https://registry.example/community.wavespeed-1.0.0.pfp",
             "sha256": built["sha256"],
+            "package_size": built["package_size"],
             "tags": ["media", "image"],
             "objects": ["skill:pkg-skill"],
         }],
@@ -1928,15 +1723,56 @@ def test_pfp_registry_search_and_install_ref(tmp_path, monkeypatch):
     assert search["count"] == 1
     assert search["results"][0]["ref"] == "community.wavespeed@1.0.0"
     assert search["results"][0]["registry_trusted"] is True
+    assert search["results"][0]["package_size"] == built["package_size"]
 
-    resolved = pfp_registry.resolve_package_path(
+    preflight = pfp_registry.resolve_package_path(
         "community.wavespeed@1.0.0", user_id="alice")
+    assert preflight["requires_confirmation"] is True
+    assert preflight["package_size"] == built["package_size"]
+    resolved = pfp_registry.resolve_package_path(
+        "community.wavespeed@1.0.0", user_id="alice", confirm_download=True)
     assert resolved["downloaded"] is True
     assert resolved["sha256"] == built["sha256"]
 
     installed = pfp_package.install_pfp(
         resolved["path"], user_id="alice", include=["skill:pkg-skill"], force=True)
     assert installed["ok"] is True
+
+
+def test_pfp_direct_url_requires_size_confirmation_before_download(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    keypair = pfp_package.create_signing_key()
+    pkgdir = _write_package_dir(tmp_path, keypair)
+    built = pfp_package.build_pfp(str(pkgdir), private_key=keypair["private_key"])
+    pfp_bytes = Path(built["path"]).read_bytes()
+    url = "https://registry.example/community.wavespeed-1.0.0.pfp"
+    calls = {"head": 0, "get": 0}
+
+    def fake_head(head_url, headers=None, **kwargs):
+        assert head_url == url
+        calls["head"] += 1
+        return _Response(b"", headers={"Content-Length": str(len(pfp_bytes))})
+
+    def fake_get(get_url, headers=None, **kwargs):
+        assert get_url == url
+        calls["get"] += 1
+        return _Response(pfp_bytes)
+
+    monkeypatch.setattr(pfp_registry.requests, "head", fake_head)
+    monkeypatch.setattr(pfp_registry.requests, "get", fake_get)
+
+    preflight = pfp_registry.resolve_package_path(url, user_id="alice")
+
+    assert preflight["requires_confirmation"] is True
+    assert preflight["package_size"] == len(pfp_bytes)
+    assert calls == {"head": 1, "get": 0}
+
+    resolved = pfp_registry.resolve_package_path(
+        url, user_id="alice", expected_sha256=built["sha256"], confirm_download=True)
+
+    assert resolved["downloaded"] is True
+    assert resolved["package_size"] == len(pfp_bytes)
+    assert calls == {"head": 2, "get": 1}
 
 
 def test_pfp_registry_update_cycle_handles_add_update_remove_and_uninstall(tmp_path, monkeypatch):
@@ -1982,6 +1818,7 @@ def test_pfp_registry_update_cycle_handles_add_update_remove_and_uninstall(tmp_p
                 "description": "WaveSpeed media provider v1",
                 "pfp_url": "https://registry.example/community.wavespeed-1.0.0.pfp",
                 "sha256": built_v1["sha256"],
+                "package_size": built_v1["package_size"],
                 "objects": ["skill:pkg-skill", "agent:helper"],
             },
             {
@@ -1990,6 +1827,7 @@ def test_pfp_registry_update_cycle_handles_add_update_remove_and_uninstall(tmp_p
                 "description": "WaveSpeed media provider v2",
                 "pfp_url": "https://registry.example/community.wavespeed-1.1.0.pfp",
                 "sha256": built_v2["sha256"],
+                "package_size": built_v2["package_size"],
                 "objects": ["skill:pkg-skill", "prompt:package-prompt", "tool:reader"],
             },
         ],
@@ -2006,7 +1844,7 @@ def test_pfp_registry_update_cycle_handles_add_update_remove_and_uninstall(tmp_p
     pfp_registry.add_registry("https://registry.example/index.json", user_id="alice")
 
     installed_path = pfp_registry.resolve_package_path(
-        "community.wavespeed@1.0.0", user_id="alice")["path"]
+        "community.wavespeed@1.0.0", user_id="alice", confirm_download=True)["path"]
     installed = pfp_package.install_pfp(
         installed_path, user_id="alice", include=["skill:pkg-skill", "agent:helper"], force=True)
     assert installed["ok"] is True
@@ -2014,7 +1852,7 @@ def test_pfp_registry_update_cycle_handles_add_update_remove_and_uninstall(tmp_p
     search = pfp_registry.search_registries("provider v2", user_id="alice")
     assert search["results"][0]["ref"] == "community.wavespeed@1.1.0"
     update_path = pfp_registry.resolve_package_path(
-        "community.wavespeed@1.1.0", user_id="alice")["path"]
+        "community.wavespeed@1.1.0", user_id="alice", confirm_download=True)["path"]
     plan = pfp_package.inspect_pfp(update_path, user_id="alice")
     changes = {item["id"]: item["change"] for item in plan["update_diff"]["objects"]}
     assert changes["skill:pkg-skill"] == "update"
@@ -2072,12 +1910,14 @@ def test_pfp_action_layer_registry_install_update_uninstall_cycle(tmp_path, monk
                 "version": "1.0.0",
                 "pfp_url": "https://registry.example/community.wavespeed-1.0.0.pfp",
                 "sha256": built_v1["sha256"],
+                "package_size": built_v1["package_size"],
             },
             {
                 "package": "community.wavespeed",
                 "version": "1.1.0",
                 "pfp_url": "https://registry.example/community.wavespeed-1.1.0.pfp",
                 "sha256": built_v2["sha256"],
+                "package_size": built_v2["package_size"],
             },
         ],
     }
@@ -2111,17 +1951,44 @@ def test_pfp_action_layer_registry_install_update_uninstall_cycle(tmp_path, monk
     }
 
     inspected = call("pfp_inspect", {"path": "community.wavespeed@1.0.0"})
+    assert inspected["requires_confirmation"] is True
+    assert inspected["package_size"] == built_v1["package_size"]
+
+    inspected = call("pfp_inspect", {
+        "path": "community.wavespeed@1.0.0",
+        "confirm_download": True,
+    })
     assert inspected["verified"] is True
     assert inspected["download"]["sha256"] == built_v1["sha256"]
+
+    install_preflight = call("pfp_install", {
+        "path": "community.wavespeed@1.0.0",
+        "include": ["skill:pkg-skill"],
+        "force": True,
+    })
+    assert install_preflight["requires_confirmation"] is True
+    assert install_preflight["package_size"] == built_v1["package_size"]
 
     installed = call("pfp_install", {
         "path": "community.wavespeed@1.0.0",
         "include": ["skill:pkg-skill"],
         "force": True,
+        "confirm_download": True,
     })
     assert installed["ok"] is True
 
-    updated = call("pfp_update", {"path": "community.wavespeed@1.1.0", "force": True})
+    update_preflight = call("pfp_update", {
+        "path": "community.wavespeed@1.1.0",
+        "force": True,
+    })
+    assert update_preflight["requires_confirmation"] is True
+    assert update_preflight["package_size"] == built_v2["package_size"]
+
+    updated = call("pfp_update", {
+        "path": "community.wavespeed@1.1.0",
+        "force": True,
+        "confirm_download": True,
+    })
     assert updated["ok"] is True
     assert updated["updated"][0]["id"] == "skill:pkg-skill"
 
@@ -2243,7 +2110,7 @@ def test_pfp_update_preserves_existing_secret_bindings(tmp_path, monkeypatch):
     _reset_repo(tmp_path, monkeypatch)
     keypair = pfp_package.create_signing_key()
     pkgdir = _write_package_dir(
-        tmp_path, keypair, tool_runner="python_subprocess",
+        tmp_path, keypair, tool_runner="python",
         tool_secrets=[{"name": "api_key", "env": "PROVIDER_API_KEY"}])
     entrypoint = pkgdir / "content" / "tools" / "reader" / "main.py"
     entrypoint.write_text(
@@ -2268,7 +2135,7 @@ def test_pfp_update_preserves_existing_secret_bindings(tmp_path, monkeypatch):
         secret_bindings={"api_key": "provider_key"})
 
     pkgdir = _write_package_dir(
-        tmp_path / "v2", keypair, version="1.1.0", tool_runner="python_subprocess",
+        tmp_path / "v2", keypair, version="1.1.0", tool_runner="python",
         tool_secrets=[{"name": "api_key", "env": "PROVIDER_API_KEY"}])
     entrypoint = pkgdir / "content" / "tools" / "reader" / "main.py"
     entrypoint.write_text(
@@ -2288,20 +2155,14 @@ def test_pfp_update_preserves_existing_secret_bindings(tmp_path, monkeypatch):
     stored = ResourceStore.instance().get("tool", "reader", "alice")
     assert stored["package_runtime"]["secret_bindings"] == {"api_key": "provider_key"}
 
-    from core.tool_loader import load_tools_into_registry
-    from core.tool_registry import ToolRegistry
-    registry = ToolRegistry()
-    load_tools_into_registry(registry, "alice")
-    handler = registry.get("reader")
-    handler.set_user_id("alice")
-    assert handler.execute({}) == "v2:sk-v1"
+
 
 
 def test_pfp_update_allows_secret_binding_override(tmp_path, monkeypatch):
     _reset_repo(tmp_path, monkeypatch)
     keypair = pfp_package.create_signing_key()
     pkgdir = _write_package_dir(
-        tmp_path, keypair, tool_runner="python_subprocess",
+        tmp_path, keypair, tool_runner="python",
         tool_secrets=[{"name": "api_key", "env": "PROVIDER_API_KEY"}])
     entrypoint = pkgdir / "content" / "tools" / "reader" / "main.py"
     entrypoint.write_text(
@@ -2323,7 +2184,7 @@ def test_pfp_update_allows_secret_binding_override(tmp_path, monkeypatch):
         secret_bindings={"api_key": "old_key"})
 
     pkgdir = _write_package_dir(
-        tmp_path / "v2", keypair, version="1.1.0", tool_runner="python_subprocess",
+        tmp_path / "v2", keypair, version="1.1.0", tool_runner="python",
         tool_secrets=[{"name": "api_key", "env": "PROVIDER_API_KEY"}])
     (pkgdir / "content" / "tools" / "reader" / "main.py").write_text(
         "import json, os\n"

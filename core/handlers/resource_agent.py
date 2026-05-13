@@ -141,7 +141,7 @@ class ManageResourceHandler(ToolHandler):
                     data["_created_by"] = self._agent_name
 
                 if rtype == "skill":
-                    from core.skill_review_bindings import (
+                    from core.review_bindings import (
                         attach_review_metadata, review_for_write,
                     )
                     review_meta = review_for_write(
@@ -202,7 +202,7 @@ class ManageResourceHandler(ToolHandler):
                     merged = {k: v for k, v in existing.items()
                               if not str(k).startswith("_")}
                     merged.update(data if isinstance(data, dict) else {})
-                    from core.skill_review_bindings import (
+                    from core.review_bindings import (
                         attach_review_metadata, review_for_write,
                     )
                     review_meta = review_for_write(
@@ -268,28 +268,15 @@ class ManageResourceHandler(ToolHandler):
                     skill_data = item
                 if not skill_data.get("prompt"):
                     return "Error: skill prompt is required for review"
-                reviewer_service_id = str(
-                    skill_data.pop("reviewer_service_id", "")
-                    or arguments.get("reviewer_service_id", "")
-                    or "")
                 package_files = skill_data.pop("package_files", {})
-                if reviewer_service_id:
-                    from core.skill_review import review_skill
-                    result = review_skill(
-                        skill_data,
-                        reviewer_service_id=reviewer_service_id,
-                        user_id=user_id,
-                        conversation_id=self._conversation_id,
-                        package_files=package_files if isinstance(package_files, dict) else {},
-                    )
-                else:
-                    from core.skill_review_bindings import review_now
-                    result = review_now(
-                        skill_data,
-                        user_id=user_id,
-                        conversation_id=self._conversation_id,
-                        package_files=package_files if isinstance(package_files, dict) else {},
-                    )
+                from core.review_bindings import review_now
+                result = review_now(
+                    skill_data,
+                    operation="review",
+                    user_id=user_id,
+                    conversation_id=self._conversation_id,
+                    package_files=package_files if isinstance(package_files, dict) else {},
+                )
                 return json.dumps(result, ensure_ascii=False, indent=2)
 
             elif action == "search_marketplace":

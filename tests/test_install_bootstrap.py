@@ -224,6 +224,9 @@ def test_finalize_install_validates_main_template_before_persistent_writes(tmp_p
                 "bootstrap_gateway_key": "RoyBetty",
                 "new_gateway_key": "new-gateway-key-123",
                 "admin_password": "admin-password-123",
+                "llm_service_id": "review_llm",
+                "llm_provider": "codex-app-server",
+                "llm_model": "gpt-5.5",
             })
             assert False, "missing main flow template should fail before persistence"
         except ValueError as exc:
@@ -295,6 +298,9 @@ def test_finalize_install_persists_complete_state_without_cleartext_key(tmp_path
             "bootstrap_gateway_key": "RoyBetty",
             "new_gateway_key": new_key,
             "admin_password": "admin-password-123",
+            "llm_service_id": "review_llm",
+            "llm_provider": "codex-app-server",
+            "llm_model": "gpt-5.5",
         })
 
         assert status["install_complete"] is True
@@ -307,16 +313,14 @@ def test_finalize_install_persists_complete_state_without_cleartext_key(tmp_path
         assert state["checks"]["admin_user"] is True
         assert state["checks"]["llm_service"] is True
         assert state["checks"]["summarizer_service"] is True
-        assert state["checks"]["skill_review_service"] is True
         assert state["checks"]["main_flow_deployed"] is True
         assert state["checks"]["first_conversation"] is True
         assert state["draft"]["gateway"]["key_sha256"] == hashlib.sha256(
             new_key.encode("utf-8")
         ).hexdigest()
         assert state["draft"]["gateway"]["service_id"] == ib.FINAL_PRIVATE_GATEWAY_SERVICE_ID
-        assert state["draft"]["llm_services"]["primary"] == ib.DEFAULT_LLM_SERVICE_ID
+        assert state["draft"]["llm_services"]["primary"] == "review_llm"
         assert state["draft"]["summarizer_service"]["service_id"] == ib.SUMMARIZER_SERVICE_ID
-        assert state["draft"]["skill_review_service"]["service_id"] == ib.SKILL_REVIEW_SERVICE_ID
         assert state["draft"]["flows"]["main_instance_id"] == ib.MAIN_INSTANCE_ID
         assert state["draft"]["conversation"]["agent"] == ib.FIRST_RUN_AGENT
         assert reg.get(ib.MAIN_INSTANCE_ID).status == "running"
@@ -330,18 +334,13 @@ def test_finalize_install_persists_complete_state_without_cleartext_key(tmp_path
         assert final_gateway is not None
         assert final_gateway.config["secret_refs"] == ib.FINAL_GATEWAY_SECRET_REF
         llm = ServiceRegistry.get_instance().get_definition(
-            SCOPE_GLOBAL, "", ib.DEFAULT_LLM_SERVICE_ID)
+            SCOPE_GLOBAL, "", "review_llm")
         assert llm is not None
         assert llm.config["provider"] == "codex-app-server"
         summarizer = ServiceRegistry.get_instance().get_definition(
             SCOPE_GLOBAL, "", ib.SUMMARIZER_SERVICE_ID)
         assert summarizer is not None
-        assert summarizer.config["llm_service"] == ib.DEFAULT_LLM_SERVICE_ID
-        skill_review = ServiceRegistry.get_instance().get_definition(
-            SCOPE_GLOBAL, "", ib.SKILL_REVIEW_SERVICE_ID)
-        assert skill_review is not None
-        assert skill_review.service_type == "skillReview"
-        assert skill_review.config["llm_service"] == ib.DEFAULT_LLM_SERVICE_ID
+        assert summarizer.config["llm_service"] == "review_llm"
         secrets_file = _paths.GLOBAL_SECRETS_FILE.read_text(encoding="utf-8")
         assert new_key not in secrets_file
         assert "admin-password-123" not in system_dir.joinpath("users.json").read_text(encoding="utf-8")

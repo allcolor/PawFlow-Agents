@@ -15,7 +15,7 @@
       "name": "exampleUppercase",
       "task_type": "exampleUppercase",
       "path": "content/flow-tasks/uppercase/task.py",
-      "runner": "python_subprocess",
+      "runner": "python",
       "description": "Uppercase FlowFile content",
       "parameters": {},
       "allowed_tools": []

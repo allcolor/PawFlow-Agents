@@ -54,7 +54,7 @@ RoyBetty
 The installer wizard forces the user to replace this key before finalizing the
 installation. Finalization creates the persistent Private Gateway, builtin auth
 gateway, admin user, selected LLM service, `summarizer_service`,
-`skill_review_service`, the `pawflow-agent` deployment, and a starter conversation with the `assistant`
+the `pawflow-agent` deployment, and a starter conversation with the `assistant`
 agent selected.
 
 ### Build from source
@@ -111,7 +111,7 @@ These are the supported Docker install scenarios and their expected outcomes.
      certificate warning, enter the current gateway key `RoyBetty`, replace it,
      create the admin password, and finalize.
    - Expected result: `_private_gateway`, `_auth_gateway`, the selected
-     `llmConnection`, `summarizer_service`, `skill_review_service`, `pawflow-agent`, and a starter
+     `llmConnection`, `summarizer_service`, `pawflow-agent`, and a starter
      conversation with `assistant` are created; `_bootstrap_private_gateway` is
      disabled and the installer deployment is stopped.
 

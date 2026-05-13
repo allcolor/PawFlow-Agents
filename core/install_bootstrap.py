@@ -28,9 +28,7 @@ BOOTSTRAP_PRIVATE_GATEWAY_SERVICE_ID = "_bootstrap_private_gateway"
 FINAL_GATEWAY_SECRET_REF = "privategateway.main"
 FINAL_PRIVATE_GATEWAY_SERVICE_ID = "_private_gateway"
 AUTH_GATEWAY_SERVICE_ID = "_auth_gateway"
-DEFAULT_LLM_SERVICE_ID = "codex_appserver_llm_service"
 SUMMARIZER_SERVICE_ID = "summarizer_service"
-SKILL_REVIEW_SERVICE_ID = "skill_review_service"
 FIRST_RUN_AGENT = "assistant"
 BOOTSTRAP_CERT_FILE = _paths.SSL_DIR / "bootstrap.crt"
 BOOTSTRAP_KEY_FILE = _paths.SSL_DIR / "bootstrap.key"
@@ -42,7 +40,6 @@ INSTALL_STEPS = [
     "admin",
     "llm_services",
     "summarizer_service",
-    "skill_review_service",
     "variables",
     "secrets",
     "cli_credentials",
@@ -139,7 +136,6 @@ def _public_draft(draft: Dict[str, Any]) -> Dict[str, Any]:
         "auth",
         "llm_services",
         "summarizer_service",
-        "skill_review_service",
         "flows",
         "conversation",
     ):
@@ -291,13 +287,15 @@ def _install_llm_and_summarizer(payload: Dict[str, Any]) -> tuple[str, str]:
     from core.service_registry import ServiceRegistry, SCOPE_GLOBAL
 
     _register_all_services()
-    provider = str(payload.get("llm_provider") or "codex-app-server").strip()
-    model = str(payload.get("llm_model") or "gpt-5.5").strip()
-    llm_service_id = str(payload.get("llm_service_id") or DEFAULT_LLM_SERVICE_ID).strip()
+    provider = str(payload.get("llm_provider") or "").strip()
+    model = str(payload.get("llm_model") or "").strip()
+    llm_service_id = str(payload.get("llm_service_id") or "").strip()
     if not provider:
         raise ValueError("llm_provider is required")
     if not llm_service_id:
         raise ValueError("llm_service_id is required")
+    if not model:
+        raise ValueError("llm_model is required")
 
     llm_config: Dict[str, Any] = {
         "provider": provider,
@@ -320,7 +318,7 @@ def _install_llm_and_summarizer(payload: Dict[str, Any]) -> tuple[str, str]:
         service_id=llm_service_id,
         service_type="llmConnection",
         config=llm_config,
-        description="Default installed LLM service for the first PawFlow agent",
+        description="Installed LLM service for the first PawFlow agent and summarizer",
         enabled=True,
     )
     reg.install(
@@ -332,16 +330,7 @@ def _install_llm_and_summarizer(payload: Dict[str, Any]) -> tuple[str, str]:
         description="Summarizer service for conversation compaction",
         enabled=True,
     )
-    reg.install(
-        scope=SCOPE_GLOBAL,
-        scope_id="",
-        service_id=SKILL_REVIEW_SERVICE_ID,
-        service_type="skillReview",
-        config={"llm_service": llm_service_id},
-        description="Skill review service for prompt-injection checks",
-        enabled=True,
-    )
-    return llm_service_id, SUMMARIZER_SERVICE_ID, SKILL_REVIEW_SERVICE_ID
+    return llm_service_id, SUMMARIZER_SERVICE_ID
 
 
 def _deploy_main_flow(private_gateway_service_id: str) -> str:
@@ -454,10 +443,12 @@ def finalize_install(payload: Dict[str, Any]) -> Dict[str, Any]:
         raise ValueError("admin_password is required")
     if len(admin_password) < 12:
         raise ValueError("admin_password must be at least 12 characters")
-    if not str(payload.get("llm_provider") or "codex-app-server").strip():
+    if not str(payload.get("llm_provider") or "").strip():
         raise ValueError("llm_provider is required")
-    if not str(payload.get("llm_service_id") or DEFAULT_LLM_SERVICE_ID).strip():
+    if not str(payload.get("llm_service_id") or "").strip():
         raise ValueError("llm_service_id is required")
+    if not str(payload.get("llm_model") or "").strip():
+        raise ValueError("llm_model is required")
     if not MAIN_TEMPLATE.exists():
         raise ValueError(f"main PawFlow flow template is missing: {MAIN_TEMPLATE}")
 
@@ -465,7 +456,7 @@ def finalize_install(payload: Dict[str, Any]) -> Dict[str, Any]:
     final_gateway_service_id = _install_final_private_gateway(final_secret_ref)
     admin_user = _configure_admin_user(payload)
     auth_gateway_service_id = _install_auth_gateway()
-    llm_service_id, summarizer_service_id, skill_review_service_id = _install_llm_and_summarizer(payload)
+    llm_service_id, summarizer_service_id = _install_llm_and_summarizer(payload)
     main_instance_id = _deploy_main_flow(final_gateway_service_id)
     first_conversation_id = _create_first_conversation(admin_user, llm_service_id)
 
@@ -490,7 +481,6 @@ def finalize_install(payload: Dict[str, Any]) -> Dict[str, Any]:
     checks["admin_user"] = True
     checks["llm_service"] = True
     checks["summarizer_service"] = True
-    checks["skill_review_service"] = True
     checks["main_flow_deployed"] = True
     checks["first_conversation"] = True
     checks["finalized"] = True
@@ -504,7 +494,6 @@ def finalize_install(payload: Dict[str, Any]) -> Dict[str, Any]:
     draft["auth"] = {"service_id": auth_gateway_service_id, "admin_user": admin_user}
     draft["llm_services"] = {"primary": llm_service_id}
     draft["summarizer_service"] = {"service_id": summarizer_service_id}
-    draft["skill_review_service"] = {"service_id": skill_review_service_id}
     draft["flows"] = {"main_instance_id": main_instance_id}
     draft["conversation"] = {
         "conversation_id": first_conversation_id,

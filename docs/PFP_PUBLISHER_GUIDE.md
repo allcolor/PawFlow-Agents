@@ -11,7 +11,7 @@ This guide covers the publication side of PawFlow Packages: signing, registry in
 5. Store the private key outside the repository, usually in an environment variable, and build with `/pfp build --key-env ENV_NAME`.
 6. Inspect the signed `.pfp` before publishing and confirm capabilities, object selection, hashes, and update diff.
 7. Upload the immutable `.pfp` artifact to a HTTPS URL.
-8. Add or update the registry index entry with the package URL, package SHA-256, developer key, tags, and object ids.
+8. Add or update the registry index entry with the package URL, package byte size, package SHA-256, developer key, tags, and object ids.
 
 ## Registry Index
 
@@ -27,6 +27,7 @@ A PFP registry is a static JSON document. It can be hosted on any HTTPS server, 
       "version": "0.1.0",
       "description": "Text utilities for PawFlow packages",
       "pfp_url": "https://example.com/pfp/examples.text-core-0.1.0.pfp",
+      "package_size": 7340032,
       "sha256": "sha256:REPLACE_WITH_ARTIFACT_HASH",
       "developer_key": "ed25519:REPLACE_WITH_PUBLIC_KEY",
       "tags": ["text", "utility"],
@@ -36,7 +37,7 @@ A PFP registry is a static JSON document. It can be hosted on any HTTPS server, 
 }
 ```
 
-`sha256` is a download pin. PawFlow verifies it when resolving a registry package, then still verifies the `.pfp` signature and lock file before install. Registry metadata is discovery/provenance data, not authority to bypass install consent.
+`package_size` is the exact `.pfp` artifact size in bytes and is required so PawFlow can ask the user before downloading. `sha256` is a download pin. PawFlow verifies both size and hash when resolving a registry package, then still verifies the `.pfp` signature and lock file before install. Registry metadata is discovery/provenance data, not authority to bypass install consent.
 
 ## Publishing Versions
 
@@ -81,7 +82,7 @@ If package B calls package A, package B must declare both a dependency and an al
     {
       "id": "service_provider:text-cleaner",
       "type": "service_provider",
-      "runner": "python_subprocess_host",
+      "runner": "python",
       "allowed_tools": [
         {"package": "examples.text-core", "version": "^0.1.0", "object": "tool:normalize_text"}
       ]

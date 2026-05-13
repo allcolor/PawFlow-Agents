@@ -14,7 +14,7 @@
       "type": "tool",
       "name": "normalize_text",
       "path": "content/tools/normalize_text/main.py",
-      "runner": "python_subprocess",
+      "runner": "python",
       "description": "Normalize whitespace and casing in text",
       "parameters": {
         "text": {"type": "string", "required": true},

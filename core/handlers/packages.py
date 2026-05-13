@@ -51,6 +51,7 @@ class ManagePackageHandler(ToolHandler):
                 "include": {"type": "array", "items": {"type": "string"}},
                 "exclude": {"type": "array", "items": {"type": "string"}},
                 "force": {"type": "boolean"},
+                "confirm_download": {"type": "boolean"},
                 "replace": {"type": "boolean"},
                 "dry_run": {"type": "boolean"},
                 "output_dir": {"type": "string"},
@@ -81,6 +82,9 @@ class ManagePackageHandler(ToolHandler):
                 )
             elif action == "inspect":
                 resolved = self._resolve_package_path(arguments)
+                if resolved.get("requires_confirmation"):
+                    result = resolved
+                    return json.dumps(result, ensure_ascii=False, indent=2)
                 result = pfp_package.inspect_pfp(
                     resolved["path"],
                     user_id=self._user_id,
@@ -91,6 +95,9 @@ class ManagePackageHandler(ToolHandler):
                     result["download"] = resolved
             elif action == "install":
                 resolved = self._resolve_package_path(arguments)
+                if resolved.get("requires_confirmation"):
+                    result = resolved
+                    return json.dumps(result, ensure_ascii=False, indent=2)
                 result = pfp_package.install_pfp(
                     resolved["path"],
                     user_id=self._user_id,
@@ -107,6 +114,9 @@ class ManagePackageHandler(ToolHandler):
                     result["download"] = resolved
             elif action == "update":
                 resolved = self._resolve_package_path(arguments)
+                if resolved.get("requires_confirmation"):
+                    result = resolved
+                    return json.dumps(result, ensure_ascii=False, indent=2)
                 result = pfp_package.update_pfp(
                     resolved["path"],
                     user_id=self._user_id,
@@ -206,5 +216,6 @@ class ManagePackageHandler(ToolHandler):
             arguments.get("path") or arguments.get("ref") or "",
             user_id=self._user_id,
             expected_sha256=arguments.get("sha256") or "",
+            confirm_download=bool(arguments.get("confirm_download", False)),
         )
 

@@ -87,7 +87,7 @@ class DynamicToolHandler(ToolHandler):
 
 
 class PfpToolProxyHandler(ToolHandler):
-    """Declarative placeholder for a package tool until the PFP runtime bridge exists."""
+    """Runtime proxy for a package tool executed through the relay PFP runner."""
 
     def __init__(self, tool_name: str, tool_description: str,
                  tool_parameters: Dict[str, Any], package_runtime: Dict[str, Any],

@@ -15,7 +15,7 @@
       "name": "example-image-provider",
       "service_id": "example-image-provider",
       "path": "content/service-providers/image/provider.py",
-      "runner": "python_subprocess",
+      "runner": "python",
       "description": "Demo image provider with a generate operation",
       "provides": ["media.image_generation"],
       "operations": {

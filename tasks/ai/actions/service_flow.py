@@ -86,7 +86,6 @@ _SERVICE_CATEGORY_BY_TYPE = {
     "llmConnection": "ai",
     "llmCredentialOAuthProvider": "ai",
     "summarizer": "ai",
-    "skillReview": "ai",
     "codexImageGeneration": "image",
     "openaiImageGeneration": "image",
     "grokImageGeneration": "image",

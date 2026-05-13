@@ -4,8 +4,7 @@ PFP packages are untrusted distribution artifacts. A .pfp is a zip containing
 pfp.json, pfp.lock.json, signature.ed25519, and content files. The signature
 covers canonical JSON for the manifest and lock, and the lock covers every
 package file hash. Installing a package always goes through an install plan;
-code-bearing tools/services are recorded as unsupported until the package
-runtime proxy exists.
+code-bearing tools/services/tasks execute only through the relay package runtime.
 """
 
 from __future__ import annotations
@@ -50,10 +49,6 @@ SIGNATURE_FILE = "signature.ed25519"
 MANIFEST_FILE = "pfp.json"
 LOCK_FILE = "pfp.lock.json"
 
-MAX_FILE_BYTES = 500_000
-MAX_PACKAGE_BYTES = 5_000_000
-MAX_PACKAGE_FILES = 250
-
 _SAFE_PATH_RE = re.compile(r"^[A-Za-z0-9._/@:+-]+$")
 _PACKAGE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{1,120}[a-z0-9]$")
 _RESOURCE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,127}$")
@@ -70,7 +65,9 @@ _RESOURCE_TYPES = {
 }
 _INSTALLABLE_TYPES = set(_RESOURCE_TYPES) | {"flow", "service", "service_definition"}
 _INSTALLABLE_TYPES.update({"tool", "service_provider", "flow_task", "task_provider"})
-_CODE_TYPES = set()
+
+_RUNTIME_OBJECT_TYPES = {"tool", "service_provider", "flow_task", "task_provider"}
+_SUPPORTED_RUNTIME_RUNNERS = {"python"}
 
 
 class PfpError(ValueError):
@@ -121,6 +118,8 @@ def build_pfp(source_dir: str, output_path: str = "", *,
         "version": version,
         "sha256": _file_sha256(out),
         "files": len(files),
+        "content_size": _files_size(files),
+        "package_size": out.stat().st_size,
     }
 
 
@@ -146,6 +145,9 @@ def inspect_pfp(path: str, *, user_id: str = "", conversation_id: str = "",
         "developer": manifest.get("developer", {}),
         "origin": manifest.get("origin", {}),
         "sha256": package.get("sha256", ""),
+        "package_size": package.get("package_size", 0),
+        "content_size": package.get("content_size", 0),
+        "file_count": package.get("file_count", 0),
         "risk": _aggregate_risk(risks),
         "capabilities": capabilities,
         "update_diff": update_diff,
@@ -160,6 +162,11 @@ def format_inspection_display(plan: Dict[str, Any]) -> str:
     lines = [
         f"PFP {plan.get('package', '')}@{plan.get('version', '')}",
         f"Verified: {bool(plan.get('verified'))} | Risk: {plan.get('risk', 'low')}",
+        (
+            f"Size: {_format_bytes(int(plan.get('package_size') or 0))} package | "
+            f"{_format_bytes(int(plan.get('content_size') or 0))} content | "
+            f"{int(plan.get('file_count') or 0)} files"
+        ),
     ]
     update_diff = plan.get("update_diff") or {}
     if update_diff.get("installed"):
@@ -180,8 +187,8 @@ def format_inspection_display(plan: Dict[str, Any]) -> str:
             f"- {row.get('id', '')} ({row.get('type', '')}, {row.get('status', '')}, {selected}, risk={row.get('risk', 'low')}){reason}")
     lines.extend(["", "Capabilities:"])
     _append_display_list(lines, "runtime objects", caps.get("runtime_objects") or [])
-    _append_display_list(lines, "allowed tools", [item.get("ref", "") for item in caps.get("allowed_tools") or []])
-    _append_display_list(lines, "allowed services", [item.get("ref", "") for item in caps.get("allowed_services") or []])
+    _append_display_list(lines, "brokered tools", [item.get("ref", "") for item in caps.get("allowed_tools") or []])
+    _append_display_list(lines, "brokered services", [item.get("ref", "") for item in caps.get("allowed_services") or []])
     _append_display_list(lines, "dependencies", [_format_dependency(dep) for dep in caps.get("dependencies") or []])
     _append_display_list(lines, "provided capabilities", caps.get("provides") or [])
     secret_names = [
@@ -258,6 +265,9 @@ def install_pfp(path: str, *, user_id: str, conversation_id: str = "",
             if dry_run:
                 installed.append({"id": obj_id, "dry_run": True})
                 continue
+            _review_object_for_install(
+                row, package, force, user_id, conversation_id,
+                operation="pfp_install")
             object_secret_bindings = _object_secret_bindings(row, secret_bindings)
             record = _install_object(
                 row["object"], package, user_id, conversation_id, scope, force,
@@ -343,6 +353,9 @@ def dev_load_pfp(source_dir: str, *, user_id: str, conversation_id: str = "",
             if dry_run:
                 installed.append({"id": obj_id, "dry_run": True, "dev": True})
                 continue
+            _review_object_for_install(
+                row, package, force, user_id, conversation_id,
+                operation="pfp_dev_load")
             object_secret_bindings = _object_secret_bindings(row, secret_bindings)
             record = _install_object(
                 row["object"], package, user_id, conversation_id, scope, force,
@@ -675,6 +688,9 @@ def _load_package(path: str, require_verified: bool = False) -> Dict[str, Any]:
             "files": files,
             "verified": False,
             "sha256": "",
+            "package_size": 0,
+            "content_size": _files_size(files),
+            "file_count": len(files),
         }
     if source.suffix != ".pfp":
         raise PfpError("Package file must use .pfp extension")
@@ -690,25 +706,19 @@ def _load_package(path: str, require_verified: bool = False) -> Dict[str, Any]:
         "files": files,
         "verified": True,
         "sha256": _file_sha256(source),
+        "package_size": source.stat().st_size,
+        "content_size": _files_size(files),
+        "file_count": len(files),
     }
 
 
 def _read_pfp_zip(path: Path) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, bytes], bytes]:
     files: Dict[str, bytes] = {}
-    total = 0
     with zipfile.ZipFile(path, "r") as zf:
         names = zf.namelist()
-        if len(names) > MAX_PACKAGE_FILES + 3:
-            raise PfpError("Package contains too many files")
         for name in names:
             rel = _safe_relpath(name)
-            info = zf.getinfo(name)
-            if info.file_size > MAX_FILE_BYTES:
-                raise PfpError(f"Package file too large: {rel}")
             data = zf.read(name)
-            total += len(data)
-            if total > MAX_PACKAGE_BYTES:
-                raise PfpError("Package exceeds total size cap")
             files[rel] = data
     for required in (MANIFEST_FILE, LOCK_FILE, SIGNATURE_FILE):
         if required not in files:
@@ -723,7 +733,6 @@ def _read_pfp_zip(path: Path) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str,
 
 def _collect_source_files(root: Path) -> Dict[str, bytes]:
     files: Dict[str, bytes] = {}
-    total = 0
     for path in sorted(root.rglob("*")):
         if not path.is_file():
             continue
@@ -731,15 +740,23 @@ def _collect_source_files(root: Path) -> Dict[str, bytes]:
         if rel in {MANIFEST_FILE, LOCK_FILE, SIGNATURE_FILE} or rel.startswith("dist/"):
             continue
         data = path.read_bytes()
-        if len(data) > MAX_FILE_BYTES:
-            raise PfpError(f"Package file too large: {rel}")
-        total += len(data)
-        if total > MAX_PACKAGE_BYTES:
-            raise PfpError("Package exceeds total size cap")
         files[rel] = data
-    if len(files) > MAX_PACKAGE_FILES:
-        raise PfpError("Package contains too many files")
     return files
+
+
+def _files_size(files: Dict[str, bytes]) -> int:
+    return sum(len(data) for data in files.values())
+
+
+def _format_bytes(size: int) -> str:
+    units = ["B", "KiB", "MiB", "GiB", "TiB"]
+    value = float(max(size, 0))
+    for unit in units:
+        if value < 1024 or unit == units[-1]:
+            if unit == "B":
+                return f"{int(value)} {unit}"
+            return f"{value:.1f} {unit}"
+        value /= 1024
 
 
 def _make_lock(files: Dict[str, bytes]) -> Dict[str, Any]:
@@ -795,8 +812,6 @@ def _object_plan(obj: Dict[str, Any], package: Dict[str, Any], user_id: str,
     reason = ""
     if not obj_id or ":" not in obj_id:
         status, reason = "blocked", "object id must be type:name"
-    elif obj_type in _CODE_TYPES:
-        status, reason, risk, installable = "unsupported_runtime", "package runtime proxy is not implemented yet", "high", False
     elif obj_type not in _INSTALLABLE_TYPES:
         status, reason, installable = "blocked", f"unsupported object type: {obj_type}", False
     elif not name or not _RESOURCE_NAME_RE.match(name):
@@ -1136,8 +1151,9 @@ def _install_object(obj: Dict[str, Any], package: Dict[str, Any], user_id: str,
         rtype = _RESOURCE_TYPES[obj_type]
         data = _load_resource_data(package, rel, rtype, name)
         data["installed_from"] = provenance
-        if rtype == "skill":
-            data = _review_skill_for_install(data, package, force, user_id, conversation_id)
+        if rtype == "skill" and obj.get("_review"):
+            from core.review_bindings import attach_review_metadata
+            data = attach_review_metadata(data, obj["_review"])
         _write_resource(rtype, name, data, user_id, conversation_id, scope, replace)
         return {
             "kind": "resource",
@@ -1240,6 +1256,7 @@ def _load_tool_proxy_data(obj: Dict[str, Any], package: Dict[str, Any], rel: str
             "secrets": _declared_secret_requirements(manifest, obj),
             "secret_bindings": dict(secret_bindings or {}),
             "dev": bool(package.get("dev")),
+            "review": obj.get("_review", {}),
         },
     }
 
@@ -1271,6 +1288,7 @@ def _load_service_provider_proxy_data(obj: Dict[str, Any], package: Dict[str, An
         "secrets": _declared_secret_requirements(manifest, obj),
         "secret_bindings": dict(secret_bindings or {}),
         "dev": bool(package.get("dev")),
+        "review": obj.get("_review", {}),
     }
     return {
         "service_id": service_id,
@@ -1320,6 +1338,7 @@ def _load_flow_task_proxy_data(obj: Dict[str, Any], package: Dict[str, Any],
         "secrets": _declared_secret_requirements(manifest, obj),
         "secret_bindings": dict(secret_bindings or {}),
         "dev": bool(package.get("dev")),
+        "review": obj.get("_review", {}),
     }
     return {
         "task_type": task_type,
@@ -1369,23 +1388,58 @@ def _parse_skill_md(text: str, default_name: str = "") -> Dict[str, Any]:
     }
 
 
-def _review_skill_for_install(data: Dict[str, Any], package: Dict[str, Any],
-                              force: bool, user_id: str,
-                              conversation_id: str) -> Dict[str, Any]:
-    from core.skill_review_bindings import attach_review_metadata, review_for_write, review_now
-    package_files = {
-        rel: content.decode("utf-8", errors="replace")
-        for rel, content in package["files"].items()
-        if rel not in {MANIFEST_FILE} and rel.startswith("content/")
-    }
-    review = review_now(data, user_id=user_id, conversation_id=conversation_id, package_files=package_files)
-    blocked = not bool(review.get("allowed", False)) or review.get("risk") == "block"
-    if blocked:
-        raise PfpError("Skill review blocked install")
-    if review.get("requires_human_review") and not force:
-        raise PfpError("Skill requires human review; rerun install with force after inspection")
-    review_meta = review_for_write(data, operation="pfp_install", user_id=user_id, conversation_id=conversation_id, package_files=package_files)
-    return attach_review_metadata(data, review_meta) if review_meta else data
+def _review_object_for_install(row: Dict[str, Any], package: Dict[str, Any],
+                               force: bool, user_id: str,
+                               conversation_id: str,
+                               operation: str) -> None:
+    obj = row["object"]
+    obj_type = str(obj.get("type") or "")
+    if obj_type == "skill":
+        rel = _safe_relpath(str(obj.get("path") or ""))
+        data = _load_resource_data(package, rel, "skill", row.get("name", ""))
+        package_files = {
+            rel_path: content.decode("utf-8", errors="replace")
+            for rel_path, content in package["files"].items()
+            if rel_path not in {MANIFEST_FILE} and rel_path.startswith("content/")
+        }
+        from core.package_review import (
+            assert_installable_review, review_hash, review_metadata,
+            review_skill_content,
+        )
+        review = review_skill_content(
+            data,
+            operation=operation,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            package_files=package_files,
+        )
+        assert_installable_review(review, force=force, label="Skill")
+        obj["_review"] = review_metadata(
+            review,
+            service_id=review.get("service_id", ""),
+            llm_service=review.get("llm_service", ""),
+            subject_hash=review_hash(data, package_files),
+        )
+        return
+    if obj_type in _RUNTIME_OBJECT_TYPES:
+        from core.package_review import (
+            assert_installable_review, review_hash, review_metadata,
+            review_package_object,
+        )
+        review = review_package_object(
+            package,
+            obj,
+            operation=operation,
+            user_id=user_id,
+            conversation_id=conversation_id,
+        )
+        assert_installable_review(review, force=force, label="Package object")
+        obj["_review"] = review_metadata(
+            review,
+            service_id=review.get("service_id", ""),
+            llm_service=review.get("llm_service", ""),
+            subject_hash=review_hash(obj, package.get("lock", {}).get("files", {})),
+        )
 
 
 def _write_resource(rtype: str, name: str, data: Dict[str, Any], user_id: str,
@@ -1856,9 +1910,24 @@ def _validate_manifest(manifest: Dict[str, Any]) -> None:
     for obj in objects:
         if not isinstance(obj, dict):
             raise PfpError("objects must contain JSON objects")
+        _validate_runtime_object(obj)
         _validate_dependency_list(obj.get("requires") or [], "object requires")
         _validate_allowed_refs(obj.get("allowed_tools") or [], "allowed_tools")
         _validate_allowed_refs(obj.get("allowed_services") or [], "allowed_services")
+
+
+def _validate_runtime_object(obj: Dict[str, Any]) -> None:
+    obj_type = str(obj.get("type") or "").strip()
+    if obj_type not in _RUNTIME_OBJECT_TYPES:
+        return
+    if not str(obj.get("path") or "").strip():
+        raise PfpError(f"{obj_type} runtime objects require path")
+    runtime = str(obj.get("runtime") or "python").strip()
+    if runtime != "python":
+        raise PfpError(f"Unsupported PFP runtime: {runtime}")
+    runner = str(obj.get("runner") or "").strip()
+    if runner not in _SUPPORTED_RUNTIME_RUNNERS:
+        raise PfpError(f"Unsupported PFP runtime runner: {runner}")
 
 
 def _validate_dependency_list(values: Any, field: str) -> None:

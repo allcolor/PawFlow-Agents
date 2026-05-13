@@ -318,7 +318,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             description = body.get("description", "")
             if description:
                 data["description"] = description
-            from core.skill_review_bindings import attach_review_metadata, review_for_write
+            from core.review_bindings import attach_review_metadata, review_for_write
             review_meta = review_for_write(
                 data,
                 operation="create",
@@ -689,7 +689,12 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                     body.get("path") or body.get("ref") or "",
                     user_id=user_id,
                     expected_sha256=body.get("sha256") or "",
+                    confirm_download=bool(body.get("confirm_download", False)),
                 )
+                if resolved.get("requires_confirmation"):
+                    result = resolved
+                    flowfile.set_content(json.dumps(result, ensure_ascii=False).encode())
+                    return [flowfile]
                 result = pfp_package.inspect_pfp(
                     resolved["path"],
                     user_id=user_id,
@@ -705,7 +710,12 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                     body.get("path") or body.get("ref") or "",
                     user_id=user_id,
                     expected_sha256=body.get("sha256") or "",
+                    confirm_download=bool(body.get("confirm_download", False)),
                 )
+                if resolved.get("requires_confirmation"):
+                    result = resolved
+                    flowfile.set_content(json.dumps(result, ensure_ascii=False).encode())
+                    return [flowfile]
                 result = pfp_package.install_pfp(
                     resolved["path"],
                     user_id=user_id,
@@ -726,7 +736,12 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                     body.get("path") or body.get("ref") or "",
                     user_id=user_id,
                     expected_sha256=body.get("sha256") or "",
+                    confirm_download=bool(body.get("confirm_download", False)),
                 )
+                if resolved.get("requires_confirmation"):
+                    result = resolved
+                    flowfile.set_content(json.dumps(result, ensure_ascii=False).encode())
+                    return [flowfile]
                 result = pfp_package.update_pfp(
                     resolved["path"],
                     user_id=user_id,
@@ -1434,7 +1449,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                 merged = {k: v for k, v in existing.items()
                           if not str(k).startswith("_")}
                 merged.update(data if isinstance(data, dict) else {})
-                from core.skill_review_bindings import attach_review_metadata, review_for_write
+                from core.review_bindings import attach_review_metadata, review_for_write
                 review_meta = review_for_write(
                     merged,
                     operation="update",
@@ -1472,7 +1487,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             data.setdefault("created_by", uid)
         try:
             if rtype == "skill":
-                from core.skill_review_bindings import attach_review_metadata, review_for_write
+                from core.review_bindings import attach_review_metadata, review_for_write
                 review_meta = review_for_write(
                     data,
                     operation="create",

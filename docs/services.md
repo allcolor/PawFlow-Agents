@@ -9,7 +9,6 @@ The chat service installer receives service type metadata grouped by category an
 | Type | Purpose |
 |---|---|
 | `llmConnection` | Direct API LLM service configuration. |
-| `skillReview` | Selects the no-tool LLM reviewer and policy for skill create/update/import review. |
 | `httpClientService` | Reusable HTTP client. |
 | `httpListener` | Shared listener for inbound HTTP/webhook/SSE/VNC routes. |
 | `httpAuthValidator` | Bearer/basic/custom auth validator. |
@@ -21,7 +20,7 @@ The chat service installer receives service type metadata grouped by category an
 | `cacheService` | Local cache service. |
 | `distributedMapCache` | Distributed key/value cache. |
 | `fileTracking` | Tracks processed files for list/watch flows. |
-| `packageRuntime` | Non-executing proxy for PFP `service_provider` objects until the out-of-process package runtime bridge is available. |
+| `packageRuntime` | Runtime proxy for PFP `service_provider` objects executed through the relay package runner. |
 
 ## Filesystem and Relay Services
 
@@ -86,11 +85,10 @@ or agents. There is no global `llm.default.service` or `image_default_service`:
 agent LLMs come from the active agent configuration, and media tools discover
 compatible media services.
 
-`skillReview` is the service-first configuration point for reviewing untrusted
-skill content. It references an `llmConnection` in `llm_service` and is resolved
-in conversation -> user -> global order, with optional conversation binding via
-`skill_review_binding`. Skill create/update/import paths review through this
-service when configured; the reviewer LLM is called with no tools.
+Untrusted skills and executable PFP objects are reviewed through the effective
+conversation `summarizer` service. The summarizer points to the `llmConnection`
+used for no-tool review calls. If no summarizer-backed LLM is available, package
+and skill review fails closed.
 
 The chat header admin gear is intentionally limited to objects that are not
 naturally service instances: user management and a guided view over a small

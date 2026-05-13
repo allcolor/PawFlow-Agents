@@ -8,7 +8,7 @@ from core import FlowFile, Task, TaskError, TaskFactory
 
 
 def register_package_task_proxy(task_type: str, metadata: Dict[str, Any]) -> type:
-    """Register a fail-closed TaskFactory proxy for a PFP flow task."""
+    """Register a relay runtime TaskFactory proxy for a PFP flow task."""
     task_type = str(task_type or "").strip()
     if not task_type:
         raise ValueError("task_type is required")

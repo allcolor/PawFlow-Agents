@@ -321,11 +321,11 @@ HELP: Dict[str, Dict[str, str]] = {
         "detail": (
             "  /pfp key-create                         — Create an Ed25519 signing key\n"
             "  /pfp build <pfpdir> --key-env VAR [--out file.pfp]\n"
-            "  /pfp inspect <file.pfp|pfpdir>          — Verify and preview objects/capabilities\n"
-            "  /pfp install <file.pfp> [--scope user|conversation] [--include ids] [--secret logical=stored_key] [--force]\n"
+            "  /pfp inspect <file.pfp|pfpdir|ref|url> [--confirm-download] — Verify and preview objects/capabilities\n"
+            "  /pfp install <file.pfp|ref|url> [--confirm-download] [--scope user|conversation] [--include ids] [--secret logical=stored_key] [--force]\n"
             "  /pfp dev-load <pfpdir> [--scope conversation|user] [--include ids] [--exclude ids] [--secret logical=stored_key] [--replace]\n"
             "  /pfp dev-unload <package> [--scope conversation|user]\n"
-            "  /pfp update <file.pfp|package@version> [--include ids] [--exclude ids] [--force]\n"
+            "  /pfp update <file.pfp|ref|url> [--confirm-download] [--include ids] [--exclude ids] [--force]\n"
             "  /pfp search <query>                     — Search configured decentralized registries\n"
             "  /pfp registry add <url> [--name name] [--trusted] — Add a static registry index\n"
             "  /pfp registry list|remove <name-or-url> — Manage configured registries\n"
@@ -1532,6 +1532,10 @@ def _parse_pfp_flags(tokens: List[str]) -> dict:
             continue
         if tok == "--force":
             data["force"] = True
+            i += 1
+            continue
+        if tok == "--confirm-download":
+            data["confirm_download"] = True
             i += 1
             continue
         if tok == "--replace":

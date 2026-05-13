@@ -5,10 +5,9 @@ from __future__ import annotations
 import json
 import hashlib
 import os
-import threading
 import base64
-import subprocess
-import sys
+import shlex
+import uuid
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict
 
@@ -18,35 +17,12 @@ RUNTIME_RESULT_FORMAT = "pawflow.package.runtime.result.v1"
 HOST_CALL_FORMAT = "pawflow.package.runtime.host_call.v1"
 
 
-_bridge_lock = threading.Lock()
-_runtime_bridge = None
-
-
 class PackageRuntimeError(RuntimeError):
     """Raised when a PFP runtime object cannot be safely prepared."""
 
 
-class PackageRuntimeUnavailable(PackageRuntimeError):
-    """Raised until the out-of-process PFP runtime bridge is implemented."""
-
-
-class PackageRuntimeBridge:
-    """Interface for an out-of-process PFP runtime runner."""
-
-    def invoke(self, request: Dict[str, Any]) -> Any:
-        raise NotImplementedError
-
-
-class PythonSubprocessPackageRuntimeBridge(PackageRuntimeBridge):
-    """Run Python package entrypoints as isolated subprocesses.
-
-    The entrypoint receives one JSON `invoke.v1` envelope on stdin and must emit
-    JSON lines on stdout. A `host_call.v1` line is executed through the optional
-    host and answered on stdin; a `result.v1` line terminates the invocation.
-    """
-
-    def __init__(self, host: Any = None):
-        self.host = host
+class RelayPackageRuntimeBridge:
+    """Run package entrypoints inside the conversation default relay."""
 
     def invoke(self, request: Dict[str, Any]) -> Any:
         if not isinstance(request, dict) or request.get("format") != RUNTIME_INVOKE_FORMAT:
@@ -55,140 +31,261 @@ class PythonSubprocessPackageRuntimeBridge(PackageRuntimeBridge):
         runtime = str(package.get("runtime") or "python")
         if runtime != "python":
             raise PackageRuntimeError(f"unsupported PFP runtime: {runtime}")
-        entrypoint_path = Path(str(package.get("entrypoint_path") or "")).resolve()
-        content_dir = Path(str(package.get("content_dir") or "")).resolve()
-        try:
-            entrypoint_path.relative_to(content_dir)
-        except ValueError as exc:
-            raise PackageRuntimeError("PFP subprocess entrypoint escapes content directory") from exc
-        if not entrypoint_path.is_file():
-            raise PackageRuntimeError("PFP subprocess entrypoint is missing")
+        runner = str(package.get("runner") or "")
+        if runner != "python":
+            raise PackageRuntimeError(f"unsupported PFP runtime runner: {runner}")
 
-        command = [sys.executable, str(entrypoint_path)]
-        if self.host is None:
-            return self._invoke_one_shot(command, request, content_dir)
-
-        proc = subprocess.Popen(
-            command,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            cwd=str(content_dir),
-            env=_subprocess_env(request),
+        relay = self._resolve_relay(request)
+        relay_root = self._relay_package_root(package)
+        self._deploy_package(relay, package, relay_root)
+        relay_request = self._relay_request(request, relay_root)
+        output_dir = str((relay_request.get("context") or {}).get("output_dir") or "")
+        if output_dir:
+            relay.mkdir(output_dir)
+        request_file = f".pawflow/request-{uuid.uuid4().hex}.json"
+        relay.write_file(
+            f"{relay_root}/{request_file}",
+            (json.dumps(relay_request, ensure_ascii=False) + "\n").encode("utf-8"),
         )
-
-        if proc.stdin is None or proc.stdout is None:
-            proc.kill()
-            raise PackageRuntimeError("PFP subprocess pipes are unavailable")
-
-        proc.stdin.write(json.dumps(request, ensure_ascii=False) + "\n")
-        proc.stdin.flush()
-        result = None
-        extra_lines = 0
-        for raw_line in proc.stdout:
-            line = raw_line.strip()
-            if not line:
-                continue
-            extra_lines += 1
-            try:
-                message = json.loads(line)
-            except Exception as exc:
-                proc.kill()
-                proc.wait()
-                raise PackageRuntimeError("PFP subprocess did not return JSON") from exc
-            if not isinstance(message, dict):
-                proc.kill()
-                proc.wait()
-                raise PackageRuntimeError("PFP subprocess returned a non-object JSON line")
-            if message.get("format") == HOST_CALL_FORMAT:
-                self._answer_host_call(proc, message)
-                continue
-            if message.get("format") == RUNTIME_RESULT_FORMAT:
-                result = message
-                break
-            proc.kill()
-            proc.wait()
-            raise PackageRuntimeError("PFP subprocess returned an invalid envelope")
-
-        if result is None:
-            self._raise_process_error(proc, "PFP subprocess did not emit a result envelope")
-
-        if proc.stdin is not None:
-            proc.stdin.close()
-        stdout_tail = proc.stdout.read() if proc.stdout is not None else ""
-        if any(line.strip() for line in stdout_tail.splitlines()):
-            proc.kill()
-            proc.wait()
-            raise PackageRuntimeError("PFP subprocess emitted stdout after result envelope")
-        return_code = proc.wait()
-        if return_code != 0:
-            self._raise_process_error(
-                proc, f"PFP subprocess exited with code {return_code}")
-        if extra_lines < 1:
-            raise PackageRuntimeError("PFP subprocess must emit exactly one JSON result line")
-        return result
-
-    def _invoke_one_shot(self, command: list[str], request: Dict[str, Any],
-                         content_dir: Path) -> Dict[str, Any]:
-        proc = subprocess.run(
-            command,
-            input=json.dumps(request, ensure_ascii=False),
-            text=True,
-            capture_output=True,
-            cwd=str(content_dir),
-            env=_subprocess_env(request),
-            check=False,
-        )
-        if proc.returncode != 0:
-            stderr = (proc.stderr or "").strip()
-            raise PackageRuntimeError(
-                f"PFP subprocess exited with code {proc.returncode}: {stderr}")
-        lines = [line for line in (proc.stdout or "").splitlines() if line.strip()]
+        controller = ".pawflow/pfp_relay_runner.py"
+        entrypoint = package["entrypoint"]
+        command = " ".join([
+            "python3",
+            shlex.quote(controller),
+            shlex.quote(request_file),
+            shlex.quote(entrypoint),
+        ])
+        result = relay.exec(relay_root, command, env=self._controller_env(request))
+        stdout = str((result or {}).get("stdout") or "")
+        stderr = str((result or {}).get("stderr") or "")
+        code = int((result or {}).get("returncode") or 0)
+        if code != 0:
+            detail = f": {stderr.strip()}" if stderr.strip() else ""
+            raise PackageRuntimeError(f"PFP relay runner exited with code {code}{detail}")
+        lines = [line for line in stdout.splitlines() if line.strip()]
         if len(lines) != 1:
-            raise PackageRuntimeError("PFP subprocess must emit exactly one JSON result line")
+            raise PackageRuntimeError("PFP relay runner must emit exactly one JSON result line")
         try:
             result = json.loads(lines[0])
         except Exception as exc:
-            raise PackageRuntimeError("PFP subprocess did not return JSON") from exc
+            raise PackageRuntimeError("PFP relay runner did not return JSON") from exc
         if not isinstance(result, dict) or result.get("format") != RUNTIME_RESULT_FORMAT:
-            raise PackageRuntimeError("PFP subprocess returned an invalid result envelope")
+            raise PackageRuntimeError("PFP relay runner returned an invalid result envelope")
+        self._copy_result_artifacts(relay, relay_request, result)
         return result
 
-    def _answer_host_call(self, proc: subprocess.Popen, request: Dict[str, Any]) -> None:
-        if self.host is None:
-            raise PackageRuntimeError("PFP subprocess host-call requested without a host")
-        if proc.stdin is None:
-            raise PackageRuntimeError("PFP subprocess stdin is unavailable")
+    def _resolve_relay(self, request: Dict[str, Any]) -> Any:
+        context = request.get("context") or {}
+        user_id = str(context.get("user_id") or "")
+        conversation_id = str(context.get("conversation_id") or "")
+        agent_name = str(context.get("agent_name") or "")
+        if not user_id or not conversation_id:
+            raise PackageRuntimeError("PFP runtime requires user_id and conversation_id to resolve the default relay")
+        from core.relay_bindings import get_default
+        relay_id = get_default(conversation_id, agent=agent_name) or ""
+        if not relay_id:
+            raise PackageRuntimeError("PFP runtime requires a default relay for this conversation")
+        from core.service_registry import ServiceRegistry
+        relay = ServiceRegistry.get_instance().resolve(relay_id, user_id=user_id, conv_id=conversation_id)
+        if relay is None:
+            raise PackageRuntimeError(f"PFP default relay is not available: {relay_id}")
+        if not hasattr(relay, "exec") or not hasattr(relay, "write_file"):
+            raise PackageRuntimeError(f"PFP default relay does not support runtime execution: {relay_id}")
+        return relay
+
+    def _relay_package_root(self, package: Dict[str, Any]) -> str:
+        package_id = _safe_cache_name(str(package.get("package") or "package"))
+        version = _safe_cache_name(str(package.get("version") or "0"))
+        digest = str(package.get("hash") or "").replace("sha256:", "")[:16] or "dev"
+        return f".pawflow/pfp/packages/{package_id}@{version}-{digest}"
+
+    def _deploy_package(self, relay: Any, package: Dict[str, Any], relay_root: str) -> None:
+        content_dir = Path(str(package.get("content_dir") or "")).resolve()
+        if not content_dir.is_dir():
+            raise PackageRuntimeError("PFP package content directory is missing")
+        relay.mkdir(f"{relay_root}/.pawflow")
+        relay.write_file(f"{relay_root}/.pawflow/pfp_relay_runner.py", _RELAY_RUNNER.encode("utf-8"))
+        sdk_source = Path(__file__).resolve().parents[1] / "docker" / "pawflow_sdk" / "pawflow.py"
+        relay.mkdir(f"{relay_root}/.pawflow/sdk")
+        relay.write_file(f"{relay_root}/.pawflow/sdk/pawflow.py", sdk_source.read_bytes())
+        for path in sorted(content_dir.rglob("*")):
+            if not path.is_file():
+                continue
+            rel = path.relative_to(content_dir).as_posix()
+            relay.write_file(f"{relay_root}/{rel}", path.read_bytes())
+
+    def _relay_request(self, request: Dict[str, Any], relay_root: str) -> Dict[str, Any]:
+        copied = json.loads(json.dumps(request, ensure_ascii=False))
+        context = copied.setdefault("context", {})
+        if context.get("output_dir"):
+            context["server_output_dir"] = context["output_dir"]
+            context["output_dir"] = f"{relay_root}/.pawflow/artifacts/{uuid.uuid4().hex}"
+        return copied
+
+    def _controller_env(self, request: Dict[str, Any]) -> Dict[str, str]:
+        env = _subprocess_env(request)
+        from core.handlers._fs_base import get_tool_relay_env
+        env.update(get_tool_relay_env())
+        env["PAWFLOW_PFP_RELAY_RUNNER"] = "1"
+        env["PYTHONPATH"] = ".pawflow/sdk"
+        env["PAWFLOW_PFP_SDK_PATH"] = ".pawflow/sdk"
+        context = request.get("context") or {}
+        env["PAWFLOW_USER_ID"] = str(context.get("user_id") or "")
+        env["PAWFLOW_CONVERSATION_ID"] = str(context.get("conversation_id") or "")
+        env["PAWFLOW_AGENT_NAME"] = str(context.get("agent_name") or "")
+        return env
+
+    def _copy_result_artifacts(self, relay: Any, request: Dict[str, Any],
+                               result: Dict[str, Any]) -> None:
+        context = request.get("context") or {}
+        relay_output_dir = str(context.get("output_dir") or "")
+        server_output_dir = str(context.get("server_output_dir") or "")
+        if not relay_output_dir or not server_output_dir:
+            return
+        artifact = _artifact_from_result(result)
+        if not artifact:
+            return
+        rel = _safe_artifact_relpath(str(artifact.get("path") or ""))
+        data = relay.read_file(f"{relay_output_dir}/{rel}")
+        target = (Path(server_output_dir).resolve() / rel).resolve()
         try:
-            payload = {"format": RUNTIME_RESULT_FORMAT, "ok": True,
-                       "result": self.host.handle_host_call(request)}
-        except Exception as exc:
-            payload = {"format": RUNTIME_RESULT_FORMAT, "ok": False, "error": str(exc)}
-        proc.stdin.write(json.dumps(payload, ensure_ascii=False) + "\n")
-        proc.stdin.flush()
-
-    def _raise_process_error(self, proc: subprocess.Popen, prefix: str) -> None:
-        stderr = ""
-        if proc.stderr is not None:
-            stderr = proc.stderr.read().strip()
-        code = proc.wait()
-        detail = f": {stderr}" if stderr else ""
-        if code not in (None, 0) and "exited with code" not in prefix:
-            prefix = f"{prefix} (exit code {code})"
-        raise PackageRuntimeError(f"{prefix}{detail}")
+            target.relative_to(Path(server_output_dir).resolve())
+        except ValueError as exc:
+            raise PackageRuntimeError("PFP media artifact escapes server output_dir") from exc
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
 
 
-def set_runtime_bridge(bridge: PackageRuntimeBridge | None) -> None:
-    """Install or clear the process-wide PFP runtime bridge."""
-    global _runtime_bridge
-    with _bridge_lock:
-        _runtime_bridge = bridge
+_RELAY_RUNNER = r'''
+import json
+import os
+import subprocess
+import sys
+import threading
+
+RUNTIME_INVOKE_FORMAT = "pawflow.package.runtime.invoke.v1"
+RUNTIME_RESULT_FORMAT = "pawflow.package.runtime.result.v1"
+HOST_CALL_FORMAT = "pawflow.package.runtime.host_call.v1"
 
 
-def get_runtime_bridge() -> PackageRuntimeBridge | None:
-    with _bridge_lock:
-        return _runtime_bridge
+def _load_request(path):
+    with open(path, "r", encoding="utf-8") as handle:
+        request = json.load(handle)
+    if not isinstance(request, dict) or request.get("format") != RUNTIME_INVOKE_FORMAT:
+        raise RuntimeError("invalid PFP invocation envelope")
+    return request
+
+
+def _child_env():
+    blocked = {
+        "PAWFLOW_TOOL_RELAY_URL",
+        "PAWFLOW_TOOL_RELAY_TOKEN",
+        "PAWFLOW_PFP_RELAY_RUNNER",
+    }
+    env = {k: v for k, v in os.environ.items() if k not in blocked}
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONPATH"] = os.environ.get("PAWFLOW_PFP_SDK_PATH", ".pawflow/sdk")
+    return env
+
+
+def _host_response(invocation, host_call):
+    try:
+        import pawflow
+        response = pawflow._request(
+            "execute_pfp_host_call",
+            invocation=invocation,
+            host_call=host_call,
+        )
+        if isinstance(response, dict) and response.get("format") == RUNTIME_RESULT_FORMAT:
+            return response
+        return {"format": RUNTIME_RESULT_FORMAT, "ok": True, "result": response}
+    except Exception as exc:
+        return {"format": RUNTIME_RESULT_FORMAT, "ok": False, "error": str(exc)}
+
+
+def _emit_result(envelope):
+    print(json.dumps(envelope, ensure_ascii=False), flush=True)
+
+
+def main():
+    if len(sys.argv) != 3:
+        raise RuntimeError("usage: pfp_relay_runner.py <request.json> <entrypoint.py>")
+    request = _load_request(sys.argv[1])
+    entrypoint = sys.argv[2]
+    proc = subprocess.Popen(
+        [sys.executable, entrypoint],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        env=_child_env(),
+    )
+    stderr_chunks = []
+
+    def _read_stderr():
+        if proc.stderr is None:
+            return
+        for chunk in proc.stderr:
+            stderr_chunks.append(chunk)
+
+    threading.Thread(target=_read_stderr, daemon=True).start()
+    assert proc.stdin is not None
+    assert proc.stdout is not None
+    proc.stdin.write(json.dumps(request, ensure_ascii=False) + "\n")
+    proc.stdin.flush()
+    results = []
+    invalid_output = []
+    for line in proc.stdout:
+        text = line.strip()
+        if not text:
+            continue
+        try:
+            envelope = json.loads(text)
+        except Exception:
+            invalid_output.append(text)
+            continue
+        if not isinstance(envelope, dict):
+            invalid_output.append(text)
+            continue
+        fmt = envelope.get("format")
+        if fmt == HOST_CALL_FORMAT:
+            proc.stdin.write(json.dumps(_host_response(request, envelope), ensure_ascii=False) + "\n")
+            proc.stdin.flush()
+            continue
+        if fmt == RUNTIME_RESULT_FORMAT:
+            results.append(envelope)
+            continue
+        invalid_output.append(text)
+    code = proc.wait()
+    if code != 0 and not results:
+        detail = "".join(stderr_chunks).strip()
+        _emit_result({
+            "format": RUNTIME_RESULT_FORMAT,
+            "ok": False,
+            "error": f"PFP entrypoint exited with code {code}" + (f": {detail}" if detail else ""),
+        })
+        return
+    if invalid_output:
+        _emit_result({
+            "format": RUNTIME_RESULT_FORMAT,
+            "ok": False,
+            "error": "PFP entrypoint emitted non-runtime stdout",
+        })
+        return
+    if len(results) != 1:
+        _emit_result({
+            "format": RUNTIME_RESULT_FORMAT,
+            "ok": False,
+            "error": "PFP entrypoint must emit exactly one result envelope",
+        })
+        return
+    _emit_result(results[0])
+
+
+if __name__ == "__main__":
+    main()
+'''
 
 
 def prepare_runtime_entrypoint(runtime: Dict[str, Any],
@@ -224,6 +321,9 @@ def prepare_runtime_entrypoint(runtime: Dict[str, Any],
     if expected_hash and actual_hash != expected_hash and not bool(installed_from.get("dev") or runtime.get("dev")):
         raise PackageRuntimeError(
             f"PFP runtime entrypoint hash mismatch for {package}:{object_id}")
+    runner = str(runtime.get("runner") or "").strip()
+    if runner != "python":
+        raise PackageRuntimeError(f"unsupported PFP runtime runner: {runner}")
 
     return {
         "package": package,
@@ -234,7 +334,7 @@ def prepare_runtime_entrypoint(runtime: Dict[str, Any],
         "entrypoint": entrypoint,
         "entrypoint_path": str(entrypoint_path),
         "hash": actual_hash,
-        "runner": str(runtime.get("runner") or ""),
+        "runner": runner,
         "dependencies": _list_value(runtime.get("dependencies")),
         "allowed_tools": _list_value(runtime.get("allowed_tools")),
         "allowed_services": _list_value(runtime.get("allowed_services")),
@@ -434,37 +534,7 @@ def invoke_task(runtime: Dict[str, Any], installed_from: Dict[str, Any],
 
 
 def _invoke_bridge(request: Dict[str, Any]) -> Any:
-    bridge = get_runtime_bridge()
-    if bridge is None:
-        bridge = _runtime_bridge_from_invocation(request)
-    if bridge is None:
-        raise PackageRuntimeUnavailable(
-            "PFP runtime bridge is not implemented yet for "
-            f"{request['package']['package']}:{request['package']['object_id']}")
-    return bridge.invoke(request)
-
-
-def _runtime_bridge_from_invocation(request: Dict[str, Any]) -> PackageRuntimeBridge | None:
-    package = request.get("package") if isinstance(request, dict) else {}
-    runner = str((package or {}).get("runner") or "").strip()
-    if not runner:
-        return None
-    if runner == "python_subprocess":
-        return PythonSubprocessPackageRuntimeBridge()
-    if runner == "python_subprocess_host":
-        return PythonSubprocessPackageRuntimeBridge(host=_default_runtime_host(request))
-    raise PackageRuntimeError(f"unsupported PFP runtime runner: {runner}")
-
-
-def _default_runtime_host(request: Dict[str, Any]) -> PackageRuntimeHost:
-    from core.tool_registry import ToolRegistry
-    from core.service_registry import ServiceRegistry
-
-    return runtime_host_from_invocation(
-        request,
-        tool_registry=ToolRegistry._live_registry,
-        service_registry=ServiceRegistry.get_instance(),
-    )
+    return RelayPackageRuntimeBridge().invoke(request)
 
 
 def _subprocess_env(request: Dict[str, Any]) -> Dict[str, str]:
@@ -633,6 +703,23 @@ def _target_ref(target: Any) -> str:
             return f"{package_ref}/{object_ref}"
         return name
     return ""
+
+
+def _artifact_from_result(result: Dict[str, Any]) -> Dict[str, Any]:
+    payload = result.get("result") if isinstance(result, dict) else None
+    if isinstance(payload, dict) and isinstance(payload.get("artifact"), dict):
+        return payload["artifact"]
+    return {}
+
+
+def _safe_artifact_relpath(value: str) -> str:
+    rel = str(value or "").replace("\\", "/").strip("/")
+    if not rel:
+        raise PackageRuntimeError("PFP media artifact.path is required")
+    parsed = PurePosixPath(rel)
+    if parsed.is_absolute() or any(part in {"", ".", ".."} for part in parsed.parts):
+        raise PackageRuntimeError("PFP media artifact.path must be relative to output_dir")
+    return rel
 
 
 def _flowfile_descriptor(flowfile: Any) -> Dict[str, Any]:

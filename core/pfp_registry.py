@@ -151,7 +151,8 @@ def url_for_ref(ref: str, *, user_id: str) -> str:
     return ref
 
 
-def download_pfp(url: str, *, expected_sha256: str = "") -> Dict[str, Any]:
+def download_pfp(url: str, *, expected_sha256: str = "",
+                 expected_size: int = 0) -> Dict[str, Any]:
     """Download a .pfp artifact to the local runtime cache."""
     clean_url = _validate_pfp_url(url)
     response = requests.get(
@@ -162,8 +163,8 @@ def download_pfp(url: str, *, expected_sha256: str = "") -> Dict[str, Any]:
     if response.status_code >= 400:
         raise PfpRegistryError(f"Package fetch failed {response.status_code}: {clean_url}")
     content = response.content
-    if len(content) > 5_000_000:
-        raise PfpRegistryError("Package exceeds download size cap")
+    if expected_size and len(content) != expected_size:
+        raise PfpRegistryError("Downloaded package size does not match registry")
     digest = "sha256:" + hashlib.sha256(content).hexdigest()
     if expected_sha256 and _normalize_sha(expected_sha256) != digest:
         raise PfpRegistryError("Downloaded package SHA-256 does not match registry")
@@ -173,11 +174,18 @@ def download_pfp(url: str, *, expected_sha256: str = "") -> Dict[str, Any]:
     tmp = target.with_suffix(".pfp.tmp")
     tmp.write_bytes(content)
     os.replace(tmp, target)
-    return {"ok": True, "path": str(target), "sha256": digest, "url": clean_url}
+    return {
+        "ok": True,
+        "path": str(target),
+        "sha256": digest,
+        "url": clean_url,
+        "package_size": len(content),
+    }
 
 
 def resolve_package_path(ref: str, *, user_id: str,
-                         expected_sha256: str = "") -> Dict[str, Any]:
+                         expected_sha256: str = "",
+                         confirm_download: bool = False) -> Dict[str, Any]:
     """Return a local .pfp path for a local path, URL, or registry ref."""
     value = str(ref or "").strip()
     if not value:
@@ -185,13 +193,50 @@ def resolve_package_path(ref: str, *, user_id: str,
     local = Path(value).expanduser()
     if local.exists():
         return {"path": str(local), "downloaded": False, "sha256": "", "url": ""}
-    expected = expected_sha256 or expected_sha_for_ref(value, user_id=user_id)
-    url = url_for_ref(value, user_id=user_id)
+    preview = preview_package_download(
+        value, user_id=user_id, expected_sha256=expected_sha256)
+    if preview["remote"] and not confirm_download:
+        return preview
+    expected = preview.get("sha256", "")
+    url = preview.get("url", value)
     if _is_http_url(url):
-        downloaded = download_pfp(url, expected_sha256=expected)
+        downloaded = download_pfp(
+            url,
+            expected_sha256=expected,
+            expected_size=int(preview.get("package_size") or 0),
+        )
         downloaded["downloaded"] = True
+        downloaded["confirmed"] = True
         return downloaded
     return {"path": value, "downloaded": False, "sha256": "", "url": ""}
+
+
+def preview_package_download(ref: str, *, user_id: str,
+                             expected_sha256: str = "") -> Dict[str, Any]:
+    """Return remote package metadata without downloading the .pfp payload."""
+    value = str(ref or "").strip()
+    if not value:
+        raise PfpRegistryError("package path or ref is required")
+    if _is_http_url(value):
+        size = _head_package_size(value)
+        sha = _normalize_sha(expected_sha256) if expected_sha256 else ""
+        return _download_confirmation(value, value, sha, size, source="url")
+    for reg in _read_registries(user_id).get("registries", []):
+        index = fetch_registry_index(reg.get("url", ""))
+        for item in index.get("packages") or []:
+            row = _normalize_package_row(item, reg, index)
+            if value in {row.get("ref"), row.get("package")}:
+                sha = _normalize_sha(expected_sha256) if expected_sha256 else row.get("sha256", "")
+                return _download_confirmation(
+                    value,
+                    row.get("url", ""),
+                    sha,
+                    int(row.get("package_size") or 0),
+                    source="registry",
+                    registry=row.get("registry", ""),
+                    registry_url=row.get("registry_url", ""),
+                )
+    return {"path": value, "downloaded": False, "remote": False, "sha256": "", "url": ""}
 
 
 def _validate_registry_index(data: Dict[str, Any]) -> None:
@@ -210,6 +255,7 @@ def _validate_registry_index(data: Dict[str, Any]) -> None:
         if not item.get("package") or not item.get("version") or not item.get("pfp_url"):
             raise PfpRegistryError("Registry package entries require package, version, and pfp_url")
         _validate_pfp_url(str(item.get("pfp_url") or ""))
+        _package_size_from_item(item)
         if item.get("sha256"):
             _normalize_sha(str(item.get("sha256")))
 
@@ -228,10 +274,82 @@ def _normalize_package_row(item: Dict[str, Any], reg: Dict[str, Any],
         "description": str(item.get("description") or ""),
         "url": str(item.get("pfp_url") or ""),
         "sha256": _normalize_sha(str(item.get("sha256") or "")) if item.get("sha256") else "",
+        "package_size": _package_size_from_item(item),
+        "size_display": _format_bytes(_package_size_from_item(item)),
         "developer_key": str(item.get("developer_key") or ""),
         "tags": item.get("tags") if isinstance(item.get("tags"), list) else [],
         "objects": item.get("objects") if isinstance(item.get("objects"), list) else [],
     }
+
+
+def _package_size_from_item(item: Dict[str, Any]) -> int:
+    raw = item.get("package_size", item.get("size", item.get("bytes")))
+    try:
+        size = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise PfpRegistryError("Registry package entries require package_size") from exc
+    if size < 0:
+        raise PfpRegistryError("Registry package_size must be non-negative")
+    return size
+
+
+def _download_confirmation(ref: str, url: str, sha256: str, package_size: int,
+                           *, source: str, registry: str = "",
+                           registry_url: str = "") -> Dict[str, Any]:
+    if package_size <= 0:
+        raise PfpRegistryError("Remote package size is required before download")
+    return {
+        "ok": False,
+        "remote": True,
+        "downloaded": False,
+        "requires_confirmation": True,
+        "confirmation": "download_package",
+        "message": (
+            f"Package {ref} is {_format_bytes(package_size)}. "
+            "Confirm download to continue."
+        ),
+        "ref": ref,
+        "url": _validate_pfp_url(url),
+        "sha256": sha256,
+        "package_size": package_size,
+        "size_display": _format_bytes(package_size),
+        "source": source,
+        "registry": registry,
+        "registry_url": registry_url,
+    }
+
+
+def _head_package_size(url: str) -> int:
+    clean_url = _validate_pfp_url(url)
+    response = requests.head(
+        clean_url,
+        headers={"User-Agent": USER_AGENT},
+        allow_redirects=True,
+        timeout=REQUEST_TIMEOUT_SECONDS,
+    )
+    if response.status_code >= 400:
+        raise PfpRegistryError(f"Package metadata fetch failed {response.status_code}: {clean_url}")
+    raw = response.headers.get("Content-Length") or ""
+    if not raw:
+        raise PfpRegistryError("Remote package must expose Content-Length before download")
+    try:
+        size = int(raw)
+    except ValueError as exc:
+        raise PfpRegistryError("Remote package Content-Length is not valid") from exc
+    if size <= 0:
+        raise PfpRegistryError("Remote package Content-Length is required before download")
+    return size
+
+
+def _format_bytes(size: int) -> str:
+    units = ["B", "KiB", "MiB", "GiB", "TiB"]
+    value = float(max(size, 0))
+    for unit in units:
+        if value < 1024 or unit == units[-1]:
+            if unit == "B":
+                return f"{int(value)} {unit}"
+            return f"{value:.1f} {unit}"
+        value /= 1024
 
 
 def _read_registries(user_id: str) -> Dict[str, Any]:

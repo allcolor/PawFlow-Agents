@@ -93,11 +93,11 @@ def import_marketplace_skill(source: str = "", ref: str = "", *,
         skill_data["name"] = name
     skill_name = skill_data["name"]
 
-    from core.skill_review_bindings import (
+    from core.review_bindings import (
         attach_review_metadata, review_for_write, review_now,
     )
     review = review_now(
-        skill_data, user_id=user_id, conversation_id=conversation_id,
+        skill_data, operation="import", user_id=user_id, conversation_id=conversation_id,
         package_files=package_files)
     blocked = not bool(review.get("allowed", False)) or review.get("risk") == "block"
     requires_human_review = bool(review.get("requires_human_review", False))

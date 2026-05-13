@@ -18,7 +18,7 @@
       "name": "example-text-cleaner",
       "service_id": "example-text-cleaner",
       "path": "content/service-providers/text/provider.py",
-      "runner": "python_subprocess_host",
+      "runner": "python",
       "description": "Normalize text through examples.text-core/tool:normalize_text",
       "provides": ["text.normalization"],
       "operations": {

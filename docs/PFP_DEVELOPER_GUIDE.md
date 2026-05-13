@@ -25,7 +25,7 @@ generate_image(prompt="a cyberpunk cat", image_service="my-image-provider", widt
 /pfp dev-unload dev.my-image-provider
 ```
 
-`dev-load` defaults to conversation scope when a conversation id is available. It records the package as `dev: true`, registers the selected runtime objects, and points their `content_dir` directly at the `.pfpdir` source tree. Python subprocess runners read the entrypoint from that source tree on every invocation, so code edits are picked up without rebuilding.
+`dev-load` defaults to conversation scope when a conversation id is available. It records the package as `dev: true`, registers the selected runtime objects, and points their `content_dir` directly at the `.pfpdir` source tree. The relay Python runner reads the entrypoint from that source tree on every invocation, so code edits are picked up without rebuilding.
 
 Re-run `dev-load --replace` when you change manifest-level data: `service_id`, `operations`, `provides`, `secrets`, `allowed_tools`, `allowed_services`, `requires`, object ids, or paths.
 
@@ -48,7 +48,7 @@ Re-run `dev-load --replace` when you change manifest-level data: `service_id`, `
       "name": "my-image-provider",
       "service_id": "my-image-provider",
       "path": "content/service-providers/image/provider.py",
-      "runner": "python_subprocess",
+      "runner": "python",
       "provides": ["media.image_generation"],
       "operations": {
         "generate": {"description": "Generate an image from a prompt"}
@@ -72,7 +72,7 @@ Rules:
 - `package` is the durable package id used by install, update, and unload.
 - Object ids must stay stable, for example `service_provider:image`.
 - `service_id` is the service name users pass to media tools, for example `image_service="my-image-provider"`.
-- `runner` must be explicit for executable objects. Use `python_subprocess` for simple one-shot execution and `python_subprocess_host` when the entrypoint needs brokered host calls through `pfp.call_tool(...)` or `pfp.call_service(...)`.
+- `runner` must be explicit for executable objects. Use `python`; the entrypoint runs in the conversation's default relay, so it can use relay-local filesystem paths and relay-local binaries directly. Calls back into PawFlow tools/services are brokered through `pfp.call_tool(...)` and `pfp.call_service(...)` and require matching grants.
 - Required secrets are declared by logical package-local name and injected as environment variables at runtime. Secret values never go into `pfp.json`.
 
 ## Image Provider Entrypoint
@@ -213,9 +213,60 @@ Unload the dev package when finished:
 
 `dev-unload` removes installed runtime objects from the selected scope. It does not delete the source directory and does not delete PawFlow secrets.
 
+## Relay Binary Tools
+
+Runtime code executes in the relay, not on the PawFlow server. If the relay image already contains the binary you need, call it directly. For example, a tool that wraps `tail` needs only an entrypoint:
+
+```text
+tail-tool.pfpdir/
+  pfp.json
+  content/
+    tools/
+      tail_file/
+        main.py
+```
+
+```json
+{
+  "id": "tool:tail_file",
+  "type": "tool",
+  "name": "tail_file",
+  "path": "content/tools/tail_file/main.py",
+  "runner": "python",
+  "parameters": {
+    "path": {"type": "string", "required": true},
+    "lines": {"type": "integer", "default": 20}
+  }
+}
+```
+
+```python
+import subprocess
+
+from pawflow import pfp
+
+args = pfp.payload["arguments"]
+path = str(args["path"])
+lines = int(args.get("lines") or 20)
+
+proc = subprocess.run(
+    ["tail", "-n", str(lines), path],
+    text=True,
+    capture_output=True,
+)
+
+if proc.returncode != 0:
+    pfp.error(proc.stderr.strip() or "tail failed")
+    raise SystemExit(1)
+
+pfp.result(proc.stdout)
+```
+
+If the binary is not part of the relay image, ship a Linux relay build inside `content/bin/linux-amd64/` and call it by package-relative path. Inspect exposes the package size and content size before install; PawFlow does not reject a package just because it carries a large binary.
+
 ## Tool Or Service Dependencies
 
-If a package runtime object calls PawFlow host tools or services, use `python_subprocess_host` and declare every grant.
+If a package runtime object calls PawFlow tools or services through the runtime SDK, use `python` and declare every grant. These grants are not required for direct relay-local filesystem or binary access.
 
 ```json
 {
@@ -223,7 +274,7 @@ If a package runtime object calls PawFlow host tools or services, use `python_su
   "type": "tool",
   "name": "normalize-and-generate",
   "path": "content/tools/normalize-and-generate/main.py",
-  "runner": "python_subprocess_host",
+  "runner": "python",
   "allowed_services": [
     {"name": "my-image-provider"}
   ],
@@ -276,6 +327,6 @@ Release mode differs from dev mode:
 - `PFP service operation is not declared`: add the operation to `operations` in `pfp.json` or call an existing operation.
 - `PFP media artifact.path is required`: return `pfp.artifact(...)` with a non-empty relative path.
 - `PFP media artifact escapes output_dir`: do not use absolute paths or `..` in artifact paths.
-- `PFP subprocess must emit exactly one JSON result line`: send debug output to stderr, not stdout.
+- `PFP runtime must emit exactly one JSON result line`: send debug output to stderr, not stdout.
 - `PFP secret binding is missing`: add `--secret logical_name=stored_secret_key` to `dev-load` or install.
 - Code edits are not visible: verify you used `dev-load` on a `.pfpdir`; signed installs use copied content and hash checks.

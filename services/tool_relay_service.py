@@ -557,9 +557,44 @@ class ToolRelayService(BaseService):
                 request_id, _tool, _raw_args,
                 user_id, conversation_id, agent_name,
             )
+        elif method == "execute_pfp_host_call":
+            return self._handle_pfp_host_call(
+                request_id,
+                msg.get("invocation", {}),
+                msg.get("host_call", {}),
+                user_id,
+                conversation_id,
+                agent_name,
+            )
         else:
             return {"type": "error", "request_id": request_id,
                     "error": f"Unknown method: {method}"}
+
+    def _handle_pfp_host_call(self, request_id: str, invocation: Dict[str, Any],
+                              host_call: Dict[str, Any], user_id: str,
+                              conversation_id: str, agent_name: str) -> dict:
+        from core import pfp_runtime
+        try:
+            from core.service_registry import ServiceRegistry
+            registry = self._get_registry(user_id, conversation_id, agent_name)
+            host = pfp_runtime.runtime_host_from_invocation(
+                invocation,
+                tool_registry=registry,
+                service_registry=ServiceRegistry.get_instance(),
+            )
+            result = host.handle_host_call(host_call)
+            payload = {
+                "format": pfp_runtime.RUNTIME_RESULT_FORMAT,
+                "ok": True,
+                "result": result,
+            }
+        except Exception as exc:
+            payload = {
+                "format": pfp_runtime.RUNTIME_RESULT_FORMAT,
+                "ok": False,
+                "error": str(exc),
+            }
+        return {"type": "result", "request_id": request_id, "data": payload}
 
     def _get_registry(self, user_id: str = "", conversation_id: str = "",
                        agent_name: str = ""):

@@ -72,7 +72,7 @@ After starting:
    RoyBetty
 5. Tell the user that the bootstrap wizard must replace RoyBetty before finalization.
 6. If the user asks you to help finish the wizard, collect the final Private Gateway key, admin username/password, LLM service id, provider, model, and optional API key. Do not print the passwords or API key back to the terminal.
-7. After finalization, PawFlow creates the persistent Private Gateway, builtin auth gateway, admin user, selected LLM service, summarizer service (`summarizer_service`), skill review service (`skill_review_service`), variables, secrets, `pawflow-agent` deployment, and a starter conversation with `assistant` selected. Client relays are still configured later from webchat.
+7. After finalization, PawFlow creates the persistent Private Gateway, builtin auth gateway, admin user, selected LLM service, summarizer service (`summarizer_service`), variables, secrets, `pawflow-agent` deployment, and a starter conversation with `assistant` selected. Client relays are still configured later from webchat.
 
 Expected final answer:
 - Whether Docker prerequisites passed.

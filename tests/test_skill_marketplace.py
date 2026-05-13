@@ -21,6 +21,26 @@ class _Response:
         return self._payload
 
 
+def _patch_safe_review(monkeypatch):
+    import core.review_bindings as review_bindings
+
+    review = {
+        "risk": "low",
+        "allowed": True,
+        "requires_human_review": False,
+        "findings": [],
+        "reviewer": "test",
+    }
+    metadata = {
+        "hash": "test",
+        "risk": "low",
+        "allowed": True,
+        "requires_human_review": False,
+    }
+    monkeypatch.setattr(review_bindings, "review_now", lambda *args, **kwargs: review)
+    monkeypatch.setattr(review_bindings, "review_for_write", lambda *args, **kwargs: metadata)
+
+
 def test_skill_search_slash_command_parses_source_and_query():
     body = _parse_command(
         "/skill search --source codex github comments",
@@ -77,6 +97,7 @@ def test_import_marketplace_review_only_does_not_create(monkeypatch):
     from core import skill_marketplace
 
     created = []
+    _patch_safe_review(monkeypatch)
 
     def fake_get(url, headers=None):
         if url.endswith("/contents/skills/.curated/review-pr?ref=main"):
@@ -114,6 +135,8 @@ def test_import_marketplace_review_only_does_not_create(monkeypatch):
 
 def test_import_marketplace_omits_binary_assets(monkeypatch):
     from core import skill_marketplace
+
+    _patch_safe_review(monkeypatch)
 
     def fake_get(url, headers=None):
         if url.endswith("/contents/skills/.curated/review-pr?ref=main"):
@@ -161,6 +184,7 @@ def test_import_marketplace_creates_low_risk_skill(monkeypatch):
     from core import skill_marketplace
 
     created = []
+    _patch_safe_review(monkeypatch)
 
     def fake_get(url, headers=None):
         if url.endswith("/contents/skills/.curated/review-pr?ref=main"):

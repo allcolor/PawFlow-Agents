@@ -5,6 +5,14 @@ from unittest.mock import patch, MagicMock
 from core import FlowFile
 
 
+_SAFE_SKILL_REVIEW = {
+    "hash": "test",
+    "risk": "low",
+    "allowed": True,
+    "requires_human_review": False,
+}
+
+
 class TestGlobalScopeBlocked:
     """Verify that global scope writes are blocked from chat actions."""
 
@@ -190,7 +198,8 @@ class TestGlobalScopeBlocked:
             "data": {"prompt": "test"},
         })
         rs = MagicMock()
-        with patch("core.resource_store.ResourceStore.instance", return_value=rs):
+        with patch("core.resource_store.ResourceStore.instance", return_value=rs), \
+                patch("core.review_bindings.review_for_write", return_value=_SAFE_SKILL_REVIEW):
             result = _handle_agent_resource(
                 task, "create_resource", json.loads(ff.get_content()), store,
                 "test_user", ff)
@@ -198,7 +207,10 @@ class TestGlobalScopeBlocked:
         body = json.loads(result[0].get_content())
         assert body == {"ok": True, "scope": "conversation"}
         rs.create.assert_called_once_with(
-            "skill", "conv_skill", "test_user", {"prompt": "test"},
+            "skill", "conv_skill", "test_user", {
+                "prompt": "test",
+                "review": _SAFE_SKILL_REVIEW,
+            },
             conversation_id=conv_id)
         store.delete(conv_id)
 
@@ -233,14 +245,18 @@ class TestPromoteGlobalBlocked:
         handler._user_id = "test_user"
         handler._conversation_id = "test_conv"
         rs = MagicMock()
-        with patch("core.resource_store.ResourceStore.instance", return_value=rs):
+        with patch("core.resource_store.ResourceStore.instance", return_value=rs), \
+                patch("core.review_bindings.review_for_write", return_value=_SAFE_SKILL_REVIEW):
             result = handler.execute({
                 "action": "create", "resource_type": "skill", "name": "user_skill",
                 "data": {"prompt": "test", "scope": "user"},
             })
         assert "(scope: user)" in result
         rs.create.assert_called_once_with(
-            "skill", "user_skill", "test_user", {"prompt": "test"})
+            "skill", "user_skill", "test_user", {
+                "prompt": "test",
+                "review": _SAFE_SKILL_REVIEW,
+            })
 
     def test_manage_resource_agent_create_forces_conversation_scope(self):
         from core.tool_registry import create_default_registry
@@ -253,7 +269,8 @@ class TestPromoteGlobalBlocked:
         handler._conversation_id = "test_conv"
         handler._agent_name = "assistant"
         rs = MagicMock()
-        with patch("core.resource_store.ResourceStore.instance", return_value=rs):
+        with patch("core.resource_store.ResourceStore.instance", return_value=rs), \
+                patch("core.review_bindings.review_for_write", return_value=_SAFE_SKILL_REVIEW):
             result = handler.execute({
                 "action": "create", "resource_type": "skill", "name": "conv_skill",
                 "data": {"prompt": "test", "scope": "global"},
@@ -261,5 +278,5 @@ class TestPromoteGlobalBlocked:
         assert "(scope: conversation)" in result
         rs.create.assert_called_once_with(
             "skill", "conv_skill", "test_user",
-            {"prompt": "test", "_created_by": "assistant"},
+            {"prompt": "test", "_created_by": "assistant", "review": _SAFE_SKILL_REVIEW},
             conversation_id="test_conv")

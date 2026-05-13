@@ -8,6 +8,7 @@ import os
 import base64
 import shlex
 import uuid
+import re
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict
 
@@ -15,6 +16,10 @@ from typing import Any, Dict
 RUNTIME_INVOKE_FORMAT = "pawflow.package.runtime.invoke.v1"
 RUNTIME_RESULT_FORMAT = "pawflow.package.runtime.result.v1"
 HOST_CALL_FORMAT = "pawflow.package.runtime.host_call.v1"
+
+
+def _safe_cache_name(value: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.@+-]", "_", str(value or "")) or "package"
 
 
 class PackageRuntimeError(RuntimeError):

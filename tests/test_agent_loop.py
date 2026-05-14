@@ -1670,6 +1670,211 @@ class TestRandomThought(unittest.TestCase):
         assert last_content != "continue"
         assert store.load_agent_context(sub_id, "worker")[-1]["content"] == last_content
 
+    def test_first_task_poll_creates_missing_subconversation(self):
+        """First task wake creates the isolated sub-conversation before loading context."""
+        from core.conversation_store import ConversationStore
+        from core.poll_scheduler import PollScheduler
+        import threading
+        import time
+
+        store = ConversationStore.instance()
+        scheduler = PollScheduler.instance()
+        parent_id = "task_first_parent"
+        task_id = "t_first"
+        sub_id = f"{parent_id}::task::{task_id}"
+        store.save(parent_id, [{"role": "user", "content": "parent transcript"}],
+                   user_id="testuser")
+        store.set_extra(parent_id, "agent_tasks", {
+            task_id: {
+                "agent": "worker",
+                "task": "start from scratch",
+                "status": "active",
+            },
+        })
+
+        captured = {}
+        task = self._make_task()
+        task._last_task_watchdog = time.time()
+        task._last_thought_watchdog = time.time()
+
+        def _build_poll_context(conversation_id, messages_data, **kwargs):
+            captured["messages_data"] = messages_data
+            captured["kwargs"] = kwargs
+            return {"conversation_id": conversation_id}
+
+        def _streaming_agent_loop(ctx, loop_cid, bus):
+            captured["ctx"] = ctx
+            captured["loop_cid"] = loop_cid
+
+        task._build_poll_context = _build_poll_context
+        task._streaming_agent_loop = _streaming_agent_loop
+        task._active_lock = threading.RLock()
+        task._active_conversations = {}
+        task._active_thoughts = set()
+        task._conv_gen_lock = threading.RLock()
+        task._conv_generation = {}
+
+        scheduler.schedule(parent_id, time.time() - 1, key=sub_id,
+                           reason=f"[agent_task:{task_id}] assigned task (worker)")
+        task._poll_once()
+
+        assert [m["content"] for m in captured["messages_data"]] == ["start from scratch"]
+        assert captured["messages_data"][0]["source"] == {
+            "type": "user",
+            "target_agent": "worker",
+        }
+        assert captured["ctx"]["conversation_id"] == sub_id
+        assert captured["loop_cid"] == sub_id
+
+    def test_task_verify_poll_uses_verification_subconversation(self):
+        """Task verification wakes run in their own sub-conversation."""
+        from core.conversation_store import ConversationStore
+        from core.poll_scheduler import PollScheduler
+        import threading
+        import time
+
+        store = ConversationStore.instance()
+        scheduler = PollScheduler.instance()
+        parent_id = "task_verify_parent"
+        task_id = "t_verify"
+        verify_id = f"{parent_id}::task_verify::{task_id}"
+        store.save(parent_id, [{"role": "user", "content": "parent transcript"}],
+                   user_id="testuser")
+        store.set_extra(parent_id, "agent_tasks", {
+            task_id: {
+                "agent": "worker",
+                "verifier": "reviewer",
+                "task": "finish the implementation",
+                "status": "verifying",
+                "last_result": "done",
+                "max_reschedules": 1,
+                "reschedule_count": 1,
+            },
+        })
+        store.save(verify_id, [{"role": "user", "content": "verify this task"}],
+                   user_id="testuser")
+        store.save_agent_context(verify_id, "worker", [
+            {"role": "user", "content": "worker private context"},
+        ])
+        store.save_agent_context(verify_id, "reviewer", [
+            {"role": "user", "content": "reviewer private context"},
+        ])
+
+        captured = {}
+        task = self._make_task()
+        task._last_task_watchdog = time.time()
+        task._last_thought_watchdog = time.time()
+
+        def _build_poll_context(conversation_id, messages_data, **kwargs):
+            captured["conversation_id"] = conversation_id
+            captured["messages_data"] = messages_data
+            captured["kwargs"] = kwargs
+            return {"conversation_id": conversation_id}
+
+        def _streaming_agent_loop(ctx, loop_cid, bus):
+            captured["ctx"] = ctx
+            captured["loop_cid"] = loop_cid
+
+        task._build_poll_context = _build_poll_context
+        task._streaming_agent_loop = _streaming_agent_loop
+        task._active_lock = threading.RLock()
+        task._active_conversations = {}
+        task._active_thoughts = set()
+        task._conv_gen_lock = threading.RLock()
+        task._conv_generation = {}
+
+        scheduler.schedule(parent_id, time.time() - 1, key=verify_id,
+                           reason=f"[task_verify:{task_id}] verify by reviewer (worker)")
+        task._poll_once()
+
+        assert [m["content"] for m in captured["messages_data"]] == [
+            "reviewer private context", "continue"]
+        assert captured["messages_data"][-1]["source"] == {
+            "type": "user",
+            "target_agent": "reviewer",
+        }
+        assert captured["kwargs"]["preloaded_conversation_id"] == verify_id
+        assert captured["kwargs"]["independent_context"] is True
+        assert captured["ctx"]["conversation_id"] == verify_id
+        assert captured["ctx"]["_independent_context"] is True
+        assert captured["loop_cid"] == verify_id
+        stored_task = store.get_extra(parent_id, "agent_tasks")[task_id]
+        assert stored_task["status"] == "verifying"
+        assert stored_task["reschedule_count"] == 1
+
+    def test_task_verify_poll_preserves_hyphenated_verifier_name(self):
+        """Task verification must not truncate verifier agent names from the schedule reason."""
+        from core.conversation_store import ConversationStore
+        from core.poll_scheduler import PollScheduler
+        import threading
+        import time
+
+        store = ConversationStore.instance()
+        scheduler = PollScheduler.instance()
+        parent_id = "task_verify_hyphen_parent"
+        task_id = "t_verify"
+        verify_id = f"{parent_id}::task_verify::{task_id}"
+        store.save(parent_id, [{"role": "user", "content": "parent transcript"}],
+                   user_id="testuser")
+        store.set_extra(parent_id, "agent_tasks", {
+            task_id: {
+                "agent": "worker",
+                "verifier": "review-bot",
+                "status": "verifying",
+                "last_result": "done",
+            },
+        })
+        store.save(verify_id, [{"role": "user", "content": "verify this task"}],
+                   user_id="testuser")
+        store.save_agent_context(verify_id, "review-bot", [
+            {"role": "user", "content": "reviewer private context"},
+        ])
+
+        captured = {}
+        task = self._make_task()
+        task._last_task_watchdog = time.time()
+        task._last_thought_watchdog = time.time()
+
+        def _build_poll_context(conversation_id, messages_data, **kwargs):
+            captured["messages_data"] = messages_data
+            captured["kwargs"] = kwargs
+            return {"conversation_id": conversation_id}
+
+        def _streaming_agent_loop(ctx, loop_cid, bus):
+            captured["ctx"] = ctx
+            captured["loop_cid"] = loop_cid
+
+        task._build_poll_context = _build_poll_context
+        task._streaming_agent_loop = _streaming_agent_loop
+        task._active_lock = threading.RLock()
+        task._active_conversations = {}
+        task._active_thoughts = set()
+        task._conv_gen_lock = threading.RLock()
+        task._conv_generation = {}
+
+        scheduler.schedule(parent_id, time.time() - 1, key=verify_id,
+                           reason=f"[task_verify:{task_id}] verify by review-bot (worker)")
+        task._poll_once()
+
+        assert [m["content"] for m in captured["messages_data"]] == [
+            "reviewer private context", "continue"]
+        assert captured["messages_data"][-1]["source"] == {
+            "type": "user",
+            "target_agent": "review-bot",
+        }
+        assert captured["ctx"]["conversation_id"] == verify_id
+        assert captured["loop_cid"] == verify_id
+
+    def test_extract_agent_from_reasons_accepts_dotted_and_hyphenated_names(self):
+        task = self._make_task()
+
+        assert task._extract_agent_from_reasons([
+            "[task_verify:t_verify] verify by review-bot (worker)",
+        ]) == "review-bot"
+        assert task._extract_agent_from_reasons([
+            "[scheduled:agent.v2] continue later",
+        ]) == "agent.v2"
+
     def _setup_agent(self, conv_id):
         """Configure an active agent for the conversation."""
         from core.conversation_store import ConversationStore
@@ -1969,6 +2174,7 @@ class TestImageServiceResolution(unittest.TestCase):
         from tasks.ai.agent_loop import AgentLoopTask
         task = AgentLoopTask.__new__(AgentLoopTask)
         mock_svc = MagicMock()
+        mock_svc.generate = MagicMock()
 
         with patch.object(task, '_discover_media_services', return_value=[
             ("pixazo", "pixazoImageGeneration", "global"),
@@ -1982,7 +2188,7 @@ class TestImageServiceResolution(unittest.TestCase):
 
         assert svc is mock_svc
         assert err is None
-        resolve.assert_called_once_with("pixazo", "user1")
+        resolve.assert_called_once_with("pixazo", "user1", "conv1")
 
     def test_make_image_resolver_with_agent_pref(self):
         """Per-agent preference selects the right service."""

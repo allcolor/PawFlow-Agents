@@ -43,18 +43,22 @@ def _strip_context_ack(text: str) -> str:
     return text
 
 
-def _preempt_rescue_requires_retrigger(message, provider_completed_at: float, provider: str = "") -> bool:
+def _preempt_rescue_requires_retrigger(
+    message, provider_completed_at: float, provider: str = "",
+    preempt_proven_handled: bool = False,
+) -> bool:
     """Return True when a drained preempt rescue still needs a real turn.
 
     Providers suppress a rescue only after their own session log proves the
-    preempt was accepted into the completed provider turn. At that point the
-    PendingQueue copy is bookkeeping, regardless of text vs multimodal shape.
+    preempt was handled by the completed provider turn. A provider timestamp
+    alone only proves the old turn ended, not that the preempting message was
+    answered.
     """
     if getattr(message, "_pending_source", "") != "preempt_rescue":
         return True
     if not provider_completed_at:
         return True
-    return False
+    return not preempt_proven_handled
 
 
 def _apply_bg_results(messages, conversation_id):
@@ -2015,8 +2019,9 @@ class AgentCoreMixin:
                             logger.info("[agent:%s] waiting for background tasks before exit",
                                         conversation_id[:8])
                             emitter.on_status("Waiting for background tasks...")
-                            _bg_mod.wait_pending(conversation_id, timeout=120,
-                                                 cancel_check=emitter.check_cancelled)
+                            _bg_mod.wait_pending(
+                                conversation_id,
+                                cancel_check=emitter.check_cancelled)
                             _apply_bg_results(messages, conversation_id)
                             continue
 
@@ -2355,7 +2360,8 @@ class AgentCoreMixin:
             _unhandled_user_msgs = [
                 m for m in _new_user_msgs
                 if _preempt_rescue_requires_retrigger(
-                    m, _provider_response_completed_at, _client_provider)
+                    m, _provider_response_completed_at, _client_provider,
+                    _had_preempts)
             ]
             if _new_user_msgs and (not _had_preempts or _unhandled_user_msgs):
                 logger.info("[agent:%s] %d truly new message(s) arrived during last turn — re-triggering",

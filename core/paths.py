@@ -11,10 +11,11 @@ Repository scopes:
   - conv   (user_id, conv_id)     : visible in this conversation only
 """
 
+import os
 from pathlib import Path
 
 # ── Root ──────────────────────────────────────────────────────────
-DATA_DIR = Path("data")
+DATA_DIR = Path(os.environ.get("PAWFLOW_DATA_DIR") or "data")
 REPOSITORY_DIR = DATA_DIR / "repository"
 RUNTIME_DIR = DATA_DIR / "runtime"
 SYSTEM_DIR = DATA_DIR / "system"

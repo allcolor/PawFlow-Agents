@@ -757,7 +757,7 @@ class LLMClient(
         except Exception:
             logger.debug("exception suppressed", exc_info=True)
 
-    def send_user_message(self, text: str, attachments: list = None):
+    def send_user_message(self, text: str, attachments: list = None, **kwargs):
         """Provider-agnostic preempt entrypoint.
 
         Each provider's mixin defines its own `_<cli>_send_user_message`.
@@ -776,6 +776,8 @@ class LLMClient(
             return False
         if fn is None:
             return False
+        if self.provider == "codex-app-server":
+            return fn(text, attachments, **kwargs)
         return fn(text, attachments)
 
     @classmethod

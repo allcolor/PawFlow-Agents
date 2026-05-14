@@ -37,6 +37,16 @@ class ExecuteFlowTask(BaseTask):
         self.pass_attributes = self.config.get('pass_attributes', True)
         self.parameter_mapping = self.config.get('parameter_mapping', {})
         self.port_mapping = self.config.get('port_mapping', {})
+        self._runtime_context: Dict[str, str] = {}
+
+    def set_runtime_context(self, *, user_id: str = "", conversation_id: str = "",
+                            scope: str = "", agent_name: str = "") -> None:
+        self._runtime_context = {
+            "user_id": user_id or "",
+            "conversation_id": conversation_id or "",
+            "scope": scope or "",
+            "agent_name": agent_name or "",
+        }
 
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
         """Execute the subflow with the FlowFile as input."""
@@ -82,6 +92,7 @@ class ExecuteFlowTask(BaseTask):
                 flow,
                 input_flowfiles=[flowfile],
                 parameters=child_params if child_params else None,
+                runtime_context=self._runtime_context or None,
             )
 
             if not result.success:

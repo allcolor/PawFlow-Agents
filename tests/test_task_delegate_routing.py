@@ -252,7 +252,10 @@ class TestResultDeliverySSE:
         mock_inst._active_contexts = {"conv1::task::t_abc:agentA": {}}
         mock_inst._active_contexts_lock = threading.Lock()
 
-        with patch("core.conversation_writer.ConversationWriter.for_conversation") as mock_writer:
+        with patch("tasks.ai.agent_loop.AgentLoopTask._live_instance",
+                   new_callable=PropertyMock, return_value=mock_inst), \
+             patch("core.conversation_writer.ConversationWriter.for_conversation") as mock_writer, \
+             patch.object(h, "_preempt_caller") as mock_preempt:
             mock_enqueue = mock_writer.return_value.enqueue_message
             h._deliver_to_caller(
                 conv_id="conv1::task::t_abc",
@@ -265,11 +268,19 @@ class TestResultDeliverySSE:
             sse_events = mock_enqueue.call_args.kwargs["sse_events"]
             assert sse_events[0]["cid"] == "conv1"
             assert sse_events[0]["type"] == "new_message"
+            assert mock_preempt.call_args.args[1] == "conv1::task::t_abc"
 
     def test_sse_on_same_conv_for_normal_caller(self):
         """For a normal caller, SSE cid matches the writer conv."""
         h = _make_handler()
-        with patch("core.conversation_writer.ConversationWriter.for_conversation") as mock_writer:
+        mock_inst = MagicMock()
+        mock_inst._active_contexts = {}
+        mock_inst._active_contexts_lock = threading.Lock()
+
+        with patch("tasks.ai.agent_loop.AgentLoopTask._live_instance",
+                   new_callable=PropertyMock, return_value=mock_inst), \
+             patch("core.conversation_writer.ConversationWriter.for_conversation") as mock_writer, \
+             patch.object(h, "_wake_caller") as mock_wake:
             mock_enqueue = mock_writer.return_value.enqueue_message
             h._deliver_to_caller(
                 conv_id="conv1",
@@ -280,6 +291,7 @@ class TestResultDeliverySSE:
             sse_events = mock_enqueue.call_args.kwargs["sse_events"]
             assert sse_events[0]["cid"] == "conv1"
             assert sse_events[0]["type"] == "new_message"
+            assert mock_wake.call_args.args[1] == "conv1"
 
 
 class TestReverseDelegateScan:

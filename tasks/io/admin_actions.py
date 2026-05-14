@@ -55,6 +55,40 @@ def _apply_service_forwards(flow, service_overrides: Dict[str, str]):
             flow.services[flow_svc_id] = live
 
 
+def _load_deployed_flow_definition(inst) -> Dict[str, Any]:
+    """Load a deployed flow from repository FQN, then legacy file path."""
+    if getattr(inst, "flow_fqn", ""):
+        from core.repository import ScopedRepository
+        repo = ScopedRepository.instance()
+        scopes = []
+        flow_scope = str(getattr(inst, "flow_scope", "") or "")
+        if flow_scope:
+            scopes.append(flow_scope)
+        if getattr(inst, "conversation_id", ""):
+            scopes.append("conversation")
+        if getattr(inst, "owner", ""):
+            scopes.append("user")
+        scopes.append("global")
+        seen = set()
+        for scope in scopes:
+            repo_scope = "conv" if scope == "conversation" else scope
+            if repo_scope in seen:
+                continue
+            seen.add(repo_scope)
+            raw = repo.get_flow(
+                inst.flow_fqn, repo_scope,
+                user_id=getattr(inst, "owner", "") or "",
+                conv_id=getattr(inst, "conversation_id", "") or "",
+            )
+            if raw is not None:
+                return raw
+    flow_path = getattr(inst, "flow_path", "") or ""
+    if flow_path and Path(flow_path).exists():
+        return json.loads(Path(flow_path).read_text(encoding="utf-8"))
+    raise FileNotFoundError(
+        f"Flow not found: fqn={getattr(inst, 'flow_fqn', '') or '-'} path={flow_path or '-'}")
+
+
 def _json_response(flowfile: FlowFile, data: Any, status: str = "200") -> List[FlowFile]:
     """Set JSON response on a FlowFile."""
     flowfile.set_content(json.dumps(data, ensure_ascii=False, default=str).encode("utf-8"))
@@ -186,14 +220,12 @@ def _start_executor(instance_id: str, deploy_reg, exec_reg) -> dict:
     inst = deploy_reg.get(instance_id)
     if not inst:
         return {"error": f"Instance '{instance_id}' not found"}
-    if not inst.flow_path or not Path(inst.flow_path).exists():
-        return {"error": f"Flow file not found: {inst.flow_path}"}
 
     try:
         from tasks import register_all_tasks
         register_all_tasks()
 
-        raw = json.loads(Path(inst.flow_path).read_text(encoding="utf-8"))
+        raw = _load_deployed_flow_definition(inst)
         clean = {k: v for k, v in raw.items() if not k.startswith("_")}
         from engine.parser import FlowParser
         flow = FlowParser.parse(clean)
@@ -215,6 +247,12 @@ def _start_executor(instance_id: str, deploy_reg, exec_reg) -> dict:
             max_workers=inst.max_workers,
             max_retries=inst.max_retries,
             parameters=inst.parameters if inst.parameters else None,
+            runtime_context={
+                "user_id": inst.owner or "",
+                "conversation_id": inst.conversation_id or "",
+                "scope": "conversation" if inst.conversation_id else "user" if inst.owner else "",
+                "agent_name": getattr(inst, "agent_name", "") or "",
+            },
         )
         executor.start()
         exec_reg.register(instance_id, executor)

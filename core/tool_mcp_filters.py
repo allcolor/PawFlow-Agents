@@ -6,6 +6,14 @@ from typing import Any, Dict, Iterable, Set
 FILTERS_KEY = "tool_mcp_filters"
 
 
+def _parent_conversation_id(conversation_id: str) -> str:
+    conversation_id = str(conversation_id or "")
+    for marker in ("::task::", "::task_verify::", "::delegate::"):
+        if marker in conversation_id:
+            return conversation_id.split(marker, 1)[0]
+    return ""
+
+
 def _clean_names(values: Iterable[Any]) -> list[str]:
     seen = set()
     out = []
@@ -30,7 +38,12 @@ def get_filters(conversation_id: str) -> Dict[str, Any]:
     if not conversation_id:
         return _default_filters()
     from core.conversation_store import ConversationStore
-    raw = ConversationStore.instance().get_extra(conversation_id, FILTERS_KEY) or {}
+    store = ConversationStore.instance()
+    raw = store.get_extra(conversation_id, FILTERS_KEY, default=None)
+    if not isinstance(raw, dict):
+        parent_id = _parent_conversation_id(conversation_id)
+        if parent_id:
+            raw = store.get_extra(parent_id, FILTERS_KEY, default=None)
     data = _default_filters()
     if isinstance(raw, dict):
         data.update(raw)

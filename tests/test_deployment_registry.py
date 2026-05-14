@@ -77,6 +77,7 @@ class TestDeployedInstance(unittest.TestCase):
             flow_name="Test Flow",
             flow_path="flows/test.json",
             owner="bob",
+            agent_name="agentA",
             status="running",
             parameters={"greeting": "Hello"},
         )
@@ -84,6 +85,7 @@ class TestDeployedInstance(unittest.TestCase):
         inst2 = DeployedInstance.from_dict(d)
         assert inst2.instance_id == inst.instance_id
         assert inst2.owner == inst.owner
+        assert inst2.agent_name == "agentA"
         assert inst2.parameters == inst.parameters
 
 

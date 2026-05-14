@@ -2,6 +2,7 @@
   "version": 1,
   "required_features": ["relay.base"],
   "server_profile": "server-full",
+  "server_minimal_profile": "server-minimal",
   "default_client_profile": "client-minimal",
   "features": {
     "relay.base": {
@@ -245,6 +246,11 @@
     "client-desktop": {
       "label": "Client desktop automation relay",
       "features": ["relay.base", "desktop.runtime", "desktop.audio", "desktop.ocr", "browser.chrome", "media.cli"]
+    },
+    "server-minimal": {
+      "label": "Server minimal execution relay",
+      "description": "Protected server relay for explicit flow task and ExecuteScript execution. It includes only the base relay runtime and does not include desktop, language SDK, browser, or GUI tooling.",
+      "features": ["relay.base"]
     },
     "server-full": {
       "label": "Server full relay",

@@ -99,6 +99,7 @@ class PfpToolProxyHandler(ToolHandler):
         self._installed_from = installed_from or {}
         self._user_id = ""
         self._conversation_id = ""
+        self._agent_name = ""
         self._is_dynamic = True
         self._is_pfp_tool = True
 
@@ -107,6 +108,9 @@ class PfpToolProxyHandler(ToolHandler):
 
     def set_conversation_id(self, cid: str):
         self._conversation_id = cid or ""
+
+    def set_agent_name(self, agent_name: str):
+        self._agent_name = agent_name or ""
 
     @property
     def name(self) -> str:
@@ -127,6 +131,7 @@ class PfpToolProxyHandler(ToolHandler):
                 self._package_runtime, self._installed_from, arguments, {
                     "user_id": self._user_id,
                     "conversation_id": self._conversation_id,
+                    "agent_name": self._agent_name,
                     "scope": "conversation" if self._conversation_id else "user",
                 })
         except pfp_runtime.PackageRuntimeError as exc:

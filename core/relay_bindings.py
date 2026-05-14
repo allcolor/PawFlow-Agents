@@ -48,7 +48,10 @@ def _invalidate_cli_after_mount_change(cid: str, agent: str = "") -> None:
 
 def get_bindings(cid: str) -> Dict[str, Any]:
     """Get relay bindings for a conversation."""
-    raw = _get_store().get_extra_cached(cid, _EXTRA_KEY, default=None)
+    try:
+        raw = _get_store().get_extra_cached(cid, _EXTRA_KEY, default=None)
+    except Exception:
+        raw = None
     if not isinstance(raw, dict):
         return {"linked": {}, "default": {}}
     raw.setdefault("linked", {})
@@ -56,18 +59,33 @@ def get_bindings(cid: str) -> Dict[str, Any]:
     return raw
 
 
+def _binding_cids(cid: str) -> List[str]:
+    cids = [cid]
+    for marker in ("::task::", "::task_verify::", "::delegate::"):
+        if cid and marker in cid:
+            parent = cid.split(marker, 1)[0]
+            if parent and parent != cid:
+                cids.append(parent)
+            break
+    return cids
+
+
 def get_linked(cid: str, agent: str = "") -> List[str]:
     """Get relay IDs available to an agent.
 
     Returns agent-specific relays + conv-wide relays (union, deduped).
     """
-    b = get_bindings(cid)
-    linked = b.get("linked", {})
-    result = list(linked.get(_CONV, []))
-    if agent and agent != _CONV:
-        for rid in linked.get(agent, []):
+    result = []
+    for lookup_cid in _binding_cids(cid):
+        b = get_bindings(lookup_cid)
+        linked = b.get("linked", {})
+        for rid in linked.get(_CONV, []):
             if rid not in result:
                 result.append(rid)
+        if agent and agent != _CONV:
+            for rid in linked.get(agent, []):
+                if rid not in result:
+                    result.append(rid)
     return result
 
 
@@ -76,13 +94,17 @@ def get_default(cid: str, agent: str = "") -> Optional[str]:
 
     Resolution: agent-specific default → conv-wide default.
     """
-    b = get_bindings(cid)
-    defaults = b.get("default", {})
-    if agent and agent != _CONV:
-        d = defaults.get(agent)
+    for lookup_cid in _binding_cids(cid):
+        b = get_bindings(lookup_cid)
+        defaults = b.get("default", {})
+        if agent and agent != _CONV:
+            d = defaults.get(agent)
+            if d:
+                return d
+        d = defaults.get(_CONV)
         if d:
             return d
-    return defaults.get(_CONV)
+    return None
 
 
 def link_relay(cid: str, relay_id: str, agent: str = "") -> bool:

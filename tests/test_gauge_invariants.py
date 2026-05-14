@@ -925,11 +925,18 @@ def test_final_drain_suppresses_confirmed_live_preempt_rescues():
     http_msg._pending_source = "http"
     http_msg._pending_enqueued_at = 100.0
 
-    assert _preempt_rescue_requires_retrigger(text_rescue, 101.0, "claude-code") is False
-    assert _preempt_rescue_requires_retrigger(image_rescue, 101.0, "claude-code") is False
-    assert _preempt_rescue_requires_retrigger(text_rescue, 101.0, "codex-app-server") is False
-    assert _preempt_rescue_requires_retrigger(image_rescue, 101.0, "codex-app-server") is False
-    assert _preempt_rescue_requires_retrigger(text_rescue, 101.0, "gemini") is False
+    assert _preempt_rescue_requires_retrigger(
+        text_rescue, 101.0, "claude-code", preempt_proven_handled=True) is False
+    assert _preempt_rescue_requires_retrigger(
+        image_rescue, 101.0, "claude-code", preempt_proven_handled=True) is False
+    assert _preempt_rescue_requires_retrigger(
+        text_rescue, 101.0, "codex-app-server", preempt_proven_handled=True) is False
+    assert _preempt_rescue_requires_retrigger(
+        image_rescue, 101.0, "codex-app-server", preempt_proven_handled=True) is False
+    assert _preempt_rescue_requires_retrigger(
+        text_rescue, 101.0, "gemini", preempt_proven_handled=True) is False
+    assert _preempt_rescue_requires_retrigger(
+        text_rescue, 101.0, "codex-app-server", preempt_proven_handled=False) is True
     assert _preempt_rescue_requires_retrigger(text_rescue, 0.0, "claude-code") is True
     assert _preempt_rescue_requires_retrigger(http_msg, 101.0, "claude-code") is True
 

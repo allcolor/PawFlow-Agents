@@ -41,7 +41,13 @@ required `token` authenticates bridge connections. The optional
 implicit backgrounding. Set it to a positive number only when a deployment wants
 long-running tool calls to return a background placeholder automatically; agents
 can still request background execution explicitly with tool-specific flags such
-as `bash(run_in_background=true)`.
+as `bash(run_in_background=true)`. The relay-side stdio MCP proxy also has no
+default initialize or `tools/call` deadline; it waits until the MCP server
+responds unless a caller provides an explicit timeout. Provider clients may still
+impose their own MCP tool timeout outside PawFlow, so generated provider configs
+must not rely on omitting a timeout field to disable a provider default. PawFlow's
+generated Codex MCP config pins `tool_timeout_sec` to `3600` seconds to avoid
+Codex's short default while keeping an explicit provider-required value.
 
 ## Media Services
 

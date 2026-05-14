@@ -14,11 +14,16 @@ def register_package_task_proxy(task_type: str, metadata: Dict[str, Any]) -> typ
         raise ValueError("task_type is required")
     parameters = metadata.get("parameters") or {}
     if parameters.get("type") == "object" and isinstance(parameters.get("properties", {}), dict):
-        schema = parameters.get("properties", {})
+        schema = dict(parameters.get("properties", {}))
     elif isinstance(parameters, dict):
-        schema = parameters
+        schema = dict(parameters)
     else:
         schema = {}
+    schema["relay"] = {
+        "type": "string",
+        "required": True,
+        "description": "Filesystem relay service id used to execute this package task.",
+    }
 
     class PackageTaskProxy(Task):
         TYPE = task_type
@@ -32,14 +37,47 @@ def register_package_task_proxy(task_type: str, metadata: Dict[str, Any]) -> typ
         def get_parameter_schema(self) -> Dict[str, Any]:
             return dict(schema)
 
+        def set_parameter_context(self, ctx) -> None:
+            runtime_context = {
+                key: self.config.get(key)
+                for key in ("_user_id", "_conversation_id", "_scope", "_agent_name")
+                if isinstance(self.config, dict) and key in self.config
+            }
+            if ctx:
+                self.config = ctx.resolve_config(
+                    getattr(self, "_original_config", self.config))
+                self.config.update(runtime_context)
+
         def execute(self, flowfile: FlowFile) -> List[FlowFile]:
             from core import pfp_runtime
             try:
+                relay_id = str(self.config.get("relay") or "").strip()
+                if not relay_id:
+                    raise TaskError("PFP flow task requires relay parameter")
+                user_id = str(self.config.get("_user_id") or "")
+                conversation_id = str(self.config.get("_conversation_id") or "")
+                if not user_id:
+                    raise TaskError("PFP flow task requires user_id runtime context")
+                scope = str(self.config.get("_scope") or ("conversation" if conversation_id else "user"))
+                if scope in {"conversation", "conv"} and not conversation_id:
+                    raise TaskError("PFP conversation-scoped flow task requires conversation_id runtime context")
+                agent_name = str(self.config.get("_agent_name") or "")
+                resolved = pfp_runtime.resolve_flow_task_runtime(
+                    task_type, user_id=user_id,
+                    conversation_id=conversation_id, scope=scope)
+                task_config = dict(self.config)
+                task_config.pop("relay", None)
+                task_config.pop("_user_id", None)
+                task_config.pop("_conversation_id", None)
+                task_config.pop("_scope", None)
+                task_config.pop("_agent_name", None)
                 return pfp_runtime.invoke_task(
-                    self.PACKAGE_RUNTIME, self.INSTALLED_FROM, self.config, flowfile, {
-                        "user_id": self.config.get("_user_id", ""),
-                        "conversation_id": self.config.get("_conversation_id", ""),
-                        "scope": self.config.get("_scope", ""),
+                    resolved["package_runtime"], resolved["installed_from"], task_config, flowfile, {
+                        "relay_id": relay_id,
+                        "user_id": user_id,
+                        "conversation_id": conversation_id,
+                        "scope": scope,
+                        "agent_name": agent_name,
                     })
             except pfp_runtime.PackageRuntimeError as exc:
                 raise TaskError(str(exc)) from exc

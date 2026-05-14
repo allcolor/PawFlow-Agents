@@ -72,7 +72,9 @@ Rules:
 - `package` is the durable package id used by install, update, and unload.
 - Object ids must stay stable, for example `service_provider:image`.
 - `service_id` is the service name users pass to media tools, for example `image_service="my-image-provider"`.
-- `runner` must be explicit for executable objects. Use `python`; the entrypoint runs in the conversation's default relay, so it can use relay-local filesystem paths and relay-local binaries directly. Calls back into PawFlow tools/services are brokered through `pfp.call_tool(...)` and `pfp.call_service(...)` and require matching grants.
+- `operations` must declare every callable service-provider operation; an empty or missing map is not a wildcard. Automatic media resolution selects providers by the exact operation required by the current tool call, for example text-to-video requires `generate` while image-to-video requires `image_to_video` or `reference_to_video`.
+- `runner` must be explicit for executable objects. Use `python`; the entrypoint runs in the selected relay, so it can use relay-local filesystem paths and relay-local binaries directly. Tool and service-provider calls use the agent-specific default relay when present, otherwise the conversation default relay; task, task-verification, and delegate sub-conversations inherit the parent conversation relay bindings, conversation-scoped package services, conversation-scoped package tools, tool/MCP filters, and installed package dependency records unless the exact sub-conversation defines its own values. Flow tasks use their required per-task `relay` parameter. A flow can define multiple relay parameters and point different imported tasks at different relays, for example `relay: "${relay_extract}"` on one task and `relay: "${relay_publish}"` on another. For protected server-side execution, pass the provisioned `srv_min_*` server execution relay id through a normal flow parameter. Calls back into PawFlow tools/services are brokered through `pfp.call_tool(...)` and `pfp.call_service(...)` and require matching grants. Package-qualified calls such as `pfp.call_tool("other.pkg/tool:shared")` resolve by package, optional version or version constraint, and object id even when another scope has a tool with the same name; they still obey the conversation and per-agent tool availability filters.
+- PFP flows deployed from the agent flow actions may use either their repository FQN or their flow `id`. PawFlow stores the canonical `fqn`, repository scope, owner, conversation id, and agent name on the deployed instance, then reuses those fields for later `start_flow` calls and restart restore so package flow tasks receive the same runtime context.
 - Required secrets are declared by logical package-local name and injected as environment variables at runtime. Secret values never go into `pfp.json`.
 
 ## Image Provider Entrypoint
@@ -298,7 +300,22 @@ result = pfp.call_service(
 pfp.result(result)
 ```
 
-Package-qualified grants are also supported for inter-PFP dependencies. The referenced package and object must already be installed before the dependent object can be selected.
+For PFP service providers, `operation` is dispatched through the provider's
+declared `operations` map; providers with no declared operations reject every
+runtime operation. For built-in PawFlow services, `operation` is
+dispatched to a public service method with keyword arguments and must return a
+JSON-serializable value. Lifecycle, context, destructive reset, and
+introspection methods such as `connect`, `disconnect`, `ensure_connected`,
+`reset`, `status`, `validate`, and `get_parameter_schema` are not callable
+through `pfp.call_service()`.
+
+Automatic media-provider resolution applies the same scope priority to native
+services and PFP providers: conversation scope wins over user scope, which wins
+over global scope. A PFP provider is selectable only for the exact operation
+requested by the tool, for example `remove_background` does not satisfy
+`upscale_image` and `speech_to_video` does not satisfy `generate_video`.
+
+Package-qualified grants are also supported for inter-PFP dependencies. The referenced package and object must already be installed before the dependent object can be selected. Native grants such as `{ "name": "read" }` authorize only unqualified host calls like `pfp.call_tool("read")`; they do not authorize `other.pkg/tool:read`. If a grant contains a package version or version constraint, that constraint is checked against the installed object and carried into the final tool/service dispatch so an older installed object with the same name cannot satisfy the call.
 
 ## Release
 

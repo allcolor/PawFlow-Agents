@@ -864,6 +864,7 @@ class AgentLoopTask(
         _int_key = f"{conversation_id}:{agent_name}" if agent_name else conversation_id
         with self._active_contexts_lock:
             _active_client = self._active_claude_client.get(_int_key)
+            _active_ctx = self._active_contexts.get(_int_key) or {}
         try:
             from services.tool_relay_service import ToolRelayService
             ToolRelayService.cancel_agent(conversation_id, agent_name)
@@ -871,7 +872,12 @@ class AgentLoopTask(
             logger.debug("exception suppressed", exc_info=True)
 
         if (_active_client and hasattr(_active_client, 'send_user_message')
-                and _active_client.send_user_message(SOFT_INTERRUPT_USER_COMMAND)):
+                and _active_client.send_user_message(
+                    SOFT_INTERRUPT_USER_COMMAND,
+                    user_id=str(_active_ctx.get("user_id") or ""),
+                    conversation_id=conversation_id,
+                    agent_name=agent_name,
+                )):
             logger.info(
                 f"[agent:{conversation_id[:8]}] interrupt delivered as live user STOP "
                 f"to '{agent_name or 'agent'}'")

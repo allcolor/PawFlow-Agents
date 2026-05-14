@@ -59,13 +59,16 @@ def test_gui_apps_are_individually_selectable_and_imply_desktop_runtime():
         assert "desktop.runtime" in feature.get("implies", [])
 
 
-def test_server_profile_is_full_but_client_default_is_minimal():
+def test_server_profile_is_full_and_execution_profile_is_minimal():
     catalog = _catalog()
     server_features = set(catalog["profiles"][catalog["server_profile"]]["features"])
+    server_minimal_features = set(catalog["profiles"][catalog["server_minimal_profile"]]["features"])
     client_features = set(catalog["profiles"][catalog["default_client_profile"]]["features"])
 
     assert catalog["server_profile"] == "server-full"
+    assert catalog["server_minimal_profile"] == "server-minimal"
     assert catalog["default_client_profile"] == "client-minimal"
+    assert server_minimal_features == {"relay.base"}
     assert client_features == {"relay.base"}
     for required in ("lang.python-dev", "lang.node", "lang.rust", "desktop.runtime", "browser.chrome", "gui.gimp"):
         assert required in server_features
@@ -120,5 +123,6 @@ def test_installer_api_advertises_relay_image_profile_step():
     assert "relay_image_profiles" in api_content["steps"]
     assert api_content["client_relay_images"]["catalog"] == "config/relay_image_catalog.json"
     assert api_content["client_relay_images"]["server_profile"] == "server-full"
+    assert api_content["client_relay_images"]["server_minimal_profile"] == "server-minimal"
     assert api_content["client_relay_images"]["advanced_features"] is True
     assert "Relay image profiles" in flow["tasks"]["install_ui"]["parameters"]["content"]

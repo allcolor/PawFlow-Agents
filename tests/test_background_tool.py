@@ -9,6 +9,8 @@ Covers:
 
 import threading
 import time
+import inspect
+from pathlib import Path
 from unittest.mock import patch
 
 import core.background_tool as bg
@@ -37,6 +39,42 @@ def test_pop_cc_tc_no_match_returns_empty():
                      bg._args_hash({"command": "ls"}))
     assert bg.pop_cc_tc("conv1", "claude", "bash",
                         bg._args_hash({"command": "pwd"})) == ""
+
+
+def test_tool_relay_filesystem_listing_uses_agent_bindings(monkeypatch):
+    from services.tool_relay_service import ToolRelayService
+    import core.relay_bindings as relay_bindings
+    from core.service_registry import SCOPE_USER
+
+    calls = []
+
+    def _get_linked(cid, agent=""):
+        calls.append((cid, agent))
+        return ["relay-agent"] if agent == "agentA" else ["relay-conv"]
+
+    class _Definition:
+        service_id = "relay-agent"
+        service_type = "relay"
+        scope = SCOPE_USER
+
+    class _Registry:
+        def resolve_definition(self, service_id, user_id="", conv_id=""):
+            return _Definition() if service_id == "relay-agent" else None
+
+        def resolve(self, service_id, user_id="", conv_id=""):
+            return object() if service_id == "relay-agent" else None
+
+    monkeypatch.setattr(relay_bindings, "get_linked", _get_linked)
+    monkeypatch.setattr(
+        "core.service_registry.ServiceRegistry.get_instance",
+        staticmethod(lambda: _Registry()),
+    )
+
+    available = ToolRelayService._list_available_filesystem_services(
+        "alice", "conv1", "agentA")
+
+    assert calls == [("conv1", "agentA")]
+    assert [item["id"] for item in available] == ["relay-agent"]
 
 
 def test_pop_cc_tc_fifo_on_hash_collision():
@@ -172,12 +210,7 @@ def test_snapshot_does_not_consume_queue():
 
 
 def test_tool_relay_auto_backgrounds_without_provider_tc_id(monkeypatch):
-    """A long MCP/tool-relay call must not wait for a provider tool id.
-
-    Some callers only have the MCP request_id. The relay still has to return
-    a background placeholder before the outer transport timeout and inject the
-    real result when the worker finishes.
-    """
+    """Explicit auto-background works even without a provider tool id."""
     _reset_state()
     from services.tool_relay_service import ToolRelayService
 
@@ -223,3 +256,63 @@ def test_tool_relay_auto_background_disabled_by_default():
 
     assert svc._auto_bg_after_seconds == 0.0
     assert schema["auto_background_after_seconds"]["default"] == 0
+
+
+def test_background_wait_has_no_default_timeout():
+    sig = inspect.signature(bg.wait_pending)
+
+    assert sig.parameters["timeout"].default is None
+
+
+def test_agent_core_waits_for_background_without_default_timeout():
+    src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
+
+    assert "wait_pending(conversation_id, timeout=120" not in src
+    assert "wait_pending(\n                                conversation_id,\n                                cancel_check=" in src
+
+
+def test_tool_relay_has_no_implicit_execution_timeout():
+    from services.tool_relay_service import ToolRelayService
+
+    src = inspect.getsource(ToolRelayService._handle_execute)
+
+    assert "wait(timeout=" not in src
+    assert "evt.wait(timeout=300)" not in src
+    assert "time.monotonic() + 0.5" not in src
+    assert "8 * 3600" not in src
+    assert "timed out" not in src
+
+
+def test_continuous_run_batch_has_no_implicit_timeout():
+    from engine.continuous_executor import ContinuousFlowExecutor
+
+    sig = inspect.signature(ContinuousFlowExecutor.run_batch)
+    assert sig.parameters["timeout"].default is None
+
+
+def test_tool_relay_late_binds_without_bounded_retry(monkeypatch):
+    _reset_state()
+    from services.tool_relay_service import ToolRelayService
+
+    svc = ToolRelayService({})
+    calls = {"count": 0}
+
+    def _pop(conv_id, agent_name, tool_name, args_hash):
+        calls["count"] += 1
+        return "tc-late" if calls["count"] == 2 else ""
+
+    def _execute(request_id, tool_name, arguments, user_id, conversation_id, agent_name):
+        with ToolRelayService._inflight_lock:
+            info = ToolRelayService._inflight[request_id]
+            assert info["cc_tc_id"] == "tc-late"
+            assert info["bg_tc_id"] == "tc-late"
+        return {"type": "result", "request_id": request_id, "data": "ok"}
+
+    monkeypatch.setattr(bg, "pop_cc_tc", _pop)
+    monkeypatch.setattr(svc, "_do_execute", _execute)
+
+    result = svc._handle_execute(
+        "rid-late", "bash", {"command": "true"}, "alice", "conv1", "agent1")
+
+    assert result["data"] == "ok"
+    assert calls == {"count": 2}

@@ -89,7 +89,8 @@ class ContinuousFlowExecutor:
                  provenance: Optional[ProvenanceRepository] = None,
                  checkpoint_interval: float = 30.0,
                  enable_checkpoints: bool = True,
-                 parameters: Optional[Dict[str, Any]] = None):
+                 parameters: Optional[Dict[str, Any]] = None,
+                 runtime_context: Optional[Dict[str, Any]] = None):
         self._flow = flow
         self._max_workers = max_workers
         self._max_retries = max_retries
@@ -125,6 +126,7 @@ class ContinuousFlowExecutor:
         if parameters:
             ctx = ctx.with_overrides(parameters)
         self._parameter_context = ctx
+        self._runtime_context = dict(runtime_context or {})
 
         # Debugger (attached externally via FlowDebugger.attach())
         self._debugger = None
@@ -150,6 +152,7 @@ class ContinuousFlowExecutor:
             self._task_states.register_task(task_id, task_type)
             self._task_retry_counts[task_id] = 0
             self._max_instances[task_id] = getattr(task, '_max_instances', 1)
+            self._inject_runtime_context(task)
             # Inject controller services into task
             if flow.services and hasattr(task, 'set_services'):
                 task.set_services(flow.services)
@@ -192,6 +195,30 @@ class ContinuousFlowExecutor:
             "relations": flow.relations,
         }
         self._connections.build_from_flow(flow_dict)
+
+    def _inject_runtime_context(self, task: Task):
+        """Attach deployment runtime context to runtime-aware tasks."""
+        user_id = str(self._runtime_context.get("user_id") or "")
+        conversation_id = str(self._runtime_context.get("conversation_id") or "")
+        scope = str(self._runtime_context.get("scope") or "")
+        if not scope:
+            scope = "conversation" if conversation_id else "user" if user_id else ""
+        agent_name = str(self._runtime_context.get("agent_name") or "")
+
+        if hasattr(task, "set_runtime_context"):
+            task.set_runtime_context(
+                user_id=user_id,
+                conversation_id=conversation_id,
+                scope=scope,
+                agent_name=agent_name,
+            )
+
+        if not getattr(task, "PACKAGE_RUNTIME", None):
+            return
+        task.config["_user_id"] = user_id
+        task.config["_conversation_id"] = conversation_id
+        task.config["_scope"] = scope
+        task.config["_agent_name"] = agent_name
 
     def _resolve_service_configs(self, flow: Flow):
         """Resolve expressions in service configs (cascade-safe).
@@ -1290,8 +1317,9 @@ class ContinuousFlowExecutor:
         parameters: Optional[Dict[str, Any]] = None,
         max_workers: int = 4,
         max_retries: int = 3,
-        timeout: float = 300.0,
+        timeout: Optional[float] = None,
         provenance: Optional[ProvenanceRepository] = None,
+        runtime_context: Optional[Dict[str, Any]] = None,
     ) -> ExecutionResult:
         """Run a flow synchronously (batch mode).
 
@@ -1305,7 +1333,8 @@ class ContinuousFlowExecutor:
             parameters: Optional parameter overrides
             max_workers: Thread pool size
             max_retries: Retries per task
-            timeout: Max seconds to wait for completion
+            timeout: Optional max seconds to wait for completion. If omitted,
+                wait until the flow completes.
             provenance: Optional provenance repository
 
         Returns:
@@ -1321,6 +1350,7 @@ class ContinuousFlowExecutor:
             provenance=provenance,
             enable_checkpoints=False,
             parameters=parameters,
+            runtime_context=runtime_context,
         )
 
         try:
@@ -1335,14 +1365,15 @@ class ContinuousFlowExecutor:
                 if flow.entries:
                     executor.inject(FlowFile())
 
-            # Wait for completion (auto-stop or timeout)
-            deadline = time.time() + timeout
-            while executor.is_running and time.time() < deadline:
+            # Wait for completion. No implicit deadline: callers that need a
+            # bounded batch run must pass timeout explicitly.
+            deadline = time.time() + timeout if timeout is not None else None
+            while executor.is_running:
+                if deadline is not None and time.time() >= deadline:
+                    logger.warning(f"Batch execution timed out after {timeout}s")
+                    errors.append({"error": f"Timeout after {timeout}s"})
+                    break
                 time.sleep(0.05)
-
-            if executor.is_running:
-                logger.warning(f"Batch execution timed out after {timeout}s")
-                errors.append({"error": f"Timeout after {timeout}s"})
 
         except Exception as e:
             errors.append({"error": str(e)})

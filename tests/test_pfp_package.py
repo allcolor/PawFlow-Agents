@@ -1,4 +1,7 @@
 import json
+import os
+import subprocess
+import sys
 import zipfile
 from pathlib import Path
 
@@ -97,6 +100,7 @@ def _write_package_dir(root, keypair, version="1.0.0", skill_body="Use the packa
             "path": "content/service-providers/image/provider.py",
             "description": "Image provider from package",
             "provides": ["media.image_generation"],
+            "operations": {"generate": {}},
             "allowed_tools": [{"name": "read"}],
         }
         if service_runner:
@@ -224,6 +228,32 @@ def test_pfp_inspect_exposes_capability_summary_for_preinstall_review(tmp_path, 
     assert "brokered tools: read, community.base/tool:normalize" in display
     assert "dependencies: community.base@1.0.0" in display
     assert "secrets: api_key->PROVIDER_API_KEY" in display
+
+
+def test_pfp_inspect_service_provider_conflict_uses_service_id(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    keypair = pfp_package.create_signing_key()
+    pkgdir = _write_package_dir(tmp_path, keypair, include_service_provider=True)
+    manifest_path = pkgdir / "pfp.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    for obj in manifest["objects"]:
+        if obj.get("id") == "service_provider:image":
+            obj["name"] = "display-name"
+            obj["service_id"] = "runtime-service-id"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    built = pfp_package.build_pfp(str(pkgdir), private_key=keypair["private_key"])
+
+    from core.service_registry import ServiceRegistry, SCOPE_USER
+    import services.package_runtime_service  # noqa: F401
+    ServiceRegistry.get_instance().install(
+        SCOPE_USER, "alice", "runtime-service-id", "packageRuntime",
+        config={"package_runtime": {"package": "other", "object_id": "service_provider:x"}, "installed_from": {}},
+    )
+
+    plan = pfp_package.inspect_pfp(built["path"], user_id="alice")
+    row = next(item for item in plan["objects"] if item["id"] == "service_provider:image")
+    assert row["name"] == "display-name"
+    assert row["status"] == "conflict"
 
 
 def test_pfp_inspect_exposes_package_size_without_size_cap(tmp_path, monkeypatch):
@@ -527,6 +557,7 @@ def test_pfp_tool_proxy_passes_runtime_context(tmp_path, monkeypatch):
         "user_id": "alice",
         "conversation_id": "conv1",
         "scope": "conversation",
+        "agent_name": "",
     }
 
 
@@ -554,7 +585,75 @@ def test_pfp_runtime_task_envelope_carries_flowfile_content(tmp_path, monkeypatc
     assert request["kind"] == "flow_task"
     assert flowfile["attributes"] == {"mime.type": "image/png"}
     assert flowfile["content_size"] == len(b"image-bytes")
-    assert flowfile["content_b64"] == "aW1hZ2UtYnl0ZXM="
+    assert flowfile["_content_bytes"] == b"image-bytes"
+    assert "content_b64" not in flowfile
+
+    class _Relay:
+        def __init__(self):
+            self.files = {}
+
+        def mkdir(self, path):
+            pass
+
+        def write_file(self, path, content):
+            self.files[path] = content
+
+    relay = _Relay()
+    staged = pfp_runtime.RelayPackageRuntimeBridge()._relay_request(
+        request, relay, ".pawflow/pfp/root")
+    staged_flowfile = staged["payload"]["flowfile"]
+    assert "_content_bytes" not in staged_flowfile
+    assert staged_flowfile["content_path"].startswith(".pawflow/flowfiles/input-")
+    assert relay.files[f".pawflow/pfp/root/{staged_flowfile['content_path']}"] == b"image-bytes"
+
+
+def test_pfp_runtime_task_stages_spilled_flowfile_without_materializing(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    keypair = pfp_package.create_signing_key()
+    pkgdir = _write_package_dir(tmp_path, keypair, include_flow_task=True)
+    built = pfp_package.build_pfp(str(pkgdir), private_key=keypair["private_key"])
+    pfp_package.install_pfp(
+        built["path"], user_id="alice", include=["flow_task:resize-image"], force=True)
+
+    from core import FlowFile, TaskFactory, pfp_runtime
+    from core.stream import SPILL_THRESHOLD
+    task_cls = TaskFactory.get("packageResizeImage")
+    source_flowfile = FlowFile(content=b"x" * (SPILL_THRESHOLD + 1))
+    request = pfp_runtime.build_task_invocation(
+        task_cls.PACKAGE_RUNTIME,
+        task_cls.INSTALLED_FROM,
+        {"width": 64},
+        source_flowfile,
+    )
+
+    flowfile = request["payload"]["flowfile"]
+    assert flowfile["content_size"] == SPILL_THRESHOLD + 1
+    assert "_content_path" in flowfile
+    assert "_content_bytes" not in flowfile
+
+    class _Relay:
+        def __init__(self):
+            self.calls = []
+
+        def mkdir(self, path):
+            pass
+
+        def write_file(self, path, content):
+            raise AssertionError("spilled FlowFile should use chunked relay writes")
+
+        def _request(self, method, path, **kwargs):
+            self.calls.append((method, path, kwargs))
+            return {}
+
+    relay = _Relay()
+    staged = pfp_runtime.RelayPackageRuntimeBridge()._relay_request(
+        request, relay, ".pawflow/pfp/root")
+    staged_flowfile = staged["payload"]["flowfile"]
+    assert "_content_path" not in staged_flowfile
+    assert staged_flowfile["content_path"].startswith(".pawflow/flowfiles/input-")
+    assert relay.calls
+    assert relay.calls[-1][0] == "write_file_chunked"
+    assert relay.calls[-1][2]["done"] is True
 
 
 def test_pfp_flow_task_is_visible_to_admin_flow_builder(tmp_path, monkeypatch):
@@ -582,11 +681,18 @@ def test_pfp_flow_task_is_visible_to_admin_flow_builder(tmp_path, monkeypatch):
         {"task_type": "packageResizeImage"}, None, None, None, None)
     assert schema == {
         "type": "packageResizeImage",
-        "schema": {"width": {"type": "integer", "required": True}},
+        "schema": {
+            "width": {"type": "integer", "required": True},
+            "relay": {
+                "type": "string",
+                "required": True,
+                "description": "Filesystem relay service id used to execute this package task.",
+            },
+        },
     }
 
     validation = _admin_validate_flow({"flow": {
-        "tasks": {"resize": {"type": "packageResizeImage", "parameters": {"width": 64}}},
+        "tasks": {"resize": {"type": "packageResizeImage", "parameters": {"width": 64, "relay": "relay1"}}},
         "relations": [],
         "entries": ["resize"],
         "exits": ["resize"],
@@ -606,17 +712,27 @@ def test_pfp_runtime_task_result_rebuilds_flowfiles(tmp_path, monkeypatch):
     task_cls = TaskFactory.get("packageResizeImage")
 
     def _invoke(self, request):
+        assert request["context"]["user_id"] == "alice"
+        assert request["context"]["conversation_id"] == "conv1"
+        assert request["context"]["relay_id"] == "relay1"
+        assert request["payload"]["task_config"] == {"width": 64}
         return {
             "format": "pawflow.package.runtime.result.v1",
             "ok": True,
             "flowfiles": [{
-                "content_b64": "b3V0",
+                "_content_bytes": b"out",
                 "attributes": {"result": "ok"},
             }],
         }
 
     monkeypatch.setattr(pfp_runtime.RelayPackageRuntimeBridge, "invoke", _invoke)
-    result = task_cls({"width": 64}).execute(FlowFile(content=b"in"))
+    result = task_cls({
+        "width": 64,
+        "relay": "relay1",
+        "_user_id": "alice",
+        "_conversation_id": "conv1",
+        "_scope": "user",
+    }).execute(FlowFile(content=b"in"))
 
     assert len(result) == 1
     assert result[0].get_content() == b"out"
@@ -653,6 +769,36 @@ def test_pfp_runtime_host_builds_authorized_host_calls(tmp_path, monkeypatch):
         raise AssertionError("undeclared host tool call should be denied")
 
 
+def test_pfp_unqualified_grant_does_not_authorize_package_qualified_call(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    keypair = pfp_package.create_signing_key()
+    pkgdir = _write_package_dir(
+        tmp_path, keypair, package_id="pkg.tools", include_service_provider=True)
+    built = pfp_package.build_pfp(str(pkgdir), private_key=keypair["private_key"])
+    pfp_package.install_pfp(
+        built["path"], user_id="alice",
+        include=["tool:reader", "service_provider:image"], force=True)
+
+    from core.pfp_capabilities import PackageCapabilityBroker, PackageCapabilityError
+    broker = PackageCapabilityBroker(user_id="alice")
+    caller = {
+        "package": "pkg.consumer",
+        "object_id": "tool:caller",
+        "allowed_tools": [{"name": "reader"}],
+        "allowed_services": [{"name": "image"}],
+    }
+
+    for authorize, ref in (
+            (broker.authorize_tool_call, "pkg.tools/tool:reader"),
+            (broker.authorize_service_call, "pkg.tools/service:image")):
+        try:
+            authorize(caller, ref)
+        except PackageCapabilityError as exc:
+            assert "not allowed" in str(exc)
+        else:
+            raise AssertionError(f"unqualified grant authorized package call: {ref}")
+
+
 def test_pfp_runtime_host_from_invocation_uses_envelope_context_and_grants(tmp_path, monkeypatch):
     _reset_repo(tmp_path, monkeypatch)
     keypair = pfp_package.create_signing_key()
@@ -668,6 +814,7 @@ def test_pfp_runtime_host_from_invocation_uses_envelope_context_and_grants(tmp_p
         stored["package_runtime"], stored["installed_from"], {}, {
             "user_id": "alice",
             "conversation_id": "conv1",
+            "agent_name": "agentA",
             "scope": "conversation",
         })
     host = pfp_runtime.runtime_host_from_invocation(request)
@@ -675,8 +822,1113 @@ def test_pfp_runtime_host_from_invocation_uses_envelope_context_and_grants(tmp_p
     assert host.user_id == "alice"
     assert host.conversation_id == "conv1"
     assert host.scope == "conversation"
+    assert host.caller_runtime["agent_name"] == "agentA"
     assert host.caller_runtime["allowed_tools"] == [{"name": "read"}]
     assert host.build_tool_call("read", {})["target"]["name"] == "read"
+
+
+def test_tool_relay_pfp_host_call_rejects_forged_context(monkeypatch):
+    from core import pfp_runtime
+    from services.tool_relay_service import ToolRelayService
+
+    def _must_not_build_host(*_args, **_kwargs):
+        raise AssertionError("forged PFP host-call reached runtime host")
+
+    monkeypatch.setattr(
+        pfp_runtime, "runtime_host_from_invocation", _must_not_build_host)
+    svc = ToolRelayService({})
+    result = svc._handle_pfp_host_call(
+        "rid1",
+        {
+            "format": pfp_runtime.RUNTIME_INVOKE_FORMAT,
+            "context": {
+                "user_id": "bob",
+                "conversation_id": "conv1",
+                "agent_name": "agentA",
+            },
+            "package": {"package": "community.fake", "object_id": "tool:reader"},
+        },
+        {"format": pfp_runtime.HOST_CALL_FORMAT, "kind": "tool", "target": "read"},
+        "alice",
+        "conv1",
+        "agentA",
+    )
+
+    assert result["type"] == "result"
+    assert result["data"]["ok"] is False
+    assert "context mismatch: user_id" in result["data"]["error"]
+
+
+def test_pfp_dynamic_tool_handler_passes_agent_name_to_runtime(monkeypatch):
+    from core import pfp_runtime
+    from core.handlers.dynamic_tool import PfpToolProxyHandler
+
+    calls = []
+
+    def _invoke_tool(runtime, installed_from, arguments, context):
+        calls.append({
+            "runtime": runtime,
+            "installed_from": installed_from,
+            "arguments": arguments,
+            "context": context,
+        })
+        return "ok"
+
+    monkeypatch.setattr(pfp_runtime, "invoke_tool", _invoke_tool)
+    handler = PfpToolProxyHandler(
+        "reader", "Read via package", {},
+        {"package": "community.reader"},
+        {"scope": "conversation"},
+    )
+    handler.set_user_id("alice")
+    handler.set_conversation_id("conv1")
+    handler.set_agent_name("agentA")
+
+    assert handler.execute({"path": "input.txt"}) == "ok"
+    assert calls[0]["context"] == {
+        "user_id": "alice",
+        "conversation_id": "conv1",
+        "agent_name": "agentA",
+        "scope": "conversation",
+    }
+
+
+def test_pfp_media_handlers_pass_agent_name_to_runtime_services(monkeypatch):
+    from core.handlers.capabilities import UpscaleImageHandler
+    from core.handlers.media import VideoGenerationHandler
+
+    class _Storage:
+        def write(self, destination, filename, data, content_type):
+            return {"file_id": "video-file"}
+
+    monkeypatch.setattr(
+        "core.storage_resolver.StorageResolver",
+        lambda user_id="", conversation_id="": _Storage(),
+    )
+
+    class _VideoService:
+        def __init__(self):
+            self.context = None
+
+        def set_runtime_context(self, **kwargs):
+            self.context = kwargs
+
+        def generate(self, **kwargs):
+            return {"video_bytes": b"mp4", "content_type": "video/mp4"}
+
+    video_service = _VideoService()
+    video = VideoGenerationHandler()
+    video.set_user_id("alice")
+    video.set_conversation_id("conv1")
+    video.set_agent_name("agentA")
+    video.set_service_resolver(lambda: (video_service, ""))
+
+    assert "Video generated" in video.execute({"prompt": "spin"})
+    assert video_service.context == {
+        "user_id": "alice",
+        "conversation_id": "conv1",
+        "agent_name": "agentA",
+    }
+
+    class _CapabilityService:
+        def __init__(self):
+            self.context = None
+
+        def set_runtime_context(self, **kwargs):
+            self.context = kwargs
+
+    capability_service = _CapabilityService()
+    upscale = UpscaleImageHandler()
+    upscale.set_user_id("alice")
+    upscale.set_conversation_id("conv1")
+    upscale.set_agent_name("agentA")
+    upscale.set_service_resolver(lambda: (capability_service, ""))
+
+    service, error = upscale._get_service({})
+    assert error == ""
+    assert service is capability_service
+    assert capability_service.context == {
+        "user_id": "alice",
+        "conversation_id": "conv1",
+        "agent_name": "agentA",
+    }
+
+
+def test_pfp_package_runtime_service_exposes_declared_media_operations(tmp_path):
+    import services.package_runtime_service  # noqa: F401
+    from services.package_runtime_service import PackageRuntimeService
+
+    svc = PackageRuntimeService({
+        "package_runtime": {
+            "package": "community.media",
+            "version": "1.0.0",
+            "object_id": "service_provider:upscale",
+            "provides": ["media.image_upscale"],
+        },
+        "installed_from": {"hash": "sha256:test"},
+        "operations": {"upscale": {}},
+    })
+
+    assert hasattr(svc, "upscale")
+    assert not hasattr(svc, "try_on")
+
+
+def test_pfp_media_resolver_discovers_package_runtime_provider(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    import services.package_runtime_service  # noqa: F401
+    from core.service_registry import ServiceRegistry, SCOPE_CONV
+    from tasks.ai.agent_utils import AgentUtilsMixin
+
+    reg = ServiceRegistry.get_instance()
+    reg.install(SCOPE_CONV, "conv1", "pfp-image", "packageRuntime", config={
+        "package_runtime": {
+            "package": "community.media",
+            "version": "1.0.0",
+            "object_id": "service_provider:image",
+            "provides": ["media.image_generation"],
+        },
+        "installed_from": {"hash": "sha256:test"},
+        "operations": {"generate": {}},
+    })
+
+    class _Agent(AgentUtilsMixin):
+        pass
+
+    svc, error = _Agent()._make_image_resolver("alice", "conv1", "agentA")()
+
+    assert error is None
+    assert svc is not None
+    assert svc.TYPE == "packageRuntime"
+    assert svc.config["package_runtime"]["object_id"] == "service_provider:image"
+
+
+def test_tool_relay_media_resolver_discovers_pfp_capability_provider(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    import services.package_runtime_service  # noqa: F401
+    from core.service_registry import ServiceRegistry, SCOPE_USER
+    from services.tool_relay_service import ToolRelayService
+
+    ServiceRegistry.get_instance().install(
+        SCOPE_USER, "alice", "pfp-3d", "packageRuntime", config={
+            "package_runtime": {
+                "package": "community.media",
+                "version": "1.0.0",
+                "object_id": "service_provider:threed",
+                "provides": ["media.3d_generation"],
+            },
+            "installed_from": {"hash": "sha256:test"},
+            "operations": {"generate_3d": {}},
+        })
+
+    svc, error = ToolRelayService._make_media_resolver(
+        "alice", "conv1", "3d")()
+
+    assert error is None
+    assert svc is not None
+    assert svc.TYPE == "packageRuntime"
+    assert hasattr(svc, "generate_3d")
+
+
+def test_tool_relay_media_resolver_accepts_native_capability_methods(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    from core.service_registry import ServiceRegistry, SCOPE_USER
+    from services.base_capabilities import BaseTryOnService
+    from services.tool_relay_service import ToolRelayService
+
+    class _TryOnService(BaseTryOnService):
+        TYPE = "nativeTryOnForPfpTest"
+
+        def connect(self):
+            pass
+
+        def disconnect(self):
+            pass
+
+        def is_connected(self):
+            return True
+
+        def try_on(self, **kwargs):
+            return {"image_bytes": b"PNG", "content_type": "image/png"}
+
+    from core import ServiceFactory
+    ServiceFactory.register(_TryOnService)
+    ServiceRegistry.get_instance().install(
+        SCOPE_USER, "alice", "tryon-native", "nativeTryOnForPfpTest")
+
+    svc, error = ToolRelayService._make_media_resolver(
+        "alice", "conv1", "tryon")()
+
+    assert error is None
+    assert svc is not None
+    assert hasattr(svc, "try_on")
+
+
+def test_pfp_capability_handler_persists_path_artifact(tmp_path, monkeypatch):
+    from core.handlers.capabilities import UpscaleImageHandler
+
+    source = tmp_path / "upscaled.png"
+    source.write_bytes(b"PNG")
+    writes = []
+
+    class _Storage:
+        def write_file(self, destination, filename, source_path, content_type):
+            writes.append({
+                "destination": destination,
+                "filename": filename,
+                "source_path": source_path,
+                "content_type": content_type,
+            })
+            return {"file_id": "path-file"}
+
+    monkeypatch.setattr(
+        "core.storage_resolver.StorageResolver",
+        lambda user_id="", conversation_id="": _Storage(),
+    )
+
+    class _Service:
+        def set_runtime_context(self, **kwargs):
+            pass
+
+        def upscale(self, **kwargs):
+            return {
+                "image_path": str(source),
+                "content_type": "image/png",
+                "_delete_media_path": True,
+            }
+
+    handler = UpscaleImageHandler()
+    handler.set_user_id("alice")
+    handler.set_conversation_id("conv1")
+    handler.set_service_resolver(lambda: (_Service(), ""))
+
+    result = handler.execute({"image_url": "https://example.test/input.png"})
+
+    assert "Upscaled image" in result
+    assert writes == [{
+        "destination": "filestore",
+        "filename": writes[0]["filename"],
+        "source_path": str(source),
+        "content_type": "image/png",
+    }]
+    assert not source.exists()
+
+
+def test_pfp_speak_handler_persists_audio_path_artifact(tmp_path, monkeypatch):
+    from core.file_store import FileStore
+    from core import voice_clone_cache as _cache
+    from core.handlers.capabilities import SpeakHandler
+
+    _reset_repo(tmp_path, monkeypatch)
+    FileStore._instance = FileStore(base_dir=str(tmp_path / "filestore"))
+    source = tmp_path / "speech.mp3"
+    source.write_bytes(b"AUDIO")
+
+    _cache.save("alice", {
+        "name": "pfpvoice",
+        "provider": "pfp:community.voice/service_provider:voice",
+        "provider_version": "1.0.0:sha256:test",
+        "ref_audio_hash": "refhash",
+        "ref_audio_fid": "",
+        "reference_text": "",
+    })
+
+    class _PfpVoiceService:
+        TYPE = "packageRuntime"
+        VERSION = "1.0.0"
+        config = {
+            "package_runtime": {
+                "package": "community.voice",
+                "version": "1.0.0",
+                "object_id": "service_provider:voice",
+            },
+            "installed_from": {"hash": "sha256:test"},
+        }
+
+        def set_runtime_context(self, **kwargs):
+            pass
+
+        def clone_speak(self, **kwargs):
+            return {
+                "audio_path": str(source),
+                "content_type": "audio/mpeg",
+                "_delete_media_path": True,
+            }
+
+    handler = SpeakHandler()
+    handler.set_user_id("alice")
+    handler.set_conversation_id("conv1")
+    handler.set_service_resolver(lambda: (_PfpVoiceService(), ""))
+
+    result = handler.execute({"voice": "pfpvoice", "text": "hello"})
+
+    assert "Speech synthesized" in result
+    assert "file_id:" in result
+    assert not source.exists()
+
+
+def test_pfp_voice_provider_identity_includes_package_runtime():
+    from core.handlers.capabilities import _provider_identity, _provider_version
+
+    class _PfpVoiceService:
+        TYPE = "packageRuntime"
+        VERSION = "1.0.0"
+        config = {
+            "package_runtime": {
+                "package": "community.voice",
+                "version": "2.0.0",
+                "object_id": "service_provider:voice",
+            },
+            "installed_from": {"hash": "sha256:abc"},
+        }
+
+    svc = _PfpVoiceService()
+
+    assert _provider_identity(svc) == "pfp:community.voice/service_provider:voice"
+    assert _provider_version(svc) == "2.0.0:sha256:abc"
+
+
+def test_pfp_voice_id_result_is_normalized_for_speak_and_delete(tmp_path, monkeypatch):
+    from core.file_store import FileStore
+    from core import voice_clone_cache as _cache
+    from core.handlers.capabilities import (
+        CloneVoiceHandler, DeleteVoiceHandler, SpeakHandler,
+    )
+
+    _reset_repo(tmp_path, monkeypatch)
+    FileStore._instance = FileStore(base_dir=str(tmp_path / "filestore"))
+
+    class _Response:
+        headers = {"Content-Type": "audio/mpeg"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return b"REFERENCE"
+
+    monkeypatch.setattr("urllib.request.urlopen", lambda *a, **k: _Response())
+
+    class _PfpVoiceService:
+        TYPE = "packageRuntime"
+        VERSION = "1.0.0"
+        config = {
+            "package_runtime": {
+                "package": "community.voice",
+                "version": "1.0.0",
+                "object_id": "service_provider:voice",
+            },
+            "installed_from": {"hash": "sha256:test"},
+        }
+
+        def __init__(self):
+            self.speak_voice_id = None
+            self.deleted_voice_id = None
+
+        def ensure_voice_id(self, **kwargs):
+            return {"voice_id": "vid-1"}
+
+        def clone_speak(self, **kwargs):
+            self.speak_voice_id = kwargs.get("voice_id")
+            return {"audio_bytes": b"AUDIO", "content_type": "audio/mpeg"}
+
+        def delete_voice_id(self, voice_id):
+            self.deleted_voice_id = voice_id
+            return True
+
+    svc = _PfpVoiceService()
+
+    clone = CloneVoiceHandler()
+    clone.set_user_id("alice")
+    clone.set_conversation_id("conv1")
+    clone.set_service_resolver(lambda: (svc, ""))
+    registered = clone.execute({
+        "name": "pfpvoice",
+        "reference_audio_url": "https://example.test/ref.mp3",
+    })
+
+    entry = _cache.get_by_name("alice", "pfpvoice")
+    assert "Voice clone registered" in registered
+    assert entry["voice_id"] == "vid-1"
+
+    speak = SpeakHandler()
+    speak.set_user_id("alice")
+    speak.set_conversation_id("conv1")
+    speak.set_service_resolver(lambda: (svc, ""))
+    spoken = speak.execute({"voice": "pfpvoice", "text": "hello"})
+
+    delete = DeleteVoiceHandler()
+    delete.set_user_id("alice")
+    delete.set_conversation_id("conv1")
+    delete.set_service_resolver(lambda: (svc, ""))
+    deleted = delete.execute({"voice": "pfpvoice"})
+
+    assert "Speech synthesized" in spoken
+    assert svc.speak_voice_id == "vid-1"
+    assert "Provider voice_id freed" in deleted
+    assert svc.deleted_voice_id == "vid-1"
+
+
+def test_pfp_user_scoped_flow_is_visible_deployable_and_runnable(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    from core.deployment_registry import DeploymentRegistry
+    from core.handlers.flow_management import FlowManagerHandler
+    from core.repository import ScopedRepository
+    from tasks import register_all_tasks
+
+    DeploymentRegistry.reset()
+    register_all_tasks()
+    flow = {
+        "id": "demo",
+        "name": "Demo",
+        "version": "1.0.0",
+        "tasks": {
+            "gen": {
+                "type": "generateFlowFile",
+                "parameters": {"content": "from pfp flow", "count": 1},
+            }
+        },
+        "relations": [],
+    }
+    ScopedRepository.instance().create_flow(
+        "community.pkg.demo:1.0.0", "user", flow, user_id="alice")
+
+    handler = FlowManagerHandler()
+    handler.set_user_id("alice")
+    handler.set_conversation_id("conv1")
+    handler.set_agent_name("agentA")
+
+    catalog = handler.execute({"action": "catalog"})
+    deployed = handler.execute({
+        "action": "deploy",
+        "template_id": "community.pkg.demo:1.0.0",
+    })
+    run = handler.execute({
+        "action": "run",
+        "template_id": "community.pkg.demo:1.0.0",
+    })
+    instances = DeploymentRegistry.get_instance().get_by_conversation(
+        "conv1", owner="alice")
+
+    assert "community.pkg.demo:1.0.0" in catalog
+    assert "deployed as instance" in deployed
+    assert len(instances) == 1
+    assert instances[0].flow_scope == "user"
+    assert "from pfp flow" in run
+
+
+def test_pfp_uninstall_removes_installed_flow(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    from core.repository import ScopedRepository
+
+    keypair = pfp_package.create_signing_key()
+    pkgdir = tmp_path / "flow-package.pfpdir"
+    flow_dir = pkgdir / "content" / "flows"
+    flow_dir.mkdir(parents=True)
+    (flow_dir / "demo.json").write_text(json.dumps({
+        "id": "demo",
+        "name": "Demo",
+        "tasks": {},
+        "relations": [],
+    }), encoding="utf-8")
+    (pkgdir / "pfp.json").write_text(json.dumps({
+        "format": "pawflow.package.v1",
+        "package": "community.flowpkg",
+        "version": "1.0.0",
+        "developer": {
+            "email": "dev@example.com",
+            "public_key": keypair["public_key"],
+        },
+        "objects": [{
+            "id": "flow:demo",
+            "type": "flow",
+            "name": "demo",
+            "fqn": "community.flowpkg.demo:1.0.0",
+            "path": "content/flows/demo.json",
+        }],
+    }), encoding="utf-8")
+
+    built = pfp_package.build_pfp(str(pkgdir), private_key=keypair["private_key"])
+    installed = pfp_package.install_pfp(
+        built["path"], user_id="alice", include=["flow:demo"], force=True)
+    before = ScopedRepository.instance().get_flow(
+        "community.flowpkg.demo:1.0.0", "user", user_id="alice")
+
+    removed = pfp_package.uninstall_pfp(
+        "community.flowpkg", user_id="alice", force=True)
+    after = ScopedRepository.instance().get_flow(
+        "community.flowpkg.demo:1.0.0", "user", user_id="alice")
+
+    assert installed["ok"] is True
+    assert before is not None
+    assert removed["ok"] is True
+    assert removed["removed"][0]["kind"] == "flow"
+    assert after is None
+
+
+def test_pfp_uninstall_keeps_modified_service_without_force(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    import services.package_runtime_service  # noqa: F401
+    from core.service_registry import ServiceRegistry, SCOPE_USER
+
+    keypair = pfp_package.create_signing_key()
+    pkgdir = _write_package_dir(
+        tmp_path / "service-package", keypair,
+        package_id="community.servicepkg",
+        include_service_provider=True,
+    )
+    built = pfp_package.build_pfp(str(pkgdir), private_key=keypair["private_key"])
+    pfp_package.install_pfp(
+        built["path"], user_id="alice",
+        include=["service_provider:image"], force=True)
+
+    reg = ServiceRegistry.get_instance()
+    sdef = reg.get_definition(SCOPE_USER, "alice", "wavespeed-image-provider")
+    sdef.config["installed_from"]["hash"] = "sha256:local-change"
+
+    result = pfp_package.uninstall_pfp(
+        "community.servicepkg", user_id="alice", force=False)
+    still_installed = reg.get_definition(
+        SCOPE_USER, "alice", "wavespeed-image-provider")
+
+    assert result["ok"] is False
+    assert result["removed"] == []
+    assert result["kept"][0]["kind"] == "service"
+    assert still_installed is not None
+
+
+def test_admin_start_uses_scoped_flow_fqn_without_flow_path(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    from core.deployment_registry import DeployedInstance, DeploymentRegistry
+    from core.executor_registry import ExecutorRegistry
+    from core.repository import ScopedRepository
+    from engine.continuous_executor import ContinuousFlowExecutor
+    from tasks.io.admin_actions import _admin_start_flow
+
+    DeploymentRegistry.reset()
+    ExecutorRegistry._instance = None
+    ScopedRepository.instance().create_flow(
+        "community.pkg.admin:1.0.0", "user", {
+            "id": "admin-flow",
+            "name": "Admin Flow",
+            "tasks": {},
+            "relations": [],
+        }, user_id="alice")
+    monkeypatch.setattr(ContinuousFlowExecutor, "start", lambda self: None)
+    dep = DeploymentRegistry.get_instance()
+    dep._instances["admin-inst"] = DeployedInstance(
+        instance_id="admin-inst",
+        flow_id="admin-flow",
+        flow_name="Admin Flow",
+        flow_fqn="community.pkg.admin:1.0.0",
+        flow_scope="user",
+        flow_path=str(tmp_path / "missing.json"),
+        owner="alice",
+        status="stopped",
+    )
+
+    result = _admin_start_flow(
+        {"instance_id": "admin-inst"}, ExecutorRegistry.get_instance(), dep, None, None)
+    executor = ExecutorRegistry.get_instance().get("admin-inst")
+
+    assert result == {"status": "running"}
+    assert executor is not None
+    assert executor._flow.id == "admin-flow"
+
+
+def test_files_fs_start_uses_scoped_flow_fqn_without_flow_path(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    from core import FlowFile
+    from core.deployment_registry import DeployedInstance, DeploymentRegistry
+    from core.executor_registry import ExecutorRegistry
+    from core.repository import ScopedRepository
+    from engine.continuous_executor import ContinuousFlowExecutor
+    from tasks.ai.actions.files_fs import _handle_files_fs
+
+    DeploymentRegistry.reset()
+    ExecutorRegistry._instance = None
+    ScopedRepository.instance().create_flow(
+        "community.pkg.files:1.0.0", "user", {
+            "id": "files-flow",
+            "name": "Files Flow",
+            "tasks": {},
+            "relations": [],
+        }, user_id="alice")
+    monkeypatch.setattr(ContinuousFlowExecutor, "start", lambda self: None)
+    dep = DeploymentRegistry.get_instance()
+    dep._instances["files-inst"] = DeployedInstance(
+        instance_id="files-inst",
+        flow_id="files-flow",
+        flow_name="Files Flow",
+        flow_fqn="community.pkg.files:1.0.0",
+        flow_scope="user",
+        flow_path=str(tmp_path / "missing.json"),
+        owner="alice",
+        status="stopped",
+    )
+    flowfile = FlowFile()
+
+    _handle_files_fs(None, "manage_conv_flow", {
+        "flow_id": "files-inst",
+        "flow_action": "start",
+    }, None, "alice", flowfile)
+    result = json.loads(flowfile.get_content().decode("utf-8"))
+    executor = ExecutorRegistry.get_instance().get("files-inst")
+
+    assert result == {"message": "Flow 'files-inst' started"}
+    assert executor is not None
+    assert executor._flow.id == "files-flow"
+
+
+def test_service_flow_deploy_and_start_preserve_pfp_runtime_identity(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    from core import FlowFile
+    from core.deployment_registry import DeploymentRegistry
+    from core.executor_registry import ExecutorRegistry
+    from core.repository import ScopedRepository
+    from tasks.ai.actions.service_flow import _handle_service_flow
+
+    DeploymentRegistry.reset()
+    ExecutorRegistry._instance = None
+    ScopedRepository.instance().create_flow(
+        "community.pkg.service:1.0.0", "user", {
+            "id": "service-flow",
+            "name": "Service Flow",
+            "scope": "conversation",
+            "tasks": {},
+            "relations": [],
+        }, user_id="alice")
+
+    class _Agent:
+        _agent_name = "agentA"
+
+    deploy_ff = FlowFile()
+    _handle_service_flow(_Agent(), "deploy_flow", {
+        "template_id": "community.pkg.service:1.0.0",
+        "conversation_id": "conv1",
+    }, None, "alice", deploy_ff)
+    deployed = json.loads(deploy_ff.get_content().decode("utf-8"))
+    inst = DeploymentRegistry.get_instance().get(deployed["instance_id"])
+
+    captured = {}
+
+    def _capture_restore(self, instance_id, flow_path, max_workers=4,
+                         max_retries=3, **kwargs):
+        captured.update({
+            "instance_id": instance_id,
+            "flow_path": flow_path,
+            "max_workers": max_workers,
+            "max_retries": max_retries,
+            **kwargs,
+        })
+        return True
+
+    monkeypatch.setattr(ExecutorRegistry, "_restore_instance", _capture_restore)
+    start_ff = FlowFile()
+    _handle_service_flow(_Agent(), "start_flow", {
+        "instance_id": deployed["instance_id"],
+    }, None, "alice", start_ff)
+    started = json.loads(start_ff.get_content().decode("utf-8"))
+
+    assert deployed["ok"] is True
+    assert inst.flow_fqn == "community.pkg.service:1.0.0"
+    assert inst.flow_scope == "conversation"
+    assert inst.agent_name == "agentA"
+    assert started == {"ok": True, "status": "running"}
+    assert captured["flow_fqn"] == "community.pkg.service:1.0.0"
+    assert captured["flow_scope"] == "conversation"
+    assert captured["owner"] == "alice"
+    assert captured["conversation_id"] == "conv1"
+    assert captured["agent_name"] == "agentA"
+
+
+def test_service_flow_discovers_and_deploys_conversation_scoped_pfp_flow(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    from core import FlowFile
+    from core.deployment_registry import DeploymentRegistry
+    from core.repository import ScopedRepository
+    from tasks.ai.actions.service_flow import _handle_service_flow
+
+    DeploymentRegistry.reset()
+    ScopedRepository.instance().create_flow(
+        "community.pkg.convflow:1.0.0", "conv", {
+            "id": "conv-flow",
+            "name": "Conversation Flow",
+            "scope": "conversation",
+            "tasks": {},
+            "relations": [],
+        }, user_id="alice", conv_id="conv1")
+
+    class _Agent:
+        _agent_name = "agentA"
+
+    list_ff = FlowFile()
+    _handle_service_flow(_Agent(), "list_available_flows", {
+        "conversation_id": "conv1",
+    }, None, "alice", list_ff)
+    listed = json.loads(list_ff.get_content().decode("utf-8"))
+
+    schema_ff = FlowFile()
+    _handle_service_flow(_Agent(), "get_flow_deploy_schema", {
+        "template_id": "community.pkg.convflow:1.0.0",
+        "conversation_id": "conv1",
+    }, None, "alice", schema_ff)
+    schema = json.loads(schema_ff.get_content().decode("utf-8"))
+
+    deploy_ff = FlowFile()
+    _handle_service_flow(_Agent(), "deploy_flow", {
+        "template_id": "community.pkg.convflow:1.0.0",
+        "conversation_id": "conv1",
+    }, None, "alice", deploy_ff)
+    deployed = json.loads(deploy_ff.get_content().decode("utf-8"))
+    inst = DeploymentRegistry.get_instance().get(deployed["instance_id"])
+
+    assert any(item["id"] == "conv-flow" and item["scope"] == "conversation"
+               for item in listed["templates"])
+    assert schema["template_id"] == "conv-flow"
+    assert deployed["ok"] is True
+    assert inst.flow_fqn == "community.pkg.convflow:1.0.0"
+    assert inst.flow_scope == "conversation"
+    assert inst.conversation_id == "conv1"
+    assert inst.agent_name == "agentA"
+
+
+def test_media_list_action_includes_conversation_scoped_pfp_provider(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    import services.package_runtime_service  # noqa: F401
+    from core import FlowFile
+    from core.service_registry import ServiceRegistry, SCOPE_CONV
+    from tasks.ai.agent_utils import AgentUtilsMixin
+    from tasks.ai.actions.media import _handle_media
+
+    ServiceRegistry.get_instance().install(
+        SCOPE_CONV, "conv1", "pfp-image", "packageRuntime", config={
+            "package_runtime": {
+                "package": "community.media",
+                "version": "1.0.0",
+                "object_id": "service_provider:image",
+                "provides": ["media.image_generation"],
+            },
+            "installed_from": {"hash": "sha256:test"},
+            "operations": {"generate": {}},
+        })
+
+    class _Agent(AgentUtilsMixin):
+        pass
+
+    class _Store:
+        def get_extra(self, conversation_id, key):
+            return {}
+
+    flowfile = FlowFile()
+    _handle_media(
+        _Agent(), "list_image_services", {"conversation_id": "conv1"},
+        _Store(), "alice", flowfile)
+    data = json.loads(flowfile.get_content().decode("utf-8"))
+
+    assert any(item["id"] == "pfp-image" for item in data)
+
+
+def test_executor_restore_loads_user_scoped_flow_fqn(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    from core.executor_registry import ExecutorRegistry
+    from core.repository import ScopedRepository
+    from engine.continuous_executor import ContinuousFlowExecutor
+    from tasks import register_all_tasks
+
+    register_all_tasks()
+    ScopedRepository.instance().create_flow(
+        "community.pkg.restore:1.0.0", "user", {
+            "id": "restore",
+            "name": "Restore From User Scope",
+            "version": "1.0.0",
+            "tasks": {"gen": {"type": "generateFlowFile", "parameters": {}}},
+            "relations": [],
+        }, user_id="alice")
+    monkeypatch.setattr(ContinuousFlowExecutor, "start", lambda self: None)
+
+    registry = ExecutorRegistry()
+    ok = registry._restore_instance(
+        "inst1", "/missing/template.json",
+        flow_fqn="community.pkg.restore:1.0.0",
+        flow_scope="user",
+        owner="alice",
+        conversation_id="conv1",
+        agent_name="agentA",
+    )
+
+    executor = registry.get("inst1")
+    assert ok is True
+    assert executor is not None
+    assert executor._flow.id == "restore"
+    assert executor._runtime_context["user_id"] == "alice"
+
+
+def test_execute_flow_propagates_runtime_context_to_subflow(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from core import FlowFile
+    from engine import FlowParser
+    from engine.continuous_executor import ContinuousFlowExecutor
+    from tasks.control.execute_flow import ExecuteFlowTask
+
+    child_path = tmp_path / "child.json"
+    child_path.write_text('{"tasks": {}, "relations": []}', encoding="utf-8")
+    task = ExecuteFlowTask({"flow_path": str(child_path)})
+    task.set_runtime_context(
+        user_id="alice", conversation_id="conv1",
+        scope="conversation", agent_name="agentA")
+    captured = {}
+
+    def _fake_run_batch(flow, input_flowfiles=None, parameters=None,
+                        runtime_context=None, **_kwargs):
+        captured["runtime_context"] = runtime_context
+        return SimpleNamespace(success=True, errors=[], output_flowfiles=[])
+
+    monkeypatch.setattr(FlowParser, "parse_from_file", lambda _path: SimpleNamespace(
+        name="Child", parameters={}, tasks={}, relations=[]))
+    monkeypatch.setattr(ContinuousFlowExecutor, "run_batch", _fake_run_batch)
+
+    task.execute(FlowFile(content=b"x"))
+
+    assert captured["runtime_context"] == {
+        "user_id": "alice",
+        "conversation_id": "conv1",
+        "scope": "conversation",
+        "agent_name": "agentA",
+    }
+
+
+def test_executor_injects_runtime_context_into_execute_flow_task(tmp_path):
+    from core import Flow
+    from engine.continuous_executor import ContinuousFlowExecutor
+    from tasks.control.execute_flow import ExecuteFlowTask
+
+    child_path = tmp_path / "child.json"
+    child_path.write_text('{"tasks": {}, "relations": []}', encoding="utf-8")
+    task = ExecuteFlowTask({"flow_path": str(child_path)})
+    flow = Flow({"id": "parent", "name": "Parent", "relations": []})
+    flow.add_task("exec", task)
+
+    ContinuousFlowExecutor(flow, runtime_context={
+        "user_id": "alice",
+        "conversation_id": "conv1",
+        "scope": "conversation",
+        "agent_name": "agentA",
+    })
+
+    assert task._runtime_context == {
+        "user_id": "alice",
+        "conversation_id": "conv1",
+        "scope": "conversation",
+        "agent_name": "agentA",
+    }
+
+
+def test_pfp_task_output_flowfile_from_content_path_stays_disk_backed(tmp_path):
+    from core import pfp_runtime
+
+    content_path = tmp_path / "result.bin"
+    content_path.write_bytes(b"x" * 16)
+
+    flowfile = pfp_runtime._flowfile_from_payload({
+        "content_path": str(content_path),
+        "content_root": str(tmp_path),
+        "_delete_content_path": True,
+        "attributes": {"mime.type": "application/octet-stream"},
+    })
+
+    assert flowfile.is_content_on_disk is True
+    assert flowfile.size() == 16
+    assert flowfile.get_attribute("mime.type") == "application/octet-stream"
+
+
+def test_pfp_flow_task_uninstall_keeps_proxy_used_by_other_user(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    from core import TaskFactory
+
+    keypair1 = pfp_package.create_signing_key()
+    pkgdir1 = _write_package_dir(
+        tmp_path / "pkg1", keypair1,
+        package_id="community.one", include_flow_task=True)
+    (pkgdir1 / "content" / "flow-tasks" / "image-resize" / "task.py").write_text(
+        "from pawflow import pfp\npfp.result(flowfiles=[])\n",
+        encoding="utf-8")
+    built1 = pfp_package.build_pfp(
+        str(pkgdir1), private_key=keypair1["private_key"])
+
+    keypair2 = pfp_package.create_signing_key()
+    pkgdir2 = _write_package_dir(
+        tmp_path / "pkg2", keypair2,
+        package_id="community.two", include_flow_task=True)
+    (pkgdir2 / "content" / "flow-tasks" / "image-resize" / "task.py").write_text(
+        "from pawflow import pfp\npfp.result(flowfiles=[])\n",
+        encoding="utf-8")
+    built2 = pfp_package.build_pfp(
+        str(pkgdir2), private_key=keypair2["private_key"])
+
+    pfp_package.install_pfp(
+        built1["path"], user_id="alice",
+        include=["flow_task:resize-image"], force=True)
+    pfp_package.install_pfp(
+        built2["path"], user_id="bob",
+        include=["flow_task:resize-image"], force=True)
+
+    assert "packageResizeImage" in TaskFactory.list_types()
+    result = pfp_package.uninstall_pfp("community.one", user_id="alice", force=False)
+
+    assert result["ok"] is True
+    assert "packageResizeImage" in TaskFactory.list_types()
+    proxy = TaskFactory.get("packageResizeImage")
+    assert proxy.PACKAGE_RUNTIME["package"] == "community.two"
+
+
+def test_pfp_flow_task_update_ignores_other_user_global_proxy(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    from core import TaskFactory
+
+    alice_key = pfp_package.create_signing_key()
+    alice_v1_dir = _write_package_dir(
+        tmp_path / "alice-v1", alice_key,
+        package_id="community.alice", include_flow_task=True)
+    alice_v1 = pfp_package.build_pfp(
+        str(alice_v1_dir), private_key=alice_key["private_key"])
+
+    bob_key = pfp_package.create_signing_key()
+    bob_dir = _write_package_dir(
+        tmp_path / "bob", bob_key,
+        package_id="community.bob", include_flow_task=True)
+    bob = pfp_package.build_pfp(str(bob_dir), private_key=bob_key["private_key"])
+
+    pfp_package.install_pfp(
+        alice_v1["path"], user_id="alice",
+        include=["flow_task:resize-image"], force=True)
+    pfp_package.install_pfp(
+        bob["path"], user_id="bob",
+        include=["flow_task:resize-image"], force=True)
+    assert TaskFactory.get("packageResizeImage").PACKAGE_RUNTIME["package"] == "community.bob"
+
+    alice_v2_dir = _write_package_dir(
+        tmp_path / "alice-v2", alice_key, version="1.1.0",
+        package_id="community.alice", include_flow_task=True)
+    (alice_v2_dir / "content" / "flow-tasks" / "image-resize" / "task.py").write_text(
+        "from pawflow import pfp\npfp.result(flowfiles=[])\n",
+        encoding="utf-8")
+    alice_v2 = pfp_package.build_pfp(
+        str(alice_v2_dir), private_key=alice_key["private_key"])
+
+    updated = pfp_package.update_pfp(alice_v2["path"], user_id="alice")
+
+    assert updated["ok"] is True
+    assert {"id": "flow_task:resize-image", "reason": "local_modified"} not in updated["skipped"]
+    assert updated["updated"][0]["id"] == "flow_task:resize-image"
+
+
+def test_tool_relay_speech_to_video_resolves_lipsync_pfp_provider(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    import services.package_runtime_service  # noqa: F401
+    from core import ServiceFactory
+    from core.service_registry import ServiceRegistry, SCOPE_USER
+    from services.base_video_generation import BaseVideoGenerationService
+    from services.tool_relay_service import ToolRelayService
+
+    class FakeVideoWithoutSpeechToVideo(BaseVideoGenerationService):
+        TYPE = "fakeVideoWithoutSpeechToVideo"
+
+        def _create_connection(self):
+            return self
+
+        def _close_connection(self):
+            pass
+
+        def generate(self, **kwargs):
+            return {"video_url": "native.mp4"}
+
+    monkeypatch.setitem(
+        ServiceFactory._services,
+        "fakeVideoWithoutSpeechToVideo",
+        FakeVideoWithoutSpeechToVideo)
+    registry = ServiceRegistry.get_instance()
+    registry.install(
+        SCOPE_USER, "alice", "native-video", "fakeVideoWithoutSpeechToVideo",
+        config={})
+    registry.install(
+        SCOPE_USER, "alice", "pfp-s2v", "packageRuntime", config={
+            "package_runtime": {
+                "package": "community.s2v",
+                "version": "1.0.0",
+                "object_id": "service_provider:s2v",
+                "entrypoint": "content/service-providers/s2v/provider.py",
+                "content_dir": str(tmp_path),
+                "provides": ["media.lipsync"],
+            },
+            "installed_from": {"hash": "sha256:test"},
+            "operations": {"speech_to_video": {}},
+        })
+
+    service, error = ToolRelayService._make_media_resolver(
+        "alice", "conv1", "speech_to_video")()
+
+    assert error is None
+    assert service is not None
+    assert hasattr(service, "speech_to_video")
+
+
+def test_pfp_sdk_flowfile_writes_relay_local_content_path(tmp_path, monkeypatch):
+    import importlib.util
+
+    monkeypatch.chdir(tmp_path)
+    sdk_path = Path(__file__).resolve().parents[1] / "docker" / "pawflow_sdk" / "pawflow.py"
+    spec = importlib.util.spec_from_file_location("pawflow_sdk_under_test", sdk_path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+
+    descriptor = module.pfp.flowfile("hello", {"mime.type": "text/plain"})
+
+    assert "content_b64" not in descriptor
+    assert descriptor["content_path"].startswith(".pawflow/flowfiles/results/result-")
+    assert (tmp_path / descriptor["content_path"]).read_bytes() == b"hello"
+    assert descriptor["attributes"] == {"mime.type": "text/plain"}
+
+
+def test_pfp_relay_runner_reports_crash_after_success_result(tmp_path):
+    from core import pfp_runtime
+
+    runner = tmp_path / "pfp_relay_runner.py"
+    runner.write_text(pfp_runtime._RELAY_RUNNER, encoding="utf-8")
+    request = tmp_path / "request.json"
+    request.write_text(json.dumps({
+        "format": pfp_runtime.RUNTIME_INVOKE_FORMAT,
+        "kind": "tool",
+        "package": {},
+        "context": {},
+        "payload": {},
+    }), encoding="utf-8")
+    entrypoint = tmp_path / "entry.py"
+    entrypoint.write_text(
+        "from pawflow import pfp\n"
+        "pfp.result({'ok': True})\n"
+        "raise RuntimeError('boom after result')\n",
+        encoding="utf-8")
+    env = dict(os.environ)
+    env["PAWFLOW_PFP_SDK_PATH"] = str(Path(__file__).resolve().parents[1] / "docker" / "pawflow_sdk")
+
+    proc = subprocess.run(
+        [sys.executable, str(runner), str(request), str(entrypoint)],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        env=env,
+        check=False,
+    )
+
+    assert proc.returncode == 0
+    envelope = json.loads(proc.stdout)
+    assert envelope["ok"] is False
+    assert "exited with code 1" in envelope["error"]
+    assert "boom after result" in envelope["error"]
 
 
 
@@ -738,6 +1990,136 @@ def test_pfp_runtime_host_executes_authorized_tool_call(tmp_path, monkeypatch):
         raise AssertionError("host-call envelope should not bypass grants")
 
 
+def test_pfp_runtime_host_package_tool_ref_requires_matching_runtime(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    from core import pfp_runtime
+    from core import pfp_capabilities
+
+    monkeypatch.setattr(
+        pfp_capabilities.PackageCapabilityBroker,
+        "_require_installed_package",
+        lambda self, package_id, version="", object_id="": None,
+    )
+
+    class _Tool:
+        def __init__(self, runtime=None):
+            self._package_runtime = runtime or {}
+
+        def execute(self, arguments):
+            return "tool-result"
+
+    class _Registry:
+        def __init__(self, tool):
+            self.tool = tool
+
+        def get(self, name):
+            return self.tool if name == "normalize" else None
+
+    host = pfp_runtime.PackageRuntimeHost(
+        user_id="alice",
+        conversation_id="conv1",
+        scope="conversation",
+        caller_runtime={
+            "package": "community.consumer",
+            "version": "1.0.0",
+            "object_id": "tool:consumer",
+            "allowed_tools": [{
+                "package": "community.base",
+                "object": "tool:normalize",
+            }],
+        },
+        tool_registry=_Registry(_Tool()),
+    )
+
+    try:
+        host.handle_host_call({
+            "format": "pawflow.package.runtime.host_call.v1",
+            "kind": "tool",
+            "target": "community.base/tool:normalize",
+            "arguments": {"text": "hi"},
+        })
+    except pfp_runtime.PackageRuntimeError as exc:
+        assert "not available" in str(exc)
+    else:
+        raise AssertionError("package-qualified host call should not execute a homonymous tool")
+
+    host.tool_registry = _Registry(_Tool({
+        "package": "community.base",
+        "version": "1.0.0",
+        "object_id": "tool:normalize",
+    }))
+    assert host.handle_host_call({
+        "format": "pawflow.package.runtime.host_call.v1",
+        "kind": "tool",
+        "target": "community.base/tool:normalize",
+        "arguments": {"text": "hi"},
+    }) == "tool-result"
+
+    try:
+        host.handle_host_call({
+            "format": "pawflow.package.runtime.host_call.v1",
+            "kind": "tool",
+            "target": "community.base@2.0.0/tool:normalize",
+            "arguments": {"text": "hi"},
+        })
+    except pfp_runtime.PackageRuntimeError as exc:
+        assert "not available" in str(exc)
+    else:
+        raise AssertionError("package-qualified host call should reject a version mismatch")
+
+
+def test_pfp_runtime_host_package_tool_ref_resolves_by_object_id(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    from core import pfp_runtime
+    from core import pfp_capabilities
+
+    monkeypatch.setattr(
+        pfp_capabilities.PackageCapabilityBroker,
+        "_require_installed_package",
+        lambda self, package_id, version="", object_id="": None,
+    )
+
+    class _Tool:
+        name = "friendly_normalize"
+        _package_runtime = {
+            "package": "community.base",
+            "object_id": "tool:normalize",
+        }
+
+        def execute(self, arguments):
+            return f"ok:{arguments['text']}"
+
+    class _Registry:
+        def get(self, name):
+            return None
+
+        def list_tools(self):
+            return [_Tool()]
+
+    host = pfp_runtime.PackageRuntimeHost(
+        user_id="alice",
+        conversation_id="conv1",
+        scope="conversation",
+        caller_runtime={
+            "package": "community.consumer",
+            "version": "1.0.0",
+            "object_id": "tool:consumer",
+            "allowed_tools": [{
+                "package": "community.base",
+                "object": "tool:normalize",
+            }],
+        },
+        tool_registry=_Registry(),
+    )
+
+    assert host.handle_host_call({
+        "format": "pawflow.package.runtime.host_call.v1",
+        "kind": "tool",
+        "target": "community.base/tool:normalize",
+        "arguments": {"text": "hi"},
+    }) == "ok:hi"
+
+
 def test_pfp_runtime_host_executes_authorized_service_call(tmp_path, monkeypatch):
     _reset_repo(tmp_path, monkeypatch)
     from core import pfp_runtime
@@ -746,6 +2128,10 @@ def test_pfp_runtime_host_executes_authorized_service_call(tmp_path, monkeypatch
     class _Service:
         def __init__(self):
             self.calls = []
+            self.runtime_contexts = []
+
+        def set_runtime_context(self, **kwargs):
+            self.runtime_contexts.append(kwargs)
 
         def invoke(self, operation, arguments):
             self.calls.append((operation, arguments))
@@ -769,6 +2155,7 @@ def test_pfp_runtime_host_executes_authorized_service_call(tmp_path, monkeypatch
             "package": "community.consumer",
             "version": "1.0.0",
             "object_id": "service_provider:consumer",
+            "agent_name": "agentA",
             "allowed_services": [{"name": "image-service"}],
         },
         service_registry=registry,
@@ -783,6 +2170,12 @@ def test_pfp_runtime_host_executes_authorized_service_call(tmp_path, monkeypatch
     })
     assert result == {"ok": True, "image": "out.png"}
     assert registry.service.calls == [("generate", {"prompt": "cat"})]
+    assert registry.service.runtime_contexts == [{
+        "user_id": "alice",
+        "conversation_id": "conv1",
+        "scope": "conversation",
+        "agent_name": "agentA",
+    }]
 
     try:
         host.handle_host_call({
@@ -796,6 +2189,286 @@ def test_pfp_runtime_host_executes_authorized_service_call(tmp_path, monkeypatch
         assert "not allowed" in str(exc)
     else:
         raise AssertionError("undeclared host service call should be denied")
+
+
+def test_pfp_runtime_host_dispatches_builtin_service_operations(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    from core import pfp_runtime
+
+    class _BuiltinService:
+        def __init__(self):
+            self.values = {}
+            self.runtime_contexts = []
+
+        def set_runtime_context(self, **kwargs):
+            self.runtime_contexts.append(kwargs)
+
+        def put(self, key, value):
+            self.values[key] = value
+
+        def get(self, key, default=None):
+            return self.values.get(key, default)
+
+        def get_blob(self):
+            return b"abc"
+
+        def disconnect(self):
+            raise AssertionError("lifecycle methods must not be dispatched")
+
+        def ensure_connected(self):
+            raise AssertionError("lifecycle methods must not be dispatched")
+
+        def reset(self):
+            raise AssertionError("destructive reset must not be dispatched")
+
+    class _Registry:
+        def __init__(self):
+            self.service = _BuiltinService()
+
+        def resolve(self, service_id, *, user_id="", conv_id=""):
+            assert user_id == "alice"
+            assert conv_id == "conv1"
+            return self.service if service_id == "cache1" else None
+
+    registry = _Registry()
+    host = pfp_runtime.PackageRuntimeHost(
+        user_id="alice",
+        conversation_id="conv1",
+        scope="conversation",
+        caller_runtime={
+            "package": "community.consumer",
+            "version": "1.0.0",
+            "object_id": "tool:consumer",
+            "agent_name": "agentA",
+            "allowed_services": [{"name": "cache1"}],
+        },
+        service_registry=registry,
+    )
+
+    assert host.handle_host_call({
+        "format": "pawflow.package.runtime.host_call.v1",
+        "kind": "service",
+        "target": "cache1",
+        "operation": "put",
+        "arguments": {"key": "answer", "value": 42},
+    }) is None
+    assert host.handle_host_call({
+        "format": "pawflow.package.runtime.host_call.v1",
+        "kind": "service",
+        "target": "cache1",
+        "operation": "get",
+        "arguments": {"key": "answer"},
+    }) == 42
+    assert registry.service.runtime_contexts[0] == {
+        "user_id": "alice",
+        "conversation_id": "conv1",
+        "scope": "conversation",
+        "agent_name": "agentA",
+    }
+
+    try:
+        host.handle_host_call({
+            "format": "pawflow.package.runtime.host_call.v1",
+            "kind": "service",
+            "target": "cache1",
+            "operation": "disconnect",
+            "arguments": {},
+        })
+    except pfp_runtime.PackageRuntimeError as exc:
+        assert "not available" in str(exc)
+    else:
+        raise AssertionError("PFP host service calls must not dispatch lifecycle methods")
+
+    for operation in ("ensure_connected", "reset"):
+        try:
+            host.handle_host_call({
+                "format": "pawflow.package.runtime.host_call.v1",
+                "kind": "service",
+                "target": "cache1",
+                "operation": operation,
+                "arguments": {},
+            })
+        except pfp_runtime.PackageRuntimeError as exc:
+            assert "not available" in str(exc)
+        else:
+            raise AssertionError(f"PFP host service calls must not dispatch {operation}")
+
+    try:
+        host.handle_host_call({
+            "format": "pawflow.package.runtime.host_call.v1",
+            "kind": "service",
+            "target": "cache1",
+            "operation": "get_blob",
+            "arguments": {},
+        })
+    except pfp_runtime.PackageRuntimeError as exc:
+        assert "non-JSON" in str(exc)
+    else:
+        raise AssertionError("PFP host service calls must reject non-JSON results")
+
+
+def test_pfp_runtime_host_package_service_ref_requires_matching_runtime(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    from core import pfp_runtime
+    from core import pfp_capabilities
+
+    monkeypatch.setattr(
+        pfp_capabilities.PackageCapabilityBroker,
+        "_require_installed_package",
+        lambda self, package_id, version="", object_id="": None,
+    )
+
+    class _Service:
+        def __init__(self, runtime=None):
+            self.config = {"package_runtime": runtime or {}}
+
+        def invoke(self, operation, arguments):
+            return {"ok": True, "operation": operation}
+
+    class _Registry:
+        def __init__(self, service):
+            self.service = service
+            self.definition = type("_Def", (), {
+                "service_id": "image-service",
+                "scope": "user",
+                "scope_id": "alice",
+                "config": service.config,
+            })()
+
+        def resolve(self, service_id, *, user_id="", conv_id=""):
+            return self.service if service_id == "image-service" else None
+
+        def resolve_by_type(self, service_type, *, user_id="", conv_id="", enabled_only=True):
+            return [self.definition] if service_type == "packageRuntime" else []
+
+        def get_live_instance(self, scope, scope_id, service_id):
+            return self.service if service_id == "image-service" else None
+
+    host = pfp_runtime.PackageRuntimeHost(
+        user_id="alice",
+        conversation_id="conv1",
+        scope="conversation",
+        caller_runtime={
+            "package": "community.consumer",
+            "version": "1.0.0",
+            "object_id": "tool:consumer",
+            "allowed_services": [{
+                "package": "community.media",
+                "object": "service:image",
+            }],
+        },
+        service_registry=_Registry(_Service()),
+    )
+
+    try:
+        host.handle_host_call({
+            "format": "pawflow.package.runtime.host_call.v1",
+            "kind": "service",
+            "target": "community.media/service:image",
+            "operation": "generate",
+            "arguments": {"prompt": "cat"},
+        })
+    except pfp_runtime.PackageRuntimeError as exc:
+        assert "not available" in str(exc)
+    else:
+        raise AssertionError("package-qualified host call should not execute a homonymous service")
+
+    host.service_registry = _Registry(_Service({
+        "package": "community.media",
+        "object_id": "service_provider:image",
+    }))
+    assert host.handle_host_call({
+        "format": "pawflow.package.runtime.host_call.v1",
+        "kind": "service",
+        "target": "community.media/service:image",
+        "operation": "generate",
+        "arguments": {"prompt": "cat"},
+    }) == {"ok": True, "operation": "generate"}
+
+
+def test_package_runtime_service_requires_declared_operations(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    from core import pfp_runtime
+    from core.base_service import ServiceError
+    from services.package_runtime_service import PackageRuntimeService
+
+    service = PackageRuntimeService({
+        "package_runtime": {
+            "package": "community.open",
+            "version": "1.0.0",
+            "object_id": "service_provider:any",
+            "entrypoint": "provider.py",
+            "content_dir": str(tmp_path),
+            "runner": "python",
+        },
+        "installed_from": {"hash": "sha256:test"},
+        "operations": {},
+    })
+    service.connect()
+
+    def _unexpected_invoke(*args, **kwargs):
+        raise AssertionError("undeclared PFP service operation must not reach runtime")
+
+    monkeypatch.setattr(pfp_runtime, "invoke_service", _unexpected_invoke)
+    try:
+        service.invoke("delete_everything", {"x": 1})
+    except ServiceError as exc:
+        assert "declares no operations" in str(exc)
+    else:
+        raise AssertionError("PFP service provider without operations must reject invocation")
+
+
+def test_pfp_runtime_host_package_service_ref_resolves_installed_service_provider(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    keypair = pfp_package.create_signing_key()
+    pkgdir = _write_package_dir(
+        tmp_path, keypair, package_id="community.media",
+        include_service_provider=True)
+    built = pfp_package.build_pfp(str(pkgdir), private_key=keypair["private_key"])
+    pfp_package.install_pfp(
+        built["path"], user_id="alice",
+        include=["service_provider:image"], force=True)
+
+    from core import pfp_runtime
+    from core.service_registry import ServiceRegistry
+
+    calls = []
+
+    def _invoke_service(runtime, installed_from, operation, arguments, context):
+        calls.append({
+            "runtime": runtime,
+            "operation": operation,
+            "arguments": arguments,
+            "context": context,
+        })
+        return {"ok": True, "service_id": runtime["object_id"]}
+
+    monkeypatch.setattr(pfp_runtime, "invoke_service", _invoke_service)
+    host = pfp_runtime.PackageRuntimeHost(
+        user_id="alice",
+        conversation_id="conv1",
+        scope="conversation",
+        caller_runtime={
+            "package": "community.consumer",
+            "version": "1.0.0",
+            "object_id": "tool:consumer",
+            "allowed_services": [{
+                "package": "community.media",
+                "object": "service:image",
+            }],
+        },
+        service_registry=ServiceRegistry.get_instance(),
+    )
+
+    assert host.handle_host_call({
+        "format": "pawflow.package.runtime.host_call.v1",
+        "kind": "service",
+        "target": "community.media/service:image",
+        "operation": "generate",
+        "arguments": {"prompt": "cat"},
+    }) == {"ok": True, "service_id": "service_provider:image"}
+    assert calls[0]["runtime"]["object_id"] == "service_provider:image"
+    assert calls[0]["operation"] == "generate"
 
 
 def test_pfp_installs_service_provider_as_package_runtime_proxy(tmp_path, monkeypatch):
@@ -871,9 +2544,14 @@ def test_pfp_service_provider_executes_declared_python_runner(tmp_path, monkeypa
 
     live = ServiceRegistry.get_instance().get_live_instance(
         SCOPE_USER, "alice", "wavespeed-image-provider")
+    live.set_runtime_context(
+        user_id="alice", conversation_id="conv1", agent_name="agentA")
     from core import pfp_runtime
 
     def _invoke(self, request):
+        assert request["context"]["user_id"] == "alice"
+        assert request["context"]["conversation_id"] == "conv1"
+        assert request["context"]["agent_name"] == "agentA"
         payload = request["payload"]
         return {
             "format": pfp_runtime.RUNTIME_RESULT_FORMAT,
@@ -1045,20 +2723,20 @@ def test_pfp_installs_flow_task_as_taskfactory_proxy(tmp_path, monkeypatch):
         built["path"], user_id="alice", include=["flow_task:resize-image"], force=True)
     assert result["ok"] is True
 
-    from core import FlowFile, TaskError, TaskFactory
+    from core import TaskFactory
     task_cls = TaskFactory.get("packageResizeImage")
     assert task_cls.TYPE == "packageResizeImage"
     assert task_cls.PACKAGE_RUNTIME["object_id"] == "flow_task:resize-image"
     assert task_cls.INSTALLED_FROM["package"] == "community.wavespeed"
     content_dir = Path(task_cls.PACKAGE_RUNTIME["content_dir"])
     assert (content_dir / task_cls.PACKAGE_RUNTIME["entrypoint"]).exists()
-    assert task_cls({"width": 64}).get_parameter_schema()["width"]["type"] == "integer"
+    assert task_cls({"width": 64, "relay": "relay1"}).get_parameter_schema()["width"]["type"] == "integer"
 
     from engine.validator import FlowValidator
     validation = FlowValidator().validate({
         "id": "f1",
         "name": "Flow with package task",
-        "tasks": {"resize": {"type": "packageResizeImage", "parameters": {"width": 64}}},
+        "tasks": {"resize": {"type": "packageResizeImage", "parameters": {"width": 64, "relay": "relay1"}}},
         "relations": [],
     })
     assert validation.valid is True
@@ -1068,7 +2746,7 @@ def test_pfp_installs_flow_task_as_taskfactory_proxy(tmp_path, monkeypatch):
     validation = FlowValidator().validate({
         "id": "f1",
         "name": "Flow with package task",
-        "tasks": {"resize": {"type": "packageResizeImage", "parameters": {"width": 64}}},
+        "tasks": {"resize": {"type": "packageResizeImage", "parameters": {"width": 64, "relay": "relay1"}}},
         "relations": [],
     })
     assert any("not registered" in warning for warning in validation.warnings)
@@ -1077,18 +2755,18 @@ def test_pfp_installs_flow_task_as_taskfactory_proxy(tmp_path, monkeypatch):
     validation = FlowValidator().validate({
         "id": "f1",
         "name": "Flow with package task",
-        "tasks": {"resize": {"type": "packageResizeImage", "parameters": {"width": 64}}},
+        "tasks": {"resize": {"type": "packageResizeImage", "parameters": {"width": 64, "relay": "relay1"}}},
         "relations": [],
     })
     assert not any("not registered" in warning for warning in validation.warnings)
     task_cls = TaskFactory.get("packageResizeImage")
 
     try:
-        task_cls({"width": 64}).execute(FlowFile(content=b"img"))
-    except TaskError as exc:
-        assert "PFP runtime requires user_id and conversation_id" in str(exc)
+        task_cls({"width": 64})
+    except ValueError as exc:
+        assert "relay" in str(exc)
     else:
-        raise AssertionError("package flow task proxy should fail closed")
+        raise AssertionError("package flow task proxy should require relay")
 
     removed = pfp_package.uninstall_pfp("community.wavespeed", user_id="alice", force=True)
     assert removed["ok"] is True
@@ -1104,10 +2782,10 @@ def test_pfp_flow_task_executes_declared_python_runner(tmp_path, monkeypatch):
         flow_task_runner="python")
     entrypoint = pkgdir / "content" / "flow-tasks" / "image-resize" / "task.py"
     entrypoint.write_text(
-        "import base64\n"
+        "from pathlib import Path\n"
         "from pawflow import pfp\n"
         "payload = pfp.payload\n"
-        "content = base64.b64decode(payload['flowfile']['content_b64']).decode('utf-8')\n"
+        "content = Path(payload['flowfile']['content_path']).read_text()\n"
         "width = payload['task_config']['width']\n"
         "pfp.result(flowfiles=[pfp.flowfile(f'{content}:{width}', {'resized': width})])\n",
         encoding="utf-8",
@@ -1120,9 +2798,10 @@ def test_pfp_flow_task_executes_declared_python_runner(tmp_path, monkeypatch):
     from core import FlowFile, TaskFactory, pfp_runtime
 
     def _invoke(self, request):
-        import base64
+        assert request["context"]["user_id"] == "alice"
+        assert request["context"]["conversation_id"] == "conv1"
         payload = request["payload"]
-        content = base64.b64decode(payload["flowfile"]["content_b64"]).decode("utf-8")
+        content = payload["flowfile"]["_content_bytes"].decode("utf-8")
         width = payload["task_config"]["width"]
         return {
             "format": pfp_runtime.RUNTIME_RESULT_FORMAT,
@@ -1134,7 +2813,13 @@ def test_pfp_flow_task_executes_declared_python_runner(tmp_path, monkeypatch):
     monkeypatch.setattr(pfp_runtime.RelayPackageRuntimeBridge, "invoke", _invoke)
 
     task_cls = TaskFactory.get("packageResizeImage")
-    result = task_cls({"width": 64}).execute(FlowFile(content=b"img"))
+    result = task_cls({
+        "width": 64,
+        "relay": "relay1",
+        "_user_id": "alice",
+        "_conversation_id": "conv1",
+        "_scope": "user",
+    }).execute(FlowFile(content=b"img"))
 
     assert len(result) == 1
     assert result[0].get_content() == b"img:64"
@@ -1149,10 +2834,10 @@ def test_pfp_flow_task_runs_through_continuous_flow_executor(tmp_path, monkeypat
         flow_task_runner="python")
     entrypoint = pkgdir / "content" / "flow-tasks" / "image-resize" / "task.py"
     entrypoint.write_text(
-        "import base64\n"
+        "from pathlib import Path\n"
         "from pawflow import pfp\n"
         "payload = pfp.payload\n"
-        "content = base64.b64decode(payload['flowfile']['content_b64']).decode('utf-8')\n"
+        "content = Path(payload['flowfile']['content_path']).read_text()\n"
         "width = payload['task_config']['width']\n"
         "attrs = dict(payload['flowfile'].get('attributes') or {})\n"
         "attrs['resized'] = str(width)\n"
@@ -1168,9 +2853,9 @@ def test_pfp_flow_task_runs_through_continuous_flow_executor(tmp_path, monkeypat
     from engine.parser import FlowParser
 
     def _invoke(self, request):
-        import base64
+        assert request["context"]["agent_name"] == "agentA"
         payload = request["payload"]
-        content = base64.b64decode(payload["flowfile"]["content_b64"]).decode("utf-8")
+        content = payload["flowfile"]["_content_bytes"].decode("utf-8")
         width = payload["task_config"]["width"]
         attrs = dict(payload["flowfile"].get("attributes") or {})
         attrs["resized"] = str(width)
@@ -1190,7 +2875,7 @@ def test_pfp_flow_task_runs_through_continuous_flow_executor(tmp_path, monkeypat
         "tasks": {
             "resize": {
                 "type": "packageResizeImage",
-                "parameters": {"width": 96},
+                "parameters": {"width": 96, "relay": "relay1"},
             },
         },
         "relations": [],
@@ -1205,6 +2890,12 @@ def test_pfp_flow_task_runs_through_continuous_flow_executor(tmp_path, monkeypat
         input_flowfiles=[FlowFile(content=b"img", attributes={"source": "test"})],
         max_retries=1,
         timeout=5,
+        runtime_context={
+            "user_id": "alice",
+            "conversation_id": "conv1",
+            "scope": "user",
+            "agent_name": "agentA",
+        },
     )
 
     assert result.success is True
@@ -1212,6 +2903,144 @@ def test_pfp_flow_task_runs_through_continuous_flow_executor(tmp_path, monkeypat
     assert len(result.output_flowfiles) == 1
     assert result.output_flowfiles[0].get_content() == b"img:96"
     assert result.output_flowfiles[0].attributes == {"source": "test", "resized": "96"}
+
+
+def test_pfp_flow_task_relay_can_come_from_flow_parameter_override(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    keypair = pfp_package.create_signing_key()
+    pkgdir = _write_package_dir(
+        tmp_path, keypair, include_flow_task=True,
+        flow_task_runner="python")
+    built = pfp_package.build_pfp(str(pkgdir), private_key=keypair["private_key"])
+    pfp_package.install_pfp(
+        built["path"], user_id="alice", include=["flow_task:resize-image"], force=True)
+
+    from core import FlowFile, pfp_runtime
+    from engine.continuous_executor import ContinuousFlowExecutor
+    from engine.parser import FlowParser
+
+    calls = []
+
+    def _invoke(self, request):
+        calls.append(request)
+        return {
+            "format": pfp_runtime.RUNTIME_RESULT_FORMAT,
+            "ok": True,
+            "flowfiles": [pfp_runtime._flowfile_descriptor(
+                FlowFile(content=b"out"))],
+        }
+
+    monkeypatch.setattr(pfp_runtime.RelayPackageRuntimeBridge, "invoke", _invoke)
+
+    flow = FlowParser.parse({
+        "id": "pfp-flow-task-relay-param",
+        "name": "PFP Flow Task Relay Param",
+        "version": "1.0.0",
+        "parameters": {"relay": "relay-default"},
+        "tasks": {
+            "resize": {
+                "type": "packageResizeImage",
+                "parameters": {"width": 96, "relay": "${relay}"},
+            },
+        },
+        "relations": [],
+        "entries": [],
+        "exits": [],
+    })
+
+    result = ContinuousFlowExecutor.run_batch(
+        flow,
+        input_flowfiles=[FlowFile(content=b"img")],
+        parameters={"relay": "relay-override"},
+        max_retries=1,
+        timeout=5,
+        runtime_context={"user_id": "alice", "conversation_id": "conv1", "scope": "user"},
+    )
+
+    assert result.success is True
+    assert calls[0]["context"]["relay_id"] == "relay-override"
+    assert calls[0]["context"]["user_id"] == "alice"
+    assert calls[0]["context"]["conversation_id"] == "conv1"
+
+
+def test_pfp_flow_tasks_can_use_distinct_flow_relay_parameters(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    keypair = pfp_package.create_signing_key()
+    pkgdir = _write_package_dir(
+        tmp_path, keypair, include_flow_task=True,
+        flow_task_runner="python")
+    built = pfp_package.build_pfp(str(pkgdir), private_key=keypair["private_key"])
+    pfp_package.install_pfp(
+        built["path"], user_id="alice", include=["flow_task:resize-image"], force=True)
+
+    from core import FlowFile, pfp_runtime
+    from engine.continuous_executor import ContinuousFlowExecutor
+    from engine.parser import FlowParser
+
+    calls = []
+
+    def _invoke(self, request):
+        calls.append(request)
+        return {
+            "format": pfp_runtime.RUNTIME_RESULT_FORMAT,
+            "ok": True,
+            "flowfiles": [pfp_runtime._flowfile_descriptor(
+                FlowFile(content=b"step"))],
+        }
+
+    monkeypatch.setattr(pfp_runtime.RelayPackageRuntimeBridge, "invoke", _invoke)
+
+    flow = FlowParser.parse({
+        "id": "pfp-flow-task-multi-relay-param",
+        "name": "PFP Flow Task Multi Relay Param",
+        "version": "1.0.0",
+        "parameters": {
+            "relay_a": "relay-default-a",
+            "relay_b": "relay-default-b",
+            "relay_c": "relay-default-c",
+        },
+        "tasks": {
+            "step_a": {
+                "type": "packageResizeImage",
+                "parameters": {"width": 64, "relay": "${relay_a}"},
+            },
+            "step_b": {
+                "type": "packageResizeImage",
+                "parameters": {"width": 96, "relay": "${relay_b}"},
+            },
+            "step_c": {
+                "type": "packageResizeImage",
+                "parameters": {"width": 128, "relay": "${relay_c}"},
+            },
+        },
+        "relations": [
+            {"from": "step_a", "to": "step_b", "type": "success"},
+            {"from": "step_b", "to": "step_c", "type": "success"},
+        ],
+        "entries": ["step_a"],
+        "exits": ["step_c"],
+    })
+
+    result = ContinuousFlowExecutor.run_batch(
+        flow,
+        input_flowfiles=[FlowFile(content=b"img")],
+        parameters={
+            "relay_a": "relay-host-a",
+            "relay_b": "relay-host-b",
+            "relay_c": "relay-host-c",
+        },
+        max_retries=1,
+        timeout=5,
+        runtime_context={"user_id": "alice", "conversation_id": "conv1", "scope": "user"},
+    )
+
+    assert result.success is True
+    assert [call["context"]["relay_id"] for call in calls] == [
+        "relay-host-a",
+        "relay-host-b",
+        "relay-host-c",
+    ]
+    assert [call["payload"]["task_config"]["width"] for call in calls] == [64, 96, 128]
 
 
 def test_pfp_package_installs_and_runs_flow_with_packaged_resources(tmp_path, monkeypatch):
@@ -1222,10 +3051,10 @@ def test_pfp_package_installs_and_runs_flow_with_packaged_resources(tmp_path, mo
         flow_task_runner="python")
     entrypoint = pkgdir / "content" / "flow-tasks" / "image-resize" / "task.py"
     entrypoint.write_text(
-        "import base64\n"
+        "from pathlib import Path\n"
         "from pawflow import pfp\n"
         "payload = pfp.payload\n"
-        "content = base64.b64decode(payload['flowfile']['content_b64']).decode('utf-8')\n"
+        "content = Path(payload['flowfile']['content_path']).read_text()\n"
         "width = payload['task_config']['width']\n"
         "pfp.result(flowfiles=[pfp.flowfile(f'{content}:{width}', {'flow': 'installed'})])\n",
         encoding="utf-8",
@@ -1239,7 +3068,7 @@ def test_pfp_package_installs_and_runs_flow_with_packaged_resources(tmp_path, mo
         "tasks": {
             "resize": {
                 "type": "packageResizeImage",
-                "parameters": {"width": 128},
+                "parameters": {"width": 128, "relay": "relay1"},
             },
         },
         "relations": [],
@@ -1280,9 +3109,10 @@ def test_pfp_package_installs_and_runs_flow_with_packaged_resources(tmp_path, mo
     from engine.parser import FlowParser
 
     def _invoke(self, request):
-        import base64
+        assert request["context"]["user_id"] == "alice"
+        assert request["context"]["conversation_id"] == "conv1"
         payload = request["payload"]
-        content = base64.b64decode(payload["flowfile"]["content_b64"]).decode("utf-8")
+        content = payload["flowfile"]["_content_bytes"].decode("utf-8")
         width = payload["task_config"]["width"]
         return {
             "format": pfp_runtime.RUNTIME_RESULT_FORMAT,
@@ -1309,6 +3139,7 @@ def test_pfp_package_installs_and_runs_flow_with_packaged_resources(tmp_path, mo
         input_flowfiles=[FlowFile(content=b"img")],
         max_retries=1,
         timeout=5,
+        runtime_context={"user_id": "alice", "conversation_id": "conv1", "scope": "user"},
     )
 
     assert result.success is True
@@ -1316,6 +3147,1358 @@ def test_pfp_package_installs_and_runs_flow_with_packaged_resources(tmp_path, mo
     assert len(result.output_flowfiles) == 1
     assert result.output_flowfiles[0].get_content() == b"img:128"
     assert result.output_flowfiles[0].attributes == {"flow": "installed"}
+
+
+def test_pfp_package_prefills_flow_task_relay_from_conversation_default(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    keypair = pfp_package.create_signing_key()
+    pkgdir = _write_package_dir(
+        tmp_path, keypair, include_flow_task=True,
+        flow_task_runner="python")
+    flow_dir = pkgdir / "content" / "flows"
+    flow_dir.mkdir(parents=True)
+    (flow_dir / "resize.json").write_text(json.dumps({
+        "id": "packaged-resize-flow",
+        "name": "Packaged Resize Flow",
+        "version": "1.0.0",
+        "tasks": {
+            "resize": {
+                "type": "packageResizeImage",
+                "parameters": {"width": 128},
+            },
+        },
+        "relations": [],
+    }), encoding="utf-8")
+    manifest_path = pkgdir / "pfp.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["objects"].append({
+        "id": "flow:resize-demo",
+        "type": "flow",
+        "name": "community.wavespeed.resize-demo:1.0.0",
+        "fqn": "community.wavespeed.resize-demo:1.0.0",
+        "path": "content/flows/resize.json",
+    })
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    built = pfp_package.build_pfp(str(pkgdir), private_key=keypair["private_key"])
+
+    import core.relay_bindings as relay_bindings
+    monkeypatch.setattr(relay_bindings, "get_default", lambda cid, agent="": "relay-conv")
+
+    installed = pfp_package.install_pfp(
+        built["path"], user_id="alice", conversation_id="conv1", scope="conversation",
+        include=["flow_task:resize-image", "flow:resize-demo"], force=True)
+    assert installed["ok"] is True
+
+    from core.repository import ScopedRepository
+    stored_flow = ScopedRepository.instance().get_flow(
+        "community.wavespeed.resize-demo:1.0.0", "conv", user_id="alice", conv_id="conv1")
+    assert stored_flow["tasks"]["resize"]["parameters"]["relay"] == "relay-conv"
+    assert stored_flow["tasks"]["resize"]["parameters"]["width"] == 128
+
+
+def test_pfp_package_prefills_flow_task_relay_from_agent_default(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    keypair = pfp_package.create_signing_key()
+    pkgdir = _write_package_dir(
+        tmp_path, keypair, include_flow_task=True,
+        flow_task_runner="python")
+    flow_dir = pkgdir / "content" / "flows"
+    flow_dir.mkdir(parents=True)
+    (flow_dir / "resize.json").write_text(json.dumps({
+        "id": "packaged-resize-flow",
+        "name": "Packaged Resize Flow",
+        "version": "1.0.0",
+        "tasks": {
+            "resize": {
+                "type": "packageResizeImage",
+                "parameters": {"width": 128},
+            },
+        },
+        "relations": [],
+    }), encoding="utf-8")
+    manifest_path = pkgdir / "pfp.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["objects"].append({
+        "id": "flow:resize-demo",
+        "type": "flow",
+        "name": "community.wavespeed.resize-demo:1.0.0",
+        "fqn": "community.wavespeed.resize-demo:1.0.0",
+        "path": "content/flows/resize.json",
+    })
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    built = pfp_package.build_pfp(str(pkgdir), private_key=keypair["private_key"])
+
+    import core.relay_bindings as relay_bindings
+    monkeypatch.setattr(
+        relay_bindings, "get_default",
+        lambda cid, agent="": "relay-agent" if agent == "agentA" else "relay-conv")
+
+    installed = pfp_package.install_pfp(
+        built["path"], user_id="alice", conversation_id="conv1", scope="conversation",
+        include=["flow_task:resize-image", "flow:resize-demo"], force=True,
+        agent_name="agentA")
+    assert installed["ok"] is True
+
+    from core.repository import ScopedRepository
+    stored_flow = ScopedRepository.instance().get_flow(
+        "community.wavespeed.resize-demo:1.0.0", "conv", user_id="alice", conv_id="conv1")
+    assert stored_flow["tasks"]["resize"]["parameters"]["relay"] == "relay-agent"
+
+
+def test_pfp_package_prefills_flow_task_relay_from_metadata_task_type(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    keypair = pfp_package.create_signing_key()
+    pkgdir = tmp_path / "metadata-task.pfpdir"
+    flow_task_dir = pkgdir / "content" / "flow-tasks" / "upper"
+    flow_dir = pkgdir / "content" / "flows"
+    flow_task_dir.mkdir(parents=True)
+    flow_dir.mkdir(parents=True)
+    (flow_task_dir / "task.json").write_text(json.dumps({
+        "type": "metadataUpperTask",
+        "name": "Metadata Upper",
+        "parameters": {"suffix": {"type": "string"}},
+    }), encoding="utf-8")
+    (flow_dir / "demo.json").write_text(json.dumps({
+        "id": "metadata-demo",
+        "name": "Metadata Demo",
+        "version": "1.0.0",
+        "tasks": {
+            "upper": {
+                "type": "metadataUpperTask",
+                "parameters": {"suffix": "!"},
+            },
+        },
+        "relations": [],
+    }), encoding="utf-8")
+    (pkgdir / "pfp.json").write_text(json.dumps({
+        "format": "pawflow.package.v1",
+        "package": "community.metadata",
+        "version": "1.0.0",
+        "description": "Metadata task type package",
+        "developer": {
+            "email": "dev@example.com",
+            "public_key": keypair["public_key"],
+        },
+        "origin": {"source": "local-test"},
+        "objects": [
+            {
+                "id": "flow_task:upper",
+                "type": "flow_task",
+                "name": "upper",
+                "runner": "python",
+                "path": "content/flow-tasks/upper/task.json",
+            },
+            {
+                "id": "flow:demo",
+                "type": "flow",
+                "name": "community.metadata.demo:1.0.0",
+                "fqn": "community.metadata.demo:1.0.0",
+                "path": "content/flows/demo.json",
+            },
+        ],
+    }), encoding="utf-8")
+    built = pfp_package.build_pfp(str(pkgdir), private_key=keypair["private_key"])
+
+    import core.relay_bindings as relay_bindings
+    monkeypatch.setattr(relay_bindings, "get_default", lambda cid, agent="": "relay-conv")
+
+    installed = pfp_package.install_pfp(
+        built["path"], user_id="alice", conversation_id="conv1",
+        scope="conversation", include=["flow_task:upper", "flow:demo"],
+        force=True)
+    assert installed["ok"] is True
+
+    from core.repository import ScopedRepository
+    stored_flow = ScopedRepository.instance().get_flow(
+        "community.metadata.demo:1.0.0", "conv", user_id="alice", conv_id="conv1")
+    assert stored_flow["tasks"]["upper"]["parameters"] == {
+        "suffix": "!",
+        "relay": "relay-conv",
+    }
+
+
+def test_pfp_media_artifact_copy_uses_relay_chunk_copy(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    from core import pfp_runtime
+
+    class _Relay:
+        def __init__(self):
+            self.copied = []
+
+        def read_file(self, path):
+            raise AssertionError(f"read_file must not be used for media artifacts: {path}")
+
+        def copy_file_to_local(self, source, target):
+            self.copied.append((source, target))
+            Path(target).parent.mkdir(parents=True, exist_ok=True)
+            Path(target).write_bytes(b"artifact-bytes")
+
+    relay = _Relay()
+    output_dir = tmp_path / "server-artifacts"
+    result = {
+        "format": pfp_runtime.RUNTIME_RESULT_FORMAT,
+        "ok": True,
+        "result": {"artifact": {"path": "image.png"}},
+    }
+
+    pfp_runtime.RelayPackageRuntimeBridge()._copy_result_artifacts(
+        relay,
+        {"context": {
+            "output_dir": ".pawflow/pfp/out",
+            "server_output_dir": str(output_dir),
+        }},
+        result,
+        ".pawflow/pfp/root",
+    )
+
+    assert relay.copied == [(".pawflow/pfp/out/image.png", str(output_dir / "image.png"))]
+    assert (output_dir / "image.png").read_bytes() == b"artifact-bytes"
+
+
+def test_pfp_task_flowfile_result_content_path_uses_relay_chunk_copy(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    from core import pfp_runtime
+
+    class _Relay:
+        def __init__(self):
+            self.copied = []
+
+        def read_file(self, path):
+            raise AssertionError(f"read_file must not be used for PFP task flowfiles: {path}")
+
+        def copy_file_to_local(self, source, target):
+            self.copied.append((source, target))
+            Path(target).parent.mkdir(parents=True, exist_ok=True)
+            Path(target).write_bytes(b"flowfile-bytes")
+
+    relay = _Relay()
+    result = {
+        "format": pfp_runtime.RUNTIME_RESULT_FORMAT,
+        "ok": True,
+        "flowfiles": [{
+            "content_path": "out/result.bin",
+            "attributes": {"result": "ok"},
+        }],
+    }
+
+    pfp_runtime.RelayPackageRuntimeBridge()._copy_result_artifacts(
+        relay, {"context": {}}, result, ".pawflow/pfp/root")
+
+    assert relay.copied[0][0] == ".pawflow/pfp/root/out/result.bin"
+    copied_path = Path(result["flowfiles"][0]["content_path"])
+    assert copied_path.exists()
+    flowfiles = pfp_runtime._normalize_task_result(result)
+    assert flowfiles[0].is_content_on_disk is True
+    assert flowfiles[0].get_content() == b"flowfile-bytes"
+    assert flowfiles[0].attributes == {"result": "ok"}
+    assert copied_path.exists()
+    import gc
+    del flowfiles
+    gc.collect()
+    assert not copied_path.exists()
+
+
+def test_pfp_media_resolver_prefers_conversation_scoped_provider(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    from core import ServiceFactory
+    from core.service_registry import ServiceRegistry, SCOPE_CONV, SCOPE_USER
+    from services.base_image_generation import BaseImageGenerationService
+    from services.tool_relay_service import ToolRelayService
+
+    class FakePfpImageService(BaseImageGenerationService):
+        TYPE = "fakePfpImage"
+
+        def _create_connection(self):
+            return self
+
+        def _close_connection(self):
+            pass
+
+        def generate(self, **kwargs):
+            return {"image_bytes": b"x", "content_type": "image/png"}
+
+    monkeypatch.setitem(ServiceFactory._services, "fakePfpImage", FakePfpImageService)
+    registry = ServiceRegistry.get_instance()
+    registry.install(
+        SCOPE_USER, "alice", "pfp-image", "fakePfpImage",
+        config={"scope_marker": "user"})
+    registry.install(
+        SCOPE_CONV, "conv1", "pfp-image", "fakePfpImage",
+        config={"scope_marker": "conversation"})
+
+    service, error = ToolRelayService._make_media_resolver(
+        "alice", "conv1", "image")()
+
+    assert error is None
+    assert service is not None
+    assert service.config["scope_marker"] == "conversation"
+
+
+def test_tool_relay_media_resolver_orders_pfp_and_native_by_scope(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    from core import ServiceFactory
+    from core.service_registry import ServiceRegistry
+    from services.base_image_generation import BaseImageGenerationService
+    from services.tool_relay_service import ToolRelayService
+
+    class NativeUserImage(BaseImageGenerationService):
+        TYPE = "nativeUserImageForScopeOrder"
+
+        def _create_connection(self):
+            return self
+
+        def _close_connection(self):
+            pass
+
+        def generate(self, **kwargs):
+            return {"image_url": "native.png"}
+
+    class PfpConversationImage:
+        TYPE = "packageRuntime"
+
+        def get_operations(self):
+            return {"generate": {}}
+
+        def generate(self, **kwargs):
+            return {"image_url": "pfp.png"}
+
+    def _definition(service_id, service_type, scope, config=None):
+        return type("_Def", (), {
+            "service_id": service_id,
+            "service_type": service_type,
+            "scope": scope,
+            "scope_id": "conv1" if scope == "conv" else "alice",
+            "config": config or {},
+        })()
+
+    native_def = _definition("native-user", "nativeUserImageForScopeOrder", "user")
+    pfp_def = _definition("pfp-conv", "packageRuntime", "conv", {
+        "package_runtime": {"provides": ["media.image_generation"]},
+        "operations": {"generate": {}},
+    })
+
+    class _Registry:
+        def resolve_by_type(self, service_type, *, user_id="", conv_id="", enabled_only=True):
+            if service_type == "nativeUserImageForScopeOrder":
+                return [native_def]
+            if service_type == "packageRuntime":
+                return [pfp_def]
+            return []
+
+        def resolve(self, service_id, *, user_id="", conv_id=""):
+            if service_id == "native-user":
+                return NativeUserImage({})
+            if service_id == "pfp-conv":
+                return PfpConversationImage()
+            return None
+
+    monkeypatch.setitem(ServiceFactory._services, "nativeUserImageForScopeOrder", NativeUserImage)
+    monkeypatch.setattr(ServiceRegistry, "get_instance", staticmethod(lambda: _Registry()))
+
+    service, error = ToolRelayService._make_media_resolver(
+        "alice", "conv1", "image")()
+
+    assert error is None
+    assert isinstance(service, PfpConversationImage)
+
+
+def test_tool_relay_wires_media_handlers_to_operation_specific_resolvers(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    from services.tool_relay_service import ToolRelayService
+
+    calls = []
+
+    def _fake_resolver(user_id, conversation_id, media_type, required_methods=()):
+        def _resolver():
+            return None, None
+        _resolver.pfp_test_call = (media_type, tuple(required_methods))
+        calls.append(_resolver.pfp_test_call)
+        return _resolver
+
+    monkeypatch.setattr(
+        ToolRelayService, "_make_media_resolver",
+        staticmethod(_fake_resolver))
+
+    registry = ToolRelayService({})._get_registry(
+        user_id="alice", conversation_id="conv1", agent_name="agentA")
+    handlers = {handler.name: handler for handler in registry.list_tools()}
+
+    assert handlers["generate_video"]._service_resolver.pfp_test_call[0] == "video"
+    assert handlers["speech_to_video"]._service_resolver.pfp_test_call == (
+        "speech_to_video", ("speech_to_video",))
+    assert handlers["upscale_image"]._service_resolver.pfp_test_call == (
+        "upscale", ("upscale",))
+    assert handlers["remove_background"]._service_resolver.pfp_test_call == (
+        "upscale", ("remove_background",))
+    assert handlers["delete_voice"]._service_resolver.pfp_test_call == (
+        "voice", ("delete_voice_id",))
+    assert handlers["get_image_model_info"]._service_resolver.pfp_test_call == (
+        "image", ("get_model_info",))
+
+
+def test_tool_relay_pfp_resolver_requires_exact_operation(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    import services.package_runtime_service  # noqa: F401
+    from core.service_registry import ServiceRegistry, SCOPE_USER
+    from services.tool_relay_service import ToolRelayService
+
+    registry = ServiceRegistry.get_instance()
+    registry.install(SCOPE_USER, "alice", "pfp-bg", "packageRuntime", config={
+        "package_runtime": {
+            "package": "pkg.media",
+            "version": "1.0.0",
+            "object_id": "service_provider:bg",
+            "provides": ["media.background_removal"],
+        },
+        "installed_from": {},
+        "operations": {"remove_background": {}},
+    })
+    registry.install(SCOPE_USER, "alice", "pfp-upscale", "packageRuntime", config={
+        "package_runtime": {
+            "package": "pkg.media",
+            "version": "1.0.0",
+            "object_id": "service_provider:upscale",
+            "provides": ["media.image_upscale"],
+        },
+        "installed_from": {},
+        "operations": {"upscale": {}},
+    })
+
+    service, error = ToolRelayService._make_media_resolver(
+        "alice", "", "upscale", ("upscale",))()
+
+    assert error is None
+    assert service is not None
+    assert service.config["package_runtime"]["object_id"] == "service_provider:upscale"
+
+
+def test_video_handler_passes_call_mode_to_auto_resolver(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    from core.handlers.media import VideoGenerationHandler
+
+    seen = []
+
+    class _VideoService:
+        def generate(self, **kwargs):
+            raise RuntimeError("stop after text mode")
+
+        def image_to_video(self, **kwargs):
+            raise RuntimeError("stop after image mode")
+
+    handler = VideoGenerationHandler()
+
+    def _resolver(required_methods=()):
+        seen.append(tuple(required_methods))
+        return _VideoService(), None
+
+    handler.set_service_resolver(_resolver)
+
+    handler.execute({"prompt": "cat"})
+    handler.execute({"prompt": "cat", "image_url": "https://example.test/in.png"})
+
+    assert seen == [
+        ("generate",),
+        ("image_to_video", "reference_to_video"),
+    ]
+
+
+def test_tool_relay_video_resolver_uses_call_mode_operation(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    import services.package_runtime_service  # noqa: F401
+    from core.service_registry import ServiceRegistry, SCOPE_USER
+    from services.tool_relay_service import ToolRelayService
+
+    registry = ServiceRegistry.get_instance()
+    registry.install(SCOPE_USER, "alice", "pfp-i2v", "packageRuntime", config={
+        "package_runtime": {
+            "package": "pkg.i2v",
+            "version": "1.0.0",
+            "object_id": "service_provider:image-video",
+            "provides": ["media.video_generation"],
+        },
+        "installed_from": {},
+        "operations": {"image_to_video": {}},
+    })
+    registry.install(SCOPE_USER, "alice", "pfp-t2v", "packageRuntime", config={
+        "package_runtime": {
+            "package": "pkg.t2v",
+            "version": "1.0.0",
+            "object_id": "service_provider:text-video",
+            "provides": ["media.video_generation"],
+        },
+        "installed_from": {},
+        "operations": {"generate": {}},
+    })
+
+    service, error = ToolRelayService._make_media_resolver(
+        "alice", "", "video")(("generate",))
+
+    assert error is None
+    assert service is not None
+    assert service.config["package_runtime"]["object_id"] == "service_provider:text-video"
+
+
+def test_agent_video_resolver_uses_call_mode_operation(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    from core.service_registry import ServiceRegistry
+    from tasks.ai.agent_utils import AgentUtilsMixin
+
+    def _definition(service_id, operations):
+        return type("_Def", (), {
+            "service_id": service_id,
+            "service_type": "packageRuntime",
+            "scope": "user",
+            "config": {
+                "package_runtime": {"provides": ["media.video_generation"]},
+                "operations": operations,
+            },
+        })()
+
+    class _ImageVideoService:
+        def get_operations(self):
+            return {"image_to_video": {}}
+
+    class _TextVideoService:
+        def get_operations(self):
+            return {"generate": {}}
+
+        def generate(self, **kwargs):
+            return {"video_url": "generated.mp4"}
+
+    class _Registry:
+        def resolve_by_type(self, service_type, *, user_id="", conv_id="", enabled_only=True):
+            if service_type == "packageRuntime":
+                return [
+                    _definition("pfp-i2v", {"image_to_video": {}}),
+                    _definition("pfp-t2v", {"generate": {}}),
+                ]
+            return []
+
+        def resolve(self, service_id, *, user_id="", conv_id=""):
+            return {
+                "pfp-i2v": _ImageVideoService(),
+                "pfp-t2v": _TextVideoService(),
+            }.get(service_id)
+
+    monkeypatch.setattr(ServiceRegistry, "get_instance", staticmethod(lambda: _Registry()))
+
+    service, error = AgentUtilsMixin()._make_video_resolver(
+        "alice", "", "agentA")(("generate",))
+
+    assert error is None
+    assert isinstance(service, _TextVideoService)
+
+
+def test_tool_relay_pfp_resolver_uses_exact_definition_when_service_ids_shadow(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    import services.package_runtime_service  # noqa: F401
+    from core.service_registry import ServiceRegistry, SCOPE_CONV, SCOPE_USER
+    from services.tool_relay_service import ToolRelayService
+
+    registry = ServiceRegistry.get_instance()
+    registry.install(SCOPE_CONV, "conv1", "image", "packageRuntime", config={
+        "package_runtime": {
+            "package": "pkg.edit",
+            "version": "1.0.0",
+            "object_id": "service_provider:image",
+            "provides": ["media.image_generation"],
+        },
+        "installed_from": {},
+        "operations": {"edit_image": {}},
+    })
+    registry.install(SCOPE_USER, "alice", "image", "packageRuntime", config={
+        "package_runtime": {
+            "package": "pkg.generate",
+            "version": "1.0.0",
+            "object_id": "service_provider:image",
+            "provides": ["media.image_generation"],
+        },
+        "installed_from": {},
+        "operations": {"generate": {}},
+    })
+
+    service, error = ToolRelayService._make_media_resolver(
+        "alice", "conv1", "image", ("generate",))()
+
+    assert error is None
+    assert service is not None
+    assert service.config["package_runtime"]["package"] == "pkg.generate"
+
+
+def test_agent_pfp_resolver_uses_exact_definition_when_service_ids_shadow(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    import services.package_runtime_service  # noqa: F401
+    from core.service_registry import ServiceRegistry, SCOPE_CONV, SCOPE_USER
+    from tasks.ai.agent_utils import AgentUtilsMixin
+
+    registry = ServiceRegistry.get_instance()
+    registry.install(SCOPE_CONV, "conv1", "image", "packageRuntime", config={
+        "package_runtime": {
+            "package": "pkg.edit",
+            "version": "1.0.0",
+            "object_id": "service_provider:image",
+            "provides": ["media.image_generation"],
+        },
+        "installed_from": {},
+        "operations": {"edit_image": {}},
+    })
+    registry.install(SCOPE_USER, "alice", "image", "packageRuntime", config={
+        "package_runtime": {
+            "package": "pkg.generate",
+            "version": "1.0.0",
+            "object_id": "service_provider:image",
+            "provides": ["media.image_generation"],
+        },
+        "installed_from": {},
+        "operations": {"generate": {}},
+    })
+
+    service, error = AgentUtilsMixin()._make_image_resolver(
+        "alice", "conv1", "agentA", required_methods=("generate",))()
+
+    assert error is None
+    assert service is not None
+    assert service.config["package_runtime"]["package"] == "pkg.generate"
+
+
+def test_agent_media_resolver_skips_pfp_provider_without_required_method(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    from core.service_registry import ServiceRegistry
+    from tasks.ai.agent_utils import AgentUtilsMixin
+
+    def _definition(service_id, operations):
+        return type("_Def", (), {
+            "service_id": service_id,
+            "service_type": "packageRuntime",
+            "scope": "user",
+            "config": {
+                "package_runtime": {"provides": ["media.image_generation"]},
+                "operations": operations,
+            },
+        })()
+
+    class _BadImageService:
+        def get_operations(self):
+            return {"edit_image": {}}
+
+        def generate(self, **kwargs):
+            raise AssertionError("provider without generate operation must be skipped")
+
+    class _GoodImageService:
+        def get_operations(self):
+            return {"generate": {}}
+
+        def generate(self, **kwargs):
+            return {"image_url": "generated.png"}
+
+    class _Registry:
+        def resolve_by_type(self, service_type, *, user_id="", conv_id="", enabled_only=True):
+            if service_type == "packageRuntime":
+                return [
+                    _definition("bad-pfp-image", {"edit_image": {}}),
+                    _definition("good-pfp-image", {"generate": {}}),
+                ]
+            return []
+
+        def resolve(self, service_id, *, user_id="", conv_id=""):
+            return {
+                "bad-pfp-image": _BadImageService(),
+                "good-pfp-image": _GoodImageService(),
+            }.get(service_id)
+
+    monkeypatch.setattr(ServiceRegistry, "get_instance", staticmethod(lambda: _Registry()))
+
+    service, error = AgentUtilsMixin()._make_image_resolver(
+        "alice", "", "agentA", required_methods=("generate",))()
+
+    assert error is None
+    assert isinstance(service, _GoodImageService)
+
+
+def test_agent_media_resolver_accepts_pfp_native_model_info_method(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    from core.service_registry import ServiceRegistry
+    from tasks.ai.agent_utils import AgentUtilsMixin
+
+    definition = type("_Def", (), {
+        "service_id": "pfp-image-info",
+        "service_type": "packageRuntime",
+        "scope": "user",
+        "config": {
+            "package_runtime": {"provides": ["media.image_generation"]},
+            "operations": {"generate": {}},
+        },
+    })()
+
+    class _PfpImageInfoService:
+        def get_operations(self):
+            return {"generate": {}}
+
+        def get_model_info(self):
+            return {"provider": "pfp"}
+
+    class _Registry:
+        def resolve_by_type(self, service_type, *, user_id="", conv_id="", enabled_only=True):
+            if service_type == "packageRuntime":
+                return [definition]
+            return []
+
+        def resolve(self, service_id, *, user_id="", conv_id=""):
+            if service_id == "pfp-image-info":
+                return _PfpImageInfoService()
+            return None
+
+    monkeypatch.setattr(ServiceRegistry, "get_instance", staticmethod(lambda: _Registry()))
+
+    service, error = AgentUtilsMixin()._make_image_resolver(
+        "alice", "", "agentA", required_methods=("get_model_info",))()
+
+    assert error is None
+    assert isinstance(service, _PfpImageInfoService)
+
+
+def test_agent_media_resolver_orders_pfp_and_native_by_scope(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    from core import ServiceFactory
+    from core.service_registry import ServiceRegistry
+    from services.base_image_generation import BaseImageGenerationService
+    from tasks.ai.agent_utils import AgentUtilsMixin
+
+    class NativeUserImage(BaseImageGenerationService):
+        TYPE = "nativeAgentImageForScopeOrder"
+
+        def _create_connection(self):
+            return self
+
+        def _close_connection(self):
+            pass
+
+        def generate(self, **kwargs):
+            return {"image_url": "native.png"}
+
+    class PfpConversationImage:
+        def get_operations(self):
+            return {"generate": {}}
+
+        def generate(self, **kwargs):
+            return {"image_url": "pfp.png"}
+
+    def _definition(service_id, service_type, scope, config=None):
+        return type("_Def", (), {
+            "service_id": service_id,
+            "service_type": service_type,
+            "scope": scope,
+            "config": config or {},
+        })()
+
+    class _Registry:
+        def resolve_by_type(self, service_type, *, user_id="", conv_id="", enabled_only=True):
+            if service_type == "nativeAgentImageForScopeOrder":
+                return [_definition("native-user", service_type, "user")]
+            if service_type == "packageRuntime":
+                return [_definition("pfp-conv", service_type, "conv", {
+                    "package_runtime": {"provides": ["media.image_generation"]},
+                    "operations": {"generate": {}},
+                })]
+            return []
+
+        def resolve(self, service_id, *, user_id="", conv_id=""):
+            if service_id == "native-user":
+                return NativeUserImage({})
+            if service_id == "pfp-conv":
+                return PfpConversationImage()
+            return None
+
+    monkeypatch.setitem(ServiceFactory._services, "nativeAgentImageForScopeOrder", NativeUserImage)
+    monkeypatch.setattr(ServiceRegistry, "get_instance", staticmethod(lambda: _Registry()))
+
+    service, error = AgentUtilsMixin()._make_image_resolver(
+        "alice", "conv1", "agentA", required_methods=("generate",))()
+
+    assert error is None
+    assert isinstance(service, PfpConversationImage)
+
+
+def test_agent_speech_to_video_resolver_orders_lipsync_pfp_by_scope(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    from core import ServiceFactory
+    from core.service_registry import ServiceRegistry
+    from services.base_video_generation import BaseVideoGenerationService
+    from tasks.ai.agent_utils import AgentUtilsMixin
+
+    class NativeUserSpeechVideo(BaseVideoGenerationService):
+        TYPE = "nativeUserSpeechVideoForScopeOrder"
+
+        def _create_connection(self):
+            return self
+
+        def _close_connection(self):
+            pass
+
+        def generate(self, **kwargs):
+            return {"video_url": "native.mp4"}
+
+        def speech_to_video(self, **kwargs):
+            return {"video_url": "native-s2v.mp4"}
+
+    class PfpConversationSpeechVideo:
+        def get_operations(self):
+            return {"speech_to_video": {}}
+
+        def speech_to_video(self, **kwargs):
+            return {"video_url": "pfp-s2v.mp4"}
+
+    def _definition(service_id, service_type, scope, config=None):
+        return type("_Def", (), {
+            "service_id": service_id,
+            "service_type": service_type,
+            "scope": scope,
+            "config": config or {},
+        })()
+
+    class _Registry:
+        def resolve_by_type(self, service_type, *, user_id="", conv_id="", enabled_only=True):
+            if service_type == "nativeUserSpeechVideoForScopeOrder":
+                return [_definition("native-user", service_type, "user")]
+            if service_type == "packageRuntime":
+                return [_definition("pfp-conv", service_type, "conv", {
+                    "package_runtime": {"provides": ["media.lipsync"]},
+                    "operations": {"speech_to_video": {}},
+                })]
+            return []
+
+        def resolve(self, service_id, *, user_id="", conv_id=""):
+            if service_id == "native-user":
+                return NativeUserSpeechVideo({})
+            if service_id == "pfp-conv":
+                return PfpConversationSpeechVideo()
+            return None
+
+    monkeypatch.setitem(
+        ServiceFactory._services,
+        "nativeUserSpeechVideoForScopeOrder",
+        NativeUserSpeechVideo)
+    monkeypatch.setattr(ServiceRegistry, "get_instance", staticmethod(lambda: _Registry()))
+
+    service, error = AgentUtilsMixin()._make_speech_to_video_resolver(
+        "alice", "conv1", "agentA")()
+
+    assert error is None
+    assert isinstance(service, PfpConversationSpeechVideo)
+
+
+def test_pfp_package_qualified_service_ignores_same_id_other_package_shadow(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    import services.package_runtime_service  # noqa: F401
+    from core import pfp_runtime
+    from core.service_registry import ServiceRegistry, SCOPE_CONV, SCOPE_USER
+
+    registry = ServiceRegistry.get_instance()
+    registry.install(SCOPE_CONV, "conv1", "image", "packageRuntime", config={
+        "package_runtime": {
+            "package": "pkg.other",
+            "version": "1.0.0",
+            "object_id": "service_provider:image",
+            "provides": ["media.image_generation"],
+        },
+        "installed_from": {},
+        "operations": {"generate": {}},
+    })
+    registry.install(SCOPE_USER, "alice", "image", "packageRuntime", config={
+        "package_runtime": {
+            "package": "pkg.target",
+            "version": "1.0.0",
+            "object_id": "service_provider:image",
+            "provides": ["media.image_generation"],
+        },
+        "installed_from": {},
+        "operations": {"generate": {}},
+    })
+
+    service = pfp_runtime._resolve_package_service(
+        registry,
+        {"package": "pkg.target", "kind": "service", "name": "image"},
+        user_id="alice",
+        conversation_id="conv1",
+    )
+
+    assert service is not None
+    assert service.config["package_runtime"]["package"] == "pkg.target"
+
+
+def test_resource_store_list_all_conversation_overrides_user_tool(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    from core.resource_store import ResourceStore
+
+    store = ResourceStore.instance()
+    store.create("tool", "shared_reader", "alice", {
+        "name": "shared_reader",
+        "description": "user tool",
+        "source": "def run(**kwargs):\n    return 'user'\n",
+        "package_runtime": {"package": "pkg.user"},
+    })
+    store.create("tool", "shared_reader", "alice", {
+        "name": "shared_reader",
+        "description": "conversation tool",
+        "source": "def run(**kwargs):\n    return 'conv'\n",
+        "package_runtime": {"package": "pkg.conv"},
+    }, conversation_id="conv1")
+
+    tools = store.list_all("tool", "alice", conversation_id="conv1")
+    shared = [tool for tool in tools if tool.get("name") == "shared_reader"]
+
+    assert len(shared) == 1
+    assert shared[0]["_scope"] == "conversation"
+    assert shared[0]["package_runtime"]["package"] == "pkg.conv"
+
+
+def test_service_registry_task_subconversation_inherits_parent_services(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    import services.package_runtime_service  # noqa: F401
+    from core.service_registry import ServiceRegistry, SCOPE_CONV
+
+    registry = ServiceRegistry.get_instance()
+    registry.install(SCOPE_CONV, "conv1", "pfp-image", "packageRuntime", config={
+        "package_runtime": {
+            "package": "pkg.parent",
+            "version": "1.0.0",
+            "object_id": "service_provider:image",
+            "provides": ["media.image_generation"],
+        },
+        "installed_from": {},
+        "operations": {"generate": {}},
+    })
+
+    service = registry.resolve(
+        "pfp-image", user_id="alice", conv_id="conv1::task::t_123")
+    delegate_service = registry.resolve(
+        "pfp-image", user_id="alice", conv_id="conv1::delegate::agent")
+
+    assert service is not None
+    assert service.config["package_runtime"]["package"] == "pkg.parent"
+    assert delegate_service is not None
+    assert delegate_service.config["package_runtime"]["package"] == "pkg.parent"
+
+
+def test_task_subconversation_inherits_parent_relay_binding(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    from core.conversation_store import ConversationStore
+    from core import relay_bindings
+
+    ConversationStore.instance().save(
+        "conv1", [{"role": "user", "content": "hello"}], user_id="alice")
+    assert relay_bindings.link_relay("conv1", "relay-main") is True
+
+    assert relay_bindings.get_default("conv1::task::t_123") == "relay-main"
+    assert relay_bindings.get_linked("conv1::task::t_123") == ["relay-main"]
+    assert relay_bindings.get_default("conv1::delegate::agent") == "relay-main"
+    assert relay_bindings.get_linked("conv1::delegate::agent") == ["relay-main"]
+
+
+def test_task_verify_subconversation_inherits_parent_services_and_relay(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    import time
+    import uuid
+    import services.package_runtime_service  # noqa: F401
+    from core import relay_bindings
+    from core.conversation_store import ConversationStore
+    from core.service_registry import ServiceRegistry, SCOPE_CONV
+
+    registry = ServiceRegistry.get_instance()
+    registry.install(SCOPE_CONV, "conv1", "pfp-image", "packageRuntime", config={
+        "package_runtime": {
+            "package": "pkg.parent",
+            "version": "1.0.0",
+            "object_id": "service_provider:image",
+            "provides": ["media.image_generation"],
+        },
+        "installed_from": {},
+        "operations": {"generate": {}},
+    })
+    ConversationStore.instance().save("conv1", [{
+        "role": "user",
+        "content": "hello",
+        "msg_id": str(uuid.uuid4()),
+        "timestamp": time.time(),
+    }], user_id="alice")
+    assert relay_bindings.link_relay("conv1", "relay-main") is True
+
+    service = registry.resolve(
+        "pfp-image", user_id="alice", conv_id="conv1::task_verify::t_123")
+
+    assert service is not None
+    assert service.config["package_runtime"]["package"] == "pkg.parent"
+    assert relay_bindings.get_default("conv1::task_verify::t_123") == "relay-main"
+
+
+def test_task_verify_subconversation_inherits_parent_dynamic_tools(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    from core.resource_store import ResourceStore
+    from services.tool_relay_service import ToolRelayService
+
+    ResourceStore.instance().create("tool", "conv_package_tool", "alice", {
+        "name": "conv_package_tool",
+        "description": "conversation package tool",
+        "source": "",
+        "package_runtime": {
+            "package": "pkg.parent",
+            "object_id": "tool:conv_package_tool",
+        },
+        "installed_from": {},
+    }, conversation_id="conv1")
+
+    registry = ToolRelayService({})._get_registry(
+        user_id="alice", conversation_id="conv1::task_verify::t_123",
+        agent_name="agentA")
+
+    assert registry.get("conv_package_tool") is not None
+
+
+def test_package_capability_broker_task_subconversation_reads_parent_install(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    keypair = pfp_package.create_signing_key()
+    pkgdir = _write_package_dir(
+        tmp_path, keypair, package_id="pkg.provider",
+        include_service_provider=True)
+    built = pfp_package.build_pfp(str(pkgdir), private_key=keypair["private_key"])
+    pfp_package.install_pfp(
+        built["path"], user_id="alice", conversation_id="conv1",
+        scope="conversation", include=["service_provider:image"], force=True)
+
+    from core.pfp_capabilities import PackageCapabilityBroker
+    caller = {
+        "package": "pkg.consumer",
+        "object_id": "tool:caller",
+        "allowed_services": ["pkg.provider/service:image"],
+    }
+
+    target = PackageCapabilityBroker(
+        user_id="alice", conversation_id="conv1::task_verify::t_123",
+        scope="conversation",
+    ).authorize_service_call(caller, "pkg.provider/service:image")["target"]
+
+    assert target == {
+        "kind": "service",
+        "name": "image",
+        "package": "pkg.provider",
+        "version": "",
+    }
+
+
+def test_package_capability_broker_prefers_exact_subconversation_install(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    keypair = pfp_package.create_signing_key()
+    parent_dir = _write_package_dir(
+        tmp_path / "parent", keypair, package_id="pkg.provider",
+        version="1.0.0", include_service_provider=True)
+    child_dir = _write_package_dir(
+        tmp_path / "child", keypair, package_id="pkg.provider",
+        version="2.0.0", include_service_provider=True)
+
+    for pkgdir, service_id in ((parent_dir, "parent-provider"), (child_dir, "child-provider")):
+        manifest_path = pkgdir / "pfp.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        for obj in manifest["objects"]:
+            if obj.get("id") == "service_provider:image":
+                obj["name"] = service_id
+                obj["service_id"] = service_id
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    parent_built = pfp_package.build_pfp(str(parent_dir), private_key=keypair["private_key"])
+    child_built = pfp_package.build_pfp(str(child_dir), private_key=keypair["private_key"])
+    pfp_package.install_pfp(
+        parent_built["path"], user_id="alice", conversation_id="conv1",
+        scope="conversation", include=["service_provider:image"], force=True)
+    pfp_package.install_pfp(
+        child_built["path"], user_id="alice", conversation_id="conv1::task::t_123",
+        scope="conversation", include=["service_provider:image"], force=True)
+
+    from core.pfp_capabilities import PackageCapabilityBroker
+    caller = {
+        "package": "pkg.consumer",
+        "object_id": "tool:caller",
+        "allowed_services": ["pkg.provider@2.0.0/service:image"],
+    }
+
+    target = PackageCapabilityBroker(
+        user_id="alice", conversation_id="conv1::task::t_123",
+        scope="conversation",
+    ).authorize_service_call(caller, "pkg.provider@2.0.0/service:image")["target"]
+
+    assert target["version"] == "2.0.0"
+
+
+def test_package_capability_broker_propagates_grant_version_to_dispatch(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    keypair = pfp_package.create_signing_key()
+    v1_dir = _write_package_dir(
+        tmp_path / "v1", keypair, package_id="pkg.mix", version="1.0.0",
+        include_service_provider=True)
+    v2_dir = _write_package_dir(
+        tmp_path / "v2", keypair, package_id="pkg.mix", version="2.0.0",
+        include_service_provider=True)
+    v1_built = pfp_package.build_pfp(str(v1_dir), private_key=keypair["private_key"])
+    v2_built = pfp_package.build_pfp(str(v2_dir), private_key=keypair["private_key"])
+    pfp_package.install_pfp(
+        v1_built["path"], user_id="alice", include=["tool:reader"], force=True)
+    pfp_package.install_pfp(
+        v2_built["path"], user_id="alice", include=["service_provider:image"], force=True)
+
+    from core import pfp_runtime
+    from core.pfp_capabilities import PackageCapabilityError
+    from core.tool_registry import ToolRegistry
+
+    def _invoke_tool(runtime, installed_from, arguments, context):
+        raise AssertionError(f"unexpected runtime dispatch: {runtime.get('version')}")
+
+    monkeypatch.setattr(pfp_runtime, "invoke_tool", _invoke_tool)
+    host = pfp_runtime.PackageRuntimeHost(
+        user_id="alice",
+        caller_runtime={
+            "package": "pkg.consumer",
+            "object_id": "tool:caller",
+            "allowed_tools": ["pkg.mix@2.0.0/tool:reader"],
+        },
+        tool_registry=ToolRegistry(),
+    )
+
+    try:
+        host.execute_tool_call("pkg.mix/tool:reader", {})
+    except PackageCapabilityError as exc:
+        assert "version mismatch" in str(exc)
+    else:
+        raise AssertionError("unversioned call used the stale package runtime")
+
+
+def test_pfp_inspect_task_subconversation_reads_parent_package_dependencies(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    keypair = pfp_package.create_signing_key()
+    provider_dir = _write_package_dir(
+        tmp_path / "provider", keypair, package_id="pkg.provider")
+    provider_built = pfp_package.build_pfp(str(provider_dir), private_key=keypair["private_key"])
+    pfp_package.install_pfp(
+        provider_built["path"], user_id="alice", conversation_id="conv1",
+        scope="conversation", include=["tool:reader"], force=True)
+
+    consumer_dir = _write_package_dir(
+        tmp_path / "consumer", keypair, package_id="pkg.consumer",
+        dependencies=[{
+            "package": "pkg.provider",
+            "version": "1.0.0",
+            "object": "tool:reader",
+        }])
+    consumer_built = pfp_package.build_pfp(str(consumer_dir), private_key=keypair["private_key"])
+
+    inspected = pfp_package.inspect_pfp(
+        consumer_built["path"], user_id="alice",
+        conversation_id="conv1::task::t_1", scope="conversation")
+
+    reader = next(row for row in inspected["objects"] if row["id"] == "tool:reader")
+    assert reader["status"] != "missing_dependency"
+
+
+def test_pfp_inspect_dependency_checks_installed_object_version(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    keypair = pfp_package.create_signing_key()
+    v1_dir = _write_package_dir(
+        tmp_path / "v1", keypair, package_id="pkg.mix", version="1.0.0",
+        include_service_provider=True)
+    v2_dir = _write_package_dir(
+        tmp_path / "v2", keypair, package_id="pkg.mix", version="2.0.0",
+        include_service_provider=True)
+    v1_built = pfp_package.build_pfp(str(v1_dir), private_key=keypair["private_key"])
+    v2_built = pfp_package.build_pfp(str(v2_dir), private_key=keypair["private_key"])
+    pfp_package.install_pfp(
+        v1_built["path"], user_id="alice", include=["tool:reader"], force=True)
+    pfp_package.install_pfp(
+        v2_built["path"], user_id="alice", include=["service_provider:image"], force=True)
+
+    consumer_dir = _write_package_dir(
+        tmp_path / "consumer", keypair, package_id="pkg.consumer",
+        dependencies=[{
+            "package": "pkg.mix",
+            "version": "2.0.0",
+            "object": "tool:reader",
+        }])
+    manifest_path = consumer_dir / "pfp.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    for obj in manifest["objects"]:
+        if obj["id"] == "tool:reader":
+            obj["id"] = "tool:consumer_reader"
+            obj["name"] = "consumer_reader"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    consumer_built = pfp_package.build_pfp(str(consumer_dir), private_key=keypair["private_key"])
+
+    inspected = pfp_package.inspect_pfp(consumer_built["path"], user_id="alice")
+    reader = next(row for row in inspected["objects"] if row["id"] == "tool:consumer_reader")
+    assert reader["status"] == "missing_dependency"
+    assert reader["missing_dependencies"] == [{
+        "package": "pkg.mix",
+        "version": "2.0.0",
+        "object": "tool:reader",
+    }]
+
+
+def test_pfp_flow_task_runtime_resolves_parent_for_task_subconversation(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    keypair = pfp_package.create_signing_key()
+    pkgdir = _write_package_dir(
+        tmp_path, keypair, include_flow_task=True, flow_task_runner="python")
+    built = pfp_package.build_pfp(str(pkgdir), private_key=keypair["private_key"])
+    pfp_package.install_pfp(
+        built["path"], user_id="alice", conversation_id="conv1",
+        scope="conversation", include=["flow_task:resize-image"], force=True)
+
+    resolved = pfp_package.resolve_installed_flow_task_runtime(
+        "packageResizeImage", user_id="alice",
+        conversation_id="conv1::task::t_123", scope="conversation")
+
+    assert resolved["package_runtime"]["package"] == "community.wavespeed"
+
+
+def test_package_qualified_tool_resolves_shadowed_user_tool_from_store(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    from core import pfp_runtime
+    from core.conversation_store import ConversationStore
+    from core.resource_store import ResourceStore
+    from core.tool_mcp_filters import set_filters
+    from core.tool_loader import load_tools_into_registry
+    from core.tool_registry import ToolRegistry
+
+    store = ResourceStore.instance()
+    store.create("tool", "shared_tool", "alice", {
+        "name": "shared_tool",
+        "description": "user package tool",
+        "source": "",
+        "package_runtime": {"package": "pkg.user", "object_id": "tool:shared_tool"},
+        "installed_from": {},
+    })
+    store.create("tool", "shared_tool", "alice", {
+        "name": "shared_tool",
+        "description": "conversation package tool",
+        "source": "",
+        "package_runtime": {"package": "pkg.conv", "object_id": "tool:shared_tool"},
+        "installed_from": {},
+    }, conversation_id="conv1")
+    ConversationStore.instance().save("conv1", [], user_id="alice")
+    set_filters("conv1", {"enabled_dynamic_tools": ["shared_tool"]})
+    registry = ToolRegistry()
+    load_tools_into_registry(registry, "alice", "conv1")
+
+    handler = pfp_runtime._resolve_package_tool(
+        registry,
+        {"package": "pkg.user", "kind": "tool", "name": "shared_tool"},
+        user_id="alice",
+        conversation_id="conv1",
+    )
+
+    assert handler is not None
+    assert handler._package_runtime["package"] == "pkg.user"
+
+
+def test_package_qualified_tool_fallback_respects_dynamic_tool_filters(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    from core import pfp_runtime
+    from core.resource_store import ResourceStore
+    from core.tool_registry import ToolRegistry
+
+    store = ResourceStore.instance()
+    store.create("tool", "user_only_tool", "alice", {
+        "name": "user_only_tool",
+        "description": "user package tool",
+        "source": "",
+        "package_runtime": {"package": "pkg.user", "object_id": "tool:user_only_tool"},
+        "installed_from": {},
+    })
+    registry = ToolRegistry()
+
+    handler = pfp_runtime._resolve_package_tool(
+        registry,
+        {"package": "pkg.user", "kind": "tool", "name": "user_only_tool"},
+        user_id="alice",
+        conversation_id="conv1",
+    )
+
+    assert handler is None
+
+
+def test_pfp_flow_task_proxy_resolves_runtime_by_user_scope(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    alice_key = pfp_package.create_signing_key()
+    bob_key = pfp_package.create_signing_key()
+    alice_pkg = _write_package_dir(
+        tmp_path / "alice", alice_key, package_id="community.alice",
+        include_flow_task=True, flow_task_runner="python")
+    bob_pkg = _write_package_dir(
+        tmp_path / "bob", bob_key, package_id="community.bob",
+        include_flow_task=True, flow_task_runner="python")
+    alice_built = pfp_package.build_pfp(str(alice_pkg), private_key=alice_key["private_key"])
+    bob_built = pfp_package.build_pfp(str(bob_pkg), private_key=bob_key["private_key"])
+    pfp_package.install_pfp(
+        alice_built["path"], user_id="alice",
+        include=["flow_task:resize-image"], force=True)
+    pfp_package.install_pfp(
+        bob_built["path"], user_id="bob",
+        include=["flow_task:resize-image"], force=True)
+
+    from core import FlowFile, TaskFactory, pfp_runtime
+    task_cls = TaskFactory.get("packageResizeImage")
+    task_cls.PACKAGE_RUNTIME = {**task_cls.PACKAGE_RUNTIME, "package": "stale.global.proxy"}
+
+    def _invoke(self, request):
+        assert request["package"]["package"] == "community.alice"
+        return {
+            "format": pfp_runtime.RUNTIME_RESULT_FORMAT,
+            "ok": True,
+            "flowfiles": [pfp_runtime._flowfile_descriptor(
+                FlowFile(content=b"alice-runtime"))],
+        }
+
+    monkeypatch.setattr(pfp_runtime.RelayPackageRuntimeBridge, "invoke", _invoke)
+    result = task_cls({
+        "width": 64,
+        "relay": "relay1",
+        "_user_id": "alice",
+        "_conversation_id": "conv1",
+        "_scope": "user",
+    }).execute(FlowFile(content=b"in"))
+
+    assert result[0].get_content() == b"alice-runtime"
+
+
+def test_pfp_flow_task_user_scope_runs_without_conversation_id(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    keypair = pfp_package.create_signing_key()
+    pkgdir = _write_package_dir(
+        tmp_path, keypair, include_flow_task=True, flow_task_runner="python")
+    built = pfp_package.build_pfp(str(pkgdir), private_key=keypair["private_key"])
+    pfp_package.install_pfp(
+        built["path"], user_id="alice",
+        include=["flow_task:resize-image"], force=True)
+
+    from core import FlowFile, TaskFactory, pfp_runtime
+    task_cls = TaskFactory.get("packageResizeImage")
+
+    def _invoke(self, request):
+        assert request["context"]["user_id"] == "alice"
+        assert request["context"]["conversation_id"] == ""
+        assert request["context"]["scope"] == "user"
+        return {
+            "format": pfp_runtime.RUNTIME_RESULT_FORMAT,
+            "ok": True,
+            "flowfiles": [pfp_runtime._flowfile_descriptor(
+                FlowFile(content=b"user-scope"))],
+        }
+
+    monkeypatch.setattr(pfp_runtime.RelayPackageRuntimeBridge, "invoke", _invoke)
+    result = task_cls({
+        "width": 64,
+        "relay": "relay1",
+        "_user_id": "alice",
+        "_scope": "user",
+    }).execute(FlowFile(content=b"in"))
+
+    assert result[0].get_content() == b"user-scope"
 
 
 def test_pfp_reload_all_installed_flow_tasks(tmp_path, monkeypatch):
@@ -1407,10 +4590,13 @@ def test_pfp_plan_accepts_installed_package_dependency(tmp_path, monkeypatch):
     keypair = pfp_package.create_signing_key()
     base_dir = _write_package_dir(
         tmp_path / "base", keypair,
-        package_id="community.base", skill_name="base-skill")
+        package_id="community.base", skill_name="base-skill",
+        include_service_provider=True)
     base = pfp_package.build_pfp(str(base_dir), private_key=keypair["private_key"])
     pfp_package.install_pfp(
-        base["path"], user_id="alice", include=["skill:base-skill", "tool:reader"], force=True)
+        base["path"], user_id="alice",
+        include=["skill:base-skill", "tool:reader", "service_provider:image"],
+        force=True)
 
     dependent_dir = _write_package_dir(
         tmp_path / "dependent", keypair,
@@ -1424,6 +4610,44 @@ def test_pfp_plan_accepts_installed_package_dependency(tmp_path, monkeypatch):
     assert skill_row["status"] == "new"
     assert skill_row["selected"] is True
     assert skill_row["missing_dependencies"] == []
+
+
+def test_pfp_plan_accepts_service_alias_for_installed_service_provider_dependency(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    keypair = pfp_package.create_signing_key()
+    base_dir = _write_package_dir(
+        tmp_path / "base", keypair,
+        package_id="community.base", include_service_provider=True)
+    base = pfp_package.build_pfp(str(base_dir), private_key=keypair["private_key"])
+    pfp_package.install_pfp(
+        base["path"], user_id="alice",
+        include=["service_provider:image"], force=True)
+
+    dependent_dir = _write_package_dir(
+        tmp_path / "dependent", keypair,
+        package_id="community.dependent")
+    manifest_path = dependent_dir / "pfp.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    tool = next(obj for obj in manifest["objects"] if obj["id"] == "tool:reader")
+    tool["allowed_tools"] = []
+    tool["allowed_services"] = [{
+        "package": "community.base",
+        "object": "service:image",
+    }]
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    dependent = pfp_package.build_pfp(
+        str(dependent_dir), private_key=keypair["private_key"])
+
+    plan = pfp_package.inspect_pfp(dependent["path"], user_id="alice")
+    tool_row = next(row for row in plan["objects"] if row["id"] == "tool:reader")
+    assert tool_row["status"] == "new"
+    assert tool_row["missing_dependencies"] == []
+
+    installed = pfp_package.install_pfp(
+        dependent["path"], user_id="alice",
+        include=["tool:reader"], force=True)
+    assert installed["ok"] is True
+    assert [row["id"] for row in installed["installed"]] == ["tool:reader"]
 
 
 def test_pfp_plan_accepts_installed_package_dependency_range(tmp_path, monkeypatch):
@@ -1572,10 +4796,13 @@ def test_pfp_capability_broker_authorizes_declared_builtin_and_package_refs(tmp_
     keypair = pfp_package.create_signing_key()
     base_dir = _write_package_dir(
         tmp_path / "base", keypair,
-        package_id="community.base", skill_name="base-skill")
+        package_id="community.base", skill_name="base-skill",
+        include_service_provider=True)
     base = pfp_package.build_pfp(str(base_dir), private_key=keypair["private_key"])
     pfp_package.install_pfp(
-        base["path"], user_id="alice", include=["skill:base-skill", "tool:reader"], force=True)
+        base["path"], user_id="alice",
+        include=["skill:base-skill", "tool:reader", "service_provider:image"],
+        force=True)
 
     from core.pfp_capabilities import PackageCapabilityBroker, PackageCapabilityError
     broker = PackageCapabilityBroker(user_id="alice")
@@ -1586,6 +4813,9 @@ def test_pfp_capability_broker_authorizes_declared_builtin_and_package_refs(tmp_
             {"name": "read"},
             {"package": "community.base", "version": ">=1.0.0,<2.0.0", "object": "tool:reader"},
         ],
+        "allowed_services": [
+            {"package": "community.base", "version": ">=1.0.0,<2.0.0", "object": "service:image"},
+        ],
     }
 
     builtin = broker.authorize_tool_call(runtime, "read")
@@ -1594,6 +4824,10 @@ def test_pfp_capability_broker_authorizes_declared_builtin_and_package_refs(tmp_
     packaged = broker.authorize_tool_call(runtime, "community.base/tool:reader")
     assert packaged["target"]["package"] == "community.base"
     assert packaged["target"]["name"] == "reader"
+
+    service = broker.authorize_service_call(runtime, "community.base/service:image")
+    assert service["target"]["package"] == "community.base"
+    assert service["target"]["name"] == "image"
 
     try:
         broker.authorize_tool_call(runtime, "bash")

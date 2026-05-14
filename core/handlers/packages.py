@@ -14,6 +14,7 @@ class ManagePackageHandler(ToolHandler):
     def __init__(self):
         self._user_id = ""
         self._conversation_id = ""
+        self._agent_name = ""
 
     @property
     def name(self) -> str:
@@ -66,6 +67,9 @@ class ManagePackageHandler(ToolHandler):
     def set_conversation_id(self, cid: str):
         self._conversation_id = cid
 
+    def set_agent_name(self, name: str):
+        self._agent_name = name
+
     def execute(self, arguments: Dict[str, Any]) -> str:
         from core import pfp_package
 
@@ -109,6 +113,7 @@ class ManagePackageHandler(ToolHandler):
                     replace=bool(arguments.get("replace", False)),
                     dry_run=bool(arguments.get("dry_run", False)),
                     secret_bindings=arguments.get("secret_bindings") or {},
+                    agent_name=self._agent_name,
                 )
                 if resolved.get("downloaded"):
                     result["download"] = resolved
@@ -127,6 +132,7 @@ class ManagePackageHandler(ToolHandler):
                     force=bool(arguments.get("force", False)),
                     dry_run=bool(arguments.get("dry_run", False)),
                     secret_bindings=arguments.get("secret_bindings") or {},
+                    agent_name=self._agent_name,
                 )
                 if resolved.get("downloaded"):
                     result["download"] = resolved
@@ -156,6 +162,7 @@ class ManagePackageHandler(ToolHandler):
                     replace=bool(arguments.get("replace", True)),
                     dry_run=bool(arguments.get("dry_run", False)),
                     secret_bindings=arguments.get("secret_bindings") or {},
+                    agent_name=self._agent_name,
                 )
             elif action in {"dev_unload", "dev-unload"}:
                 result = pfp_package.dev_unload_pfp(

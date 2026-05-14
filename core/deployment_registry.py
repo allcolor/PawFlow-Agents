@@ -34,12 +34,14 @@ class DeployedInstance:
     flow_id: str                          # flow name (e.g. pawflow_agent)
     flow_name: str                        # display name
     flow_fqn: str = ""                    # repository FQN (package.name:version)
+    flow_scope: str = ""                  # repository scope: conv | user | global
     flow_path: str = ""                   # legacy — fallback for unversioned flows
     owner: Optional[str] = None           # None = global
     status: str = "stopped"               # running | stopped | error
     source: str = "gui"                   # gui | agent
     parameters: Dict[str, Any] = field(default_factory=dict)
     conversation_id: Optional[str] = None
+    agent_name: str = ""
     created_at: float = field(default_factory=time.time)
     last_started: Optional[float] = None
     last_stopped: Optional[float] = None
@@ -119,6 +121,7 @@ class DeploymentRegistry:
         max_retries: int = 3,
         source: str = "gui",
         conversation_id: Optional[str] = None,
+        agent_name: str = "",
         instance_id: Optional[str] = None,
         service_overrides: Optional[Dict[str, str]] = None,
         service_configs: Optional[Dict[str, Dict[str, Any]]] = None,
@@ -154,6 +157,7 @@ class DeploymentRegistry:
             source=source,
             parameters=parameters or {},
             conversation_id=conversation_id,
+            agent_name=agent_name or "",
             created_at=time.time(),
             max_workers=max_workers,
             max_retries=max_retries,

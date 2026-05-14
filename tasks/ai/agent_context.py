@@ -340,7 +340,11 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 pass
             # Load dynamic tools (global + user + conv) for this user/conv.
             from core.tool_loader import load_tools_into_registry
-            _parent_cid = conversation_id.split("::task::")[0] if "::task::" in conversation_id else conversation_id
+            _parent_cid = conversation_id
+            for _sep in ("::task::", "::task_verify::", "::delegate::"):
+                if _sep in _parent_cid:
+                    _parent_cid = _parent_cid.split(_sep, 1)[0]
+                    break
             load_tools_into_registry(
                 registry, _user_id_for_svc, _parent_cid)
         _context_agent = _early_agent

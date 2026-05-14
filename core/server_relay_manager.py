@@ -1,7 +1,10 @@
 """Server-Side Relay Manager.
 
-Spawns a Docker relay container per conversation, giving each conversation
-a persistent workspace on the server without requiring a local install.
+Spawns Docker relay containers per conversation without requiring a local
+install. PawFlow uses two explicit server relay kinds:
+
+- workspace: persistent full workspace relay for interactive/server files
+- minimal: protected execution relay for flow tasks and ExecuteScript
 
 Each container:
 - Runs tools/pawflow_relay.py in manual mode (env vars, not CLI args)
@@ -11,8 +14,9 @@ Each container:
 
 Metadata is stored in ConversationStore extra:
   key="server_relay" value={relay_id, container_id, token, user_id, ws_url, ...}
+  key="server_minimal_relay" value={relay_id, container_id, token, user_id, ws_url, ...}
 
-Max 1 server relay per conversation (enforced in spawn).
+Max 1 server relay of each kind per conversation (enforced in spawn).
 """
 
 import logging
@@ -37,15 +41,24 @@ logger = logging.getLogger(__name__)
 #   server_relay_workspace  — Workspace dir in container (default: /workspace)
 #   server_relay_cpus       — CPU limit (default: 2)
 #   server_relay_memory     — Memory limit (default: 2g)
+#   server_relay_minimal_image  — Docker image for protected execution relays
+#   server_relay_minimal_cpus   — CPU limit for protected execution relays
+#   server_relay_minimal_memory — Memory limit for protected execution relays
 
 _DEFAULTS = {
     "server_relay_image":     "pawflow-relay-dev:latest",
+    "server_relay_minimal_image": "pawflow-relay-minimal:latest",
     "server_relay_mount_code": "0",
     "server_relay_tools_dir": "tools",
     "server_relay_workspace": "/workspace",
     "server_relay_cpus":      "2",
     "server_relay_memory":    "2g",
+    "server_relay_minimal_cpus": "1",
+    "server_relay_minimal_memory": "512m",
 }
+
+_KIND_WORKSPACE = "workspace"
+_KIND_MINIMAL = "minimal"
 
 
 def _cfg(key: str) -> str:
@@ -65,16 +78,56 @@ from core.docker_utils import docker_cmd, get_host_ip, to_host_path
 from pawflow_relay.utils import find_free_port
 
 
-def _volume_name(conv_id: str) -> str:
-    return f"pawflow_ws_{conv_id}"
+def _validate_kind(kind: str) -> str:
+    if kind not in {_KIND_WORKSPACE, _KIND_MINIMAL}:
+        raise ValueError(f"Unknown server relay kind: {kind}")
+    return kind
 
 
-def _container_name(conv_id: str) -> str:
-    return f"pawflow-relay-srv-{conv_id[:16]}"
+def _metadata_key(kind: str) -> str:
+    kind = _validate_kind(kind)
+    return "server_minimal_relay" if kind == _KIND_MINIMAL else "server_relay"
 
 
-def _relay_id_for_conv(conv_id: str) -> str:
-    return f"srv_ws_{conv_id[:16]}"
+def _volume_name(conv_id: str, kind: str = _KIND_WORKSPACE) -> str:
+    kind = _validate_kind(kind)
+    prefix = "pawflow_exec" if kind == _KIND_MINIMAL else "pawflow_ws"
+    return f"{prefix}_{conv_id}"
+
+
+def _container_name(conv_id: str, kind: str = _KIND_WORKSPACE) -> str:
+    kind = _validate_kind(kind)
+    prefix = "pawflow-relay-min" if kind == _KIND_MINIMAL else "pawflow-relay-srv"
+    return f"{prefix}-{conv_id[:16]}"
+
+
+def _relay_id_for_conv(conv_id: str, kind: str = _KIND_WORKSPACE) -> str:
+    kind = _validate_kind(kind)
+    prefix = "srv_min" if kind == _KIND_MINIMAL else "srv_ws"
+    return f"{prefix}_{conv_id[:16]}"
+
+
+def _relay_kind_config(kind: str) -> Dict[str, Any]:
+    kind = _validate_kind(kind)
+    if kind == _KIND_MINIMAL:
+        return {
+            "kind": _KIND_MINIMAL,
+            "label": "server minimal execution relay",
+            "image": _cfg("server_relay_minimal_image"),
+            "cpus": _cfg("server_relay_minimal_cpus"),
+            "memory": _cfg("server_relay_minimal_memory"),
+            "publish_desktop": False,
+            "description": "Server minimal execution relay (server-spawned)",
+        }
+    return {
+        "kind": _KIND_WORKSPACE,
+        "label": "server workspace relay",
+        "image": _cfg("server_relay_image"),
+        "cpus": _cfg("server_relay_cpus"),
+        "memory": _cfg("server_relay_memory"),
+        "publish_desktop": True,
+        "description": "Server workspace relay (server-spawned)",
+    }
 
 
 class ServerRelayManager:
@@ -95,6 +148,8 @@ class ServerRelayManager:
         self,
         conv_id: str,
         user_id: str,
+        *,
+        kind: str = _KIND_WORKSPACE,
     ) -> Dict[str, Any]:
         """Spawn a server relay for this conversation.
 
@@ -103,28 +158,31 @@ class ServerRelayManager:
         """
         from core.conversation_store import ConversationStore
 
+        kind = _validate_kind(kind)
+        kind_cfg = _relay_kind_config(kind)
+        metadata_key = _metadata_key(kind)
         store = ConversationStore.instance()
-        existing = store.get_extra(conv_id, "server_relay")
+        existing = store.get_extra(conv_id, metadata_key)
         if existing and isinstance(existing, dict) and existing.get("relay_id"):
             # Check if the container is actually running
             cid = existing.get("container_id", "")
             if cid and self._is_container_running(cid):
                 raise ValueError(
-                    f"A server workspace already exists for this conversation: "
+                    f"A {kind_cfg['label']} already exists for this conversation: "
                     f"{existing['relay_id']}"
                 )
             # Container is dead — clean up and re-spawn
-            logger.info("Dead server relay found for conv %s — re-spawning", conv_id)
+            logger.info("Dead %s found for conv %s — re-spawning", kind_cfg["label"], conv_id)
             self._cleanup_container(existing.get("container_id", ""), remove=True)
 
         # VNC / audio host ports are real Docker publish ports — must be free.
-        desktop_host_port = find_free_port()
-        audio_host_port = find_free_port()
+        desktop_host_port = find_free_port() if kind_cfg["publish_desktop"] else None
+        audio_host_port = find_free_port() if kind_cfg["publish_desktop"] else None
         token = secrets.token_urlsafe(32)
-        relay_id = _relay_id_for_conv(conv_id)
+        relay_id = _relay_id_for_conv(conv_id, kind)
         path = f"/ws/relay/{relay_id}"
-        container_name = _container_name(conv_id)
-        volume = _volume_name(conv_id)
+        container_name = _container_name(conv_id, kind)
+        volume = _volume_name(conv_id, kind)
         host_ip = get_host_ip()
 
         # Resolve the REAL main HTTPListenerService port + TLS state. The
@@ -141,12 +199,12 @@ class ServerRelayManager:
         ws_scheme = "wss" if _main_listener.is_ssl else "ws"
 
         # Read config live from global_parameters.json
-        relay_image = _cfg("server_relay_image")
+        relay_image = kind_cfg["image"]
         relay_mount_code = _truthy(_cfg("server_relay_mount_code"))
         relay_tools_dir = _cfg("server_relay_tools_dir")  # relative to server CWD
         relay_workspace = _cfg("server_relay_workspace")
-        relay_cpus = _cfg("server_relay_cpus")
-        relay_memory = _cfg("server_relay_memory")
+        relay_cpus = kind_cfg["cpus"]
+        relay_memory = kind_cfg["memory"]
 
         # The published relay image embeds the launcher and pawflow_relay package
         # under /opt/pawflow. Dev mounts are opt-in because a PawFlow server
@@ -173,7 +231,7 @@ class ServerRelayManager:
         # Register the relay service on the server BEFORE spawning the container.
         # RelayService.connect() registers /ws/relay/<service_id> on the main
         # HTTPListenerService — no separate port or path to configure.
-        self._install_relay_service(user_id, relay_id, token)
+        self._install_relay_service(user_id, relay_id, token, kind=kind)
 
         ws_url_for_container = f"{ws_scheme}://{host_ip}:{main_port}{path}"
 
@@ -209,16 +267,19 @@ class ServerRelayManager:
             "--env", "PAWFLOW_RELAY_ALLOW_EXEC=1",
             "--env", "PAWFLOW_SERVER_MOUNT=/cc_sessions",
             "--env", "PAWFLOW_FILESTORE_MOUNT=/filestore",
-            "--publish", f"{desktop_host_port}:6080",
-            "--publish", f"{audio_host_port}:6180",
-            "--env", "PAWFLOW_DESKTOP_NOVNC_PORT=6080",
             "--env", "HOME=/home/pawflow",
             "--env", "USER=pawflow",
             "--env", "PATH=/home/pawflow/.cargo/bin:/home/pawflow/go/bin:/usr/local/go/bin:/opt/kotlinc/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
         ]
+        if kind_cfg["publish_desktop"]:
+            docker_run_args.extend([
+                "--publish", f"{desktop_host_port}:6080",
+                "--publish", f"{audio_host_port}:6180",
+                "--env", "PAWFLOW_DESKTOP_NOVNC_PORT=6080",
+            ])
 
         # NOTE: no docker.sock bind-mount. The server-spawned relay lives in
-        # an isolated named volume (pawflow_data_<conv_id>); it has no host
+        # an isolated kind-specific named volume; it has no host
         # path to bind-mount into a nested container, so spawn_relay / child-
         # relay features are meaningless here. Exposing docker.sock would
         # grant root-on-host via `docker run -v /:/host --privileged` for no
@@ -231,7 +292,7 @@ class ServerRelayManager:
         cmd = docker_cmd() + ["run"] + docker_run_args
         logger.info("Spawning server relay container: %s  cmd=%s", container_name, cmd)
         result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=30,
+            cmd, capture_output=True, text=True,
         )
         if result.returncode != 0:
             # Cleanup the service we just installed
@@ -251,32 +312,62 @@ class ServerRelayManager:
             "user_id": user_id,
             "ws_url": ws_url_for_container,
             "volume": volume,
-            "desktop_host_port": desktop_host_port,
-            "audio_host_port": audio_host_port,
+            "kind": kind,
+            "image": relay_image,
+            "cpus": relay_cpus,
+            "memory": relay_memory,
         }
-        store.set_extra(conv_id, "server_relay", metadata)
+        if desktop_host_port is not None:
+            metadata["desktop_host_port"] = desktop_host_port
+        if audio_host_port is not None:
+            metadata["audio_host_port"] = audio_host_port
+        store.set_extra(conv_id, metadata_key, metadata)
         # Auto-link this relay to the conversation
         try:
             from core.relay_bindings import link_relay
             link_relay(conv_id, relay_id)
         except Exception as e:
             logger.warning("Failed to auto-link relay %s to conv %s: %s", relay_id, conv_id, e)
-        logger.info("Server relay spawned for conv %s: %s", conv_id, relay_id)
+        logger.info("%s spawned for conv %s: %s", kind_cfg["label"], conv_id, relay_id)
         return metadata
 
-    def destroy(self, conv_id: str) -> bool:
+    def spawn_minimal(self, conv_id: str, user_id: str) -> Dict[str, Any]:
+        """Spawn the protected minimal execution relay for this conversation."""
+        return self.spawn(conv_id, user_id, kind=_KIND_MINIMAL)
+
+    def ensure(
+        self,
+        conv_id: str,
+        user_id: str,
+        *,
+        kind: str = _KIND_WORKSPACE,
+    ) -> Dict[str, Any]:
+        """Return a running server relay, spawning it when missing or dead."""
+        kind = _validate_kind(kind)
+        meta = self.get_metadata(conv_id, kind=kind)
+        if meta and self._is_container_running(meta.get("container_id", "")):
+            return meta
+        return self.spawn(conv_id, user_id, kind=kind)
+
+    def ensure_minimal(self, conv_id: str, user_id: str) -> Dict[str, Any]:
+        """Return the protected minimal execution relay, spawning it if needed."""
+        return self.ensure(conv_id, user_id, kind=_KIND_MINIMAL)
+
+    def destroy(self, conv_id: str, *, kind: str = _KIND_WORKSPACE) -> bool:
         """Stop and remove the server relay for this conversation."""
         from core.conversation_store import ConversationStore
 
+        kind = _validate_kind(kind)
+        metadata_key = _metadata_key(kind)
         store = ConversationStore.instance()
-        meta = store.get_extra(conv_id, "server_relay")
+        meta = store.get_extra(conv_id, metadata_key)
         if not meta or not isinstance(meta, dict):
             return False
 
         relay_id = meta.get("relay_id", "")
         container_id = meta.get("container_id", "")
         user_id = meta.get("user_id", "")
-        volume = meta.get("volume", _volume_name(conv_id))
+        volume = meta.get("volume", _volume_name(conv_id, kind))
 
         # Stop + remove container
         self._cleanup_container(container_id, remove=True)
@@ -286,7 +377,7 @@ class ServerRelayManager:
             try:
                 subprocess.run(
                     docker_cmd() + ["volume", "rm", "-f", volume],
-                    capture_output=True, timeout=15,
+                    capture_output=True,
                 )
             except Exception as e:
                 logger.warning("Could not remove volume %s: %s", volume, e)
@@ -303,16 +394,21 @@ class ServerRelayManager:
             except Exception:
                 pass
         # Clear metadata
-        store.set_extra(conv_id, "server_relay", None)
-        logger.info("Server relay destroyed for conv %s", conv_id)
+        store.set_extra(conv_id, metadata_key, None)
+        logger.info("Server %s relay destroyed for conv %s", kind, conv_id)
         return True
 
-    def stop(self, conv_id: str) -> bool:
+    def destroy_minimal(self, conv_id: str) -> bool:
+        """Stop and remove the protected minimal execution relay."""
+        return self.destroy(conv_id, kind=_KIND_MINIMAL)
+
+    def stop(self, conv_id: str, *, kind: str = _KIND_WORKSPACE) -> bool:
         """Stop the relay container without removing the volume."""
         from core.conversation_store import ConversationStore
 
+        kind = _validate_kind(kind)
         store = ConversationStore.instance()
-        meta = store.get_extra(conv_id, "server_relay")
+        meta = store.get_extra(conv_id, _metadata_key(kind))
         if not meta or not isinstance(meta, dict):
             return False
 
@@ -320,20 +416,22 @@ class ServerRelayManager:
         self._cleanup_container(container_id, remove=False)
         return True
 
-    def get_relay_id(self, conv_id: str) -> Optional[str]:
+    def get_relay_id(self, conv_id: str, *, kind: str = _KIND_WORKSPACE) -> Optional[str]:
         """Return the relay_id for this conversation, or None."""
         from core.conversation_store import ConversationStore
 
-        meta = ConversationStore.instance().get_extra(conv_id, "server_relay")
+        kind = _validate_kind(kind)
+        meta = ConversationStore.instance().get_extra(conv_id, _metadata_key(kind))
         if meta and isinstance(meta, dict):
             return meta.get("relay_id")
         return None
 
-    def get_metadata(self, conv_id: str) -> Optional[Dict[str, Any]]:
+    def get_metadata(self, conv_id: str, *, kind: str = _KIND_WORKSPACE) -> Optional[Dict[str, Any]]:
         """Return full relay metadata for this conversation, or None."""
         from core.conversation_store import ConversationStore
 
-        meta = ConversationStore.instance().get_extra(conv_id, "server_relay")
+        kind = _validate_kind(kind)
+        meta = ConversationStore.instance().get_extra(conv_id, _metadata_key(kind))
         if meta and isinstance(meta, dict) and meta.get("relay_id"):
             return meta
         return None
@@ -347,9 +445,10 @@ class ServerRelayManager:
         try:
             for conv in store.list_conversations():
                 cid = conv["conversation_id"]
-                meta = store.get_extra(cid, "server_relay")
-                if meta and isinstance(meta, dict) and meta.get("relay_id"):
-                    result.append({"conv_id": cid, **meta})
+                for kind in (_KIND_WORKSPACE, _KIND_MINIMAL):
+                    meta = store.get_extra(cid, _metadata_key(kind))
+                    if meta and isinstance(meta, dict) and meta.get("relay_id"):
+                        result.append({"conv_id": cid, **meta})
         except Exception as e:
             logger.warning("list_all error: %s", e)
         return result
@@ -368,16 +467,17 @@ class ServerRelayManager:
                 continue
             # Re-spawn
             user_id = entry.get("user_id", "")
+            kind = entry.get("kind") or _KIND_WORKSPACE
             if not user_id:
                 logger.warning("No user_id in relay metadata for conv %s — skipping", conv_id)
                 continue
             try:
                 # Clear stale metadata so spawn() doesn't treat it as alive
                 from core.conversation_store import ConversationStore
-                ConversationStore.instance().set_extra(conv_id, "server_relay", None)
-                self.spawn(conv_id, user_id)
+                ConversationStore.instance().set_extra(conv_id, _metadata_key(kind), None)
+                self.spawn(conv_id, user_id, kind=kind)
                 restarted += 1
-                logger.info("Restarted server relay for conv %s", conv_id)
+                logger.info("Restarted server %s relay for conv %s", kind, conv_id)
             except Exception as e:
                 logger.error("Failed to restart server relay for conv %s: %s", conv_id, e)
         return restarted
@@ -390,7 +490,7 @@ class ServerRelayManager:
         try:
             result = subprocess.run(
                 docker_cmd() + ["inspect", "--format", "{{.State.Running}}", container_id],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True, text=True,
             )
             return result.returncode == 0 and result.stdout.strip() == "true"
         except Exception:
@@ -402,7 +502,7 @@ class ServerRelayManager:
         try:
             subprocess.run(
                 docker_cmd() + ["stop", container_id],
-                capture_output=True, timeout=15,
+                capture_output=True,
             )
         except Exception as e:
             logger.debug("Container stop error (%s): %s", container_id[:12], e)
@@ -410,21 +510,24 @@ class ServerRelayManager:
             try:
                 subprocess.run(
                     docker_cmd() + ["rm", "-f", container_id],
-                    capture_output=True, timeout=10,
+                    capture_output=True,
                 )
             except Exception as e:
                 logger.debug("Container rm error (%s): %s", container_id[:12], e)
 
-    def _install_relay_service(self, user_id: str, relay_id: str, token: str) -> None:
+    def _install_relay_service(self, user_id: str, relay_id: str, token: str,
+                               *, kind: str = _KIND_WORKSPACE) -> None:
         from core.service_registry import ServiceRegistry
+        kind = _validate_kind(kind)
+        kind_cfg = _relay_kind_config(kind)
         registry = ServiceRegistry.get_instance()
         registry.install(
             scope="user",
             scope_id=user_id,
             service_id=relay_id,
             service_type="relay",
-            config={"token": token, "mode": "readwrite"},
-            description="Server workspace relay (server-spawned)",
+            config={"token": token, "mode": "readwrite", "server_kind": kind},
+            description=kind_cfg["description"],
         )
 
     def _uninstall_relay_service(self, user_id: str, relay_id: str) -> None:

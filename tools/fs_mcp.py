@@ -9,14 +9,15 @@ import os
 import subprocess
 import threading
 import uuid as _uuid
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 # Active MCP server processes: {server_id: {"process", "stdin_lock", "pending"}}
 _mcp_servers: Dict[str, Any] = {}
 _mcp_lock = threading.Lock()
 
 
-def _mcp_send_rpc(server_id: str, method: str, params: dict = None, timeout: int = 30) -> dict:
+def _mcp_send_rpc(server_id: str, method: str, params: dict = None,
+                  timeout: Optional[float] = None) -> dict:
     """Send a JSON-RPC 2.0 request to an MCP stdio server and wait for response."""
     with _mcp_lock:
         srv = _mcp_servers.get(server_id)
@@ -39,9 +40,9 @@ def _mcp_send_rpc(server_id: str, method: str, params: dict = None, timeout: int
     # MCP servers send one JSON-RPC response per line on stdout
     import select as _sel
     import time as _t
-    deadline = _t.time() + timeout
+    deadline = _t.time() + timeout if timeout is not None else None
     stdout_fd = proc.stdout.fileno()
-    while _t.time() < deadline:
+    while True:
         if proc.poll() is not None:
             # Read any remaining output before reporting death
             remaining = proc.stdout.read()
@@ -50,8 +51,15 @@ def _mcp_send_rpc(server_id: str, method: str, params: dict = None, timeout: int
                 f"MCP server '{server_id}' exited (code={proc.returncode}). "
                 f"stderr: {stderr_out[:500]}")
         # Wait for data with timeout (cross-platform: use thread for Windows)
+        select_timeout = 1.0
+        if deadline is not None:
+            remaining = deadline - _t.time()
+            if remaining <= 0:
+                raise TimeoutError(
+                    f"MCP server '{server_id}' did not respond within {timeout}s")
+            select_timeout = min(remaining, 1.0)
         try:
-            ready, _, _ = _sel.select([stdout_fd], [], [], 1.0)
+            ready, _, _ = _sel.select([stdout_fd], [], [], select_timeout)
         except (ValueError, OSError):
             # On Windows, select doesn't work on pipes — use blocking read in thread
             import concurrent.futures as _cf
@@ -92,13 +100,11 @@ def _mcp_send_rpc(server_id: str, method: str, params: dict = None, timeout: int
                 raise RuntimeError(f"MCP error: {err.get('message', err)}")
             return resp.get("result", {})
         # Not our response — could be a notification, skip
-    raise TimeoutError(f"MCP server '{server_id}' did not respond within {timeout}s")
-
 
 def action_mcp_start(root_dir, abs_path, req, **kwargs):
     """Start an MCP stdio server subprocess.
 
-    req: {server_id, command, args?, env?}
+    req: {server_id, command, args?, env?, timeout?}
     """
     server_id = req.get("server_id", "")
     command = req.get("command", "")
@@ -145,7 +151,7 @@ def action_mcp_start(root_dir, abs_path, req, **kwargs):
             "protocolVersion": "2024-11-05",
             "capabilities": {},
             "clientInfo": {"name": "pawflow-relay", "version": "1.0"},
-        }, timeout=10)
+        }, timeout=req.get("timeout"))
 
         # Send initialized notification (no response expected)
         notif = json.dumps({
@@ -197,7 +203,7 @@ def action_mcp_discover(root_dir, abs_path, req, **kwargs):
 def action_mcp_call(root_dir, abs_path, req, **kwargs):
     """Call a tool on a running MCP stdio server.
 
-    req: {server_id, tool_name, arguments}
+    req: {server_id, tool_name, arguments, timeout?}
     """
     server_id = req.get("server_id", "")
     tool_name = req.get("tool_name", "")
@@ -208,7 +214,7 @@ def action_mcp_call(root_dir, abs_path, req, **kwargs):
     result = _mcp_send_rpc(server_id, "tools/call", {
         "name": tool_name,
         "arguments": arguments,
-    })
+    }, timeout=req.get("timeout"))
     # MCP returns content array
     content = result.get("content", [])
     # Flatten text content

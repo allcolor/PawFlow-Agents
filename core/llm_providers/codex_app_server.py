@@ -284,13 +284,37 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
         return "".join(parts)
 
     @classmethod
+    def _codex_app_rollout_line_count(cls, jsonl_path: str) -> int:
+        if not jsonl_path:
+            return 0
+        try:
+            with open(jsonl_path, "r", encoding="utf-8", errors="replace") as fh:
+                return sum(1 for _ in fh)
+        except OSError:
+            return 0
+
+    @classmethod
     def _codex_app_check_preempt_in_rollout(cls, jsonl_path: str, sent_texts: list) -> str:
-        """Return done/pending/unread/unknown for steered user texts in Codex JSONL."""
+        """Return done/unread/unknown for steered user texts in Codex JSONL.
+
+        For app-server, seeing the steered user message in the rollout after
+        the `turn/steer` write is the provider-level receipt proof. The model
+        may or may not visibly answer that preempt, but PawFlow must not run a
+        rescue turn once Codex has recorded the user item in the active rollout.
+        """
         if not sent_texts or not jsonl_path:
             return "unknown"
-        last_assistant_pos = -1
-        found_flags = [False] * len(sent_texts)
-        preempt_positions = [-1] * len(sent_texts)
+        sent_records = []
+        for item in sent_texts:
+            if isinstance(item, dict):
+                sent_records.append({
+                    "text": str(item.get("text") or ""),
+                    "after_line": max(0, int(item.get("after_line") or 0)),
+                })
+            else:
+                sent_records.append({"text": str(item or ""), "after_line": 0})
+        found_flags = [False] * len(sent_records)
+        preempt_positions = [-1] * len(sent_records)
         try:
             with open(jsonl_path, "r", encoding="utf-8", errors="replace") as fh:
                 for i, line in enumerate(fh):
@@ -307,15 +331,15 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                     if payload.get("type") != "message":
                         continue
                     role = payload.get("role") or ""
-                    if role == "assistant":
-                        last_assistant_pos = i
-                        continue
                     if role != "user":
                         continue
                     text_blob = cls._codex_app_payload_text(payload)
                     if not text_blob:
                         continue
-                    for idx, sent in enumerate(sent_texts):
+                    for idx, sent_record in enumerate(sent_records):
+                        if i < sent_record["after_line"]:
+                            continue
+                        sent = sent_record["text"]
                         if sent and sent in text_blob:
                             found_flags[idx] = True
                             preempt_positions[idx] = i
@@ -323,9 +347,6 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
             return "unknown"
         if not any(found_flags):
             return "unread"
-        for idx, pos in enumerate(preempt_positions):
-            if found_flags[idx] and pos > last_assistant_pos:
-                return "pending"
         if not all(found_flags):
             return "unread"
         return "done"
@@ -374,7 +395,9 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
             logger.debug("[codex-app] abort flag failed", exc_info=True)
         self._codex_app_abort_active(force=force)
 
-    def _codex_app_send_user_message(self, text: str, attachments: list = None):
+    def _codex_app_send_user_message(
+        self, text: str, attachments: list = None, *, user_id: str = "",
+        conversation_id: str = "", agent_name: str = ""):
         """Preempt/steer entrypoint for active app-server turns.
 
         Unlike ``codex exec``, app-server can append input to an in-flight turn
@@ -388,9 +411,21 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
         if lock is None:
             return False
         with lock:
-            # Prefer the most recent active turn. LLMClient instances are shared,
-            # so keep this best-effort rather than relying on mutable self scope.
-            entries = list(active.values())
+            target_user = user_id or getattr(self, "_user_id", "") or ""
+            target_conv = conversation_id or getattr(self, "_conversation_id", "") or ""
+            target_agent = agent_name or getattr(self, "_agent_name", "") or ""
+            entries = []
+            for key, candidate in active.items():
+                if not isinstance(key, tuple) or len(key) < 3:
+                    continue
+                key_user, key_conv, key_agent = key[:3]
+                if target_user and key_user != target_user:
+                    continue
+                if target_conv and key_conv != target_conv:
+                    continue
+                if target_agent and key_agent != target_agent:
+                    continue
+                entries.append(candidate)
             if not entries:
                 return False
             state = sorted(entries, key=lambda s: s.get("started_at", 0))[-1]
@@ -412,6 +447,8 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
             if not input_items:
                 return False
             try:
+                rollout = self._codex_app_rollout_path(state.get("workdir", ""), thread_id)
+                after_line = self._codex_app_rollout_line_count(rollout)
                 self._codex_app_send(proc, {
                     "method": "turn/steer",
                     "id": self._codex_app_next_id(),
@@ -424,7 +461,7 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                 self._codex_app_preempt_pending = int(
                     getattr(self, "_codex_app_preempt_pending", 0) or 0) + 1
                 sent = list(getattr(self, "_codex_app_sent_preempt_texts", []) or [])
-                sent.append(text or "")
+                sent.append({"text": text or "", "after_line": after_line})
                 self._codex_app_sent_preempt_texts = sent
                 logger.info(
                     "[codex-app] steered active turn %s (pending=%d)",
@@ -780,6 +817,9 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                     "turn_id": turn_id,
                     "workdir": workdir,
                     "container_dir": container_dir,
+                    "user_id": user_id,
+                    "conversation_id": conv_id,
+                    "agent_name": agent_name,
                     "started_at": time.time(),
                 }
 
@@ -944,11 +984,11 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                         if pstatus == "done":
                             self._had_preempts_this_turn = True
                             logger.info(
-                                "[codex-app] turn completed; rollout shows %d preempt(s) answered inline",
+                                "[codex-app] turn completed; rollout shows %d preempt(s) received by provider",
                                 len(sent))
                         else:
                             logger.info(
-                                "[codex-app] turn completed; %d preempt(s) not proven answered in rollout (status=%s) - pending rescue will retrigger",
+                                "[codex-app] turn completed; %d preempt(s) not proven received in rollout (status=%s) - pending rescue will retrigger",
                                 len(sent), pstatus)
                         self._codex_app_preempt_pending = 0
                         self._codex_app_sent_preempt_texts = []

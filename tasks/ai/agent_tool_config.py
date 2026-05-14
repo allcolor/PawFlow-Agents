@@ -121,8 +121,13 @@ class AgentToolConfigMixin:
                     h.set_user_id(user_id)
                 if conversation_id and hasattr(h, 'set_conversation_id'):
                     h.set_conversation_id(conversation_id)
+                image_methods = ("generate",)
+                if isinstance(h, EditImageHandler):
+                    image_methods = ("edit_image",)
+                elif isinstance(h, ImageModelInfoHandler):
+                    image_methods = ("get_model_info",)
                 h.set_service_resolver(self._make_image_resolver(
-                    user_id, conversation_id, agent_name,
+                    user_id, conversation_id, agent_name, image_methods,
                 ))
             elif isinstance(h, VideoGenerationHandler):
                 if file_base_url:
@@ -154,20 +159,20 @@ class AgentToolConfigMixin:
                     h.set_user_id(user_id)
                 if conversation_id and hasattr(h, 'set_conversation_id'):
                     h.set_conversation_id(conversation_id)
-                _maker = {
-                    "generate_3d": self._make_3d_resolver,
-                    "upscale_image": self._make_upscale_resolver,
-                    "upscale_video": self._make_upscale_resolver,
-                    "remove_background": self._make_upscale_resolver,
-                    "try_on": self._make_tryon_resolver,
-                    "lipsync": self._make_lipsync_resolver,
-                    "train_image_model": self._make_trainer_resolver,
-                    "clone_voice": self._make_voice_clone_resolver,
-                    "speak": self._make_voice_clone_resolver,
-                    "delete_voice": self._make_voice_clone_resolver,
+                _maker, _methods = {
+                    "generate_3d": (self._make_3d_resolver, ("generate_3d",)),
+                    "upscale_image": (self._make_upscale_resolver, ("upscale",)),
+                    "upscale_video": (self._make_upscale_resolver, ("upscale_video",)),
+                    "remove_background": (self._make_upscale_resolver, ("remove_background",)),
+                    "try_on": (self._make_tryon_resolver, ("try_on",)),
+                    "lipsync": (self._make_lipsync_resolver, ("lipsync",)),
+                    "train_image_model": (self._make_trainer_resolver, ("train",)),
+                    "clone_voice": (self._make_voice_clone_resolver, ("clone_speak",)),
+                    "speak": (self._make_voice_clone_resolver, ("clone_speak",)),
+                    "delete_voice": (self._make_voice_clone_resolver, ("delete_voice_id",)),
                 }[h.name]
                 h.set_service_resolver(_maker(
-                    user_id, conversation_id, agent_name))
+                    user_id, conversation_id, agent_name, _methods))
             elif h.name in ("describe_image", "remix_image"):
                 if file_base_url and hasattr(h, 'set_base_url'):
                     h.set_base_url(file_base_url)
@@ -175,8 +180,12 @@ class AgentToolConfigMixin:
                     h.set_user_id(user_id)
                 if conversation_id and hasattr(h, 'set_conversation_id'):
                     h.set_conversation_id(conversation_id)
+                _methods = {
+                    "describe_image": ("describe_image",),
+                    "remix_image": ("remix_image",),
+                }[h.name]
                 h.set_service_resolver(self._make_image_resolver(
-                    user_id, conversation_id, agent_name))
+                    user_id, conversation_id, agent_name, _methods))
             elif h.name == "speech_to_video":
                 if file_base_url and hasattr(h, 'set_base_url'):
                     h.set_base_url(file_base_url)
@@ -184,7 +193,7 @@ class AgentToolConfigMixin:
                     h.set_user_id(user_id)
                 if conversation_id and hasattr(h, 'set_conversation_id'):
                     h.set_conversation_id(conversation_id)
-                h.set_service_resolver(self._make_video_resolver(
+                h.set_service_resolver(self._make_speech_to_video_resolver(
                     user_id, conversation_id, agent_name))
             elif isinstance(h, ScheduleWakeupHandler):
                 if conversation_id:

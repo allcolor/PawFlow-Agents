@@ -13,6 +13,41 @@ from core.tool_registry import ToolRegistry
 logger = logging.getLogger(__name__)
 
 
+def _load_deployed_flow_definition(inst) -> Dict[str, Any]:
+    """Load a deployed flow from repository FQN, then legacy file path."""
+    if getattr(inst, "flow_fqn", ""):
+        from core.repository import ScopedRepository
+        repo = ScopedRepository.instance()
+        scopes = []
+        flow_scope = str(getattr(inst, "flow_scope", "") or "")
+        if flow_scope:
+            scopes.append(flow_scope)
+        if getattr(inst, "conversation_id", ""):
+            scopes.append("conversation")
+        if getattr(inst, "owner", ""):
+            scopes.append("user")
+        scopes.append("global")
+        seen = set()
+        for scope in scopes:
+            repo_scope = "conv" if scope == "conversation" else scope
+            if repo_scope in seen:
+                continue
+            seen.add(repo_scope)
+            raw = repo.get_flow(
+                inst.flow_fqn, repo_scope,
+                user_id=getattr(inst, "owner", "") or "",
+                conv_id=getattr(inst, "conversation_id", "") or "",
+            )
+            if raw is not None:
+                return raw
+    flow_path = getattr(inst, "flow_path", "") or ""
+    if flow_path:
+        with open(flow_path, encoding="utf-8") as handle:
+            return json.loads(handle.read())
+    raise FileNotFoundError(
+        f"Flow not found: fqn={getattr(inst, 'flow_fqn', '') or '-'} path={flow_path or '-'}")
+
+
 def _handle_files_fs(self, action, body, store, user_id, flowfile):
     """Handle files fs actions. Returns [flowfile] or None."""
 
@@ -216,8 +251,7 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
                 from engine.continuous_executor import ContinuousFlowExecutor
                 from tasks import register_all_tasks
                 register_all_tasks()
-                raw = json.loads(
-                    open(inst.flow_path, encoding="utf-8").read())
+                raw = _load_deployed_flow_definition(inst)
                 clean = {k: v for k, v in raw.items()
                          if not k.startswith("_")}
                 if inst.parameters:
@@ -237,7 +271,13 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
                 executor = ContinuousFlowExecutor(
                     flow, max_workers=inst.max_workers,
                     max_retries=inst.max_retries,
-                    parameters=inst.parameters or None)
+                    parameters=inst.parameters or None,
+                    runtime_context={
+                        "user_id": inst.owner or "",
+                        "conversation_id": inst.conversation_id or "",
+                        "scope": "conversation" if inst.conversation_id else "user" if inst.owner else "",
+                        "agent_name": getattr(inst, "agent_name", "") or "",
+                    })
                 executor.start()
                 reg.register(flow_id, executor)
                 flowfile.set_content(json.dumps(

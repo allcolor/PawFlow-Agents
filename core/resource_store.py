@@ -247,35 +247,33 @@ class ResourceStore:
         from core.repository import ScopedRepository
         repo = ScopedRepository.instance()
 
+        merged: Dict[str, Dict[str, Any]] = {}
+
+        def _merge_by_name(items: List[Dict[str, Any]], scope: str) -> None:
+            for item in items:
+                name = item.get("name")
+                if not name:
+                    continue
+                entry = dict(item)
+                entry["_scope"] = scope
+                merged[name] = entry
+
         # User-scoped items
         if user_id == GLOBAL_USER_ID:
-            user_items = repo.list(rtype, "global")
-            for item in user_items:
-                item["_scope"] = "global"
-            result = user_items
+            _merge_by_name(repo.list(rtype, "global"), "global")
+            result = list(merged.values())
         else:
-            user_items = repo.list(rtype, "user", user_id=user_id)
-            for item in user_items:
-                item["_scope"] = "user"
-
-            global_items = repo.list(rtype, "global")
-            seen = {item.get("name") for item in user_items}
-            for gi in global_items:
-                if gi.get("name") not in seen:
-                    gi["_scope"] = "global"
-                    user_items.append(gi)
-            result = user_items
+            _merge_by_name(repo.list(rtype, "global"), "global")
+            _merge_by_name(repo.list(rtype, "user", user_id=user_id), "user")
+            result = list(merged.values())
 
         # Add conversation-scoped resources (from repository conv scope)
         if conversation_id and user_id != GLOBAL_USER_ID:
             try:
                 conv_items = repo.list(rtype, "conv",
                                        user_id=user_id, conv_id=conversation_id)
-                seen_names = {item.get("name") for item in result}
-                for item in conv_items:
-                    if item.get("name") not in seen_names:
-                        item["_scope"] = "conversation"
-                        result.append(item)
+                _merge_by_name(conv_items, "conversation")
+                result = list(merged.values())
             except Exception:
                 pass
             # Also check conversation_task_defs extras (task_defs still in extras)
@@ -285,13 +283,12 @@ class ResourceStore:
                     store = ConversationStore.instance()
                     conv_defs = store.get_extra(conversation_id,
                                                 "conversation_task_defs") or {}
-                    seen_names = {item.get("name") for item in result}
                     for td_name, td_data in conv_defs.items():
-                        if td_name not in seen_names:
-                            entry = dict(td_data)
-                            entry["name"] = td_name
-                            entry["_scope"] = "conversation"
-                            result.append(entry)
+                        entry = dict(td_data)
+                        entry["name"] = td_name
+                        entry["_scope"] = "conversation"
+                        merged[td_name] = entry
+                    result = list(merged.values())
                 except Exception:
                     pass
             # Filter disabled agents

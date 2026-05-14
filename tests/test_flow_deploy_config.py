@@ -88,7 +88,7 @@ def test_flow_instance_template_falls_back_from_legacy_path(monkeypatch, tmp_pat
     monkeypatch.setattr(
         service_flow,
         "_resolve_flow_template_path",
-        lambda template_id, user_id: template if template_id == "pawflow-agent" else None,
+        lambda template_id, user_id, conversation_id="": template if template_id == "pawflow-agent" else None,
     )
 
     raw = service_flow._load_flow_instance_template_raw(inst, "user1")

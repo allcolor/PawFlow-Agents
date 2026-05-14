@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import base64
 import hashlib
 import os
-import base64
 import shlex
 import uuid
 import re
+import copy
+import tempfile
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict
 
@@ -27,7 +29,7 @@ class PackageRuntimeError(RuntimeError):
 
 
 class RelayPackageRuntimeBridge:
-    """Run package entrypoints inside the conversation default relay."""
+    """Run package entrypoints inside the selected relay."""
 
     def invoke(self, request: Dict[str, Any]) -> Any:
         if not isinstance(request, dict) or request.get("format") != RUNTIME_INVOKE_FORMAT:
@@ -43,7 +45,7 @@ class RelayPackageRuntimeBridge:
         relay = self._resolve_relay(request)
         relay_root = self._relay_package_root(package)
         self._deploy_package(relay, package, relay_root)
-        relay_request = self._relay_request(request, relay_root)
+        relay_request = self._relay_request(request, relay, relay_root)
         output_dir = str((relay_request.get("context") or {}).get("output_dir") or "")
         if output_dir:
             relay.mkdir(output_dir)
@@ -76,7 +78,7 @@ class RelayPackageRuntimeBridge:
             raise PackageRuntimeError("PFP relay runner did not return JSON") from exc
         if not isinstance(result, dict) or result.get("format") != RUNTIME_RESULT_FORMAT:
             raise PackageRuntimeError("PFP relay runner returned an invalid result envelope")
-        self._copy_result_artifacts(relay, relay_request, result)
+        self._copy_result_artifacts(relay, relay_request, result, relay_root)
         return result
 
     def _resolve_relay(self, request: Dict[str, Any]) -> Any:
@@ -84,6 +86,18 @@ class RelayPackageRuntimeBridge:
         user_id = str(context.get("user_id") or "")
         conversation_id = str(context.get("conversation_id") or "")
         agent_name = str(context.get("agent_name") or "")
+        relay_id = str(context.get("relay_id") or context.get("relay") or "").strip()
+        if relay_id:
+            from core.service_registry import ServiceRegistry
+            relay = ServiceRegistry.get_instance().resolve(
+                relay_id, user_id=user_id, conv_id=conversation_id)
+            if relay is None:
+                raise PackageRuntimeError(f"PFP relay is not available: {relay_id}")
+            if not hasattr(relay, "exec") or not hasattr(relay, "write_file"):
+                raise PackageRuntimeError(f"PFP relay does not support runtime execution: {relay_id}")
+            return relay
+        if request.get("kind") == "flow_task":
+            raise PackageRuntimeError("PFP flow task requires relay parameter")
         if not user_id or not conversation_id:
             raise PackageRuntimeError("PFP runtime requires user_id and conversation_id to resolve the default relay")
         from core.relay_bindings import get_default
@@ -119,13 +133,68 @@ class RelayPackageRuntimeBridge:
             rel = path.relative_to(content_dir).as_posix()
             relay.write_file(f"{relay_root}/{rel}", path.read_bytes())
 
-    def _relay_request(self, request: Dict[str, Any], relay_root: str) -> Dict[str, Any]:
-        copied = json.loads(json.dumps(request, ensure_ascii=False))
+    def _relay_request(self, request: Dict[str, Any], relay: Any, relay_root: str) -> Dict[str, Any]:
+        copied = copy.deepcopy(request)
         context = copied.setdefault("context", {})
         if context.get("output_dir"):
             context["server_output_dir"] = context["output_dir"]
             context["output_dir"] = f"{relay_root}/.pawflow/artifacts/{uuid.uuid4().hex}"
+        self._stage_flowfile_payload(copied, relay, relay_root)
         return copied
+
+    def _stage_flowfile_payload(self, request: Dict[str, Any], relay: Any,
+                                relay_root: str) -> None:
+        if request.get("kind") != "flow_task":
+            return
+        payload = request.get("payload") or {}
+        flowfile = payload.get("flowfile") if isinstance(payload, dict) else None
+        if not isinstance(flowfile, dict):
+            return
+        content = flowfile.pop("_content_bytes", None)
+        local_content_path = flowfile.pop("_content_path", "")
+        if content is None and not local_content_path:
+            return
+        content_dir = f"{relay_root}/.pawflow/flowfiles"
+        relay.mkdir(content_dir)
+        rel_path = f".pawflow/flowfiles/input-{uuid.uuid4().hex}.bin"
+        target_path = f"{relay_root}/{rel_path}"
+        if local_content_path:
+            self._write_relay_file_from_path(relay, target_path, Path(str(local_content_path)))
+        else:
+            if not isinstance(content, (bytes, bytearray)):
+                raise PackageRuntimeError("PFP task flowfile content must be bytes")
+            relay.write_file(target_path, bytes(content))
+        flowfile["content_path"] = rel_path
+
+    def _write_relay_file_from_path(self, relay: Any, target_path: str,
+                                    source_path: Path) -> None:
+        source = source_path.expanduser().resolve()
+        if not source.is_file():
+            raise PackageRuntimeError("PFP task flowfile content_path is missing")
+        requester = getattr(relay, "_request", None)
+        if callable(requester):
+            chunk_size = 1024 * 1024
+            total = source.stat().st_size
+            if total == 0:
+                requester("write_file", target_path, content="", base64=True)
+                return
+            written = 0
+            index = 0
+            with source.open("rb") as handle:
+                while True:
+                    chunk = handle.read(chunk_size)
+                    if not chunk:
+                        break
+                    written += len(chunk)
+                    requester(
+                        "write_file_chunked", target_path,
+                        index=index,
+                        data=base64.b64encode(chunk).decode("ascii"),
+                        done=written >= total,
+                    )
+                    index += 1
+            return
+        relay.write_file(target_path, source.read_bytes())
 
     def _controller_env(self, request: Dict[str, Any]) -> Dict[str, str]:
         env = _subprocess_env(request)
@@ -141,7 +210,8 @@ class RelayPackageRuntimeBridge:
         return env
 
     def _copy_result_artifacts(self, relay: Any, request: Dict[str, Any],
-                               result: Dict[str, Any]) -> None:
+                               result: Dict[str, Any], relay_root: str) -> None:
+        self._copy_result_flowfiles(relay, result, relay_root)
         context = request.get("context") or {}
         relay_output_dir = str(context.get("output_dir") or "")
         server_output_dir = str(context.get("server_output_dir") or "")
@@ -151,14 +221,38 @@ class RelayPackageRuntimeBridge:
         if not artifact:
             return
         rel = _safe_artifact_relpath(str(artifact.get("path") or ""))
-        data = relay.read_file(f"{relay_output_dir}/{rel}")
         target = (Path(server_output_dir).resolve() / rel).resolve()
         try:
             target.relative_to(Path(server_output_dir).resolve())
         except ValueError as exc:
             raise PackageRuntimeError("PFP media artifact escapes server output_dir") from exc
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(data)
+        copier = getattr(relay, "copy_file_to_local", None)
+        if not callable(copier):
+            raise PackageRuntimeError(
+                "PFP media artifact relay must support chunked copy_file_to_local")
+        copier(f"{relay_output_dir}/{rel}", str(target))
+
+    def _copy_result_flowfiles(self, relay: Any, result: Dict[str, Any],
+                               relay_root: str) -> None:
+        flowfiles = result.get("flowfiles") if isinstance(result, dict) else None
+        if not isinstance(flowfiles, list):
+            return
+        copier = getattr(relay, "copy_file_to_local", None)
+        for item in flowfiles:
+            if not isinstance(item, dict) or not item.get("content_path"):
+                continue
+            if not callable(copier):
+                raise PackageRuntimeError(
+                    "PFP task flowfile relay must support chunked copy_file_to_local")
+            rel = _safe_artifact_relpath(str(item.get("content_path") or ""))
+            copied = tempfile.NamedTemporaryFile(prefix="pawflow-pfp-flowfile-", delete=False)
+            copied_path = Path(copied.name)
+            copied.close()
+            copier(f"{relay_root}/{rel}", str(copied_path))
+            item["content_path"] = str(copied_path)
+            item["content_root"] = str(copied_path.parent)
+            item["_delete_content_path"] = True
 
 
 _RELAY_RUNNER = r'''
@@ -263,7 +357,7 @@ def main():
             continue
         invalid_output.append(text)
     code = proc.wait()
-    if code != 0 and not results:
+    if code != 0:
         detail = "".join(stderr_chunks).strip()
         _emit_result({
             "format": RUNTIME_RESULT_FORMAT,
@@ -446,16 +540,55 @@ class PackageRuntimeHost:
     def execute_tool_call(self, tool_ref: str, arguments: Dict[str, Any]) -> Any:
         call = self.build_tool_call(tool_ref, arguments)
         handler = self._resolve_tool(call["target"])
+        self._set_runtime_context(handler)
         return handler.execute(call["arguments"])
 
     def execute_service_call(self, service_ref: str, operation: str,
                              arguments: Dict[str, Any] | None = None) -> Any:
         call = self.build_service_call(service_ref, operation, arguments)
         service = self._resolve_service(call["target"])
-        if not hasattr(service, "invoke"):
+        self._set_runtime_context(service)
+        if hasattr(service, "invoke"):
+            return service.invoke(call["operation"], call["arguments"])
+        return self._dispatch_service_operation(
+            service, call["operation"], call["arguments"], call["target"])
+
+    def _dispatch_service_operation(self, service: Any, operation: str,
+                                    arguments: Dict[str, Any],
+                                    target: Dict[str, str]) -> Any:
+        operation = str(operation or "").strip()
+        if _is_blocked_builtin_service_operation(operation):
             raise PackageRuntimeError(
-                f"service does not support PFP host invocation: {call['target']['name']}")
-        return service.invoke(call["operation"], call["arguments"])
+                f"service operation is not available for PFP host invocation: {operation}")
+        method = getattr(service, operation, None)
+        if not callable(method):
+            raise PackageRuntimeError(
+                f"service does not support PFP host operation: {target['name']}.{operation}")
+        if not isinstance(arguments, dict):
+            raise PackageRuntimeError("PFP host service arguments must be an object")
+        try:
+            result = method(**arguments)
+        except TypeError as exc:
+            raise PackageRuntimeError(
+                f"service operation arguments are invalid for {target['name']}.{operation}: {exc}") from exc
+        return _json_safe_service_result(result, target["name"], operation)
+
+    def _set_runtime_context(self, target: Any) -> None:
+        if hasattr(target, "set_runtime_context"):
+            target.set_runtime_context(
+                user_id=self.user_id,
+                conversation_id=self.conversation_id,
+                scope=self.scope,
+                agent_name=str((self.caller_runtime or {}).get("agent_name") or ""),
+            )
+            return
+        if hasattr(target, "set_user_id"):
+            target.set_user_id(self.user_id)
+        if hasattr(target, "set_conversation_id"):
+            target.set_conversation_id(self.conversation_id)
+        agent_name = str((self.caller_runtime or {}).get("agent_name") or "")
+        if agent_name and hasattr(target, "set_agent_name"):
+            target.set_agent_name(agent_name)
 
     def handle_host_call(self, request: Dict[str, Any]) -> Any:
         if not isinstance(request, dict) or request.get("format") != HOST_CALL_FORMAT:
@@ -473,20 +606,41 @@ class PackageRuntimeHost:
     def _resolve_tool(self, target: Dict[str, str]) -> Any:
         if self.tool_registry is None:
             raise PackageRuntimeError("tool_registry is required for PFP host tool calls")
+        if target.get("package"):
+            handler = _resolve_package_tool(
+                self.tool_registry, target, user_id=self.user_id,
+                conversation_id=self.conversation_id,
+                agent_name=str((self.caller_runtime or {}).get("agent_name") or ""))
+            if handler is None:
+                raise PackageRuntimeError(
+                    f"host tool is not available: {target.get('package', '')}/{target.get('kind', '')}:{target.get('name', '')}")
+            _require_runtime_target(handler, target)
+            return handler
         handler = self.tool_registry.get(target["name"])
         if handler is None:
             raise PackageRuntimeError(f"host tool is not available: {target['name']}")
+        _require_runtime_target(handler, target)
         return handler
 
     def _resolve_service(self, target: Dict[str, str]) -> Any:
         if self.service_registry is None:
             raise PackageRuntimeError("service_registry is required for PFP host service calls")
+        if target.get("package"):
+            service = _resolve_package_service(
+                self.service_registry, target,
+                user_id=self.user_id, conversation_id=self.conversation_id)
+            if service is None:
+                raise PackageRuntimeError(
+                    f"host service is not available: {target.get('package', '')}/{target.get('kind', '')}:{target.get('name', '')}")
+            _require_runtime_target(service, target)
+            return service
         resolver = getattr(self.service_registry, "resolve", None)
         if not resolver:
             raise PackageRuntimeError("service_registry.resolve is required for PFP host service calls")
         service = resolver(target["name"], user_id=self.user_id, conv_id=self.conversation_id)
         if service is None:
             raise PackageRuntimeError(f"host service is not available: {target['name']}")
+        _require_runtime_target(service, target)
         return service
 
 
@@ -504,6 +658,7 @@ def runtime_host_from_invocation(request: Dict[str, Any], *,
         "object_id": package_runtime.get("object_id", ""),
         "allowed_tools": package_runtime.get("allowed_tools", []),
         "allowed_services": package_runtime.get("allowed_services", []),
+        "agent_name": str(context.get("agent_name") or ""),
     }
     return PackageRuntimeHost(
         user_id=str(context.get("user_id") or ""),
@@ -536,6 +691,18 @@ def invoke_task(runtime: Dict[str, Any], installed_from: Dict[str, Any],
                 context: Dict[str, Any] | None = None) -> Any:
     request = build_task_invocation(runtime, installed_from, task_config, flowfile, context)
     return _normalize_task_result(_invoke_bridge(request))
+
+
+def resolve_flow_task_runtime(task_type: str, *, user_id: str,
+                              conversation_id: str,
+                              scope: str = "conversation") -> Dict[str, Any]:
+    from core import pfp_package
+    try:
+        return pfp_package.resolve_installed_flow_task_runtime(
+            task_type, user_id=user_id,
+            conversation_id=conversation_id, scope=scope)
+    except Exception as exc:
+        raise PackageRuntimeError(str(exc)) from exc
 
 
 def _invoke_bridge(request: Dict[str, Any]) -> Any:
@@ -651,6 +818,31 @@ def _raise_result_error(result: Dict[str, Any]) -> None:
     raise PackageRuntimeError(str(result.get("error") or "PFP runtime bridge failed"))
 
 
+def _is_blocked_builtin_service_operation(operation: str) -> bool:
+    operation = str(operation or "").strip()
+    if not operation or operation.startswith("_"):
+        return True
+    blocked = {
+        "connect", "disconnect", "is_connected", "status", "validate",
+        "get_parameter_schema", "ensure_connected", "reset", "close",
+        "open", "start", "stop", "shutdown", "restart",
+        "set_runtime_context", "set_user_id", "set_conversation_id",
+        "set_agent_name",
+    }
+    if operation in blocked:
+        return True
+    return operation.startswith(("ensure_", "set_"))
+
+
+def _json_safe_service_result(result: Any, service_name: str, operation: str) -> Any:
+    try:
+        json.dumps(result, ensure_ascii=False, allow_nan=False)
+    except (TypeError, ValueError) as exc:
+        raise PackageRuntimeError(
+            f"service operation returned a non-JSON result: {service_name}.{operation}") from exc
+    return result
+
+
 def _invocation_envelope(kind: str, prepared: Dict[str, Any],
                          payload: Dict[str, Any],
                          context: Dict[str, Any] | None = None) -> Dict[str, Any]:
@@ -674,7 +866,7 @@ def _runtime_context(context: Dict[str, Any]) -> Dict[str, str]:
         "conversation_id": str(context.get("conversation_id") or ""),
         "scope": scope,
     }
-    for key in ("output_dir", "max_artifact_bytes"):
+    for key in ("agent_name", "output_dir", "max_artifact_bytes", "relay_id"):
         if context.get(key) is not None:
             result[key] = str(context.get(key) or "")
     return result
@@ -710,6 +902,178 @@ def _target_ref(target: Any) -> str:
     return ""
 
 
+def _runtime_metadata(target: Any) -> Dict[str, Any]:
+    runtime = getattr(target, "_package_runtime", None)
+    if isinstance(runtime, dict):
+        return runtime
+    config = getattr(target, "config", None)
+    if isinstance(config, dict) and isinstance(config.get("package_runtime"), dict):
+        return config["package_runtime"]
+    return {}
+
+
+def _required_object_ids(target: Dict[str, str]) -> set[str]:
+    kind = str(target.get("kind") or "")
+    name = str(target.get("name") or "")
+    object_ids = {f"{kind}:{name}"}
+    if kind == "service":
+        object_ids.add(f"service_provider:{name}")
+    return object_ids
+
+
+def _runtime_matches_target(runtime: Dict[str, Any], target: Dict[str, str]) -> bool:
+    if str(runtime.get("package") or "") != str(target.get("package") or ""):
+        return False
+    version_constraint = str(target.get("version") or "")
+    if version_constraint:
+        from core.pfp_capabilities import _version_satisfies
+        if not _version_satisfies(str(runtime.get("version") or ""), version_constraint):
+            return False
+    return str(runtime.get("object_id") or "") in _required_object_ids(target)
+
+
+def _require_runtime_target(runtime_target: Any, target: Dict[str, str]) -> None:
+    package = str(target.get("package") or "")
+    if not package:
+        return
+    runtime = _runtime_metadata(runtime_target)
+    if not runtime:
+        raise PackageRuntimeError(
+            f"host {target.get('kind', '')} is not a PFP package runtime: {target.get('name', '')}")
+    if not _runtime_matches_target(runtime, target):
+        raise PackageRuntimeError(
+            f"host {target.get('kind', '')} does not match package target: {package}/{target.get('kind', '')}:{target.get('name', '')}")
+
+
+def _resolve_package_service(service_registry: Any, target: Dict[str, str], *,
+                             user_id: str, conversation_id: str) -> Any:
+    resolver = getattr(service_registry, "resolve_by_type", None)
+    if not callable(resolver):
+        return None
+    for definition in resolver("packageRuntime", user_id=user_id, conv_id=conversation_id):
+        runtime = _runtime_metadata(definition)
+        if not runtime:
+            runtime = _runtime_metadata(getattr(definition, "config", {}))
+        if not _runtime_matches_target(runtime, target):
+            continue
+        service_id = str(getattr(definition, "service_id", "") or "")
+        if not service_id:
+            continue
+        scoped_getter = getattr(service_registry, "get_live_instance", None)
+        if callable(scoped_getter):
+            live = scoped_getter(
+                str(getattr(definition, "scope", "") or ""),
+                str(getattr(definition, "scope_id", "") or ""),
+                service_id,
+            )
+        else:
+            live = service_registry.resolve(service_id, user_id=user_id, conv_id=conversation_id)
+        if live is not None:
+            return live
+    return None
+
+
+def _parent_conversation_ids(conversation_id: str) -> list[str]:
+    conversation_id = str(conversation_id or "")
+    ids = [conversation_id] if conversation_id else []
+    for marker in ("::task::", "::task_verify::", "::delegate::"):
+        if conversation_id and marker in conversation_id:
+            parent = conversation_id.split(marker, 1)[0]
+            if parent and parent not in ids:
+                ids.append(parent)
+            break
+    return ids
+
+
+def _filter_conversation_id(conversation_id: str) -> str:
+    conversation_id = str(conversation_id or "")
+    for marker in ("::task::", "::task_verify::", "::delegate::"):
+        if marker in conversation_id:
+            return conversation_id.split(marker, 1)[0]
+    return conversation_id
+
+
+def _resolve_package_tool_from_store(target: Dict[str, str], *,
+                                     user_id: str,
+                                     conversation_id: str,
+                                     agent_name: str = "") -> Any:
+    if not user_id:
+        return None
+    name = str(target.get("name") or "")
+    try:
+        from core.repository import ScopedRepository
+        from core.handlers.dynamic_tool import PfpToolProxyHandler
+    except Exception:
+        return None
+    repo = ScopedRepository.instance()
+    scoped_entries = []
+    for cid in _parent_conversation_ids(conversation_id):
+        try:
+            for entry in repo.list("tools", "conv", user_id=user_id, conv_id=cid) or []:
+                scoped_entries.append((entry, "conversation"))
+        except Exception:
+            pass
+    try:
+        for entry in repo.list("tools", "user", user_id=user_id) or []:
+            scoped_entries.append((entry, "user"))
+    except Exception:
+        pass
+    try:
+        for entry in repo.list("tools", "global") or []:
+            scoped_entries.append((entry, "global"))
+    except Exception:
+        pass
+    filter_cid = conversation_id
+    for entry, origin_scope in scoped_entries:
+        if str(entry.get("name") or "") != name:
+            continue
+        if filter_cid:
+            try:
+                from core.tool_mcp_filters import is_tool_enabled
+                if not is_tool_enabled(
+                        filter_cid, name, agent_name, "dynamic", origin_scope):
+                    continue
+            except Exception:
+                pass
+        runtime = entry.get("package_runtime") or {}
+        if _runtime_matches_target(runtime, target):
+            return PfpToolProxyHandler(
+                tool_name=name,
+                tool_description=entry.get("description", ""),
+                tool_parameters=entry.get("parameters", {}) or {},
+                package_runtime=runtime,
+                installed_from=entry.get("installed_from", {}) or {},
+            )
+    return None
+
+
+def _resolve_package_tool(tool_registry: Any, target: Dict[str, str], *,
+                          user_id: str = "",
+                          conversation_id: str = "",
+                          agent_name: str = "") -> Any:
+    candidates = []
+    direct_getter = getattr(tool_registry, "get", None)
+    if callable(direct_getter):
+        direct = direct_getter(str(target.get("name") or ""))
+        if direct is not None:
+            candidates.append(direct)
+    lister = getattr(tool_registry, "list_tools", None)
+    if callable(lister):
+        candidates.extend(lister() or [])
+    seen = set()
+    for handler in candidates:
+        marker = id(handler)
+        if marker in seen:
+            continue
+        seen.add(marker)
+        runtime = _runtime_metadata(handler)
+        if _runtime_matches_target(runtime, target):
+            return handler
+    return _resolve_package_tool_from_store(
+        target, user_id=user_id, conversation_id=conversation_id,
+        agent_name=agent_name)
+
+
 def _artifact_from_result(result: Dict[str, Any]) -> Dict[str, Any]:
     payload = result.get("result") if isinstance(result, dict) else None
     if isinstance(payload, dict) and isinstance(payload.get("artifact"), dict):
@@ -731,6 +1095,15 @@ def _flowfile_descriptor(flowfile: Any) -> Dict[str, Any]:
     if flowfile is None:
         return {}
     attributes = getattr(flowfile, "attributes", {}) or {}
+    content_ref = getattr(flowfile, "_content_ref", None)
+    if content_ref is not None and bool(getattr(content_ref, "is_on_disk", False)):
+        content_path = getattr(content_ref, "_file_path", None)
+        if content_path and Path(content_path).is_file():
+            return {
+                "attributes": dict(attributes),
+                "content_size": int(getattr(content_ref, "size", 0) or 0),
+                "_content_path": str(content_path),
+            }
     content = b""
     try:
         content = flowfile.get_content() if hasattr(flowfile, "get_content") else getattr(flowfile, "content", b"")
@@ -740,23 +1113,57 @@ def _flowfile_descriptor(flowfile: Any) -> Dict[str, Any]:
     return {
         "attributes": dict(attributes),
         "content_size": len(content),
-        "content_b64": base64.b64encode(content).decode("ascii"),
+        "_content_bytes": bytes(content),
     }
 
 
 def _flowfile_from_payload(payload: Any) -> Any:
     if not isinstance(payload, dict):
         raise PackageRuntimeError("PFP task runtime flowfile must be an object")
-    content_b64 = str(payload.get("content_b64") or "")
-    try:
-        content = base64.b64decode(content_b64.encode("ascii"), validate=True)
-    except Exception as exc:
-        raise PackageRuntimeError("PFP task runtime flowfile content_b64 is invalid") from exc
     attributes = payload.get("attributes") or {}
     if not isinstance(attributes, dict):
         raise PackageRuntimeError("PFP task runtime flowfile attributes must be an object")
+    if isinstance(payload.get("_content_bytes"), (bytes, bytearray)):
+        content = bytes(payload["_content_bytes"])
+    elif payload.get("content_path"):
+        if payload.get("_delete_content_path"):
+            path = _flowfile_content_path(payload)
+            from core import FlowFile
+            from core.stream import ContentReference
+            return FlowFile(
+                attributes={str(k): str(v) for k, v in attributes.items()},
+                _content_ref=ContentReference(file_path=path, size=path.stat().st_size),
+            )
+        content = _flowfile_content_from_path(payload)
+    else:
+        raise PackageRuntimeError("PFP task runtime flowfile requires content_path")
     from core import FlowFile
     return FlowFile(content=content, attributes={str(k): str(v) for k, v in attributes.items()})
+
+
+def _flowfile_content_path(payload: Dict[str, Any]) -> Path:
+    path = Path(str(payload.get("content_path") or "")).expanduser().resolve()
+    root_value = str(payload.get("content_root") or "").strip()
+    if root_value:
+        root = Path(root_value).expanduser().resolve()
+        try:
+            path.relative_to(root)
+        except ValueError as exc:
+            raise PackageRuntimeError("PFP task runtime flowfile content_path escapes content_root") from exc
+    if not path.is_file():
+        raise PackageRuntimeError("PFP task runtime flowfile content_path is missing")
+    return path
+
+
+def _flowfile_content_from_path(payload: Dict[str, Any]) -> bytes:
+    path = _flowfile_content_path(payload)
+    content = path.read_bytes()
+    if payload.get("_delete_content_path"):
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
+    return content
 
 
 def _safe_entrypoint(value: str) -> str:

@@ -253,17 +253,48 @@ def tts_store(user_id: str, conversation_id: str,
     # Tag the entry with the cache key so `tts_find` can lookup by key,
     # and with the ref-audio hash so `cascade_delete` can find siblings.
     try:
-        with store._store_lock:
-            store._ensure_loaded()
-            e = store._entries.get(file_id)
-            if e is not None:
-                e["voice_cache_key"] = cache_key
-                if ref_audio_hash:
-                    e["voice_ref_hash"] = ref_audio_hash
-        store._save_index()
+        _tag_tts_entry(store, file_id, cache_key, ref_audio_hash)
     except Exception as e:
         logger.debug("voice_clone_cache.tts_store tag: %s", e)
     return file_id
+
+
+def tts_store_file(user_id: str, conversation_id: str,
+                   cache_key: str,
+                   filename: str, source_path: str,
+                   content_type: str = "audio/mpeg",
+                   ref_audio_hash: str = "") -> str:
+    """Cache a rendered TTS audio file from a local path. Returns file_id."""
+    if not user_id or not conversation_id:
+        raise ValueError("tts_store_file: user_id and conversation_id required")
+    from core.file_store import FileStore
+    store = FileStore.instance()
+    file_id = store.store_file(
+        filename=filename,
+        source_path=source_path,
+        content_type=content_type,
+        conversation_id=conversation_id,
+        user_id=user_id,
+        ttl=0,
+        category=_TTS_CATEGORY,
+    )
+    try:
+        _tag_tts_entry(store, file_id, cache_key, ref_audio_hash)
+    except Exception as e:
+        logger.debug("voice_clone_cache.tts_store_file tag: %s", e)
+    return file_id
+
+
+def _tag_tts_entry(store, file_id: str, cache_key: str,
+                   ref_audio_hash: str = "") -> None:
+    with store._store_lock:
+        store._ensure_loaded()
+        e = store._entries.get(file_id)
+        if e is not None:
+            e["voice_cache_key"] = cache_key
+            if ref_audio_hash:
+                e["voice_ref_hash"] = ref_audio_hash
+    store._save_index()
 
 
 def _purge_ref_audio(user_id: str, file_id: str) -> bool:
@@ -327,7 +358,11 @@ def cascade_delete(user_id: str, name: str, service) -> Dict[str, Any]:
     if entry is None:
         return result
 
-    voice_id = entry.get("voice_id") or ""
+    raw_voice_id = entry.get("voice_id") or ""
+    if isinstance(raw_voice_id, dict):
+        voice_id = str(raw_voice_id.get("voice_id") or raw_voice_id.get("id") or "")
+    else:
+        voice_id = str(raw_voice_id or "")
     if voice_id and service is not None:
         try:
             ok = bool(service.delete_voice_id(voice_id))

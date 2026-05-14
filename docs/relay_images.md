@@ -1,10 +1,14 @@
 # Relay Image Profiles
 
-PawFlow supports two relay image strategies:
+PawFlow supports three relay image strategies:
 
-- **Server relays** use the official full image. Server relays are centralized,
-  controlled by the PawFlow administrator, and should expose the broadest stable
-  capability set.
+- **Server workspace relays** use the official full image. They are centralized,
+  controlled by the PawFlow administrator, and expose the broadest stable
+  capability set for interactive workspaces.
+- **Server minimal execution relays** use the official minimal server image. They
+  are explicit flow execution targets for PFP flow tasks and ExecuteScript when
+  the desired security boundary is "run inside a protected server Docker relay,
+  never directly on the PawFlow server process or filesystem."
 - **Client relays** are generated from a configurable profile. The user decides
   which languages, desktop tools, browser support, media tools, and GUI apps are
   installed on their machine.
@@ -97,10 +101,17 @@ The initial catalog ships these presets:
 - `client-python` — Python development and AST tooling
 - `client-frontend` — Node/frontend and Chrome
 - `client-desktop` — desktop automation, audio, OCR, Chrome, media CLI
+- `server-minimal` — protected server execution relay with `relay.base` only
 - `server-full` — official full server relay capability set
 
-Server relay creation should default to `server-full`. Client relay creation
-should default to `client-minimal` and let the user add capabilities.
+Server workspace creation should use `server-full`. Server execution relay
+creation should use `server-minimal`. Client relay creation should default to
+`client-minimal` and let the user add capabilities.
+
+The minimal server relay is not a fallback. A flow chooses it explicitly by
+setting a normal relay parameter, for example `relay: "${relay_secure}"`, where
+`relay_secure` contains the provisioned `srv_min_*` relay id. Different tasks in
+the same flow may use different relay parameters.
 
 ## Generate a Client Relay Image
 

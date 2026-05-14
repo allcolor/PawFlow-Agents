@@ -1,4 +1,6 @@
-from core.handlers.web_fetch import WebSearchHandler
+import inspect
+
+from core.handlers.web_fetch import ExecuteScriptHandler, WebSearchHandler
 
 
 def test_web_search_defaults_to_google_then_bing_aggregation(monkeypatch):
@@ -32,6 +34,13 @@ def test_web_search_defaults_to_google_then_bing_aggregation(monkeypatch):
     assert "providers: google,bing" in out
     assert "AWS Color Guide" in out
     assert "AWS Brand Color" in out
+
+
+def test_execute_script_isolates_pawflow_data_dir_for_relay_python():
+    src = inspect.getsource(ExecuteScriptHandler._execute_remote)
+    assert "PAWFLOW_DATA_DIR" in src
+    assert "pawflow-exec-data" in src
+    assert "setdefault(" in src
 
 
 def test_web_search_provider_override_uses_only_requested_provider(monkeypatch):

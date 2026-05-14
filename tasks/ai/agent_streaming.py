@@ -184,6 +184,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
             with self._active_contexts_lock:
                 _active_client = self._active_claude_client.get(_agent_key)
                 _active_ctx = self._active_contexts.get(_agent_key) or {}
+                _active_turn = self._active_turns.get(_agent_key) or {}
             _running_mode = _active_ctx.get("_turn_mode") or {
                 "type": "user", "source_agent": None}
             _modes_match = (
@@ -204,7 +205,13 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                     and hasattr(_active_client, 'send_user_message')
                     and _user_text and _modes_match):
                 _attachments = _body.get("attachments", [])
-                if _active_client.send_user_message(_user_text, attachments=_attachments):
+                if _active_client.send_user_message(
+                    _user_text,
+                    attachments=_attachments,
+                    user_id=_uid,
+                    conversation_id=conversation_id,
+                    agent_name=_target,
+                ):
                     _rescued = _queue_pending_user(source="preempt_rescue", publish=False)
                     logger.info(
                         "[agent:%s] preempted active provider session%s",
@@ -239,6 +246,22 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                         if _preempt_killed:
                             self._active_contexts.pop(_agent_key, None)
 
+            if (not _active_client and _active_turn and _user_text
+                    and _modes_match):
+                # The worker thread exists, but the provider client is not live
+                # yet (context preparation/compact before _run_agent_loop). A
+                # plain queue would make the user wait for the stale turn to
+                # finish. Bump the generation captured by that preparing worker
+                # and immediately start a fresh turn from the queued message.
+                _fast_restart_after_preempt = True
+                with self._conv_gen_lock:
+                    self._conv_generation[_agent_key] = (
+                        self._conv_generation.get(_agent_key, 0) + 1)
+                logger.info(
+                    "[agent:%s] preempted preparing provider turn — fast-restarting %s",
+                    conversation_id[:8], _target or "default")
+                _already_active = False
+
             # Queue this user message in the agent's PendingQueue —
             # the active turn will drain at its end, or a wake will
             # fire if the turn somehow ended before we got here.
@@ -269,6 +292,9 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
             if _active_agent_guess else conversation_id
         )
         _active_turn_started = time.time()
+        _gen_key = f"{conversation_id}:{_target}" if _target else conversation_id
+        with self._conv_gen_lock:
+            _starting_generation = self._conv_generation.get(_gen_key, 0)
         with self._active_lock:
             self._active_conversations[conversation_id] = self._active_conversations.get(conversation_id, 0) + 1
             self._user_active_conversations.add(conversation_id)
@@ -279,6 +305,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                 "started_at": _active_turn_started,
                 "status": "preparing",
                 "message_preview": _user_text[:160],
+                "generation": _starting_generation,
             }
 
         if _target:
@@ -332,6 +359,17 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                 f"{conversation_id}:{_resolved_agent}"
                 if _resolved_agent else conversation_id
             )
+            ctx["_generation"] = _starting_generation
+            ctx["_gen_key"] = _gen_key
+            ctx["_active_turn_key"] = _active_turn_key
+
+            if not self._is_current_generation(_gen_key, _starting_generation):
+                logger.info(
+                    "[agent:%s] abandoning preempted preparing turn for %s",
+                    conversation_id[:8], _resolved_agent or "default")
+                self._decrement_active(conversation_id, ctx)
+                return
+
             with self._active_contexts_lock:
                 _turn = self._active_turns.pop(_active_turn_key, None) or {}
                 _turn.update({
@@ -341,16 +379,11 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                     "status": "thinking",
                     "message_preview": _turn.get("message_preview", _user_text[:160]),
                     "max_rounds": ctx.get("max_rounds", 0),
+                    "generation": _starting_generation,
                 })
                 self._active_turns[_resolved_turn_key] = _turn
             _active_turn_key = _resolved_turn_key
             ctx["_active_turn_key"] = _active_turn_key
-
-            _gen_key = f"{conversation_id}:{_target}" if _target else conversation_id
-            with self._conv_gen_lock:
-                gen = self._conv_generation.get(_gen_key, 0)
-            ctx["_generation"] = gen
-            ctx["_gen_key"] = _gen_key
 
             self._streaming_agent_loop(ctx, conversation_id, bus)
 

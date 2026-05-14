@@ -19,8 +19,9 @@ def _handle_media(self, action, body, store, user_id, flowfile):
 
     if action == "list_image_services":
         from services.base_image_generation import BaseImageGenerationService
-        services = self._discover_media_services(user_id, BaseImageGenerationService)
         conv_id = body.get("conversation_id", "")
+        services = self._discover_media_services(
+            user_id, BaseImageGenerationService, conv_id)
         prefs = {}
         if conv_id:
             prefs = store.get_extra(conv_id, "image_services") or {}
@@ -71,8 +72,9 @@ def _handle_media(self, action, body, store, user_id, flowfile):
 
     if action == "list_video_services":
         from services.base_video_generation import BaseVideoGenerationService
-        services = self._discover_media_services(user_id, BaseVideoGenerationService)
         conv_id = body.get("conversation_id", "")
+        services = self._discover_media_services(
+            user_id, BaseVideoGenerationService, conv_id)
         prefs = store.get_extra(conv_id, "video_services") or {} if conv_id else {}
         result = [{
             "id": sid, "type": stype, "scope": scope,

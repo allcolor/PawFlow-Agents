@@ -264,16 +264,35 @@ class AgentPollerMixin:
             cid = entry["conversation_id"]
             entry_key = entry.get("key", cid)
             reason = entry.get("reason", "scheduled recheck")
+            _is_task = "::task::" in entry_key
+            _is_task_verify = "::task_verify::" in entry_key
+            _is_task_context = _is_task or _is_task_verify
+            _task_id_tmp = ""
+            _task_data_tmp = {}
+            _task_context_agent = ""
 
             # For task sub-conversations, load from the sub-conv
-            if "::task::" in entry_key:
+            if _is_task_context:
                 _task_id_tmp = entry_key.rsplit("::", 1)[-1]
                 _all_tasks_tmp = store.get_extra(cid, "agent_tasks") or {}
                 _task_data_tmp = _all_tasks_tmp.get(_task_id_tmp, {})
-                _task_agent_tmp = _task_data_tmp.get("agent", "")
-                _task_ctx_data = (store.load_agent_context(entry_key, _task_agent_tmp)
-                                  if _task_agent_tmp else None)
-                messages_data = _task_ctx_data if _task_ctx_data is not None else store.load(entry_key)
+                if _is_task_verify:
+                    _task_context_agent = (
+                        _task_data_tmp.get("verifier", "")
+                        or self._extract_agent_from_reasons([reason])
+                        or _task_data_tmp.get("agent", "")
+                    )
+                else:
+                    _task_context_agent = _task_data_tmp.get("agent", "")
+                try:
+                    _task_ctx_data = (store.load_agent_context(entry_key, _task_context_agent)
+                                      if _task_context_agent else None)
+                except ValueError:
+                    _task_ctx_data = None
+                try:
+                    messages_data = _task_ctx_data if _task_ctx_data is not None else store.load(entry_key)
+                except ValueError:
+                    messages_data = []
                 if messages_data:
                     # Subsequent iteration. Interactive tasks must not receive
                     # a bare "continue" because it can be mistaken for user data.
@@ -291,26 +310,35 @@ class AgentPollerMixin:
                         )
                     _continue_msg = stamp_message({
                         "role": "user", "content": _continue_content,
+                        "source": ({"type": "user", "target_agent": _task_context_agent}
+                                   if _task_context_agent else {"type": "context"}),
                         "msg_id": _poll_uuid.uuid4().hex[:12]}, entry_key)
                     ConversationWriter.for_conversation(entry_key).enqueue_message(
                         _continue_msg,
                         wait=True)
-                    if _task_ctx_data is not None and _task_agent_tmp:
+                    if _task_ctx_data is not None and _task_context_agent:
                         messages_data = list(_task_ctx_data) + [_continue_msg]
                         store.save_agent_context(
-                            entry_key, _task_agent_tmp, messages_data)
+                            entry_key, _task_context_agent, messages_data)
                     else:
                         messages_data = store.load(entry_key)
                 if not messages_data:
                     # First iteration — sub-conv doesn't exist yet.
-                    _task_prompt = _task_data_tmp.get("task", "") or _task_data_tmp.get("prompt", "") or reason
+                    if _is_task_verify:
+                        _task_prompt = "[System: Task verification context initialized.]"
+                    else:
+                        _task_prompt = _task_data_tmp.get("task", "") or _task_data_tmp.get("prompt", "") or reason
                     # Inject task prompt as a normal user message
                     # (as if the human owner sent it directly)
                     _meta_tmp = store.get_metadata(cid)
                     _uid_tmp = _meta_tmp["user_id"] if _meta_tmp else ""
-                    messages_data = [
-                        {"role": "user", "content": _task_prompt},
-                    ]
+                    import uuid as _poll_uuid
+                    from core.llm_client import stamp_message
+                    messages_data = [stamp_message({
+                        "role": "user", "content": _task_prompt,
+                        "source": ({"type": "user", "target_agent": _task_context_agent}
+                                   if _task_context_agent else {"type": "context"}),
+                        "msg_id": _poll_uuid.uuid4().hex[:12]}, entry_key)]
                     store.save(entry_key, messages_data, user_id=_uid_tmp)
                     # Set permission_mode on sub-conv if auto_allow
                     if _task_data_tmp.get("auto_allow"):
@@ -321,11 +349,14 @@ class AgentPollerMixin:
                 continue
 
             # Extract agent name from key
-            if "::task::" in entry_key or "::task_verify::" in entry_key:
+            if _is_task_context:
                 _task_id = entry_key.rsplit("::", 1)[-1]
                 _all_tasks = store.get_extra(cid, "agent_tasks") or {}
                 _task_entry = _all_tasks.get(_task_id, {})
-                _thought_agent = _task_entry.get("agent", "")
+                if _is_task_verify:
+                    _thought_agent = _task_context_agent or _task_entry.get("verifier", "") or _task_entry.get("agent", "")
+                else:
+                    _thought_agent = _task_entry.get("agent", "")
                 # Skip cancelled/completed/failed tasks
                 _task_status = _task_entry.get("status", "")
                 if _task_status in ("cancelled", "completed", "failed"):
@@ -333,24 +364,25 @@ class AgentPollerMixin:
                     with self._active_lock:
                         self._active_thoughts.discard(entry_key)
                     continue
-                # ── Pre-launch limit checks ──
-                _cancel_reason = _check_task_limits(_task_entry, _task_id)
-                if _cancel_reason:
-                    logger.info("[poller] Cancelling task %s — %s", _task_id, _cancel_reason)
-                    _task_entry["status"] = "cancelled"
-                    _task_entry["cancel_reason"] = _cancel_reason
+                if _is_task:
+                    # ── Pre-launch limit checks ──
+                    _cancel_reason = _check_task_limits(_task_entry, _task_id)
+                    if _cancel_reason:
+                        logger.info("[poller] Cancelling task %s — %s", _task_id, _cancel_reason)
+                        _task_entry["status"] = "cancelled"
+                        _task_entry["cancel_reason"] = _cancel_reason
+                        _all_tasks[_task_id] = _task_entry
+                        store.set_extra(cid, "agent_tasks", _all_tasks)
+                        bus.publish_event(cid, "task_stopped", {
+                            "task_id": _task_id, "agent_name": _thought_agent,
+                            "reason": _cancel_reason, "force": True})
+                        with self._active_lock:
+                            self._active_thoughts.discard(entry_key)
+                        continue
+                    # ── Increment reschedule_count (only real task runs, not verification) ──
+                    _task_entry["reschedule_count"] = _task_entry.get("reschedule_count", 0) + 1
                     _all_tasks[_task_id] = _task_entry
                     store.set_extra(cid, "agent_tasks", _all_tasks)
-                    bus.publish_event(cid, "task_stopped", {
-                        "task_id": _task_id, "agent_name": _thought_agent,
-                        "reason": _cancel_reason, "force": True})
-                    with self._active_lock:
-                        self._active_thoughts.discard(entry_key)
-                    continue
-                # ── Increment reschedule_count (only real runs, not skipped) ──
-                _task_entry["reschedule_count"] = _task_entry.get("reschedule_count", 0) + 1
-                _all_tasks[_task_id] = _task_entry
-                store.set_extra(cid, "agent_tasks", _all_tasks)
             elif "::" in entry_key:
                 # Thought key: conv::thought::agent_name
                 _thought_agent = entry_key.rsplit("::", 1)[-1]
@@ -411,22 +443,22 @@ class AgentPollerMixin:
                 self._active_conversations[cid] = self._active_conversations.get(cid, 0) + 1
 
             try:
-                # Build context using parent cid (for metadata, user_id, services)
-                # but with the task's messages_data (isolated or sub-conv)
-                _is_task = "::task::" in entry_key
+                # Build context using parent cid for metadata/user_id, but with
+                # the isolated task or task-verification messages.
                 ctx = self._build_poll_context(cid, messages_data,
                                                scheduled_reasons=[reason],
-                                               skip_agent_context=_is_task,
-                                               preloaded_conversation_id=entry_key if _is_task else "",
-                                               independent_context=_is_task)
-                # For task sub-conversations, override the conversation_id
-                # so messages are persisted in the sub-conv, not the parent
-                if _is_task and ctx:
+                                               skip_agent_context=_is_task_context,
+                                               preloaded_conversation_id=entry_key if _is_task_context else "",
+                                               independent_context=_is_task_context)
+                # For task sub-conversations, override the conversation_id so
+                # messages are persisted in the sub-conv, not the parent.
+                if _is_task_context and ctx:
                     ctx["conversation_id"] = entry_key
                     # Don't resume parent's Claude Code session
                     ctx["_claude_has_session"] = False
                     # Track iteration number for transcript grouping (reschedule_count = iteration number)
-                    ctx["_task_iteration"] = _task_entry.get("reschedule_count", 0) if _task_entry else 0
+                    if _is_task:
+                        ctx["_task_iteration"] = _task_entry.get("reschedule_count", 0) if _task_entry else 0
                     ctx["_independent_context"] = True
                 if ctx is None:
                     with self._active_lock:
@@ -453,11 +485,11 @@ class AgentPollerMixin:
                     _thinking_evt["task_iteration"] = _task_entry.get("reschedule_count", 0) if _task_entry else 0
                 bus.publish_event(cid, "thinking", _thinking_evt)
 
-                # For task entries, use the sub-conversation ID so messages
-                # are persisted in the isolated task context
-                _loop_cid = entry_key if "::task::" in entry_key else cid
+                # For task entries, use the sub-conversation ID so messages are
+                # persisted in the isolated task or verification context.
+                _loop_cid = entry_key if _is_task_context else cid
                 # But publish events on the parent conv so webchat sees them
-                if "::task::" in entry_key:
+                if _is_task_context:
                     ctx["_event_cid"] = cid
                 thread = threading.Thread(
                     target=self._streaming_agent_loop,
@@ -587,16 +619,16 @@ class AgentPollerMixin:
                 return sr.rsplit("(", 1)[-1].rstrip(")")
             if "[agent_task:" in sr and "(" in sr:
                 return sr.rsplit("(", 1)[-1].rstrip(")")
-            tv_match = re.search(r'\[task_verify:(\w+)\].*by (\w+)', sr)
+            tv_match = re.search(r'\[task_verify:[^\]]+\].*by ([\w.-]+)', sr)
             if tv_match:
-                return tv_match.group(2)
+                return tv_match.group(1)
             plan_match = re.search(r'\[plan_step:\w+:\d+\]\s*\(([\w.-]+)\)', sr)
             if plan_match:
                 return plan_match.group(1)
             pv_match = re.search(r'\[plan_verify:\w+:\d+:[\w.-]+\]\s*\(([\w.-]+)\)', sr)
             if pv_match:
                 return pv_match.group(1)
-            sched_match = re.match(r'\[scheduled:(\w+)\]', sr)
+            sched_match = re.match(r'\[scheduled:([\w.-]+)\]', sr)
             if sched_match:
                 return sched_match.group(1)
         return None

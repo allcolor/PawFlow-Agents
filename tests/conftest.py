@@ -23,7 +23,8 @@ def _isolate_data_dir(tmp_path_factory):
         "DATA_DIR", "REPOSITORY_DIR", "RUNTIME_DIR", "SYSTEM_DIR",
         "CONVERSATIONS_DIR", "DEPLOYMENTS_DIR", "FILES_DIR",
         "MEMORIES_DIR", "KNOWLEDGE_GRAPHS_DIR", "PLANS_DIR",
-        "CLAUDE_SESSIONS_DIR", "GRAPHS_DIR", "SPILL_DIR",
+        "CLAUDE_SESSIONS_DIR", "CODEX_SESSIONS_DIR",
+        "GEMINI_SESSIONS_DIR", "GRAPHS_DIR", "SPILL_DIR",
         "TOKEN_USAGE_FILE", "POLL_SCHEDULE_FILE", "GATEWAY_BANS_FILE",
         "USERS_FILE", "SESSIONS_FILE", "SECURITY_FILE",
         "SECRET_KEY_FILE", "SERVER_ID_FILE", "SSL_DIR",
@@ -53,6 +54,8 @@ def _isolate_data_dir(tmp_path_factory):
     paths.KNOWLEDGE_GRAPHS_DIR = runtime_dir / "knowledge_graphs"
     paths.PLANS_DIR = runtime_dir / "plans"
     paths.CLAUDE_SESSIONS_DIR = runtime_dir / "sessions" / "claude"
+    paths.CODEX_SESSIONS_DIR = runtime_dir / "sessions" / "codex"
+    paths.GEMINI_SESSIONS_DIR = runtime_dir / "sessions" / "gemini"
     paths.GRAPHS_DIR = runtime_dir / "graphs"
     paths.SPILL_DIR = runtime_dir / "spill"
     paths.TOKEN_USAGE_FILE = runtime_dir / "token_usage.json"

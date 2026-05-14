@@ -246,6 +246,11 @@ memory instead of rescanning `transcript.jsonl` after each append.
 
 ## Running the Tests
 
+Tests must never write to the repository's real `data/` tree. The global
+pytest fixture redirects PawFlow storage paths to a temporary data directory,
+and relay-executed Python snippets receive an isolated `PAWFLOW_DATA_DIR` by
+default so reproduction scripts cannot pollute `data/runtime`.
+
 ```bash
 # All tests (758)
 pytest tests/ -v

@@ -228,11 +228,18 @@ class ExecuteScriptHandler(ToolHandler):
         try:
             if hasattr(svc, 'exec'):
                 # Write to temp file then execute (avoids shell escaping issues)
-                import tempfile, uuid as _uuid_exec
-                _fname = f".pawflow_exec_{_uuid_exec.uuid4().hex[:8]}.py"
+                import os
+                import tempfile
+                import uuid as _uuid_exec
+                _exec_id = _uuid_exec.uuid4().hex[:8]
+                _fname = f".pawflow_exec_{_exec_id}.py"
+                _exec_env = dict(env or {})
+                _exec_env.setdefault(
+                    "PAWFLOW_DATA_DIR",
+                    os.path.join(tempfile.gettempdir(), "pawflow-exec-data", _exec_id))
                 svc.write_file(_fname, code.encode("utf-8"))
                 try:
-                    result = svc.exec(".", f"python3 {_fname}", env=env or None)
+                    result = svc.exec(".", f"python3 {_fname}", env=_exec_env)
                 finally:
                     try:
                         svc.delete_file(_fname)

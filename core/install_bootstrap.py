@@ -51,6 +51,7 @@ CLIENT_RELAY_IMAGES = {
     "catalog": "config/relay_image_catalog.json",
     "generator": "scripts/generate-relay-image.py",
     "server_profile": "server-full",
+    "server_minimal_profile": "server-minimal",
     "default_client_profile": "client-minimal",
     "advanced_features": True,
 }

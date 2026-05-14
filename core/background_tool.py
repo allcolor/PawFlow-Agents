@@ -242,16 +242,19 @@ def has_pending(conversation_id: str) -> bool:
         )
 
 
-def wait_pending(conversation_id: str, timeout: float = 120,
+def wait_pending(conversation_id: str, timeout: Optional[float] = None,
                  cancel_check=None) -> int:
     """Wait for all pending bg tasks. Returns count completed.
+
+    timeout: optional explicit maximum wait in seconds. When omitted, wait
+    until every background task finishes or cancel_check raises.
 
     cancel_check: callable that raises if the agent was preempted
     (e.g., user sent a new message). Called every second.
     """
-    deadline = time.time() + timeout
+    deadline = (time.time() + timeout) if timeout is not None else None
     completed = 0
-    while time.time() < deadline:
+    while True:
         with _lock:
             pending = [
                 tc_id for tc_id, t in _backgrounded.items()
@@ -259,7 +262,13 @@ def wait_pending(conversation_id: str, timeout: float = 120,
             ]
         if not pending:
             break
-        time.sleep(1)
+        if deadline is not None:
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                break
+            time.sleep(min(1, remaining))
+        else:
+            time.sleep(1)
         if cancel_check:
             cancel_check()  # raises AgentCancelled if preempted
         for tc_id in pending:

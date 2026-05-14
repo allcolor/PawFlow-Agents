@@ -8,6 +8,7 @@ through `core.storage_resolver.StorageResolver`, same pattern as
 """
 
 import logging
+import os
 import time
 from typing import Any, Dict
 
@@ -42,6 +43,45 @@ def _write_result(user_id: str, conversation_id: str,
     return resolver.write(destination, filename, payload, content_type)
 
 
+def _write_result_file(user_id: str, conversation_id: str,
+                       destination: str, filename: str,
+                       source_path: str, content_type: str) -> Dict[str, Any]:
+    """Persist a generated local file via StorageResolver."""
+    from core.storage_resolver import StorageResolver
+    resolver = StorageResolver(
+        user_id=user_id, conversation_id=conversation_id or "")
+    return resolver.write_file(destination, filename, source_path, content_type)
+
+
+def _provider_identity(svc) -> str:
+    runtime = getattr(svc, "config", {}).get("package_runtime", {}) \
+        if isinstance(getattr(svc, "config", None), dict) else {}
+    if runtime:
+        package = str(runtime.get("package") or "")
+        object_id = str(runtime.get("object_id") or "")
+        if package and object_id:
+            return f"pfp:{package}/{object_id}"
+    return getattr(svc, "TYPE", svc.__class__.__name__)
+
+
+def _provider_version(svc) -> str:
+    config = getattr(svc, "config", {})
+    runtime = config.get("package_runtime", {}) if isinstance(config, dict) else {}
+    if runtime:
+        installed = config.get("installed_from", {}) if isinstance(config, dict) else {}
+        version = str(runtime.get("version") or "")
+        digest = str(installed.get("hash") or "")
+        return f"{version}:{digest}" if digest else version
+    return getattr(svc, "VERSION", "0")
+
+
+def _voice_id_value(value) -> str:
+    """Normalize provider voice-id results to the provider-opaque string."""
+    if isinstance(value, dict):
+        return str(value.get("voice_id") or value.get("id") or "")
+    return str(value or "")
+
+
 class _CapabilityHandlerBase(ToolHandler):
     """Shared wiring for the capability handlers (3D/upscale/try-on/...)."""
 
@@ -49,6 +89,7 @@ class _CapabilityHandlerBase(ToolHandler):
     _service_resolver = None  # () -> (service, error_msg)
     _user_id: str = ""
     _conversation_id: str = ""
+    _agent_name: str = ""
 
     def set_base_url(self, base_url: str):
         self._base_url = base_url.rstrip("/")
@@ -58,6 +99,9 @@ class _CapabilityHandlerBase(ToolHandler):
 
     def set_conversation_id(self, conversation_id: str):
         self._conversation_id = conversation_id
+
+    def set_agent_name(self, agent_name: str):
+        self._agent_name = agent_name
 
     def set_service_resolver(self, resolver):
         self._service_resolver = resolver
@@ -86,6 +130,7 @@ class _CapabilityHandlerBase(ToolHandler):
                 svc.set_runtime_context(
                     user_id=self._user_id,
                     conversation_id=self._conversation_id,
+                    agent_name=self._agent_name,
                 )
             return svc, ""
         if not self._service_resolver:
@@ -95,6 +140,7 @@ class _CapabilityHandlerBase(ToolHandler):
             svc.set_runtime_context(
                 user_id=self._user_id,
                 conversation_id=self._conversation_id,
+                agent_name=self._agent_name,
             )
         return svc, err
 
@@ -107,6 +153,25 @@ class _CapabilityHandlerBase(ToolHandler):
         ct = result.get("content_type", "application/octet-stream")
         payload = result.get("bytes") or result.get("image_bytes") \
             or result.get("video_bytes") or result.get("audio_bytes") or b""
+        source_path = result.get("path") or result.get("image_path") \
+            or result.get("video_path") or result.get("audio_path") or ""
+        if source_path:
+            try:
+                write_result = _write_result_file(
+                    self._user_id, self._conversation_id,
+                    destination, filename, str(source_path), ct)
+            finally:
+                if result.get("_delete_media_path"):
+                    try:
+                        os.unlink(str(source_path))
+                    except OSError:
+                        pass
+            if write_result.get("file_id"):
+                url = f"fs://filestore/{write_result['file_id']}/{filename}"
+                return f"{label}: {url}\nfile_id: {write_result['file_id']}"
+            return (f"{label} saved to "
+                    f"{write_result.get('destination', destination)}: "
+                    f"{write_result.get('path', filename)}")
         if not payload:
             return f"Error: {label} returned no payload"
         write_result = _write_result(
@@ -714,8 +779,8 @@ class CloneVoiceHandler(_CapabilityHandlerBase):
 
         from core import voice_clone_cache as _cache
 
-        provider = getattr(svc, "TYPE", svc.__class__.__name__)
-        provider_version = getattr(svc, "VERSION", "0")
+        provider = _provider_identity(svc)
+        provider_version = _provider_version(svc)
 
         # Download reference audio so we can hash it.
         try:
@@ -766,12 +831,12 @@ class CloneVoiceHandler(_CapabilityHandlerBase):
         voice_id = ""
         if hasattr(svc, "ensure_voice_id"):
             try:
-                voice_id = svc.ensure_voice_id(
+                voice_id = _voice_id_value(svc.ensure_voice_id(
                     reference_audio_url=ref_url,
                     reference_text=reference_text,
                     name=name,
                     reference_audio_bytes=ref_bytes,
-                ) or ""
+                ))
             except Exception as e:
                 logger.warning(
                     "ensure_voice_id failed on %s: %s — falling back to "
@@ -862,7 +927,7 @@ class SpeakHandler(_CapabilityHandlerBase):
             return (f"Error: unknown voice clone {voice!r}. Register one "
                     f"first with `clone_voice`.")
 
-        provider = getattr(svc, "TYPE", svc.__class__.__name__)
+        provider = _provider_identity(svc)
         if entry.get("provider") and entry["provider"] != provider:
             return (f"Error: voice clone {voice!r} was created with provider "
                     f"{entry['provider']}, but the active voice-clone service "
@@ -903,7 +968,7 @@ class SpeakHandler(_CapabilityHandlerBase):
         try:
             kwargs = {}
             if entry.get("voice_id"):
-                kwargs["voice_id"] = entry["voice_id"]
+                kwargs["voice_id"] = _voice_id_value(entry["voice_id"])
             # Rebuild a usable URL when the service cannot use cached bytes
             # directly (for example WaveSpeedAI prediction inputs expect a
             # URL string, not a raw/base64 sample in this call path).
@@ -944,7 +1009,8 @@ class SpeakHandler(_CapabilityHandlerBase):
             return f"Error synthesizing speech: {e}"
 
         audio_bytes = r.get("audio_bytes") or r.get("bytes") or b""
-        if not audio_bytes:
+        audio_path = r.get("audio_path") or r.get("path") or ""
+        if not audio_bytes and not audio_path:
             return "Error: provider returned no audio"
         content_type = r.get("content_type", "audio/mpeg")
         ext = {
@@ -958,15 +1024,33 @@ class SpeakHandler(_CapabilityHandlerBase):
         # Store the rendered audio in FileStore + index it in the TTS cache.
         conv = self._conversation_id or "_voice_cache"
         try:
-            fid = _cache.tts_store(
-                user_id=self._user_id,
-                conversation_id=conv,
-                cache_key=cache_key,
-                filename=filename,
-                audio_bytes=audio_bytes,
-                content_type=content_type,
-                ref_audio_hash=ref_hash,
-            )
+            if audio_path:
+                try:
+                    fid = _cache.tts_store_file(
+                        user_id=self._user_id,
+                        conversation_id=conv,
+                        cache_key=cache_key,
+                        filename=filename,
+                        source_path=str(audio_path),
+                        content_type=content_type,
+                        ref_audio_hash=ref_hash,
+                    )
+                finally:
+                    if r.get("_delete_media_path"):
+                        try:
+                            os.unlink(str(audio_path))
+                        except OSError:
+                            pass
+            else:
+                fid = _cache.tts_store(
+                    user_id=self._user_id,
+                    conversation_id=conv,
+                    cache_key=cache_key,
+                    filename=filename,
+                    audio_bytes=audio_bytes,
+                    content_type=content_type,
+                    ref_audio_hash=ref_hash,
+                )
         except Exception as e:
             return f"Error storing synthesized audio: {e}"
 

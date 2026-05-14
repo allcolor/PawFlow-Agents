@@ -157,6 +157,9 @@ class FlowManagerHandler(ToolHandler):
     def set_conversation_id(self, cid: str):
         self._conversation_id = cid
 
+    def set_agent_name(self, agent_name: str):
+        self._agent_name = agent_name or ""
+
     def execute(self, arguments: Dict[str, Any]) -> str:
         action = arguments.get("action", "")
         flow_id = arguments.get("flow_id", "")
@@ -200,41 +203,64 @@ class FlowManagerHandler(ToolHandler):
     def _owner_tag(self) -> str:
         return self._user_id or None
 
+    def _flow_scope_chain(self):
+        if self._conversation_id:
+            yield "conv", self._user_id or "", self._conversation_id
+        if self._user_id:
+            yield "user", self._user_id, ""
+        yield "global", "", ""
+
+    def _get_scoped_flow(self, fqn: str, preferred_scope: str = ""):
+        from core.repository import ScopedRepository
+        repo = ScopedRepository.instance()
+        scope_chain = list(self._flow_scope_chain())
+        if preferred_scope:
+            scope_chain = [
+                item for item in scope_chain if item[0] == preferred_scope
+            ] + [item for item in scope_chain if item[0] != preferred_scope]
+        for scope, user_id, conv_id in scope_chain:
+            try:
+                flow_data = repo.get_flow(
+                    fqn, scope, user_id=user_id, conv_id=conv_id)
+            except TypeError:
+                flow_data = repo.get_flow(fqn, scope)
+            if flow_data is not None:
+                return flow_data, scope
+        return None, ""
+
     def _catalog(self) -> str:
         """List available flow templates from the repository."""
         import core.paths as _p
-        from core.repository import ScopedRepository
-        repo = ScopedRepository.instance()
-        # List all flow packages in global scope
-        flows_dir = _p.REPOSITORY_DIR / "flows" / "global"
         templates = []
-        if flows_dir.exists():
-            for pkg_dir in sorted(flows_dir.iterdir()):
-                if not pkg_dir.is_dir():
+        seen = set()
+        for scope, user_id, conv_id in self._flow_scope_chain():
+            flows_dir = _p.repo_dir(
+                "flows", scope, user_id=user_id, conv_id=conv_id)
+            if not flows_dir.exists():
+                continue
+            for latest in sorted(flows_dir.glob("**/latest.json")):
+                flow_dir = latest.parent
+                package_dir = flow_dir.parent
+                try:
+                    package = ".".join(package_dir.relative_to(flows_dir).parts)
+                    if not package:
+                        continue
+                    ver_info = json.loads(latest.read_text(encoding="utf-8"))
+                    ver = ver_info.get("version", "")
+                    ver_file = flow_dir / "versions" / f"{ver}.json"
+                    data = json.loads(ver_file.read_text(encoding="utf-8")) if ver_file.exists() else {}
+                    fqn = f"{package}.{flow_dir.name}:{ver}"
+                    if fqn in seen:
+                        continue
+                    seen.add(fqn)
+                    templates.append({
+                        "fqn": fqn,
+                        "name": data.get("name", flow_dir.name),
+                        "version": ver,
+                        "description": data.get("description", ""),
+                    })
+                except Exception:
                     continue
-                for flow_dir in sorted(pkg_dir.iterdir()):
-                    if not flow_dir.is_dir():
-                        continue
-                    latest = flow_dir / "latest.json"
-                    if not latest.exists():
-                        continue
-                    try:
-                        ver_info = json.loads(latest.read_text(encoding="utf-8"))
-                        ver = ver_info.get("version", "")
-                        ver_file = flow_dir / "versions" / f"{ver}.json"
-                        if ver_file.exists():
-                            data = json.loads(ver_file.read_text(encoding="utf-8"))
-                        else:
-                            data = {}
-                        fqn = f"{pkg_dir.name}.{flow_dir.name}:{ver}"
-                        templates.append({
-                            "fqn": fqn,
-                            "name": data.get("name", flow_dir.name),
-                            "version": ver,
-                            "description": data.get("description", ""),
-                        })
-                    except Exception:
-                        continue
         if not templates:
             return "No flow templates found in the repository."
         lines = []
@@ -250,15 +276,13 @@ class FlowManagerHandler(ToolHandler):
             return "Error: template_id is required (use FQN like default.flow_name:1.0.0)"
 
         # Resolve FQN to repository flow
-        from core.repository import ScopedRepository
         from core.paths import parse_flow_fqn
         try:
             package, flowname, version = parse_flow_fqn(template_id)
         except Exception:
             return f"Error: invalid FQN '{template_id}'. Use package.flow_name:version"
 
-        repo = ScopedRepository.instance()
-        flow_data = repo.get_flow(template_id, "global")
+        flow_data, flow_scope = self._get_scoped_flow(template_id)
         if flow_data is None:
             return (
                 f"Error: flow '{template_id}' not found in repository. "
@@ -280,12 +304,14 @@ class FlowManagerHandler(ToolHandler):
                 parameters=params or {},
                 source="agent",
                 conversation_id=self._conversation_id,
+                agent_name=getattr(self, "_agent_name", "") or "",
             )
             # Update the deployment with FQN
             dep_reg._ensure_loaded()
             inst = dep_reg._instances.get(instance_id)
             if inst:
                 inst.flow_fqn = template_id
+                inst.flow_scope = flow_scope
                 dep_reg._save_instance(inst)
             return (
                 f"Flow '{template_id}' deployed as instance "
@@ -307,8 +333,7 @@ class FlowManagerHandler(ToolHandler):
         if not template_id:
             return ("Error: template_id is required (FQN like "
                     "default.flow_name:1.0.0).")
-        from core.repository import ScopedRepository
-        flow_data = ScopedRepository.instance().get_flow(template_id, "global")
+        flow_data, _flow_scope = self._get_scoped_flow(template_id)
         if flow_data is None:
             return (f"Error: flow '{template_id}' not found in repository. "
                     f"Use action 'catalog' to see available flows.")
@@ -332,7 +357,13 @@ class FlowManagerHandler(ToolHandler):
         ff = FlowFile(content=(input_text or "").encode("utf-8"))
         try:
             result = ContinuousFlowExecutor.run_batch(
-                flow, input_flowfiles=[ff], max_workers=1)
+                flow, input_flowfiles=[ff], max_workers=1,
+                runtime_context={
+                    "user_id": self._user_id,
+                    "conversation_id": self._conversation_id,
+                    "scope": "conversation" if self._conversation_id else "user",
+                    "agent_name": getattr(self, "_agent_name", "") or "",
+                })
         except Exception as e:
             return f"Error: execution failed for '{template_id}': {e}"
         outs = []
@@ -442,6 +473,7 @@ class FlowManagerHandler(ToolHandler):
                 parameters=definition.get("parameters", {}),
                 source="agent",
                 conversation_id=self._conversation_id,
+                agent_name=getattr(self, "_agent_name", "") or "",
                 instance_id=flow_id,  # Use flow_id as instance_id for created flows
             )
             return f"Flow '{instance_id}' created. Use start to run it."
@@ -470,16 +502,20 @@ class FlowManagerHandler(ToolHandler):
             from engine.parser import FlowParser
             from engine.continuous_executor import ContinuousFlowExecutor
 
-            # Load the template
-            flow_path = inst.flow_path
-            if not flow_path or not os.path.exists(flow_path):
-                flow_path = dep_reg._find_flow_path(inst.flow_id)
-            if not flow_path:
-                dep_reg.update_status(flow_id, "error", "Template file not found")
-                return f"Error: template file not found for '{flow_id}'"
+            raw = None
+            if inst.flow_fqn:
+                raw, _flow_scope = self._get_scoped_flow(
+                    inst.flow_fqn, inst.flow_scope or "global")
+            if raw is None:
+                flow_path = inst.flow_path
+                if not flow_path or not os.path.exists(flow_path):
+                    flow_path = dep_reg._find_flow_path(inst.flow_id)
+                if not flow_path:
+                    dep_reg.update_status(flow_id, "error", "Template file not found")
+                    return f"Error: template file not found for '{flow_id}'"
 
-            with open(flow_path, "r", encoding="utf-8") as ff:
-                raw = json.load(ff)
+                with open(flow_path, "r", encoding="utf-8") as ff:
+                    raw = json.load(ff)
             clean = {k: v for k, v in raw.items() if not k.startswith("_")}
             # Apply instance parameters
             if inst.parameters:
@@ -500,7 +536,13 @@ class FlowManagerHandler(ToolHandler):
                 reg.unregister(flow_id)
 
             executor = ContinuousFlowExecutor(
-                flow, max_workers=inst.max_workers, max_retries=inst.max_retries
+                flow, max_workers=inst.max_workers, max_retries=inst.max_retries,
+                runtime_context={
+                    "user_id": inst.owner or "",
+                    "conversation_id": inst.conversation_id or "",
+                    "scope": "conversation" if inst.conversation_id else "user" if inst.owner else "",
+                    "agent_name": inst.agent_name or getattr(self, "_agent_name", "") or "",
+                }
             )
             executor.start()
             reg.register(flow_id, executor)

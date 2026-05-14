@@ -254,18 +254,22 @@ def _normalize_flow_parameters(raw_params: Any) -> Dict[str, Dict[str, Any]]:
             if not str(name).startswith("_")}
 
 
-def _template_roots(user_id: str):
+def _template_roots(user_id: str, conversation_id: str = ""):
     from core.paths import REPOSITORY_DIR
-    roots = [REPOSITORY_DIR / "flows" / "global"]
+    roots = []
     if user_id:
+        if conversation_id:
+            roots.append(REPOSITORY_DIR / "flows" / "users" / user_id / conversation_id)
         roots.append(REPOSITORY_DIR / "flows" / "users" / user_id)
+    roots.append(REPOSITORY_DIR / "flows" / "global")
     return roots
 
 
-def _resolve_flow_template_path(template_id: str, user_id: str):
+def _resolve_flow_template_path(template_id: str, user_id: str,
+                                conversation_id: str = ""):
     if not template_id:
         return None
-    for root in _template_roots(user_id):
+    for root in _template_roots(user_id, conversation_id):
         if not root.is_dir():
             continue
         for latest in root.rglob("latest.json"):
@@ -279,7 +283,11 @@ def _resolve_flow_template_path(template_id: str, user_id: str):
                 if not vfile.is_file():
                     continue
                 raw = json.loads(vfile.read_text(encoding="utf-8"))
-                if (raw.get("id") or flow_dir.name) == template_id:
+                if template_id in {
+                    raw.get("id") or flow_dir.name,
+                    raw.get("name") or "",
+                    raw.get("fqn") or "",
+                }:
                     return vfile
             except Exception:
                 continue
@@ -376,9 +384,11 @@ def _load_flow_instance_template_raw(inst, user_id: str) -> Dict[str, Any]:
     flow_path = getattr(inst, "flow_path", "") or ""
     if flow_path:
         candidates.append(_Path(flow_path))
-    for template_id in (getattr(inst, "flow_id", "") or "",
+    for template_id in (getattr(inst, "flow_fqn", "") or "",
+                        getattr(inst, "flow_id", "") or "",
                         getattr(inst, "flow_name", "") or ""):
-        tpath = _resolve_flow_template_path(template_id, user_id)
+        tpath = _resolve_flow_template_path(
+            template_id, user_id, getattr(inst, "conversation_id", "") or "")
         if tpath:
             candidates.append(tpath)
     for path in candidates:
@@ -1918,9 +1928,14 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                     return [flowfile]
                 reg._restore_instance(iid, inst.flow_path,
                                        inst.max_workers, inst.max_retries,
+                                       flow_fqn=getattr(inst, "flow_fqn", "") or "",
+                                       flow_scope=getattr(inst, "flow_scope", "") or "",
                                        parameters=inst.parameters,
                                        service_overrides=inst.service_overrides,
-                                       service_configs=inst.service_configs)
+                                       service_configs=inst.service_configs,
+                                       owner=inst.owner or "",
+                                       conversation_id=inst.conversation_id or "",
+                                       agent_name=getattr(inst, "agent_name", "") or "")
                 flowfile.set_content(json.dumps({"ok": True, "status": "running"}).encode())
             elif action == "undeploy_flow":
                 ex = reg.get(iid)
@@ -1937,16 +1952,22 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         # Flow templates are stored under
         #   data/repository/flows/global/<package>/<flow_name>/latest.json
         #   data/repository/flows/users/<uid>/<package>/<flow_name>/latest.json
+        #   data/repository/flows/users/<uid>/<conversation_id>/<package>/<flow_name>/latest.json
         # Each <flow_name>/ contains latest.json (a {"version": "X.Y.Z"}
         # pointer) plus versions/<version>.json (the real flow definition).
-        # We walk both global and the caller's user scope.
+        # We walk conversation, user, then global scopes.
         try:
             from core.paths import REPOSITORY_DIR
+            conv_id = body.get("conversation_id", "") or flowfile.get_attribute("http.conversation_id") or ""
             templates = []
-            roots = [("global", REPOSITORY_DIR / "flows" / "global")]
+            roots = []
             if user_id:
+                if conv_id:
+                    roots.append(("conversation",
+                                  REPOSITORY_DIR / "flows" / "users" / user_id / conv_id))
                 roots.append(("user",
                               REPOSITORY_DIR / "flows" / "users" / user_id))
+            roots.append(("global", REPOSITORY_DIR / "flows" / "global"))
             for scope_label, root in roots:
                 if not root.is_dir():
                     continue
@@ -1989,7 +2010,8 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "Missing template_id"}).encode())
             return [flowfile]
         try:
-            tpath = _resolve_flow_template_path(template_id, user_id)
+            conv_id = body.get("conversation_id", "") or flowfile.get_attribute("http.conversation_id") or ""
+            tpath = _resolve_flow_template_path(template_id, user_id, conv_id)
             if not tpath:
                 flowfile.set_content(json.dumps(
                     {"error": f"Template '{template_id}' not found in "
@@ -2021,7 +2043,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             return [flowfile]
         try:
             from core.deployment_registry import DeploymentRegistry
-            tpath = _resolve_flow_template_path(template_id, user_id)
+            tpath = _resolve_flow_template_path(template_id, user_id, conv_id)
             if not tpath:
                 flowfile.set_content(json.dumps(
                     {"error": f"Template '{template_id}' not found in "
@@ -2052,15 +2074,28 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             params["_flow_scope"] = flow_scope
 
             dr = DeploymentRegistry.get_instance()
+            agent_name = (
+                body.get("_agent_name", "")
+                or body.get("call_agent_name", "")
+                or flowfile.get_attribute("call_agent_name")
+                or getattr(self, "_agent_name", "")
+                or ""
+            )
             iid = dr.deploy(
                 template_path=str(tpath),
                 owner=uid,
                 parameters=params,
                 source="agent",
                 conversation_id=conv_id if deploy_scope == "conversation" else None,
+                agent_name=agent_name,
                 service_overrides=service_overrides,
                 service_configs=service_configs,
             )
+            inst = dr.get(iid)
+            if inst:
+                inst.flow_fqn = flow_config.get("fqn") or template_id
+                inst.flow_scope = flow_scope
+                dr._save_instance(inst)
             flowfile.set_content(json.dumps(
                 {"ok": True, "instance_id": iid, "scope": deploy_scope,
                  "flow_scope": flow_scope}).encode())
@@ -2191,6 +2226,73 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 "destroyed": destroyed,
                 "message": "Server workspace destroyed." if destroyed else "No server workspace found.",
             }).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+        return [flowfile]
+
+    if action == "create_server_execution_relay":
+        conv_id = body.get("conversation_id", "")
+        if not conv_id:
+            conv_id = flowfile.get_attribute("http.conversation_id") or ""
+        if not conv_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+            return [flowfile]
+        try:
+            from core.server_relay_manager import ServerRelayManager
+            meta = ServerRelayManager.get_instance().ensure_minimal(conv_id, user_id)
+            flowfile.set_content(json.dumps({
+                "ok": True,
+                "relay_id": meta["relay_id"],
+                "ws_url": meta["ws_url"],
+                "volume": meta["volume"],
+                "kind": meta.get("kind", "minimal"),
+                "message": (
+                    f"Server execution relay ready. Use relay '{meta['relay_id']}' "
+                    "as an explicit flow parameter value."
+                ),
+            }).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+        return [flowfile]
+
+    if action == "destroy_server_execution_relay":
+        conv_id = body.get("conversation_id", "")
+        if not conv_id:
+            conv_id = flowfile.get_attribute("http.conversation_id") or ""
+        if not conv_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+            return [flowfile]
+        try:
+            from core.server_relay_manager import ServerRelayManager
+            destroyed = ServerRelayManager.get_instance().destroy_minimal(conv_id)
+            flowfile.set_content(json.dumps({
+                "ok": True,
+                "destroyed": destroyed,
+                "message": "Server execution relay destroyed." if destroyed else "No server execution relay found.",
+            }).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+        return [flowfile]
+
+    if action == "server_execution_relay_status":
+        conv_id = body.get("conversation_id", "")
+        if not conv_id:
+            conv_id = flowfile.get_attribute("http.conversation_id") or ""
+        try:
+            from core.server_relay_manager import ServerRelayManager
+            mgr = ServerRelayManager.get_instance()
+            meta = mgr.get_metadata(conv_id, kind="minimal") if conv_id else None
+            if not meta:
+                flowfile.set_content(json.dumps({"exists": False}).encode())
+            else:
+                running = mgr._is_container_running(meta.get("container_id", ""))
+                flowfile.set_content(json.dumps({
+                    "exists": True,
+                    "relay_id": meta["relay_id"],
+                    "running": running,
+                    "volume": meta.get("volume", ""),
+                    "kind": meta.get("kind", "minimal"),
+                }).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
         return [flowfile]

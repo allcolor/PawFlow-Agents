@@ -48,6 +48,23 @@ VALID_SCOPES = (SCOPE_GLOBAL, SCOPE_USER, SCOPE_CONV)
 # Global scope uses a fixed scope_id internally
 _GLOBAL_SCOPE_ID = "__global__"
 
+
+def _parent_conversation_id(conv_id: str) -> str:
+    conv_id = str(conv_id or "")
+    for marker in ("::task::", "::task_verify::", "::delegate::"):
+        if marker in conv_id:
+            return conv_id.split(marker, 1)[0]
+    return ""
+
+
+def _package_runtime_dedupe_key(sdef) -> tuple:
+    runtime = (getattr(sdef, "config", {}) or {}).get("package_runtime") or {}
+    return (
+        getattr(sdef, "service_id", ""),
+        str(runtime.get("package") or ""),
+        str(runtime.get("object_id") or ""),
+    )
+
 # Service types that support heartbeat (have a ping() method)
 _HEARTBEAT_TYPES = frozenset({"relay"})
 
@@ -964,6 +981,9 @@ class ServiceRegistry:
         """Yield (scope, scope_id) in resolution order: conv > user > global."""
         if conv_id:
             yield SCOPE_CONV, conv_id
+            parent_id = _parent_conversation_id(conv_id)
+            if parent_id and parent_id != conv_id:
+                yield SCOPE_CONV, parent_id
         if user_id:
             yield SCOPE_USER, user_id
         yield SCOPE_GLOBAL, ""
@@ -1000,13 +1020,17 @@ class ServiceRegistry:
             rsid = self._resolve_scope_id(scope, sid)
             with self._data_lock:
                 for sdef in self._definitions.get(rsid, {}).values():
-                    if sdef.service_id in seen:
+                    seen_key = (
+                        sdef.service_id if service_type != "packageRuntime"
+                        else _package_runtime_dedupe_key(sdef)
+                    )
+                    if seen_key in seen:
                         continue
                     if sdef.service_type == service_type:
                         if enabled_only and not sdef.enabled:
                             continue
                         result.append(sdef)
-                        seen.add(sdef.service_id)
+                        seen.add(seen_key)
         return result
 
     def resolve_all(self, *, user_id: str = "", conv_id: str = "",

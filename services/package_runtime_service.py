@@ -98,12 +98,25 @@ class PackageRuntimeService(Service):
             "operations": self.get_operations(),
         }
 
+    def __getattr__(self, name: str):
+        if name.startswith("_"):
+            raise AttributeError(name)
+        operations = self.get_operations()
+        if name not in operations:
+            raise AttributeError(name)
+
+        def _operation(**kwargs):
+            return self._invoke_media_operation(name, kwargs)
+
+        return _operation
+
     def set_runtime_context(self, *, user_id: str = "", conversation_id: str = "",
-                            scope: str = "") -> None:
+                            scope: str = "", agent_name: str = "") -> None:
         self._runtime_context = {
             "user_id": user_id,
             "conversation_id": conversation_id,
             "scope": scope or ("conversation" if conversation_id else "user"),
+            "agent_name": agent_name,
         }
 
     def generate(self, **kwargs) -> Dict[str, Any]:
@@ -114,7 +127,9 @@ class PackageRuntimeService(Service):
         if not operation:
             raise ServiceError("PFP service operation is required")
         operations = self.get_operations()
-        if operations and operation not in operations:
+        if not operations:
+            raise ServiceError("PFP service provider declares no operations")
+        if operation not in operations:
             raise ServiceError(
                 f"PFP service operation '{operation}' is not declared. Supported: {sorted(operations.keys())}.")
         if not self.is_connected():

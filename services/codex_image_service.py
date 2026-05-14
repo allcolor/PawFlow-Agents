@@ -68,10 +68,13 @@ class CodexImageService(BaseImageGenerationService):
         self.cleanup = bool(self.config.get("cleanup", True))
         self._runtime_user_id = ""
         self._runtime_conversation_id = ""
+        self._runtime_agent_name = ""
 
-    def set_runtime_context(self, user_id: str = "", conversation_id: str = ""):
+    def set_runtime_context(self, user_id: str = "", conversation_id: str = "",
+                            agent_name: str = "", **_: object):
         self._runtime_user_id = user_id or ""
         self._runtime_conversation_id = conversation_id or ""
+        self._runtime_agent_name = agent_name or ""
 
     def _create_connection(self):
         if not self.llm_service:

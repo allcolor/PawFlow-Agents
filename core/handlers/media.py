@@ -60,6 +60,7 @@ class ImageGenerationHandler(ToolHandler):
     _service_resolver = None  # () -> (service, error_msg)
     _user_id: str = ""
     _conversation_id: str = ""
+    _agent_name: str = ""
 
     @property
     def name(self) -> str:
@@ -153,9 +154,22 @@ class ImageGenerationHandler(ToolHandler):
     def set_conversation_id(self, conversation_id: str):
         self._conversation_id = conversation_id
 
+    def set_agent_name(self, agent_name: str):
+        self._agent_name = agent_name
+
     def set_service_resolver(self, resolver):
         """Set a resolver function: () -> (service, error_msg)."""
         self._service_resolver = resolver
+
+    @staticmethod
+    def _required_video_methods(arguments: Dict[str, Any]):
+        if arguments.get("image_url") and arguments.get("end_image_url"):
+            return ("frame_to_video",)
+        if arguments.get("video_url"):
+            return ("video_edit",)
+        if arguments.get("image_url"):
+            return ("image_to_video", "reference_to_video")
+        return ("generate",)
 
     def execute(self, arguments: Dict[str, Any]) -> str:
         import time as _time
@@ -187,6 +201,7 @@ class ImageGenerationHandler(ToolHandler):
                 service.set_runtime_context(
                     user_id=self._user_id,
                     conversation_id=getattr(self, "_conversation_id", "") or "",
+                    agent_name=getattr(self, "_agent_name", "") or "",
                 )
             gen_args = {k: v for k, v in arguments.items()
                         if k not in ("destination", "path", "service", "image_service")}
@@ -227,6 +242,7 @@ class EditImageHandler(ToolHandler):
     _service_resolver = None  # () -> (service, error_msg)
     _user_id: str = ""
     _conversation_id: str = ""
+    _agent_name: str = ""
 
     @property
     def name(self) -> str:
@@ -300,6 +316,9 @@ class EditImageHandler(ToolHandler):
     def set_conversation_id(self, conversation_id: str):
         self._conversation_id = conversation_id
 
+    def set_agent_name(self, agent_name: str):
+        self._agent_name = agent_name
+
     def set_service_resolver(self, resolver):
         """Set a resolver: () -> (service, error_msg). Same shape as ImageGenerationHandler."""
         self._service_resolver = resolver
@@ -357,6 +376,7 @@ class EditImageHandler(ToolHandler):
                 service.set_runtime_context(
                     user_id=self._user_id,
                     conversation_id=getattr(self, "_conversation_id", "") or "",
+                    agent_name=getattr(self, "_agent_name", "") or "",
                 )
             edit_kwargs = {k: v for k, v in arguments.items()
                            if k not in ("destination", "path", "image_urls", "service", "image_service")}
@@ -400,6 +420,7 @@ class VideoGenerationHandler(ToolHandler):
     _service_resolver = None  # () -> (service, error_msg)
     _user_id: str = ""
     _conversation_id: str = ""
+    _agent_name: str = ""
 
     @property
     def name(self) -> str:
@@ -511,9 +532,22 @@ class VideoGenerationHandler(ToolHandler):
     def set_conversation_id(self, conversation_id: str):
         self._conversation_id = conversation_id
 
+    def set_agent_name(self, agent_name: str):
+        self._agent_name = agent_name
+
     def set_service_resolver(self, resolver):
         """Set a resolver function: () -> (service, error_msg)."""
         self._service_resolver = resolver
+
+    @staticmethod
+    def _required_video_methods(arguments: Dict[str, Any]):
+        if arguments.get("image_url") and arguments.get("end_image_url"):
+            return ("frame_to_video",)
+        if arguments.get("video_url"):
+            return ("video_edit",)
+        if arguments.get("image_url"):
+            return ("image_to_video", "reference_to_video")
+        return ("generate",)
 
     def _rewrite(self, url: str, service=None) -> str:
         """Convert fs://filestore/<id>/<name> to HTTP unless service reads it locally."""
@@ -542,7 +576,24 @@ class VideoGenerationHandler(ToolHandler):
         else:
             if not self._service_resolver:
                 return "Error: no video service resolver configured"
-            service, error = self._service_resolver()
+            required_methods = self._required_video_methods(arguments)
+            try:
+                import inspect
+                params = inspect.signature(self._service_resolver).parameters
+                accepts_override = any(
+                    param.kind in (
+                        param.POSITIONAL_ONLY,
+                        param.POSITIONAL_OR_KEYWORD,
+                        param.VAR_POSITIONAL,
+                    )
+                    for param in params.values()
+                )
+            except (TypeError, ValueError):
+                accepts_override = False
+            if accepts_override:
+                service, error = self._service_resolver(required_methods)
+            else:
+                service, error = self._service_resolver()
         if not service:
             return f"Error: {error or 'no video generation service available'}"
 
@@ -560,6 +611,7 @@ class VideoGenerationHandler(ToolHandler):
                 service.set_runtime_context(
                     user_id=self._user_id,
                     conversation_id=getattr(self, "_conversation_id", "") or "",
+                    agent_name=getattr(self, "_agent_name", "") or "",
                 )
             gen_args = {k: v for k, v in arguments.items()
                         if k not in ("destination", "path", "image_url",
@@ -635,6 +687,7 @@ class AudioGenerationHandler(ToolHandler):
     _service_resolver = None
     _user_id: str = ""
     _conversation_id: str = ""
+    _agent_name: str = ""
 
     @property
     def name(self) -> str:
@@ -710,6 +763,9 @@ class AudioGenerationHandler(ToolHandler):
     def set_conversation_id(self, conversation_id: str):
         self._conversation_id = conversation_id
 
+    def set_agent_name(self, agent_name: str):
+        self._agent_name = agent_name
+
     def set_service_resolver(self, resolver):
         """Set a resolver function: () -> (service, error_msg)."""
         self._service_resolver = resolver
@@ -744,6 +800,7 @@ class AudioGenerationHandler(ToolHandler):
                 service.set_runtime_context(
                     user_id=self._user_id,
                     conversation_id=getattr(self, "_conversation_id", "") or "",
+                    agent_name=getattr(self, "_agent_name", "") or "",
                 )
             if hasattr(service, "set_callback_base_url"):
                 service.set_callback_base_url(self._base_url)
@@ -815,6 +872,7 @@ class ImageModelInfoHandler(ToolHandler):
     _service_resolver = None
     _user_id: str = ""
     _conversation_id: str = ""
+    _agent_name: str = ""
 
     @property
     def name(self) -> str:
@@ -851,6 +909,9 @@ class ImageModelInfoHandler(ToolHandler):
     def set_conversation_id(self, conversation_id: str):
         self._conversation_id = conversation_id
 
+    def set_agent_name(self, agent_name: str):
+        self._agent_name = agent_name
+
     def set_service_resolver(self, resolver):
         self._service_resolver = resolver
 
@@ -874,6 +935,7 @@ class ImageModelInfoHandler(ToolHandler):
             service.set_runtime_context(
                 user_id=self._user_id,
                 conversation_id=getattr(self, "_conversation_id", "") or "",
+                agent_name=getattr(self, "_agent_name", "") or "",
             )
         if hasattr(service, 'get_model_info'):
             info = service.get_model_info()

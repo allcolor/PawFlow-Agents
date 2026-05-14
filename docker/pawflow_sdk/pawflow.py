@@ -333,8 +333,12 @@ class _PfpRuntime:
             content = content.encode("utf-8")
         if content is None:
             content = b""
+        rel_path = f".pawflow/flowfiles/results/result-{uuid.uuid4().hex}.bin"
+        os.makedirs(os.path.dirname(rel_path), exist_ok=True)
+        with open(rel_path, "wb") as handle:
+            handle.write(bytes(content))
         return {
-            "content_b64": base64.b64encode(bytes(content)).decode("ascii"),
+            "content_path": rel_path,
             "attributes": {str(k): str(v) for k, v in (attributes or {}).items()},
         }
 

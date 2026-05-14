@@ -60,6 +60,41 @@ def test_tool_mcp_filters_inherit_and_agent_override(tmp_path):
     assert is_tool_enabled(cid, "shared_tool", origin="dynamic", origin_scope="user")
 
 
+def test_tool_mcp_filters_subconversations_inherit_parent_until_overridden(tmp_path):
+    ConversationStore.reset()
+    store = ConversationStore.instance()
+    store._store_dir = tmp_path
+    parent = "conv_parent"
+    child = "conv_parent::task::t_1"
+    verify = "conv_parent::task_verify::t_1"
+    delegate = "conv_parent::delegate::agent"
+    store.save(parent, [], user_id="u1")
+    store.save(child, [], user_id="u1")
+
+    set_filters(parent, {
+        "disabled_tools": ["bash"],
+        "enabled_dynamic_tools": ["shared_tool"],
+        "enabled_mcps": ["global_mcp"],
+    })
+
+    for cid in (child, verify, delegate):
+        assert not is_tool_enabled(cid, "bash")
+        assert is_tool_enabled(cid, "shared_tool", origin="dynamic", origin_scope="user")
+        assert not is_tool_enabled(cid, "other_tool", origin="dynamic", origin_scope="user")
+        assert enabled_mcp_names(cid) == {"global_mcp"}
+
+    set_filters(child, {
+        "disabled_tools": [],
+        "enabled_dynamic_tools": ["child_tool"],
+        "enabled_mcps": ["child_mcp"],
+    })
+
+    assert is_tool_enabled(child, "bash")
+    assert not is_tool_enabled(child, "shared_tool", origin="dynamic", origin_scope="user")
+    assert is_tool_enabled(child, "child_tool", origin="dynamic", origin_scope="user")
+    assert enabled_mcp_names(child) == {"child_mcp"}
+
+
 def test_tool_mcp_filter_actions_round_trip(tmp_path):
     ConversationStore.reset()
     store = ConversationStore.instance()

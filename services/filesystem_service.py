@@ -1158,6 +1158,33 @@ class RelayService(BaseService):
                 break
         return b"".join(chunks)
 
+    def copy_file_to_local(self, path: str, local_path: str,
+                           local: bool = False) -> dict:
+        """Copy a relay file to a server-local path without holding it in RAM."""
+        from pathlib import Path
+
+        target = Path(local_path).expanduser().resolve()
+        target.parent.mkdir(parents=True, exist_ok=True)
+
+        first = self._request("read_file_chunked", path, local=local)
+        total_chunks = int(first.get("total_chunks", 1) or 1)
+        chunk_size = int(first.get("chunk_size", 1024 * 1024) or 1024 * 1024)
+        written = 0
+        with target.open("wb") as handle:
+            data = base64.b64decode(first.get("data") or "")
+            handle.write(data)
+            written += len(data)
+            for index in range(1, total_chunks):
+                chunk = self._request(
+                    "read_chunk", path, index=index,
+                    chunk_size=chunk_size, local=local)
+                data = base64.b64decode(chunk.get("data") or "")
+                handle.write(data)
+                written += len(data)
+                if chunk.get("done"):
+                    break
+        return {"path": str(target), "written": written}
+
     def write_file(self, path: str, content: bytes, local: bool = False):
         if len(content) > 50 * 1024 * 1024:  # > 50MB → chunked
             self._write_chunked(path, content, local=local)

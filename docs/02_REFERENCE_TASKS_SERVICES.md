@@ -5,10 +5,14 @@
 PawFlow Package (`.pfp`) files can add flow processor types through `flow_task`
 or `task_provider` objects. Installed package tasks are registered in
 `TaskFactory` as runtime proxies: flows can parse and validate the new task
-type immediately, and execution runs the package entrypoint through the
-conversation default relay. Use `task_def` only for agent/task-definition
-resources; use `flow_task`/`task_provider` for flow processors.
-processors.
+type immediately, and execution runs the package entrypoint through the relay
+named by the task's required `relay` parameter. `relay` is per task and may be
+an expression backed by flow parameters, so one flow can run three imported PFP
+tasks on three different relays with `relay: "${relay_a}"`,
+`relay: "${relay_b}"`, and `relay: "${relay_c}"`. PFP flow imports from a
+conversation prefill that parameter from the conversation default relay when
+one is available. Use `task_def` only for agent/task-definition resources; use
+`flow_task`/`task_provider` for flow processors.
 
 ### 11.1. Base Tasks (System)
 

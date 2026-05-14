@@ -566,6 +566,108 @@ def test_compact_drops_previous_synthetic_context_from_tail(monkeypatch):
     assert "OLD COMPACT ACK" not in joined
 
 
+def test_compact_backfills_tail_budget_past_oversized_tool_result(monkeypatch):
+    """Target tokens are a budget to fill, not just uncovered tail messages.
+
+    A raw tool result can be larger than the remaining tail budget even though
+    its deterministic compacted form is small. The tail selector must account
+    for that post-truncation cost, otherwise it stops early and leaves the
+    compacted context far below compact_target_tokens.
+    """
+    from core import bucket_store as _bs_mod
+    from core.conversation_store import ConversationStore
+    from core.llm_client import LLMMessage, LLMToolCall
+    from tasks.ai.agent_loop import AgentLoopTask
+
+    class _StubCS:
+        def _conv_dir(self, conversation_id):
+            return Path("/tmp/pawflow-test-compact-fill")
+
+        def message_count(self, conversation_id):
+            return 5
+
+    class _StubBS:
+        @classmethod
+        def get(cls, conv_dir):
+            return cls()
+
+        def assemble_summary_header(self):
+            return "H" * 72_000
+
+    def _estimate(self, msgs, **kwargs):
+        total = 0
+        for m in msgs:
+            content = getattr(m, "content", "") or ""
+            if isinstance(content, list):
+                content = " ".join(
+                    str(p.get("text", "")) for p in content
+                    if isinstance(p, dict) and p.get("type") == "text"
+                )
+            total += len(str(content)) // 4 + 4
+            total += 8 * len(getattr(m, "tool_calls", None) or [])
+        return total
+
+    monkeypatch.setattr(ConversationStore, "instance", classmethod(lambda cls: _StubCS()))
+    monkeypatch.setattr(_bs_mod, "BucketStore", _StubBS)
+    monkeypatch.setattr(AgentLoopTask, "_persist_context", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        AgentLoopTask, "_cleanup_orphan_files", staticmethod(lambda *a, **kw: None))
+    monkeypatch.setattr(AgentLoopTask, "_estimate_tokens", _estimate)
+
+    instance = AgentLoopTask.__new__(AgentLoopTask)
+    tool_call = LLMToolCall(id="tc_big", name="bash", arguments={"command": "pytest"})
+    msgs = [
+        LLMMessage(role="system", content="sys", conversation_id="cid", seq=1),
+        LLMMessage(
+            role="user",
+            content="OLDER_FILL_SHOULD_BE_KEPT " + ("fill words " * 2_000),
+            conversation_id="cid",
+            seq=10,
+        ),
+        LLMMessage(
+            role="assistant",
+            content="",
+            tool_calls=[tool_call],
+            conversation_id="cid",
+            seq=11,
+        ),
+        LLMMessage(
+            role="tool",
+            content="large tool output line " * 2_000,
+            tool_call_id="tc_big",
+            conversation_id="cid",
+            seq=12,
+        ),
+        LLMMessage(
+            role="user",
+            content="RECENT_TAIL_MESSAGE",
+            conversation_id="cid",
+            seq=13,
+        ),
+    ]
+
+    class _C:
+        api_key = ""
+        base_url = ""
+
+    out = instance._compact(
+        list(msgs), _C(),
+        max_tokens=200_000,
+        force=True,
+        conversation_id="cid_test",
+        agent_name="assistant",
+        user_id="uid",
+        budget_config={"compact_target_tokens": 25_000},
+    )
+
+    joined = "\n".join(m.content or "" for m in out)
+    assert "OLDER_FILL_SHOULD_BE_KEPT" in joined
+    assert "RECENT_TAIL_MESSAGE" in joined
+    assert "...[compacted" in joined
+    assert _estimate(instance, out) <= 25_000
+    assert _estimate(instance, out) > 23_000
+
+
 def test_independent_compact_summarizes_head_without_bucket_store(monkeypatch):
     """Task/delegate contexts compact locally; they never read the shared pyramid."""
     from core import bucket_store as _bs_mod

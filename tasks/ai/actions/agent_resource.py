@@ -706,6 +706,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                     result["download"] = resolved
             elif pfp_action == "install":
                 from core import pfp_registry
+                agent_name = str(body.get("agent_name") or getattr(self, "_agent_name", "") or "")
                 resolved = pfp_registry.resolve_package_path(
                     body.get("path") or body.get("ref") or "",
                     user_id=user_id,
@@ -727,11 +728,13 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                     replace=bool(body.get("replace", False)),
                     dry_run=bool(body.get("dry_run", False)),
                     secret_bindings=body.get("secret_bindings") or {},
+                    agent_name=agent_name,
                 )
                 if resolved.get("downloaded"):
                     result["download"] = resolved
             elif pfp_action == "update":
                 from core import pfp_registry
+                agent_name = str(body.get("agent_name") or getattr(self, "_agent_name", "") or "")
                 resolved = pfp_registry.resolve_package_path(
                     body.get("path") or body.get("ref") or "",
                     user_id=user_id,
@@ -752,10 +755,12 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                     force=bool(body.get("force", False)),
                     dry_run=bool(body.get("dry_run", False)),
                     secret_bindings=body.get("secret_bindings") or {},
+                    agent_name=agent_name,
                 )
                 if resolved.get("downloaded"):
                     result["download"] = resolved
             elif pfp_action == "dev_load":
+                agent_name = str(body.get("agent_name") or getattr(self, "_agent_name", "") or "")
                 result = pfp_package.dev_load_pfp(
                     body.get("source_dir") or body.get("path") or "",
                     user_id=user_id,
@@ -767,6 +772,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                     replace=bool(body.get("replace", True)),
                     dry_run=bool(body.get("dry_run", False)),
                     secret_bindings=body.get("secret_bindings") or {},
+                    agent_name=agent_name,
                 )
             elif pfp_action == "dev_unload":
                 result = pfp_package.dev_unload_pfp(

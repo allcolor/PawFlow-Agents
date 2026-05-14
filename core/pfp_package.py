@@ -211,7 +211,8 @@ def install_pfp(path: str, *, user_id: str, conversation_id: str = "",
                 scope: str = "user", include: Optional[Iterable[str]] = None,
                 exclude: Optional[Iterable[str]] = None, force: bool = False,
                 replace: bool = False, dry_run: bool = False,
-                secret_bindings: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+                secret_bindings: Optional[Dict[str, str]] = None,
+                agent_name: str = "") -> Dict[str, Any]:
     """Install selected package objects and write local package provenance."""
     if not user_id:
         raise PfpError("user_id is required")
@@ -271,7 +272,7 @@ def install_pfp(path: str, *, user_id: str, conversation_id: str = "",
             object_secret_bindings = _object_secret_bindings(row, secret_bindings)
             record = _install_object(
                 row["object"], package, user_id, conversation_id, scope, force,
-                replace, object_secret_bindings)
+                replace, object_secret_bindings, agent_name=agent_name)
             records.append(record)
             installed.append({"id": obj_id, **record})
         except Exception as exc:
@@ -296,7 +297,8 @@ def dev_load_pfp(source_dir: str, *, user_id: str, conversation_id: str = "",
                  scope: str = "conversation", include: Optional[Iterable[str]] = None,
                  exclude: Optional[Iterable[str]] = None, force: bool = True,
                  replace: bool = True, dry_run: bool = False,
-                 secret_bindings: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+                 secret_bindings: Optional[Dict[str, str]] = None,
+                 agent_name: str = "") -> Dict[str, Any]:
     """Load an unsigned .pfpdir directly for local package development."""
     if not user_id:
         raise PfpError("user_id is required")
@@ -359,7 +361,7 @@ def dev_load_pfp(source_dir: str, *, user_id: str, conversation_id: str = "",
             object_secret_bindings = _object_secret_bindings(row, secret_bindings)
             record = _install_object(
                 row["object"], package, user_id, conversation_id, scope, force,
-                replace, object_secret_bindings)
+                replace, object_secret_bindings, agent_name=agent_name)
             record["dev"] = True
             records.append(record)
             installed.append({"id": obj_id, **record})
@@ -394,7 +396,8 @@ def update_pfp(path: str, *, user_id: str, conversation_id: str = "",
                scope: str = "user", include: Optional[Iterable[str]] = None,
                exclude: Optional[Iterable[str]] = None, force: bool = False,
                dry_run: bool = False,
-               secret_bindings: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+               secret_bindings: Optional[Dict[str, str]] = None,
+               agent_name: str = "") -> Dict[str, Any]:
     """Update objects previously installed from the same package.
 
     By default only objects already recorded for this package are updated.
@@ -467,6 +470,7 @@ def update_pfp(path: str, *, user_id: str, conversation_id: str = "",
         force=force,
         replace=True,
         dry_run=dry_run,
+        agent_name=agent_name,
         secret_bindings=_merge_record_secret_bindings(
             record, allowed, update_secret_bindings),
     )
@@ -610,6 +614,50 @@ def load_all_installed_package_tasks() -> Dict[str, Any]:
                     "error": str(exc),
                 })
     return {"ok": not errors, "loaded": loaded, "errors": errors}
+
+
+def resolve_installed_flow_task_runtime(task_type: str, *, user_id: str,
+                                        conversation_id: str = "",
+                                        scope: str = "conversation") -> Dict[str, Any]:
+    """Resolve the installed PFP flow task runtime for this execution scope."""
+    task_type = str(task_type or "").strip()
+    if not task_type:
+        raise PfpError("task_type is required")
+    if not user_id:
+        raise PfpError("user_id is required")
+    def _conversation_scope_ids(cid: str) -> list[str]:
+        cid = str(cid or "")
+        ids = [cid] if cid else []
+        for marker in ("::task::", "::task_verify::", "::delegate::"):
+            if cid and marker in cid:
+                parent = cid.split(marker, 1)[0]
+                if parent and parent not in ids:
+                    ids.append(parent)
+                break
+        return ids
+
+    scopes = []
+    if scope in {"conversation", "conv"}:
+        if not conversation_id:
+            raise PfpError("conversation_id is required for conversation-scoped PFP flow tasks")
+        for cid in _conversation_scope_ids(conversation_id):
+            scopes.append(("conversation", cid))
+    scopes.append(("user", ""))
+
+    for candidate_scope, scope_id in scopes:
+        root = _install_scope_dir(user_id, scope_id, candidate_scope)
+        matches = []
+        if root.exists():
+            for path in sorted(root.glob("*.json")):
+                record = _read_json_file(path)
+                for obj in record.get("objects") or []:
+                    if obj.get("kind") == "flow_task" and obj.get("task_type") == task_type:
+                        matches.append(obj)
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            raise PfpError(f"PFP flow task type is ambiguous in {candidate_scope} scope: {task_type}")
+    raise PfpError(f"PFP flow task is not installed for this scope: {task_type}")
 
 
 def export_pfpdir(package_id: str, version: str, include: Iterable[str], *,
@@ -823,7 +871,9 @@ def _object_plan(obj: Dict[str, Any], package: Dict[str, Any], user_id: str,
         reason = "missing package dependency: " + ", ".join(
             _format_dependency(dep) for dep in missing_dependencies)
     if installable and status == "new":
-        status = _existing_status(obj_type, name, user_id, conversation_id, scope)
+        status = _existing_status(
+            obj_type, _existing_status_name(obj_type, obj, package, path, name),
+            user_id, conversation_id, scope)
     if obj_type in {"service", "service_definition"}:
         risk = "medium"
     if obj_type in {"tool", "service_provider", "flow_task", "task_provider"}:
@@ -856,6 +906,23 @@ def _object_plan(obj: Dict[str, Any], package: Dict[str, Any], user_id: str,
         "capabilities": capabilities,
         "object": obj,
     }
+
+
+def _existing_status_name(obj_type: str, obj: Dict[str, Any], package: Dict[str, Any],
+                          path: str, name: str) -> str:
+    if obj_type == "service_provider":
+        service_id = str(obj.get("service_id") or "").strip()
+        if service_id:
+            return service_id
+        if path and path.endswith(".json"):
+            try:
+                metadata = _load_json_bytes(package["files"][_safe_relpath(path)])
+                service_id = str(metadata.get("service_id") or "").strip()
+                if service_id:
+                    return service_id
+            except Exception:
+                pass
+    return name
 
 
 def _package_update_diff(manifest: Dict[str, Any], package: Dict[str, Any],
@@ -1128,7 +1195,8 @@ def _merge_record_secret_bindings(record: Dict[str, Any], selected: set,
 def _install_object(obj: Dict[str, Any], package: Dict[str, Any], user_id: str,
                     conversation_id: str, scope: str, force: bool,
                     replace: bool,
-                    secret_bindings: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+                    secret_bindings: Optional[Dict[str, str]] = None,
+                    agent_name: str = "") -> Dict[str, Any]:
     obj_type = obj["type"]
     obj_id = obj["id"]
     name = obj.get("name") or _name_from_id(obj_id)
@@ -1165,6 +1233,8 @@ def _install_object(obj: Dict[str, Any], package: Dict[str, Any], user_id: str,
         }
     if obj_type == "flow":
         data = _load_json_bytes(package["files"][rel])
+        _inject_package_flow_task_relays(
+            data, package, _install_default_relay_id(conversation_id, agent_name))
         data["installed_from"] = provenance
         fqn = str(obj.get("fqn") or data.get("fqn") or name)
         _write_flow(fqn, data, user_id, conversation_id, scope, replace)
@@ -1357,6 +1427,53 @@ def _register_flow_task_proxy(data: Dict[str, Any]) -> None:
     register_package_task_proxy(data["task_type"], data)
 
 
+def _install_default_relay_id(conversation_id: str, agent_name: str = "") -> str:
+    if not conversation_id:
+        return ""
+    from core.relay_bindings import get_default
+    return str(get_default(conversation_id, agent=agent_name) or "")
+
+
+def _package_flow_task_types(package: Dict[str, Any]) -> set[str]:
+    manifest = package["manifest"]
+    task_types = set()
+    for obj in manifest.get("objects") or []:
+        if str(obj.get("type") or "") not in {"flow_task", "task_provider"}:
+            continue
+        metadata = {}
+        rel = str(obj.get("path") or "")
+        if rel.endswith(".json"):
+            try:
+                metadata = _load_json_bytes(package["files"][_safe_relpath(rel)])
+            except Exception:
+                metadata = {}
+        task_type = str(
+            obj.get("task_type") or obj.get("type_name")
+            or metadata.get("task_type") or metadata.get("type")
+            or obj.get("name") or ""
+        ).strip()
+        if task_type:
+            task_types.add(task_type)
+    return task_types
+
+
+def _inject_package_flow_task_relays(data: Dict[str, Any], package: Dict[str, Any], relay_id: str) -> None:
+    if not relay_id:
+        return
+    task_types = _package_flow_task_types(package)
+    if not task_types:
+        return
+    tasks = data.get("tasks") or {}
+    if not isinstance(tasks, dict):
+        return
+    for task in tasks.values():
+        if not isinstance(task, dict) or str(task.get("type") or "") not in task_types:
+            continue
+        parameters = task.setdefault("parameters", {})
+        if isinstance(parameters, dict):
+            parameters.setdefault("relay", relay_id)
+
+
 def _load_resource_data(package: Dict[str, Any], rel: str, rtype: str, name: str) -> Dict[str, Any]:
     data = package["files"][rel]
     if rtype == "skill" and rel.endswith("SKILL.md"):
@@ -1468,6 +1585,42 @@ def _write_flow(fqn: str, data: Dict[str, Any], user_id: str, conversation_id: s
     repo.create_flow(fqn, repo_scope, data, user_id=user_id, conv_id=conversation_id)
 
 
+def _uninstall_flow(record: Dict[str, Any], user_id: str,
+                    conversation_id: str, scope: str, force: bool) -> bool:
+    from core.paths import flow_dir, flow_latest_file, flow_version_file, parse_flow_fqn
+    from core.repository import ScopedRepository
+    fqn = str(record.get("fqn") or "")
+    if not fqn:
+        return False
+    repo_scope = "conv" if scope == "conversation" else scope
+    current = ScopedRepository.instance().get_flow(
+        fqn, repo_scope, user_id=user_id, conv_id=conversation_id)
+    if not current:
+        return False
+    installed_from = current.get("installed_from") or {}
+    if not force and installed_from.get("hash") != record.get("hash"):
+        return False
+    package, flowname, version = parse_flow_fqn(fqn)
+    if not version:
+        return False
+    version_path = flow_version_file(
+        package, flowname, version, repo_scope, user_id, conversation_id)
+    if not version_path.exists():
+        return False
+    version_path.unlink()
+    flow_path = flow_dir(package, flowname, repo_scope, user_id, conversation_id)
+    versions_dir = flow_path / "versions"
+    remaining = sorted(versions_dir.glob("*.json")) if versions_dir.exists() else []
+    if remaining:
+        _write_json_file(flow_latest_file(
+            package, flowname, repo_scope, user_id, conversation_id), {
+                "version": remaining[-1].stem,
+            })
+    else:
+        shutil.rmtree(flow_path, ignore_errors=True)
+    return True
+
+
 def _write_service(data: Dict[str, Any], user_id: str, conversation_id: str,
                    scope: str, replace: bool) -> None:
     from core.service_registry import ServiceRegistry, SCOPE_CONV, SCOPE_USER
@@ -1521,24 +1674,37 @@ def _uninstall_object(record: Dict[str, Any], user_id: str, conversation_id: str
         from core.service_registry import ServiceRegistry, SCOPE_CONV, SCOPE_USER
         reg_scope = SCOPE_CONV if scope == "conversation" else SCOPE_USER
         scope_id = conversation_id if scope == "conversation" else user_id
-        ServiceRegistry.get_instance().uninstall(reg_scope, scope_id, record["service_id"])
+        reg = ServiceRegistry.get_instance()
+        current = reg.get_definition(reg_scope, scope_id, record["service_id"])
+        if current and not force:
+            installed_from = (current.config or {}).get("installed_from") or {}
+            if installed_from.get("hash") != record.get("hash"):
+                return False
+        reg.uninstall(reg_scope, scope_id, record["service_id"])
         return True
     if kind == "flow_task":
         from core import TaskFactory
         task_type = str(record.get("task_type") or "")
         current = TaskFactory.get(task_type) if task_type in TaskFactory.list_types() else None
-        if current and not force:
+        current_matches = False
+        if current:
             runtime = getattr(current, "PACKAGE_RUNTIME", {}) or {}
             installed_from = getattr(current, "INSTALLED_FROM", {}) or {}
-            if (runtime.get("object_id") != record.get("object_id")
-                    or installed_from.get("hash") != record.get("hash")):
-                return False
+            current_matches = (
+                runtime.get("object_id") == record.get("object_id")
+                and installed_from.get("hash") == record.get("hash")
+            )
         if task_type:
-            TaskFactory._tasks.pop(task_type, None)
+            if current_matches:
+                replacement = _find_replacement_flow_task_record(task_type, record)
+                if replacement:
+                    _register_flow_task_proxy(replacement)
+                else:
+                    TaskFactory._tasks.pop(task_type, None)
             return True
         return False
     if kind == "flow":
-        return False
+        return _uninstall_flow(record, user_id, conversation_id, scope, force)
     return False
 
 
@@ -1565,16 +1731,40 @@ def _record_is_locally_modified(record: Dict[str, Any], user_id: str,
         installed_from = (sdef.config or {}).get("installed_from") or {}
         return installed_from.get("hash") != record.get("hash")
     if kind == "flow_task":
-        from core import TaskFactory
         task_type = str(record.get("task_type") or "")
-        if task_type not in TaskFactory.list_types():
+        if not task_type:
             return False
-        current = TaskFactory.get(task_type)
-        runtime = getattr(current, "PACKAGE_RUNTIME", {}) or {}
-        installed_from = getattr(current, "INSTALLED_FROM", {}) or {}
+        try:
+            current = resolve_installed_flow_task_runtime(
+                task_type, user_id=user_id,
+                conversation_id=conversation_id, scope=scope)
+        except Exception:
+            return False
+        runtime = current.get("package_runtime") or {}
+        installed_from = current.get("installed_from") or {}
         return (runtime.get("object_id") != record.get("object_id")
                 or installed_from.get("hash") != record.get("hash"))
     return False
+
+
+def _find_replacement_flow_task_record(task_type: str,
+                                       removed: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    removed_object_id = str(removed.get("object_id") or "")
+    removed_package = str((removed.get("installed_from") or {}).get("package") or "")
+    for path, _scope, _user_id, _conversation_id in _iter_install_record_paths():
+        try:
+            record = _read_json_file(path)
+        except Exception:
+            continue
+        for obj in record.get("objects") or []:
+            if obj.get("kind") != "flow_task" or obj.get("task_type") != task_type:
+                continue
+            obj_package = str((obj.get("installed_from") or {}).get("package") or "")
+            if (str(obj.get("object_id") or "") == removed_object_id
+                    and obj_package == removed_package):
+                continue
+            return obj
+    return None
 
 
 def _write_install_record(package: Dict[str, Any], user_id: str, conversation_id: str,
@@ -1868,7 +2058,16 @@ def _existing_status(obj_type: str, name: str, user_id: str,
         if obj_type in {"flow_task", "task_provider"}:
             from core import TaskFactory
             task_type = name
-            return "conflict" if task_type in TaskFactory.list_types() else "new"
+            current = TaskFactory.get(task_type) if task_type in TaskFactory.list_types() else None
+            if current and not getattr(current, "PACKAGE_RUNTIME", None):
+                return "conflict"
+            try:
+                resolve_installed_flow_task_runtime(
+                    task_type, user_id=user_id,
+                    conversation_id=conversation_id, scope=scope)
+                return "conflict"
+            except Exception:
+                return "new"
         if obj_type in {"service", "service_definition"}:
             from core.service_registry import ServiceRegistry, SCOPE_CONV, SCOPE_USER
             reg_scope = SCOPE_CONV if scope == "conversation" else SCOPE_USER
@@ -1989,6 +2188,11 @@ def _dependency_package(item: Any, *, strict: bool) -> Dict[str, str]:
         if version:
             _validate_version_ref(version)
             dep["version"] = version
+        object_ref = str(item.get("object") or "").strip()
+        if object_ref and ":" not in object_ref:
+            raise PfpError("package dependency object must be type:name")
+        if object_ref:
+            dep["object"] = object_ref
         return dep
     raise PfpError("package dependency entries must be strings or objects")
 
@@ -2182,8 +2386,24 @@ def _missing_package_dependencies(package_id: str, dependencies: List[Dict[str, 
         if not installed_version or not _version_satisfies(installed_version, dep_version):
             missing.append(dep)
             continue
-        if dep_object and dep_object not in set(installed_record.get("objects") or []):
+        installed_objects = set(installed_record.get("objects") or [])
+        accepted_objects = {dep_object}
+        if dep_object.startswith("service:"):
+            accepted_objects.add("service_provider:" + dep_object.split(":", 1)[1])
+        if dep_object and not accepted_objects.intersection(installed_objects):
             missing.append(dep)
+            continue
+        if dep_object and dep_version:
+            object_versions = installed_record.get("object_versions") or {}
+            matching_versions = [
+                str(object_versions.get(obj_id) or "")
+                for obj_id in accepted_objects
+                if obj_id in installed_objects
+            ]
+            if matching_versions and not any(
+                    _version_satisfies(version, dep_version)
+                    for version in matching_versions):
+                missing.append(dep)
     return missing
 
 
@@ -2197,7 +2417,17 @@ def _installed_package_versions(user_id: str, conversation_id: str, scope: str) 
 def _installed_package_records(user_id: str, conversation_id: str, scope: str) -> Dict[str, Dict[str, Any]]:
     roots = [_install_scope_dir(user_id, "", "user")]
     if scope == "conversation":
-        roots.append(_install_scope_dir(user_id, conversation_id, "conversation"))
+        conv_ids = []
+        for marker in ("::task::", "::task_verify::", "::delegate::"):
+            if conversation_id and marker in conversation_id:
+                parent = conversation_id.split(marker, 1)[0]
+                if parent:
+                    conv_ids.append(parent)
+                break
+        if conversation_id:
+            conv_ids.append(conversation_id)
+        for conv_id in conv_ids:
+            roots.append(_install_scope_dir(user_id, conv_id, "conversation"))
     packages: Dict[str, Dict[str, Any]] = {}
     for root in roots:
         if not root.exists():
@@ -2210,13 +2440,22 @@ def _installed_package_records(user_id: str, conversation_id: str, scope: str) -
             package_id = str(record.get("package") or "")
             version = str(record.get("version") or "")
             if package_id and version:
+                objects = [
+                    str(obj.get("object_id") or "")
+                    for obj in record.get("objects") or []
+                    if obj.get("object_id")
+                ]
+                object_versions = {}
+                for obj in record.get("objects") or []:
+                    object_id = str(obj.get("object_id") or "")
+                    if not object_id:
+                        continue
+                    runtime = obj.get("package_runtime") or {}
+                    object_versions[object_id] = str(runtime.get("version") or version)
                 packages[package_id] = {
                     "version": version,
-                    "objects": [
-                        str(obj.get("object_id") or "")
-                        for obj in record.get("objects") or []
-                        if obj.get("object_id")
-                    ],
+                    "objects": objects,
+                    "object_versions": object_versions,
                 }
     return packages
 

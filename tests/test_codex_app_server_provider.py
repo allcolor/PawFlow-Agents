@@ -1,6 +1,7 @@
 """Static coverage for the isolated Codex app-server provider."""
 
 import inspect
+import json
 import os
 import time
 
@@ -93,11 +94,13 @@ def test_codex_mcp_config_uses_absolute_python_for_app_server_spawn():
     assert 'python_bin = "/usr/bin/python3"' in src
 
 
-def test_codex_mcp_config_does_not_set_tool_timeout():
+def test_codex_mcp_config_sets_long_tool_timeout():
     from core.llm_providers.codex_session import CodexSessionMixin
 
     src = inspect.getsource(CodexSessionMixin._codex_setup_mcp_config)
-    assert "tool_timeout_sec" not in src
+    assert "tool_timeout_sec = 3600" in src
+    assert "tool_timeout_sec = 120" not in src
+    assert "tool_timeout_sec = 300" not in src
     assert "startup_timeout_sec = 20" in src
 
 
@@ -174,6 +177,124 @@ def test_codex_app_server_uses_completed_message_as_text_source_of_truth():
     assert "dropping non-final assistant delta text" in src
     assert "final_text_parts.append(final_text)" in src
     assert '"".join(final_text_parts).strip() or "".join(text_parts).strip()' in src
+
+
+def test_codex_app_server_does_not_stop_live_turn_at_tool_boundary_for_preempt():
+    src = inspect.getsource(LLMCodexAppServerMixin._stream_codex_app_server)
+    assert "preempt_boundary_stop" not in src
+    assert "preempt pending after tool_result" not in src
+    assert 'finish_reason="stop"' in src
+    assert '"preempt_boundary_stop"' not in src
+
+
+def test_codex_app_server_preempt_targets_matching_active_turn(monkeypatch):
+    class Proc:
+        def poll(self):
+            return None
+
+    client = LLMClient(provider="codex-app-server", config={})
+    target_proc = Proc()
+    other_proc = Proc()
+    lock = client._codex_app_ensure_lock()
+    client._codex_app_active = {
+        ("alice", "conv-main", "assistant", 1.0): {
+            "proc": target_proc,
+            "thread_id": "thread-main",
+            "turn_id": "turn-main",
+            "workdir": "/tmp/main",
+            "container_dir": "/cc_sessions/main",
+            "started_at": 1.0,
+        },
+        ("alice", "_memory_extract", "memory", 2.0): {
+            "proc": other_proc,
+            "thread_id": "thread-memory",
+            "turn_id": "turn-memory",
+            "workdir": "/tmp/memory",
+            "container_dir": "/cc_sessions/memory",
+            "started_at": 2.0,
+        },
+    }
+    client._codex_app_lock = lock
+    sent = []
+    monkeypatch.setattr(
+        client, "_codex_app_send", lambda proc, msg: sent.append((proc, msg)))
+
+    assert client._codex_app_send_user_message(
+        "preempt",
+        user_id="alice",
+        conversation_id="conv-main",
+        agent_name="assistant",
+    ) is True
+
+    assert sent
+    proc, msg = sent[0]
+    assert proc is target_proc
+    assert msg["method"] == "turn/steer"
+    assert msg["params"]["threadId"] == "thread-main"
+    assert msg["params"]["expectedTurnId"] == "turn-main"
+
+
+def test_codex_app_server_preempt_rollout_check_ignores_initial_prompt_false_positive(tmp_path):
+    rollout = tmp_path / "rollout.jsonl"
+    preempt_text = "Confirmes bordel !!!"
+    rows = [
+        {"payload": {"type": "message", "role": "user", "content": [
+            {"type": "input_text", "text": f"old compacted history: {preempt_text}"},
+        ]}},
+        {"payload": {"type": "message", "role": "assistant", "content": [
+            {"type": "output_text", "text": "ordinary work continued"},
+        ]}},
+    ]
+    rollout.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+
+    status = LLMCodexAppServerMixin._codex_app_check_preempt_in_rollout(
+        str(rollout), [{"text": preempt_text, "after_line": 2}])
+
+    assert status == "unread"
+
+
+def test_codex_app_server_preempt_rollout_check_accepts_post_steer_user_message(tmp_path):
+    rollout = tmp_path / "rollout.jsonl"
+    preempt_text = "test preempt exact"
+    rows = [
+        {"payload": {"type": "message", "role": "user", "content": [
+            {"type": "input_text", "text": f"old compacted history: {preempt_text}"},
+        ]}},
+        {"payload": {"type": "message", "role": "assistant", "content": [
+            {"type": "output_text", "text": "before steer"},
+        ]}},
+        {"payload": {"type": "message", "role": "user", "content": [
+            {"type": "input_text", "text": preempt_text},
+        ]}},
+        {"payload": {"type": "message", "role": "assistant", "content": [
+            {"type": "output_text", "text": "ack after steer"},
+        ]}},
+    ]
+    rollout.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+
+    status = LLMCodexAppServerMixin._codex_app_check_preempt_in_rollout(
+        str(rollout), [{"text": preempt_text, "after_line": 2}])
+
+    assert status == "done"
+
+
+def test_codex_app_server_preempt_rollout_check_only_requires_post_steer_user_item(tmp_path):
+    rollout = tmp_path / "rollout.jsonl"
+    preempt_text = "test preempt without visible ack"
+    rows = [
+        {"payload": {"type": "message", "role": "assistant", "content": [
+            {"type": "output_text", "text": "before steer"},
+        ]}},
+        {"payload": {"type": "message", "role": "user", "content": [
+            {"type": "input_text", "text": preempt_text},
+        ]}},
+    ]
+    rollout.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+
+    status = LLMCodexAppServerMixin._codex_app_check_preempt_in_rollout(
+        str(rollout), [{"text": preempt_text, "after_line": 1}])
+
+    assert status == "done"
 
 
 def test_codex_live_sweeper_does_not_evict_active_turn():

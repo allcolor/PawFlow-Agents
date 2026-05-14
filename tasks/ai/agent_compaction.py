@@ -767,6 +767,46 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                 chars_per_token=chars_per_token,
                 token_multiplier=_tmul)
 
+        def _estimate_tail_selection_cost(m: LLMMessage) -> int:
+            """Estimate the token cost used for tail walk-back selection.
+
+            Oversized tool results are selected at their post-truncation cost,
+            because step 2a will truncate them before persisting the final
+            compacted context. Using the raw cost here can stop the walk-back
+            early and leave thousands of target tokens unused.
+            """
+            if m.role != "tool":
+                return _estimate([m])
+            content = m.content
+            if isinstance(content, str):
+                if len(content) <= self._TOOL_TRUNC_LIMIT:
+                    return _estimate([m])
+                content = (
+                    content[:self._TOOL_TRUNC_LIMIT]
+                    + "\n...[compacted — re-call tool if needed]..."
+                )
+            elif isinstance(content, list):
+                text_parts = [p for p in content if p.get("type") == "text"]
+                text = " ".join(p.get("text", "") for p in text_parts)
+                if len(text) > self._TOOL_TRUNC_LIMIT:
+                    content = (
+                        text[:self._TOOL_TRUNC_LIMIT]
+                        + "\n...[compacted — re-call tool if needed]..."
+                    )
+                else:
+                    content = text
+            else:
+                return _estimate([m])
+            return _estimate([LLMMessage(
+                role=m.role,
+                content=content,
+                tool_call_id=getattr(m, 'tool_call_id', None),
+                timestamp=getattr(m, 'timestamp', 0.0),
+                seq=getattr(m, 'seq', 0),
+                source=getattr(m, 'source', None),
+                conversation_id=getattr(m, 'conversation_id', None),
+            )])
+
         def _is_independent_summary(m: LLMMessage) -> bool:
             source = getattr(m, 'source', None) or {}
             source_type = source.get("type") if isinstance(source, dict) else ""
@@ -1053,11 +1093,14 @@ class AgentCompactionMixin(AgentSummarizeMixin):
             _tail_budget = max(1000, cap - _header_tokens - _SAFETY_MARGIN)
 
             _tail_msgs = messages[start_idx:]
-            # Walk from end accumulating per-msg estimates.
+            # Walk from end accumulating per-msg estimates. Tool results use
+            # post-truncation cost here, matching step 2a below, so a large
+            # relay/bash output does not block useful older context that still
+            # fits inside the target budget after deterministic truncation.
             _accum = 0
             _take_from = len(_tail_msgs)
             for _i in range(len(_tail_msgs) - 1, -1, -1):
-                _cost = _estimate([_tail_msgs[_i]])
+                _cost = _estimate_tail_selection_cost(_tail_msgs[_i])
                 if _accum + _cost > _tail_budget and _i < len(_tail_msgs) - 1:
                     # Include at LEAST one msg even if oversized — a
                     # single oversized recent msg beats an empty tail.

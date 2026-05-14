@@ -508,9 +508,11 @@ class TestFlowManagerHandler(unittest.TestCase):
         from core.deployment_registry import DeploymentRegistry
         DeploymentRegistry.reset()
 
-    def _make_handler(self, user_id="alice"):
+    def _make_handler(self, user_id="alice", agent_name=""):
         h = FlowManagerHandler()
         h.set_user_id(user_id)
+        if agent_name:
+            h.set_agent_name(agent_name)
         return h
 
     def _sample_definition(self, flow_id="flow1", name="Test Flow"):
@@ -556,6 +558,16 @@ class TestFlowManagerHandler(unittest.TestCase):
         inst = DeploymentRegistry.get_instance().get("flow1")
         self.assertEqual(inst.owner, "bob")
 
+    def test_create_flow_agent_name_is_persisted(self):
+        h = self._make_handler("bob", agent_name="agentA")
+        h.execute({
+            "action": "create",
+            "definition": self._sample_definition(),
+        })
+        from core.deployment_registry import DeploymentRegistry
+        inst = DeploymentRegistry.get_instance().get("flow1")
+        self.assertEqual(inst.agent_name, "agentA")
+
     def test_start_flow(self):
         h = self._make_handler()
         h.execute({"action": "create", "definition": self._sample_definition()})
@@ -564,6 +576,49 @@ class TestFlowManagerHandler(unittest.TestCase):
         from core.deployment_registry import DeploymentRegistry
         inst = DeploymentRegistry.get_instance().get("flow1")
         self.assertIsNotNone(inst)
+
+    def test_start_flow_uses_flow_fqn_when_flow_path_is_missing(self):
+        from core.deployment_registry import DeployedInstance, DeploymentRegistry
+
+        h = self._make_handler()
+        dep_reg = DeploymentRegistry.get_instance()
+        dep_reg._ensure_loaded()
+        dep_reg._instances["flow1"] = DeployedInstance(
+            instance_id="flow1",
+            flow_id="flow1",
+            flow_name="Flow 1",
+            flow_fqn="default.flow1:1.0.0",
+            flow_path="/tmp/pawflow-missing-flow-template.json",
+            owner="alice",
+            conversation_id="conv1",
+        )
+
+        class _Repo:
+            def get_flow(self, fqn, scope):
+                self.fqn = fqn
+                self.scope = scope
+                return self_definition()
+
+        class _Executor:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def start(self):
+                pass
+
+            def stop(self):
+                pass
+
+        self_definition = self._sample_definition
+        repo = _Repo()
+        with patch("core.repository.ScopedRepository.instance", return_value=repo), \
+                patch("engine.parser.FlowParser.parse", return_value=MagicMock(services={})), \
+                patch("engine.continuous_executor.ContinuousFlowExecutor", _Executor):
+            result = h.execute({"action": "start", "flow_id": "flow1"})
+
+        self.assertIn("started", result)
+        self.assertEqual(repo.fqn, "default.flow1:1.0.0")
+        self.assertEqual(repo.scope, "global")
 
     def test_stop_flow(self):
         h = self._make_handler()

@@ -153,7 +153,8 @@ and marks the installer deployment stopped for restart-safe restoration.
      system settings and services UI after installation
 
 7. Relay image profiles
-   - server relays use the official `server-full` relay image profile
+   - server workspace relays use the official `server-full` relay image profile
+   - server execution relays use the official `server-minimal` relay image profile and are selected explicitly as relay parameter values by deployed flows
    - client relays are configured later by the user from selectable capabilities
    - expose `client-minimal`, language presets, desktop/browser presets, and advanced per-feature checkboxes
    - always include the required PawFlow relay base with Python runtime, FUSE mounts, and `/workspace`/`/cc_sessions`/`/filestore` mountpoints

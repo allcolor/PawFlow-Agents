@@ -42,16 +42,19 @@ class PackageCapabilityBroker:
         for grant in grants:
             parsed_grant = _parse_grant(grant, target_kind)
             if _grant_matches(parsed_grant, target):
+                authorized_target = dict(target)
                 if target.get("package"):
                     version_constraint = target.get("version", "") or parsed_grant.get("version", "")
                     self._require_installed_package(
                         target["package"], version_constraint,
                         f"{target['kind']}:{target['name']}")
+                    if version_constraint:
+                        authorized_target["version"] = version_constraint
                 return {
                     "ok": True,
                     "caller_package": caller_package,
                     "caller_object": caller_object,
-                    "target": target,
+                    "target": authorized_target,
                     "grant": grant,
                 }
         raise PackageCapabilityError(
@@ -68,9 +71,25 @@ class PackageCapabilityBroker:
         if version and not _version_satisfies(installed_version, version):
             raise PackageCapabilityError(
                 f"package dependency version mismatch: {package_id}@{version}")
-        if object_id and object_id not in set(record.get("objects") or []):
+        installed_objects = set(record.get("objects") or [])
+        accepted_objects = {object_id}
+        if object_id.startswith("service:"):
+            accepted_objects.add("service_provider:" + object_id.split(":", 1)[1])
+        if object_id and not accepted_objects.intersection(installed_objects):
             raise PackageCapabilityError(
                 f"package dependency object is not installed: {package_id}/{object_id}")
+        if version and object_id:
+            object_versions = record.get("object_versions") or {}
+            matching_versions = [
+                str(object_versions.get(obj_id) or "")
+                for obj_id in accepted_objects
+                if obj_id in installed_objects
+            ]
+            if matching_versions and not any(
+                    _version_satisfies(candidate, version)
+                    for candidate in matching_versions):
+                raise PackageCapabilityError(
+                    f"package dependency object version mismatch: {package_id}@{version}/{object_id}")
 
 
 def _parse_target_ref(ref: str, expected_kind: str) -> Dict[str, str]:
@@ -92,7 +111,7 @@ def _grant_matches(parsed: Dict[str, str], target: Dict[str, str]) -> bool:
     if not parsed:
         return False
     for key in ("kind", "name", "package"):
-        if parsed.get(key, "") and parsed.get(key, "") != target.get(key, ""):
+        if parsed.get(key, "") != target.get(key, ""):
             return False
     if target.get("version") and parsed.get("version"):
         return _version_satisfies(target["version"], parsed["version"])
@@ -224,7 +243,17 @@ def _split_object_ref(value: str) -> tuple[str, str]:
 def _installed_package_records(user_id: str, conversation_id: str, scope: str) -> Dict[str, Dict[str, Any]]:
     roots = [_install_scope_dir(user_id, "", "user")]
     if scope == "conversation":
-        roots.append(_install_scope_dir(user_id, conversation_id, "conversation"))
+        conv_ids = []
+        for marker in ("::task::", "::task_verify::", "::delegate::"):
+            if conversation_id and marker in conversation_id:
+                parent = conversation_id.split(marker, 1)[0]
+                if parent:
+                    conv_ids.append(parent)
+                break
+        if conversation_id:
+            conv_ids.append(conversation_id)
+        for conv_id in conv_ids:
+            roots.append(_install_scope_dir(user_id, conv_id, "conversation"))
     packages: Dict[str, Dict[str, Any]] = {}
     for root in roots:
         if not root.exists():
@@ -237,13 +266,22 @@ def _installed_package_records(user_id: str, conversation_id: str, scope: str) -
             package_id = str(record.get("package") or "")
             version = str(record.get("version") or "")
             if package_id and version:
+                objects = [
+                    str(obj.get("object_id") or "")
+                    for obj in record.get("objects") or []
+                    if obj.get("object_id")
+                ]
+                object_versions = {}
+                for obj in record.get("objects") or []:
+                    object_id = str(obj.get("object_id") or "")
+                    if not object_id:
+                        continue
+                    runtime = obj.get("package_runtime") or {}
+                    object_versions[object_id] = str(runtime.get("version") or version)
                 packages[package_id] = {
                     "version": version,
-                    "objects": [
-                        str(obj.get("object_id") or "")
-                        for obj in record.get("objects") or []
-                        if obj.get("object_id")
-                    ],
+                    "objects": objects,
+                    "object_versions": object_versions,
                 }
     return packages
 

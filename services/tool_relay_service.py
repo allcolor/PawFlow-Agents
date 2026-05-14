@@ -332,6 +332,9 @@ class ToolRelayService(BaseService):
             cancel_evt = info.get("cancel")
             if cancel_evt:
                 cancel_evt.set()
+            wake_evt = info.get("wake")
+            if wake_evt:
+                wake_evt.set()
             _hooks = list(info.get("kill_hooks") or [])
             _success = 0
             _failure = 0
@@ -370,6 +373,9 @@ class ToolRelayService(BaseService):
                     bg_evt = info.get("background")
                     if bg_evt and not bg_evt.is_set():
                         bg_evt.set()
+                        wake_evt = info.get("wake")
+                        if wake_evt:
+                            wake_evt.set()
                         logger.info("[tool-relay] backgrounded tc_id=%s (request_id=%s)",
                                     tc_id, _rid)
                         return True
@@ -382,6 +388,9 @@ class ToolRelayService(BaseService):
                     bg_evt = info.get("background")
                     if bg_evt and not bg_evt.is_set():
                         bg_evt.set()
+                        wake_evt = info.get("wake")
+                        if wake_evt:
+                            wake_evt.set()
                         logger.info("[tool-relay] backgrounded request_id=%s", _rid)
                         return True
                     elif bg_evt and bg_evt.is_set():
@@ -430,6 +439,9 @@ class ToolRelayService(BaseService):
                     from core.background_tool import is_backgrounded
                     if bg_evt and is_backgrounded(tc_id):
                         bg_evt.set()
+                        wake_evt = info.get("wake")
+                        if wake_evt:
+                            wake_evt.set()
                 except Exception:
                     pass
                 logger.debug(
@@ -464,6 +476,9 @@ class ToolRelayService(BaseService):
             if cancel_evt:
                 cancel_evt.set()
                 cancel_evt_set = True
+            wake_evt = info.get("wake")
+            if wake_evt:
+                wake_evt.set()
             _hooks = list(info.get("kill_hooks") or [])
             _success = 0
             _failure = 0
@@ -576,6 +591,8 @@ class ToolRelayService(BaseService):
         from core import pfp_runtime
         try:
             from core.service_registry import ServiceRegistry
+            self._validate_pfp_host_call_context(
+                invocation, user_id, conversation_id, agent_name)
             registry = self._get_registry(user_id, conversation_id, agent_name)
             host = pfp_runtime.runtime_host_from_invocation(
                 invocation,
@@ -596,6 +613,22 @@ class ToolRelayService(BaseService):
             }
         return {"type": "result", "request_id": request_id, "data": payload}
 
+    @staticmethod
+    def _validate_pfp_host_call_context(invocation: Dict[str, Any], user_id: str,
+                                      conversation_id: str, agent_name: str) -> None:
+        context = invocation.get("context") if isinstance(invocation, dict) else {}
+        if not isinstance(context, dict):
+            raise ValueError("invalid PFP invocation context")
+        expected = {
+            "user_id": user_id or "",
+            "conversation_id": conversation_id or "",
+            "agent_name": agent_name or "",
+        }
+        for key, value in expected.items():
+            actual = str(context.get(key) or "")
+            if actual != value:
+                raise ValueError(f"PFP host-call context mismatch: {key}")
+
     def _get_registry(self, user_id: str = "", conversation_id: str = "",
                        agent_name: str = ""):
         """Get a configured tool registry for this request context.
@@ -614,9 +647,11 @@ class ToolRelayService(BaseService):
         if user_id:
             try:
                 from core.tool_loader import load_tools_into_registry
-                _parent_cid = (conversation_id.split("::task::")[0]
-                               if conversation_id and "::task::" in conversation_id
-                               else (conversation_id or ""))
+                _parent_cid = conversation_id or ""
+                for _sep in ("::task::", "::task_verify::", "::delegate::"):
+                    if _sep in _parent_cid:
+                        _parent_cid = _parent_cid.split(_sep, 1)[0]
+                        break
                 load_tools_into_registry(
                     registry, user_id, _parent_cid)
             except Exception as e:
@@ -639,9 +674,9 @@ class ToolRelayService(BaseService):
                 logger.debug("[tool-relay] tool availability filter failed: %s", e)
 
         # Find the default linked filesystem service for this conversation.
-        fs_svc = self._find_filesystem_service(user_id, conversation_id)
+        fs_svc = self._find_filesystem_service(user_id, conversation_id, agent_name)
         fs_resolver = self._make_filesystem_resolver(
-            user_id, conversation_id, default_service=fs_svc)
+            user_id, conversation_id, agent_name, default_service=fs_svc)
 
         # Configure ALL handlers that need user/filesystem context
         for h in registry.list_tools():
@@ -731,16 +766,23 @@ class ToolRelayService(BaseService):
         except Exception as _e:
             logger.warning("[tool-relay] SpawnAgents wiring failed: %s", _e)
 
-        # Configure media service resolvers (image/video/audio generation)
-        from core.handlers.media import ImageGenerationHandler, ImageModelInfoHandler
+        # Configure media service resolvers (image/video/audio/capabilities)
+        from core.handlers.media import EditImageHandler, ImageGenerationHandler, ImageModelInfoHandler
         from core.handlers.media import VideoGenerationHandler, AudioGenerationHandler
         file_base_url = self.config.get("file_base_url", "") or ""
         for h in registry.list_tools():
-            if isinstance(h, (ImageGenerationHandler, ImageModelInfoHandler)):
+            if isinstance(h, (ImageGenerationHandler, EditImageHandler,
+                              ImageModelInfoHandler)):
                 if file_base_url and hasattr(h, 'set_base_url'):
                     h.set_base_url(file_base_url)
+                image_methods = ("generate",)
+                if isinstance(h, EditImageHandler):
+                    image_methods = ("edit_image",)
+                elif isinstance(h, ImageModelInfoHandler):
+                    image_methods = ("get_model_info",)
                 h.set_service_resolver(
-                    self._make_media_resolver(user_id, conversation_id, "image"))
+                    self._make_media_resolver(
+                        user_id, conversation_id, "image", image_methods))
             elif isinstance(h, VideoGenerationHandler):
                 if file_base_url:
                     h.set_base_url(file_base_url)
@@ -750,7 +792,49 @@ class ToolRelayService(BaseService):
                 if file_base_url:
                     h.set_base_url(file_base_url)
                 h.set_service_resolver(
-                    self._make_media_resolver(user_id, conversation_id, "audio"))
+                    self._make_media_resolver(
+                        user_id, conversation_id, "audio", ("generate",)))
+            elif h.name in ("generate_3d",):
+                if file_base_url and hasattr(h, 'set_base_url'):
+                    h.set_base_url(file_base_url)
+                h.set_service_resolver(
+                    self._make_media_resolver(
+                        user_id, conversation_id, "3d", ("generate_3d",)))
+            elif h.name in ("upscale_image",):
+                if file_base_url and hasattr(h, 'set_base_url'):
+                    h.set_base_url(file_base_url)
+                h.set_service_resolver(
+                    self._make_media_resolver(
+                        user_id, conversation_id, "upscale", ("upscale",)))
+            elif h.name in ("try_on",):
+                if file_base_url and hasattr(h, 'set_base_url'):
+                    h.set_base_url(file_base_url)
+                h.set_service_resolver(
+                    self._make_media_resolver(
+                        user_id, conversation_id, "tryon", ("try_on",)))
+            elif h.name in ("lipsync",):
+                if file_base_url and hasattr(h, 'set_base_url'):
+                    h.set_base_url(file_base_url)
+                h.set_service_resolver(
+                    self._make_media_resolver(
+                        user_id, conversation_id, "lipsync", ("lipsync",)))
+            elif h.name in ("train_image_model",):
+                if file_base_url and hasattr(h, 'set_base_url'):
+                    h.set_base_url(file_base_url)
+                h.set_service_resolver(
+                    self._make_media_resolver(
+                        user_id, conversation_id, "trainer", ("train",)))
+            elif h.name in ("clone_voice", "speak", "delete_voice"):
+                if file_base_url and hasattr(h, 'set_base_url'):
+                    h.set_base_url(file_base_url)
+                voice_methods = {
+                    "clone_voice": ("clone_speak",),
+                    "speak": ("clone_speak",),
+                    "delete_voice": ("delete_voice_id",),
+                }[h.name]
+                h.set_service_resolver(
+                    self._make_media_resolver(
+                        user_id, conversation_id, "voice", voice_methods))
             elif h.name in ("describe_image", "remix_image"):
                 if file_base_url and hasattr(h, 'set_base_url'):
                     h.set_base_url(file_base_url)
@@ -758,8 +842,13 @@ class ToolRelayService(BaseService):
                     h.set_user_id(user_id)
                 if hasattr(h, 'set_conversation_id'):
                     h.set_conversation_id(conversation_id)
+                image_methods = {
+                    "describe_image": ("describe_image",),
+                    "remix_image": ("remix_image",),
+                }[h.name]
                 h.set_service_resolver(
-                    self._make_media_resolver(user_id, conversation_id, "image"))
+                    self._make_media_resolver(
+                        user_id, conversation_id, "image", image_methods))
             elif h.name in ("speech_to_video",):
                 if file_base_url and hasattr(h, 'set_base_url'):
                     h.set_base_url(file_base_url)
@@ -768,7 +857,9 @@ class ToolRelayService(BaseService):
                 if hasattr(h, 'set_conversation_id'):
                     h.set_conversation_id(conversation_id)
                 h.set_service_resolver(
-                    self._make_media_resolver(user_id, conversation_id, "video"))
+                    self._make_media_resolver(
+                        user_id, conversation_id, "speech_to_video",
+                        ("speech_to_video",)))
             elif h.name in ("upscale_video", "remove_background"):
                 if file_base_url and hasattr(h, 'set_base_url'):
                     h.set_base_url(file_base_url)
@@ -776,8 +867,13 @@ class ToolRelayService(BaseService):
                     h.set_user_id(user_id)
                 if hasattr(h, 'set_conversation_id'):
                     h.set_conversation_id(conversation_id)
+                upscale_methods = {
+                    "upscale_video": ("upscale_video",),
+                    "remove_background": ("remove_background",),
+                }[h.name]
                 h.set_service_resolver(
-                    self._make_media_resolver(user_id, conversation_id, "upscale"))
+                    self._make_media_resolver(
+                        user_id, conversation_id, "upscale", upscale_methods))
 
         # Populate conversation-linked filesystems on all BaseFsHandler instances.
         from core.handlers._fs_base import BaseFsHandler, _FS_TYPES
@@ -785,7 +881,7 @@ class ToolRelayService(BaseService):
         if _fs_handlers:
             try:
                 available = self._list_available_filesystem_services(
-                    user_id, conversation_id, _FS_TYPES)
+                    user_id, conversation_id, agent_name, fs_types=_FS_TYPES)
                 for h in _fs_handlers:
                     h.set_available_services(available)
                 logger.debug("Filesystem services for user '%s': %s",
@@ -796,14 +892,22 @@ class ToolRelayService(BaseService):
         return registry
 
     @staticmethod
-    def _make_media_resolver(user_id: str, conversation_id: str, media_type: str):
+    def _make_media_resolver(user_id: str, conversation_id: str, media_type: str,
+                             required_methods=()):
         """Build a resolver closure for image/video/audio services."""
-        def resolver():
+        required_methods = tuple(required_methods or ())
+        def resolver(required_methods_override=()):
             type_map = {
                 "image": ("base_image_generation", "BaseImageGenerationService"),
                 "video": ("base_video_generation", "BaseVideoGenerationService"),
+                "speech_to_video": ("base_video_generation", "BaseVideoGenerationService"),
                 "audio": ("base_audio_generation", "BaseAudioGenerationService"),
+                "3d": ("base_capabilities", "BaseImage3DService"),
                 "upscale": ("base_capabilities", "BaseImageUpscaleService"),
+                "tryon": ("base_capabilities", "BaseTryOnService"),
+                "lipsync": ("base_capabilities", "BaseLipsyncService"),
+                "trainer": ("base_capabilities", "BaseImageTrainerService"),
+                "voice": ("base_voice_clone", "BaseVoiceCloneService"),
             }
             mod_name, cls_name = type_map[media_type]
             import importlib
@@ -831,20 +935,117 @@ class ToolRelayService(BaseService):
             _sreg = ServiceRegistry.get_instance()
             matching = []
             for vtype in valid_types:
-                matching.extend(_sreg.resolve_by_type(vtype, user_id=user_id))
+                matching.extend(_sreg.resolve_by_type(
+                    vtype, user_id=user_id, conv_id=conversation_id))
+            pfp_capabilities = {
+                "image": {"media.image_generation"},
+                "video": {"media.video_generation"},
+                "speech_to_video": {"media.video_generation", "media.lipsync"},
+                "audio": {"media.audio_generation"},
+                "3d": {"media.3d_generation"},
+                "upscale": {
+                    "media.image_upscale", "media.video_upscale",
+                    "media.background_removal",
+                },
+                "tryon": {"media.try_on"},
+                "lipsync": {"media.lipsync"},
+                "trainer": {"media.image_training"},
+                "voice": {"media.voice_clone"},
+            }.get(media_type, set())
+            if pfp_capabilities:
+                for sdef in _sreg.resolve_by_type(
+                        "packageRuntime", user_id=user_id,
+                        conv_id=conversation_id):
+                    runtime = (sdef.config or {}).get("package_runtime") or {}
+                    provides = set(runtime.get("provides") or [])
+                    if provides.intersection(pfp_capabilities):
+                        matching.append(sdef)
+            matching = [
+                sdef for _idx, sdef in sorted(
+                    enumerate(matching),
+                    key=lambda item: (ToolRelayService._service_scope_rank(item[1]), item[0]),
+                )
+            ]
 
             if not matching:
                 return None, f"No {media_type} generation service deployed"
-            # Resolve the first one
-            sid = matching[0].service_id
-            svc = _sreg.resolve(sid, user_id=user_id)
-            if svc:
-                # Different service types expose different methods
-                check = {'upscale': 'upscale'}.get(media_type, 'generate')
-                if hasattr(svc, check):
+            method_map = {
+                "image": ("generate",),
+                "video": (
+                    "generate", "frame_to_video", "image_to_video",
+                    "reference_to_video", "video_edit"),
+                "speech_to_video": ("speech_to_video",),
+                "audio": ("generate",),
+                "3d": ("generate_3d",),
+                "upscale": (
+                    "upscale", "upscale_video", "remove_background"),
+                "tryon": ("try_on",),
+                "lipsync": ("lipsync",),
+                "trainer": ("train",),
+                "voice": ("clone_speak",),
+            }
+            required = tuple(
+                required_methods_override or required_methods
+                or method_map.get(media_type, ()))
+            def _service_supports_required_methods(svc):
+                if not svc:
+                    return False
+                native_proxy_methods = {"get_model_info"}
+                if any(method in native_proxy_methods
+                       and callable(getattr(svc, method, None))
+                       for method in required):
+                    return True
+                operation_getter = getattr(svc, "get_operations", None)
+                if callable(operation_getter):
+                    operations = operation_getter() or {}
+                    if isinstance(operations, dict):
+                        operation_names = set(operations)
+                        if not operation_names:
+                            return False
+                    elif isinstance(operations, (list, tuple, set)):
+                        operation_names = {
+                            str(name) for name in operations if str(name or "")}
+                        if not operation_names:
+                            return False
+                    else:
+                        operation_names = set()
+                    if operation_names and not any(method in operation_names for method in required):
+                        return False
+                return any(hasattr(svc, method) for method in required)
+
+            first_sid = matching[0].service_id
+            for sdef in matching:
+                svc = ToolRelayService._resolve_service_definition(
+                    _sreg, sdef, user_id=user_id,
+                    conversation_id=conversation_id)
+                if _service_supports_required_methods(svc):
                     return svc, None
-            return None, f"{media_type.title()} service '{sid}' failed to connect"
+            return None, f"{media_type.title()} service '{first_sid}' failed to connect"
         return resolver
+
+    @staticmethod
+    def _resolve_service_definition(registry, service_def, *, user_id: str,
+                                    conversation_id: str):
+        service_id = str(getattr(service_def, "service_id", "") or "")
+        if not service_id:
+            return None
+        scoped_getter = getattr(registry, "get_live_instance", None)
+        if callable(scoped_getter):
+            scope = str(getattr(service_def, "scope", "") or "")
+            scope_id = str(getattr(service_def, "scope_id", "") or "")
+            if scope and scope_id:
+                return scoped_getter(scope, scope_id, service_id)
+        return registry.resolve(
+            service_id, user_id=user_id, conv_id=conversation_id)
+
+    @staticmethod
+    def _service_scope_rank(service_def) -> int:
+        scope = str(getattr(service_def, "scope", "") or "").lower()
+        if scope in {"conv", "conversation"}:
+            return 0
+        if scope == "user":
+            return 1
+        return 2
 
     def _load_mcp_tools(self, registry, user_id: str, conversation_id: str,
                         agent_name: str = ""):
@@ -892,7 +1093,8 @@ class ToolRelayService(BaseService):
                             except Exception:
                                 pass
                         if not relay_svc:
-                            relay_svc = self._find_filesystem_service(user_id, conversation_id)
+                            relay_svc = self._find_filesystem_service(
+                                user_id, conversation_id, agent_name)
                         if not relay_svc:
                             logger.warning("[tool-relay][mcp] No relay for '%s'", mcp_name)
                             continue
@@ -958,6 +1160,7 @@ class ToolRelayService(BaseService):
 
     @staticmethod
     def _list_available_filesystem_services(user_id: str = "", conversation_id: str = "",
+                                            agent_name: str = "",
                                             fs_types=("relay", "filesystem", "googleDrive", "oneDrive")):
         """List filesystem services explicitly linked to this conversation."""
         available = []
@@ -968,7 +1171,7 @@ class ToolRelayService(BaseService):
             if conversation_id:
                 try:
                     from core.relay_bindings import get_linked
-                    for sid in get_linked(conversation_id):
+                    for sid in get_linked(conversation_id, agent_name):
                         if sid in seen:
                             continue
                         sdef = reg.resolve_definition(sid, user_id=user_id, conv_id=conversation_id)
@@ -1014,13 +1217,13 @@ class ToolRelayService(BaseService):
 
     @staticmethod
     def _make_filesystem_resolver(user_id: str = "", conversation_id: str = "",
-                                  default_service=None):
+                                  agent_name: str = "", default_service=None):
         def resolver(service_id: str = "", *_args):
             try:
                 from core.service_registry import ServiceRegistry
                 reg = ServiceRegistry.get_instance()
                 available = ToolRelayService._list_available_filesystem_services(
-                    user_id, conversation_id)
+                    user_id, conversation_id, agent_name)
                 allowed = [item.get("id", "") for item in available if item.get("id")]
                 if service_id in ("", "workspace", "ws", "local") and default_service:
                     return default_service
@@ -1035,7 +1238,8 @@ class ToolRelayService(BaseService):
         return resolver
 
     @staticmethod
-    def _find_filesystem_service(user_id: str = "", conversation_id: str = ""):
+    def _find_filesystem_service(user_id: str = "", conversation_id: str = "",
+                                 agent_name: str = ""):
         """Find the first live filesystem service for this user.
 
         Same logic as agent_utils._find_filesystem_service but standalone.
@@ -1044,7 +1248,7 @@ class ToolRelayService(BaseService):
             from core.service_registry import ServiceRegistry
             reg = ServiceRegistry.get_instance()
             available = ToolRelayService._list_available_filesystem_services(
-                user_id, conversation_id)
+                user_id, conversation_id, agent_name)
             if available:
                 for item in available:
                     svc = reg.resolve(
@@ -1121,32 +1325,27 @@ class ToolRelayService(BaseService):
                 evt = self._executing[request_id]
         if request_id in self._executing:
             logger.info("[tool-relay] waiting for in-flight request %s", request_id)
-            evt.wait(timeout=300)
+            evt.wait()
             with self._cache_lock:
                 if request_id in self._result_cache:
                     return self._result_cache[request_id]
             return {"type": "result", "request_id": request_id,
-                    "data": "Error: in-flight request timed out"}
+                    "data": "Error: in-flight request completed without a cached result"}
 
         # Match CC tool_use id (enqueued by claude_code provider when it
         # emitted the tool_call SSE event). Matching lets background /
         # kill actions, keyed by UI-visible tc_id, reach this request.
         #
-        # Race: the MCP bridge (in-container) forwards the execute_tool
-        # request to us CONCURRENTLY with the claude-code provider's
-        # stdout reader processing the same `assistant` event and
-        # calling `enqueue_cc_tc`. The bridge often wins — pop fires
-        # before enqueue lands. Without a wait, every fast-dispatching
-        # tool (bash, grep, etc.) spuriously MISSes on a healthy loop.
-        # Short retry with timeout lets the enqueue catch up while
-        # still capping the blocking window so a genuine miss
-        # (sentinel conv, crashed provider) doesn't stall.
+        # Race: the MCP bridge can forward execute_tool before the provider
+        # stream exposes the UI-visible tool_call id. In that case the request
+        # starts with request_id as its background id; enqueue_cc_tc can still
+        # late-bind the provider id through bind_pending_cc_tc.
         #
         # Sentinel conversations (_compact, _memory_extract, …) never
         # push cc_tc — they have no UI subscribers, tool_call SSE is a
         # no-op, and they can't be backgrounded or killed per-tool
         # anyway (the whole sentinel session is the unit of cancel).
-        # Skip BOTH the retry and the MISS log for them.
+        # Skip the MISS log for them.
         cc_tc_id = ""
         _is_sentinel = bool(conversation_id) and conversation_id.startswith("_")
         try:
@@ -1154,19 +1353,6 @@ class ToolRelayService(BaseService):
             _ah = _args_hash(arguments)
             cc_tc_id = pop_cc_tc(
                 conversation_id, agent_name, tool_name, _ah)
-            if not cc_tc_id and not _is_sentinel:
-                # Retry with bounded wait (up to 500ms, polling every
-                # 50ms). The provider's enqueue runs on the CC stdout
-                # reader thread and typically catches up within 10-
-                # 100ms; 500ms is a generous upper bound.
-                import time as _t
-                _deadline = _t.monotonic() + 0.5
-                while _t.monotonic() < _deadline:
-                    _t.sleep(0.05)
-                    cc_tc_id = pop_cc_tc(
-                        conversation_id, agent_name, tool_name, _ah)
-                    if cc_tc_id:
-                        break
             if not cc_tc_id and not _is_sentinel:
                 # This can be a healthy relay-first race. The provider stream
                 # may late-bind the tc_id once its tool_call item arrives.
@@ -1188,11 +1374,12 @@ class ToolRelayService(BaseService):
         # detaches the call (returns placeholder, thread keeps running).
         # Use the provider-visible tool id when available; otherwise fall
         # back to request_id so MCP calls without a mapped tool_call can
-        # still auto-background before the transport timeout.
+        # still use explicit auto-background.
         bg_tc_id = cc_tc_id or request_id
         evt = threading.Event()
         cancel_event = threading.Event()
         background_event = threading.Event()
+        wake_event = threading.Event()
         started_at = time.time()
         # Shared mutable list — the exec thread populates it via
         # register_kill_hook(); cancel_agent reads + invokes each hook.
@@ -1205,6 +1392,7 @@ class ToolRelayService(BaseService):
                 "agent": agent_name,
                 "cancel": cancel_event,
                 "background": background_event,
+                "wake": wake_event,
                 "cc_tc_id": cc_tc_id,
                 "bg_tc_id": bg_tc_id,
                 "tool_name": tool_name,
@@ -1212,6 +1400,21 @@ class ToolRelayService(BaseService):
                 "started_at": started_at,
                 "kill_hooks": kill_hooks,
             }
+
+        if not cc_tc_id and not _is_sentinel:
+            try:
+                from core.background_tool import pop_cc_tc
+                cc_tc_id = pop_cc_tc(
+                    conversation_id, agent_name, tool_name, _ah)
+            except Exception as _me:
+                logger.debug("[tool-relay] late cc_tc pop skipped: %s", _me)
+            if cc_tc_id:
+                bg_tc_id = cc_tc_id
+                with self._inflight_lock:
+                    info = self._inflight.get(request_id)
+                    if info:
+                        info["cc_tc_id"] = cc_tc_id
+                        info["bg_tc_id"] = cc_tc_id
 
         # Execute in a daemon thread so cancel/background can let it run on.
         _result_holder = [None]
@@ -1238,6 +1441,7 @@ class ToolRelayService(BaseService):
                 _set_current_cancel_event(None)
                 _set_current_kill_hooks(None)
                 evt.set()
+                wake_event.set()
 
         exec_thread = threading.Thread(target=_exec, daemon=True)
         exec_thread.start()
@@ -1245,16 +1449,21 @@ class ToolRelayService(BaseService):
         # Wait for completion, cancel, or explicit background. Optional auto-BG
         # is disabled by default: there is no implicit timeout/backgrounding.
         _auto_bg_after = max(0.0, float(getattr(self, "_auto_bg_after_seconds", 0.0) or 0.0))
-        while not evt.is_set():
-            _elapsed = time.time() - started_at
-            # Auto-BG must not depend on a provider tool_call id: direct
-            # MCP/tool-relay calls still need a placeholder before the
-            # outer transport timeout.
-            if (_auto_bg_after > 0 and not background_event.is_set()
-                    and _elapsed >= _auto_bg_after):
+        auto_bg_timer = None
+        if _auto_bg_after > 0:
+            def _auto_background():
+                if evt.is_set() or cancel_event.is_set():
+                    return
                 logger.info("[tool-relay] auto-background after %ds for tc_id=%s",
                             int(_auto_bg_after), bg_tc_id)
                 background_event.set()
+                wake_event.set()
+
+            auto_bg_timer = threading.Timer(_auto_bg_after, _auto_background)
+            auto_bg_timer.daemon = True
+            auto_bg_timer.start()
+
+        while not evt.is_set():
 
             if background_event.is_set():
                 # Return placeholder now; spawn a watcher to inject the
@@ -1271,15 +1480,17 @@ class ToolRelayService(BaseService):
 
                 def _watch_bg_completion(_evt, _holder, _tc, _conv, _agent,
                                          _tool, _uid, _cancel):
-                    # Wake up on either exec-done or user-kill, whichever
-                    # comes first. Hard 8h ceiling guards against a stuck
-                    # subprocess on a crashed relay.
-                    _deadline = time.time() + 8 * 3600
-                    while time.time() < _deadline:
-                        if _evt.wait(timeout=0.5):
-                            break
-                        if _cancel.is_set():
-                            break
+                    _bg_wake = threading.Event()
+
+                    def _relay_event(_src):
+                        _src.wait()
+                        _bg_wake.set()
+
+                    threading.Thread(
+                        target=_relay_event, args=(_evt,), daemon=True).start()
+                    threading.Thread(
+                        target=_relay_event, args=(_cancel,), daemon=True).start()
+                    _bg_wake.wait()
                     _was_cancelled = _cancel.is_set() and not _evt.is_set()
                     _res = _holder[0] or {}
                     _payload = _res.get("data", "") if isinstance(_res, dict) else str(_res)
@@ -1320,14 +1531,11 @@ class ToolRelayService(BaseService):
                     self._executing.pop(request_id, None)
                 with self._inflight_lock:
                     self._inflight.pop(request_id, None)
+                if auto_bg_timer:
+                    auto_bg_timer.cancel()
                 return result
 
-            if _auto_bg_after > 0:
-                _remaining = _auto_bg_after - (time.time() - started_at)
-                _wait = min(0.5, max(0.01, _remaining)) if _remaining > 0 else 0.01
-            else:
-                _wait = 0.5
-            if cancel_event.wait(timeout=_wait):
+            if cancel_event.is_set():
                 # Cancelled — return interrupt result immediately. The
                 # daemon thread is abandoned; best-effort subprocess kill
                 # is the relay's responsibility.
@@ -1338,7 +1546,12 @@ class ToolRelayService(BaseService):
                     self._executing.pop(request_id, None)
                 with self._inflight_lock:
                     self._inflight.pop(request_id, None)
+                if auto_bg_timer:
+                    auto_bg_timer.cancel()
                 return result
+
+            wake_event.wait()
+            wake_event.clear()
 
         result = _result_holder[0]
         # If cancelled while executing, check cache
@@ -1355,6 +1568,8 @@ class ToolRelayService(BaseService):
                 evt.set()
             with self._inflight_lock:
                 self._inflight.pop(request_id, None)
+            if auto_bg_timer:
+                auto_bg_timer.cancel()
             # Cleanup old cache entries (keep last 100)
             with self._cache_lock:
                 if len(self._result_cache) > 100:

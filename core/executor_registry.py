@@ -185,9 +185,13 @@ class ExecutorRegistry:
                 self._restore_instance(iid, inst.flow_path,
                                        inst.max_workers, inst.max_retries,
                                        flow_fqn=getattr(inst, 'flow_fqn', ''),
+                                       flow_scope=getattr(inst, 'flow_scope', '') or '',
                                        parameters=inst.parameters,
                                        service_overrides=inst.service_overrides,
-                                       service_configs=inst.service_configs)
+                                       service_configs=inst.service_configs,
+                                       owner=inst.owner or "",
+                                       conversation_id=inst.conversation_id or "",
+                                       agent_name=getattr(inst, 'agent_name', '') or "")
 
         # Clean up legacy state file if present
         legacy = Path(STATE_FILE)
@@ -198,9 +202,13 @@ class ExecutorRegistry:
     def _restore_instance(self, instance_id: str, flow_path: str,
                           max_workers: int = 4, max_retries: int = 3,
                           flow_fqn: str = "",
+                          flow_scope: str = "",
                           parameters: Optional[Dict[str, Any]] = None,
                           service_overrides: Optional[Dict[str, str]] = None,
-                          service_configs: Optional[Dict[str, Dict[str, Any]]] = None) -> bool:
+                          service_configs: Optional[Dict[str, Dict[str, Any]]] = None,
+                          owner: str = "",
+                          conversation_id: str = "",
+                          agent_name: str = "") -> bool:
         """Restore a single executor from the repository or flow_path."""
         try:
             from tasks import register_all_tasks
@@ -211,7 +219,26 @@ class ExecutorRegistry:
             if flow_fqn:
                 try:
                     from core.repository import ScopedRepository
-                    raw = ScopedRepository.instance().get_flow(flow_fqn, "global")
+                    repo = ScopedRepository.instance()
+                    scopes = []
+                    if flow_scope:
+                        scopes.append(flow_scope)
+                    if conversation_id:
+                        scopes.append("conv")
+                    if owner:
+                        scopes.append("user")
+                    scopes.append("global")
+                    seen = set()
+                    for scope in scopes:
+                        if scope in seen:
+                            continue
+                        seen.add(scope)
+                        raw = repo.get_flow(
+                            flow_fqn, scope,
+                            user_id=owner,
+                            conv_id=conversation_id if scope == "conv" else "")
+                        if raw:
+                            break
                     if raw:
                         logger.info("Restored '%s' from repository (%s)",
                                     instance_id, flow_fqn)
@@ -243,6 +270,12 @@ class ExecutorRegistry:
                 max_workers=_eff_workers,
                 max_retries=max_retries,
                 parameters=parameters if parameters else None,
+                runtime_context={
+                    "user_id": owner,
+                    "conversation_id": conversation_id,
+                    "scope": "conversation" if conversation_id else "user" if owner else "",
+                    "agent_name": agent_name,
+                },
             )
             if flow_fqn:
                 executor._flow_fqn = flow_fqn

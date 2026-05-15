@@ -813,7 +813,11 @@ def test_interrupt_uses_live_stop_or_graceful_api_stop_turn():
     loop_src = Path("tasks/ai/agent_loop.py").read_text(encoding="utf-8")
     core_src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
     emitter_src = Path("tasks/ai/agent_emitter.py").read_text(encoding="utf-8")
-    assert "send_user_message(SOFT_INTERRUPT_USER_COMMAND)" in loop_src
+    assert "send_user_message(" in loop_src
+    assert "SOFT_INTERRUPT_USER_COMMAND" in loop_src
+    assert "user_id=str(_active_ctx.get(\"user_id\") or \"\")" in loop_src
+    assert "conversation_id=conversation_id" in loop_src
+    assert "agent_name=agent_name" in loop_src
     assert "Do NOT bump generation here; that is force-stop semantics" in loop_src
     assert "self._conv_interrupt[_key] = True" in loop_src
     assert "interrupt cancels active loop" not in loop_src

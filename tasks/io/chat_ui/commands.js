@@ -815,6 +815,27 @@ async function handleSlashCommand(text) {
   const parts = tokenizeCommand(text);
   const cmd = parts[0].toLowerCase();
 
+  if (window._pawflowExtRuntime) {
+    window._pawflowExtRuntime.fireHook('command_submitted', {
+      command: cmd, args: parts.slice(1), text: text,
+    });
+  }
+
+  // Extension-provided commands resolve before built-ins so a package
+  // can shadow nothing it did not register, but the dispatch lets it own
+  // its namespace once registered.
+  if (window.pawflow && typeof window.pawflow.getCommand === 'function') {
+    const extCmd = window.pawflow.getCommand(cmd);
+    if (extCmd && typeof extCmd.handler === 'function') {
+      try {
+        const out = extCmd.handler(text, parts);
+        return Promise.resolve(out).then(function (v) { return v !== false; });
+      } catch (err) {
+        console.warn('[ext:' + extCmd.pkg + '] command ' + cmd + ': ' + err.message);
+      }
+    }
+  }
+
   // Resolve aliases
   const resolved = _CMD_ALIASES[cmd] || cmd;
 

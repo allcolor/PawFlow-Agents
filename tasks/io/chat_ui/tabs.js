@@ -6,6 +6,7 @@ let _terminalCounter = 0;
 
 /** Switch to a tab by id. */
 function switchTab(tabId) {
+  var _prevTab = _activeTab;
   _activeTab = tabId;
   // Update tab buttons
   document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -21,6 +22,10 @@ function switchTab(tabId) {
     if (container && container._xterm) {
       setTimeout(() => container._xterm.focus(), 50);
     }
+  }
+  if (window._pawflowExtRuntime) {
+    window._pawflowExtRuntime.fireHook('tab_switched',
+      { oldTab: _prevTab || null, newTab: tabId });
   }
 }
 

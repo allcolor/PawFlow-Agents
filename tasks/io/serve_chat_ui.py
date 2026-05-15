@@ -23,8 +23,10 @@ logger = logging.getLogger(__name__)
 _CHAT_UI_DIR = Path(__file__).parent / "chat_ui"
 
 # JS modules in load order (each file must be standalone)
+# ext_runtime.js must load early so other modules can fire hooks safely.
 _JS_MODULES = [
-    "i18n.js", "state.js", "rxbus.js", "themes.js", "conversations.js", "messages.js",
+    "i18n.js", "state.js", "rxbus.js", "ext_runtime.js",
+    "themes.js", "conversations.js", "messages.js",
     "active_agents.js", "typing.js", "notifications.js", "sse.js",
     "dialogs.js",
     "admin_settings.js",
@@ -102,6 +104,16 @@ def _initial_i18n_block() -> str:
     )
 
 
+def _initial_extensions_block() -> str:
+    """Bootstrap manifest for installed UI extensions.
+
+    Phase 1 ships the runtime without PFP integration; the bootstrap is
+    always empty here. PFP install (phase 2) will populate this list with
+    the asset manifest of each installed `ui_extension` object.
+    """
+    return "<script>window.PAWFLOW_EXTENSIONS=[];</script>\n"
+
+
 def _compute_js_version() -> str:
     """Short hash of all chat assets that affect boot-time rendering."""
     h = hashlib.md5()
@@ -133,6 +145,7 @@ def _load_html() -> str:
     scripts_html = (
         f'<script>window.PAWFLOW_ASSET_VERSION={json.dumps(v)};</script>\n'
         + _initial_i18n_block()
+        + _initial_extensions_block()
         + "\n".join(script_tags)
     )
 

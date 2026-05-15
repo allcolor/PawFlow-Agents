@@ -179,9 +179,20 @@ function cancelAgent(target) {
 
 async function send() {
   const input = document.getElementById('input');
-  const text = input.value.trim();
+  let text = input.value.trim();
   if (!text && pendingFiles.length === 0) return;
 
+  // before_send filter — extensions can mutate (text, attachments).
+  if (window._pawflowExtRuntime) {
+    var _bsPayload = window._pawflowExtRuntime.fireFilter('before_send', {
+      text: text, attachmentsCount: pendingFiles.length,
+    });
+    if (_bsPayload && typeof _bsPayload.text === 'string') {
+      text = _bsPayload.text;
+      input.value = text;
+    }
+    if (_bsPayload && _bsPayload.cancel === true) return;
+  }
 
   // Save to message history (before slash command intercept so commands are in history too)
   if (text) {

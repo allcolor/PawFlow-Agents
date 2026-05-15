@@ -143,6 +143,9 @@ async function applyThemeRef(ref, force) {
   _activeThemeRef = res.theme_ref || nextRef;
   _activeThemeContext = contextKey;
   applyThemeCss(res.css || '');
+  if (window._pawflowExtRuntime) {
+    window._pawflowExtRuntime.fireHook('theme_changed', { themeRef: _activeThemeRef });
+  }
 }
 
 function onGlobalThemeSelectChange(value) {

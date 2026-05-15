@@ -23,6 +23,35 @@ function connectSSE(cid, onReady, opts) {
   startActiveSync();
   sseRetryCount = 0;  // reset so onopen doesn't think we're reconnecting
   const token = getToken();
+
+  // Fan-out every named SSE event to UI extensions. Wraps addEventListener
+  // on the new EventSource only so extensions see all events without each
+  // native listener having to call _pawflowExtRuntime explicitly.
+  function _wrapSseForExtensions(es) {
+    if (!window._pawflowExtRuntime) return;
+    var _orig = es.addEventListener.bind(es);
+    es.addEventListener = function (type, listener, opts) {
+      function wrapped(e) {
+        try { listener(e); }
+        finally {
+          try {
+            var data = null;
+            if (e && typeof e.data === 'string' && e.data.length) {
+              try { data = JSON.parse(e.data); } catch (_p) { data = e.data; }
+            }
+            window._pawflowExtRuntime.fireHook('sse_event',
+              { event: type, data: data, conversationId: cid });
+            if (type === 'tool_call') {
+              window._pawflowExtRuntime.fireHook('tool_call_started', data || {});
+            } else if (type === 'tool_result') {
+              window._pawflowExtRuntime.fireHook('tool_call_completed', data || {});
+            }
+          } catch (_ext) { /* never let an extension hook break SSE */ }
+        }
+      }
+      return _orig(type, wrapped, opts);
+    };
+  }
   // noReplay=true: caller is an explicit reload/switch that just refetched
   // the authoritative history from disk. The server must discard any
   // buffered events for this conv instead of replaying them -- otherwise
@@ -36,6 +65,7 @@ function connectSSE(cid, onReady, opts) {
     + (token ? '&token=' + encodeURIComponent(token) : '')
     + (_noReplay ? '&replay=false' : '');
   eventSource = new EventSource(url);
+  _wrapSseForExtensions(eventSource);
 
   // ── Task block grouping ─────────────────────────────────────────
   const _taskBlocks = {};

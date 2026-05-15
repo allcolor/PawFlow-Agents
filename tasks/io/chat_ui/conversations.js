@@ -231,12 +231,18 @@ function resumeConv(cid, force) {
   if (cid === conversationId && !force) return;
   document.getElementById('status').textContent = t('loading');
 
+  var _prevCid = conversationId;
   // 1. CLEAR -- DOM empty, every conv-scoped global reset, SSE closed.
   _clearConvState();
   conversationId = cid;
   _setInputEnabled(true);
   highlightConv(cid);
   updateDeleteBtn();
+  if (window._pawflowExtRuntime) {
+    window._pawflowExtRuntime.fireHook('conversation_changed', {
+      oldCid: _prevCid || null, newCid: cid, force: !!force,
+    });
+  }
 
   // 2. LOAD histo(50). No SSE is open yet: nothing can pollute
   //    _seenMsgIds before render.

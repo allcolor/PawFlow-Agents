@@ -780,6 +780,15 @@ function addMsg(role, text, extra) {
     }
   }
   if (window.PAWFLOW_GROUP_TECHNICAL_MESSAGES) applyTechnicalMessageGrouping();
+  if (window._pawflowExtRuntime) {
+    window._pawflowExtRuntime.fireHook('message_appended', {
+      role: role,
+      conversationId: (typeof conversationId !== 'undefined' ? conversationId : null),
+      msgId: (extra && extra.msg_id) || '',
+      ts: (extra && extra.ts) || 0,
+      source: (extra && extra.source) || null,
+    });
+  }
   return el;
 }
 

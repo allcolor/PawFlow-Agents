@@ -70,6 +70,9 @@ function setPermissionMode(mode) {
   permissionMode = mode;
   fireAction('set_permission_mode', { conversation_id: conversationId, mode });
   updatePermissionBadge();
+  if (window._pawflowExtRuntime) {
+    window._pawflowExtRuntime.fireHook('permission_mode_changed', { mode: mode });
+  }
 }
 
 function loadPermissionMode() {

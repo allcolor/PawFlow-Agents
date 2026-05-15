@@ -228,11 +228,16 @@ function cmdAgentSelect(name) {
     addMsg('error', t('bugAgentRequired'));
     return;
   }
+  var _prevAgent = selectedAgent;
   if (!conversationId) {
     pendingAgent = name;
     selectedAgent = name;
     updateActiveAgentBadge();
     addMsg('system', t('agentSelectedPending', { name: name }));
+    if (window._pawflowExtRuntime) {
+      window._pawflowExtRuntime.fireHook('agent_changed',
+        { oldAgent: _prevAgent || null, newAgent: name, pending: true });
+    }
     return;
   }
   action$('select_agent', { name }).subscribe(data => {
@@ -241,6 +246,10 @@ function cmdAgentSelect(name) {
     updateActiveAgentBadge();
     addMsg('system', t('agentSelected', { name: name }));
     loadResources();
+    if (window._pawflowExtRuntime) {
+      window._pawflowExtRuntime.fireHook('agent_changed',
+        { oldAgent: _prevAgent || null, newAgent: name, pending: false });
+    }
   });
 }
 

@@ -556,11 +556,15 @@ if (typeof hljs !== 'undefined') {
   <div class="sidebar-settings" id="resourcesPanel" style="display:none">
     <label style="cursor:pointer;user-select:none;" onclick="toggleResourcesSection()">&#x25BC; <span data-i18n="resources">Resources</span></label>
     <div id="resourcesContent" style="margin-top:4px;font-size:12px;color:var(--pf-muted);"></div>
+    <div data-pf-slot="resources_panel_ext"></div>
   </div>
+  <div class="sidebar-settings" data-pf-slot="sidebar_bottom_ext"></div>
+  <div class="sidebar-settings" data-pf-slot="sidebar_top_ext" style="order:-1"></div>
 </div>
 <!-- Tab bar -->
 <div class="tab-bar" id="tabBar">
   <button class="tab-btn active" id="tabChat" data-tab="chat" title="Chat" data-i18n-title="chatTitle" onclick="switchTab('chat')">💬</button>
+  <div data-pf-slot="tab_bar_ext"></div>
   <div class="tab-spacer"></div>
   <button id="audioToggleBtn" style="display:none;background:none;border:none;color:#e0e0e0;font-size:18px;cursor:pointer;padding:4px;" onclick="audioToggleMute()" title="Mute audio" data-i18n-title="muteAudioTitle">&#x1F50A;</button>
   <button id="audioRestartBtn" style="display:none;background:none;border:none;color:#e0e0e0;font-size:16px;cursor:pointer;padding:4px;" onclick="audioRestart()" title="Restart audio stream" data-i18n-title="restartAudioTitle">&#x1F504;</button>
@@ -661,6 +665,7 @@ if (typeof hljs !== 'undefined') {
           <span class="ami-icon">&#x1F5D1;</span>
           <div><div class="ami-label" data-i18n="delete">Delete</div><div class="ami-desc" data-i18n="deleteDesc">Delete this conversation</div></div>
         </div>
+        <div data-pf-slot="action_menu_ext"></div>
       </div>
     </div>
     <div class="action-menu-wrap" id="adminSettingsWrap" style="display:none">
@@ -674,8 +679,10 @@ if (typeof hljs !== 'undefined') {
           <span class="ami-icon">P</span>
           <div><div class="ami-label">System Parameters</div><div class="ami-desc">Guided global variables and secrets</div></div>
         </div>
+        <div data-pf-slot="gear_menu_ext"></div>
       </div>
     </div>
+    <span data-pf-slot="header_actions_ext"></span>
     <button class="btn" id="logoutBtn" onclick="doLogout()" style="display:none" data-i18n="logout">Logout</button>
   </div>
 </div>
@@ -718,6 +725,9 @@ if (typeof hljs !== 'undefined') {
 </div>
 </div><!-- /tab-content chat -->
 </div><!-- /main -->
+<!-- UI extension hosts (PFP ui.v1) -->
+<div id="pf-ext-modal-host"></div>
+<div id="pf-ext-panel-host" style="display:none;position:fixed;top:0;right:0;bottom:0;width:380px;background:var(--pf-panel,#16213e);border-left:1px solid var(--pf-border,#0f3460);z-index:50;overflow-y:auto;"></div>
 <script>
 // Config injected by server
 const AGENT_PATH = '{{AGENT_PATH}}';

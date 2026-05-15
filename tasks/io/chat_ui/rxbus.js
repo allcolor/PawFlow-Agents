@@ -244,6 +244,14 @@ function fireAction(actionName, params = {}) {
  */
 function _pushCommandResult(data) {
   _commandResult$.next(data);
+  if (window._pawflowExtRuntime && data && data.action) {
+    window._pawflowExtRuntime.fireHook('command_result', {
+      action: data.action,
+      conversationId: data.conversation_id || null,
+      callId: data._callId || '',
+      hasError: !!data.error,
+    });
+  }
 }
 
 /**

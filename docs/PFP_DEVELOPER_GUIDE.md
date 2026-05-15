@@ -384,10 +384,12 @@ Hooks accepted in `ui.v1`: `boot`, `shutdown`, `conversation_changed`,
 `command_submitted`, `command_result`, `before_send`, `agent_changed`,
 `theme_changed`, `tab_switched`, `permission_mode_changed`, `sse_event`.
 
-Assets are restricted to `.js .css .json .html .svg .png .jpg .jpeg .webp
-.woff .woff2`. Each declared script is loaded into the page same-origin
-from `/chat/ext/...`; the browser keeps execution order matching insertion
-order, so multiple extensions remain isolated.
+Assets are restricted to `.js .css .json .svg .png .jpg .jpeg .webp
+.woff .woff2`. `.html` assets are refused because same-origin HTML served
+from `/chat/ext/...` could execute inline scripts under the user's session.
+Each declared script is loaded into the page same-origin from `/chat/ext/...`;
+scripts keep their manifest insertion order, but all installed UI extensions
+share the same browser trust domain.
 
 The extension JS calls `pawflow.register("<package_id>", function (pfp) {
 ... })` at top level. The `pfp` object exposes:

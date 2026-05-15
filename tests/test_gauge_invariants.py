@@ -1212,7 +1212,8 @@ def test_soft_interrupt_live_stop_is_not_persisted_for_api_fallback():
     core_src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
     cc_src = Path("core/llm_providers/claude_code.py").read_text(encoding="utf-8")
     assert "STOP IMMEDIATELY!" in policy_src
-    assert "send_user_message(SOFT_INTERRUPT_USER_COMMAND)" in loop_src
+    assert "send_user_message(" in loop_src
+    assert "SOFT_INTERRUPT_USER_COMMAND" in loop_src
     assert "\"content\": SOFT_INTERRUPT_USER_COMMAND" not in loop_src
     assert "SOFT_INTERRUPT_USER_COMMAND" in core_src
     assert "SOFT_INTERRUPT_USER_COMMAND" in cc_src

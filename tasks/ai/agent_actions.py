@@ -32,6 +32,7 @@ from tasks.ai.actions.cc_live import _handle_cc_live
 from tasks.ai.actions.codex_live import _handle_codex_live
 from tasks.ai.actions.gemini_live import _handle_gemini_live
 from tasks.ai.actions.command_dispatch import _handle_command_dispatch
+from tasks.ai.actions.pfp_ui import _handle_pfp_ui
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,9 @@ _BG_ACTION_SEMAPHORE = threading.BoundedSemaphore(max(1, _MAX_BG_ACTIONS))
 
 
 _ACTION_HANDLERS = [
+    # PFP UI extension handlers run first: any body carrying `_ext` is
+    # routed to its installed handler before built-in dispatchers see it.
+    _handle_pfp_ui,
     _handle_conversation,
     _handle_cancel_interrupt,
     _handle_context_ops,

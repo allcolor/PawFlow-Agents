@@ -416,6 +416,68 @@ gate. Server-side handlers triggered by `pfp.call(...)` execute inside the
 relay subprocess sandbox (phase 3); they cannot exfiltrate or escalate
 without an `allowed_tools` / `allowed_services` grant accepted at install.
 
+### Server handlers
+
+A `ui_extension` may declare server handlers triggered by
+`pfp.call(action, body)` in the browser. They run in the same relay
+subprocess sandbox as PFP tools — the entrypoint hash is verified on
+every call, the relay child sees a scrubbed env, and host-side
+`pfp.call_tool` / `pfp.call_service` requests are re-authorized through
+`PackageCapabilityBroker` before running.
+
+```json
+{
+  "id": "ui_extension:hello",
+  "type": "ui_extension",
+  "version_compat": "ui.v1",
+  "assets": {"scripts": ["content/ui/extension.js"]},
+  "slots": [...],
+  "hooks": [...],
+  "handlers": [
+    {
+      "action": "hello.ping",
+      "path": "content/handlers/ping.py",
+      "runner": "python",
+      "description": "Echo a value back to the UI extension",
+      "allowed_tools": [{"name": "read"}],
+      "allowed_services": [],
+      "secrets": [{"name": "api_key", "env": "PROVIDER_API_KEY", "required": true}]
+    }
+  ]
+}
+```
+
+Action names must match `^[a-z0-9][a-z0-9_.-]{0,127}$` and be unique
+within the extension; the runner must be `python`. Each handler entry's
+entrypoint is hash-locked at install time, so a tampered file on disk
+refuses to run.
+
+Handler implementation — mirrors the PFP tool/service pattern:
+
+```python
+# content/handlers/ping.py
+from pawflow import pfp
+
+payload = pfp.payload or {}
+args = payload.get("arguments", {}) if isinstance(payload, dict) else {}
+pfp.result({
+    "echo": str(args.get("message") or ""),
+    "action": payload.get("action", ""),
+})
+```
+
+From the browser:
+
+```javascript
+pfp.call("hello.ping", { message: "world" })
+   .then(function (resp) { console.log(resp.result); });
+```
+
+PawFlow routes `pfp.call(...)` through `/api/ui` with `_ext: "<package_id>"`
+automatically set. The action dispatcher (`_handle_pfp_ui`) sits at the
+top of the action-handler chain so any `_ext`-tagged body is captured
+before the built-in dispatchers.
+
 Dev loop:
 
 ```text

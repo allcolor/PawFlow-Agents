@@ -1347,6 +1347,9 @@ def _install_object(obj: Dict[str, Any], package: Dict[str, Any], user_id: str,
             "slots": manifest_obj["slots"],
             "hooks": manifest_obj["hooks"],
             "i18n": manifest_obj["i18n"],
+            "handlers": manifest_obj["handlers"],
+            "allowed_tools": list(obj.get("allowed_tools") or []),
+            "allowed_services": list(obj.get("allowed_services") or []),
             "installed_from": provenance,
             "dependencies": dependencies,
             "hash": provenance["hash"],
@@ -1562,6 +1565,9 @@ def _ui_extension_asset_list(obj: Dict[str, Any]) -> List[Dict[str, str]]:
     return rows
 
 
+_UI_HANDLER_ACTION_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,127}$")
+
+
 def _validate_ui_extension_object(obj: Dict[str, Any], package: Dict[str, Any]) -> str:
     """Return an empty string when the ui_extension is structurally valid, else a reason."""
     if str(obj.get("version_compat") or "") != _UI_API_VERSION:
@@ -1599,11 +1605,36 @@ def _validate_ui_extension_object(obj: Dict[str, Any], package: Dict[str, Any]) 
     for hook in hooks:
         if str(hook) not in _UI_KNOWN_HOOKS:
             return f"ui_extension.hooks: unknown hook {hook!r}"
+    # Server-side handlers: triggered by `pfp.call(action, body)` from the
+    # browser. Each handler runs in the relay subprocess sandbox — same
+    # isolation as PFP tools — with broker-authorized host calls.
+    handlers = obj.get("handlers") if isinstance(obj.get("handlers"), list) else []
+    seen_actions = set()
+    for entry in handlers:
+        if not isinstance(entry, dict):
+            return "ui_extension.handlers entries must be objects"
+        act = str(entry.get("action") or "").strip()
+        if not act or not _UI_HANDLER_ACTION_RE.match(act):
+            return f"ui_extension.handlers: invalid action {act!r}"
+        if act in seen_actions:
+            return f"ui_extension.handlers: duplicate action {act!r}"
+        seen_actions.add(act)
+        runner = str(entry.get("runner") or "")
+        if runner != "python":
+            return f"ui_extension.handlers: only 'python' runner is supported (got {runner!r})"
+        path = str(entry.get("path") or "").strip()
+        if not path:
+            return f"ui_extension.handlers[{act}]: path is required"
+        rel = _safe_relpath(path)
+        if rel not in files:
+            return f"ui_extension.handlers[{act}]: missing package file {path!r}"
+        if Path(rel).suffix.lower() != ".py":
+            return f"ui_extension.handlers[{act}]: handler must be a .py file"
     return ""
 
 
 def _ui_extension_manifest(obj: Dict[str, Any], package: Dict[str, Any]) -> Dict[str, Any]:
-    """Build the install-record manifest (assets with sha + size, slots, hooks)."""
+    """Build the install-record manifest (assets with sha + size, slots, hooks, handlers)."""
     import hashlib
     rows = []
     for entry in _ui_extension_asset_list(obj):
@@ -1632,12 +1663,28 @@ def _ui_extension_manifest(obj: Dict[str, Any], package: Dict[str, Any]) -> Dict
     for row in rows:
         if row["kind"] == "i18n" and row.get("lang"):
             i18n[row["lang"]] = row["path"]
+    handlers = []
+    for entry in (obj.get("handlers") or []):
+        rel = _safe_relpath(str(entry.get("path") or ""))
+        data = package["files"][rel]
+        digest = hashlib.sha256(data).hexdigest()
+        handlers.append({
+            "action": str(entry.get("action") or ""),
+            "path": rel,
+            "sha256": "sha256:" + digest,
+            "runner": "python",
+            "allowed_tools": list(entry.get("allowed_tools") or []),
+            "allowed_services": list(entry.get("allowed_services") or []),
+            "secrets": _normalize_secret_requirements(entry.get("secrets")),
+            "description": str(entry.get("description") or ""),
+        })
     return {
         "version_compat": _UI_API_VERSION,
         "assets": rows,
         "slots": slots,
         "hooks": hooks,
         "i18n": i18n,
+        "handlers": handlers,
     }
 
 
@@ -1686,8 +1733,63 @@ def list_installed_ui_extensions(*, user_id: str, conversation_id: str = "",
                     "slots": list(ui.get("slots") or []),
                     "hooks": list(ui.get("hooks") or []),
                     "i18n": dict(ui.get("i18n") or {}),
+                    "handlers": list(ui.get("handlers") or []),
+                    "allowed_tools": list(ui.get("allowed_tools") or []),
+                    "allowed_services": list(ui.get("allowed_services") or []),
+                    "installed_from": dict(ui.get("installed_from") or {}),
                 })
     return out
+
+
+def resolve_ui_handler(package_id: str, action: str, *,
+                       user_id: str, conversation_id: str = "",
+                       scope: str = "user") -> Optional[Dict[str, Any]]:
+    """Return runtime info for a UI handler, or None when no match exists.
+
+    The returned dict carries the fields needed to call `pfp_runtime.invoke_ui_handler`:
+    `package_runtime`, `installed_from`, plus the matching handler's secrets,
+    grants, and entrypoint path. Conversation scope inherits user-scope packages.
+    """
+    if not package_id or not action:
+        return None
+    records = list_installed_ui_extensions(
+        user_id=user_id, conversation_id=conversation_id, scope=scope)
+    for rec in records:
+        if rec.get("package") != package_id:
+            continue
+        for handler in rec.get("handlers") or []:
+            if str(handler.get("action") or "") != action:
+                continue
+            installed_from = dict(rec.get("installed_from") or {})
+            # Use the handler's own hash so the runtime entrypoint check
+            # validates THIS file rather than the ui_extension manifest hash.
+            installed_from["hash"] = str(handler.get("sha256") or installed_from.get("hash") or "")
+            installed_from["file"] = str(handler.get("path") or "")
+            package_runtime = {
+                "package": package_id,
+                "version": rec.get("version", ""),
+                "object_id": rec.get("object_id", ""),
+                "runtime": "python",
+                "runner": "python",
+                "entrypoint": str(handler.get("path") or ""),
+                "hash": str(handler.get("sha256") or ""),
+                "content_dir": rec.get("content_dir", ""),
+                "allowed_tools": list(handler.get("allowed_tools")
+                                       or rec.get("allowed_tools") or []),
+                "allowed_services": list(handler.get("allowed_services")
+                                          or rec.get("allowed_services") or []),
+                "secrets": list(handler.get("secrets") or []),
+                "secret_bindings": {},
+                "provides": [],
+                "dependencies": [],
+            }
+            return {
+                "package_runtime": package_runtime,
+                "installed_from": installed_from,
+                "scope": rec.get("scope", scope),
+                "description": str(handler.get("description") or ""),
+            }
+    return None
 
 
 def _parse_skill_md(text: str, default_name: str = "") -> Dict[str, Any]:

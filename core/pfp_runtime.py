@@ -476,6 +476,24 @@ def build_task_invocation(runtime: Dict[str, Any], installed_from: Dict[str, Any
     )
 
 
+def build_ui_handler_invocation(runtime: Dict[str, Any], installed_from: Dict[str, Any],
+                                action: str, arguments: Dict[str, Any] | None = None,
+                                context: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    """Envelope for a UI extension handler triggered by `pfp.call(action, body)`.
+
+    Structurally identical to a tool invocation (relay subprocess, broker-authorized
+    host calls back into PawFlow) but tagged so audit / logging can distinguish
+    chat-tool calls from UI-driven calls and so the handler can read which action
+    name the browser used.
+    """
+    if not action:
+        raise PackageRuntimeError("PFP ui handler action is required")
+    prepared = prepare_runtime_entrypoint(runtime, installed_from)
+    return _invocation_envelope(
+        "ui_handler", prepared,
+        {"action": action, "arguments": arguments or {}}, context)
+
+
 class PackageRuntimeHost:
     """Authorized host-call surface exposed to future out-of-process runtimes."""
 
@@ -691,6 +709,23 @@ def invoke_task(runtime: Dict[str, Any], installed_from: Dict[str, Any],
                 context: Dict[str, Any] | None = None) -> Any:
     request = build_task_invocation(runtime, installed_from, task_config, flowfile, context)
     return _normalize_task_result(_invoke_bridge(request))
+
+
+def invoke_ui_handler(runtime: Dict[str, Any], installed_from: Dict[str, Any],
+                      action: str, arguments: Dict[str, Any] | None = None,
+                      context: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    """Run a UI extension handler via the relay subprocess sandbox.
+
+    Same isolation guarantees as `invoke_tool`/`invoke_service`: the entrypoint
+    is hash-verified against the signed install record, the relay child runs
+    with a scrubbed env, and any host-side `pfp.call_tool`/`pfp.call_service`
+    requests are re-authorized through `PackageCapabilityBroker` before running.
+    Returns a JSON-serializable dict shaped by the handler.
+    """
+    request = build_ui_handler_invocation(
+        runtime, installed_from, action, arguments, context)
+    result = _invoke_bridge(request)
+    return _normalize_service_result(result)
 
 
 def resolve_flow_task_runtime(task_type: str, *, user_id: str,

@@ -22,7 +22,17 @@
         {"slot": "action_menu",     "id": "hello.open",     "icon": "👋", "label_key": "hello.menu"},
         {"slot": "resources_panel", "id": "hello.section",  "label_key": "hello.section"}
       ],
-      "hooks": ["boot", "conversation_changed"]
+      "hooks": ["boot", "conversation_changed"],
+      "handlers": [
+        {
+          "action": "hello.ping",
+          "path": "content/handlers/ping.py",
+          "runner": "python",
+          "description": "Echo a value back to the UI extension",
+          "allowed_tools": [],
+          "allowed_services": []
+        }
+      ]
     }
   ]
 }

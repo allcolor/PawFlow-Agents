@@ -89,7 +89,7 @@ class LLMConnectionService(BaseService):
                 f"Unknown provider '{self.provider}'. "
                 f"Supported: {', '.join(self.PROVIDERS)}"
             )
-        if self.provider in ("claude-code", "codex-app-server", "gemini"):
+        if self.provider in ("claude-code", "claude-code-interactive", "codex-app-server", "gemini"):
             # CLI providers — binary auto-detected at runtime, OAuth pool is
             # the default credential source, api_key is an optional fallback.
             pass
@@ -508,6 +508,10 @@ class LLMConnectionService(BaseService):
                 "options": ["low", "medium", "high", "max"],
                 "description": "Claude Code effort level (thinking budget)",
             },
+            "experimental": {
+                "type": "boolean", "default": False,
+                "description": "Enable experimental providers such as claude-code-interactive",
+            },
         }
 
     def get_parameter_rules(self) -> list:
@@ -550,6 +554,26 @@ class LLMConnectionService(BaseService):
                     "docker_cpu_limit": {"visible": True},
                     "docker_memory_limit": {"visible": True},
                     "effort":        {"visible": True},
+                    "experimental":  {"visible": False},
+                    "extra_body":    {"visible": False},
+                }
+            },
+            {
+                "when": {"provider": ["claude-code-interactive"]},
+                "set": {
+                    "api_key":       {"visible": True, "description": "Anthropic API key (empty = OAuth credential service)"},
+                    "credential_service_id": {"visible": True},
+                    "base_url":      {"visible": False},
+                    "max_retries":   {"visible": False},
+                    "fallback_model": {"visible": False},
+                    "supports_vision": {"visible": False},
+                    "max_concurrent": {"visible": False},
+                    "timeout":       {"default": 0},
+                    "docker_image":  {"visible": True},
+                    "docker_cpu_limit": {"visible": True},
+                    "docker_memory_limit": {"visible": True},
+                    "effort":        {"visible": True},
+                    "experimental":  {"visible": True},
                     "extra_body":    {"visible": False},
                 }
             },

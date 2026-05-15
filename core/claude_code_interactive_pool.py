@@ -1,0 +1,334 @@
+"""Persistent Docker sessions for claude-code-interactive.
+
+Unlike ``ClaudeCodePool`` where one ``claude -p`` exec owns one throwaway
+container, this pool keeps one interactive Claude Code tmux session alive per
+``(user, conversation, agent, service)``. Output is not read from tmux or the
+Claude transcript; the provider consumes MITM-observed SSE events.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Dict, Optional
+import json
+import os
+import shlex
+import socket
+import subprocess
+import threading
+import time
+import uuid
+
+from core.cc_interactive_certs import generate_leaf, ca_private_key_is_host_only
+from core.docker_utils import docker_cmd, get_host_ip, get_server_id, to_host_path, translate_path
+import core.paths as _paths
+
+
+@dataclass
+class InteractiveContainer:
+    key: tuple[str, str, str, str]
+    name: str
+    workdir: str
+    container_workdir: str
+    session_token: str
+    event_service_id: str
+    internal_token: str
+    created_at: float = field(default_factory=time.time)
+    last_used: float = field(default_factory=time.time)
+    initial_context_loaded: bool = False
+    proxy_started: bool = False
+    claude_started: bool = False
+
+
+class InteractiveClaudeCodePool:
+    _instance: Optional["InteractiveClaudeCodePool"] = None
+    _instance_lock = threading.Lock()
+
+    @classmethod
+    def instance(cls) -> "InteractiveClaudeCodePool":
+        with cls._instance_lock:
+            if cls._instance is None:
+                cls._instance = cls()
+            return cls._instance
+
+    def __init__(self):
+        self._lock = threading.RLock()
+        self._sessions: Dict[tuple[str, str, str, str], InteractiveContainer] = {}
+
+    @staticmethod
+    def _safe(value: str) -> str:
+        return (value or "").replace(":", "_").replace("/", "_").replace("\\", "_")
+
+    @staticmethod
+    def _container_workdir(user_id: str, conversation_id: str, agent_name: str) -> str:
+        return "/cc_sessions/{}/{}/{}".format(
+            InteractiveClaudeCodePool._safe(user_id),
+            (conversation_id or "").replace(":", "_"),
+            agent_name,
+        )
+
+    def ensure_started(self, client, model: str, user_id: str,
+                       conversation_id: str, agent_name: str) -> InteractiveContainer:
+        service_id = getattr(client, "_agent_service", "") or ""
+        key = (user_id, conversation_id, agent_name, service_id)
+        with self._lock:
+            existing = self._sessions.get(key)
+            if existing and self._is_alive(existing.name):
+                existing.last_used = time.time()
+                return existing
+            if existing:
+                self._sessions.pop(key, None)
+
+        state = self._start_new(client, model, user_id, conversation_id, agent_name, key)
+        with self._lock:
+            self._sessions[key] = state
+        return state
+
+    def send_text(self, state: InteractiveContainer, text: str) -> bool:
+        if not self._is_alive(state.name):
+            return False
+        cmd = docker_cmd() + [
+            "exec", "-i", "--user", "1000:1000", state.name,
+            "tmux", "load-buffer", "-",
+        ]
+        r = subprocess.run(cmd, input=text.encode("utf-8"), capture_output=True, timeout=15)
+        if r.returncode != 0:
+            return False
+        r = subprocess.run(
+            docker_cmd() + ["exec", "--user", "1000:1000", state.name,
+                            "tmux", "paste-buffer", "-t", "pawflow"],
+            capture_output=True, timeout=10)
+        if r.returncode != 0:
+            return False
+        r = subprocess.run(
+            docker_cmd() + ["exec", "--user", "1000:1000", state.name,
+                            "tmux", "send-keys", "-t", "pawflow", "Enter"],
+            capture_output=True, timeout=10)
+        return r.returncode == 0
+
+    def send_interrupt(self, state: InteractiveContainer, text: str) -> bool:
+        return self.send_keys(state, ["Escape"]) and self.send_text(state, text)
+
+    def force_stop(self, state: InteractiveContainer) -> bool:
+        return self.send_keys(state, ["Escape", "Escape"])
+
+    def send_keys(self, state: InteractiveContainer, keys: list[str]) -> bool:
+        if not self._is_alive(state.name):
+            return False
+        r = subprocess.run(
+            docker_cmd() + ["exec", "--user", "1000:1000", state.name,
+                            "tmux", "send-keys", "-t", "pawflow", *keys],
+            capture_output=True, timeout=10)
+        return r.returncode == 0
+
+    def kill_session(self, user_id: str, conversation_id: str,
+                     agent_name: str, service_id: str = "") -> bool:
+        key = (user_id, conversation_id, agent_name, service_id or "")
+        with self._lock:
+            state = self._sessions.pop(key, None)
+        if not state:
+            return False
+        subprocess.run(docker_cmd() + ["rm", "-f", state.name], capture_output=True, timeout=15)
+        return True
+
+    def _start_new(self, client, model: str, user_id: str, conversation_id: str,
+                   agent_name: str, key: tuple[str, str, str, str]) -> InteractiveContainer:
+        from services.cc_interactive_event_service import get_or_create_cc_interactive_event_service
+
+        workdir = client._get_session_workdir(conversation_id, agent_name, user_id)
+        client._setup_credentials(workdir)
+        mcp_path, internal_token = client._setup_mcp_config(workdir, user_id, conversation_id, agent_name)
+        cert_dir = Path(workdir) / ".pawflow_cci" / "certs"
+        certs = generate_leaf(cert_dir)
+
+        event_url, event_token, event_service = get_or_create_cc_interactive_event_service()
+        host_ip = get_host_ip()
+        event_url = event_url.replace("localhost", host_ip).replace("127.0.0.1", host_ip)
+        session_token = uuid.uuid4().hex
+        event_service.register_session(session_token)
+
+        name = self._spawn_container()
+        container_workdir = self._container_workdir(user_id, conversation_id, agent_name)
+        state = InteractiveContainer(
+            key=key,
+            name=name,
+            workdir=workdir,
+            container_workdir=container_workdir,
+            session_token=session_token,
+            event_service_id=getattr(event_service, "service_id", ""),
+            internal_token=internal_token,
+        )
+
+        try:
+            self._write_hook_settings(workdir)
+            self._install_ca(name, container_workdir)
+            self._start_proxy(
+                name=name,
+                container_workdir=container_workdir,
+                session_token=session_token,
+                event_url=event_url,
+                event_token=event_token,
+                internal_token=internal_token,
+            )
+            state.proxy_started = True
+            self._start_claude_tmux(
+                name=name,
+                container_workdir=container_workdir,
+                mcp_path=f"{container_workdir}/.mcp.json",
+                model=model,
+                ca_path=f"{container_workdir}/.pawflow_cci/certs/pawflow-ca.crt",
+                session_token=session_token,
+                event_url=event_url,
+                event_token=event_token,
+                internal_token=internal_token,
+            )
+            state.claude_started = True
+        except Exception:
+            subprocess.run(docker_cmd() + ["rm", "-f", name], capture_output=True, timeout=15)
+            raise
+        return state
+
+    def _spawn_container(self) -> str:
+        _paths.CLAUDE_SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+        project_root = Path(__file__).resolve().parents[1]
+        sessions_host = translate_path(to_host_path(str(_paths.CLAUDE_SESSIONS_DIR.resolve())))
+        mounts = ["-v", f"{sessions_host}:/cc_sessions"]
+        files = [
+            (project_root / "tools" / "mcp_bridge.py", "/opt/pawflow/mcp_bridge.py"),
+            (project_root / "tools" / "cc_interactive_proxy.py", "/opt/pawflow/cc_interactive_proxy.py"),
+            (project_root / "tools" / "cc_interactive_hook.py", "/opt/pawflow/cc_interactive_hook.py"),
+            (project_root / "docker" / "pawflow_sdk" / "pawflow.py", "/opt/pawflow/pawflow.py"),
+        ]
+        for src, dst in files:
+            if src.exists():
+                mounts += ["-v", f"{translate_path(to_host_path(str(src)))}:{dst}:ro"]
+        pkg_dir = project_root / "pawflow_relay"
+        if pkg_dir.is_dir():
+            mounts += ["-v", f"{translate_path(to_host_path(str(pkg_dir)))}:/opt/pawflow/pawflow_relay:ro"]
+        if not ca_private_key_is_host_only([m.split(":", 1)[0] for m in mounts if isinstance(m, str)]):
+            raise RuntimeError("Refusing to mount CC interactive CA private key")
+
+        owner = get_server_id()
+        name = f"pf-{owner[:12]}-cci-{uuid.uuid4().hex[:8]}"
+        image = os.environ.get("PAWFLOW_CLAUDE_CODE_IMAGE", "pawflow-claude-code:latest")
+        run_args = [
+            "-d", "--rm", "--name", name,
+            *mounts,
+            "--add-host", "api.anthropic.com:127.0.0.1",
+            "--add-host", "host.docker.internal:host-gateway",
+            "--cap-add", "SYS_ADMIN",
+            "--shm-size", "512m",
+            "--tmpfs", "/tmp:rw,nosuid,size=512m",
+            "--user", "root",
+            "--entrypoint", "/usr/bin/sleep",
+            image,
+            "infinity",
+        ]
+        result = subprocess.run(docker_cmd() + ["run"] + run_args,
+                                capture_output=True, text=True, timeout=30)
+        if result.returncode != 0:
+            raise RuntimeError(f"Failed to spawn CC interactive container: {result.stderr[:500]}")
+        subprocess.run(docker_cmd() + ["exec", "--user", "root", name, "chronyd"],
+                       capture_output=True, timeout=5)
+        return name
+
+    def _install_ca(self, name: str, container_workdir: str) -> None:
+        ca_path = f"{container_workdir}/.pawflow_cci/certs/pawflow-ca.crt"
+        cmd = (
+            f"cp {shlex.quote(ca_path)} /usr/local/share/ca-certificates/pawflow-cci.crt && "
+            "update-ca-certificates"
+        )
+        r = subprocess.run(docker_cmd() + ["exec", "--user", "root", name, "bash", "-lc", cmd],
+                           capture_output=True, text=True, timeout=30)
+        if r.returncode != 0:
+            raise RuntimeError(f"Failed to install CC interactive CA: {r.stderr[:300]}")
+
+    def _start_proxy(self, *, name: str, container_workdir: str,
+                     session_token: str, event_url: str, event_token: str,
+                     internal_token: str) -> None:
+        ips = self._resolve_upstream_ips()
+        env = [
+            "-e", f"PAWFLOW_CCI_SESSION_TOKEN={session_token}",
+            "-e", f"PAWFLOW_CCI_EVENT_URL={event_url}",
+            "-e", f"PAWFLOW_CCI_EVENT_TOKEN={event_token}",
+            "-e", f"PAWFLOW_INTERNAL_TOKEN={internal_token}",
+            "-e", f"PAWFLOW_ANTHROPIC_UPSTREAM_IPS={','.join(ips)}",
+            "-e", f"PAWFLOW_CCI_LEAF_CERT={container_workdir}/.pawflow_cci/certs/api-anthropic.crt",
+            "-e", f"PAWFLOW_CCI_LEAF_KEY={container_workdir}/.pawflow_cci/certs/api-anthropic.key",
+        ]
+        r = subprocess.run(
+            docker_cmd() + ["exec", "-d", "--user", "root", *env, name,
+                            "python3", "/opt/pawflow/cc_interactive_proxy.py"],
+            capture_output=True, text=True, timeout=10)
+        if r.returncode != 0:
+            raise RuntimeError(f"Failed to start CC interactive proxy: {r.stderr[:300]}")
+
+    def _write_hook_settings(self, workdir: str) -> None:
+        hooks = {}
+        handler = {
+            "type": "command",
+            "command": "python3",
+            "args": ["/opt/pawflow/cc_interactive_hook.py"],
+            "timeout": 5,
+        }
+        for event_name in ("Stop", "StopFailure", "PreCompact", "PostCompact", "SessionEnd"):
+            hooks[event_name] = [{"hooks": [handler]}]
+        settings_path = Path(workdir) / ".claude" / "settings.json"
+        settings_path.parent.mkdir(parents=True, exist_ok=True)
+        settings_path.write_text(json.dumps({"hooks": hooks}, indent=2) + "\n", encoding="utf-8")
+
+    def _start_claude_tmux(self, *, name: str, container_workdir: str,
+                           mcp_path: str, model: str, ca_path: str,
+                           session_token: str, event_url: str,
+                           event_token: str, internal_token: str) -> None:
+        args = [
+            "claude",
+            "--dangerously-skip-permissions",
+            "--strict-mcp-config",
+            "--mcp-config", mcp_path,
+            "--max-turns", "1000",
+        ]
+        if model:
+            args.extend(["--model", model])
+        quoted = " ".join(shlex.quote(a) for a in args)
+        shell = (
+            f"cd {shlex.quote(container_workdir)} && "
+            "tmux kill-session -t pawflow 2>/dev/null || true; "
+            "tmux new-session -d -s pawflow "
+            f"'env HOME={shlex.quote(container_workdir)} USER=pawflow "
+            f"CLAUDE_CONFIG_DIR={shlex.quote(container_workdir)} "
+            f"NODE_EXTRA_CA_CERTS={shlex.quote(ca_path)} "
+            f"PAWFLOW_CCI_SESSION_TOKEN={shlex.quote(session_token)} "
+            f"PAWFLOW_CCI_EVENT_URL={shlex.quote(event_url)} "
+            f"PAWFLOW_CCI_EVENT_TOKEN={shlex.quote(event_token)} "
+            f"PAWFLOW_INTERNAL_TOKEN={shlex.quote(internal_token)} "
+            "CLAUDE_CODE_CERT_STORE=system TERM=xterm-256color "
+            f"{quoted}'"
+        )
+        r = subprocess.run(
+            docker_cmd() + ["exec", "--user", "1000:1000", name,
+                            "bash", "-lc", shell],
+            capture_output=True, text=True, timeout=15)
+        if r.returncode != 0:
+            raise RuntimeError(f"Failed to start Claude tmux: {r.stderr[:500]}")
+
+    @staticmethod
+    def _resolve_upstream_ips() -> list[str]:
+        infos = socket.getaddrinfo("api.anthropic.com", 443, type=socket.SOCK_STREAM)
+        seen = []
+        for info in infos:
+            ip = info[4][0]
+            if ip not in seen and ip != "127.0.0.1":
+                seen.append(ip)
+        return seen
+
+    @staticmethod
+    def _is_alive(name: str) -> bool:
+        try:
+            result = subprocess.run(
+                docker_cmd() + ["inspect", "-f", "{{.State.Running}}", name],
+                capture_output=True, text=True, timeout=5)
+            return result.stdout.strip() == "true"
+        except Exception:
+            return False

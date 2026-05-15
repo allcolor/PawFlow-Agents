@@ -263,11 +263,12 @@ class TestLLMConnectionService:
         src = open("core/llm_client.py", encoding="utf-8").read()
         assert "DEFAULT_MODELS = {" not in src
         configured = {
-            "openai": "gpt-4o-mini",
-            "anthropic": "claude-opus-4-6",
-            "claude-code": "claude-opus-4-6",
-            "codex-app-server": "gpt-5.4",
-            "gemini": "gemini-2.5-pro",
+            "openai": "gpt-5.5",
+            "anthropic": "claude-opus-4-7",
+            "claude-code": "claude-opus-4-7",
+            "claude-code-interactive": "claude-opus-4-7",
+            "codex-app-server": "gpt-5.5",
+            "gemini": "gemini-3.1-pro",
         }
         config_path = tmp_path / "default_models.json"
         config_path.write_text(json.dumps(configured), encoding="utf-8")

@@ -23,6 +23,7 @@ from core.llm_providers import (
     LLMOpenaiMixin,
     LLMAnthropicMixin,
     LLMClaudeCodeMixin,
+    LLMClaudeCodeInteractiveMixin,
     LLMCodexAppServerMixin,
     LLMGeminiMixin,
 )
@@ -30,11 +31,12 @@ from core.llm_providers import (
 logger = logging.getLogger(__name__)
 
 _BUILTIN_MODEL_DEFAULTS = {
-    "openai": "gpt-4o-mini",
-    "anthropic": "claude-opus-4-6",
-    "claude-code": "claude-opus-4-6",
-    "codex-app-server": "gpt-5.4",
-    "gemini": "gemini-2.5-pro",
+    "openai": "gpt-5.5",
+    "anthropic": "claude-opus-4-7",
+    "claude-code": "claude-opus-4-7",
+    "claude-code-interactive": "claude-opus-4-7",
+    "codex-app-server": "gpt-5.5",
+    "gemini": "gemini-3.1-pro",
 }
 
 
@@ -339,6 +341,7 @@ class LLMClient(
     LLMOpenaiMixin,
     LLMAnthropicMixin,
     LLMClaudeCodeMixin,
+    LLMClaudeCodeInteractiveMixin,
     LLMCodexAppServerMixin,
     LLMGeminiMixin,
 ):
@@ -355,7 +358,7 @@ class LLMClient(
         max_retries: Number of retries on transient errors
     """
 
-    PROVIDERS = ("openai", "anthropic", "claude-code", "codex-app-server", "gemini")
+    PROVIDERS = ("openai", "anthropic", "claude-code", "claude-code-interactive", "codex-app-server", "gemini")
 
     DEFAULT_URLS = {
         "openai": "https://api.openai.com",
@@ -366,6 +369,7 @@ class LLMClient(
 
     _LIVE_PREEMPT_SUPPORT = {
         "claude-code": True,
+        "claude-code-interactive": True,
         "codex-app-server": True,
         "gemini": True,
     }
@@ -494,7 +498,7 @@ class LLMClient(
         configured = self._cfg("default_model", "")
         if configured:
             return configured
-        if self.provider in ("claude-code", "codex-app-server", "gemini"):
+        if self.provider in ("claude-code", "claude-code-interactive", "codex-app-server", "gemini"):
             return ""
         return self.DEFAULT_MODELS.get(self.provider, "")
 
@@ -768,6 +772,8 @@ class LLMClient(
         """
         if self.provider == "claude-code":
             fn = getattr(self, "_cc_send_user_message", None)
+        elif self.provider == "claude-code-interactive":
+            fn = getattr(self, "_cci_send_user_message", None)
         elif self.provider == "codex-app-server":
             fn = getattr(self, "_codex_app_send_user_message", None)
         elif self.provider == "gemini":
@@ -776,7 +782,7 @@ class LLMClient(
             return False
         if fn is None:
             return False
-        if self.provider == "codex-app-server":
+        if self.provider in ("claude-code-interactive", "codex-app-server"):
             return fn(text, attachments, **kwargs)
         return fn(text, attachments)
 
@@ -825,7 +831,7 @@ class LLMClient(
         Returns:
             LLMResponse with content and/or tool_calls populated.
         """
-        if not self.api_key and self.provider not in ("claude-code", "codex-app-server", "gemini"):
+        if not self.api_key and self.provider not in ("claude-code", "claude-code-interactive", "codex-app-server", "gemini"):
             raise LLMClientError("api_key is required")
         if self.provider not in self.PROVIDERS:
             raise LLMClientError(
@@ -847,6 +853,15 @@ class LLMClient(
                 # streaming callback. The LLMResponse carries the final
                 # text + tool_calls.
                 result = self._stream_claude_code(
+                    messages, mdl, temperature, max_tokens, tools,
+                    call_user_id=call_user_id,
+                    call_conversation_id=call_conversation_id,
+                    call_agent_name=call_agent_name,
+                    call_event_cid=call_event_cid,
+                    call_ephemeral_stream=call_ephemeral_stream,
+                )
+            elif self.provider == "claude-code-interactive":
+                result = self._stream_claude_code_interactive(
                     messages, mdl, temperature, max_tokens, tools,
                     call_user_id=call_user_id,
                     call_conversation_id=call_conversation_id,
@@ -1000,6 +1015,11 @@ class LLMClient(
                 self._codex_app_abort_active(force=True)
             except Exception:
                 logger.debug("Codex app-server abort failed", exc_info=True)
+        if getattr(self, "provider", "") == "claude-code-interactive":
+            try:
+                self.cancel_claude_code_interactive(force=True)
+            except Exception:
+                logger.debug("Claude Code interactive abort failed", exc_info=True)
         conn = getattr(self, "_active_http_conn", None)
         if conn is not None:
             try:
@@ -1041,7 +1061,7 @@ class LLMClient(
 
         Supports both OpenAI and Anthropic streaming.
         """
-        if not self.api_key and self.provider not in ("claude-code", "codex-app-server", "gemini"):
+        if not self.api_key and self.provider not in ("claude-code", "claude-code-interactive", "codex-app-server", "gemini"):
             raise LLMClientError("api_key is required")
 
         model = model or self.default_model
@@ -1063,6 +1083,17 @@ class LLMClient(
                                                   call_agent_name=call_agent_name,
                                                   call_event_cid=call_event_cid,
                                                   call_ephemeral_stream=call_ephemeral_stream)
+            elif self.provider == "claude-code-interactive":
+                result = self._stream_claude_code_interactive(
+                    messages, mdl, temperature, max_tokens, tools, callback,
+                    thinking_callback=thinking_callback,
+                    turn_callback=turn_callback,
+                    block_callback=block_callback,
+                    call_user_id=call_user_id,
+                    call_conversation_id=call_conversation_id,
+                    call_agent_name=call_agent_name,
+                    call_event_cid=call_event_cid,
+                    call_ephemeral_stream=call_ephemeral_stream)
             elif self.provider == "codex-app-server":
                 result = self._stream_codex_app_server(messages, mdl, temperature, max_tokens, tools, callback,
                                                        thinking_budget=thinking_budget,

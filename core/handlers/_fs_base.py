@@ -510,6 +510,13 @@ class BaseFsHandler(ToolHandler):
         from core.handlers._edit_guard import track_read
         track_read(self._user_id, self._conversation_id,
                    self._agent_name, path, data)
+        _img_exts = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp")
+        if any(fname.lower().endswith(ext) for ext in _img_exts):
+            import base64 as _b64
+            import mimetypes as _mimetypes
+            mime = _mimetypes.guess_type(fname)[0] or "image/png"
+            b64 = _b64.b64encode(data).decode("ascii")
+            return f"Image: {fname} ({len(data):,} bytes, {mime})\n__image_data__:{mime}:{b64}"
         try:
             text = data.decode("utf-8")
         except UnicodeDecodeError:

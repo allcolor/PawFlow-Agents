@@ -35,7 +35,7 @@ class ReadHandler(BaseFsHandler):
             " - PDF files: use the pages parameter (e.g. pages='1-5'). For large PDFs "
             "(more than 10 pages), you MUST provide pages to read specific ranges.\n"
             " - Jupyter notebooks (.ipynb): returns all cells with their outputs.\n"
-            " - Images (PNG, JPG, etc.): returns metadata; use see() for visual inspection.\n\n"
+            " - Images (PNG, JPG, etc.): injects the image as multimodal vision content.\n\n"
             "Important:\n"
             " - This tool can only read files, not directories. To list a directory, use "
             "bash with ls or use glob.\n"
@@ -149,13 +149,15 @@ class ReadHandler(BaseFsHandler):
 
         fname = path.rsplit("/", 1)[-1] if "/" in path else path
 
-        # Images — return metadata + hint to use see() for visual inspection
+        # Images — same multimodal contract as see(). ToolRelayService turns
+        # this marker into native MCP image content for Claude Code.
         _img_exts = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp")
         if any(fname.lower().endswith(ext) for ext in _img_exts):
+            import base64
             import mimetypes
             mime = mimetypes.guess_type(fname)[0] or "image/png"
-            return (f"Image file: {fname} ({len(data):,} bytes, {mime})\n"
-                    f"[To visually inspect this image, use see(path=\"{path}\") instead of read]")
+            b64 = base64.b64encode(bytes(data)).decode("ascii")
+            return f"Image: {fname} ({len(data):,} bytes, {mime})\n__image_data__:{mime}:{b64}"
 
         # Video/audio — hint to use see()
         _vid_exts = (".mp4", ".avi", ".mov", ".mkv", ".webm", ".flv")

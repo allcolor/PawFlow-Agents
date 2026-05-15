@@ -14,7 +14,7 @@ def test_only_codex_app_server_is_registered():
     assert "codex" not in LLMClient.PROVIDERS
     assert "codex" not in LLMClient.DEFAULT_MODELS
     assert "codex-app-server" in LLMClient.PROVIDERS
-    assert LLMClient.DEFAULT_MODELS["codex-app-server"] == "gpt-5.4"
+    assert LLMClient.DEFAULT_MODELS["codex-app-server"] == "gpt-5.5"
     assert not hasattr(LLMClient, "_stream_codex")
     assert hasattr(LLMClient, "_stream_codex_app_server")
 

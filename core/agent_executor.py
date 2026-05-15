@@ -598,12 +598,13 @@ class SubAgentExecutor:
                 }
                 with _active_inst._active_contexts_lock:
                     _active_inst._active_contexts[_active_ctx_key] = _active_ctx
-                    # Register CC client under the task-shaped key so a
+                    # Register CLI clients under the task-shaped key so a
                     # task-targeted force-stop (cancel_interrupt.py line
-                    # 60: `f"::task::{task_id}" in k`) finds and kills
-                    # the sub-agent's CC subprocess. Register only for
-                    # CC clients that expose cancel_claude_code.
-                    if hasattr(client, "cancel_claude_code"):
+                    # 60: `f"::task::{task_id}" in k`) finds and cancels
+                    # the sub-agent's provider process/session.
+                    if (hasattr(client, "cancel_claude_code")
+                            or hasattr(client, "cancel_claude_code_interactive")
+                            or hasattr(client, "abort")):
                         _active_inst._active_claude_client[_active_ctx_key] = client
         except Exception:
             _active_inst = None

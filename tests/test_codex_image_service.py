@@ -28,7 +28,7 @@ class FakeClient:
 
 class FakeLLMService:
     provider = "codex-app-server"
-    default_model = "gpt-5.4"
+    default_model = "gpt-5.5"
 
     def __init__(self, client):
         self._client = client
@@ -162,7 +162,7 @@ def test_codex_image_generate_runs_through_codex_pool_and_llm_service(tmp_path, 
     }
     assert "exec" in call["codex_args"]
     assert "--model" in call["codex_args"]
-    assert "gpt-5.4" in call["codex_args"]
+    assert "gpt-5.5" in call["codex_args"]
     assert "--disable" in call["codex_args"]
     assert "image_generation" not in call["codex_args"]
     assert call["codex_args"][-1] == "-"

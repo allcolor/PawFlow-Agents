@@ -262,6 +262,7 @@ class AgentLoopTask(
                 # skipped cancel for codex/gemini agents.
                 _cancel_fn = (
                     getattr(_cc, 'cancel_claude_code', None)
+                    or getattr(_cc, 'cancel_claude_code_interactive', None)
                     or getattr(_cc, 'cancel_codex', None)
                     or getattr(_cc, 'cancel_gemini', None)
                     or getattr(_cc, 'abort', None)

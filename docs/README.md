@@ -7,6 +7,7 @@
 | [Architecture](architecture.md) | Internal architecture: FlowFile, Task, Service, Flow, engine |
 | [Agent System](AGENT_SYSTEM.md) | Agent loop, context management, plans, multi-agent, streaming |
 | [LLM Providers](llm_providers.md) | OpenAI/Anthropic APIs, Claude Code, Codex, Gemini, OpenAI-compatible endpoints |
+| [Claude Code Interactive](CLAUDE_CODE_INTERACTIVE.md) | Experimental MITM-backed Claude Code interactive provider |
 | [PawCode CLI](pawcode.md) | Terminal client, stream-JSON mode, shared conversations |
 | [VS Code Extension](vscode.md) | Editor client, resource panel, approvals |
 | [Multi-Client Conversations](multi_client_conversations.md) | Web, CLI, VS Code, API, and channels sharing one conversation runtime |

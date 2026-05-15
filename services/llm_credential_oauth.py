@@ -21,6 +21,7 @@ SERVICE_TYPE = "llmCredentialOAuthProvider"
 PROVIDERS = ("claude-code", "codex-app-server", "gemini")
 _SHORT_PROVIDER = {
     "claude-code": "cc",
+    "claude-code-interactive": "cc",
     "claude": "cc",
     "cc": "cc",
     "codex-app-server": "codex",

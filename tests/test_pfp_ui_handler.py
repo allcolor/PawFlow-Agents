@@ -77,6 +77,25 @@ def _write_ui_pkg_with_handler(root: Path, keypair, *,
     return pkg
 
 
+@pytest.fixture(autouse=True)
+def _mock_llm_review(monkeypatch):
+    """Stub the summarizer review so install plans do not hit a real LLM."""
+    import core.package_review as package_review
+
+    class _ReviewLLM:
+        def complete(self, **kwargs):
+            class _Response:
+                content = json.dumps({
+                    "risk": "low", "allowed": True,
+                    "requires_human_review": False, "findings": [],
+                    "sanitized_summary": "ok", "recommended_changes": [],
+                })
+            return _Response()
+    monkeypatch.setattr(
+        package_review, "_resolve_review_llm",
+        lambda user_id, conversation_id: (_ReviewLLM(), None, "review_llm"))
+
+
 @pytest.fixture
 def keypair():
     return pfp_package.create_signing_key()

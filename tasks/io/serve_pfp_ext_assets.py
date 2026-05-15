@@ -89,6 +89,17 @@ class ServePfpExtensionAssetsTask(BaseTask):
             return self._not_found(flowfile, "authentication required")
         conversation_id = (flowfile.get_attribute("http.cookie.pawflow_conv") or "").strip()
 
+        # Kill switch and per-conversation toggle: a disabled package must
+        # not be servable at all. Returning 404 (rather than 403) hides the
+        # presence of the package from a malicious page in another tab.
+        from core.tool_mcp_filters import (
+            _ui_extensions_globally_disabled, is_extension_enabled,
+        )
+        if _ui_extensions_globally_disabled():
+            return self._not_found(flowfile, "ui extensions are disabled")
+        if conversation_id and not is_extension_enabled(conversation_id, package_id):
+            return self._not_found(flowfile, "extension disabled for this conversation")
+
         # Look up the asset across user + (optionally) conversation scope.
         from core.pfp_package import list_installed_ui_extensions
         scope = "conversation" if conversation_id else "user"

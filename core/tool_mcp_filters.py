@@ -30,6 +30,7 @@ def _default_filters() -> Dict[str, Any]:
         "disabled_tools": [],
         "enabled_dynamic_tools": [],
         "enabled_mcps": [],
+        "disabled_extensions": [],
         "agent_overrides": {},
     }
 
@@ -50,6 +51,7 @@ def get_filters(conversation_id: str) -> Dict[str, Any]:
     data["disabled_tools"] = _clean_names(data.get("disabled_tools") or [])
     data["enabled_dynamic_tools"] = _clean_names(data.get("enabled_dynamic_tools") or [])
     data["enabled_mcps"] = _clean_names(data.get("enabled_mcps") or [])
+    data["disabled_extensions"] = _clean_names(data.get("disabled_extensions") or [])
     data.pop("disabled_mcps", None)
     if not isinstance(data.get("agent_overrides"), dict):
         data["agent_overrides"] = {}
@@ -64,6 +66,7 @@ def set_filters(conversation_id: str, filters: Dict[str, Any]) -> Dict[str, Any]
     data["disabled_tools"] = _clean_names(data.get("disabled_tools") or [])
     data["enabled_dynamic_tools"] = _clean_names(data.get("enabled_dynamic_tools") or [])
     data["enabled_mcps"] = _clean_names(data.get("enabled_mcps") or [])
+    data["disabled_extensions"] = _clean_names(data.get("disabled_extensions") or [])
     data.pop("disabled_mcps", None)
     overrides = {}
     for agent, cfg in (data.get("agent_overrides") or {}).items():
@@ -151,4 +154,43 @@ def is_enabled(conversation_id: str, name: str, agent_name: str = "",
                kind: str = "tools") -> bool:
     if kind == "mcps":
         return bool(name) and name in enabled_mcp_names(conversation_id, agent_name)
+    if kind == "extensions":
+        return is_extension_enabled(conversation_id, name)
     return is_tool_enabled(conversation_id, name, agent_name)
+
+
+def _ui_extensions_globally_disabled() -> bool:
+    """Process-wide kill switch (env var). Set to bail out of every package UI."""
+    import os
+    raw = os.environ.get("PAWFLOW_UI_EXTENSIONS_DISABLED", "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def is_extension_enabled(conversation_id: str, package_id: str) -> bool:
+    """Return True when the named ui_extension is enabled for this conversation.
+
+    Order of precedence: the global env kill switch wins, then the per-conv
+    `disabled_extensions` blacklist in `tool_mcp_filters`. Unknown package
+    ids are considered enabled (the boot manifest filters by installed list
+    elsewhere).
+    """
+    if not package_id:
+        return False
+    if _ui_extensions_globally_disabled():
+        return False
+    filters = get_filters(conversation_id)
+    blacklist = set(filters.get("disabled_extensions") or [])
+    return package_id not in blacklist
+
+
+def filter_enabled_extensions(conversation_id: str, package_ids: Iterable[str]) -> list[str]:
+    """Return the subset of `package_ids` that is enabled for the conversation.
+
+    Used by the chat boot manifest to drop disabled extensions before the page
+    is rendered, and by the asset task to refuse 404 on a disabled package.
+    """
+    if _ui_extensions_globally_disabled():
+        return []
+    filters = get_filters(conversation_id) if conversation_id else _default_filters()
+    blacklist = set(filters.get("disabled_extensions") or [])
+    return [pkg for pkg in package_ids if pkg and pkg not in blacklist]

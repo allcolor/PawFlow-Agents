@@ -50,6 +50,26 @@ def _handle_pfp_ui(self, action: str, body: Dict[str, Any], store, user_id: str,
         }
     }
 
+    # Kill switch + per-conv toggle. Both must succeed for the handler to
+    # run, even with valid auth and a healthy install record.
+    from core.tool_mcp_filters import (
+        _ui_extensions_globally_disabled, is_extension_enabled,
+    )
+    if _ui_extensions_globally_disabled():
+        flowfile.set_content(json.dumps({
+            "error": "UI extensions are disabled on this server",
+            "_ext": package_id,
+        }).encode("utf-8"))
+        flowfile.set_attribute("http.response.status", "503")
+        return [flowfile]
+    if conversation_id and not is_extension_enabled(conversation_id, package_id):
+        flowfile.set_content(json.dumps({
+            "error": "extension disabled for this conversation",
+            "_ext": package_id,
+        }).encode("utf-8"))
+        flowfile.set_attribute("http.response.status", "403")
+        return [flowfile]
+
     from core import pfp_package, pfp_runtime
 
     scope = "conversation" if conversation_id else "user"

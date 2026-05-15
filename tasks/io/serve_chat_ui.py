@@ -119,6 +119,11 @@ def _initial_extensions_block(user_id: str = "", conversation_id: str = "") -> s
         return "<script>window.PAWFLOW_EXTENSIONS=[];</script>\n"
     try:
         from core.pfp_package import list_installed_ui_extensions, _UI_API_VERSION
+        from core.tool_mcp_filters import (
+            _ui_extensions_globally_disabled, is_extension_enabled,
+        )
+        if _ui_extensions_globally_disabled():
+            return "<script>window.PAWFLOW_EXTENSIONS=[];</script>\n"
         scope = "conversation" if conversation_id else "user"
         records = list_installed_ui_extensions(
             user_id=user_id, conversation_id=conversation_id, scope=scope)
@@ -128,6 +133,11 @@ def _initial_extensions_block(user_id: str = "", conversation_id: str = "") -> s
     out = []
     for rec in records:
         if rec.get("version_compat") != _UI_API_VERSION:
+            continue
+        # Per-conversation toggle: drop extensions the user disabled in this
+        # conversation. The kill switch was already handled above.
+        if conversation_id and not is_extension_enabled(
+                conversation_id, str(rec.get("package") or "")):
             continue
         package = rec.get("package") or ""
         assets = []

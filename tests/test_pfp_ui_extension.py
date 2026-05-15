@@ -91,6 +91,34 @@ def _write_ui_extension_pkg(root: Path, keypair, *, version: str = "1.0.0",
     return pkg
 
 
+@pytest.fixture(autouse=True)
+def _mock_llm_review(monkeypatch):
+    """Stub the summarizer review so install plans do not hit a real LLM.
+
+    Phase 4 review pipeline runs on every `ui_extension` install. Without an
+    LLM-backed reviewer the runtime returns `risk=block` and refuses install,
+    which would mask the actual fixture behaviour we want to exercise. The
+    stub mirrors what a clean review on safe content would emit.
+    """
+    import core.package_review as package_review
+
+    class _ReviewLLM:
+        def complete(self, **kwargs):
+            class _Response:
+                content = json.dumps({
+                    "risk": "low",
+                    "allowed": True,
+                    "requires_human_review": False,
+                    "findings": [],
+                    "sanitized_summary": "ok",
+                    "recommended_changes": [],
+                })
+            return _Response()
+    monkeypatch.setattr(
+        package_review, "_resolve_review_llm",
+        lambda user_id, conversation_id: (_ReviewLLM(), None, "review_llm"))
+
+
 @pytest.fixture
 def keypair():
     return pfp_package.create_signing_key()

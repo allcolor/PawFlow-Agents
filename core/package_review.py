@@ -11,9 +11,9 @@ from typing import Any, Dict, Iterable, List, Optional
 _RISK_ORDER = {"low": 0, "medium": 1, "high": 2, "block": 3}
 _TEXT_FILE_SUFFIXES = (
     ".py", ".json", ".md", ".txt", ".yaml", ".yml", ".toml",
-    ".sh", ".ps1", ".js", ".ts",
+    ".sh", ".ps1", ".js", ".mjs", ".ts", ".css", ".html",
 )
-_CODE_FILE_SUFFIXES = (".py", ".sh", ".ps1", ".js", ".ts")
+_CODE_FILE_SUFFIXES = (".py", ".sh", ".ps1", ".js", ".mjs", ".ts")
 
 # Advisory-only pattern checks.
 #
@@ -74,6 +74,110 @@ _STATIC_PATTERNS = [
         "filesystem_write",
         re.compile(r"\b(write_bytes|write_text|open\s*\([^\)]*['\"]w|unlink|rmtree|remove\s*\()", re.I | re.S),
         "Writes or deletes files.",
+    ),
+]
+
+# Browser-side patterns. Run on `ui_extension` JS/CSS assets shipped through
+# PFP packages. Like the python checks above, these are ADVISORY: a
+# determined attacker can defeat them with string concatenation, base64,
+# template literals, or Function constructors. The defense in depth is
+# install consent (user reviews the findings before approving), CSP at
+# `/chat`, and the kill-switch / per-conversation toggle. Treat each hit
+# as a finding that surfaces in the install plan, not as a filter that
+# would keep a hostile package out.
+_JS_STATIC_PATTERNS = [
+    (
+        "block",
+        "token_exfiltration",
+        re.compile(r"\b(getToken|getAuthToken|getJwtToken|getAuthHeaders|getAuthCookie)\s*\(", re.I),
+        "Reads the PawFlow session token. UI extensions must call host APIs through pfp.call(...) instead.",
+    ),
+    (
+        "block",
+        "token_exfiltration",
+        re.compile(r"""localStorage\s*\.\s*getItem\s*\(\s*['\"]pawflow_""", re.I),
+        "Reads PawFlow-prefixed localStorage entries.",
+    ),
+    (
+        "block",
+        "token_exfiltration",
+        re.compile(r"document\s*\.\s*cookie\b", re.I),
+        "Reads or writes document.cookie.",
+    ),
+    (
+        "block",
+        "external_network",
+        re.compile(r"\bfetch\s*\(\s*['\"]https?://(?![\w.-]*\$\{)", re.I),
+        "fetch() to an external URL. Use pfp.call(...) to reach PawFlow, or declare an allowed_tools grant.",
+    ),
+    (
+        "block",
+        "external_network",
+        re.compile(r"\bnew\s+XMLHttpRequest\b", re.I),
+        "Uses XMLHttpRequest. Use pfp.call(...) instead.",
+    ),
+    (
+        "block",
+        "external_network",
+        re.compile(r"\bnew\s+WebSocket\s*\(\s*['\"]wss?://", re.I),
+        "Opens a WebSocket to a remote endpoint.",
+    ),
+    (
+        "block",
+        "external_network",
+        re.compile(r"\bnavigator\s*\.\s*sendBeacon\s*\(", re.I),
+        "Uses navigator.sendBeacon for background data exfiltration.",
+    ),
+    (
+        "high",
+        "dynamic_execution",
+        re.compile(r"\beval\s*\(", re.I),
+        "Uses eval() (dynamic code execution).",
+    ),
+    (
+        "high",
+        "dynamic_execution",
+        # `new Function(...)` is the JS dynamic-code constructor. Match it
+        # case-sensitively so the regex does not collide with the `function`
+        # keyword which is the normal way to declare a function in JS.
+        re.compile(r"\bnew\s+Function\s*\("),
+        "Uses the Function constructor (dynamic code execution).",
+    ),
+    (
+        "high",
+        "dynamic_execution",
+        re.compile(r"\b(setTimeout|setInterval)\s*\(\s*['\"]", re.I),
+        "Passes a string to setTimeout/setInterval (dynamic code execution).",
+    ),
+    (
+        "high",
+        "navigation_hijack",
+        re.compile(r"\bwindow\s*\.\s*(location|open)\s*[=\(]", re.I),
+        "Mutates window.location or opens a new window.",
+    ),
+    (
+        "medium",
+        "dom_injection",
+        re.compile(r"\b\.innerHTML\s*=", re.I),
+        "Assigns to innerHTML (potential XSS sink).",
+    ),
+    (
+        "medium",
+        "dom_injection",
+        re.compile(r"document\s*\.\s*write\s*\(", re.I),
+        "Uses document.write (deprecated and a known XSS sink).",
+    ),
+    (
+        "medium",
+        "pixel_exfiltration",
+        re.compile(r"\bnew\s+Image\s*\(\s*\)\s*\.\s*src\s*=", re.I),
+        "Creates an Image object and sets its src (pixel beacon pattern).",
+    ),
+    (
+        "medium",
+        "clipboard_access",
+        re.compile(r"\bnavigator\s*\.\s*clipboard\s*\.\s*read", re.I),
+        "Reads the clipboard programmatically.",
     ),
 ]
 
@@ -278,7 +382,15 @@ def _static_text_review(texts: Iterable[tuple[str, str]]) -> Dict[str, Any]:
     for source, text in texts:
         if not text:
             continue
-        for severity, category, pattern, reason in _STATIC_PATTERNS:
+        # Pick the pattern set by file extension so a .js asset is checked
+        # against browser-side rules and a .py entrypoint against python
+        # rules. Unknown extensions fall back to the python rules; the
+        # python set has the strictest secret/exfiltration patterns.
+        if source.lower().endswith((".js", ".mjs", ".ts", ".css", ".html")):
+            pattern_set = _JS_STATIC_PATTERNS
+        else:
+            pattern_set = _STATIC_PATTERNS
+        for severity, category, pattern, reason in pattern_set:
             match = pattern.search(text)
             if match:
                 findings.append(_finding(severity, category, f"{source}: {match.group(0)}", reason))

@@ -1864,6 +1864,30 @@ def _review_object_for_install(row: Dict[str, Any], package: Dict[str, Any],
             llm_service=review.get("llm_service", ""),
             subject_hash=review_hash(obj, package.get("lock", {}).get("files", {})),
         )
+        return
+    if obj_type == "ui_extension":
+        # Scan all declared ui_extension files (scripts, styles, i18n,
+        # handlers) through the static+LLM pipeline. Browser-side .js/.css
+        # assets are matched against `_JS_STATIC_PATTERNS`; the .py handlers
+        # fall through to the python pattern set automatically.
+        from core.package_review import (
+            assert_installable_review, review_hash, review_metadata,
+            review_package_object,
+        )
+        review = review_package_object(
+            package,
+            obj,
+            operation=operation,
+            user_id=user_id,
+            conversation_id=conversation_id,
+        )
+        assert_installable_review(review, force=force, label="UI extension")
+        obj["_review"] = review_metadata(
+            review,
+            service_id=review.get("service_id", ""),
+            llm_service=review.get("llm_service", ""),
+            subject_hash=review_hash(obj, package.get("lock", {}).get("files", {})),
+        )
 
 
 def _write_resource(rtype: str, name: str, data: Dict[str, Any], user_id: str,

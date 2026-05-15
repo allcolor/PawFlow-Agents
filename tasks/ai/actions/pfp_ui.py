@@ -6,14 +6,38 @@ dispatcher below recognizes any body carrying `_ext`, resolves the
 matching installed handler, and runs it through the existing relay
 subprocess sandbox via `core.pfp_runtime.invoke_ui_handler`.
 
-All trust boundary guarantees of the PFP runtime apply here:
+Trust domain shared by all installed UI extensions
+--------------------------------------------------
+UI extensions run as plain JavaScript in the user's tab, same origin as
+PawFlow itself. Any installed extension can read every other extension's
+DOM, redefine `window.pawflow`, intercept the SSE bus, and call
+`fetch('/api/ui', { body: '{"_ext": "victim.pkg", ...}' })` directly.
+The `_ext` field on the request body is therefore **self-declared by the
+caller**: it identifies which installed package's handler to run, not
+which extension initiated the call.
+
+The practical consequence is that two installed extensions from
+different vendors share the same browser trust domain. A malicious A
+can invoke B's handlers with B's `allowed_tools` grants. This is the
+same trust model as Chrome extensions executing in a page, or VS Code
+extensions in a workspace: install consent is the gate, not runtime
+isolation. The kill switch and per-conversation toggle let a user
+contain a misbehaving extension without uninstalling.
+
+Within that domain, the PFP runtime keeps its full set of guarantees:
   - the entrypoint hash is verified against the signed install record
     on every call;
   - the relay child runs with the relay token / runner flag scrubbed from
     its env, so the handler can only re-enter PawFlow through brokered
     `pfp.call_tool` / `pfp.call_service` envelopes;
   - `PackageCapabilityBroker` re-authorizes every host call against the
-    `allowed_tools` / `allowed_services` grants declared at install time.
+    `allowed_tools` / `allowed_services` grants declared at install time;
+  - the `_ext` field is recorded in the audit log of every invocation so
+    cross-package calls are visible to a human auditor.
+
+Future work: a true per-extension isolation would require sandboxed
+iframes with a postMessage broker. The current architecture is the
+right base layer for that change, but it does not provide it today.
 """
 
 from __future__ import annotations
@@ -91,6 +115,14 @@ def _handle_pfp_ui(self, action: str, body: Dict[str, Any], store, user_id: str,
         "scope": resolved.get("scope") or scope,
         "agent_name": agent_name,
     }
+    # Audit log: who called what, with which grants. The `_ext` is self-
+    # declared by the browser caller so this log is the primary signal
+    # for spotting cross-package abuse in a multi-extension install.
+    logger.info(
+        "PFP UI handler invoke: user=%s conv=%s _ext=%s action=%s grants=tools:%d/services:%d",
+        user_id, conversation_id or "-", package_id, action,
+        len(resolved["package_runtime"].get("allowed_tools") or []),
+        len(resolved["package_runtime"].get("allowed_services") or []))
     try:
         result = pfp_runtime.invoke_ui_handler(
             resolved["package_runtime"],

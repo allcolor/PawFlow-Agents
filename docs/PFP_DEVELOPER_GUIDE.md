@@ -413,8 +413,24 @@ They have full DOM access; PawFlow scans the JS files at install time for
 known exfiltration patterns and surfaces findings in the install plan, but
 the trust boundary is browser-side and the install consent is the real
 gate. Server-side handlers triggered by `pfp.call(...)` execute inside the
-relay subprocess sandbox (phase 3); they cannot exfiltrate or escalate
-without an `allowed_tools` / `allowed_services` grant accepted at install.
+relay subprocess sandbox; they cannot exfiltrate or escalate without an
+`allowed_tools` / `allowed_services` grant accepted at install.
+
+**All installed UI extensions share one trust domain.** Because every
+extension runs as plain JavaScript in the user's tab, an installed
+extension A can redefine `window.pawflow`, read B's DOM, and call
+`/api/ui` with `_ext: "victim.pkg"` to invoke B's handlers with B's
+`allowed_tools` grants. The `_ext` request field is self-declared by the
+browser caller, not a server-enforced binding to a specific extension.
+This is the same trust model as Chrome extensions, VS Code extensions,
+or any plug-in system that runs in a shared address space: install
+consent is the gate, not runtime isolation. PawFlow logs every UI
+handler invocation with its `_ext` value so a human reviewer can spot
+abuse; the kill switch (`PAWFLOW_UI_EXTENSIONS_DISABLED=1`) and
+per-conversation `disabled_extensions` blacklist let a user contain a
+misbehaving extension without uninstalling. Real per-extension
+isolation would require sandboxed iframes plus a postMessage broker; it
+is not implemented today.
 
 ### Server handlers
 

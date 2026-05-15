@@ -37,7 +37,12 @@ mimetypes.add_type("font/woff", ".woff")
 mimetypes.add_type("font/woff2", ".woff2")
 
 
-_ALLOWED_EXTENSIONS = {".js", ".css", ".json", ".html", ".svg",
+# `.html` removed: a same-origin HTML page served from /chat/ext/... could
+# run inline <script> under the user's session even though the runtime
+# auto-loader only fetches .js/.css. The matching whitelist in core.pfp_package
+# (_UI_ASSET_EXTENSIONS) refuses to install a package declaring .html assets;
+# this server-side allow-list is the second layer.
+_ALLOWED_EXTENSIONS = {".js", ".css", ".json", ".svg",
                        ".png", ".jpg", ".jpeg", ".webp",
                        ".woff", ".woff2"}
 _BASE_PATH = "/chat/ext"

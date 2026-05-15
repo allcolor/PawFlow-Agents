@@ -312,3 +312,187 @@ def test_dispatcher_403_when_extension_disabled_in_conv(installed_ui_pkg, tmp_pa
         "action": "x.foo", "_ext": installed_ui_pkg, "conversation_id": cid,
     })
     assert out.get_attribute("http.response.status") == "403"
+
+
+# ── .html / .css review coverage (qwen findings #3 + #4) ───────────────────────────────────────────────────────────
+
+def test_review_files_now_includes_css_in_payload():
+    """Phase 4 docs claim CSS assets are reviewed; check the selector actually emits them."""
+    from core.package_review import _review_files
+    files = {
+        "content/ui/extension.js": b"pawflow.register('x', function(){});",
+        "content/ui/extension.css": b".x{color:red}",
+        "content/ui/extension.html": b"<p>hi</p>",
+    }
+    selected, _ = _review_files(files, "")
+    paths = {row["path"] for row in selected}
+    assert "content/ui/extension.css" in paths
+    assert "content/ui/extension.html" in paths
+    assert "content/ui/extension.js" in paths
+
+
+def test_html_assets_rejected_at_install_plan(tmp_path):
+    """A .pfp that declares a .html asset is refused by the manifest validator."""
+    keypair = pfp_package.create_signing_key()
+    pkg = tmp_path / "bad.pfpdir"
+    (pkg / "content" / "ui").mkdir(parents=True)
+    (pkg / "content" / "ui" / "extension.js").write_text(
+        "pawflow.register('bad.html', function(){});", encoding="utf-8")
+    (pkg / "content" / "ui" / "page.html").write_text(
+        "<script>alert(1)</script>", encoding="utf-8")
+    manifest = {
+        "format": "pawflow.package.v1",
+        "package": "bad.html",
+        "version": "0.1.0",
+        "developer": {"email": "d@x", "public_key": keypair["public_key"]},
+        "objects": [{
+            "id": "ui_extension:main", "type": "ui_extension", "name": "main",
+            "version_compat": "ui.v1",
+            "assets": {
+                "scripts": ["content/ui/extension.js",
+                            "content/ui/page.html"],
+            },
+            "slots": [{"slot": "action_menu", "id": "bad.x"}],
+            "hooks": ["boot"],
+        }],
+    }
+    (pkg / "pfp.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    built = pfp_package.build_pfp(str(pkg), private_key=keypair["private_key"])
+    plan = pfp_package.inspect_pfp(built["path"], user_id="alice")
+    row = next(r for r in plan["objects"] if r["type"] == "ui_extension")
+    assert row["status"] == "blocked"
+    assert ".html" in row["reason"] or "not allowed" in row["reason"]
+
+
+def test_asset_task_refuses_html_extension(tmp_path, monkeypatch):
+    """Server-side allowlist also refuses .html, redundant with the install check."""
+    monkeypatch.setattr("core.paths.REPOSITORY_DIR", tmp_path / "repo")
+    out = _asset_task_call("/chat/ext/x/abc1234567890abc/page.html")
+    assert out.get_attribute("http.response.status") == "404"
+
+
+# ── Handler secrets propagation (qwen finding #2) ──────────────────────────────────────────────────────────
+
+def _write_pkg_with_handler_secret(root, keypair, *, required: bool = True):
+    pkg = root / "secret.pfpdir"
+    (pkg / "content" / "ui").mkdir(parents=True)
+    (pkg / "content" / "handlers").mkdir(parents=True)
+    (pkg / "content" / "ui" / "extension.js").write_text(
+        "pawflow.register('sec.pkg', function(){});", encoding="utf-8")
+    (pkg / "content" / "handlers" / "call.py").write_text(
+        "from pawflow import pfp\npfp.result({})\n", encoding="utf-8")
+    manifest = {
+        "format": "pawflow.package.v1",
+        "package": "sec.pkg",
+        "version": "0.1.0",
+        "developer": {"email": "d@x", "public_key": keypair["public_key"]},
+        "objects": [{
+            "id": "ui_extension:main", "type": "ui_extension", "name": "main",
+            "version_compat": "ui.v1",
+            "assets": {"scripts": ["content/ui/extension.js"]},
+            "slots": [{"slot": "action_menu", "id": "sec.x"}],
+            "hooks": ["boot"],
+            "handlers": [{
+                "action": "sec.call",
+                "path": "content/handlers/call.py",
+                "runner": "python",
+                "secrets": [{
+                    "name": "api_key",
+                    "env": "PROVIDER_API_KEY",
+                    "required": required,
+                }],
+            }],
+        }],
+    }
+    (pkg / "pfp.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    return pkg
+
+
+def test_install_plan_surfaces_handler_required_secret(tmp_path):
+    """Handler-level required secrets must appear in the install plan's row.secrets."""
+    keypair = pfp_package.create_signing_key()
+    pkgdir = _write_pkg_with_handler_secret(tmp_path, keypair)
+    built = pfp_package.build_pfp(str(pkgdir), private_key=keypair["private_key"])
+    plan = pfp_package.inspect_pfp(built["path"], user_id="alice")
+    row = next(r for r in plan["objects"] if r["type"] == "ui_extension")
+    secret_names = {s["name"] for s in row["secrets"]}
+    assert "api_key" in secret_names, (
+        f"handler-level secret not surfaced in install plan: {row['secrets']}")
+
+
+def test_install_refuses_when_handler_required_secret_unbound(tmp_path, monkeypatch):
+    """Install must reject when the user did not bind a required handler secret."""
+    monkeypatch.setattr("core.paths.REPOSITORY_DIR", tmp_path / "repo")
+    keypair = pfp_package.create_signing_key()
+    pkgdir = _write_pkg_with_handler_secret(tmp_path, keypair)
+    built = pfp_package.build_pfp(str(pkgdir), private_key=keypair["private_key"])
+    result = pfp_package.install_pfp(
+        built["path"], user_id="alice",
+        include=["ui_extension:main"])
+    # No --secret api_key=... was provided. Expect skipped, not installed.
+    skipped = result.get("skipped") or []
+    reasons = {s["reason"] for s in skipped}
+    assert "missing_secret_binding" in reasons, result
+
+
+def test_handler_secret_bindings_propagate_to_runtime(tmp_path, monkeypatch):
+    """After install with --secret, resolve_ui_handler must carry the binding."""
+    monkeypatch.setattr("core.paths.REPOSITORY_DIR", tmp_path / "repo")
+    keypair = pfp_package.create_signing_key()
+    pkgdir = _write_pkg_with_handler_secret(tmp_path, keypair)
+    built = pfp_package.build_pfp(str(pkgdir), private_key=keypair["private_key"])
+    # Pretend the secret exists in the user's secret store — the install
+    # plan only checks the binding is bound to a key, not that the key
+    # itself exists in this test environment.
+    monkeypatch.setattr(
+        pfp_package, "_secret_key_exists",
+        lambda secret_key, user_id, conversation_id: True)
+    result = pfp_package.install_pfp(
+        built["path"], user_id="alice",
+        include=["ui_extension:main"],
+        secret_bindings={"api_key": "stored_provider_key"})
+    assert result["ok"], result
+    resolved = pfp_package.resolve_ui_handler(
+        "sec.pkg", "sec.call", user_id="alice", scope="user")
+    assert resolved is not None
+    bindings = resolved["package_runtime"]["secret_bindings"]
+    assert bindings == {"api_key": "stored_provider_key"}, (
+        f"handler bindings missing or wrong: {bindings!r}")
+
+
+# ── Same-origin reality: documented limitation (qwen finding #1) ────────────────────────────────────────────────────
+
+def test_ui_handler_dispatcher_trusts_client_supplied_ext(installed_ui_pkg, monkeypatch):
+    """Document that `_ext` in the request body is self-declared.
+
+    This is not a security control: two extensions sharing the same
+    origin in the user's browser tab can both invoke handlers under any
+    installed package id. The audit log records the `_ext` value so a
+    human reviewer can spot abuse. See the dispatcher docstring for the
+    full trust model.
+    """
+    from core import pfp_runtime
+    seen = {}
+
+    def _fake_bridge(request):
+        seen["request"] = request
+        return {
+            "format": pfp_runtime.RUNTIME_RESULT_FORMAT,
+            "ok": True,
+            "result": {"called": True},
+        }
+    monkeypatch.setattr(pfp_runtime, "_invoke_bridge", _fake_bridge)
+
+    # An attacker page calls `/api/ui` with `_ext` set to the installed
+    # package id. The dispatcher resolves and runs the handler. There is
+    # no per-extension binding to verify the caller — same-origin reality.
+    from tasks.ai.actions.pfp_ui import _handle_pfp_ui
+    body = {"action": "x.foo", "_ext": installed_ui_pkg}
+    ff = FlowFile(content=json.dumps(body).encode("utf-8"))
+    ff.set_attribute("http.auth.principal", "alice")
+    out = _handle_pfp_ui(None, body["action"], body, None, "alice", ff)
+    # 404 because the installed_ui_pkg has no `x.foo` handler, not
+    # because the call was rejected. The point is the dispatcher took
+    # the `_ext` at face value and tried to resolve.
+    assert out is not None
+    assert out[0].get_attribute("http.response.status") == "404"

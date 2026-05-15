@@ -431,10 +431,20 @@ def _merge_reviews(static: Dict[str, Any], llm: Dict[str, Any]) -> Dict[str, Any
 def _review_files(files: Dict[str, bytes], entrypoint: str) -> tuple[List[Dict[str, Any]], List[Dict[str, str]]]:
     selected = []
     findings = []
+    # Browser-side assets (.css / .html) must reach the LLM and the static
+    # pattern pass too — they ship through `/chat/ext` and a malicious .css
+    # can carry data: URLs or `expression()` payloads, while a .html page
+    # served same-origin can run inline scripts under the user's session.
+    _BROWSER_REVIEW_SUFFIXES = (".css", ".html", ".svg")
     for rel, data in sorted(files.items()):
         if rel in {"pfp.json", "pfp.lock.json", "signature.ed25519"}:
             continue
-        include = rel == entrypoint or rel.endswith(_CODE_FILE_SUFFIXES) or rel.endswith((".json", ".md"))
+        include = (
+            rel == entrypoint
+            or rel.endswith(_CODE_FILE_SUFFIXES)
+            or rel.endswith(_BROWSER_REVIEW_SUFFIXES)
+            or rel.endswith((".json", ".md"))
+        )
         file_row = {
             "path": rel,
             "size": len(data),

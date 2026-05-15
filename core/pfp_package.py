@@ -90,7 +90,12 @@ _UI_KNOWN_HOOKS = {
     "tab_switched", "permission_mode_changed",
     "sse_event",
 }
-_UI_ASSET_EXTENSIONS = {".js", ".css", ".json", ".html", ".svg", ".png", ".jpg", ".jpeg", ".webp", ".woff", ".woff2"}
+# `.html` is intentionally absent: a same-origin HTML page served from
+# `/chat/ext/...` could run inline <script> blocks under the user's session
+# even though the runtime only auto-loads .js/.css. Extensions that need to
+# build markup do it through DOM APIs (createElement + textContent) from
+# their .js code.
+_UI_ASSET_EXTENSIONS = {".js", ".css", ".json", ".svg", ".png", ".jpg", ".jpeg", ".webp", ".woff", ".woff2"}
 
 
 class PfpError(ValueError):
@@ -1129,6 +1134,15 @@ def _declared_secret_requirements(manifest: Dict[str, Any],
         merged[item["name"]] = item
     for item in _normalize_secret_requirements(obj.get("secrets", [])):
         merged[item["name"]] = item
+    # ui_extension nests per-handler secret requirements one level deeper.
+    # Surface them at the object level so the install plan, capability
+    # aggregator, and `--secret name=key` matcher see them like any other.
+    if str(obj.get("type") or "") == "ui_extension":
+        for handler in obj.get("handlers") or []:
+            if not isinstance(handler, dict):
+                continue
+            for item in _normalize_secret_requirements(handler.get("secrets")):
+                merged.setdefault(item["name"], item)
     return list(merged.values())
 
 
@@ -1337,7 +1351,8 @@ def _install_object(obj: Dict[str, Any], package: Dict[str, Any], user_id: str,
             "dependencies": dependencies,
         }
     if obj_type == "ui_extension":
-        manifest_obj = _ui_extension_manifest(obj, package)
+        manifest_obj = _ui_extension_manifest(
+            obj, package, secret_bindings=secret_bindings)
         return {
             "kind": "ui_extension",
             "object_id": obj_id,
@@ -1633,7 +1648,8 @@ def _validate_ui_extension_object(obj: Dict[str, Any], package: Dict[str, Any]) 
     return ""
 
 
-def _ui_extension_manifest(obj: Dict[str, Any], package: Dict[str, Any]) -> Dict[str, Any]:
+def _ui_extension_manifest(obj: Dict[str, Any], package: Dict[str, Any],
+                            secret_bindings: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
     """Build the install-record manifest (assets with sha + size, slots, hooks, handlers)."""
     import hashlib
     rows = []
@@ -1664,10 +1680,20 @@ def _ui_extension_manifest(obj: Dict[str, Any], package: Dict[str, Any]) -> Dict
         if row["kind"] == "i18n" and row.get("lang"):
             i18n[row["lang"]] = row["path"]
     handlers = []
+    secret_bindings = secret_bindings or {}
     for entry in (obj.get("handlers") or []):
         rel = _safe_relpath(str(entry.get("path") or ""))
         data = package["files"][rel]
         digest = hashlib.sha256(data).hexdigest()
+        handler_secrets = _normalize_secret_requirements(entry.get("secrets"))
+        # Bindings are install-time `--secret name=stored_key` pairs that
+        # apply to the whole package. Per-handler `secret_bindings` is the
+        # subset of those that this handler actually requested.
+        handler_bindings = {
+            req["name"]: secret_bindings[req["name"]]
+            for req in handler_secrets
+            if req["name"] in secret_bindings
+        }
         handlers.append({
             "action": str(entry.get("action") or ""),
             "path": rel,
@@ -1675,7 +1701,8 @@ def _ui_extension_manifest(obj: Dict[str, Any], package: Dict[str, Any]) -> Dict
             "runner": "python",
             "allowed_tools": list(entry.get("allowed_tools") or []),
             "allowed_services": list(entry.get("allowed_services") or []),
-            "secrets": _normalize_secret_requirements(entry.get("secrets")),
+            "secrets": handler_secrets,
+            "secret_bindings": handler_bindings,
             "description": str(entry.get("description") or ""),
         })
     return {
@@ -1779,7 +1806,10 @@ def resolve_ui_handler(package_id: str, action: str, *,
                 "allowed_services": list(handler.get("allowed_services")
                                           or rec.get("allowed_services") or []),
                 "secrets": list(handler.get("secrets") or []),
-                "secret_bindings": {},
+                # Bindings are recorded per handler at install time. Without
+                # this, a handler declaring a required secret would 502 at
+                # invoke time because the runtime cannot resolve it.
+                "secret_bindings": dict(handler.get("secret_bindings") or {}),
                 "provides": [],
                 "dependencies": [],
             }

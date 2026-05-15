@@ -65,9 +65,32 @@ _RESOURCE_TYPES = {
 }
 _INSTALLABLE_TYPES = set(_RESOURCE_TYPES) | {"flow", "service", "service_definition"}
 _INSTALLABLE_TYPES.update({"tool", "service_provider", "flow_task", "task_provider"})
+_INSTALLABLE_TYPES.add("ui_extension")
 
 _RUNTIME_OBJECT_TYPES = {"tool", "service_provider", "flow_task", "task_provider"}
 _SUPPORTED_RUNTIME_RUNNERS = {"python"}
+
+# Slot and hook names accepted by the browser-side `ui.v1` contract.
+# Adding a new slot / hook is additive; removing or renaming bumps to ui.v2
+# and packages declaring `version_compat: "ui.v1"` must fail install.
+_UI_API_VERSION = "ui.v1"
+_UI_KNOWN_SLOTS = {
+    "action_menu", "gear_menu", "resources_panel",
+    "sidebar_top", "sidebar_bottom",
+    "header_actions", "tab_bar",
+}
+_UI_KNOWN_HOOKS = {
+    "boot", "shutdown",
+    "conversation_changed", "conversation_created", "conversation_deleted",
+    "message_appended", "message_streaming",
+    "tool_call_started", "tool_call_completed",
+    "command_submitted", "command_result",
+    "before_send",
+    "agent_changed", "theme_changed",
+    "tab_switched", "permission_mode_changed",
+    "sse_event",
+}
+_UI_ASSET_EXTENSIONS = {".js", ".css", ".json", ".html", ".svg", ".png", ".jpg", ".jpeg", ".webp", ".woff", ".woff2"}
 
 
 class PfpError(ValueError):
@@ -866,6 +889,10 @@ def _object_plan(obj: Dict[str, Any], package: Dict[str, Any], user_id: str,
         status, reason, installable = "blocked", "invalid object name", False
     elif path and _safe_relpath(path) not in package["files"]:
         status, reason, installable = "blocked", f"missing package file: {path}", False
+    elif obj_type == "ui_extension":
+        _ui_err = _validate_ui_extension_object(obj, package)
+        if _ui_err:
+            status, reason, installable = "blocked", _ui_err, False
     elif missing_dependencies:
         status = "missing_dependency"
         reason = "missing package dependency: " + ", ".join(
@@ -1004,7 +1031,7 @@ def _version_change_kind(from_version: str, to_version: str) -> str:
 def _object_capabilities(obj_type: str, obj: Dict[str, Any],
                          dependencies: List[Dict[str, str]],
                          secrets: List[Dict[str, Any]]) -> Dict[str, Any]:
-    return {
+    caps = {
         "runtime": obj_type in {"tool", "service_provider", "flow_task", "task_provider"},
         "allowed_tools": _capability_refs(obj.get("allowed_tools") or [], "tool"),
         "allowed_services": _capability_refs(obj.get("allowed_services") or [], "service"),
@@ -1013,6 +1040,18 @@ def _object_capabilities(obj_type: str, obj: Dict[str, Any],
         "secrets": secrets,
         "permissions": obj.get("permissions", {}) if isinstance(obj.get("permissions"), dict) else {},
     }
+    if obj_type == "ui_extension":
+        assets = _ui_extension_asset_list(obj)
+        caps["ui_extension"] = {
+            "version_compat": str(obj.get("version_compat") or ""),
+            "slots": [
+                {"slot": str(s.get("slot") or ""), "id": str(s.get("id") or "")}
+                for s in (obj.get("slots") or []) if isinstance(s, dict)
+            ],
+            "hooks": [str(h) for h in (obj.get("hooks") or [])],
+            "asset_count": len(assets),
+        }
+    return caps
 
 
 def _aggregate_capabilities(objects: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -1200,7 +1239,11 @@ def _install_object(obj: Dict[str, Any], package: Dict[str, Any], user_id: str,
     obj_type = obj["type"]
     obj_id = obj["id"]
     name = obj.get("name") or _name_from_id(obj_id)
-    rel = _safe_relpath(str(obj.get("path") or ""))
+    path_str = str(obj.get("path") or "")
+    # ui_extension uses an `assets` list instead of a single `path`; allow
+    # an empty top-level path here and let the install branch read the
+    # asset list directly.
+    rel = _safe_relpath(path_str) if path_str else ""
     provenance = _provenance(package, obj_id, rel)
     dependencies = _declared_package_dependencies(package["manifest"], obj)
     if obj_type == "tool":
@@ -1292,6 +1335,21 @@ def _install_object(obj: Dict[str, Any], package: Dict[str, Any], user_id: str,
             "service_id": data.get("service_id") or name,
             "hash": provenance["hash"],
             "dependencies": dependencies,
+        }
+    if obj_type == "ui_extension":
+        manifest_obj = _ui_extension_manifest(obj, package)
+        return {
+            "kind": "ui_extension",
+            "object_id": obj_id,
+            "name": name,
+            "version_compat": manifest_obj["version_compat"],
+            "assets": manifest_obj["assets"],
+            "slots": manifest_obj["slots"],
+            "hooks": manifest_obj["hooks"],
+            "i18n": manifest_obj["i18n"],
+            "installed_from": provenance,
+            "dependencies": dependencies,
+            "hash": provenance["hash"],
         }
     raise PfpError(f"Unsupported object type: {obj_type}")
 
@@ -1483,6 +1541,153 @@ def _load_resource_data(package: Dict[str, Any], rel: str, rtype: str, name: str
         raise PfpError(f"{rel} must contain a JSON object")
     loaded.pop("name", None)
     return loaded
+
+
+def _ui_extension_asset_list(obj: Dict[str, Any]) -> List[Dict[str, str]]:
+    """Flatten the assets object into [{kind, path}, ...]."""
+    raw = obj.get("assets") if isinstance(obj.get("assets"), dict) else {}
+    rows = []
+    for kind in ("scripts", "styles"):
+        for item in raw.get(kind) or []:
+            path = str(item or "").strip()
+            if path:
+                rows.append({"kind": kind[:-1], "path": path})
+    # i18n catalogs live next to scripts/styles under the same root.
+    i18n = raw.get("i18n") if isinstance(raw.get("i18n"), dict) else {}
+    for lang, path in i18n.items():
+        spath = str(path or "").strip()
+        if not isinstance(lang, str) or not spath:
+            continue
+        rows.append({"kind": "i18n", "path": spath, "lang": lang})
+    return rows
+
+
+def _validate_ui_extension_object(obj: Dict[str, Any], package: Dict[str, Any]) -> str:
+    """Return an empty string when the ui_extension is structurally valid, else a reason."""
+    if str(obj.get("version_compat") or "") != _UI_API_VERSION:
+        return f"ui_extension requires version_compat == {_UI_API_VERSION!r}"
+    assets = obj.get("assets")
+    if not isinstance(assets, dict):
+        return "ui_extension.assets must be an object with scripts/styles"
+    rows = _ui_extension_asset_list(obj)
+    if not rows:
+        return "ui_extension must declare at least one script"
+    files = package.get("files") or {}
+    for row in rows:
+        rel = _safe_relpath(row["path"])
+        if rel not in files:
+            return f"ui_extension asset is missing in package: {row['path']}"
+        ext = Path(rel).suffix.lower()
+        if ext not in _UI_ASSET_EXTENSIONS:
+            return f"ui_extension asset extension is not allowed: {row['path']}"
+    slots = obj.get("slots") if isinstance(obj.get("slots"), list) else []
+    seen_ids = set()
+    for slot in slots:
+        if not isinstance(slot, dict):
+            return "ui_extension.slots entries must be objects"
+        slot_name = str(slot.get("slot") or "")
+        slot_id = str(slot.get("id") or "")
+        if slot_name not in _UI_KNOWN_SLOTS:
+            return f"ui_extension.slots: unknown slot {slot_name!r}"
+        if not slot_id:
+            return "ui_extension.slots entries require a non-empty id"
+        key = (slot_name, slot_id)
+        if key in seen_ids:
+            return f"ui_extension.slots: duplicate id {slot_id!r} in slot {slot_name!r}"
+        seen_ids.add(key)
+    hooks = obj.get("hooks") if isinstance(obj.get("hooks"), list) else []
+    for hook in hooks:
+        if str(hook) not in _UI_KNOWN_HOOKS:
+            return f"ui_extension.hooks: unknown hook {hook!r}"
+    return ""
+
+
+def _ui_extension_manifest(obj: Dict[str, Any], package: Dict[str, Any]) -> Dict[str, Any]:
+    """Build the install-record manifest (assets with sha + size, slots, hooks)."""
+    import hashlib
+    rows = []
+    for entry in _ui_extension_asset_list(obj):
+        rel = _safe_relpath(entry["path"])
+        data = package["files"][rel]
+        digest = hashlib.sha256(data).hexdigest()
+        record = {
+            "kind": entry["kind"],
+            "path": rel,
+            "sha256": "sha256:" + digest,
+            "size": len(data),
+        }
+        if entry.get("lang"):
+            record["lang"] = entry["lang"]
+        rows.append(record)
+    slots = []
+    for slot in (obj.get("slots") or []):
+        slots.append({
+            "slot": str(slot.get("slot") or ""),
+            "id": str(slot.get("id") or ""),
+            "icon": str(slot.get("icon") or ""),
+            "label_key": str(slot.get("label_key") or ""),
+        })
+    hooks = [str(h) for h in (obj.get("hooks") or [])]
+    i18n = {}
+    for row in rows:
+        if row["kind"] == "i18n" and row.get("lang"):
+            i18n[row["lang"]] = row["path"]
+    return {
+        "version_compat": _UI_API_VERSION,
+        "assets": rows,
+        "slots": slots,
+        "hooks": hooks,
+        "i18n": i18n,
+    }
+
+
+def list_installed_ui_extensions(*, user_id: str, conversation_id: str = "",
+                                 scope: str = "user") -> List[Dict[str, Any]]:
+    """Return the asset manifest for every installed ui_extension in the scope.
+
+    Each entry has: package, version, content_dir, version_compat, assets,
+    slots, hooks, i18n. Conversation scope inherits user-scope packages.
+    """
+    seen = set()
+    out = []
+    scopes = ["conversation", "user"] if scope in {"conversation", "conv"} else ["user"]
+    for sc in scopes:
+        try:
+            root = _install_scope_dir(user_id, conversation_id, sc)
+        except PfpError:
+            continue
+        if not root.exists():
+            continue
+        for path in sorted(root.glob("*.json")):
+            try:
+                record = _read_json_file(path)
+            except (OSError, json.JSONDecodeError, PfpError):
+                continue
+            package_id = str(record.get("package") or "")
+            if not package_id or package_id in seen:
+                continue
+            content_dir = str(record.get("content_dir") or "")
+            if not content_dir or not Path(content_dir).is_dir():
+                continue
+            objects = record.get("objects") or []
+            ui_objects = [obj for obj in objects if obj.get("kind") == "ui_extension"]
+            if not ui_objects:
+                continue
+            seen.add(package_id)
+            for ui in ui_objects:
+                out.append({
+                    "package": package_id,
+                    "version": str(record.get("version") or ""),
+                    "scope": sc,
+                    "content_dir": content_dir,
+                    "object_id": str(ui.get("object_id") or ""),
+                    "version_compat": str(ui.get("version_compat") or _UI_API_VERSION),
+                    "assets": list(ui.get("assets") or []),
+                    "slots": list(ui.get("slots") or []),
+                    "hooks": list(ui.get("hooks") or []),
+                    "i18n": dict(ui.get("i18n") or {}),
+                })
+    return out
 
 
 def _parse_skill_md(text: str, default_name: str = "") -> Dict[str, Any]:
@@ -1705,6 +1910,11 @@ def _uninstall_object(record: Dict[str, Any], user_id: str, conversation_id: str
         return False
     if kind == "flow":
         return _uninstall_flow(record, user_id, conversation_id, scope, force)
+    if kind == "ui_extension":
+        # ui_extension assets live entirely in the package content store;
+        # removing the install record is enough. The shared content_dir
+        # is cleaned up by uninstall_pfp when no objects remain.
+        return True
     return False
 
 

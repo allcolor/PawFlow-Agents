@@ -450,11 +450,12 @@
   // override the hook-firing primitives by writing to window.pawflow.
   window._pawflowExtRuntime = _internal;
 
-  // Fire `boot` once after DOMContentLoaded. Extension callbacks scheduled
-  // by `register()` run before this fires, so subscribers attached during
-  // their setup phase will receive the boot payload. Late subscribers (e.g.
-  // a lazy-loaded extension script) get the cached payload replayed on
-  // `pfp.on('boot', cb)` via the replay path inside `on`.
+  // Fire `boot` once after DOMContentLoaded AND after all extension assets
+  // declared in PAWFLOW_EXTENSIONS have finished loading. Extension scripts
+  // registered via `register()` may be late (lazy-loaded from /chat/ext/...),
+  // so we wait for the manifest before firing boot. Subscribers attached
+  // during the setup phase receive the boot payload; later subscribers get
+  // the cached payload replayed via the replay path inside `on`.
   function _bootDispatch() {
     var payload = {
       ui_api_version: UI_API_VERSION,
@@ -469,13 +470,68 @@
     // slot entries declared from `register()` callbacks become visible.
     _renderAllSlots();
   }
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', function () {
-      // Wait one tick so register() callbacks scheduled with setTimeout 0
-      // have run before we mark booted.
+
+  function _loadOneAsset(asset) {
+    return new Promise(function (resolve) {
+      if (!asset || !asset.url) { resolve(); return; }
+      var kind = asset.kind;
+      if (kind === 'script') {
+        var s = document.createElement('script');
+        s.src = asset.url;
+        s.async = false;
+        s.defer = true;
+        s.crossOrigin = 'anonymous';
+        s.onload = function () { resolve(); };
+        s.onerror = function () {
+          _logExtError('?', 'asset_load', 'script ' + asset.url);
+          resolve();
+        };
+        document.head.appendChild(s);
+      } else if (kind === 'style') {
+        var l = document.createElement('link');
+        l.rel = 'stylesheet';
+        l.href = asset.url;
+        l.onload = function () { resolve(); };
+        l.onerror = function () {
+          _logExtError('?', 'asset_load', 'style ' + asset.url);
+          resolve();
+        };
+        document.head.appendChild(l);
+      } else {
+        // i18n / other — not auto-loaded; the extension can fetch on demand.
+        resolve();
+      }
+    });
+  }
+
+  function _loadAllExtensions() {
+    var manifest = window.PAWFLOW_EXTENSIONS || [];
+    if (!manifest.length) return Promise.resolve();
+    var promises = [];
+    manifest.forEach(function (entry) {
+      if (!entry || entry.version_compat !== UI_API_VERSION) return;
+      var assets = entry.assets || [];
+      // Load styles first so script logic can rely on CSS variables.
+      assets.filter(function (a) { return a.kind === 'style'; })
+            .forEach(function (a) { promises.push(_loadOneAsset(a)); });
+      // Scripts load with async=false; the browser keeps execution order
+      // matching insertion order, so multiple extensions remain isolated.
+      assets.filter(function (a) { return a.kind === 'script'; })
+            .forEach(function (a) { promises.push(_loadOneAsset(a)); });
+    });
+    return Promise.all(promises);
+  }
+
+  function _boot() {
+    _loadAllExtensions().then(function () {
+      // Wait one tick so register() callbacks scheduled by extension
+      // scripts (via setTimeout 0) have run before we mark booted.
       setTimeout(_bootDispatch, 0);
-    }, { once: true });
+    });
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', _boot, { once: true });
   } else {
-    setTimeout(_bootDispatch, 0);
+    _boot();
   }
 })();

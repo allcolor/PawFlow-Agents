@@ -335,6 +335,99 @@ requested by the tool, for example `remove_background` does not satisfy
 
 Package-qualified grants are also supported for inter-PFP dependencies. The referenced package and object must already be installed before the dependent object can be selected. Native grants such as `{ "name": "read" }` authorize only unqualified host calls like `pfp.call_tool("read")`; they do not authorize `other.pkg/tool:read`. If a grant contains a package version or version constraint, that constraint is checked against the installed object and carried into the final tool/service dispatch so an older installed object with the same name cannot satisfy the call.
 
+## UI Extensions (ui.v1)
+
+A package can ship a `ui_extension` object that injects JS / CSS into the
+chat web UI through the versioned `ui.v1` slot and hook contract. PawFlow
+serves the assets at `/chat/ext/<package>/<short_sha256>/<file>` with
+per-file SHA-256 integrity verification, and the install plan blocks the
+extension if it declares an incompatible `version_compat`.
+
+Source layout:
+
+```text
+my-ui.pfpdir/
+  pfp.json
+  content/
+    ui/
+      extension.js
+      extension.css       (optional)
+      i18n/en.json        (optional, served on demand)
+```
+
+Manifest:
+
+```json
+{
+  "id": "ui_extension:hello",
+  "type": "ui_extension",
+  "name": "hello",
+  "version_compat": "ui.v1",
+  "assets": {
+    "scripts": ["content/ui/extension.js"],
+    "styles":  ["content/ui/extension.css"]
+  },
+  "slots": [
+    {"slot": "action_menu",     "id": "hello.open", "icon": "👋", "label_key": "hello.menu"},
+    {"slot": "resources_panel", "id": "hello.section"}
+  ],
+  "hooks": ["boot", "conversation_changed"]
+}
+```
+
+Slots accepted in `ui.v1`: `action_menu`, `gear_menu`, `resources_panel`,
+`sidebar_top`, `sidebar_bottom`, `header_actions`, `tab_bar`.
+
+Hooks accepted in `ui.v1`: `boot`, `shutdown`, `conversation_changed`,
+`conversation_created`, `conversation_deleted`, `message_appended`,
+`message_streaming`, `tool_call_started`, `tool_call_completed`,
+`command_submitted`, `command_result`, `before_send`, `agent_changed`,
+`theme_changed`, `tab_switched`, `permission_mode_changed`, `sse_event`.
+
+Assets are restricted to `.js .css .json .html .svg .png .jpg .jpeg .webp
+.woff .woff2`. Each declared script is loaded into the page same-origin
+from `/chat/ext/...`; the browser keeps execution order matching insertion
+order, so multiple extensions remain isolated.
+
+The extension JS calls `pawflow.register("<package_id>", function (pfp) {
+... })` at top level. The `pfp` object exposes:
+
+```javascript
+pfp.id                   // your package id
+pfp.t(key, vars)         // i18n lookup, namespaced to your package
+pfp.ui.slot(slot, id, render)
+pfp.ui.openDialog(title, contentNode, opts?)
+pfp.ui.closeDialog()
+pfp.ui.openPanel(id, render)
+pfp.ui.closePanel()
+pfp.on(hook, cb)         // subscribe to a ui.v1 hook
+pfp.off(hook, cb)
+pfp.publish(local, data) // inter-extension bus
+pfp.subscribe(local, cb)
+pfp.call(action, body)   // POST to /api/ui with _ext: <package_id>
+pfp.command(name, spec)  // register a slash command
+```
+
+UI extensions live in the user's own browser tab, same origin as the page.
+They have full DOM access; PawFlow scans the JS files at install time for
+known exfiltration patterns and surfaces findings in the install plan, but
+the trust boundary is browser-side and the install consent is the real
+gate. Server-side handlers triggered by `pfp.call(...)` execute inside the
+relay subprocess sandbox (phase 3); they cannot exfiltrate or escalate
+without an `allowed_tools` / `allowed_services` grant accepted at install.
+
+Dev loop:
+
+```text
+/pfp dev-load ./my-ui.pfpdir --include ui_extension:hello
+# Reload /chat to load the new assets. Edit content/ui/extension.js, the
+# next page reload picks up the changes (the URL hash changes when the
+# file changes; the browser fetches the new version).
+/pfp dev-unload my.ui-package
+```
+
+A starter template lives at `docs/examples/pfp/ui_extension_hello.pfpdir/`.
+
 ## Release
 
 When the dev package works, create a signed release artifact:

@@ -1,0 +1,4 @@
+/* Hello UI extension styles — examples.ui-hello */
+[data-pf-ext="examples.ui-hello"] .ami-icon {
+  filter: hue-rotate(60deg);
+}

@@ -84,6 +84,11 @@
           },
           {
             "method": "GET",
+            "pattern": "/chat/ext/{path+}",
+            "relationship": "GET:/chat/ext"
+          },
+          {
+            "method": "GET",
             "pattern": "/files/{file_id}",
             "relationship": "GET:/files"
           },
@@ -233,6 +238,11 @@
             "attribute": "http.path",
             "operator": "matches_regex",
             "value": "^/chat/js/"
+          },
+          "chat_ext": {
+            "attribute": "http.path",
+            "operator": "matches_regex",
+            "value": "^/chat/ext/"
           }
         },
         "default_relationship": "api"
@@ -261,6 +271,13 @@
       "parameters": {
         "assets_prefix": "chat_ui",
         "base_path": "/chat/js",
+        "cache_control": "public, max-age=31536000, immutable"
+      }
+    },
+    "chat_ext_assets": {
+      "type": "servePfpExtensionAssets",
+      "max_instances": "${agent_max_instances}",
+      "parameters": {
         "cache_control": "public, max-age=31536000, immutable"
       }
     }
@@ -415,6 +432,21 @@
       "from": "http_in",
       "to": "validate_auth",
       "type": "GET:/chat/js"
+    },
+    {
+      "from": "http_in",
+      "to": "validate_auth",
+      "type": "GET:/chat/ext"
+    },
+    {
+      "from": "route_after_auth",
+      "to": "chat_ext_assets",
+      "type": "chat_ext"
+    },
+    {
+      "from": "chat_ext_assets",
+      "to": "send_response",
+      "type": "success"
     }
   ],
   "entries": [

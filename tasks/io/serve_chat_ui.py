@@ -104,14 +104,62 @@ def _initial_i18n_block() -> str:
     )
 
 
-def _initial_extensions_block() -> str:
+def _initial_extensions_block(user_id: str = "", conversation_id: str = "") -> str:
     """Bootstrap manifest for installed UI extensions.
 
-    Phase 1 ships the runtime without PFP integration; the bootstrap is
-    always empty here. PFP install (phase 2) will populate this list with
-    the asset manifest of each installed `ui_extension` object.
+    Each entry carries `package`, `version`, `slots`, `hooks`, `i18n`, and a
+    list of `assets` with public URLs already shaped as
+    `/chat/ext/<package>/<short_hash>/<file>` so the browser-side runtime
+    can `import()` them with an immutable cache key. Only `ui.v1`-compatible
+    packages are emitted here; mismatched packages are silently dropped at
+    serve time and logged once on install (where the user can still see them
+    in the install plan).
     """
-    return "<script>window.PAWFLOW_EXTENSIONS=[];</script>\n"
+    if not user_id:
+        return "<script>window.PAWFLOW_EXTENSIONS=[];</script>\n"
+    try:
+        from core.pfp_package import list_installed_ui_extensions, _UI_API_VERSION
+        scope = "conversation" if conversation_id else "user"
+        records = list_installed_ui_extensions(
+            user_id=user_id, conversation_id=conversation_id, scope=scope)
+    except Exception:
+        logger.debug("PFP UI extensions lookup failed", exc_info=True)
+        return "<script>window.PAWFLOW_EXTENSIONS=[];</script>\n"
+    out = []
+    for rec in records:
+        if rec.get("version_compat") != _UI_API_VERSION:
+            continue
+        package = rec.get("package") or ""
+        assets = []
+        for asset in rec.get("assets") or []:
+            digest = str(asset.get("sha256") or "").replace("sha256:", "")
+            if not digest:
+                continue
+            short = digest[:16]
+            url = f"/chat/ext/{package}/{short}/{asset['path']}"
+            assets.append({
+                "kind": asset.get("kind", ""),
+                "url": url,
+                "path": asset.get("path", ""),
+                "size": int(asset.get("size", 0) or 0),
+                "sha256": asset.get("sha256", ""),
+                "lang": asset.get("lang", ""),
+            })
+        out.append({
+            "package": package,
+            "version": rec.get("version", ""),
+            "scope": rec.get("scope", ""),
+            "version_compat": rec.get("version_compat", ""),
+            "assets": assets,
+            "slots": rec.get("slots", []),
+            "hooks": rec.get("hooks", []),
+            "i18n": rec.get("i18n", {}),
+        })
+    return (
+        "<script>window.PAWFLOW_EXTENSIONS="
+        + json.dumps(out, ensure_ascii=False)
+        + ";</script>\n"
+    )
 
 
 def _compute_js_version() -> str:
@@ -126,6 +174,9 @@ def _compute_js_version() -> str:
         for p in sorted(i18n_dir.glob("*.json")):
             h.update(p.read_bytes())
     return h.hexdigest()[:8]
+
+
+_EXTENSIONS_PLACEHOLDER = "<!--__PAWFLOW_EXTENSIONS_PLACEHOLDER__-->"
 
 
 def _load_html() -> str:
@@ -145,7 +196,7 @@ def _load_html() -> str:
     scripts_html = (
         f'<script>window.PAWFLOW_ASSET_VERSION={json.dumps(v)};</script>\n'
         + _initial_i18n_block()
-        + _initial_extensions_block()
+        + _EXTENSIONS_PLACEHOLDER
         + "\n".join(script_tags)
     )
 
@@ -210,6 +261,10 @@ class ServeChatUITask(BaseTask):
         initial_theme = _initial_theme_block(flowfile)
         if initial_theme:
             html = html.replace("</head>", initial_theme + "</head>", 1)
+        user_id = (flowfile.get_attribute("http.auth.principal") or "").strip()
+        conversation_id = (flowfile.get_attribute("http.cookie.pawflow_conv") or "").strip()
+        ext_block = _initial_extensions_block(user_id, conversation_id)
+        html = html.replace(_EXTENSIONS_PLACEHOLDER, ext_block, 1)
         html = html.replace("{{AGENT_PATH}}", agent_path)
         html = html.replace("{{LOGIN_URL}}", login_url)
         html = html.replace("{{SSE_PATH}}", sse_path)

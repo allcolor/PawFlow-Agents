@@ -77,6 +77,24 @@ Rules:
 - PFP flows deployed from the agent flow actions may use either their repository FQN or their flow `id`. PawFlow stores the canonical `fqn`, repository scope, owner, conversation id, and agent name on the deployed instance, then reuses those fields for later `start_flow` calls and restart restore so package flow tasks receive the same runtime context.
 - Required secrets are declared by logical package-local name and injected as environment variables at runtime. Secret values never go into `pfp.json`.
 
+## SDK Surface For PFP Entrypoints
+
+The `pawflow` SDK module shipped with package runtimes exposes three symbols: `pfp`, `tools`, and `fs`. Only `pfp` is available to PFP entrypoints. The `tools` and `fs` surfaces are reserved for non-PFP container scripts (PawCode SDK, ad-hoc relay scripts) and are blocked at runtime when called from a PFP package.
+
+| Symbol | Available in a PFP entrypoint? | How a PFP must reach the same capability |
+|---|---|---|
+| `pfp.input()`, `pfp.payload`, `pfp.package`, `pfp.context` | Yes | n/a |
+| `pfp.result(value)`, `pfp.error(message)` | Yes | n/a |
+| `pfp.flowfile(...)`, `pfp.artifact(...)` | Yes | n/a |
+| `pfp.call_tool(name, **args)` | Yes (broker-authorized) | n/a |
+| `pfp.call_service(name, op, **args)` | Yes (broker-authorized) | n/a |
+| `tools.call(...)`, `tools.get_schema(...)` | **No** — `_ensure_connected()` raises because the relay env scrubs `PAWFLOW_TOOL_RELAY_URL`/`_TOKEN` for PFP runs | Use `pfp.call_tool(...)` with a declared `allowed_tools` grant |
+| `fs.read_file`, `fs.write_file`, `fs.exec`, `fs.list_dir`, `fs.grep`, `fs.stat`, `fs.exists`, `fs.delete_file`, `fs.mkdir`, `fs.edit`, `fs.git_status`, `fs.git_commit` | **No** — same scrubbed-env block | Either open files/spawn binaries directly inside the relay container (no broker needed for relay-local I/O) or use `pfp.call_tool("read", path=...)`, `pfp.call_tool("write", ...)`, `pfp.call_tool("bash", ...)`, etc. with the matching grant |
+
+Two separate trust boundaries are at play here. A PFP entrypoint may freely read/write/exec inside its relay sandbox using the Python standard library because that surface is already constrained by the relay container, not by the broker. The broker only authorizes calls that re-enter PawFlow tools or services through `pfp.call_tool(...)` / `pfp.call_service(...)`. Going through `tools.*` or `fs.*` would bypass the broker entirely and is therefore blocked at the env layer: the PFP relay runner removes `PAWFLOW_TOOL_RELAY_URL`, `PAWFLOW_TOOL_RELAY_TOKEN`, and `PAWFLOW_PFP_RELAY_RUNNER` from the child process environment, so `_ensure_connected()` in the SDK raises a `ConnectionError` immediately.
+
+If you find yourself wanting `fs.read_file("/etc/passwd")` from a PFP entrypoint, open it with `open(...)` instead. If you want a PawFlow-side `read` tool call (for example to read a FileStore artifact through the same allowlist the rest of PawFlow uses), declare it in `allowed_tools` and use `pfp.call_tool("read", ...)`.
+
 ## Image Provider Entrypoint
 
 PFP media providers should not return image, video, or audio bytes in JSON. Large media should be written to the controlled output directory and returned by reference.

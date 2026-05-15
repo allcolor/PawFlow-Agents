@@ -15,6 +15,23 @@ _TEXT_FILE_SUFFIXES = (
 )
 _CODE_FILE_SUFFIXES = (".py", ".sh", ".ps1", ".js", ".ts")
 
+# Advisory-only pattern checks.
+#
+# These regexes raise the static `risk` level and surface findings in the
+# review payload so a human reviewer (and the LLM reviewer) sees them. They
+# are NOT a security boundary: trivial obfuscation (string concatenation,
+# base64, getattr, dotted aliases like `import subprocess as sp`) defeats
+# them. The real isolation for untrusted package code lives elsewhere:
+#   - Ed25519 signature + per-file SHA-256 lock verified on install and
+#     on every runtime invocation (see core.pfp_package, core.pfp_runtime).
+#   - Path containment under the scoped package content directory.
+#   - The relay subprocess that runs the entrypoint with a scrubbed env
+#     (no relay URL/token), so PawFlow tool/service calls only work via
+#     `pfp.call_tool` / `pfp.call_service` envelopes.
+#   - PackageCapabilityBroker re-checks every host call against the
+#     installed-time `allowed_tools` / `allowed_services` grants.
+# Treat hits here as signals to surface during review, not as a filter that
+# can keep a determined attacker out.
 _STATIC_PATTERNS = [
     (
         "block",

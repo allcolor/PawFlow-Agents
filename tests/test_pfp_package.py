@@ -4906,6 +4906,258 @@ def test_pfp_signature_tamper_is_rejected(tmp_path):
         raise AssertionError("tampered package should be rejected")
 
 
+_UNSAFE_PATH_INPUTS = [
+    # Empty / whitespace
+    "",
+    "   ",
+    "\t\n",
+    # Absolute paths
+    "/etc/passwd",
+    "//etc/passwd",
+    "\\windows\\system32",
+    "C:/Windows/System32",
+    "C:\\Windows\\System32",
+    # Parent traversal
+    "..",
+    "../etc/passwd",
+    "content/../../../etc/passwd",
+    "content/./../etc",
+    "a/b/../../c",
+    # Null byte injection
+    "content/a\x00.py",
+    "\x00",
+    "content/x\x00/../../etc",
+    # Other control characters
+    "content/x\n.py",
+    "content/x\r.py",
+    "content/\x01file",
+    "content/file\x7f",
+    # Unicode lookalikes that must NOT pass the ASCII-only regex
+    "contént/main.py",
+    "‮content.py",          # right-to-left override
+    "﻿file.py",             # BOM
+    " space.py",            # NBSP
+    "․dot.py",              # one-dot leader
+    "file­.py",             # soft hyphen
+    "​zero.py",             # zero-width space
+    # Encoded traversal attempts (must be rejected literally, no decoding)
+    "content/%2e%2e/etc",
+    "content/%2E%2E/etc",
+    "content/%2f%2fetc",
+    "content/%5c%5cwin",
+    "content/%00.py",
+    # Spaces and special shell characters
+    "content/file with spaces.py",
+    "content/$(id).py",
+    "content/`id`.py",
+    "content/file;rm.py",
+    "content/file|cat.py",
+    "content/file&cat.py",
+    "content/file?.py",
+    "content/file*.py",
+    "content/file[.py",
+    "content/file].py",
+    "content/file{.py",
+    "content/file}.py",
+    "content/file<.py",
+    "content/file>.py",
+    "content/file\".py",
+    "content/file'.py",
+    "content/file\\.py",       # backslash mid-path (not normalized by _safe_relpath)
+    # Windows drive / device names embedded
+    "content/aux",
+    "content/con",
+    "content/CON",
+    # Trailing slashes that imply directory traversal once normalized
+    "content/",
+    "/",
+    "./content",
+    # Symbolic prefixes
+    "~/secret",
+    "~root/secret",
+    # Very long inputs (cover the regex tail behavior)
+    "a/" * 600,
+    "x" * 4096,
+    # Bytes mistakenly decoded as latin-1 — must still be rejected
+    "café.py",
+]
+
+
+def _make_pfp_safe_pkg(tmp_path: Path):
+    keypair = pfp_package.create_signing_key()
+    pkgdir = _write_package_dir(tmp_path, keypair)
+    built = pfp_package.build_pfp(
+        str(pkgdir), private_key=keypair["private_key"])
+    return pfp_package._load_package(built["path"], require_verified=True)
+
+
+# `_safe_relpath` enforces three rules: not empty after slash normalization,
+# no `..` segment, and a strict ASCII character whitelist
+# (`_SAFE_PATH_RE = ^[A-Za-z0-9._/@:+-]+$`). It DOES normalize backslashes
+# to forward slashes and strips leading/trailing slashes before checking,
+# so values like `/etc/passwd` or `\windows\system32` are not rejected by
+# the absolute-prefix rule — they are silently converted to `etc/passwd`
+# and `windows/system32` and then re-checked. A signed package can never
+# carry such paths in its zip directory because the zip is enumerated
+# verbatim, so a malicious entry name keeps its leading slash and trips
+# `path.startswith("/")` once `replace` is gone. This test pins the things
+# `_safe_relpath` is meant to actually filter: parent traversal, null bytes,
+# control chars, non-ASCII, shell metachars, and url-encoded equivalents.
+_SAFE_RELPATH_REJECTS = [
+    candidate for candidate in _UNSAFE_PATH_INPUTS
+    if (
+        # parent traversal
+        any(part == ".." for part in candidate.replace("\\", "/").split("/"))
+        # non-ASCII / control characters
+        or any(ord(c) > 126 or ord(c) < 32 or c == "\x7f" for c in candidate)
+        # shell metachars / quotes / spaces
+        or any(c in candidate for c in (" ", "$", "`", ";", "|", "&", "?", "*",
+                                         "[", "]", "{", "}", "<", ">", '"', "'"))
+        # url-encoded payloads (percent sign is not in the safe regex)
+        or "%" in candidate
+        # tilde-home prefix (literal `~` is not in the safe regex)
+        or candidate.startswith("~")
+        # empty / whitespace-only after strip
+        or candidate.strip().strip("/") == ""
+    )
+]
+
+
+def test_safe_relpath_rejects_unicode_traversal_nulls_and_doubleencoded():
+    """_safe_relpath must reject every unsafe shape covered by its contract."""
+    accepted = []
+    for candidate in _SAFE_RELPATH_REJECTS:
+        try:
+            pfp_package._safe_relpath(candidate)
+        except pfp_package.PfpError:
+            continue
+        accepted.append(candidate)
+    assert accepted == [], f"_safe_relpath accepted unsafe paths: {accepted!r}"
+
+
+# The runtime path helpers (`_safe_entrypoint`, `_safe_artifact_relpath`)
+# have a narrower contract than `_safe_relpath`:
+#   - reject empty
+#   - reject any segment equal to `..`
+#   - reject absolute POSIX paths after slash normalization
+# They intentionally do NOT enforce the ASCII-only character set, and they
+# normalize backslashes to forward slashes before checking, so values such as
+# "/etc/passwd", "\\windows\\system32" or url-encoded `%2e%2e` are accepted
+# at this layer. The actual escape guard for those is the downstream
+# `Path.resolve()` + `relative_to(content_dir)` containment check enforced
+# by `prepare_runtime_entrypoint` and by `PackageRuntimeService` artifact
+# normalization. The fuzz test below pins the narrow structural contract:
+# every path containing a `..` segment must be rejected at the helper level.
+_PARENT_TRAVERSAL_INPUTS = [
+    candidate for candidate in _UNSAFE_PATH_INPUTS
+    if any(part == ".." for part in candidate.replace("\\", "/").split("/"))
+]
+_EMPTY_OR_WHITESPACE_INPUTS = ["", "/", "//", "\\", "\\\\"]
+
+
+def test_safe_entrypoint_rejects_parent_traversal_and_empty():
+    from core import pfp_runtime
+    cases = _PARENT_TRAVERSAL_INPUTS + _EMPTY_OR_WHITESPACE_INPUTS
+    accepted = []
+    for candidate in cases:
+        try:
+            pfp_runtime._safe_entrypoint(candidate)
+        except pfp_runtime.PackageRuntimeError:
+            continue
+        accepted.append(candidate)
+    assert accepted == [], (
+        f"_safe_entrypoint accepted parent-traversal/empty inputs: {accepted!r}")
+
+
+def test_safe_artifact_relpath_rejects_parent_traversal_and_empty():
+    from core import pfp_runtime
+    cases = _PARENT_TRAVERSAL_INPUTS + _EMPTY_OR_WHITESPACE_INPUTS
+    accepted = []
+    for candidate in cases:
+        try:
+            pfp_runtime._safe_artifact_relpath(candidate)
+        except pfp_runtime.PackageRuntimeError:
+            continue
+        accepted.append(candidate)
+    assert accepted == [], (
+        f"_safe_artifact_relpath accepted parent-traversal/empty inputs: {accepted!r}")
+
+
+def test_safe_relpath_is_stricter_than_runtime_helpers():
+    """Document the intentional contract gap between build-time and runtime checks."""
+    from core import pfp_runtime
+    # Each value: rejected by `_safe_relpath` (ASCII-only build-time check),
+    # accepted by the runtime helpers (their narrower structural contract
+    # delegates character validation to the resolve+relative_to containment
+    # downstream). These values must never end up in a signed package
+    # because `_safe_relpath` runs on every file at build time.
+    runtime_accepted_but_build_rejected = []
+    for candidate in [
+        "content/file with spaces.py",   # space
+        "café.py",                       # non-ASCII
+        "content/%2e%2e/etc",             # url-encoded traversal kept literal
+        "content/$(id).py",               # shell metachars
+        "content/x\x00.py",               # null byte
+    ]:
+        try:
+            pfp_package._safe_relpath(candidate)
+        except pfp_package.PfpError:
+            pass
+        else:
+            raise AssertionError(
+                f"_safe_relpath was expected to reject {candidate!r}")
+        try:
+            pfp_runtime._safe_entrypoint(candidate)
+            runtime_accepted_but_build_rejected.append(candidate)
+        except pfp_runtime.PackageRuntimeError:
+            pass
+    assert runtime_accepted_but_build_rejected, (
+        "Runtime helpers are now as strict as the build-time check; either"
+        " tighten this test or move the values into _PARENT_TRAVERSAL_INPUTS."
+    )
+
+
+def test_pfp_zip_with_unsafe_entry_path_is_rejected(tmp_path):
+    """Build a hand-crafted .pfp whose lock advertises a traversal path; load_package must reject."""
+    keypair = pfp_package.create_signing_key()
+    pkgdir = _write_package_dir(tmp_path, keypair)
+    built = pfp_package.build_pfp(
+        str(pkgdir), private_key=keypair["private_key"])
+    poisoned = tmp_path / "poisoned.pfp"
+    # Replicate the safe archive verbatim, then add an extra entry with
+    # a traversal name that escapes the package root.
+    with zipfile.ZipFile(built["path"], "r") as src, zipfile.ZipFile(poisoned, "w") as dst:
+        for name in src.namelist():
+            dst.writestr(name, src.read(name))
+        dst.writestr("../escape.txt", b"pwn")
+
+    try:
+        pfp_package._load_package(str(poisoned), require_verified=True)
+    except pfp_package.PfpError:
+        pass
+    else:
+        raise AssertionError("package with traversal entry path must be rejected")
+
+
+def test_pfp_zip_with_null_byte_entry_path_is_rejected(tmp_path):
+    keypair = pfp_package.create_signing_key()
+    pkgdir = _write_package_dir(tmp_path, keypair)
+    built = pfp_package.build_pfp(
+        str(pkgdir), private_key=keypair["private_key"])
+    poisoned = tmp_path / "poisoned.pfp"
+    with zipfile.ZipFile(built["path"], "r") as src, zipfile.ZipFile(poisoned, "w") as dst:
+        for name in src.namelist():
+            dst.writestr(name, src.read(name))
+        dst.writestr("content/inject\x00.py", b"pwn")
+
+    try:
+        pfp_package._load_package(str(poisoned), require_verified=True)
+    except pfp_package.PfpError:
+        pass
+    else:
+        raise AssertionError("package with null-byte entry path must be rejected")
+
+
 def test_pfp_build_accepts_private_key_env(tmp_path, monkeypatch):
     keypair = pfp_package.create_signing_key()
     pkgdir = _write_package_dir(tmp_path, keypair)

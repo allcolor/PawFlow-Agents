@@ -53,10 +53,12 @@ Claude Code startup probe cannot be confused with the real model turn. The known
 quota probe (`/v1/messages` with `max_tokens: 1` and user content `quota`) is
 observed for diagnostics but its response body is ignored. Interactive sessions
 set Claude Code's prompt-suggestion and terminal-title environment toggles off
-so UI hints do not become PawFlow transcript messages. If Anthropic compresses
-an observed response (`gzip` or `deflate`), only the side-channel copy is decoded
-before SSE/JSON parsing; the proxied bytes sent back to Claude Code remain
-unchanged.
+so UI hints do not become PawFlow transcript messages. They also pass the same
+thinking-related CLI flags as the stream-json provider (`--thinking-display
+summarized`, plus configured `--effort`) so Claude Code emits observable
+thinking blocks. If Anthropic compresses an observed response (`gzip` or
+`deflate`), only the side-channel copy is decoded before SSE/JSON parsing; the
+proxied bytes sent back to Claude Code remain unchanged.
 
 The provider assembles responses from those events:
 
@@ -64,6 +66,8 @@ The provider assembles responses from those events:
   persisted as assistant messages when the corresponding content block stops.
 - `thinking_delta` streams to the thinking UI immediately and is persisted on
   the flushed assistant block.
+- `signature_delta` inside a thinking block produces a redacted "Thought for"
+  placeholder when Anthropic exposes only a signed thinking block.
 - `tool_use` blocks and `input_json_delta` are emitted as live observed tool
   events for display/persistence only. PawFlow never re-executes them; Claude
   Code already ran those tools inside its own session.

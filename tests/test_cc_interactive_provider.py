@@ -155,35 +155,6 @@ def test_turn_coordinator_waits_for_proxy_message_stop_after_stop_hook():
     assert resp.content == "first second"
 
 
-def test_turn_coordinator_emits_deferred_json_text_block():
-    events = [
-        _sse("content_block_delta", {
-            "type": "content_block_delta",
-            "index": 0,
-            "delta": {"type": "text_delta", "text": '{"ti'},
-        }),
-        _sse("content_block_delta", {
-            "type": "content_block_delta",
-            "index": 0,
-            "delta": {"type": "text_delta", "text": 'tle":"Review PawFlow initial context file"}'},
-        }),
-        _sse("content_block_stop", {"type": "content_block_stop", "index": 0}),
-        {"type": "hook", "hook_event_name": "Stop", "input": {"hook_event_name": "Stop"}},
-    ]
-
-    seen = []
-    turns = []
-    resp = _CCITurnCoordinator(
-        _Events(events), "sess", callback=seen.append,
-        turn_callback=lambda text, tool_calls, thinking="": turns.append((text, tool_calls, thinking)),
-    ).run()
-
-    text = '{"title":"Review PawFlow initial context file"}'
-    assert resp.content == text
-    assert seen == [text]
-    assert turns == [(text, [], "")]
-
-
 def test_turn_coordinator_keeps_non_title_json_text_block():
     events = [
         _sse("content_block_delta", {
@@ -205,6 +176,36 @@ def test_turn_coordinator_keeps_non_title_json_text_block():
     assert resp.content == '{"answer":"ok"}'
     assert seen == ['{"answer":"ok"}']
     assert turns == [('{"answer":"ok"}', [], "")]
+
+
+def test_turn_coordinator_synthesizes_redacted_thinking_from_signature():
+    events = [
+        _sse("content_block_start", {
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {"type": "thinking"},
+        }),
+        _sse("content_block_delta", {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "signature_delta", "signature": "sig"},
+        }),
+        _sse("content_block_stop", {"type": "content_block_stop", "index": 0}),
+        {"type": "hook", "hook_event_name": "Stop", "input": {"hook_event_name": "Stop"}},
+    ]
+
+    thinking_seen = []
+    turns = []
+    resp = _CCITurnCoordinator(
+        _Events(events), "sess", thinking_callback=thinking_seen.append,
+        turn_callback=lambda text, tool_calls, thinking="": turns.append((text, tool_calls, thinking)),
+    ).run()
+
+    assert resp.content == ""
+    assert resp.thinking.startswith("[Thought for ")
+    assert "reasoning content redacted" in resp.thinking
+    assert thinking_seen == [resp.thinking]
+    assert turns == [("", [], resp.thinking)]
 
 
 def test_turn_coordinator_publishes_native_tool_result_live():
@@ -693,6 +694,7 @@ def test_interactive_pool_starts_tmux_in_normal_provider_namespace(monkeypatch):
         container_workdir="/cc_sessions/u/c/a",
         mcp_path="/cc_sessions/c/a/.mcp.json",
         model="opus",
+        effort="high",
         ca_path="/cc_sessions/c/a/ca.crt",
         session_token="session-token",
         event_url="wss://events",
@@ -709,6 +711,9 @@ def test_interactive_pool_starts_tmux_in_normal_provider_namespace(monkeypatch):
     assert "HOME=/cc_sessions/c/a" in shell
     assert "CLAUDE_CONFIG_DIR=/cc_sessions/c/a" in shell
     assert "--mcp-config /cc_sessions/c/a/.mcp.json" in shell
+    assert "--verbose" in shell
+    assert "--thinking-display summarized" in shell
+    assert "--effort high" in shell
     assert "NODE_EXTRA_CA_CERTS=/cc_sessions/c/a/ca.crt" in shell
     assert "--resume" not in shell
 

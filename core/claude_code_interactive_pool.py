@@ -285,6 +285,7 @@ class InteractiveClaudeCodePool:
                 container_workdir=physical_container_workdir,
                 mcp_path=f"{container_workdir}/.mcp.json",
                 model=model,
+                effort=client._cfg("effort", "") if hasattr(client, "_cfg") else "",
                 ca_path=f"{container_workdir}/.pawflow_cci/certs/pawflow-ca.crt",
                 session_token=session_token,
                 event_url=event_url,
@@ -390,6 +391,7 @@ class InteractiveClaudeCodePool:
         env = settings.get("env")
         if not isinstance(env, dict):
             env = {}
+        # Claude Code recognizes these env toggles in their documented string forms.
         env.update({
             "CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION": "false",
             "CLAUDE_CODE_DISABLE_TERMINAL_TITLE": "1",
@@ -455,7 +457,8 @@ class InteractiveClaudeCodePool:
         settings["permissions"] = permissions
 
     def _start_claude_tmux(self, *, name: str, container_workdir: str,
-                           mcp_path: str, model: str, ca_path: str,
+                           mcp_path: str, model: str, effort: str = "",
+                           ca_path: str,
                            session_token: str, event_url: str,
                            event_token: str, internal_token: str) -> None:
         parts = container_workdir.lstrip("/").split("/")
@@ -471,12 +474,16 @@ class InteractiveClaudeCodePool:
             # live. A cold start must always create a fresh Claude Code session
             # and receive PawFlow's initial context file; never pass --resume.
             "--dangerously-skip-permissions",
+            "--verbose",
+            "--thinking-display", "summarized",
             "--strict-mcp-config",
             "--mcp-config", mcp_path,
             "--max-turns", "1000",
         ]
         if model:
             args.extend(["--model", model])
+        if effort:
+            args.extend(["--effort", effort])
         quoted = " ".join(shlex.quote(a) for a in args)
         drop_privs = "setpriv --reuid=1000 --regid=1000 --clear-groups --"
         shell = (

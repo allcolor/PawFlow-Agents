@@ -42,7 +42,9 @@ class _CCITurnCoordinator:
         self.current_block_type = None
         self._text_block_buf = ""
         self._thinking_block_buf = ""
-        self._defer_text_block = False
+        self._thinking_redacted = False
+        self._thinking_start = 0.0
+        self._thinking_end = 0.0
         self._active_message_requests: set[str] = set()
         self._request_stop_reasons: dict[str, str] = {}
         self._saw_message_request = False
@@ -107,10 +109,14 @@ class _CCITurnCoordinator:
                 block_type = block.get("type")
                 self.current_block_type = block_type
                 if block_type == "thinking":
-                    self._append_thinking(
+                    thinking = (
                         block.get("thinking", "")
                         or block.get("text", "")
                         or block.get("reasoning_content", ""))
+                    if thinking:
+                        self._append_thinking(thinking)
+                    elif block.get("signature"):
+                        self._mark_redacted_thinking()
                 elif block_type == "tool_use":
                     block_state = {
                         "id": block.get("id") or f"cci_{uuid.uuid4().hex[:12]}",
@@ -132,6 +138,8 @@ class _CCITurnCoordinator:
                 delta = payload.get("delta") or {}
                 dtype = delta.get("type", "")
                 if dtype == "signature_delta":
+                    if self.current_block_type == "thinking" or delta.get("signature"):
+                        self._mark_redacted_thinking()
                     continue
                 if dtype == "input_json_delta" and idx in self.tool_blocks:
                     self.tool_blocks[idx]["json"] += delta.get("partial_json", "")
@@ -207,10 +215,6 @@ class _CCITurnCoordinator:
     def _append_text(self, text: str) -> None:
         if text:
             self._text_block_buf += text
-            if not self.text_parts and not self._defer_text_block:
-                self._defer_text_block = self._text_block_buf.lstrip().startswith("{")
-            if self._defer_text_block:
-                return
             self.text_parts.append(text)
             if self.callback:
                 self.callback(text)
@@ -222,25 +226,39 @@ class _CCITurnCoordinator:
             if self.thinking_callback:
                 self.thinking_callback(text)
 
+    def _mark_redacted_thinking(self) -> None:
+        self._thinking_redacted = True
+        if self._thinking_start == 0.0:
+            self._thinking_start = time.time()
+        self._thinking_end = time.time()
+
     def _flush_text_block(self) -> None:
         if not self._text_block_buf:
             return
         text = self._text_block_buf
         self._text_block_buf = ""
-        deferred = self._defer_text_block
-        self._defer_text_block = False
-        if deferred:
-            self.text_parts.append(text)
-            if self.callback:
-                self.callback(text)
         if self.turn_callback:
             self.turn_callback(text, [], "")
 
     def _flush_thinking_block(self) -> None:
-        if not self._thinking_block_buf:
+        if not self._thinking_block_buf and not self._thinking_redacted:
             return
         thinking = self._thinking_block_buf
+        synthesized = False
+        if not thinking and self._thinking_redacted:
+            duration = max(0.0, self._thinking_end - self._thinking_start)
+            thinking = (
+                f"[Thought for {duration:.1f}s - reasoning content redacted "
+                "by the Anthropic API; the signature is preserved by Claude Code.]"
+            )
+            synthesized = True
+            self.thinking_parts.append(thinking)
         self._thinking_block_buf = ""
+        self._thinking_redacted = False
+        self._thinking_start = 0.0
+        self._thinking_end = 0.0
+        if synthesized and thinking and self.thinking_callback:
+            self.thinking_callback(thinking)
         if self.turn_callback:
             self.turn_callback("", [], thinking)
 

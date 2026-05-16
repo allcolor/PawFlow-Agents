@@ -34,18 +34,18 @@ response back to Claude Code, the proxy parses a copy of Anthropic SSE bytes or
 non-stream JSON message responses and sends scrubbed events to PawFlow over
 `/ws/cc-interactive/events/<service_id>`.
 
-For transport debugging, the proxy also emits `wire` events for raw socket
-chunks received and sent on both directions (`client_to_upstream` and
-`upstream_to_client`). By default this dump is limited to model endpoints
-(`/v1/messages` and `/v1/complete`) so Claude Code telemetry batches do not bury
-the useful traffic. Set `PAWFLOW_CCI_PROXY_WIRE_LOG_ALL=1` or override
-`PAWFLOW_CCI_PROXY_WIRE_LOG_PATHS` to inspect additional paths. These events are
-logged by the event service with the complete sanitized bytes as base64 plus
-size, SHA-256, and UTF-8 `repr`; they are not queued for the provider. Sensitive
-HTTP headers such as `Authorization`, `Cookie`, `Set-Cookie`, and API-key headers
-are redacted in the proxy and redacted again by the server before logging. Set
-`PAWFLOW_CCI_PROXY_WIRE_LOG=0` in the proxy environment to disable this verbose
-wire dump.
+For transport debugging, the proxy can emit `wire` events for raw socket chunks
+received and sent on both directions (`client_to_upstream` and
+`upstream_to_client`). This dump is disabled by default because Claude Code also
+sends large telemetry batches on the same keep-alive sockets. Set
+`PAWFLOW_CCI_PROXY_WIRE_LOG=1` to enable it. When enabled, the dump is still
+limited to model endpoints (`/v1/messages` and `/v1/complete`) unless
+`PAWFLOW_CCI_PROXY_WIRE_LOG_ALL=1` or `PAWFLOW_CCI_PROXY_WIRE_LOG_PATHS` expands
+the allow-list. The event service logs wire payloads at DEBUG with sanitized
+base64, size, SHA-256, and UTF-8 `repr`; they are not queued for the provider.
+Sensitive HTTP headers such as `Authorization`, `Cookie`, `Set-Cookie`, and
+API-key headers are redacted in the proxy and redacted again by the server before
+logging.
 
 The proxy parses HTTP keep-alive traffic as a sequence of request/response
 exchanges on the same TLS socket. Each exchange receives its own request id so a
@@ -75,7 +75,8 @@ The provider assembles responses from those events:
   diagnostic wire dumps are scrubbed/redacted.
 - `message_delta.usage` updates token usage.
 - Claude Code command hooks publish `Stop`, `StopFailure`, `PreCompact`,
-  `PostCompact`, and `SessionEnd` lifecycle events over the same WebSocket.
+  `PostCompact`, `SessionEnd`, and `UserPromptSubmit` lifecycle events over the
+  same WebSocket.
 - Only the Claude Code `Stop` hook closes a PawFlow turn. Anthropic
   `message_stop` events are observed for diagnostics but do not terminate the
   interactive turn, because Claude Code can issue intermediate model requests
@@ -94,6 +95,18 @@ not receive the full context again; PawFlow sends only the latest turn delta.
 Live interrupt sends `Escape`, then pastes the interrupt message, then sends
 `Enter`. Force stop sends `Escape Escape` to the tmux session and leaves the
 container lifecycle intact.
+
+If a user attaches to the provider-owned tmux and submits a prompt manually,
+Claude Code's `UserPromptSubmit` hook sends that prompt to PawFlow. PawFlow
+persists it as a normal user message with `channel="tmux"` and starts a passive
+MITM capture for the resulting Claude Code turn, so the assistant response also
+lands in the conversation context. Prompts pasted by PawFlow itself are recorded
+by SHA-256 in `.pawflow_cci/injected_prompts.jsonl`; the hook consumes that
+marker and does not mirror those managed prompts back into the transcript.
+
+The chat UI tmux action lists live Claude Code interactive sessions for the
+current conversation. It opens directly when only one tmux exists and shows a
+chooser when several agents have live interactive sessions.
 
 OAuth credentials use the same session-local `.credentials.json` path as the
 regular `claude-code` provider. The interactive tmux launcher also mirrors the

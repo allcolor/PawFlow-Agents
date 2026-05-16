@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import socket
@@ -100,7 +101,50 @@ def _compact_input(raw: dict) -> dict:
         "hook_event_name", "session_id", "cwd", "permission_mode",
         "source", "trigger", "error", "matcher", "agent_id", "agent_type",
     }
-    return {k: v for k, v in raw.items() if k in keep}
+    out = {k: v for k, v in raw.items() if k in keep}
+    if raw.get("hook_event_name") == "UserPromptSubmit":
+        prompt = raw.get("prompt", "")
+        if not isinstance(prompt, str):
+            prompt = ""
+        out["prompt_sha256"] = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+        out["prompt_len"] = len(prompt)
+        injected = _consume_injected_prompt(prompt)
+        out["pawflow_injected_prompt"] = injected
+        if prompt and not injected:
+            out["prompt"] = prompt
+    return out
+
+
+def _consume_injected_prompt(prompt: str) -> bool:
+    path = os.environ.get("PAWFLOW_CCI_INJECTED_PROMPTS", "")
+    if not path or not prompt:
+        return False
+    digest = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            rows = fh.readlines()
+    except FileNotFoundError:
+        return False
+    except Exception:
+        return False
+    found = False
+    kept = []
+    for row in rows:
+        try:
+            payload = json.loads(row)
+        except Exception:
+            continue
+        if not found and payload.get("sha256") == digest:
+            found = True
+            continue
+        kept.append(row)
+    if found:
+        try:
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.writelines(kept)
+        except Exception:
+            pass
+    return found
 
 
 def main() -> int:

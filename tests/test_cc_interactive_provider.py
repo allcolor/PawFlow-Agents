@@ -416,7 +416,8 @@ def test_interactive_pool_writes_lifecycle_hooks(tmp_path):
 
     settings = json.loads((tmp_path / ".claude" / "settings.json").read_text())
     assert set(settings["hooks"]) == {
-        "Stop", "StopFailure", "PreCompact", "PostCompact", "SessionEnd"
+        "UserPromptSubmit", "Stop", "StopFailure", "PreCompact",
+        "PostCompact", "SessionEnd"
     }
     stop_hook = settings["hooks"]["Stop"][0]["hooks"][0]
     assert stop_hook["command"] == "python3"
@@ -535,6 +536,61 @@ def test_interactive_pool_records_tmux_paste_errors(monkeypatch):
 
     assert pool.send_text(state, "hello") is False
     assert state.last_error == "tmux load-buffer failed: can't find session: pawflow"
+
+
+def test_interactive_pool_lists_live_conversation_sessions(monkeypatch):
+    from core.claude_code_interactive_pool import InteractiveClaudeCodePool, InteractiveContainer
+
+    pool = InteractiveClaudeCodePool()
+    live = {"new", "old"}
+    monkeypatch.setattr(pool, "_is_alive", lambda name: name in live)
+    pool._sessions[("u", "c", "agent-b", "svc2")] = InteractiveContainer(
+        key=("u", "c", "agent-b", "svc2"),
+        name="new",
+        workdir="/host/b",
+        container_workdir="/cc_sessions/u/c/agent-b",
+        session_token="sess-b",
+        event_service_id="events",
+        internal_token="internal",
+        last_used=20,
+    )
+    pool._sessions[("u", "c", "agent-a", "svc1")] = InteractiveContainer(
+        key=("u", "c", "agent-a", "svc1"),
+        name="old",
+        workdir="/host/a",
+        container_workdir="/cc_sessions/u/c/agent-a",
+        session_token="sess-a",
+        event_service_id="events",
+        internal_token="internal",
+        last_used=10,
+    )
+    pool._sessions[("u", "c", "dead-agent", "svc1")] = InteractiveContainer(
+        key=("u", "c", "dead-agent", "svc1"),
+        name="dead",
+        workdir="/host/dead",
+        container_workdir="/cc_sessions/u/c/dead-agent",
+        session_token="sess-dead",
+        event_service_id="events",
+        internal_token="internal",
+        last_used=30,
+    )
+    pool._sessions[("u", "other", "agent-c", "svc3")] = InteractiveContainer(
+        key=("u", "other", "agent-c", "svc3"),
+        name="other",
+        workdir="/host/c",
+        container_workdir="/cc_sessions/u/other/agent-c",
+        session_token="sess-c",
+        event_service_id="events",
+        internal_token="internal",
+        last_used=40,
+    )
+
+    sessions = pool.list_sessions("u", "c")
+
+    assert [row["agent_name"] for row in sessions] == ["agent-b", "agent-a"]
+    assert sessions[0]["service_id"] == "svc2"
+    assert sessions[0]["container_name"] == "new"
+    assert ("u", "c", "dead-agent", "svc1") not in pool._sessions
 
 
 def test_interactive_pool_starts_tmux_in_normal_provider_namespace(monkeypatch):
@@ -702,7 +758,7 @@ def test_cc_interactive_event_service_logs_wire_without_queueing(caplog):
         b"hello"
     )
 
-    with caplog.at_level("INFO", logger="services.cc_interactive_event_service"):
+    with caplog.at_level("DEBUG", logger="services.cc_interactive_event_service"):
         svc.publish_event("sess", {
             "type": "wire",
             "request_id": "r1",
@@ -721,3 +777,86 @@ def test_cc_interactive_event_service_logs_wire_without_queueing(caplog):
     assert "secret-token" not in caplog.text
     assert "Set-Cookie: <redacted>" in caplog.text
     assert "Authorization: <redacted>" in caplog.text
+
+
+def test_cc_interactive_event_service_persists_manual_tmux_prompt(monkeypatch):
+    from services.cc_interactive_event_service import CCInteractiveEventService
+
+    writes = []
+    captures = []
+
+    class _Writer:
+        def enqueue_message(self, msg, agent_name="", user_id="", ttl=0):
+            writes.append({
+                "msg": msg,
+                "agent_name": agent_name,
+                "user_id": user_id,
+                "ttl": ttl,
+            })
+
+    class _ConversationWriter:
+        @staticmethod
+        def for_conversation(cid):
+            assert cid == "cid1"
+            return _Writer()
+
+    monkeypatch.setattr(
+        "core.conversation_writer.ConversationWriter", _ConversationWriter)
+    monkeypatch.setattr(
+        CCInteractiveEventService, "_start_manual_capture",
+        lambda self, state: captures.append(state.session_token))
+
+    svc = CCInteractiveEventService({"token": "tok", "_service_id": "events"})
+    svc.register_session(
+        "sess", user_id="uid1", conversation_id="cid1", agent_name="assistant")
+    svc.publish_event("sess", {
+        "type": "hook",
+        "hook_event_name": "UserPromptSubmit",
+        "input": {
+            "hook_event_name": "UserPromptSubmit",
+            "prompt": "hello from tmux",
+            "pawflow_injected_prompt": False,
+        },
+    })
+
+    assert len(writes) == 1
+    assert writes[0]["agent_name"] == "assistant"
+    assert writes[0]["user_id"] == "uid1"
+    msg = writes[0]["msg"]
+    assert msg["role"] == "user"
+    assert msg["content"] == "hello from tmux"
+    assert msg["channel"] == "tmux"
+    assert msg["source"] == {
+        "type": "user",
+        "name": "uid1",
+        "target_agent": "assistant",
+        "input": "cc_interactive_tmux",
+    }
+    assert msg.get("msg_id")
+    assert msg.get("ts")
+    assert captures == ["sess"]
+
+
+def test_cc_interactive_event_service_ignores_pawflow_injected_prompt(monkeypatch):
+    from services.cc_interactive_event_service import CCInteractiveEventService
+
+    monkeypatch.setattr(
+        CCInteractiveEventService, "_start_manual_capture",
+        lambda self, state: (_ for _ in ()).throw(AssertionError("should not capture")))
+
+    svc = CCInteractiveEventService({"token": "tok", "_service_id": "events"})
+    svc.register_session(
+        "sess", user_id="uid1", conversation_id="cid1", agent_name="assistant")
+    svc.publish_event("sess", {
+        "type": "hook",
+        "hook_event_name": "UserPromptSubmit",
+        "input": {
+            "hook_event_name": "UserPromptSubmit",
+            "prompt_len": 123,
+            "pawflow_injected_prompt": True,
+        },
+    })
+
+    event = svc.wait_event("sess", timeout=0)
+    assert event["type"] == "hook"
+    assert event["hook_event_name"] == "UserPromptSubmit"

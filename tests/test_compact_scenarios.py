@@ -668,6 +668,94 @@ def test_compact_backfills_tail_budget_past_oversized_tool_result(monkeypatch):
     assert _estimate(instance, out) > 23_000
 
 
+def test_compact_fits_single_oversized_user_tail_to_budget(monkeypatch):
+    """A single huge recent user message should fill, not crush, the cap.
+
+    The tail walk-back always keeps at least the newest message. If that
+    message is larger than the tail budget, compact must truncate that one
+    message to the available tail budget instead of invoking global force-fit,
+    which can collapse a 25k target to a much smaller context.
+    """
+    from core import bucket_store as _bs_mod
+    from core.conversation_store import ConversationStore
+    from core.llm_client import LLMMessage
+    from tasks.ai.agent_loop import AgentLoopTask
+
+    class _StubCS:
+        def _conv_dir(self, conversation_id):
+            return Path("/tmp/pawflow-test-compact-oversized-user")
+
+        def message_count(self, conversation_id):
+            return 426
+
+    class _StubBS:
+        @classmethod
+        def get(cls, conv_dir):
+            return cls()
+
+        def assemble_summary_header(self):
+            return "H" * 16_000
+
+    def _estimate(self, msgs, **kwargs):
+        total = 0
+        for m in msgs:
+            content = getattr(m, "content", "") or ""
+            if isinstance(content, list):
+                content = " ".join(
+                    str(p.get("text", "")) for p in content
+                    if isinstance(p, dict) and p.get("type") == "text"
+                )
+            total += len(str(content)) // 4 + 4
+            total += 8 * len(getattr(m, "tool_calls", None) or [])
+        return total
+
+    def _force_fit_should_not_run(*args, **kwargs):
+        raise AssertionError("oversized user tail must be pre-fitted")
+
+    monkeypatch.setattr(ConversationStore, "instance", classmethod(lambda cls: _StubCS()))
+    monkeypatch.setattr(_bs_mod, "BucketStore", _StubBS)
+    monkeypatch.setattr(AgentLoopTask, "_persist_context", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        AgentLoopTask, "_cleanup_orphan_files", staticmethod(lambda *a, **kw: None))
+    monkeypatch.setattr(AgentLoopTask, "_estimate_tokens", _estimate)
+    monkeypatch.setattr(AgentLoopTask, "_force_fit_context", _force_fit_should_not_run)
+
+    instance = AgentLoopTask.__new__(AgentLoopTask)
+    msgs = [
+        LLMMessage(role="system", content="sys", conversation_id="cid", seq=1),
+        LLMMessage(role="assistant", content="older assistant", conversation_id="cid", seq=10),
+        LLMMessage(
+            role="user",
+            content="BUG_COMPACT_BUDGET_START\n" + ("huge user log line\n" * 20_000)
+                    + "BUG_COMPACT_BUDGET_END",
+            conversation_id="cid",
+            seq=426,
+        ),
+    ]
+
+    class _C:
+        api_key = ""
+        base_url = ""
+
+    out = instance._compact(
+        list(msgs), _C(),
+        max_tokens=200_000,
+        force=True,
+        conversation_id="cid_test",
+        agent_name="assistant",
+        user_id="uid",
+        budget_config={"compact_target_tokens": 25_000},
+    )
+
+    joined = "\n".join(m.content or "" for m in out)
+    final_tokens = _estimate(instance, out)
+    assert "BUG_COMPACT_BUDGET_START" in joined
+    assert "BUG_COMPACT_BUDGET_END" in joined
+    assert "compacted to fit tail budget" in joined
+    assert final_tokens <= 25_000
+    assert final_tokens > 23_000
+
+
 def test_independent_compact_summarizes_head_without_bucket_store(monkeypatch):
     """Task/delegate contexts compact locally; they never read the shared pyramid."""
     from core import bucket_store as _bs_mod

@@ -52,9 +52,13 @@ class CCInteractiveSessionEvents:
     session_token: str
     events: "queue.Queue[dict]"
     container_id: str = ""
+    user_id: str = ""
+    conversation_id: str = ""
+    agent_name: str = ""
     connected: bool = False
     unreliable: bool = False
     error: str = ""
+    manual_capture_active: bool = False
     created_at: float = field(default_factory=time.time)
     last_event_at: float = 0.0
 
@@ -127,7 +131,9 @@ class CCInteractiveEventService(BaseService):
         self._route_path = ""
         self._initialized = False
 
-    def register_session(self, session_token: str) -> CCInteractiveSessionEvents:
+    def register_session(self, session_token: str, *, user_id: str = "",
+                         conversation_id: str = "",
+                         agent_name: str = "") -> CCInteractiveSessionEvents:
         if not session_token:
             raise ValueError("session_token is required")
         with self._sessions_lock:
@@ -138,6 +144,12 @@ class CCInteractiveEventService(BaseService):
                     events=queue.Queue(maxsize=self._max_queue),
                 )
                 self._sessions[session_token] = state
+            if user_id:
+                state.user_id = user_id
+            if conversation_id:
+                state.conversation_id = conversation_id
+            if agent_name:
+                state.agent_name = agent_name
             return state
 
     def unregister_session(self, session_token: str) -> None:
@@ -186,6 +198,7 @@ class CCInteractiveEventService(BaseService):
         self._log_event_summary(session_token, event)
         if event.get("type") == "wire":
             return
+        self._maybe_ingest_manual_prompt(state, event)
         try:
             state.events.put(event, block=block, timeout=5 if block else 0)
         except queue.Full as exc:
@@ -212,8 +225,15 @@ class CCInteractiveEventService(BaseService):
                 "CC interactive MITM event: session=%s request=%s type=%s payload_keys=%s",
                 session_token[:8], event.get("request_id", ""), ptype,
                 sorted(payload.keys())[:8])
-        elif etype in {"request_start", "request_stop", "request_error", "response_start", "response_ignored"}:
-            logger.info(
+        elif etype == "request_error":
+            logger.warning(
+                "CC interactive proxy event: session=%s type=%s request=%s path=%s status=%s ctype=%s encoding=%s reason=%s error=%s",
+                session_token[:8], etype, event.get("request_id", ""),
+                event.get("path", ""), event.get("status", ""),
+                event.get("content_type", ""), event.get("content_encoding", ""),
+                event.get("reason", ""), event.get("error", ""))
+        elif etype in {"request_start", "request_stop", "response_start", "response_ignored"}:
+            logger.debug(
                 "CC interactive proxy event: session=%s type=%s request=%s path=%s status=%s ctype=%s encoding=%s reason=%s",
                 session_token[:8], etype, event.get("request_id", ""),
                 event.get("path", ""), event.get("status", ""),
@@ -222,7 +242,7 @@ class CCInteractiveEventService(BaseService):
         elif etype == "wire":
             safe_b64, safe_text = _safe_wire_field(
                 str(event.get("data_b64", "")), str(event.get("text_repr", "")))
-            logger.info(
+            logger.debug(
                 "CC interactive proxy wire: session=%s request=%s direction=%s stage=%s seq=%s bytes=%s sha256=%s data_b64=%s text=%s",
                 session_token[:8], event.get("request_id", ""),
                 event.get("direction", ""), event.get("stage", ""),
@@ -232,6 +252,97 @@ class CCInteractiveEventService(BaseService):
             logger.info(
                 "CC interactive hook event: session=%s hook=%s",
                 session_token[:8], event.get("hook_event_name", ""))
+
+    def _maybe_ingest_manual_prompt(self, state: CCInteractiveSessionEvents,
+                                    event: dict) -> None:
+        if event.get("type") != "hook" or event.get("hook_event_name") != "UserPromptSubmit":
+            return
+        data = event.get("input") or {}
+        if not isinstance(data, dict):
+            return
+        if data.get("pawflow_injected_prompt"):
+            return
+        prompt = data.get("prompt", "")
+        if not isinstance(prompt, str) or not prompt.strip():
+            return
+        if not state.conversation_id or not state.agent_name:
+            logger.debug("manual CC prompt ignored without session binding")
+            return
+        try:
+            from core.conversation_writer import ConversationWriter
+            from core.llm_client import stamp_message
+            msg = stamp_message({
+                "role": "user",
+                "content": prompt,
+                "source": {
+                    "type": "user",
+                    "name": state.user_id,
+                    "target_agent": state.agent_name,
+                    "input": "cc_interactive_tmux",
+                },
+                "channel": "tmux",
+            }, state.conversation_id)
+            ConversationWriter.for_conversation(
+                state.conversation_id).enqueue_message(
+                    msg, agent_name=state.agent_name, user_id=state.user_id)
+            logger.info(
+                "CC interactive manual tmux prompt persisted: conv=%s agent=%s msg=%s chars=%d",
+                state.conversation_id[:8], state.agent_name, msg.get("msg_id", ""),
+                len(prompt))
+        except Exception:
+            logger.warning("CC interactive manual prompt persist failed", exc_info=True)
+            return
+        self._start_manual_capture(state)
+
+    def _start_manual_capture(self, state: CCInteractiveSessionEvents) -> None:
+        with self._sessions_lock:
+            if state.manual_capture_active:
+                return
+            state.manual_capture_active = True
+        thread = threading.Thread(
+            target=self._run_manual_capture,
+            args=(state.session_token,),
+            name=f"cci-manual-capture-{state.session_token[:8]}",
+            daemon=True,
+        )
+        thread.start()
+
+    def _run_manual_capture(self, session_token: str) -> None:
+        state = self.session_state(session_token)
+        try:
+            if not state:
+                return
+            from core.llm_client import stamp_message
+            from core.conversation_writer import ConversationWriter
+            from core.llm_providers.claude_code_interactive import _CCITurnCoordinator
+            coord = _CCITurnCoordinator(self, session_token)
+            response = coord.run()
+            content = response.content or ""
+            if not content.strip():
+                return
+            msg = stamp_message({
+                "role": "assistant",
+                "content": content,
+                "source": {
+                    "type": "agent",
+                    "name": state.agent_name,
+                    "input": "cc_interactive_tmux",
+                },
+                "channel": "tmux",
+            }, state.conversation_id)
+            ConversationWriter.for_conversation(
+                state.conversation_id).enqueue_message(
+                    msg, agent_name=state.agent_name, user_id=state.user_id)
+            logger.info(
+                "CC interactive manual tmux response persisted: conv=%s agent=%s msg=%s chars=%d",
+                state.conversation_id[:8], state.agent_name, msg.get("msg_id", ""),
+                len(content))
+        except Exception:
+            logger.warning("CC interactive manual response capture failed", exc_info=True)
+        finally:
+            state = self.session_state(session_token)
+            if state:
+                state.manual_capture_active = False
 
     def _handle_ws(self, sock, path_params, meta):
         from services.filesystem_service import _attach_sync_sock_to_loop

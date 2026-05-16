@@ -807,6 +807,65 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                 conversation_id=getattr(m, 'conversation_id', None),
             )])
 
+        def _clone_with_content(m: LLMMessage, content: Any) -> LLMMessage:
+            return LLMMessage(
+                role=m.role,
+                content=content,
+                tool_call_id=getattr(m, 'tool_call_id', None),
+                tool_calls=getattr(m, 'tool_calls', None),
+                timestamp=getattr(m, 'timestamp', 0.0),
+                seq=getattr(m, 'seq', 0),
+                source=getattr(m, 'source', None),
+                conversation_id=getattr(m, 'conversation_id', None),
+            )
+
+        def _truncate_message_to_budget(m: LLMMessage,
+                                        token_budget: int) -> LLMMessage:
+            """Shrink one oversized non-tool tail message to its budget.
+
+            The tail selector keeps at least the newest message. When that
+            message is itself larger than the tail budget, the old fallback
+            built an over-cap compact and let global force-fit crush the whole
+            output far below compact_target_tokens. Fit just that message
+            instead so the final compact still uses the configured budget.
+            """
+            content = getattr(m, 'content', None)
+            if isinstance(content, list):
+                text = " ".join(
+                    str(p.get("text", "")) for p in content
+                    if isinstance(p, dict) and p.get("type") == "text")
+            elif isinstance(content, str):
+                text = content
+            else:
+                return m
+            if _estimate([m]) <= token_budget:
+                return m
+
+            marker = "\n...[compacted to fit tail budget; use read_history for full message]...\n"
+
+            def _candidate(keep_chars: int) -> LLMMessage:
+                if keep_chars <= 0:
+                    body = marker.strip()
+                elif len(text) <= keep_chars:
+                    body = text
+                else:
+                    head = max(0, keep_chars // 2)
+                    tail = max(0, keep_chars - head)
+                    body = text[:head] + marker + (text[-tail:] if tail else "")
+                return _clone_with_content(m, body)
+
+            low, high = 0, len(text)
+            best = _candidate(0)
+            while low <= high:
+                mid = (low + high) // 2
+                cand = _candidate(mid)
+                if _estimate([cand]) <= token_budget:
+                    best = cand
+                    low = mid + 1
+                else:
+                    high = mid - 1
+            return best
+
         def _is_independent_summary(m: LLMMessage) -> bool:
             source = getattr(m, 'source', None) or {}
             source_type = source.get("type") if isinstance(source, dict) else ""
@@ -1145,6 +1204,19 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                     # Hit start of context — drop the orphan
                     saved_recent = saved_recent[1:]
                     break
+
+            if (len(saved_recent) == 1
+                    and saved_recent[0].role != "tool"
+                    and _estimate([saved_recent[0]]) > _tail_budget):
+                _oversized_before = _estimate([saved_recent[0]])
+                saved_recent = [
+                    _truncate_message_to_budget(saved_recent[0], _tail_budget)
+                ]
+                _accum = _estimate(saved_recent)
+                logger.info(
+                    "[compact] tail oversized message truncated: %d > "
+                    "budget %d -> %d tokens",
+                    _oversized_before, _tail_budget, _accum)
 
             logger.info(
                 "[compact] tail walk-back: kept %d/%d msgs "

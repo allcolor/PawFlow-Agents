@@ -68,7 +68,7 @@ def _scrub(value):
     return value
 
 
-WIRE_LOG_ENABLED = os.environ.get("PAWFLOW_CCI_PROXY_WIRE_LOG", "1").lower() not in {"0", "false", "no"}
+WIRE_LOG_ENABLED = os.environ.get("PAWFLOW_CCI_PROXY_WIRE_LOG", "0").lower() in {"1", "true", "yes"}
 WIRE_LOG_ALL = os.environ.get("PAWFLOW_CCI_PROXY_WIRE_LOG_ALL", "0").lower() in {"1", "true", "yes"}
 WIRE_LOG_PATHS = tuple(
     path.strip() for path in os.environ.get(
@@ -120,6 +120,11 @@ class WireLogger:
         self._states = {}
 
     def log(self, stage: str, data: bytes) -> None:
+        if self.direction == "upstream_to_client" and stage == "out" and data:
+            self.request_context["upstream_to_client_bytes"] = (
+                int(self.request_context.get("upstream_to_client_bytes", 0) or 0)
+                + len(data)
+            )
         if not WIRE_LOG_ENABLED or not data:
             return
         for payload in self._sanitize(stage, data):
@@ -996,7 +1001,13 @@ def handle_client(client):
         c2u.join()
         u2c.join()
         if not errors.empty():
-            raise errors.get()
+            exc = errors.get()
+            if int(wire_context.get("upstream_to_client_bytes", 0) or 0) > 0:
+                _log(
+                    "request_late_pipe_error_ignored request="
+                    f"{request_id} error={exc}")
+            else:
+                raise exc
         _log(f"request_stop request={request_id}")
         EVENTS.emit({"type": "request_stop", "request_id": request_id})
     except Exception as exc:

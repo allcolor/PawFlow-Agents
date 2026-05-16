@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Optional
+import hashlib
 import json
 import os
 import shlex
@@ -112,11 +113,36 @@ class InteractiveClaudeCodePool:
                 self._sessions.pop(state.key, None)
         return None
 
+    def list_sessions(self, user_id: str, conversation_id: str,
+                      service_id: str = "") -> list[dict]:
+        """Return live interactive sessions for a conversation."""
+        sessions: list[dict] = []
+        with self._lock:
+            candidates = [
+                (key, state) for key, state in self._sessions.items()
+                if key[0] == user_id
+                and key[1] == conversation_id
+                and (not service_id or key[3] == service_id)
+            ]
+            candidates.sort(key=lambda row: row[1].last_used, reverse=True)
+            for key, state in candidates:
+                if not self._is_alive(state.name):
+                    self._sessions.pop(key, None)
+                    continue
+                sessions.append({
+                    "agent_name": key[2],
+                    "service_id": key[3],
+                    "container_name": state.name,
+                    "last_used": state.last_used,
+                })
+        return sessions
+
     def send_text(self, state: InteractiveContainer, text: str) -> bool:
         state.last_error = ""
         if not self._is_alive(state.name):
             state.last_error = f"Container {state.name} is not running"
             return False
+        self._remember_injected_prompt(state, text)
         cmd = docker_cmd() + [
             "exec", "-i", "--user", "1000:1000", state.name,
             "tmux", "load-buffer", "-",
@@ -140,6 +166,23 @@ class InteractiveClaudeCodePool:
             state.last_error = self._command_error("tmux send-keys Enter", r)
             return False
         return True
+
+    @staticmethod
+    def _remember_injected_prompt(state: InteractiveContainer, text: str) -> None:
+        """Record PawFlow-injected tmux prompts so hooks can ignore them."""
+        try:
+            marker_dir = Path(state.workdir) / ".pawflow_cci"
+            marker_dir.mkdir(parents=True, exist_ok=True)
+            marker = marker_dir / "injected_prompts.jsonl"
+            payload = {
+                "sha256": hashlib.sha256((text or "").encode("utf-8")).hexdigest(),
+                "length": len(text or ""),
+                "ts": time.time(),
+            }
+            with open(marker, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(payload, separators=(",", ":")) + "\n")
+        except Exception:
+            pass
 
     def send_interrupt(self, state: InteractiveContainer, text: str) -> bool:
         return self.send_keys(state, ["Escape"]) and self.send_text(state, text)
@@ -198,7 +241,12 @@ class InteractiveClaudeCodePool:
         host_ip = get_host_ip()
         event_url = event_url.replace("localhost", host_ip).replace("127.0.0.1", host_ip)
         session_token = uuid.uuid4().hex
-        event_service.register_session(session_token)
+        event_service.register_session(
+            session_token,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            agent_name=agent_name,
+        )
 
         name = self._spawn_container()
         physical_container_workdir = self._physical_container_workdir(
@@ -326,7 +374,7 @@ class InteractiveClaudeCodePool:
             "args": ["/opt/pawflow/cc_interactive_hook.py"],
             "timeout": 5,
         }
-        for event_name in ("Stop", "StopFailure", "PreCompact", "PostCompact", "SessionEnd"):
+        for event_name in ("UserPromptSubmit", "Stop", "StopFailure", "PreCompact", "PostCompact", "SessionEnd"):
             hooks[event_name] = [{"hooks": [handler]}]
         settings_path = Path(workdir) / ".claude" / "settings.json"
         settings_path.parent.mkdir(parents=True, exist_ok=True)
@@ -428,6 +476,7 @@ class InteractiveClaudeCodePool:
             f"PAWFLOW_CCI_EVENT_URL={shlex.quote(event_url)} "
             f"PAWFLOW_CCI_EVENT_TOKEN={shlex.quote(event_token)} "
             f"PAWFLOW_INTERNAL_TOKEN={shlex.quote(internal_token)} "
+            f"PAWFLOW_CCI_INJECTED_PROMPTS={shlex.quote(ns_workdir + '/.pawflow_cci/injected_prompts.jsonl')} "
             "CLAUDE_CODE_CERT_STORE=system TERM=xterm-256color "
             f"{quoted}')"
         )

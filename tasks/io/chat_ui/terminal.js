@@ -107,6 +107,43 @@ function _pickMode(relayId) {
   });
 }
 
+function _listCCInteractiveTerminals() {
+  return new Promise((resolve, reject) => {
+    action$('list_cc_interactive_terminals').subscribe({
+      next: data => resolve(Array.isArray(data.sessions) ? data.sessions : []),
+      error: e => reject(e),
+    });
+  });
+}
+
+function _pickCCInteractiveTerminal(sessions) {
+  if (!sessions.length) return Promise.resolve(null);
+  if (sessions.length === 1) return Promise.resolve(sessions[0]);
+  return new Promise(resolve => {
+    const bg = document.createElement('div');
+    bg.className = 'exec-overlay';
+    bg.innerHTML = '<div class="exec-dialog" style="min-width:360px;">'
+      + '<h3>' + escapeHtml(t('chooseCCInteractiveTerminal')) + '</h3>'
+      + '<div id="_cciTermPickList" style="margin:12px 0;"></div>'
+      + '<div class="exec-btns"><button class="exec-deny" id="_cciTermCancel">' + escapeHtml(t('contextCancel')) + '</button></div>'
+      + '</div>';
+    const list = bg.querySelector('#_cciTermPickList');
+    bg.querySelector('#_cciTermCancel').onclick = () => { bg.remove(); resolve(null); };
+    for (const session of sessions) {
+      const btn = document.createElement('button');
+      btn.className = 'exec-approve';
+      btn.style.cssText = 'display:block;width:100%;margin-bottom:6px;text-align:left;';
+      const bits = [session.agent_name || ''];
+      if (session.service_id) bits.push(session.service_id);
+      if (session.container_name) bits.push(session.container_name);
+      btn.textContent = bits.filter(Boolean).join(' - ');
+      btn.onclick = () => { bg.remove(); resolve(session); };
+      list.appendChild(btn);
+    }
+    document.body.appendChild(bg);
+  });
+}
+
 /** /terminal command */
 async function cmdTerminal(text, parts) {
   const sub = (parts[1] || '').toLowerCase();
@@ -184,13 +221,33 @@ async function cmdTerminal(text, parts) {
 
 /** Open the live tmux session for the selected Claude Code interactive agent. */
 async function cmdCCInteractiveTerminal(agentName) {
-  const targetAgent = agentName || (typeof selectedAgent !== 'undefined' ? selectedAgent : '') || '';
+  let session = null;
+  if (!agentName) {
+    try {
+      const sessions = await _listCCInteractiveTerminals();
+      if (!sessions.length) {
+        addMsg('system', t('ccInteractiveTerminalNoLive'));
+        return true;
+      }
+      session = await _pickCCInteractiveTerminal(sessions);
+      if (!session) return true;
+    } catch (e) {
+      addMsg('system', t('failedToOpenTerminal', { error: e.message }));
+      return true;
+    }
+  }
+  const targetAgent = agentName || (session && session.agent_name) || '';
   if (!targetAgent) {
     addMsg('system', t('ccInteractiveTerminalNoAgent'));
     return true;
   }
   addMsg('system', t('openingCCInteractiveTerminal', { agent: targetAgent }));
-  action$('open_cc_interactive_terminal', { agent_name: targetAgent, cols: 120, rows: 30 }).subscribe({
+  action$('open_cc_interactive_terminal', {
+    agent_name: targetAgent,
+    service_id: session && session.service_id ? session.service_id : '',
+    cols: 120,
+    rows: 30,
+  }).subscribe({
     next: async (resp) => {
       if (resp.error) {
         addMsg('system', '\u26a0 ' + resp.error);

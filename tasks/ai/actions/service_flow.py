@@ -2549,6 +2549,21 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
         return [flowfile]
 
+    if action == "list_cc_interactive_terminals":
+        conversation_id = body.get("conversation_id", "") or flowfile.get_attribute("http.conversation_id") or ""
+        service_id = body.get("service_id", "") or ""
+        if not conversation_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+            return [flowfile]
+        try:
+            from core.claude_code_interactive_pool import InteractiveClaudeCodePool
+            sessions = InteractiveClaudeCodePool.instance().list_sessions(
+                user_id, conversation_id, service_id=service_id)
+            flowfile.set_content(json.dumps({"sessions": sessions}).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+        return [flowfile]
+
     if action == "open_cc_interactive_terminal":
         agent_name = body.get("agent_name", "") or body.get("agent", "")
         conversation_id = body.get("conversation_id", "") or flowfile.get_attribute("http.conversation_id") or ""

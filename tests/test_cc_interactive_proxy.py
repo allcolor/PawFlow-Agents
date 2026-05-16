@@ -226,6 +226,7 @@ def test_wire_logger_emits_full_body_with_redacted_sensitive_headers(monkeypatch
     logs = []
     monkeypatch.setattr(proxy.EVENTS, "emit", events.append)
     monkeypatch.setattr(proxy, "_log", logs.append)
+    monkeypatch.setattr(proxy, "WIRE_LOG_ENABLED", True)
 
     wire = proxy.WireLogger("r1", "client_to_upstream", {})
     wire.log("in", (
@@ -254,6 +255,24 @@ def test_wire_logger_emits_full_body_with_redacted_sensitive_headers(monkeypatch
         assert b"Cookie: <redacted:" in decoded
         assert "hello world" in event["text_repr"]
     assert logs
+
+
+def test_wire_logger_is_disabled_by_default_but_tracks_upstream_bytes(monkeypatch):
+    monkeypatch.setenv("PAWFLOW_CCI_SESSION_TOKEN", "sess")
+    proxy = importlib.import_module("tools.cc_interactive_proxy")
+    events = []
+    logs = []
+    context = {}
+    monkeypatch.setattr(proxy.EVENTS, "emit", events.append)
+    monkeypatch.setattr(proxy, "_log", logs.append)
+    monkeypatch.setattr(proxy, "WIRE_LOG_ENABLED", False)
+
+    wire = proxy.WireLogger("r1", "upstream_to_client", context)
+    wire.log("out", b"HTTP/1.1 200 OK\r\n\r\nhello")
+
+    assert events == []
+    assert logs == []
+    assert context["upstream_to_client_bytes"] == 24
 
 
 def test_wire_logger_skips_non_model_paths_by_default(monkeypatch):
@@ -609,3 +628,39 @@ def test_hook_compacts_lifecycle_input():
         "trigger": "auto",
         "cwd": "/workspace",
     }
+
+
+def test_hook_marks_pawflow_injected_prompts_without_forwarding_text(tmp_path, monkeypatch):
+    hook = importlib.import_module("tools.cc_interactive_hook")
+    prompt = "PawFlow injected prompt"
+    marker = tmp_path / "injected_prompts.jsonl"
+    marker.write_text(json.dumps({
+        "sha256": hook.hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+        "length": len(prompt),
+    }) + "\n", encoding="utf-8")
+    monkeypatch.setenv("PAWFLOW_CCI_INJECTED_PROMPTS", str(marker))
+
+    compact = hook._compact_input({
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": prompt,
+        "cwd": "/workspace",
+    })
+
+    assert compact["hook_event_name"] == "UserPromptSubmit"
+    assert compact["pawflow_injected_prompt"] is True
+    assert compact["prompt_len"] == len(prompt)
+    assert "prompt" not in compact
+    assert marker.read_text(encoding="utf-8") == ""
+
+
+def test_hook_keeps_manual_user_prompt(monkeypatch):
+    hook = importlib.import_module("tools.cc_interactive_hook")
+    monkeypatch.delenv("PAWFLOW_CCI_INJECTED_PROMPTS", raising=False)
+
+    compact = hook._compact_input({
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "Manual tmux prompt",
+    })
+
+    assert compact["pawflow_injected_prompt"] is False
+    assert compact["prompt"] == "Manual tmux prompt"

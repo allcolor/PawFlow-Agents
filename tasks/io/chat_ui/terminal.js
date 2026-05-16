@@ -182,6 +182,39 @@ async function cmdTerminal(text, parts) {
   return true;
 }
 
+/** Open the live tmux session for the selected Claude Code interactive agent. */
+async function cmdCCInteractiveTerminal(agentName) {
+  const targetAgent = agentName || (typeof selectedAgent !== 'undefined' ? selectedAgent : '') || '';
+  if (!targetAgent) {
+    addMsg('system', t('ccInteractiveTerminalNoAgent'));
+    return true;
+  }
+  addMsg('system', t('openingCCInteractiveTerminal', { agent: targetAgent }));
+  action$('open_cc_interactive_terminal', { agent_name: targetAgent, cols: 120, rows: 30 }).subscribe({
+    next: async (resp) => {
+      if (resp.error) {
+        addMsg('system', '\u26a0 ' + resp.error);
+        return;
+      }
+      const sessionId = resp.session_id;
+      const token = resp.token || '';
+      if (!token) {
+        addMsg('system', t('terminalMissingToken'));
+        return;
+      }
+      await _loadXterm();
+      const tabId = addTerminalTab(sessionId, resp.relay_id || ('cc:' + targetAgent));
+      const panel = document.getElementById('tabContent_' + tabId);
+      const container = panel.querySelector('.xterm-container');
+      _initXterm(container, sessionId, token);
+    },
+    error: (e) => {
+      addMsg('system', t('failedToOpenTerminal', { error: e.message }));
+    },
+  });
+  return true;
+}
+
 /** Initialize xterm.js inside a container element. */
 function _initXterm(container, sessionId, token) {
   const term = new window.Terminal({

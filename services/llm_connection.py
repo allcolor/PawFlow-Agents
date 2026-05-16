@@ -351,6 +351,7 @@ class LLMConnectionService(BaseService):
                 "type": "service_ref",
                 "service_type": "llmCredentialOAuthProvider",
                 "provider_field": "provider",
+                "provider_aliases": {"claude-code-interactive": "claude-code"},
                 "default": "",
                 "description": "OAuth credential provider service used when api_key is empty",
             },
@@ -508,10 +509,6 @@ class LLMConnectionService(BaseService):
                 "options": ["low", "medium", "high", "max"],
                 "description": "Claude Code effort level (thinking budget)",
             },
-            "experimental": {
-                "type": "boolean", "default": False,
-                "description": "Enable experimental providers such as claude-code-interactive",
-            },
         }
 
     def get_parameter_rules(self) -> list:
@@ -554,7 +551,6 @@ class LLMConnectionService(BaseService):
                     "docker_cpu_limit": {"visible": True},
                     "docker_memory_limit": {"visible": True},
                     "effort":        {"visible": True},
-                    "experimental":  {"visible": False},
                     "extra_body":    {"visible": False},
                 }
             },
@@ -573,7 +569,6 @@ class LLMConnectionService(BaseService):
                     "docker_cpu_limit": {"visible": True},
                     "docker_memory_limit": {"visible": True},
                     "effort":        {"visible": True},
-                    "experimental":  {"visible": True},
                     "extra_body":    {"visible": False},
                 }
             },

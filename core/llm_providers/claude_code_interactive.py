@@ -30,11 +30,15 @@ class _CCITurnCoordinator:
         self.text_parts: list[str] = []
         self.thinking_parts: list[str] = []
         self.tool_blocks: dict[int, dict] = {}
+        self.tool_by_id: dict[str, dict] = {}
         self.usage = {}
         self.lifecycle_events: list[dict] = []
+        self.current_block_type = None
+        self._text_block_buf = ""
+        self._thinking_block_buf = ""
 
     def run(self, abort_event=None):
-        from core.llm_client import LLMResponse, LLMToolCall
+        from core.llm_client import LLMResponse
 
         done = False
         while not done:
@@ -46,10 +50,14 @@ class _CCITurnCoordinator:
             etype = event.get("type", "")
             if etype == "request_error":
                 raise RuntimeError(event.get("error", "CC interactive proxy request failed"))
+            if etype == "tool_result":
+                self._emit_tool_result(event)
+                continue
             if etype == "hook":
                 self.lifecycle_events.append(event)
                 hook_name = event.get("hook_event_name", "")
                 if hook_name == "Stop":
+                    self._emit_pending_tool_uses()
                     done = True
                 elif hook_name == "StopFailure":
                     info = event.get("input") or {}
@@ -64,55 +72,71 @@ class _CCITurnCoordinator:
             if ptype == "content_block_start":
                 block = payload.get("content_block") or {}
                 idx = int(payload.get("index", 0) or 0)
-                if block.get("type") == "tool_use":
-                    self.tool_blocks[idx] = {
+                block_type = block.get("type")
+                self.current_block_type = block_type
+                if block_type == "thinking":
+                    self._append_thinking(
+                        block.get("thinking", "")
+                        or block.get("text", "")
+                        or block.get("reasoning_content", ""))
+                elif block_type == "tool_use":
+                    block_state = {
                         "id": block.get("id") or f"cci_{uuid.uuid4().hex[:12]}",
                         "name": block.get("name", ""),
                         "json": "",
+                        "emitted": False,
                     }
+                    self.tool_blocks[idx] = block_state
+                    self.tool_by_id[block_state["id"]] = block_state
+                    tool_input = block.get("input")
+                    if isinstance(tool_input, dict) and tool_input:
+                        self.tool_blocks[idx]["json"] = json.dumps(tool_input, ensure_ascii=False)
+                elif block_type == "text":
+                    self._append_text(block.get("text", ""))
             elif ptype == "content_block_delta":
                 idx = int(payload.get("index", 0) or 0)
                 delta = payload.get("delta") or {}
                 dtype = delta.get("type", "")
-                if dtype == "text_delta":
-                    text = delta.get("text", "")
-                    if text:
-                        self.text_parts.append(text)
-                        if self.callback:
-                            self.callback(text)
-                elif dtype == "thinking_delta":
-                    text = delta.get("thinking", "")
-                    if text:
-                        self.thinking_parts.append(text)
-                        if self.thinking_callback:
-                            self.thinking_callback(text)
-                elif dtype == "input_json_delta" and idx in self.tool_blocks:
+                if dtype == "signature_delta":
+                    continue
+                if dtype == "input_json_delta" and idx in self.tool_blocks:
                     self.tool_blocks[idx]["json"] += delta.get("partial_json", "")
+                    continue
+                thinking_text = (
+                    delta.get("thinking", "")
+                    or delta.get("reasoning_content", "")
+                    or delta.get("reasoning", ""))
+                if dtype == "thinking_delta" or (
+                        self.current_block_type == "thinking" and thinking_text):
+                    self._append_thinking(thinking_text or delta.get("text", ""))
+                else:
+                    self._append_text(delta.get("text", ""))
+            elif ptype == "content_block_stop":
+                idx = int(payload.get("index", 0) or 0)
+                if idx in self.tool_blocks:
+                    self._emit_tool_use(idx)
+                if self._text_block_buf and self.callback:
+                    self.callback(self._text_block_buf)
+                if self._thinking_block_buf and self.thinking_callback:
+                    self.thinking_callback(self._thinking_block_buf)
+                self._text_block_buf = ""
+                self._thinking_block_buf = ""
+                self.current_block_type = None
             elif ptype == "message_delta":
                 usage = payload.get("usage") or {}
                 if usage:
                     self.usage.update(usage)
             elif ptype == "message_stop":
-                done = True
+                # In interactive mode the Anthropic request lifecycle is not
+                # the Claude Code turn lifecycle. Claude Code may issue
+                # intermediate requests while the tmux turn is still active;
+                # only the Claude Code Stop hook closes the PawFlow turn.
+                continue
 
-        tool_calls = []
-        for block in self.tool_blocks.values():
-            raw = block.get("json", "") or "{}"
-            try:
-                args = json.loads(raw)
-            except Exception:
-                args = {}
-            tool_calls.append(LLMToolCall(
-                id=block.get("id") or f"cci_{uuid.uuid4().hex[:12]}",
-                name=block.get("name", ""),
-                arguments=args,
-            ))
         text = "".join(self.text_parts)
-        if self.block_callback:
-            self.block_callback(text, tool_calls)
         return LLMResponse(
             content=text,
-            tool_calls=tool_calls,
+            tool_calls=[],
             tokens_in=int(self.usage.get("input_tokens", 0) or 0),
             tokens_out=int(self.usage.get("output_tokens", 0) or 0),
             total_tokens=(int(self.usage.get("input_tokens", 0) or 0)
@@ -125,6 +149,54 @@ class _CCITurnCoordinator:
             },
         )
 
+    def _append_text(self, text: str) -> None:
+        if text:
+            self.text_parts.append(text)
+            self._text_block_buf += text
+
+    def _append_thinking(self, text: str) -> None:
+        if text:
+            self.thinking_parts.append(text)
+            self._thinking_block_buf += text
+
+    def _emit_tool_use(self, idx: int) -> None:
+        block = self.tool_blocks.get(idx) or {}
+        if not block or block.get("emitted"):
+            return
+        raw = block.get("json", "") or "{}"
+        try:
+            args = json.loads(raw)
+        except Exception:
+            args = {}
+        block["emitted"] = True
+        if self.block_callback:
+            self.block_callback("tool_use", {
+                "id": block.get("id") or f"cci_{uuid.uuid4().hex[:12]}",
+                "name": block.get("name", ""),
+                "arguments": args,
+            })
+
+    def _emit_pending_tool_uses(self) -> None:
+        for idx in list(self.tool_blocks):
+            self._emit_tool_use(idx)
+
+    def _emit_tool_result(self, event: dict) -> None:
+        tc_id = event.get("tool_use_id", "") or ""
+        if not tc_id:
+            return
+        block = self.tool_by_id.get(tc_id) or {}
+        if block:
+            for idx, candidate in self.tool_blocks.items():
+                if candidate is block:
+                    self._emit_tool_use(idx)
+                    break
+        if self.block_callback:
+            self.block_callback("tool_result", {
+                "tc_id": tc_id,
+                "tool": block.get("name", ""),
+                "result": event.get("content", "") or "(no output)",
+            })
+
 
 class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
     """Claude Code interactive provider using a transparent MITM proxy."""
@@ -136,11 +208,6 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
         call_agent_name=None, call_event_cid=None, call_ephemeral_stream=None,
     ):
         from core.llm_client import LLMClientError
-
-        if not self._cci_enabled():
-            raise LLMClientError(
-                "claude-code-interactive is experimental; set "
-                "PAWFLOW_CC_INTERACTIVE_ENABLED=1 or config.experimental=true")
 
         user_id = call_user_id or getattr(self, "_user_id", "") or ""
         conversation_id = call_conversation_id or getattr(self, "_conversation_id", "") or ""
@@ -158,7 +225,10 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
         _, _, event_service = get_or_create_cc_interactive_event_service()
         event_service.drain_session(state.session_token)
         if not pool.send_text(state, prompt):
-            raise LLMClientError("Failed to paste prompt into Claude Code interactive tmux session")
+            detail = getattr(state, "last_error", "") or "unknown tmux error"
+            raise LLMClientError(
+                "Failed to paste prompt into Claude Code interactive tmux session: "
+                f"{detail}")
         state.initial_context_loaded = True
 
         coord = _CCITurnCoordinator(
@@ -169,15 +239,6 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
         if turn_callback:
             turn_callback(response.content, response.tool_calls)
         return response
-
-    def _cci_enabled(self) -> bool:
-        import os
-        raw = self._cfg("experimental", "")
-        if isinstance(raw, bool) and raw:
-            return True
-        if str(raw).strip().lower() in {"1", "true", "yes", "on"}:
-            return True
-        return os.environ.get("PAWFLOW_CC_INTERACTIVE_ENABLED", "").strip() in {"1", "true", "yes", "on"}
 
     def _cci_prompt(self, messages, tools, workdir: str, container_workdir: str,
                     user_id: str, conversation_id: str,

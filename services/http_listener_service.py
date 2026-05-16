@@ -1111,6 +1111,19 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
 
             _remote = client_address[0] if client_address else "?"
 
+            result = self._route_registry.match("GET", path)
+            entry = result[0] if result else None
+            path_params = result[1] if result else {}
+            _is_public = bool(entry and entry.public)
+            _is_private_only = bool(entry and entry.private_only)
+
+            if _is_private_only:
+                from core.relay_proxy_auth import is_private_ip
+                if not is_private_ip(_remote):
+                    sock.sendall(b"HTTP/1.1 403 Forbidden\r\n\r\n")
+                    sock.close()
+                    return
+
             # Internal-auth bypass for server-spawned components (CC
             # container MCP bridge, server-side relays). A valid
             # `pawflow_internal` cookie on a /ws/tools/* route skips
@@ -1136,7 +1149,8 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
             # Private gateway check for WebSocket connections
             try:
                 _gateway = getattr(self, "_private_gateway", None)
-                if (_gateway is not None
+                if (not _is_public
+                        and _gateway is not None
                         and _gateway.check_ws(path, headers, client_address, _internal_ok)):
                     logger.warning(
                         "[ws] rejected %s on %s: private gateway check failed",
@@ -1162,7 +1176,7 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
             _ws_auth_role = ""
             _ws_auth_session_id = ""
             _ws_auth_is_api_key = False
-            if not _internal_ok:
+            if not _internal_ok and not _is_public:
                 try:
                     from core.security import SecurityManager
                     sm = SecurityManager.get_instance()
@@ -1220,14 +1234,10 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
                     sock.close()
                     return
 
-            # Match route
-            result = self._route_registry.match("GET", path)
-            if result is None or not result[0].ws_handler:
+            if entry is None or not entry.ws_handler:
                 sock.sendall(b"HTTP/1.1 400 Bad Request\r\n\r\n")
                 sock.close()
                 return
-
-            entry, path_params = result
 
             # RFC 6455 handshake
             ws_key = headers.get("Sec-WebSocket-Key", "")

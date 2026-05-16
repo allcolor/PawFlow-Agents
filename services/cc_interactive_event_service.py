@@ -9,9 +9,11 @@ silently dropping events.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import queue
+import re
 import threading
 import time
 import uuid
@@ -22,6 +24,27 @@ from core import ServiceFactory
 from core.base_service import BaseService
 
 logger = logging.getLogger(__name__)
+
+_SENSITIVE_HEADER_RE = re.compile(
+    rb"(?im)^(authorization|cookie|proxy-authorization|set-cookie|x-api-key|anthropic-api-key):[^\r\n]*"
+)
+
+
+def _redact_wire_bytes(data: bytes) -> bytes:
+    return _SENSITIVE_HEADER_RE.sub(
+        lambda match: match.group(1) + b": <redacted>", data)
+
+
+def _safe_wire_field(data_b64: str, text_repr: str) -> tuple[str, str]:
+    try:
+        raw = base64.b64decode(data_b64, validate=True)
+    except Exception:
+        return "<invalid-base64>", "<invalid-base64>"
+    redacted = _redact_wire_bytes(raw)
+    return (
+        base64.b64encode(redacted).decode("ascii"),
+        repr(redacted.decode("utf-8", errors="replace")),
+    )
 
 
 @dataclass
@@ -83,7 +106,7 @@ class CCInteractiveEventService(BaseService):
         self._route_path = route
         listener.register_route(
             "GET", route, self._service_id, callback=None,
-            ws_handler=self._handle_ws)
+            ws_handler=self._handle_ws, public=True, private_only=True)
         self._connection = listener
         with self._instances_lock:
             self._instances[self._service_id] = self
@@ -160,12 +183,55 @@ class CCInteractiveEventService(BaseService):
         event.setdefault("session_token", session_token)
         event.setdefault("timestamp", time.time())
         state.last_event_at = time.time()
+        self._log_event_summary(session_token, event)
+        if event.get("type") == "wire":
+            return
         try:
             state.events.put(event, block=block, timeout=5 if block else 0)
         except queue.Full as exc:
             state.unreliable = True
             state.error = "CC interactive event queue overflow"
             raise RuntimeError(state.error) from exc
+
+    @staticmethod
+    def _log_event_summary(session_token: str, event: dict) -> None:
+        etype = event.get("type", "")
+        if etype == "sse":
+            payload = event.get("payload") or {}
+            ptype = payload.get("type") or event.get("event", "")
+            if ptype == "content_block_delta":
+                delta = payload.get("delta") or {}
+                dtype = delta.get("type", "")
+                text = delta.get("text", "") if dtype == "text_delta" else ""
+                logger.info(
+                    "CC interactive MITM event: session=%s request=%s type=%s delta=%s text_len=%d text_preview=%r",
+                    session_token[:8], event.get("request_id", ""), ptype, dtype,
+                    len(text), text[:24])
+                return
+            logger.info(
+                "CC interactive MITM event: session=%s request=%s type=%s payload_keys=%s",
+                session_token[:8], event.get("request_id", ""), ptype,
+                sorted(payload.keys())[:8])
+        elif etype in {"request_start", "request_stop", "request_error", "response_start", "response_ignored"}:
+            logger.info(
+                "CC interactive proxy event: session=%s type=%s request=%s path=%s status=%s ctype=%s encoding=%s reason=%s",
+                session_token[:8], etype, event.get("request_id", ""),
+                event.get("path", ""), event.get("status", ""),
+                event.get("content_type", ""), event.get("content_encoding", ""),
+                event.get("reason", ""))
+        elif etype == "wire":
+            safe_b64, safe_text = _safe_wire_field(
+                str(event.get("data_b64", "")), str(event.get("text_repr", "")))
+            logger.info(
+                "CC interactive proxy wire: session=%s request=%s direction=%s stage=%s seq=%s bytes=%s sha256=%s data_b64=%s text=%s",
+                session_token[:8], event.get("request_id", ""),
+                event.get("direction", ""), event.get("stage", ""),
+                event.get("seq", ""), event.get("bytes", ""),
+                event.get("sha256", ""), safe_b64, safe_text)
+        elif etype == "hook":
+            logger.info(
+                "CC interactive hook event: session=%s hook=%s",
+                session_token[:8], event.get("hook_event_name", ""))
 
     def _handle_ws(self, sock, path_params, meta):
         from services.filesystem_service import _attach_sync_sock_to_loop
@@ -204,11 +270,14 @@ class CCInteractiveEventService(BaseService):
                 state.connected = True
             await _ws_send_frame(writer, json.dumps({"type": "registered"}).encode())
             logger.info(
-                "CC interactive event proxy connected: session=%s container=%s addr=%s",
-                session_token[:8], state.container_id, remote)
+                "CC interactive event client connected: session=%s kind=%s container=%s addr=%s",
+                session_token[:8], client_kind, state.container_id, remote)
 
             while True:
-                opcode, payload = await _ws_recv_frame(reader)
+                try:
+                    opcode, payload = await _ws_recv_frame(reader)
+                except asyncio.IncompleteReadError:
+                    break
                 if opcode == 0x08:
                     break
                 if opcode == 0x09:

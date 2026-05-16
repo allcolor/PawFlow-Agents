@@ -8,10 +8,12 @@ The proxy uses the RelayService WS connection to multiplex terminal
 traffic alongside filesystem commands on the same relay channel.
 """
 
+import base64
 import json
 import logging
 import socket
 import struct
+import subprocess
 import threading
 
 logger = logging.getLogger(__name__)
@@ -66,7 +68,17 @@ def get_terminal_token(session_id: str) -> str:
 
 def unregister_terminal(session_id: str):
     with _lock:
-        _sessions.pop(session_id, None)
+        sess = _sessions.pop(session_id, None)
+    proc = (sess or {}).get("server_pipe_process")
+    if proc is not None and proc.poll() is None:
+        try:
+            proc.terminate()
+            proc.wait(timeout=2)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
     try:
         from core.capability_routes import revoke_route_tokens
         revoke_route_tokens(session_id)
@@ -147,15 +159,20 @@ def terminal_ws_handler(client_sock, path_params: dict, meta: dict):
         _ws_close(client_sock, 4001, "Unknown terminal session")
         return
 
-    relay_service = sess.get("relay_service")
-    if not relay_service:
-        _ws_close(client_sock, 4002, "Relay not available")
-        return
-
     # Register browser socket for this session
     with _lock:
         if session_id in _sessions:
             _sessions[session_id]["browser_sock"] = client_sock
+
+    if sess.get("server_pipe_command"):
+        logger.info("Terminal proxy: session %s connected (server pipe mode)", session_id)
+        _server_pipe_ws_loop(client_sock, session_id, sess)
+        return
+
+    relay_service = sess.get("relay_service")
+    if not relay_service:
+        _ws_close(client_sock, 4002, "Relay not available")
+        return
 
     logger.info("Terminal proxy: session %s connected (relay mode)", session_id)
 
@@ -198,7 +215,114 @@ def terminal_ws_handler(client_sock, path_params: dict, meta: dict):
         except Exception:
             pass
 
+def _server_pipe_ws_loop(client_sock, session_id: str, sess: dict):
+    """Bridge a browser terminal to a server-side subprocess pipe.
 
+    For CC interactive debugging, the subprocess is `docker exec -i` running a
+    Linux-side PTY bridge inside the provider container. The PawFlow server only
+    handles ordinary pipes, so this stays portable on Windows.
+    """
+    cmd = sess.get("server_pipe_command") or []
+    if not cmd:
+        _ws_close(client_sock, 4003, "Missing server terminal command")
+        return
+
+    proc = None
+    stop = threading.Event()
+    send_lock = threading.Lock()
+
+    def _send_json(payload: dict):
+        with send_lock:
+            _ws_send(client_sock, json.dumps(payload).encode("utf-8"))
+
+    def _send_data(data: bytes):
+        if data:
+            _send_json({
+                "type": "terminal_data",
+                "session_id": session_id,
+                "data": base64.b64encode(data).decode("ascii"),
+            })
+
+    def _reader():
+        try:
+            while not stop.is_set():
+                try:
+                    if not proc or not proc.stdout:
+                        data = b""
+                    elif hasattr(proc.stdout, "read1"):
+                        data = proc.stdout.read1(4096)
+                    else:
+                        data = proc.stdout.read(1)
+                except Exception:
+                    break
+                if not data:
+                    break
+                _send_data(data)
+        except Exception as exc:
+            if not stop.is_set():
+                logger.debug("Server terminal reader stopped: %s", exc)
+        finally:
+            try:
+                _send_json({"type": "terminal_exit", "session_id": session_id})
+            except Exception:
+                pass
+
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            close_fds=True,
+        )
+        with _lock:
+            if session_id in _sessions:
+                _sessions[session_id]["server_pipe_process"] = proc
+
+        reader = threading.Thread(target=_reader, name=f"server-terminal-{session_id}", daemon=True)
+        reader.start()
+
+        while True:
+            opcode, payload = _ws_recv(client_sock)
+            if opcode == 0x08:
+                break
+            if opcode == 0x09:
+                with send_lock:
+                    _ws_send(client_sock, payload, opcode=0x0A)
+                continue
+            if opcode != 0x01:
+                continue
+            msg = json.loads(payload.decode("utf-8"))
+            msg_type = msg.get("type", "")
+            if msg_type == "terminal_input":
+                data = base64.b64decode(msg.get("data", ""))
+                if data and proc.stdin:
+                    proc.stdin.write(data)
+                    proc.stdin.flush()
+            elif msg_type == "terminal_resize":
+                pass
+    except Exception as exc:
+        if "Connection" not in str(exc):
+            logger.warning("Server terminal proxy error: %s", exc)
+    finally:
+        stop.set()
+        if proc is not None and proc.poll() is None:
+            try:
+                proc.terminate()
+                proc.wait(timeout=2)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+        with _lock:
+            if session_id in _sessions:
+                _sessions[session_id]["browser_sock"] = None
+                _sessions[session_id].pop("server_pipe_process", None)
+        try:
+            client_sock.close()
+        except Exception:
+            pass
 
 
 def _send_command_to_relay(relay_service, cmd: dict):

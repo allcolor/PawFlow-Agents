@@ -11,9 +11,9 @@
       "required": true,
       "description": "Minimum runtime needed by a PawFlow Docker relay: Python launcher, FUSE server mounts, FileStore mount, and core shell tools.",
       "apt": [
-        "sudo", "python3", "python3-pip", "python3-venv", "ca-certificates",
+        "sudo", "python3", "python3-pip", "python3-venv", "python3-dev", "ca-certificates",
         "git", "curl", "wget", "gnupg2", "software-properties-common", "jq", "sqlite3", "openssh-client", "unzip", "zip",
-        "file", "less", "fuse3", "libfuse3-dev", "chrony"
+        "file", "less", "fuse3", "libfuse3-dev", "build-essential", "pkg-config", "chrony"
       ],
       "pip": ["pyfuse3", "trio", "websockets", "requests", "certifi"],
       "env": {

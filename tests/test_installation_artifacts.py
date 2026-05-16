@@ -39,11 +39,12 @@ def test_server_dockerfile_supports_bootstrap_docker_builds():
 def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     install = Path("scripts/install-pawflow.sh")
     build = Path("scripts/build-pawflow-docker.sh")
+    build_server_minimal_relay = Path("scripts/build-server-minimal-relay.sh")
     run = Path("scripts/run-pawflow-docker.sh")
     doctor = Path("scripts/doctor-pawflow.sh")
     doctor_ps1 = Path("scripts/doctor-pawflow.ps1")
 
-    for script in (install, build, run, doctor):
+    for script in (install, build, build_server_minimal_relay, run, doctor):
         assert script.exists()
         assert script.stat().st_mode & 0o111
         assert "set -euo pipefail" in script.read_text(encoding="utf-8")
@@ -78,6 +79,11 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
 
     build_src = build.read_text(encoding="utf-8")
     assert "printenv PAWFLOW_IMAGE" in build_src
+
+    minimal_relay_src = build_server_minimal_relay.read_text(encoding="utf-8")
+    assert "PAWFLOW_SERVER_MINIMAL_RELAY_IMAGE" in minimal_relay_src
+    assert "pawflow-relay-minimal:latest" in minimal_relay_src
+    assert "--profile server-minimal" in minimal_relay_src
     assert "ghcr.io/allcolor/pawflow:latest" in build_src
 
     doctor_src = doctor.read_text(encoding="utf-8")

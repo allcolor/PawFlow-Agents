@@ -5,6 +5,7 @@ import inspect
 from services.llm_connection import LLMConnectionService
 from services.llm_credential_oauth import (
     LLMCredentialOAuthProviderService,
+    normalize_provider,
     resolve_credential_service_id,
 )
 from core.service_registry import ServiceRegistry
@@ -16,8 +17,12 @@ def _sdef(service_id, service_type, config):
 
 def test_llm_service_references_external_credential_provider():
     schema = LLMConnectionService({}).get_parameter_schema()
+    assert "experimental" not in schema
     assert schema["credential_service_id"]["type"] == "service_ref"
     assert schema["credential_service_id"]["service_type"] == "llmCredentialOAuthProvider"
+    assert schema["credential_service_id"]["provider_aliases"] == {
+        "claude-code-interactive": "claude-code"
+    }
     assert LLMConnectionService({}).get_service_actions() == []
 
 
@@ -58,6 +63,32 @@ def test_credential_pool_resolution_prefers_llm_reference(monkeypatch):
     assert resolve_credential_service_id("codex-app-server", cred.service_id) == cred.service_id
 
 
+def test_claude_code_interactive_reuses_claude_code_credentials(monkeypatch):
+    assert normalize_provider("claude-code-interactive") == "claude-code"
+    llm = _sdef(
+        "claude_code_interactive_llm_service",
+        "llmConnection",
+        {"provider": "claude-code-interactive", "credential_service_id": "claude_code_oauth_credentials"},
+    )
+    cred = _sdef(
+        "claude_code_oauth_credentials",
+        "llmCredentialOAuthProvider",
+        {"provider": "claude-code"},
+    )
+    by_id = {llm.service_id: llm, cred.service_id: cred}
+    monkeypatch.setattr(
+        "services.llm_credential_oauth.get_service_def",
+        lambda service_id, user_id="", conv_id="": by_id.get(service_id),
+    )
+    monkeypatch.setattr(
+        "services.llm_credential_oauth._all_service_defs",
+        lambda user_id="", conv_id="": list(by_id.values()),
+    )
+
+    assert resolve_credential_service_id("claude-code-interactive", llm.service_id) == cred.service_id
+    assert resolve_credential_service_id("claude-code-interactive", cred.service_id) == cred.service_id
+
+
 def test_service_registry_has_startup_migration_for_legacy_llm_oauth():
     src = inspect.getsource(ServiceRegistry._migrate_llm_oauth_credentials)
     assert "credential_service_id" in src
@@ -73,3 +104,10 @@ def test_credential_dialog_filters_provider_actions_without_parameter_rules():
     assert "rules = rules || [];" in src
     assert "actions = actions || [];" in src
     assert "if (!rules || !rules.length) return;" not in src
+
+
+def test_service_ref_ui_supports_provider_aliases():
+    src = Path("tasks/io/chat_ui/resources.js").read_text(encoding="utf-8")
+    assert "data-provider-aliases" in src
+    assert "function _serviceRefProviderMatches" in src
+    assert "s.provider === wantedProvider" not in src

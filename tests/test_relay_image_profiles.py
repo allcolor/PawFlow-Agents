@@ -29,8 +29,11 @@ def test_relay_catalog_has_required_base_runtime():
     assert "relay.base" in catalog["required_features"]
     assert base["required"] is True
     assert "python3" in base["apt"]
+    assert "python3-dev" in base["apt"]
     assert "fuse3" in base["apt"]
     assert "libfuse3-dev" in base["apt"]
+    assert "build-essential" in base["apt"]
+    assert "pkg-config" in base["apt"]
     assert "pyfuse3" in base["pip"]
     assert "trio" in base["pip"]
     post_install = "\n".join(base["post_install"])
@@ -103,6 +106,8 @@ def test_generator_resolves_implied_features_and_writes_installer_artifacts(tmp_
 
     dockerfile = (out_dir / "Dockerfile").read_text(encoding="utf-8")
     assert "python3 /opt/pawflow/pawflow_relay_launcher.py" not in dockerfile
+    assert dockerfile.index("pkg-config") < dockerfile.index("pip3 install")
+    assert dockerfile.index("libfuse3-dev") < dockerfile.index("pip3 install")
     assert "https://deb.nodesource.com/setup_22.x" in dockerfile
     assert dockerfile.index("https://deb.nodesource.com/setup_22.x") < dockerfile.index("nodejs")
     assert "gimp gimp-plugin-registry" in dockerfile
@@ -113,6 +118,23 @@ def test_generator_resolves_implied_features_and_writes_installer_artifacts(tmp_
     assert "--server-mount /cc_sessions" in run_script
     assert "--filestore-mount /filestore" in run_script
     assert "--device /dev/fuse" in run_script
+
+    build_script = (out_dir / "build.sh").read_text(encoding="utf-8")
+    assert "SCRIPT_DIR=" in build_script
+    assert 'docker build -t "$IMAGE" "$SCRIPT_DIR"' in build_script
+
+
+def test_server_minimal_build_script_targets_runtime_default_image():
+    script = ROOT / "scripts" / "build-server-minimal-relay.sh"
+    src = script.read_text(encoding="utf-8")
+
+    assert script.exists()
+    assert script.stat().st_mode & 0o111
+    assert "set -euo pipefail" in src
+    assert "--profile server-minimal" in src
+    assert "pawflow-relay-minimal:latest" in src
+    assert "docker/relay-generated/server-minimal" in src
+    assert "PAWFLOW_SERVER_MINIMAL_RELAY_IMAGE" in src
 
 
 def test_installer_api_advertises_relay_image_profile_step():

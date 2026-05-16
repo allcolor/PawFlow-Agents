@@ -664,6 +664,44 @@ class TestHTTPListenerIntegration:
         finally:
             svc.disconnect()
 
+    def test_public_websocket_route_skips_private_gateway_and_session_auth(self):
+        port = 19934
+        svc = HTTPListenerService({"host": "127.0.0.1", "port": port})
+
+        class _Gateway:
+            def is_enabled(self):
+                return True
+
+            def is_banned(self, _ip):
+                return False
+
+            def check_ws(self, *_args, **_kwargs):
+                return True
+
+        def _ws_handler(sock, _path_params, _meta):
+            sock.close()
+
+        svc.connect()
+        try:
+            svc._server._private_gateway = _Gateway()
+            svc.register_route(
+                "GET", "/ws/public", "test", callback=None,
+                ws_handler=_ws_handler, public=True, private_only=True)
+            with socket.create_connection(("127.0.0.1", port), timeout=5) as sock:
+                sock.sendall((
+                    "GET /ws/public HTTP/1.1\r\n"
+                    f"Host: 127.0.0.1:{port}\r\n"
+                    "Upgrade: websocket\r\n"
+                    "Connection: Upgrade\r\n"
+                    "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+                    "Sec-WebSocket-Version: 13\r\n"
+                    "\r\n"
+                ).encode("ascii"))
+                data = sock.recv(1024)
+            assert b"101 Switching Protocols" in data
+        finally:
+            svc.disconnect()
+
     def test_builtin_health_endpoint_is_public(self):
         port = 19933
         svc = HTTPListenerService({"host": "127.0.0.1", "port": port})

@@ -483,7 +483,9 @@ class AgentCoreMixin:
                 logger.warning(
                     "[compact] auto threshold crossed after %s: %d >= %d (%.0f%%)",
                     reason, used, trigger_tokens, trigger_fraction * 100)
-                if _client_provider in ("claude-code", "codex-app-server", "gemini"):
+                if _client_provider in (
+                    "claude-code", "claude-code-interactive",
+                    "codex-app-server", "gemini"):
                     # Stateful CLI/live providers must not be killed from a
                     # streaming callback. Propagate the threshold crossing to
                     # the normal provider-compact path: it tears down the old
@@ -1316,7 +1318,8 @@ class AgentCoreMixin:
                     # already pushed everything and response.content is
                     # the concatenation of pieces already on disk.
                     _is_claude_code = _client_provider in (
-                        "claude-code", "codex-app-server", "gemini")
+                        "claude-code", "claude-code-interactive",
+                        "codex-app-server", "gemini")
 
                     _cc_turn_count = [0]
 
@@ -1602,8 +1605,8 @@ class AgentCoreMixin:
                                 callback=emitter.get_token_callback(ps),
                                 thinking_budget=_tb,
                                 thinking_callback=emitter.get_thinking_callback(ps) if _tb > 0 else None,
-                                turn_callback=_claude_code_turn_callback if _client_provider in ("claude-code", "codex-app-server", "gemini") else None,
-                                block_callback=_cli_block_callback if _client_provider in ("codex-app-server", "gemini") else None,
+                                turn_callback=_claude_code_turn_callback if _client_provider in ("claude-code", "claude-code-interactive", "codex-app-server", "gemini") else None,
+                                block_callback=_cli_block_callback if _client_provider in ("claude-code-interactive", "codex-app-server", "gemini") else None,
                                 **_call_kwargs)
                         return client.complete(
                             messages=msgs, model=model or None,
@@ -1614,7 +1617,7 @@ class AgentCoreMixin:
                     # Claude-code with existing session: send only the latest
                     # user message (session has full context via --resume)
                     _call_context = llm_context
-                    if _is_claude_code and ctx.get("_claude_has_session"):
+                    if _is_claude_code and ctx.get("_cli_has_session"):
                         def _is_real_user_msg(m):
                             if m.role != "user":
                                 return False
@@ -2345,8 +2348,8 @@ class AgentCoreMixin:
             # turn_callback again returns empty.)
             _is_cli_provider = (
                 ctx.get("_is_claude_code")
-                or ctx.get("active_llm_provider") in ("codex-app-server", "gemini")
-                or getattr(client, "provider", "") in ("codex-app-server", "gemini")
+                or ctx.get("active_llm_provider") in ("claude-code-interactive", "codex-app-server", "gemini")
+                or getattr(client, "provider", "") in ("claude-code-interactive", "codex-app-server", "gemini")
             )
             if not response_content and not _fatal_error and not _is_cli_provider:
                 logger.warning(f"[agent:{conversation_id[:8]}] empty response — forcing synthesis")

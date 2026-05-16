@@ -11,15 +11,18 @@ separate WebSocket.
 from __future__ import annotations
 
 import base64
+import gzip
 import hashlib
 import json
 import os
 import socket
 import ssl
 import sys
+import queue
 import threading
 import time
 import uuid
+import zlib
 from urllib.parse import urlparse
 
 
@@ -40,11 +43,19 @@ def _log(msg: str) -> None:
     sys.stderr.flush()
 
 
+def _preview(text: str, limit: int = 80) -> str:
+    text = (text or "").replace("\r", "\\r").replace("\n", "\\n")
+    return text[:limit]
+
+
 def _scrub(value):
     if isinstance(value, dict):
         out = {}
         for k, v in value.items():
             kl = str(k).lower()
+            if kl in {"data_b64", "text_repr"}:
+                out[k] = v
+                continue
             if kl in {"data", "source", "image", "content"} and isinstance(v, str) and len(v) > 512:
                 out[k] = {"sha256": hashlib.sha256(v.encode()).hexdigest(), "length": len(v)}
             else:
@@ -55,6 +66,107 @@ def _scrub(value):
     if isinstance(value, str) and len(value) > 4096:
         return {"sha256": hashlib.sha256(value.encode()).hexdigest(), "length": len(value)}
     return value
+
+
+WIRE_LOG_ENABLED = os.environ.get("PAWFLOW_CCI_PROXY_WIRE_LOG", "1").lower() not in {"0", "false", "no"}
+WIRE_LOG_ALL = os.environ.get("PAWFLOW_CCI_PROXY_WIRE_LOG_ALL", "0").lower() in {"1", "true", "yes"}
+WIRE_LOG_PATHS = tuple(
+    path.strip() for path in os.environ.get(
+        "PAWFLOW_CCI_PROXY_WIRE_LOG_PATHS", "/v1/messages,/v1/complete"
+    ).split(",") if path.strip()
+)
+SENSITIVE_HEADERS = {
+    "authorization",
+    "cookie",
+    "proxy-authorization",
+    "set-cookie",
+    "x-api-key",
+    "anthropic-api-key",
+}
+
+
+def _wire_path_allowed(path: str) -> bool:
+    if WIRE_LOG_ALL:
+        return True
+    return any(path == allowed or path.startswith(f"{allowed}?") for allowed in WIRE_LOG_PATHS)
+
+
+def _redact_header_block(header_bytes: bytes) -> bytes:
+    text = header_bytes.decode("latin-1", errors="replace")
+    lines = text.split("\r\n")
+    redacted = []
+    for line in lines:
+        if ":" not in line:
+            redacted.append(line)
+            continue
+        key, value = line.split(":", 1)
+        if key.strip().lower() in SENSITIVE_HEADERS:
+            redacted.append(f"{key}: <redacted:{len(value.strip())}>")
+        else:
+            redacted.append(line)
+    return "\r\n".join(redacted).encode("latin-1", errors="replace")
+
+
+def _text_repr(data: bytes) -> str:
+    return repr(data.decode("utf-8", errors="replace"))
+
+
+class WireLogger:
+    def __init__(self, request_id: str, direction: str, request_context: dict):
+        self.request_id = request_id
+        self.direction = direction
+        self.request_context = request_context
+        self._seq = 0
+        self._states = {}
+
+    def log(self, stage: str, data: bytes) -> None:
+        if not WIRE_LOG_ENABLED or not data:
+            return
+        for payload in self._sanitize(stage, data):
+            if not payload:
+                continue
+            self._seq += 1
+            event = {
+                "type": "wire",
+                "request_id": self.request_id,
+                "direction": self.direction,
+                "stage": stage,
+                "seq": self._seq,
+                "bytes": len(payload),
+                "sha256": hashlib.sha256(payload).hexdigest(),
+                "data_b64": base64.b64encode(payload).decode("ascii"),
+                "text_repr": _text_repr(payload),
+            }
+            _log(
+                f"wire {self.direction} {stage} request={self.request_id} seq={self._seq} "
+                f"bytes={event['bytes']} sha256={event['sha256']} data_b64={event['data_b64']} "
+                f"text={event['text_repr']}")
+            EVENTS.emit(event)
+
+    def _sanitize(self, stage: str, data: bytes) -> list[bytes]:
+        state = self._states.setdefault(stage, {"header_done": False, "header_buf": b""})
+        if state["header_done"]:
+            if self.request_context.get("wire_enabled") is not True:
+                return []
+            return [data]
+        state["header_buf"] += data
+        marker = state["header_buf"].find(b"\r\n\r\n")
+        if marker < 0:
+            return []
+        header = state["header_buf"][:marker + 4]
+        rest = state["header_buf"][marker + 4:]
+        state["header_buf"] = b""
+        state["header_done"] = True
+        if self.direction == "client_to_upstream":
+            start, _headers = _header_map(header)
+            parts = start.split(" ", 2)
+            path = parts[1] if len(parts) > 1 else ""
+            self.request_context["path"] = path
+            self.request_context["wire_enabled"] = _wire_path_allowed(path)
+        if self.request_context.get("wire_enabled") is not True:
+            return []
+        redacted_header = _redact_header_block(header)
+        return [redacted_header + rest]
 
 
 class EventClient:
@@ -73,11 +185,13 @@ class EventClient:
         port = parsed.port or (443 if parsed.scheme == "wss" else 80)
         path = parsed.path or "/ws/cc-interactive/events"
         sock = socket.create_connection((host, port), timeout=10)
+        sock.settimeout(None)
         if parsed.scheme == "wss":
             ctx = ssl.create_default_context()
             ctx.check_hostname = False
             ctx.verify_mode = ssl.CERT_NONE
             sock = ctx.wrap_socket(sock, server_hostname=host)
+            sock.settimeout(None)
         internal = os.environ.get("PAWFLOW_INTERNAL_TOKEN", "")
         cookie_line = f"Cookie: pawflow_internal={internal}\r\n" if internal else ""
         ws_key = base64.b64encode(os.urandom(16)).decode()
@@ -214,19 +328,6 @@ def _is_chunked(headers) -> bool:
                for k, v in headers)
 
 
-def _read_body(sock, initial: bytes, headers) -> bytes:
-    length = _content_length(headers)
-    if length <= 0:
-        return initial
-    body = initial
-    while len(body) < length:
-        chunk = sock.recv(min(65536, length - len(body)))
-        if not chunk:
-            raise ConnectionError("client closed during body")
-        body += chunk
-    return body
-
-
 def _connect_upstream():
     ips = [ip.strip() for ip in os.environ.get("PAWFLOW_ANTHROPIC_UPSTREAM_IPS", "").split(",") if ip.strip()]
     if not ips:
@@ -236,30 +337,14 @@ def _connect_upstream():
     for ip in ips:
         try:
             raw = socket.create_connection((ip, UPSTREAM_PORT), timeout=10)
+            raw.settimeout(None)
             ctx = ssl.create_default_context()
-            return ctx.wrap_socket(raw, server_hostname=UPSTREAM_HOST)
+            wrapped = ctx.wrap_socket(raw, server_hostname=UPSTREAM_HOST)
+            wrapped.settimeout(None)
+            return wrapped
         except Exception as exc:
             last = exc
     raise ConnectionError(f"upstream connect failed: {last}")
-
-
-def _rewrite_request(start: str, headers) -> bytes:
-    skip = {"proxy-connection", "connection", "keep-alive", "te", "trailer", "upgrade"}
-    out = [start]
-    saw_host = False
-    for k, v in headers:
-        kl = k.lower()
-        if kl in skip:
-            continue
-        if kl == "host":
-            out.append(f"Host: {UPSTREAM_HOST}")
-            saw_host = True
-        else:
-            out.append(f"{k}: {v}")
-    if not saw_host:
-        out.append(f"Host: {UPSTREAM_HOST}")
-    out.append("Connection: close")
-    return ("\r\n".join(out) + "\r\n\r\n").encode("latin-1")
 
 
 class SSEObserver:
@@ -296,72 +381,589 @@ class SSEObserver:
                 payload = {"raw": data[:1000]}
         ev = dict(self.base_event)
         ev.update({"event": event_name, "payload": payload})
+        if isinstance(payload, dict):
+            ptype = payload.get("type") or event_name
+            if ptype == "content_block_delta":
+                delta = payload.get("delta") or {}
+                dtype = delta.get("type", "")
+                text = delta.get("text", "") if dtype == "text_delta" else ""
+                _log(
+                    f"emit sse request={self.base_event.get('request_id', '')} "
+                    f"event={event_name} type={ptype} delta={dtype} "
+                    f"text_len={len(text)} preview={_preview(text)!r}")
+            else:
+                _log(
+                    f"emit sse request={self.base_event.get('request_id', '')} "
+                    f"event={event_name} type={ptype} keys={sorted(payload.keys())[:8]}")
+        else:
+            _log(
+                f"emit sse request={self.base_event.get('request_id', '')} "
+                f"event={event_name} payload_type={type(payload).__name__}")
         EVENTS.emit(ev)
 
 
-def _stream_response(upstream, client, base_event: dict):
-    header, rest = _read_headers(upstream)
-    start, headers = _header_map(header)
-    client.sendall(header)
-    ctype = "\n".join(v for k, v in headers if k.lower() == "content-type").lower()
-    observer = SSEObserver(base_event) if "text/event-stream" in ctype else None
+class HTTPExchangeTracker:
+    def __init__(self, connection_id: str):
+        self.connection_id = connection_id
+        self._next = 0
+        self._pending = queue.Queue()
 
-    if observer and _is_chunked(headers):
-        buf = rest
+    def new_request_id(self) -> str:
+        self._next += 1
+        return self.connection_id if self._next == 1 else f"{self.connection_id}-{self._next}"
+
+    def push(self, context: dict) -> None:
+        self._pending.put(context)
+
+    def pop(self) -> dict:
+        try:
+            return self._pending.get_nowait()
+        except queue.Empty:
+            return {"request_id": self.connection_id, "path": "", "ignore_response": False}
+
+
+def _is_quota_probe(path: str, body: bytes) -> bool:
+    if not path.startswith("/v1/messages"):
+        return False
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except Exception:
+        return False
+    messages = payload.get("messages") or []
+    return (
+        payload.get("max_tokens") == 1
+        and isinstance(messages, list)
+        and len(messages) == 1
+        and messages[0].get("role") == "user"
+        and messages[0].get("content") == "quota"
+    )
+
+
+def _content_text(content) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, dict):
+                if item.get("type") == "text":
+                    parts.append(str(item.get("text", "")))
+                elif "text" in item:
+                    parts.append(str(item.get("text", "")))
+            elif item is not None:
+                parts.append(str(item))
+        return "\n".join(p for p in parts if p)
+    if content is None:
+        return ""
+    return str(content)
+
+
+def _emit_observed_tool_results(request_id: str, path: str, body: bytes) -> None:
+    if not path.startswith("/v1/messages"):
+        return
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except Exception:
+        return
+    messages = payload.get("messages") or []
+    if not isinstance(messages, list):
+        return
+    for message in messages:
+        if not isinstance(message, dict) or message.get("role") != "user":
+            continue
+        content = message.get("content") or []
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not isinstance(block, dict) or block.get("type") != "tool_result":
+                continue
+            tool_use_id = block.get("tool_use_id") or block.get("id") or ""
+            if not tool_use_id:
+                continue
+            result = _content_text(block.get("content"))
+            _log(
+                f"emit tool_result request={request_id} path={path} "
+                f"tool_use_id={tool_use_id} result_len={len(result)} "
+                f"preview={_preview(result)!r}")
+            EVENTS.emit({
+                "type": "tool_result",
+                "request_id": request_id,
+                "path": path,
+                "tool_use_id": tool_use_id,
+                "content": result,
+                "is_error": bool(block.get("is_error")),
+            })
+
+
+class HTTPRequestObserver:
+    def __init__(self, tracker: HTTPExchangeTracker):
+        self.tracker = tracker
+        self.buf = b""
+
+    def feed(self, data: bytes):
+        self.buf += data
         while True:
-            while b"\r\n" not in buf:
-                chunk = upstream.recv(65536)
-                if not chunk:
-                    return
-                buf += chunk
-            size_line, buf = buf.split(b"\r\n", 1)
-            size = int(size_line.split(b";", 1)[0], 16)
-            needed = size + 2
-            while len(buf) < needed:
-                chunk = upstream.recv(65536)
-                if not chunk:
-                    return
-                buf += chunk
-            chunk_data, buf = buf[:size], buf[needed:]
-            client.sendall(size_line + b"\r\n" + chunk_data + b"\r\n")
+            if b"\r\n\r\n" not in self.buf:
+                return
+            header, rest = self.buf.split(b"\r\n\r\n", 1)
+            start, headers = _header_map(header + b"\r\n\r\n")
+            clen = _content_length(headers)
+            if len(rest) < clen:
+                return
+            body = rest[:clen]
+            self.buf = rest[clen:]
+            parts = start.split(" ", 2)
+            method = parts[0] if parts else ""
+            path = parts[1] if len(parts) > 1 else ""
+            request_id = self.tracker.new_request_id()
+            ignore_response = _is_quota_probe(path, body)
+            reason = "quota_probe" if ignore_response else ""
+            self.tracker.push({
+                "request_id": request_id,
+                "method": method,
+                "path": path,
+                "ignore_response": ignore_response,
+                "ignore_reason": reason,
+            })
+            _log(
+                f"request_start request={request_id} method={method} path={path} "
+                f"body_bytes={len(body)} ignore_reason={reason or '-'}")
+            EVENTS.emit({
+                "type": "request_start",
+                "request_id": request_id,
+                "method": method,
+                "path": path,
+                "body_sha256": hashlib.sha256(body).hexdigest(),
+                "body_bytes": len(body),
+                "ignore_reason": reason,
+            })
+            _emit_observed_tool_results(request_id, path, body)
+
+
+class ChunkedBodyObserver:
+    def __init__(self, observer: SSEObserver):
+        self.observer = observer
+        self.buf = b""
+        self.remaining = None
+        self.done = False
+
+    def feed(self, data: bytes):
+        if self.done:
+            return data
+        self.buf += data
+        while not self.done:
+            if self.remaining is None:
+                if b"\r\n" not in self.buf:
+                    return None
+                size_line, self.buf = self.buf.split(b"\r\n", 1)
+                self.remaining = int(size_line.split(b";", 1)[0], 16)
+                if self.remaining == 0:
+                    if len(self.buf) < 2:
+                        return None
+                    if self.buf.startswith(b"\r\n"):
+                        leftover = self.buf[2:]
+                    else:
+                        trailer_end = self.buf.find(b"\r\n\r\n")
+                        if trailer_end < 0:
+                            return None
+                        leftover = self.buf[trailer_end + 4:]
+                    self.buf = b""
+                    self.done = True
+                    finish = getattr(self.observer, "finish", None)
+                    if finish:
+                        finish()
+                    return leftover
+            if len(self.buf) < self.remaining + 2:
+                return None
+            chunk_data = self.buf[:self.remaining]
+            self.buf = self.buf[self.remaining + 2:]
+            self.remaining = None
             if chunk_data:
-                observer.feed(chunk_data)
-            if size == 0:
-                return
-    else:
-        if rest:
-            client.sendall(rest)
-            if observer:
-                observer.feed(rest)
+                self.observer.feed(chunk_data)
+        return self.buf
+
+
+class DecodingObserver:
+    def __init__(self, observer, encoding: str, request_id: str):
+        self.observer = observer
+        self.encoding = (encoding or "").lower()
+        self.request_id = request_id
+        self.decoder = self._make_decoder()
+        self.unsupported = False
+
+    def _make_decoder(self):
+        if not self.encoding or "identity" in self.encoding:
+            return None
+        if "gzip" in self.encoding:
+            return zlib.decompressobj(16 + zlib.MAX_WBITS)
+        if "deflate" in self.encoding:
+            return zlib.decompressobj()
+        self.unsupported = True
+        _log(
+            f"response_ignored request={self.request_id} "
+            f"reason=unsupported_content_encoding encoding={self.encoding}")
+        EVENTS.emit({
+            "type": "response_ignored",
+            "request_id": self.request_id,
+            "reason": "unsupported_content_encoding",
+            "payload_type": self.encoding,
+        })
+        return None
+
+    def feed(self, data: bytes):
+        if self.unsupported:
+            return
+        if not data:
+            return
+        if self.decoder is None:
+            self.observer.feed(data)
+            return
+        decoded = self.decoder.decompress(data)
+        if decoded:
+            self.observer.feed(decoded)
+
+    def finish(self):
+        if self.unsupported:
+            return
+        if self.decoder is not None:
+            decoded = self.decoder.flush()
+            if decoded:
+                self.observer.feed(decoded)
+        finish = getattr(self.observer, "finish", None)
+        if finish:
+            finish()
+
+
+class HTTPResponseObserver:
+    def __init__(self, tracker: HTTPExchangeTracker):
+        self.tracker = tracker
+        self.buf = b""
+        self.body_observer = None
+
+    def feed(self, data: bytes):
+        self.buf += data
         while True:
-            chunk = upstream.recv(65536)
-            if not chunk:
+            if self.body_observer:
+                leftover = self.body_observer.feed(self.buf)
+                if leftover is None:
+                    self.buf = b""
+                    return
+                self.buf = leftover
+                self.body_observer = None
+                continue
+            if b"\r\n\r\n" not in self.buf:
                 return
-            client.sendall(chunk)
+            header, rest = self.buf.split(b"\r\n\r\n", 1)
+            start, headers = _header_map(header + b"\r\n\r\n")
+            is_chunked = _is_chunked(headers)
+            if is_chunked:
+                self.buf = rest
+                self._start_chunked_response(start, headers)
+                continue
+            else:
+                clen = _content_length(headers)
+                if clen and len(rest) < clen:
+                    return
+                body = rest[:clen] if clen else b""
+                remaining = rest[clen:] if clen else rest
+            self.buf = remaining
+            self._emit_response(start, headers, body, is_chunked=False)
+
+    def finish(self):
+        if self.body_observer:
+            finish = getattr(self.body_observer, "finish", None)
+            if finish:
+                finish()
+        if self.buf:
+            _log(f"response observer discarded incomplete trailing bytes={len(self.buf)}")
+
+    def _start_chunked_response(self, start: str, headers) -> None:
+        ctx = self.tracker.pop()
+        request_id = ctx.get("request_id", self.tracker.connection_id)
+        ctype, encoding, status = self._response_meta(start, headers)
+        _log(
+            f"response_start request={request_id} path={ctx.get('path', '')} status={status} "
+            f"ctype={ctype or '-'} body_bytes=chunked encoding={encoding or '-'} chunked=True")
+        EVENTS.emit({
+            "type": "response_start",
+            "request_id": request_id,
+            "path": ctx.get("path", ""),
+            "status": status,
+            "content_type": ctype,
+            "content_length": 0,
+            "content_encoding": encoding,
+            "chunked": True,
+        })
+        if ctx.get("ignore_response"):
+            EVENTS.emit({
+                "type": "response_ignored",
+                "request_id": request_id,
+                "path": ctx.get("path", ""),
+                "reason": ctx.get("ignore_reason", "request_ignored"),
+            })
+            self.body_observer = ChunkedBodyObserver(_NullObserver())
+        elif "text/event-stream" in ctype:
+            self.body_observer = ChunkedBodyObserver(
+                DecodingObserver(
+                    SSEObserver({"type": "sse", "request_id": request_id}),
+                    encoding,
+                    request_id,
+                ))
+        elif "json" in ctype:
+            self.body_observer = ChunkedBodyObserver(JSONResponseObserver(
+                {"type": "sse", "request_id": request_id},
+                content_length=0,
+                encoding=encoding,
+            ))
+        else:
+            self.body_observer = ChunkedBodyObserver(_NullObserver())
+
+    def _response_meta(self, start: str, headers):
+        ctype = "\n".join(v for k, v in headers if k.lower() == "content-type").lower()
+        encoding = "\n".join(v for k, v in headers if k.lower() == "content-encoding").lower()
+        status = ""
+        parts = start.split(" ", 2)
+        if len(parts) > 1:
+            status = parts[1]
+        return ctype, encoding, status
+
+    def _emit_response(self, start: str, headers, body: bytes, is_chunked: bool):
+        ctx = self.tracker.pop()
+        request_id = ctx.get("request_id", self.tracker.connection_id)
+        ctype, encoding, status = self._response_meta(start, headers)
+        _log(
+            f"response_start request={request_id} path={ctx.get('path', '')} status={status} "
+            f"ctype={ctype or '-'} body_bytes={len(body)} encoding={encoding or '-'} chunked={is_chunked}")
+        EVENTS.emit({
+            "type": "response_start",
+            "request_id": request_id,
+            "path": ctx.get("path", ""),
+            "status": status,
+            "content_type": ctype,
+            "content_length": len(body),
+            "content_encoding": encoding,
+            "chunked": is_chunked,
+        })
+        if ctx.get("ignore_response"):
+            EVENTS.emit({
+                "type": "response_ignored",
+                "request_id": request_id,
+                "path": ctx.get("path", ""),
+                "reason": ctx.get("ignore_reason", "request_ignored"),
+            })
+            return
+        if "text/event-stream" in ctype:
+            sse = SSEObserver({"type": "sse", "request_id": request_id})
+            sse.feed(body)
+            return
+        if "json" in ctype:
+            json_observer = JSONResponseObserver(
+                {"type": "sse", "request_id": request_id},
+                content_length=len(body),
+                encoding=encoding,
+            )
+            json_observer.feed(body)
+            json_observer.finish()
+
+
+class JSONResponseObserver:
+    def __init__(self, base_event: dict, content_length: int = 0, encoding: str = ""):
+        self.base_event = base_event
+        self.content_length = max(0, int(content_length or 0))
+        self.encoding = encoding or ""
+        self.buf = b""
+        self.emitted = False
+
+    def feed(self, data: bytes):
+        if self.emitted or not data:
+            return
+        self.buf += data
+        if self.content_length and len(self.buf) >= self.content_length:
+            self.finish()
+
+    def finish(self):
+        if self.emitted:
+            return
+        self.emitted = True
+        raw = self.buf[:self.content_length] if self.content_length else self.buf
+        if not raw:
+            return
+        if "gzip" in self.encoding:
+            raw = gzip.decompress(raw)
+        payload = json.loads(raw.decode("utf-8"))
+        if not isinstance(payload, dict):
+            self._ignore("json_payload_not_object", "")
+            return
+        ptype = payload.get("type", "")
+        _log(
+            f"json_response request={self.base_event.get('request_id', '')} "
+            f"type={ptype or '-'} keys={sorted(payload.keys())[:10]}")
+        if ptype != "message":
+            self._ignore("json_type_not_message", str(ptype))
+            return
+        content = payload.get("content") or []
+        if not isinstance(content, list):
+            self._ignore("message_content_not_list", "")
+            return
+        emitted_blocks = 0
+        for idx, block in enumerate(content):
+            if not isinstance(block, dict):
+                continue
+            btype = block.get("type", "")
+            if btype == "text":
+                text = block.get("text", "")
+                if not text:
+                    continue
+                emitted_blocks += 1
+                _log(
+                    f"emit json_text request={self.base_event.get('request_id', '')} "
+                    f"index={idx} text_len={len(text)} preview={_preview(text)!r}")
+                self._emit("content_block_start", {
+                    "type": "content_block_start",
+                    "index": idx,
+                    "content_block": {"type": "text"},
+                })
+                for pos in range(0, len(text), 1800):
+                    self._emit("content_block_delta", {
+                        "type": "content_block_delta",
+                        "index": idx,
+                        "delta": {"type": "text_delta", "text": text[pos:pos + 1800]},
+                    })
+                self._emit("content_block_stop", {
+                    "type": "content_block_stop",
+                    "index": idx,
+                })
+            elif btype == "tool_use":
+                emitted_blocks += 1
+                self._emit("content_block_start", {
+                    "type": "content_block_start",
+                    "index": idx,
+                    "content_block": {
+                        "type": "tool_use",
+                        "id": block.get("id", ""),
+                        "name": block.get("name", ""),
+                    },
+                })
+                tool_input = block.get("input") or {}
+                self._emit("content_block_delta", {
+                    "type": "content_block_delta",
+                    "index": idx,
+                    "delta": {
+                        "type": "input_json_delta",
+                        "partial_json": json.dumps(tool_input, separators=(",", ":")),
+                    },
+                })
+                self._emit("content_block_stop", {
+                    "type": "content_block_stop",
+                    "index": idx,
+                })
+        if emitted_blocks == 0:
+            self._ignore("message_without_supported_content", "")
+            return
+        usage = payload.get("usage") or {}
+        if usage:
+            self._emit("message_delta", {"type": "message_delta", "usage": usage})
+        self._emit("message_stop", {"type": "message_stop"})
+
+    def _ignore(self, reason: str, payload_type: str):
+        ev = dict(self.base_event)
+        ev.update({
+            "type": "response_ignored",
+            "reason": reason,
+            "payload_type": payload_type,
+        })
+        _log(
+            f"response_ignored request={self.base_event.get('request_id', '')} "
+            f"reason={reason} payload_type={payload_type}")
+        EVENTS.emit(ev)
+
+    def _emit(self, event_name: str, payload: dict):
+        ev = dict(self.base_event)
+        ev.update({"event": event_name, "payload": payload})
+        EVENTS.emit(ev)
+
+
+class _NullObserver:
+    def feed(self, data: bytes):
+        return
+
+
+def _pipe_exact(src, dst, observer=None, wire_logger=None, observer_before_send: bool = False):
+    while True:
+        chunk = src.recv(65536)
+        if not chunk:
             if observer:
+                finish = getattr(observer, "finish", None)
+                if finish:
+                    try:
+                        finish()
+                    except Exception as exc:
+                        _log(f"observer finish failed without affecting proxy stream: {exc}")
+            try:
+                dst.shutdown(socket.SHUT_WR)
+            except Exception:
+                pass
+            return
+        if wire_logger:
+            try:
+                wire_logger.log("in", chunk)
+            except Exception as exc:
+                _log(f"wire log failed without affecting proxy stream: {exc}")
+                wire_logger = None
+        if observer and observer_before_send:
+            try:
                 observer.feed(chunk)
+            except Exception as exc:
+                _log(f"observer failed without affecting proxy stream: {exc}")
+                observer = None
+        dst.sendall(chunk)
+        if wire_logger:
+            try:
+                wire_logger.log("out", chunk)
+            except Exception as exc:
+                _log(f"wire log failed without affecting proxy stream: {exc}")
+                wire_logger = None
+        if observer and not observer_before_send:
+            try:
+                observer.feed(chunk)
+            except Exception as exc:
+                _log(f"observer failed without affecting proxy stream: {exc}")
+                observer = None
 
 
 def handle_client(client):
     request_id = uuid.uuid4().hex[:12]
     upstream = None
     try:
-        header, initial = _read_headers(client)
-        start, headers = _header_map(header)
-        body = _read_body(client, initial, headers)
-        method = start.split(" ", 1)[0]
-        path = start.split(" ", 2)[1] if " " in start else ""
-        EVENTS.emit({
-            "type": "request_start",
-            "request_id": request_id,
-            "method": method,
-            "path": path,
-            "body_sha256": hashlib.sha256(body).hexdigest(),
-            "body_bytes": len(body),
-        })
         upstream = _connect_upstream()
-        upstream.sendall(_rewrite_request(start, headers) + body)
-        _stream_response(upstream, client, {"type": "sse", "request_id": request_id})
+        _log(f"client_connected request={request_id}")
+        errors = queue.Queue()
+
+        def run_pipe(src, dst, observer, wire_logger, observer_before_send=False):
+            try:
+                _pipe_exact(src, dst, observer, wire_logger, observer_before_send)
+            except Exception as exc:
+                errors.put(exc)
+
+        wire_context = {}
+        tracker = HTTPExchangeTracker(request_id)
+        c2u = threading.Thread(
+            target=run_pipe,
+            args=(client, upstream, HTTPRequestObserver(tracker),
+                  WireLogger(request_id, "client_to_upstream", wire_context), True),
+            daemon=True)
+        u2c = threading.Thread(
+            target=run_pipe,
+            args=(upstream, client, HTTPResponseObserver(tracker),
+                  WireLogger(request_id, "upstream_to_client", wire_context), False),
+            daemon=True)
+        c2u.start()
+        u2c.start()
+        c2u.join()
+        u2c.join()
+        if not errors.empty():
+            raise errors.get()
+        _log(f"request_stop request={request_id}")
         EVENTS.emit({"type": "request_stop", "request_id": request_id})
     except Exception as exc:
         EVENTS.emit({"type": "request_error", "request_id": request_id, "error": str(exc)})

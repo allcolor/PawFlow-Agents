@@ -3383,7 +3383,8 @@ function _renderSchemaFields(schema, values, readonly) {
       const st = (pdef.service_type || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;');
       const pf = (pdef.provider_field || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;');
       const fp = (pdef.provider || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;');
-      html += '<select id="svc-p-' + pname + '" data-service-ref="1" data-service-type="' + st + '" data-provider-field="' + pf + '" data-provider="' + fp + '" data-current="' + escaped + '"' + dis + ' style="' + _svcInputStyle + roS + '">';
+      const aliases = JSON.stringify(pdef.provider_aliases || {}).replace(/&/g,'&amp;').replace(/'/g,'&#39;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      html += '<select id="svc-p-' + pname + '" data-service-ref="1" data-service-type="' + st + '" data-provider-field="' + pf + '" data-provider="' + fp + '" data-provider-aliases=\'' + aliases + '\' data-current="' + escaped + '"' + dis + ' style="' + _svcInputStyle + roS + '">';
       html += '<option value="' + escaped + '">' + (escaped || '(auto)') + '</option>';
       html += '</select>';
     } else if (ptype === 'textarea' || ptype === 'map' || ptype === 'object') {
@@ -3404,6 +3405,14 @@ function _renderSchemaFields(schema, values, readonly) {
   return html;
 }
 
+function _serviceRefProviderMatches(serviceProvider, wantedProvider, aliases) {
+  const canonical = (provider) => {
+    provider = String(provider || '').trim();
+    return (aliases && aliases[provider]) || provider;
+  };
+  return !wantedProvider || canonical(serviceProvider) === canonical(wantedProvider);
+}
+
 async function _populateServiceRefs(container) {
   const refs = Array.from(container.querySelectorAll('select[data-service-ref="1"]'));
   for (const sel of refs) {
@@ -3412,9 +3421,11 @@ async function _populateServiceRefs(container) {
     const providerEl = providerField ? container.querySelector('#svc-p-' + providerField) : null;
     const wantedProvider = (sel.dataset.provider || '') || (providerEl ? providerEl.value : '');
     const current = sel.value || sel.dataset.current || '';
+    let aliases = {};
+    try { aliases = JSON.parse(sel.dataset.providerAliases || '{}'); } catch (_) { aliases = {}; }
     try {
       const data = await rxjs.firstValueFrom(listServices$(serviceType));
-      const services = (data.services || []).filter(s => !wantedProvider || s.provider === wantedProvider);
+      const services = (data.services || []).filter(s => _serviceRefProviderMatches(s.provider, wantedProvider, aliases));
       let html = '<option value="">(auto)</option>';
       for (const s of services) {
         const id = String(s.service_id || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');

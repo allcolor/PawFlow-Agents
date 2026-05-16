@@ -257,8 +257,9 @@ def _write_scripts(out_dir: Path, image_name: str, manifest: dict[str, Any]) -> 
     build.write_text(
         "#!/usr/bin/env bash\n"
         "set -euo pipefail\n"
+        "SCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\n"
         f"IMAGE={image_expansion}\n"
-        "docker build -t \"$IMAGE\" .\n",
+        "docker build -t \"$IMAGE\" \"$SCRIPT_DIR\"\n",
         encoding="utf-8",
     )
     run_args = " ".join(shlex.quote(arg) for arg in manifest.get("runtime_docker_args", []))

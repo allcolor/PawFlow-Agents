@@ -39,6 +39,7 @@ class InteractiveContainer:
     initial_context_loaded: bool = False
     proxy_started: bool = False
     claude_started: bool = False
+    last_error: str = ""
 
 
 class InteractiveClaudeCodePool:
@@ -62,6 +63,13 @@ class InteractiveClaudeCodePool:
 
     @staticmethod
     def _container_workdir(user_id: str, conversation_id: str, agent_name: str) -> str:
+        return "/cc_sessions/{}/{}".format(
+            (conversation_id or "").replace(":", "_"),
+            agent_name,
+        )
+
+    @staticmethod
+    def _physical_container_workdir(user_id: str, conversation_id: str, agent_name: str) -> str:
         return "/cc_sessions/{}/{}/{}".format(
             InteractiveClaudeCodePool._safe(user_id),
             (conversation_id or "").replace(":", "_"),
@@ -85,8 +93,29 @@ class InteractiveClaudeCodePool:
             self._sessions[key] = state
         return state
 
+    def find_session(self, user_id: str, conversation_id: str,
+                     agent_name: str, service_id: str = "") -> Optional[InteractiveContainer]:
+        """Return the newest live interactive session for an agent."""
+        with self._lock:
+            candidates = [
+                state for key, state in self._sessions.items()
+                if key[0] == user_id
+                and key[1] == conversation_id
+                and key[2] == agent_name
+                and (not service_id or key[3] == service_id)
+            ]
+            candidates.sort(key=lambda state: state.last_used, reverse=True)
+            for state in candidates:
+                if self._is_alive(state.name):
+                    state.last_used = time.time()
+                    return state
+                self._sessions.pop(state.key, None)
+        return None
+
     def send_text(self, state: InteractiveContainer, text: str) -> bool:
+        state.last_error = ""
         if not self._is_alive(state.name):
+            state.last_error = f"Container {state.name} is not running"
             return False
         cmd = docker_cmd() + [
             "exec", "-i", "--user", "1000:1000", state.name,
@@ -94,18 +123,23 @@ class InteractiveClaudeCodePool:
         ]
         r = subprocess.run(cmd, input=text.encode("utf-8"), capture_output=True, timeout=15)
         if r.returncode != 0:
+            state.last_error = self._command_error("tmux load-buffer", r)
             return False
         r = subprocess.run(
             docker_cmd() + ["exec", "--user", "1000:1000", state.name,
                             "tmux", "paste-buffer", "-t", "pawflow"],
             capture_output=True, timeout=10)
         if r.returncode != 0:
+            state.last_error = self._command_error("tmux paste-buffer", r)
             return False
         r = subprocess.run(
             docker_cmd() + ["exec", "--user", "1000:1000", state.name,
                             "tmux", "send-keys", "-t", "pawflow", "Enter"],
             capture_output=True, timeout=10)
-        return r.returncode == 0
+        if r.returncode != 0:
+            state.last_error = self._command_error("tmux send-keys Enter", r)
+            return False
+        return True
 
     def send_interrupt(self, state: InteractiveContainer, text: str) -> bool:
         return self.send_keys(state, ["Escape"]) and self.send_text(state, text)
@@ -114,13 +148,31 @@ class InteractiveClaudeCodePool:
         return self.send_keys(state, ["Escape", "Escape"])
 
     def send_keys(self, state: InteractiveContainer, keys: list[str]) -> bool:
+        state.last_error = ""
         if not self._is_alive(state.name):
+            state.last_error = f"Container {state.name} is not running"
             return False
         r = subprocess.run(
             docker_cmd() + ["exec", "--user", "1000:1000", state.name,
                             "tmux", "send-keys", "-t", "pawflow", *keys],
             capture_output=True, timeout=10)
-        return r.returncode == 0
+        if r.returncode != 0:
+            state.last_error = self._command_error("tmux send-keys", r)
+            return False
+        return True
+
+    @staticmethod
+    def _command_error(label: str, result) -> str:
+        stderr = getattr(result, "stderr", b"") or b""
+        stdout = getattr(result, "stdout", b"") or b""
+        if isinstance(stderr, bytes):
+            stderr = stderr.decode("utf-8", errors="replace")
+        if isinstance(stdout, bytes):
+            stdout = stdout.decode("utf-8", errors="replace")
+        detail = (stderr or stdout or "").strip()
+        if detail:
+            return f"{label} failed: {detail[:500]}"
+        return f"{label} failed with exit code {getattr(result, 'returncode', '?')}"
 
     def kill_session(self, user_id: str, conversation_id: str,
                      agent_name: str, service_id: str = "") -> bool:
@@ -149,6 +201,8 @@ class InteractiveClaudeCodePool:
         event_service.register_session(session_token)
 
         name = self._spawn_container()
+        physical_container_workdir = self._physical_container_workdir(
+            user_id, conversation_id, agent_name)
         container_workdir = self._container_workdir(user_id, conversation_id, agent_name)
         state = InteractiveContainer(
             key=key,
@@ -162,10 +216,10 @@ class InteractiveClaudeCodePool:
 
         try:
             self._write_hook_settings(workdir)
-            self._install_ca(name, container_workdir)
+            self._install_ca(name, physical_container_workdir)
             self._start_proxy(
                 name=name,
-                container_workdir=container_workdir,
+                container_workdir=physical_container_workdir,
                 session_token=session_token,
                 event_url=event_url,
                 event_token=event_token,
@@ -174,7 +228,7 @@ class InteractiveClaudeCodePool:
             state.proxy_started = True
             self._start_claude_tmux(
                 name=name,
-                container_workdir=container_workdir,
+                container_workdir=physical_container_workdir,
                 mcp_path=f"{container_workdir}/.mcp.json",
                 model=model,
                 ca_path=f"{container_workdir}/.pawflow_cci/certs/pawflow-ca.crt",
@@ -276,14 +330,68 @@ class InteractiveClaudeCodePool:
             hooks[event_name] = [{"hooks": [handler]}]
         settings_path = Path(workdir) / ".claude" / "settings.json"
         settings_path.parent.mkdir(parents=True, exist_ok=True)
-        settings_path.write_text(json.dumps({"hooks": hooks}, indent=2) + "\n", encoding="utf-8")
+        settings = self._read_json(settings_path)
+        settings.update({
+            "hooks": hooks,
+            "enableAllProjectMcpServers": True,
+            "enabledMcpjsonServers": ["pawflow"],
+        })
+        settings_path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
+
+        root_settings_path = Path(workdir) / "settings.json"
+        root_settings = self._read_json(root_settings_path)
+        root_settings.update({
+            "theme": root_settings.get("theme") or "dark",
+            "skipDangerousModePermissionPrompt": True,
+        })
+        root_settings_path.write_text(json.dumps(root_settings, indent=2) + "\n", encoding="utf-8")
+
+        claude_json_path = Path(workdir) / ".claude.json"
+        claude_json = self._read_json(claude_json_path)
+        claude_json.update({
+            "theme": claude_json.get("theme") or "dark",
+            "hasCompletedOnboarding": True,
+        })
+        project_key = self._container_workdir("", "", "")
+        try:
+            rel = Path(workdir).relative_to(_paths.CLAUDE_SESSIONS_DIR)
+            rel_parts = rel.as_posix().split("/")
+            if len(rel_parts) >= 3:
+                project_key = "/cc_sessions/" + "/".join(rel_parts[1:])
+        except Exception:
+            project_key = ""
+        if project_key:
+            claude_json.setdefault("projects", {}).setdefault(
+                project_key, {})["hasTrustDialogAccepted"] = True
+        claude_json_path.write_text(json.dumps(claude_json, indent=2) + "\n", encoding="utf-8")
+
+    @staticmethod
+    def _read_json(path: Path) -> dict:
+        try:
+            if path.exists():
+                data = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    return data
+        except Exception:
+            pass
+        return {}
 
     def _start_claude_tmux(self, *, name: str, container_workdir: str,
                            mcp_path: str, model: str, ca_path: str,
                            session_token: str, event_url: str,
                            event_token: str, internal_token: str) -> None:
+        parts = container_workdir.lstrip("/").split("/")
+        if len(parts) < 3 or parts[0] != "cc_sessions":
+            raise ValueError(
+                f"container_workdir must look like /cc_sessions/<user>/<conv>/...; "
+                f"got {container_workdir!r}")
+        user_slot = "/cc_sessions/" + parts[1]
+        ns_workdir = "/" + "/".join(parts[:1] + parts[2:])
         args = [
             "claude",
+            # Interactive sessions are append-only while the tmux/container is
+            # live. A cold start must always create a fresh Claude Code session
+            # and receive PawFlow's initial context file; never pass --resume.
             "--dangerously-skip-permissions",
             "--strict-mcp-config",
             "--mcp-config", mcp_path,
@@ -292,26 +400,37 @@ class InteractiveClaudeCodePool:
         if model:
             args.extend(["--model", model])
         quoted = " ".join(shlex.quote(a) for a in args)
+        drop_privs = "setpriv --reuid=1000 --regid=1000 --clear-groups --"
         shell = (
-            f"cd {shlex.quote(container_workdir)} && "
-            "tmux kill-session -t pawflow 2>/dev/null || true; "
-            "tmux new-session -d -s pawflow "
-            f"'env HOME={shlex.quote(container_workdir)} USER=pawflow "
-            f"CLAUDE_CONFIG_DIR={shlex.quote(container_workdir)} "
-            f"NODE_EXTRA_CA_CERTS={shlex.quote(ca_path)} "
+            f"mount --bind {shlex.quote(user_slot)} /cc_sessions && "
+            f"cd {shlex.quote(ns_workdir)} && ("
+            f"{drop_privs} tmux kill-session -t pawflow 2>/dev/null || true; "
+            f"{drop_privs} tmux new-session -d -s pawflow "
+            f"'env HOME={shlex.quote(ns_workdir)} USER=pawflow "
+            f"CLAUDE_CONFIG_DIR={shlex.quote(ns_workdir)} "
+            f"NODE_EXTRA_CA_CERTS={shlex.quote(ca_path.replace(container_workdir, ns_workdir, 1))} "
             f"PAWFLOW_CCI_SESSION_TOKEN={shlex.quote(session_token)} "
             f"PAWFLOW_CCI_EVENT_URL={shlex.quote(event_url)} "
             f"PAWFLOW_CCI_EVENT_TOKEN={shlex.quote(event_token)} "
             f"PAWFLOW_INTERNAL_TOKEN={shlex.quote(internal_token)} "
             "CLAUDE_CODE_CERT_STORE=system TERM=xterm-256color "
-            f"{quoted}'"
+            f"{quoted}')"
         )
         r = subprocess.run(
-            docker_cmd() + ["exec", "--user", "1000:1000", name,
+            docker_cmd() + ["exec", "--user", "root", name,
+                            "setsid", "--wait", "unshare", "-m", "--",
                             "bash", "-lc", shell],
             capture_output=True, text=True, timeout=15)
         if r.returncode != 0:
             raise RuntimeError(f"Failed to start Claude tmux: {r.stderr[:500]}")
+        probe = subprocess.run(
+            docker_cmd() + ["exec", "--user", "1000:1000", name,
+                            "tmux", "has-session", "-t", "pawflow"],
+            capture_output=True, text=True, timeout=10)
+        if probe.returncode != 0:
+            raise RuntimeError(
+                "Claude tmux session exited during startup: "
+                f"{(probe.stderr or probe.stdout or '').strip()[:500]}")
 
     @staticmethod
     def _resolve_upstream_ips() -> list[str]:

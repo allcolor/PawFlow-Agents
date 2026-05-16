@@ -108,10 +108,24 @@ Server workspace creation should use `server-full`. Server execution relay
 creation should use `server-minimal`. Client relay creation should default to
 `client-minimal` and let the user add capabilities.
 
-The minimal server relay is not a fallback. A flow chooses it explicitly by
-setting a normal relay parameter, for example `relay: "${relay_secure}"`, where
-`relay_secure` contains the provisioned `srv_min_*` relay id. Different tasks in
-the same flow may use different relay parameters.
+The minimal server relay is the protected default execution image for
+server-side scripts, tools, and package runtimes that do not receive an explicit
+user relay. Build it on the PawFlow host with:
+
+```bash
+bash scripts/build-server-minimal-relay.sh
+```
+
+That script generates `docker/relay-generated/server-minimal/` from the
+`server-minimal` profile and builds the tag configured by
+`server_relay_minimal_image` (`pawflow-relay-minimal:latest` by default). Use
+`PAWFLOW_SERVER_MINIMAL_RELAY_IMAGE` to build a custom tag, and set the matching
+PawFlow variable if the server should start a different image.
+
+A flow may still choose a specific relay explicitly by setting a normal relay
+parameter, for example `relay: "${relay_secure}"`, where `relay_secure` contains
+the provisioned `srv_min_*` relay id. Different tasks in the same flow may use
+different relay parameters.
 
 ## Generate a Client Relay Image
 

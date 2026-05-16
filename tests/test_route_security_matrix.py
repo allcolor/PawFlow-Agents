@@ -253,6 +253,23 @@ def test_terminal_register_then_unregister_revokes(cap_db):
     assert err and err["status"] == 403
 
 
+def test_terminal_registers_server_pipe_command(cap_db):
+    from services.terminal_proxy import get_terminal, register_terminal, unregister_terminal
+
+    token = register_terminal(
+        "term-server", "__server__", relay_service=None,
+        owner_user_id="alice",
+        server_pipe_command=["docker", "exec", "python3"])
+
+    sess = get_terminal("term-server")
+    assert token
+    assert sess["relay_service_id"] == "__server__"
+    assert sess["relay_service"] is None
+    assert sess["server_pipe_command"] == ["docker", "exec", "python3"]
+
+    unregister_terminal("term-server")
+
+
 def test_port_forward_legacy_remove_path_works(cap_db):
     from services.port_forward_proxy import (
         add_forward, remove_forward, list_forwards,

@@ -602,6 +602,10 @@ if (typeof hljs !== 'undefined') {
           <span class="ami-icon" style="font-family:monospace;font-weight:bold">&gt;_</span>
           <div><div class="ami-label" data-i18n="terminal">Terminal</div><div class="ami-desc" data-i18n="terminalDesc">Open interactive terminal on relay</div></div>
         </div>
+        <div class="action-menu-item" onclick="closeActionMenu();cmdCCInteractiveTerminal()">
+          <span class="ami-icon" style="font-family:monospace;font-weight:bold">CC</span>
+          <div><div class="ami-label" data-i18n="ccInteractiveTerminal">CC Interactive Tmux</div><div class="ami-desc" data-i18n="ccInteractiveTerminalDesc">Attach to selected agent tmux</div></div>
+        </div>
         <div class="action-menu-item" onclick="closeActionMenu();cmdCode('',[''])">
           <span class="ami-icon">&#x2699;</span>
           <div><div class="ami-label" data-i18n="vsCode">VS Code</div><div class="ami-desc" data-i18n="vsCodeDesc">Open code-server editor on relay</div></div>

@@ -1314,6 +1314,8 @@ def _parse_skill_sugar_command(text: str, base: dict, agent_name: str = "") -> d
     rest = text[2:].strip()
     parts = rest.split(None, 2)
     skill_name = parts[0].lstrip("@") if parts else ""
+    if skill_name.startswith("/"):
+        skill_name = ""
     target = agent_name
     arguments = ""
     if len(parts) > 1:
@@ -1321,7 +1323,9 @@ def _parse_skill_sugar_command(text: str, base: dict, agent_name: str = "") -> d
             target = parts[1].lstrip("@")
             arguments = parts[2] if len(parts) > 2 else ""
         else:
-            arguments = rest[len(parts[0]):].strip()
+            arguments = parts[1]
+            if len(parts) > 2:
+                arguments += " " + parts[2]
     return {
         "action": "run_skill",
         "target_agent": target,

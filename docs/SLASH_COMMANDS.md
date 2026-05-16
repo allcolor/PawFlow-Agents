@@ -1,6 +1,6 @@
 # PawFlow Webchat Slash Commands Reference
 
-All commands are typed in the chat input, prefixed with `/`. Commands are processed client-side when possible, with a server-side fallback for extensibility.
+All commands are typed in the chat input, prefixed with `/`. Commands are processed client-side when possible, with a server-side fallback for extensibility. A double slash is reserved as skill-run sugar: `//<skill> [@agent] [args...]` is equivalent to `/skill run [@agent] <skill> [args...]`.
 
 ## Quick Reference
 

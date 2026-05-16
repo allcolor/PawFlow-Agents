@@ -67,6 +67,24 @@ def test_skill_run_sugar_only_treats_second_token_as_agent():
     assert body["arguments"] == "email user@example.com"
 
 
+def test_skill_run_sugar_empty_skill_uses_run_skill_validation():
+    body = _parse_command("//", "conv1", "alice", "assistant")
+
+    assert body["action"] == "run_skill"
+    assert body["target_agent"] == "assistant"
+    assert body["skill_name"] == ""
+    assert body["arguments"] == ""
+
+
+def test_skill_run_sugar_rejects_triple_slash_as_missing_skill():
+    body = _parse_command("///review-pr 42", "conv1", "alice", "assistant")
+
+    assert body["action"] == "run_skill"
+    assert body["target_agent"] == "assistant"
+    assert body["skill_name"] == ""
+    assert body["arguments"] == "42"
+
+
 def test_resolve_runnable_skill_prompt_renders_args_and_placeholders(monkeypatch):
     from core import skill_resolver
 

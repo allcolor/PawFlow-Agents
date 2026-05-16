@@ -674,6 +674,30 @@ def test_hook_marks_pawflow_injected_prompts_without_forwarding_text(tmp_path, m
     assert marker.read_text(encoding="utf-8") == ""
 
 
+def test_hook_matches_injected_prompt_when_claude_strips_trailing_newline(tmp_path, monkeypatch):
+    hook = importlib.import_module("tools.cc_interactive_hook")
+    prompt = "Read this PawFlow initial context file before answering:\n@/cc_sessions/c/a/.pawflow_cci/initial_context.md"
+    sent = prompt + "\n"
+    marker = tmp_path / "injected_prompts.jsonl"
+    marker.write_text(json.dumps({
+        "sha256": hook.hashlib.sha256(sent.encode("utf-8")).hexdigest(),
+        "length": len(sent),
+    }) + "\n", encoding="utf-8")
+    monkeypatch.setenv("PAWFLOW_CCI_INJECTED_PROMPTS", str(marker))
+
+    compact = hook._compact_input({
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": prompt,
+        "cwd": "/workspace",
+    })
+
+    assert compact["pawflow_injected_prompt"] is True
+    assert compact["pawflow_managed_prompt"] is True
+    assert "pawflow_injected_prompt_missing" not in compact
+    assert "prompt" not in compact
+    assert marker.read_text(encoding="utf-8") == ""
+
+
 def test_hook_keeps_manual_user_prompt(monkeypatch):
     hook = importlib.import_module("tools.cc_interactive_hook")
     monkeypatch.delenv("PAWFLOW_CCI_INJECTED_PROMPTS", raising=False)

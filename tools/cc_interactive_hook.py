@@ -136,7 +136,10 @@ def _consume_injected_prompt(prompt: str) -> bool:
     path = os.environ.get("PAWFLOW_CCI_INJECTED_PROMPTS", "")
     if not path or not prompt:
         return False
-    digest = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+    digest_candidates = {
+        hashlib.sha256(candidate.encode("utf-8")).hexdigest()
+        for candidate in (prompt, prompt + "\n", prompt + "\r\n", prompt.rstrip("\r\n"))
+    }
     try:
         with open(path, "a+", encoding="utf-8") as fh:
             if fcntl is not None:
@@ -150,7 +153,7 @@ def _consume_injected_prompt(prompt: str) -> bool:
                     payload = json.loads(row)
                 except Exception:
                     continue
-                if not found and payload.get("sha256") == digest:
+                if payload.get("sha256") in digest_candidates:
                     found = True
                     continue
                 kept.append(row)

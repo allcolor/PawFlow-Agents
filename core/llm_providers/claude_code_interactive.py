@@ -420,6 +420,9 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
                 "It contains the compacted conversation summary/context and "
                 "the latest user request. After reading it, continue the "
                 "conversation and answer the latest user request.")
+            current = self._cci_current_turn_text(messages)
+            if current:
+                parts.append("Latest turn to answer now:\n" + current)
         elif system_prompt:
             parts.append("<system_instructions>\n" + system_prompt + "\n</system_instructions>")
         if image_lines:

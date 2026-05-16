@@ -444,7 +444,9 @@ def test_initial_interactive_prompt_writes_context_file(tmp_path):
     assert "system rules" in body
     assert "compact summary" in body
     assert "latest request" in body
-    assert "latest request" not in prompt
+    assert "Latest turn to answer now:" in prompt
+    assert "latest request" in prompt
+    assert "compact summary" not in prompt
 
 
 def test_resume_interactive_prompt_uses_current_turn_only(tmp_path):

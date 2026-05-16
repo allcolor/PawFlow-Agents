@@ -56,9 +56,13 @@ set Claude Code's prompt-suggestion and terminal-title environment toggles off
 so UI hints do not become PawFlow transcript messages. They also pass the same
 thinking-related CLI flags as the stream-json provider (`--thinking-display
 summarized`, plus configured `--effort`) so Claude Code emits observable
-thinking blocks. If Anthropic compresses an observed response (`gzip` or
-`deflate`), only the side-channel copy is decoded before SSE/JSON parsing; the
-proxied bytes sent back to Claude Code remain unchanged.
+thinking blocks. On a cold interactive start, PawFlow stores the full compacted
+context in `.pawflow_cci/initial_context.md` and repeats the latest turn in the
+tmux prompt itself, so Claude Code has the immediate user request even if it
+uses targeted reads over the large context file. If Anthropic compresses an
+observed response (`gzip` or `deflate`), only the side-channel copy is decoded
+before SSE/JSON parsing; the proxied bytes sent back to Claude Code remain
+unchanged.
 
 The provider assembles responses from those events:
 

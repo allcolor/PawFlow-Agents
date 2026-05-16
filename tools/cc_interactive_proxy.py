@@ -472,6 +472,16 @@ def _is_title_json_text(text: str) -> bool:
     return isinstance(payload, dict) and set(payload.keys()) == {"title"}
 
 
+def _is_hidden_native_tool(name: str, args: dict) -> bool:
+    tool = (name or "").lower().replace("_", "")
+    if tool in {"getschema", "toolsearch", "toolschema", "listtools"}:
+        return True
+    if tool == "read":
+        path = str(args.get("file_path") or args.get("path") or "")
+        return "/.pawflow_cci/initial_context.md" in path.replace("\\", "/")
+    return False
+
+
 def _is_title_prompt(path: str, body: bytes) -> bool:
     if not path.startswith("/v1/messages"):
         return False
@@ -485,23 +495,25 @@ def _is_title_prompt(path: str, body: bytes) -> bool:
     text = "\n".join(_content_text(message.get("content"))
                      for message in messages if isinstance(message, dict))
     lowered = text.lower()
-    return "json title" in lowered or ("\"title\"" in lowered and "conversation" in lowered)
+    return (
+        lowered.startswith("generate a json title for this conversation")
+        or lowered.startswith("generate a concise json title for this conversation")
+    )
 
 
-def _emit_observed_tool_blocks(request_id: str, path: str, body: bytes) -> None:
-    # Claude Code native tools are implementation details of the interactive
-    # session. PawFlow exposes PawFlow toolcalls separately; mirroring Claude's
-    # own Read/ToolSearch/Bash transcript pollutes the webchat and context.
-    return
+def _emit_observed_tool_blocks(request_id: str, path: str, body: bytes,
+                               hidden_tool_use_ids: set[str] | None = None) -> set[str]:
+    hidden_tool_use_ids = hidden_tool_use_ids or set()
+    newly_hidden: set[str] = set()
     if not path.startswith("/v1/messages"):
-        return
+        return newly_hidden
     try:
         payload = json.loads(body.decode("utf-8"))
     except Exception:
-        return
+        return newly_hidden
     messages = payload.get("messages") or []
     if not isinstance(messages, list):
-        return
+        return newly_hidden
     for message in messages:
         if not isinstance(message, dict):
             continue
@@ -518,20 +530,26 @@ def _emit_observed_tool_blocks(request_id: str, path: str, body: bytes) -> None:
                 if not tool_use_id:
                     continue
                 args = block.get("input") or {}
+                tool_name = block.get("name", "")
+                if _is_hidden_native_tool(tool_name, args if isinstance(args, dict) else {}):
+                    newly_hidden.add(tool_use_id)
+                    continue
                 _log(
                     f"emit tool_use request={request_id} path={path} "
-                    f"tool_use_id={tool_use_id} name={block.get('name', '')}")
+                    f"tool_use_id={tool_use_id} name={tool_name}")
                 EVENTS.emit({
                     "type": "tool_use",
                     "request_id": request_id,
                     "path": path,
                     "tool_use_id": tool_use_id,
-                    "name": block.get("name", ""),
+                    "name": tool_name,
                     "arguments": args if isinstance(args, dict) else {},
                 })
             elif role == "user" and btype == "tool_result":
                 tool_use_id = block.get("tool_use_id") or block.get("id") or ""
                 if not tool_use_id:
+                    continue
+                if tool_use_id in hidden_tool_use_ids or tool_use_id in newly_hidden:
                     continue
                 result = _content_text(block.get("content"))
                 _log(
@@ -546,12 +564,14 @@ def _emit_observed_tool_blocks(request_id: str, path: str, body: bytes) -> None:
                     "content": result,
                     "is_error": bool(block.get("is_error")),
                 })
+    return newly_hidden
 
 
 class HTTPRequestObserver:
     def __init__(self, tracker: HTTPExchangeTracker):
         self.tracker = tracker
         self.buf = b""
+        self.hidden_tool_use_ids: set[str] = set()
 
     def feed(self, data: bytes):
         self.buf += data
@@ -594,7 +614,8 @@ class HTTPRequestObserver:
                 "body_bytes": len(body),
                 "ignore_reason": reason,
             })
-            _emit_observed_tool_blocks(request_id, path, body)
+            self.hidden_tool_use_ids.update(
+                _emit_observed_tool_blocks(request_id, path, body, self.hidden_tool_use_ids))
 
 
 class ChunkedBodyObserver:

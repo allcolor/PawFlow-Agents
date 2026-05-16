@@ -4,7 +4,10 @@
 from __future__ import annotations
 
 import base64
-import fcntl
+try:
+    import fcntl  # POSIX-only; marker-file locking is best-effort elsewhere.
+except ImportError:
+    fcntl = None  # type: ignore[assignment]
 import hashlib
 import json
 import os
@@ -136,7 +139,8 @@ def _consume_injected_prompt(prompt: str) -> bool:
     digest = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
     try:
         with open(path, "a+", encoding="utf-8") as fh:
-            fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+            if fcntl is not None:
+                fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
             fh.seek(0)
             rows = fh.readlines()
             found = False

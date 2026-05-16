@@ -38,7 +38,7 @@ def test_claude_code_interactive_provider_registered_and_dispatched():
     assert "_cci_send_user_message" in send_src
 
 
-def test_turn_coordinator_assembles_text_thinking_and_hides_native_tool_use():
+def test_turn_coordinator_assembles_text_thinking_and_native_tool_use():
     events = [
         _sse("content_block_delta", {
             "type": "content_block_delta",
@@ -98,7 +98,11 @@ def test_turn_coordinator_assembles_text_thinking_and_hides_native_tool_use():
     assert resp.tokens_in == 11
     assert resp.tokens_out == 7
     assert resp.tool_calls == []
-    assert blocks == []
+    assert blocks == [("tool_use", {
+        "id": "toolu_1",
+        "name": "read",
+        "arguments": {"path": "a.png"},
+    })]
     assert turns == [("Hi there", [], ""), ("", [], "plan")]
 
 
@@ -202,7 +206,7 @@ def test_turn_coordinator_keeps_non_title_json_text_block():
     assert turns == [('{"answer":"ok"}', [], "")]
 
 
-def test_turn_coordinator_hides_native_tool_result_live():
+def test_turn_coordinator_publishes_native_tool_result_live():
     events = [
         _sse("content_block_start", {
             "type": "content_block_start",
@@ -227,7 +231,18 @@ def test_turn_coordinator_hides_native_tool_result_live():
     ).run()
 
     assert resp.tool_calls == []
-    assert blocks == []
+    assert blocks == [
+        ("tool_use", {
+            "id": "toolu_1",
+            "name": "read",
+            "arguments": {"path": "README.md"},
+        }),
+        ("tool_result", {
+            "tc_id": "toolu_1",
+            "tool": "read",
+            "result": "file body",
+        }),
+    ]
 
 
 def test_turn_coordinator_buffers_tool_result_until_tool_use_is_emitted():
@@ -253,7 +268,18 @@ def test_turn_coordinator_buffers_tool_result_until_tool_use_is_emitted():
         block_callback=lambda event_type, payload: blocks.append((event_type, payload)),
     ).run()
 
-    assert blocks == []
+    assert blocks == [
+        ("tool_use", {
+            "id": "toolu_1",
+            "name": "read",
+            "arguments": {"path": "README.md"},
+        }),
+        ("tool_result", {
+            "tc_id": "toolu_1",
+            "tool": "read",
+            "result": "file body",
+        }),
+    ]
 
 
 def test_turn_coordinator_observed_tool_use_unblocks_result_before_sse_stop():
@@ -271,6 +297,58 @@ def test_turn_coordinator_observed_tool_use_unblocks_result_before_sse_stop():
             "delta": {"type": "input_json_delta", "partial_json": '{"command":"git status"}'},
         }),
         _sse("content_block_stop", {"type": "content_block_stop", "index": 0}),
+        {"type": "hook", "hook_event_name": "Stop", "input": {"hook_event_name": "Stop"}},
+    ]
+
+    blocks = []
+    _CCITurnCoordinator(
+        _Events(events), "sess",
+        block_callback=lambda event_type, payload: blocks.append((event_type, payload)),
+    ).run()
+
+    assert blocks == [
+        ("tool_use", {
+            "id": "toolu_1",
+            "name": "Bash",
+            "arguments": {"command": "git status"},
+        }),
+        ("tool_result", {
+            "tc_id": "toolu_1",
+            "tool": "Bash",
+            "result": "clean",
+        }),
+    ]
+
+
+def test_turn_coordinator_hides_bootstrap_native_tools():
+    events = [
+        _sse("content_block_start", {
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {"type": "tool_use", "id": "toolu_1", "name": "Read"},
+        }),
+        _sse("content_block_delta", {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {
+                "type": "input_json_delta",
+                "partial_json": '{"file_path":"/cc_sessions/c/a/.pawflow_cci/initial_context.md"}',
+            },
+        }),
+        _sse("content_block_stop", {"type": "content_block_stop", "index": 0}),
+        {"type": "tool_result", "tool_use_id": "toolu_1", "content": "context"},
+        _sse("content_block_start", {
+            "type": "content_block_start",
+            "index": 1,
+            "content_block": {"type": "tool_use", "id": "toolu_2", "name": "ToolSearch"},
+        }),
+        _sse("content_block_delta", {
+            "type": "content_block_delta",
+            "index": 1,
+            "delta": {"type": "input_json_delta", "partial_json": '{"query":"Bash"}'},
+        }),
+        _sse("content_block_stop", {"type": "content_block_stop", "index": 1}),
+        {"type": "tool_result", "tool_use_id": "toolu_2", "content": "schema"},
         {"type": "hook", "hook_event_name": "Stop", "input": {"hook_event_name": "Stop"}},
     ]
 

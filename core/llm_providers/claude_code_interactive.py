@@ -27,6 +27,18 @@ def _is_title_json_text(text: str) -> bool:
     return isinstance(payload, dict) and set(payload.keys()) == {"title"}
 
 
+def _is_hidden_native_tool(name: str, args: dict) -> bool:
+    """Hide Claude Code bootstrap/discovery tools from PawFlow transcript UI."""
+    tool = (name or "").lower().replace("_", "")
+    if tool in {"getschema", "toolsearch", "toolschema", "listtools"}:
+        return True
+    if tool == "read":
+        path = str(args.get("file_path") or args.get("path") or "")
+        normalized = path.replace("\\", "/")
+        return "/.pawflow_cci/initial_context.md" in normalized
+    return False
+
+
 class _CCITurnCoordinator:
     def __init__(self, event_service, session_token: str, callback=None,
                  thinking_callback=None, block_callback=None,
@@ -124,6 +136,7 @@ class _CCITurnCoordinator:
                         "name": block.get("name", ""),
                         "json": "",
                         "emitted": False,
+                        "hidden": False,
                     }
                     self.tool_blocks[idx] = block_state
                     self.tool_by_id[block_state["id"]] = block_state
@@ -257,11 +270,25 @@ class _CCITurnCoordinator:
         if not block or block.get("emitted"):
             return
         tool_id = block.get("id") or f"cci_{uuid.uuid4().hex[:12]}"
+        raw = block.get("json", "") or "{}"
+        try:
+            args = json.loads(raw)
+        except Exception:
+            args = {}
+        if not isinstance(args, dict):
+            args = {}
+        block["hidden"] = _is_hidden_native_tool(block.get("name", ""), args)
         block["emitted"] = True
         if tool_id in self.emitted_tool_use_ids:
             self._emit_pending_tool_results(tool_id)
             return
         self.emitted_tool_use_ids.add(tool_id)
+        if self.block_callback and not block.get("hidden"):
+            self.block_callback("tool_use", {
+                "id": tool_id,
+                "name": block.get("name", ""),
+                "arguments": args,
+            })
         self._emit_pending_tool_results(tool_id)
 
     def _emit_pending_tool_uses(self) -> None:
@@ -292,6 +319,7 @@ class _CCITurnCoordinator:
                 "name": event.get("name", ""),
                 "json": json.dumps(args if isinstance(args, dict) else {}, ensure_ascii=False),
                 "emitted": False,
+                "hidden": _is_hidden_native_tool(event.get("name", ""), args if isinstance(args, dict) else {}),
             }
             self.tool_by_id[tc_id] = block
         if block.get("emitted") or tc_id in self.emitted_tool_use_ids:
@@ -300,6 +328,19 @@ class _CCITurnCoordinator:
             return
         block["emitted"] = True
         self.emitted_tool_use_ids.add(tc_id)
+        try:
+            args = json.loads(block.get("json", "") or "{}")
+        except Exception:
+            args = {}
+        if not isinstance(args, dict):
+            args = {}
+        block["hidden"] = _is_hidden_native_tool(block.get("name", ""), args)
+        if self.block_callback and not block.get("hidden"):
+            self.block_callback("tool_use", {
+                "id": tc_id,
+                "name": block.get("name", ""),
+                "arguments": args,
+            })
         self._emit_pending_tool_results(tc_id)
 
     def _emit_pending_tool_results(self, tc_id: str) -> None:
@@ -317,6 +358,12 @@ class _CCITurnCoordinator:
         if not tc_id or tc_id in self.emitted_tool_result_ids:
             return
         self.emitted_tool_result_ids.add(tc_id)
+        if self.block_callback and not block.get("hidden"):
+            self.block_callback("tool_result", {
+                "tc_id": tc_id,
+                "tool": block.get("name", ""),
+                "result": event.get("content", "") or "(no output)",
+            })
 
 
 class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):

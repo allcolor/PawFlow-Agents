@@ -11,7 +11,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Optional
-import fcntl
+try:
+    import fcntl  # POSIX-only; the flock below is best-effort on platforms that have it
+except ImportError:  # Windows: server still boots, the marker file is written without an advisory lock
+    fcntl = None  # type: ignore[assignment]
 import hashlib
 import json
 import os
@@ -181,7 +184,8 @@ class InteractiveClaudeCodePool:
                 "ts": time.time(),
             }
             with open(marker, "a", encoding="utf-8") as fh:
-                fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+                if fcntl is not None:
+                    fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
                 fh.write(json.dumps(payload, separators=(",", ":")) + "\n")
         except Exception:
             pass

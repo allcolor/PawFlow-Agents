@@ -217,12 +217,12 @@ class CCInteractiveEventService(BaseService):
                 delta = payload.get("delta") or {}
                 dtype = delta.get("type", "")
                 text = delta.get("text", "") if dtype == "text_delta" else ""
-                logger.info(
+                logger.debug(
                     "CC interactive MITM event: session=%s request=%s type=%s delta=%s text_len=%d text_preview=%r",
                     session_token[:8], event.get("request_id", ""), ptype, dtype,
                     len(text), text[:24])
                 return
-            logger.info(
+            logger.debug(
                 "CC interactive MITM event: session=%s request=%s type=%s payload_keys=%s",
                 session_token[:8], event.get("request_id", ""), ptype,
                 sorted(payload.keys())[:8])

@@ -68,6 +68,9 @@ The provider assembles responses from those events:
 - `tool_use` blocks and `input_json_delta` are emitted as live observed tool
   events for display/persistence only. PawFlow never re-executes them; Claude
   Code already ran those tools inside its own session.
+- Bootstrap/discovery native tools are hidden from the PawFlow transcript:
+  `GetSchema`, `ToolSearch`, compatible schema-list aliases, and Claude Code's
+  `Read` of `.pawflow_cci/initial_context.md`.
 - Outgoing `/v1/messages` request bodies are observed for both assistant
   `tool_use` blocks and user `tool_result` blocks. This preserves live ordering
   even when a response-side tool block is delayed or missed; provider events are

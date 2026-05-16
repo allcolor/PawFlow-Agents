@@ -69,7 +69,7 @@ def test_proxy_request_observer_does_not_modify_forwarded_bytes(monkeypatch):
     }]
 
 
-def test_request_observer_hides_native_claude_tool_results(monkeypatch):
+def test_request_observer_emits_observed_tool_results(monkeypatch):
     monkeypatch.setenv("PAWFLOW_CCI_SESSION_TOKEN", "sess")
     proxy = importlib.import_module("tools.cc_interactive_proxy")
     events = []
@@ -94,10 +94,18 @@ def test_request_observer_hides_native_claude_tool_results(monkeypatch):
     tracker = proxy.HTTPExchangeTracker("r1")
     proxy.HTTPRequestObserver(tracker).feed(chunk)
 
-    assert [event["type"] for event in events] == ["request_start"]
+    assert events[0]["type"] == "request_start"
+    assert events[1] == {
+        "type": "tool_result",
+        "request_id": "r1",
+        "path": "/v1/messages?beta=true",
+        "tool_use_id": "toolu_1",
+        "content": "file body",
+        "is_error": False,
+    }
 
 
-def test_request_observer_hides_native_claude_tool_use_before_result(monkeypatch):
+def test_request_observer_emits_observed_tool_use_before_result(monkeypatch):
     monkeypatch.setenv("PAWFLOW_CCI_SESSION_TOKEN", "sess")
     proxy = importlib.import_module("tools.cc_interactive_proxy")
     events = []
@@ -114,6 +122,54 @@ def test_request_observer_hides_native_claude_tool_use_before_result(monkeypatch
                 "type": "tool_result",
                 "tool_use_id": "toolu_1",
                 "content": "clean",
+            }]},
+        ],
+    }).encode()
+    chunk = (
+        b"POST /v1/messages?beta=true HTTP/1.1\r\n"
+        b"Host: api.anthropic.com\r\n"
+        + f"Content-Length: {len(body)}\r\n\r\n".encode()
+        + body
+    )
+
+    proxy.HTTPRequestObserver(proxy.HTTPExchangeTracker("r1")).feed(chunk)
+
+    assert [event["type"] for event in events] == ["request_start", "tool_use", "tool_result"]
+    assert events[1] == {
+        "type": "tool_use",
+        "request_id": "r1",
+        "path": "/v1/messages?beta=true",
+        "tool_use_id": "toolu_1",
+        "name": "Bash",
+        "arguments": {"command": "git status"},
+    }
+    assert events[2]["tool_use_id"] == "toolu_1"
+    assert events[2]["content"] == "clean"
+
+
+def test_request_observer_hides_bootstrap_native_tools(monkeypatch):
+    monkeypatch.setenv("PAWFLOW_CCI_SESSION_TOKEN", "sess")
+    proxy = importlib.import_module("tools.cc_interactive_proxy")
+    events = []
+    monkeypatch.setattr(proxy.EVENTS, "emit", events.append)
+    body = json.dumps({
+        "messages": [
+            {"role": "assistant", "content": [{
+                "type": "tool_use",
+                "id": "toolu_1",
+                "name": "Read",
+                "input": {"file_path": "/cc_sessions/c/a/.pawflow_cci/initial_context.md"},
+            }]},
+            {"role": "user", "content": [{
+                "type": "tool_result",
+                "tool_use_id": "toolu_1",
+                "content": "initial context",
+            }]},
+            {"role": "assistant", "content": [{
+                "type": "tool_use",
+                "id": "toolu_2",
+                "name": "ToolSearch",
+                "input": {"query": "Bash"},
             }]},
         ],
     }).encode()

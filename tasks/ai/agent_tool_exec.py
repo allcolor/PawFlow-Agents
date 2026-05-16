@@ -215,7 +215,32 @@ class AgentToolExecMixin:
                 _set_current_cancel_event(_cancel_event)
                 _set_current_kill_hooks(_kill_hooks)
                 _tool_relay_bound = True
-                # Resolve $VAR / ${VAR} in arguments before execution
+                try:
+                    from core.agent_hooks import AgentHookRunner
+                    _hook_runner = AgentHookRunner(
+                        user_id=user_id,
+                        conversation_id=conversation_id,
+                        agent_name=agent_name,
+                        agent_service=agent_svc,
+                    )
+                    _pre = _hook_runner.run("pre_tool_call", {
+                        "tool_call_id": tc.id,
+                        "tool_name": tc.name,
+                        "arguments": tc.arguments if isinstance(tc.arguments, dict) else {},
+                    }, fail_policy="closed")
+                    if _pre.get("decision") == "block":
+                        reason = _pre.get("reason") or "blocked by hook"
+                        return tc, f"Blocked by hook: {reason}"
+                    if _pre.get("decision") == "replace":
+                        _payload = _pre.get("payload") or {}
+                        tc.name = str(_payload.get("tool_name") or tc.name)
+                        _new_args = _payload.get("arguments")
+                        tc.arguments = _new_args if isinstance(_new_args, dict) else {}
+                except Exception as _he:
+                    logger.error("pre_tool_call hook failed; denying tool: %s", _he,
+                                 exc_info=True)
+                    return tc, f"Error: pre_tool_call hook failed: {_he}"
+                # Resolve $VAR / ${VAR} in arguments before execution.
                 if _all_env:
                     _skip = set()
                     if tc.name == "bash":
@@ -223,16 +248,29 @@ class AgentToolExecMixin:
                     elif tc.name == "execute_script":
                         _skip = {"code"}
                     _resolve_vars_in_args(tc.arguments, _all_env, skip_keys=_skip)
-                # Pre-hook execution
-                self._run_hook("pre", tc.name, tc.arguments, conversation_id, user_id)
                 logger.info("Agent calling tool '%s' with args: %s", tc.name, tc.arguments)
                 result = registry.execute(tc.name, tc.arguments) or ""
                 # Redact secrets from tool output
                 if _secret_values and isinstance(result, str):
                     result = _redact_secrets(result, _secret_values,
                                              secret_names=_secret_names)
-                # Post-hook execution
-                self._run_hook("post", tc.name, tc.arguments, conversation_id, user_id)
+                try:
+                    _post = _hook_runner.run("post_tool_call", {
+                        "tool_call_id": tc.id,
+                        "tool_name": tc.name,
+                        "arguments": tc.arguments if isinstance(tc.arguments, dict) else {},
+                        "result": result,
+                    })
+                    if _post.get("decision") == "replace":
+                        _payload = _post.get("payload") or {}
+                        if "result" in _payload:
+                            result = _payload.get("result")
+                    elif _post.get("decision") == "block":
+                        reason = _post.get("reason") or "blocked by hook"
+                        result = f"Blocked by hook: {reason}"
+                except Exception as _he:
+                    logger.warning("post_tool_call hook failed: %s", _he,
+                                   exc_info=True)
                 # Check for ask_user pause signal
                 if isinstance(result, str) and result.startswith("__ASK_USER__:"):
                     # Strip the prefix — the question text becomes the tool result
@@ -358,49 +396,6 @@ class AgentToolExecMixin:
         return [results_map[tc.id] for tc in tool_calls]
 
 
-    def _run_hook(self, phase: str, tool_name: str, arguments: dict,
-                  conversation_id: str, user_id: str) -> None:
-        """Run a pre/post tool execution hook if configured.
-
-        Hooks are stored in conv extra "hooks" as a dict:
-          {"pre:filesystem.write_file": "eslint --fix ${path}", ...}
-        The hook command is run via the relay executor if available.
-        """
-        if not conversation_id:
-            return
-        try:
-            from core.conversation_store import ConversationStore
-            from tasks.ai.agent_utils import _resolve_extra_dict
-            hooks = _resolve_extra_dict(
-                ConversationStore.instance(), conversation_id,
-                "hooks", user_id)
-            if not hooks:
-                return
-
-            # Build action key: "pre:tool_name" or "pre:tool_name.action"
-            action = arguments.get("action", "") if isinstance(arguments, dict) else ""
-            keys_to_check = [f"{phase}:{tool_name}"]
-            if action:
-                keys_to_check.insert(0, f"{phase}:{tool_name}.{action}")
-
-            for key in keys_to_check:
-                cmd = hooks.get(key)
-                if not cmd:
-                    continue
-                # Substitute ${path}, ${action} etc. from arguments
-                for k, v in (arguments or {}).items():
-                    if isinstance(v, str):
-                        cmd = cmd.replace(f"${{{k}}}", v)
-                logger.info(f"[hook] {key}: {cmd}")
-                # Execute via relay if available
-                try:
-                    exec_svc = self._find_executor_service(user_id)
-                    if exec_svc:
-                        exec_svc.execute(cmd)
-                except Exception as he:
-                    logger.warning(f"[hook] {key} failed: {he}")
-        except Exception as e:
-            logger.debug(f"[hook] check failed: {e}")
 
 
     def _handle_response_no_tools(self, response_text: str, client_provider: str,

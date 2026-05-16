@@ -117,6 +117,24 @@ Every assistant message and tool result is persisted to the conversation store v
 
 `ConversationWriter` runs one daemon thread per conversation behind a FIFO queue. `enqueue()` is non-blocking for throughput, so on process exit the queue may still hold items. The signal handler in `cli.py` calls `ConversationWriter.shutdown_all(wait_timeout=...)` **before** `os._exit(0)` to drain every queue - without this, in-flight writes die with the daemon thread and messages are lost. `shutdown_all` returns `False` if any queue times out; the caller logs this as data loss.
 
+### Agent hooks
+
+Agent hooks are repository resources of type `agent_hook`, scoped like other repository resources (`global`, `user`, or `conversation`). The Resource Panel exposes an Agent Hooks repository section for create/edit/delete and PFP-imported hooks. Conversation configuration only stores bindings in `conversation_hooks`: hook name, enabled flag, priority, optional event filters, optional agent/tool filters, and fail policy. It does not embed hook code.
+
+Runtime hook events are:
+
+| Event | Timing |
+|---|---|
+| `pre_tool_call` | Before a provider/API/relay tool call is executed. Can block the call or replace `tool_name`/`arguments`. |
+| `post_tool_call` | After tool execution and secret redaction. Can replace the result returned to the LLM. |
+| `pre_user_message` | Before a user message is persisted or queued. Can block or rewrite the message content. |
+| `post_llm_message` | Before an assistant message is persisted. Can block or rewrite content/thinking. |
+| `post_llm_thinking` | Before assistant thinking is persisted. Can rewrite thinking text. |
+| `pre_compact` | Before context compaction. Can block compaction or add compact instructions. |
+| `post_compact` | After compaction has produced the replacement context. |
+
+Hook code returns a JSON object shaped as `{"decision":"allow|block|replace","reason":"optional","payload":{...}}`. Empty event/agent/tool filters mean all. `fail_policy: "closed"` blocks the triggering operation when the hook fails; the default is fail-open. PFP hooks are installed as `agent_hook` runtime objects and run through the same signed package runtime bridge as package tools.
+
 ---
 
 ## 4. Context Management

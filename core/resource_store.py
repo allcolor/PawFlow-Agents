@@ -10,6 +10,7 @@ Resource types:
 - task_def: { name, prompt, criteria?, default_interval?, description?, created_by? }
 - theme:    directory resource with theme.json, CSS files, and optional assets
 - private_gateway_skin: directory resource with skin.json and template.html
+- agent_hook: runtime hook selected by conversation bindings
 """
 
 import logging
@@ -29,6 +30,7 @@ _TYPE_MAP = {
     "task_def": "tasks",
     "prompt": "prompts",
     "tool": "tools",
+    "agent_hook": "agent_hooks",
     "theme": "theme",
     "private_gateway_skin": "private_gateway_skin",
 }
@@ -44,6 +46,7 @@ _REQUIRED_FIELDS = {
     "task_def": ("prompt",),
     "prompt": ("prompt",),
     "tool": ("source",),
+    "agent_hook": (),
     "theme": (),
     "private_gateway_skin": (),
 }
@@ -88,6 +91,13 @@ _DEFAULTS = {
         "description": "",
         "parameters": {},
         "checksum": "",
+    },
+    "agent_hook": {
+        "description": "",
+        "events": [],
+        "tools": [],
+        "source": "",
+        "fail_policy": "open",
     },
     "theme": {
         "title": "",

@@ -1509,6 +1509,30 @@ async function _renderResourcesData(data) {
     }
     repoHtml += _sectionFooter();
 
+    // ── Agent Hooks Repository (runtime hooks selectable from conversation config) ──
+    repoHtml += _repoSectionHeader(t('agentHooksRepository'), 'agent_hook', {
+      createOnclick: "showResourceCreator('agent_hook')",
+      createTitle: t('createNewAgentHook'),
+    });
+    if (!_isSectionCollapsed('agent_hook')) {
+      const hooks = data.agent_hooks || [];
+      repoHtml += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:4px;cursor:pointer;color:var(--pf-accent-2);font-size:11px;" onclick="_showAgentHooksDialog()">\u2699 ' + escapeHtml(t('configureBindings')) + '</div>';
+      if (hooks.length) {
+        hooks.forEach(h => {
+          const events = Array.isArray(h.events) ? h.events.join(', ') : '';
+          const desc = h.description ? ' title="' + escapeHtml(h.description) + '"' : '';
+          repoHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer;"${desc} oncontextmenu="showResourceMenu(event,'agent_hook','${escapeHtml(h.name)}','${h.scope||''}');return false;">
+            ${_scopeBadge(h.scope)}<span style="color:var(--pf-accent);font-size:11px">\u2693</span>
+            <span style="color:var(--pf-text);font-size:12px;flex:1;">${escapeHtml(h.name)}</span>
+            <span style="color:var(--pf-muted);font-size:10px;">${escapeHtml(events)}</span>
+          </div>`;
+        });
+      } else {
+        repoHtml += '<div style="margin-left:8px;font-size:11px;color:var(--pf-muted);">' + escapeHtml(t('noAgentHooks')) + '</div>';
+      }
+    }
+    repoHtml += _sectionFooter();
+
     // ── Tools Repository (always available, no linking) ──
     repoHtml += _repoSectionHeader(t('toolsRepository'), '_tool', {
       createOnclick: "showResourceCreator('_tool')",
@@ -1882,6 +1906,97 @@ function _saveToolMcpFilterDialog() {
     if (res.error) { addMsg('error', res.error); return; }
     addMsg('system', t('toolsMcpAvailabilityUpdated'));
     document.getElementById('toolMcpFilterOverlay')?.remove();
+    loadResources();
+  });
+}
+
+function _normalizeAgentHookBindings(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw.map(function(item) {
+    if (typeof item === 'string') return { name: item, enabled: true };
+    return item && typeof item === 'object' ? item : null;
+  }).filter(Boolean);
+}
+
+function _splitCommaList(value) {
+  return String(value || '').split(',').map(function(s) { return s.trim(); }).filter(Boolean);
+}
+
+function _joinList(value) {
+  return Array.isArray(value) ? value.join(', ') : String(value || '');
+}
+
+async function _showAgentHooksDialog() {
+  if (!conversationId) { addMsg('error', t('noConv')); return; }
+  let data = {};
+  try {
+    data = await rxjs.firstValueFrom(action$('get_conversation_hooks', { conversation_id: conversationId }));
+    if (data.error) { addMsg('error', data.error); return; }
+  } catch (e) { addMsg('error', e.message); return; }
+
+  const hooks = data.hooks || [];
+  const bindings = _normalizeAgentHookBindings(data.bindings || []);
+  const byName = {};
+  bindings.forEach(function(b) { byName[b.name || b.ref || ''] = b; });
+  let overlay = document.getElementById('agentHooksOverlay');
+  if (overlay) overlay.remove();
+  overlay = document.createElement('div');
+  overlay.id = 'agentHooksOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:var(--pf-shadow);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  const panel = document.createElement('div');
+  panel.style.cssText = 'background:var(--pf-panel);border-radius:8px;padding:20px;width:740px;max-height:85vh;overflow-y:auto;border:1px solid var(--pf-border);';
+  let html = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">'
+    + '<h3 style="margin:0;color:var(--pf-text);font-size:14px;">' + escapeHtml(t('conversationAgentHooks')) + '</h3>'
+    + '<button onclick="document.getElementById(\'agentHooksOverlay\').remove()" style="background:none;border:none;color:var(--pf-muted);cursor:pointer;font-size:18px;">&times;</button></div>';
+  if (hooks.length) {
+    html += '<div style="display:grid;grid-template-columns:34px 1fr 1fr 1fr 70px 88px;gap:6px;align-items:center;color:var(--pf-muted);font-size:10px;margin-bottom:4px;">'
+      + '<div></div><div>' + escapeHtml(t('name')) + '</div><div>' + escapeHtml(t('events')) + '</div><div>' + escapeHtml(t('filters')) + '</div><div>' + escapeHtml(t('priority')) + '</div><div>' + escapeHtml(t('failPolicy')) + '</div></div>';
+    hooks.forEach(function(h, idx) {
+      const name = h.name || '';
+      const b = byName[name] || null;
+      const enabled = !!b && b.enabled !== false;
+      const events = b ? _joinList(b.events) : '';
+      const agents = b ? _joinList(b.agents) : '';
+      const tools = b ? _joinList(b.tools) : '';
+      const priority = b ? (b.priority || 0) : 0;
+      const fp = (b && b.fail_policy) || h.fail_policy || 'open';
+      html += '<div class="agent-hook-binding-row" data-hook-name="' + escapeHtml(name) + '" style="display:grid;grid-template-columns:34px 1fr 1fr 1fr 70px 88px;gap:6px;align-items:center;margin-bottom:6px;padding:6px;background:var(--pf-sidebar);border:1px solid var(--pf-border);border-radius:4px;">'
+        + '<input class="ah-enabled" type="checkbox"' + (enabled ? ' checked' : '') + ' style="accent-color:var(--pf-accent);"/>'
+        + '<div style="min-width:0;">' + _scopeBadge(h._scope || h.scope || '') + '<span style="font-size:12px;color:var(--pf-text);">' + escapeHtml(name) + '</span></div>'
+        + '<input class="ah-events" value="' + escapeHtml(events) + '" placeholder="' + escapeHtml(_joinList(h.events || [])) + '" style="width:100%;box-sizing:border-box;background:var(--pf-code-bg);color:var(--pf-text);border:1px solid var(--pf-border);padding:5px;border-radius:4px;font-size:11px;"/>'
+        + '<div style="display:flex;gap:4px;"><input class="ah-agents" value="' + escapeHtml(agents) + '" placeholder="@" style="width:50%;box-sizing:border-box;background:var(--pf-code-bg);color:var(--pf-text);border:1px solid var(--pf-border);padding:5px;border-radius:4px;font-size:11px;"/><input class="ah-tools" value="' + escapeHtml(tools) + '" placeholder="tool" style="width:50%;box-sizing:border-box;background:var(--pf-code-bg);color:var(--pf-text);border:1px solid var(--pf-border);padding:5px;border-radius:4px;font-size:11px;"/></div>'
+        + '<input class="ah-priority" type="number" value="' + escapeHtml(String(priority)) + '" style="width:100%;box-sizing:border-box;background:var(--pf-code-bg);color:var(--pf-text);border:1px solid var(--pf-border);padding:5px;border-radius:4px;font-size:11px;"/>'
+        + '<select class="ah-fail" style="width:100%;box-sizing:border-box;background:var(--pf-code-bg);color:var(--pf-text);border:1px solid var(--pf-border);padding:5px;border-radius:4px;font-size:11px;"><option value="open"' + (fp === 'open' ? ' selected' : '') + '>open</option><option value="closed"' + (fp === 'closed' ? ' selected' : '') + '>closed</option></select>'
+        + '</div>';
+    });
+  } else {
+    html += '<div style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('noAgentHooks')) + '</div>';
+  }
+  html += '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;">'
+    + '<button onclick="document.getElementById(\'agentHooksOverlay\').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">' + escapeHtml(t('contextCancel')) + '</button>'
+    + '<button onclick="_saveAgentHooksDialog()" style="background:var(--pf-accent);color:var(--pf-bg);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">' + escapeHtml(t('contextSave')) + '</button></div>';
+  panel.innerHTML = html;
+  overlay.appendChild(panel);
+  document.body.appendChild(overlay);
+}
+
+function _saveAgentHooksDialog() {
+  const rows = document.querySelectorAll('#agentHooksOverlay .agent-hook-binding-row');
+  const bindings = Array.from(rows).map(function(row) {
+    return {
+      name: row.dataset.hookName || '',
+      enabled: !!row.querySelector('.ah-enabled')?.checked,
+      events: _splitCommaList(row.querySelector('.ah-events')?.value || ''),
+      agents: _splitCommaList(row.querySelector('.ah-agents')?.value || ''),
+      tools: _splitCommaList(row.querySelector('.ah-tools')?.value || ''),
+      priority: parseInt(row.querySelector('.ah-priority')?.value || '0') || 0,
+      fail_policy: row.querySelector('.ah-fail')?.value || 'open',
+    };
+  }).filter(function(b) { return b.name && b.enabled; });
+  action$('update_conversation_hooks', { conversation_id: conversationId, bindings: bindings }).subscribe(function(res) {
+    if (res.error) { addMsg('error', res.error); return; }
+    addMsg('system', t('agentHooksUpdated'));
+    document.getElementById('agentHooksOverlay')?.remove();
     loadResources();
   });
 }
@@ -2432,6 +2547,7 @@ const _RESOURCE_FIELDS = {
   mcp:      [['transport','mcp_transport'],['via','mcp_via'],['relay_service','mcp_relay'],['local','checkbox'],['url','text'],['command','text'],['args','json'],['env','json'],['auth','json'],['description','text']],
   task_def: [['prompt','textarea'],['criteria','textarea'],['default_interval','text'],['verifier','text'],['interactive','checkbox'],['skills','skills_picker'],['description','text']],
   prompt:   [['prompt','textarea'],['parameters','params_editor'],['title','text'],['category','text'],['description','text']],
+  agent_hook: [['events','json'],['allowed_tools','json'],['allowed_services','json'],['fail_policy','hook_fail_policy'],['description','text'],['source','textarea']],
   _tool:    [['tool_description','text'],['parameters','textarea'],['code','textarea']],
 };
 
@@ -2499,6 +2615,10 @@ function _buildResourceForm(rtype, data, isNew, readonly) {
         options += '<option value="' + escapeHtml(rid) + '"' + selected + '>' + escapeHtml(label) + '</option>';
       });
       html += `<select id="res-${key}"${dis} style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;${roS}">${options}</select>`;
+    } else if (type === 'hook_fail_policy') {
+      const openSelected = (val === 'open' || !val) ? ' selected' : '';
+      const closedSelected = val === 'closed' ? ' selected' : '';
+      html += `<select id="res-${key}"${dis} style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;${roS}"><option value="open"${openSelected}>open</option><option value="closed"${closedSelected}>closed</option></select>`;
     } else if (type === 'params_editor') {
       const params = (data && typeof data[key] === 'object' && data[key]) ? data[key] : {};
       html += `<div id="res-${key}" data-type="params_editor" style="margin-top:2px;background:var(--pf-sidebar);border:1px solid var(--pf-border);border-radius:4px;padding:6px;${roS}">`;

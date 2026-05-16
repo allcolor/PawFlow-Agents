@@ -579,6 +579,46 @@ class AgentCoreMixin:
                     # it like a fresh inbound request.
                     "kind": "reply",
                 }
+            if msg.role == "assistant" and conversation_id:
+                try:
+                    from core.agent_hooks import AgentHookRunner
+                    _src = msg.source if isinstance(msg.source, dict) else {}
+                    _runner = AgentHookRunner(
+                        user_id=user_id,
+                        conversation_id=conversation_id,
+                        agent_name=ctx.get("active_agent_name", "") or _src.get("name", ""),
+                        agent_service=_src.get("llm_service", ""),
+                        provider=_src.get("provider", ""),
+                        model=_src.get("model", ""),
+                    )
+                    if getattr(msg, "thinking", ""):
+                        _think = _runner.run("post_llm_thinking", {
+                            "message_id": getattr(msg, "msg_id", ""),
+                            "thinking": msg.thinking,
+                            "source": msg.source,
+                        })
+                        if _think.get("decision") == "replace":
+                            _payload = _think.get("payload") or {}
+                            if "thinking" in _payload:
+                                msg.thinking = str(_payload.get("thinking") or "")
+                    _msg_hook = _runner.run("post_llm_message", {
+                        "message_id": getattr(msg, "msg_id", ""),
+                        "content": msg.content,
+                        "thinking": getattr(msg, "thinking", ""),
+                        "source": msg.source,
+                    })
+                    if _msg_hook.get("decision") == "block":
+                        logger.info("post_llm_message hook blocked assistant message")
+                        return
+                    if _msg_hook.get("decision") == "replace":
+                        _payload = _msg_hook.get("payload") or {}
+                        if "content" in _payload:
+                            msg.content = _payload.get("content")
+                        if "thinking" in _payload:
+                            msg.thinking = str(_payload.get("thinking") or "")
+                except Exception as _hook_err:
+                    logger.warning("post_llm_message hook failed: %s", _hook_err,
+                                   exc_info=True)
             messages.append(msg)
             new_messages.append(msg)
             # Persist via conversation writer + publish SSE (single source of truth)

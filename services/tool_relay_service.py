@@ -1583,6 +1583,33 @@ class ToolRelayService(BaseService):
                     user_id, conversation_id, agent_name):
         registry = self._get_registry(user_id, conversation_id, agent_name)
 
+        try:
+            from core.agent_hooks import AgentHookRunner
+            _hook_runner = AgentHookRunner(
+                user_id=user_id,
+                conversation_id=conversation_id,
+                agent_name=agent_name,
+            )
+            _pre = _hook_runner.run("pre_tool_call", {
+                "tool_call_id": request_id,
+                "tool_name": tool_name,
+                "arguments": arguments if isinstance(arguments, dict) else {},
+            }, fail_policy="closed")
+            if _pre.get("decision") == "block":
+                reason = _pre.get("reason") or "blocked by hook"
+                return {"type": "result", "request_id": request_id,
+                        "data": f"Blocked by hook: {reason}"}
+            if _pre.get("decision") == "replace":
+                _payload = _pre.get("payload") or {}
+                tool_name = str(_payload.get("tool_name") or tool_name)
+                _new_args = _payload.get("arguments")
+                arguments = _new_args if isinstance(_new_args, dict) else {}
+        except Exception as _he:
+            logger.error("pre_tool_call hook failed; denying relay tool: %s", _he,
+                         exc_info=True)
+            return {"type": "result", "request_id": request_id,
+                    "data": f"Error: pre_tool_call hook failed: {_he}"}
+
         # Tool Approval Gate — reads permission_mode from conversation
         # For task sub-conversations (conv::task::tid), inherit parent's permissions
         _perm_cid = conversation_id
@@ -1732,6 +1759,23 @@ class ToolRelayService(BaseService):
         if _secret_values:
             result_str = _redact_secrets(result_str, _secret_values,
                                          secret_names=_secret_names)
+
+        try:
+            _post = _hook_runner.run("post_tool_call", {
+                "tool_call_id": request_id,
+                "tool_name": tool_name,
+                "arguments": arguments if isinstance(arguments, dict) else {},
+                "result": result_str,
+            })
+            if _post.get("decision") == "replace":
+                _payload = _post.get("payload") or {}
+                if "result" in _payload:
+                    result_str = str(_payload.get("result") or "")
+            elif _post.get("decision") == "block":
+                reason = _post.get("reason") or "blocked by hook"
+                result_str = f"Blocked by hook: {reason}"
+        except Exception as _he:
+            logger.warning("post_tool_call hook failed: %s", _he, exc_info=True)
 
         # Convert __image_data__: markers into MCP content blocks server-side,
         # gated on the handler's _returns_images flag. Without this gate, a

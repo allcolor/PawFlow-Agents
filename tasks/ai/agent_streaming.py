@@ -122,6 +122,39 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
             _stream_mark("stamped")
             if _attachments_body:
                 _stamped_user["attachments"] = _attachments_body
+            try:
+                from core.agent_hooks import AgentHookRunner
+                _pre_user = AgentHookRunner(
+                    user_id=_uid,
+                    conversation_id=conversation_id,
+                    agent_name=_target or "",
+                ).run("pre_user_message", {
+                    "message": dict(_stamped_user),
+                    "content": _stamped_user.get("content", ""),
+                    "attachments": _attachments_body,
+                    "target_agent": _target or "",
+                    "channel": "web",
+                }, fail_policy="closed")
+                if _pre_user.get("decision") == "block":
+                    reason = _pre_user.get("reason") or "blocked by hook"
+                    flowfile.set_content(json.dumps({"error": reason}).encode())
+                    flowfile.set_attribute("http.response.status", "403")
+                    return [flowfile]
+                if _pre_user.get("decision") == "replace":
+                    _payload = _pre_user.get("payload") or {}
+                    _msg = _payload.get("message")
+                    if isinstance(_msg, dict):
+                        _stamped_user.update(_msg)
+                    elif "content" in _payload:
+                        _stamped_user["content"] = _payload.get("content")
+                    if isinstance(_stamped_user.get("content"), str):
+                        _user_text = _stamped_user.get("content") or ""
+            except Exception as _hook_err:
+                flowfile.set_content(json.dumps({
+                    "error": f"pre_user_message hook failed: {_hook_err}",
+                }).encode())
+                flowfile.set_attribute("http.response.status", "403")
+                return [flowfile]
             if not _skip_pre_persist:
                 try:
                     _cw = ConversationWriter.for_conversation(conversation_id)

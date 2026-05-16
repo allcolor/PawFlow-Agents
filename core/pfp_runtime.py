@@ -494,6 +494,17 @@ def build_ui_handler_invocation(runtime: Dict[str, Any], installed_from: Dict[st
         {"action": action, "arguments": arguments or {}}, context)
 
 
+def build_agent_hook_invocation(runtime: Dict[str, Any], installed_from: Dict[str, Any],
+                                event: Dict[str, Any],
+                                context: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    """Envelope for an installed PFP agent_hook resource."""
+    if not isinstance(event, dict):
+        raise PackageRuntimeError("PFP agent_hook event must be an object")
+    prepared = prepare_runtime_entrypoint(runtime, installed_from)
+    return _invocation_envelope(
+        "agent_hook", prepared, {"event": event}, context)
+
+
 class PackageRuntimeHost:
     """Authorized host-call surface exposed to future out-of-process runtimes."""
 
@@ -724,6 +735,15 @@ def invoke_ui_handler(runtime: Dict[str, Any], installed_from: Dict[str, Any],
     """
     request = build_ui_handler_invocation(
         runtime, installed_from, action, arguments, context)
+    result = _invoke_bridge(request)
+    return _normalize_service_result(result)
+
+
+def invoke_agent_hook(runtime: Dict[str, Any], installed_from: Dict[str, Any],
+                      event: Dict[str, Any],
+                      context: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    """Run an agent_hook PFP entrypoint and return its JSON decision."""
+    request = build_agent_hook_invocation(runtime, installed_from, event, context)
     result = _invoke_bridge(request)
     return _normalize_service_result(result)
 

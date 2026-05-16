@@ -825,7 +825,6 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                         "FORCED" if force else "TRIGGERED",
                         _original_tokens, trigger, cap, _original_count)
 
-            from core.compact_hooks import fire_pre_compact, fire_post_compact
             _trigger_label = "manual" if force else "auto"
             _pre_ctx = {
                 "trigger": _trigger_label,
@@ -837,11 +836,19 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                 "original_tokens": _original_tokens,
                 "independent_context": True,
             }
-            _pre_result = fire_pre_compact(_pre_ctx)
-            if _pre_result.get("abort"):
+            from core.agent_hooks import AgentHookRunner
+            _hook_runner = AgentHookRunner(
+                user_id=user_id,
+                conversation_id=conversation_id,
+                agent_name=agent_name,
+            )
+            _pre_result = _hook_runner.run("pre_compact", _pre_ctx,
+                                          fail_policy="closed")
+            if _pre_result.get("decision") == "block":
                 logger.info("[compact] pre-hook aborted independent compaction")
                 return messages
-            _instructions = _pre_result.get("compact_instructions", "") or ""
+            _pre_payload = _pre_result.get("payload") or {}
+            _instructions = _pre_payload.get("compact_instructions", "") or ""
             _instructions = (
                 (_instructions + "\n\n") if _instructions else ""
             ) + (
@@ -988,11 +995,11 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                     "after_messages": len(compacted),
                     "tokens_before": _original_tokens,
                     "tokens_after": new_estimate,
-                    "compacted": compacted,
+                    "compacted_messages": self._serialize_messages(compacted),
                     "independent_context": True,
                 }
                 try:
-                    fire_post_compact(_post_ctx)
+                    _hook_runner.run("post_compact", _post_ctx)
                 except Exception:
                     logger.debug("post_compact hooks raised", exc_info=True)
                 self._compact_breaker_record(
@@ -1025,9 +1032,6 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                     _original_tokens, trigger, cap, _original_count)
 
         # ── Pre-compact hooks ──
-        # Third-party code can modify compact_instructions or abort via
-        # core.compact_hooks.subscribe_pre_compact(...).
-        from core.compact_hooks import fire_pre_compact, fire_post_compact
         _trigger_label = "manual" if force else "auto"
         _pre_ctx = {
             "trigger": _trigger_label,
@@ -1038,13 +1042,21 @@ class AgentCompactionMixin(AgentSummarizeMixin):
             "force": bool(force),
             "original_tokens": _original_tokens,
         }
-        _pre_result = fire_pre_compact(_pre_ctx)
-        if _pre_result.get("abort"):
+        from core.agent_hooks import AgentHookRunner
+        _hook_runner = AgentHookRunner(
+            user_id=user_id,
+            conversation_id=conversation_id,
+            agent_name=agent_name,
+        )
+        _pre_result = _hook_runner.run("pre_compact", _pre_ctx,
+                                      fail_policy="closed")
+        if _pre_result.get("decision") == "block":
             logger.info("[compact] pre-hook aborted compaction — returning "
                         "messages unchanged")
             return messages
-        compact_instructions = _pre_result.get("compact_instructions", "") or ""
-        _user_display = _pre_result.get("user_display_message", "") or ""
+        _pre_payload = _pre_result.get("payload") or {}
+        compact_instructions = _pre_payload.get("compact_instructions", "") or ""
+        _user_display = _pre_payload.get("user_display_message", "") or ""
         if _user_display and conversation_id:
             try:
                 from core.conversation_event_bus import ConversationEventBus
@@ -1226,10 +1238,10 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                 "after_messages": len(compacted),
                 "tokens_before": _original_tokens,
                 "tokens_after": new_estimate,
-                "compacted": compacted,
+                "compacted_messages": self._serialize_messages(compacted),
             }
             try:
-                fire_post_compact(_post_ctx)
+                _hook_runner.run("post_compact", _post_ctx)
             except Exception:
                 logger.debug("post_compact hooks raised", exc_info=True)
             self._compact_breaker_record(

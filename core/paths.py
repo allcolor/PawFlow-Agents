@@ -24,7 +24,7 @@ SYSTEM_DIR = DATA_DIR / "system"
 # ── Repository resource types ────────────────────────────────────
 REPO_TYPES = frozenset({
     "agents", "skills", "tasks", "flows",
-    "mcps", "services", "tools", "prompts", "theme",
+    "mcps", "services", "tools", "prompts", "agent_hooks", "theme",
     "private_gateway_skin", "voice_clones",
 })
 

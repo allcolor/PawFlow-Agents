@@ -95,6 +95,44 @@ Two separate trust boundaries are at play here. A PFP entrypoint may freely read
 
 If you find yourself wanting `fs.read_file("/etc/passwd")` from a PFP entrypoint, open it with `open(...)` instead. If you want a PawFlow-side `read` tool call (for example to read a FileStore artifact through the same allowlist the rest of PawFlow uses), declare it in `allowed_tools` and use `pfp.call_tool("read", ...)`.
 
+## Agent Hook Entrypoint
+
+Packages can install `agent_hook` runtime objects. They are stored as repository resources and must be enabled from conversation hook bindings before they run.
+
+Manifest object example:
+
+```json
+{
+  "id": "agent_hook:bash_guard",
+  "type": "agent_hook",
+  "name": "bash_guard",
+  "path": "content/hooks/bash_guard.py",
+  "runner": "python",
+  "events": ["pre_tool_call"],
+  "allowed_tools": [],
+  "allowed_services": []
+}
+```
+
+Entrypoint example:
+
+```python
+from pawflow import pfp
+
+event = pfp.payload.get("event", {})
+payload = event.get("payload", {})
+
+if event.get("event") == "pre_tool_call" and payload.get("tool_name") == "bash":
+    command = (payload.get("arguments") or {}).get("command", "")
+    if "rm -rf" in command:
+        pfp.result({"decision": "block", "reason": "destructive command"})
+        raise SystemExit(0)
+
+pfp.result({"decision": "allow", "payload": payload})
+```
+
+Hook decisions are `allow`, `block`, or `replace`. For `replace`, return the modified `payload` object expected by the event. Hooks can request broker-authorized host calls with `pfp.call_tool` or `pfp.call_service` when the manifest declares the matching grants.
+
 ## Image Provider Entrypoint
 
 PFP media providers should not return image, video, or audio bytes in JSON. Large media should be written to the controlled output directory and returned by reference.

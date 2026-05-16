@@ -985,6 +985,35 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             "has_parameters": bool(p.get("parameters")),
         } for p in all_prompts]
 
+        # Agent hooks: installed repo hooks, activated per conversation by
+        # conversation_hooks bindings.
+        try:
+            from core.agent_hooks import VALID_AGENT_HOOK_EVENTS
+            all_agent_hooks = rs.list_all("agent_hook", uid, conversation_id=conv_id)
+            _active_hooks = store.get_extra(conv_id, "conversation_hooks") or [] if conv_id else []
+            _active_names = set()
+            if isinstance(_active_hooks, dict):
+                _active_hooks = _active_hooks.get("hooks", list(_active_hooks.values()))
+            if isinstance(_active_hooks, list):
+                for _bh in _active_hooks:
+                    if isinstance(_bh, str):
+                        _active_names.add(_bh)
+                    elif isinstance(_bh, dict):
+                        _active_names.add(str(_bh.get("name") or _bh.get("ref") or ""))
+            agent_hooks_out = [{
+                "name": h["name"],
+                "description": h.get("description", ""),
+                "scope": h.get("_scope", ""),
+                "events": h.get("events") or [],
+                "tools": h.get("tools") or [],
+                "fail_policy": h.get("fail_policy", "open"),
+                "active": h.get("name", "") in _active_names,
+                "valid_events": sorted(VALID_AGENT_HOOK_EVENTS),
+            } for h in all_agent_hooks]
+        except Exception:
+            logger.debug("list_resources: agent_hooks failed", exc_info=True)
+            agent_hooks_out = []
+
         try:
             from core.chat_themes import list_themes as _list_themes
             themes_out = _list_themes(uid, conv_id)
@@ -1020,6 +1049,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             "mcp_servers": mcps_out,
             "task_defs": tasks_out,
             "prompts": prompts_out,
+            "agent_hooks": agent_hooks_out,
             "themes": themes_out,
             "voices": voices_out,
         }
@@ -1464,7 +1494,8 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                 )
                 if review_meta:
                     data = attach_review_metadata(data, review_meta)
-            rs.update(rtype, rname, target_uid, data)
+            scope_kwargs = {"conversation_id": body.get("conversation_id", "")} if scope == "conversation" else {}
+            rs.update(rtype, rname, target_uid, data, **scope_kwargs)
             flowfile.set_content(json.dumps({"ok": True}).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
@@ -1519,6 +1550,81 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
         return [flowfile]
 
+    if action == "get_conversation_hooks":
+        conv_id = body.get("conversation_id", "")
+        if not conv_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        from core.resource_store import ResourceStore
+        from core.agent_hooks import VALID_AGENT_HOOK_EVENTS
+        hooks = ResourceStore.instance().list_all(
+            "agent_hook", user_id, conversation_id=conv_id)
+        bindings = store.get_extra(conv_id, "conversation_hooks") or []
+        flowfile.set_content(json.dumps({
+            "hooks": hooks,
+            "bindings": bindings,
+            "events": sorted(VALID_AGENT_HOOK_EVENTS),
+        }, ensure_ascii=False).encode())
+        return [flowfile]
+
+    if action == "update_conversation_hooks":
+        conv_id = body.get("conversation_id", "")
+        bindings = body.get("bindings", [])
+        if not conv_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        if not isinstance(bindings, list):
+            flowfile.set_content(json.dumps({"error": "bindings must be a list"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        from core.agent_hooks import VALID_AGENT_HOOK_EVENTS
+        from core.resource_store import ResourceStore
+        installed = {
+            str(h.get("name") or "")
+            for h in ResourceStore.instance().list_all(
+                "agent_hook", user_id, conversation_id=conv_id)
+        }
+        clean = []
+        for item in bindings:
+            if isinstance(item, str):
+                item = {"name": item}
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or item.get("ref") or "").strip()
+            if not name:
+                continue
+            if name not in installed:
+                flowfile.set_content(json.dumps({
+                    "error": f"agent_hook '{name}' is not installed",
+                }).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            events = item.get("events") or []
+            if isinstance(events, str):
+                events = [events]
+            events = [str(e) for e in events if str(e)] if isinstance(events, list) else []
+            invalid_events = [e for e in events if e not in VALID_AGENT_HOOK_EVENTS]
+            if invalid_events:
+                flowfile.set_content(json.dumps({
+                    "error": "invalid agent hook events: " + ", ".join(invalid_events),
+                }).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            clean.append({
+                "name": name,
+                "enabled": bool(item.get("enabled", True)),
+                "events": events,
+                "agents": item.get("agents") or [],
+                "tools": item.get("tools") or [],
+                "priority": int(item.get("priority", 0) or 0),
+                "fail_policy": str(item.get("fail_policy") or "open"),
+            })
+        store.set_extra(conv_id, "conversation_hooks", clean, user_id=user_id)
+        flowfile.set_content(json.dumps({"ok": True, "bindings": clean}).encode())
+        return [flowfile]
+
     if action == "delete_resource":
         rtype = body.get("resource_type", "")
         rname = body.get("name", "").strip()
@@ -1544,7 +1650,8 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                 del conv_defs[rname]
                 cs.set_extra(conv_id, "conversation_task_defs", conv_defs)
         else:
-            deleted = rs.delete(rtype, rname, target_uid)
+            scope_kwargs = {"conversation_id": conv_id} if scope == "conversation" and conv_id else {}
+            deleted = rs.delete(rtype, rname, target_uid, **scope_kwargs)
         flowfile.set_content(json.dumps({"ok": True, "deleted": deleted}).encode())
         return [flowfile]
 

@@ -21,6 +21,7 @@ def _write_package_dir(root, keypair, version="1.0.0", skill_body="Use the packa
                        package_id="community.wavespeed", skill_name="pkg-skill",
                        dependencies=None, tool_allowed_tools=None,
                        include_service_provider=False, include_flow_task=False,
+                       include_agent_hook=False,
                        tool_runner="python", service_runner="python", flow_task_runner="python",
                        tool_secrets=None):
     pkg = root / "wavespeed-provider.pfpdir"
@@ -29,6 +30,7 @@ def _write_package_dir(root, keypair, version="1.0.0", skill_body="Use the packa
     tool_dir = pkg / "content" / "tools" / "reader"
     service_provider_dir = pkg / "content" / "service-providers" / "image"
     flow_task_dir = pkg / "content" / "flow-tasks" / "image-resize"
+    agent_hook_dir = pkg / "content" / "hooks"
     skill_dir.mkdir(parents=True)
     agent_dir.mkdir(parents=True)
     tool_dir.mkdir(parents=True)
@@ -36,6 +38,8 @@ def _write_package_dir(root, keypair, version="1.0.0", skill_body="Use the packa
         service_provider_dir.mkdir(parents=True)
     if include_flow_task:
         flow_task_dir.mkdir(parents=True)
+    if include_agent_hook:
+        agent_hook_dir.mkdir(parents=True)
     (skill_dir / "SKILL.md").write_text(
         "---\n"
         f"name: {skill_name}\n"
@@ -55,6 +59,11 @@ def _write_package_dir(root, keypair, version="1.0.0", skill_body="Use the packa
     if include_flow_task:
         (flow_task_dir / "task.py").write_text(
             "raise RuntimeError('not executable at install')\n", encoding="utf-8")
+    if include_agent_hook:
+        (agent_hook_dir / "guard.py").write_text(
+            "from pawflow import pfp\n"
+            "pfp.result({'decision': 'allow', 'payload': pfp.payload.get('event', {}).get('payload', {})})\n",
+            encoding="utf-8")
     manifest = {
         "format": "pawflow.package.v1",
         "package": package_id,
@@ -122,6 +131,17 @@ def _write_package_dir(root, keypair, version="1.0.0", skill_body="Use the packa
         if flow_task_runner:
             flow_task_object["runner"] = flow_task_runner
         manifest["objects"].append(flow_task_object)
+    if include_agent_hook:
+        manifest["objects"].append({
+            "id": "agent_hook:guard",
+            "type": "agent_hook",
+            "name": "guard",
+            "path": "content/hooks/guard.py",
+            "runner": "python",
+            "description": "Package hook",
+            "events": ["pre_tool_call"],
+            "allowed_tools": [{"name": "read"}],
+        })
     if dependencies:
         manifest["dependencies"] = dependencies
     (pkg / "pfp.json").write_text(json.dumps(manifest), encoding="utf-8")
@@ -195,6 +215,26 @@ def test_pfp_build_inspect_and_selective_install(tmp_path, monkeypatch):
 
     listed = pfp_package.list_installed_packages(user_id="alice")
     assert listed["packages"][0]["package"] == "community.wavespeed"
+
+
+def test_pfp_installs_agent_hook_runtime_resource(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    keypair = pfp_package.create_signing_key()
+    pkgdir = _write_package_dir(tmp_path, keypair, include_agent_hook=True)
+    built = pfp_package.build_pfp(str(pkgdir), private_key=keypair["private_key"])
+
+    result = pfp_package.install_pfp(
+        built["path"], user_id="alice", include=["agent_hook:guard"], force=True)
+
+    assert result["ok"] is True
+    assert [row["id"] for row in result["installed"]] == ["agent_hook:guard"]
+    from core.resource_store import ResourceStore
+    stored = ResourceStore.instance().get("agent_hook", "guard", "alice")
+    assert stored is not None
+    assert stored["events"] == ["pre_tool_call"]
+    assert stored["description"] == "Package hook"
+    assert stored["package_runtime"]["object_id"] == "agent_hook:guard"
+    assert stored["package_runtime"]["allowed_tools"] == [{"name": "read"}]
 
 
 def test_pfp_inspect_exposes_capability_summary_for_preinstall_review(tmp_path, monkeypatch):

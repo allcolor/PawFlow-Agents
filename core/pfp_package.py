@@ -64,10 +64,10 @@ _RESOURCE_TYPES = {
     "task_def": "task_def",
 }
 _INSTALLABLE_TYPES = set(_RESOURCE_TYPES) | {"flow", "service", "service_definition"}
-_INSTALLABLE_TYPES.update({"tool", "service_provider", "flow_task", "task_provider"})
+_INSTALLABLE_TYPES.update({"tool", "agent_hook", "service_provider", "flow_task", "task_provider"})
 _INSTALLABLE_TYPES.add("ui_extension")
 
-_RUNTIME_OBJECT_TYPES = {"tool", "service_provider", "flow_task", "task_provider"}
+_RUNTIME_OBJECT_TYPES = {"tool", "agent_hook", "service_provider", "flow_task", "task_provider"}
 _SUPPORTED_RUNTIME_RUNNERS = {"python"}
 
 # Slot and hook names accepted by the browser-side `ui.v1` contract.
@@ -1272,6 +1272,19 @@ def _install_object(obj: Dict[str, Any], package: Dict[str, Any], user_id: str,
             "dependencies": dependencies,
             "package_runtime": data["package_runtime"],
         }
+    if obj_type == "agent_hook":
+        data = _load_agent_hook_proxy_data(
+            obj, package, rel, provenance, secret_bindings)
+        _write_resource("agent_hook", name, data, user_id, conversation_id, scope, replace)
+        return {
+            "kind": "resource",
+            "object_id": obj_id,
+            "resource_type": "agent_hook",
+            "name": name,
+            "hash": provenance["hash"],
+            "dependencies": dependencies,
+            "package_runtime": data["package_runtime"],
+        }
     if obj_type in _RESOURCE_TYPES:
         rtype = _RESOURCE_TYPES[obj_type]
         data = _load_resource_data(package, rel, rtype, name)
@@ -1387,6 +1400,49 @@ def _load_tool_proxy_data(obj: Dict[str, Any], package: Dict[str, Any], rel: str
         "source": "",
         "description": description,
         "parameters": parameters,
+        "installed_from": provenance,
+        "package_runtime": {
+            "package": manifest["package"],
+            "version": manifest["version"],
+            "object_id": obj["id"],
+            "entrypoint": rel,
+            "content_dir": package.get("content_dir", ""),
+            "runtime": str(obj.get("runtime") or metadata.get("runtime") or "python"),
+            "runner": str(obj.get("runner") or metadata.get("runner") or ""),
+            "dependencies": _declared_package_dependencies(manifest, obj),
+            "allowed_tools": obj.get("allowed_tools", []),
+            "allowed_services": obj.get("allowed_services", []),
+            "secrets": _declared_secret_requirements(manifest, obj),
+            "secret_bindings": dict(secret_bindings or {}),
+            "dev": bool(package.get("dev")),
+            "review": obj.get("_review", {}),
+        },
+    }
+
+
+def _load_agent_hook_proxy_data(obj: Dict[str, Any], package: Dict[str, Any], rel: str,
+                                provenance: Dict[str, Any],
+                                secret_bindings: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    manifest = package["manifest"]
+    metadata: Dict[str, Any] = {}
+    if rel.endswith(".json"):
+        metadata = _load_json_bytes(package["files"][rel])
+    events = obj.get("events") or metadata.get("events") or []
+    if isinstance(events, str):
+        events = [events]
+    if not isinstance(events, list):
+        raise PfpError("agent_hook events must be a list")
+    tools = obj.get("tools") or metadata.get("tools") or []
+    if isinstance(tools, str):
+        tools = [tools]
+    if not isinstance(tools, list):
+        raise PfpError("agent_hook tools must be a list")
+    return {
+        "source": "",
+        "description": str(obj.get("description") or metadata.get("description") or ""),
+        "events": events,
+        "tools": tools,
+        "fail_policy": str(obj.get("fail_policy") or metadata.get("fail_policy") or "open"),
         "installed_from": provenance,
         "package_runtime": {
             "package": manifest["package"],

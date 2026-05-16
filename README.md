@@ -5,8 +5,8 @@
 <h1 align="center">PawFlow</h1>
 
 <p align="center">
-  <strong>Your AI agents, your infrastructure, your data.</strong><br>
-  Self-hosted AI agent orchestration platform — Apache NiFi meets Claude Code.
+  <strong>Self-hosted agent runtime for real infrastructure.</strong><br>
+  Durable AI agents with relay-backed tools, shared context, and interchangeable LLM providers.
 </p>
 
 <p align="center">
@@ -18,15 +18,17 @@
 
 ---
 
-PawFlow is a self-hosted runtime for autonomous AI agents, shared conversations, relay-backed tools, multimodal generation, desktop automation, and deterministic workflows. No vendor lock-in, no cloud dependency — deploy on your hardware and connect the LLM backends you choose.
+PawFlow is a self-hosted runtime that lets AI agents work inside your real infrastructure, with durable context, relay-backed tools, and interchangeable LLM providers. Run Claude Code, Codex, Gemini, Anthropic, OpenAI, or OpenAI-compatible agents against your own workspaces without moving your data into a vendor-controlled agent cloud.
 
-**What makes it different:**
+## Why PawFlow
 
-- **Full agent autonomy** — Claude Code, Codex, Gemini CLI, Anthropic API, OpenAI API, and OpenAI-compatible endpoints with tool-use loops, multi-agent delegation, persistent memory, and knowledge graphs
-- **Shared multi-client conversations** — web chat, PawCode CLI, VS Code, API clients, and channel flows can work against the same persistent conversation
-- **Pipeline engine** — NiFi-style DAG execution with 100+ task types, backpressure, checkpointing, crash recovery, and flow tooling
-- **90+ built-in tools** — filesystem, bash, code editing, web/search, desktop screen control, image/video/audio/3D generation, voice clone, security scanning, and more
-- **Self-hosted relay model** — your conversations, memories, code, filesystem access, and desktop control stay on infrastructure you operate
+Most agent tools are either libraries, hosted coding assistants, or workflow automations. PawFlow is the runtime layer between them: it keeps agent state, routes work through connected relays, streams shared conversations to multiple clients, and lets each agent use the provider that fits the job.
+
+- **Agents work where your files are** — a relay runs next to the user's workspace and executes filesystem, shell, browser, desktop, and generation tools over a controlled connection.
+- **Context is durable** — conversations, per-agent context, memory, knowledge graphs, diaries, and project graphs survive restarts and can be shared across web, CLI, API, and channel flows.
+- **Providers are swappable** — use Claude Code, Codex CLI, Gemini CLI, Anthropic API, OpenAI API, or local/OpenAI-compatible endpoints per agent or conversation.
+- **Orchestration is built in** — combine autonomous agents with NiFi-style flows, backpressure, checkpointing, scheduling, approvals, and multi-agent delegation.
+- **Self-hosted by design** — your conversations, tools, code access, desktop access, and runtime data stay on infrastructure you operate.
 
 ## Quick Start
 

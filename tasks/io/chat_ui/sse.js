@@ -922,6 +922,10 @@ function connectSSE(cid, onReady, opts) {
       showContextOp((data.detail || data.stage) + '...');
     } else if (data.stage === 'done') {
       hideContextOp();
+      if (data.operation === 'restart_from') {
+        if (conversationId) resumeConv(conversationId, true);
+        return;
+      }
       const agent = data.agent || 'shared';
       // Authorise the next gauge decrease for this agent — the
       // post-compact `message_meta` will be smaller than the cached

@@ -365,6 +365,10 @@ class AgentSerializationMixin:
                     entry["tool_args"] = m["tool_args"]
                 if m.get("tool_call_id"):
                     entry["tool_call_id"] = m["tool_call_id"]
+                if m.get("tc_id"):
+                    entry["tc_id"] = m["tc_id"]
+                elif m.get("tool_call_id"):
+                    entry["tc_id"] = m["tool_call_id"]
                 if m.get("display_type"):
                     entry["display_type"] = m["display_type"]
                 if _display_ts:

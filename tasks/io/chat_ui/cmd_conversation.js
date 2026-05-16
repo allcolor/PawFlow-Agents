@@ -95,7 +95,24 @@ function cmdSearch(text, parts, cmd) {
   return true;
 }
 
-function cmdClear() { document.getElementById('messages').innerHTML = ''; return true; }
+function cmdClear() {
+  const container = document.getElementById('messages');
+  if (!container) return true;
+  const knownTotal = serverMsgCount || currentOffset || document.querySelectorAll('#messages > .msg').length;
+  _expectingClear = true;
+  container.innerHTML = '';
+  _expectingClear = false;
+  _seenMsgIds.clear();
+  if (typeof _liveCountedMsgIds !== 'undefined' && _liveCountedMsgIds.clear) _liveCountedMsgIds.clear();
+  if (typeof _selectedMsgIds !== 'undefined' && _selectedMsgIds.clear) _selectedMsgIds.clear();
+  _histTaskBlocks = {};
+  clearAllStreams();
+  currentOffset = 0;
+  serverMsgCount = knownTotal;
+  hasMoreMessages = knownTotal > 0;
+  _updateLoadMoreBanner();
+  return true;
+}
 
 function cmdClearStore(text, parts) {
   if (!conversationId) { addMsg('system', t('noConv')); return true; }

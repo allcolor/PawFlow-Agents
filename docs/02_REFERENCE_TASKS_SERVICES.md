@@ -719,7 +719,7 @@ PawFlow exposes the runtime through the listener/UI server and client integratio
 
 ### 14.2. Main Screens
 
-- Conversation view with streaming assistant output, tool calls, tool results, approvals, background tools, and active-agent controls. The web chat can collapse consecutive technical rows between visible messages when the expression variable `chat.group_technical_messages` resolves to a truthy value (`true`, `1`, `yes`, `on`); the default is `true`. The header `Group tech` toggle writes this parameter at conversation scope and reloads the conversation so rendering follows the server-resolved value.
+- Conversation view with streaming assistant output, tool calls, tool results, approvals, background tools, and active-agent controls. The web chat can collapse consecutive technical rows between visible messages when the expression variable `chat.group_technical_messages` resolves to a truthy value (`true`, `1`, `yes`, `on`); the default is `true`. Tool-call groups keep a stable `tc_id` boundary so a reload does not merge unrelated tools into one technical details block. The header `Group tech` toggle writes this parameter at conversation scope and reloads the conversation so rendering follows the server-resolved value. The floating scroll controls use explicit top/bottom navigation; the top button does not trigger history lazy-loading by itself.
 - Admin/resource views for LLM services, relays, provider login, runtime status, and user-scoped resources.
 - Desktop/VNC, terminal, code-server, and port-forward views exposed through capability-protected routes.
 

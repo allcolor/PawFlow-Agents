@@ -39,7 +39,8 @@ class ScreenHandler(BaseFsHandler):
             "or local=false (default) for the Docker virtual screen.\n"
             "COORDINATES: x,y are in physical pixels matching the screenshot resolution. "
             "Always take a screenshot first — the result includes the screen resolution "
-            "(e.g. 2560x1440). Use those pixel dimensions to calculate click/move coordinates."
+            "(e.g. 2560x1440). Use those pixel dimensions to calculate click/move coordinates; "
+            "never use coordinates from the resized screenshot image rendered in chat."
         )
 
     @property
@@ -59,8 +60,8 @@ class ScreenHandler(BaseFsHandler):
                         "mouse_position: get current mouse coordinates."
                     ),
                 },
-                "x": {"type": "integer", "description": "X coordinate (for click/move/scroll)"},
-                "y": {"type": "integer", "description": "Y coordinate (for click/move/scroll)"},
+                "x": {"type": "integer", "description": "X coordinate in physical screenshot pixels, not resized chat-image pixels (for click/move/scroll)"},
+                "y": {"type": "integer", "description": "Y coordinate in physical screenshot pixels, not resized chat-image pixels (for click/move/scroll)"},
                 "text": {"type": "string", "description": "Text to type (for type action)"},
                 "key": {"type": "string", "description": "Key name: Enter, Tab, Escape, Space, Backspace, Delete, Up, Down, Left, Right, F1-F12, ctrl+c, alt+tab, etc."},
                 "button": {"type": "string", "description": "Mouse button: left (default), right, middle"},
@@ -186,7 +187,7 @@ class ScreenHandler(BaseFsHandler):
                         category="screenshot")
                     url = f"fs://filestore/{fid}/{fname}"
                     size_info = f"\nScreen resolution: {width}x{height}" if width and height else ""
-                    coord_hint = f" — use these dimensions for x,y coordinates in click/move/scroll actions" if width else ""
+                    coord_hint = f" — use these physical pixel dimensions for x,y coordinates; do not use the resized chat preview" if width else ""
                     return f"Screenshot captured: {url}\n{len(img_bytes):,} bytes, {b64_data[:20]}...{size_info}{coord_hint}"
                 except Exception as e:
                     return f"Screenshot captured but storage failed: {e}"

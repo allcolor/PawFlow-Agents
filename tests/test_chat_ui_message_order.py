@@ -52,6 +52,10 @@ def test_technical_grouping_is_expression_driven_and_post_rendered():
     assert "t('technicalDetailsSummary'" in MESSAGES_JS
     assert "Technical details ·" not in MESSAGES_JS
     assert "function findToolCallElement(tcId, root)" in MESSAGES_JS
+    assert "function _technicalGroupKey(el)" in MESSAGES_JS
+    assert "function _technicalGroupShouldSplit(group, childKey)" in MESSAGES_JS
+    assert "return 'tool:' + tcId" in MESSAGES_JS
+    assert "group.dataset.technicalGroupKey" in MESSAGES_JS
     assert "className = 'msg technical-group'" in MESSAGES_JS
     assert "el.dataset.messageRole = role" in MESSAGES_JS
     assert "details.dataset.live = '1'" in SSE_JS
@@ -86,7 +90,12 @@ def test_technical_grouping_toggle_sets_conversation_parameter_and_reloads():
 
 def test_autoscroll_only_stops_on_user_scroll_intent():
     assert "let _autoScroll = true" in MESSAGES_JS
+    assert "let _suppressTopLoadUntil = 0" in MESSAGES_JS
     assert "function setMessagesScrollTop(value)" in MESSAGES_JS
+    assert "function scrollMessagesTop()" in MESSAGES_JS
+    assert "_autoScroll = false" in MESSAGES_JS
+    assert "Date.now() > _suppressTopLoadUntil" in MESSAGES_JS
+    assert "scrollMessagesTop();document.getElementById('input').focus()" in TEMPLATE_HTML
     assert "m.addEventListener('wheel', markUserScrollIntent" in MESSAGES_JS
     assert "m.addEventListener('pointerdown'" in MESSAGES_JS
     assert "isScrollbarPointerEvent(e)" in MESSAGES_JS
@@ -95,6 +104,37 @@ def test_autoscroll_only_stops_on_user_scroll_intent():
     assert "hasUserScrollIntent()" in MESSAGES_JS
     assert "m.scrollTop < _lastScrollTop" not in MESSAGES_JS
     assert "container.scrollTop = container.scrollHeight - prevHeight" not in CONVERSATIONS_JS
+
+
+def test_tool_results_carry_tc_id_for_reload_grouping():
+    assert "if (tcId) el.dataset.tcId = tcId;" in MESSAGES_JS
+    assert "if (tcId) _inner.dataset.tcId = tcId;" in MESSAGES_JS
+
+
+def test_clear_keeps_conversation_and_load_more_entrypoint():
+    assert "function cmdClear()" in Path("tasks/io/chat_ui/cmd_conversation.js").read_text(encoding="utf-8")
+    conv_cmds = Path("tasks/io/chat_ui/cmd_conversation.js").read_text(encoding="utf-8")
+    clear_block = conv_cmds[conv_cmds.index("function cmdClear()"):conv_cmds.index("function cmdClearStore")]
+    assert "newChat()" not in clear_block
+    assert "currentOffset = 0" in clear_block
+    assert "hasMoreMessages = knownTotal > 0" in clear_block
+    assert "_updateLoadMoreBanner()" in clear_block
+
+
+def test_message_actions_can_copy_id_and_restart_from_msg_id():
+    attachments_js = Path("tasks/io/chat_ui/attachments.js").read_text(encoding="utf-8")
+    assert "copyMsgId(this)" in MESSAGES_JS
+    assert "restartFromMsg(this)" in MESSAGES_JS
+    assert "function copyMsgId(btn)" in attachments_js
+    assert "navigator.clipboard.writeText(msg.dataset.msgid)" in attachments_js
+    assert "function restartFromMsg(btn)" in attachments_js
+    assert "confirm(t('restartFromHereConfirm'))" in attachments_js
+    assert "action$('restart_from', { msg_id: msg.dataset.msgid })" in attachments_js
+
+
+def test_restart_from_done_reloads_truncated_conversation():
+    assert "data.operation === 'restart_from'" in SSE_JS
+    assert "resumeConv(conversationId, true)" in SSE_JS
 
 
 def test_live_tool_events_keep_chat_scrolled():

@@ -456,6 +456,24 @@ class TestClassifyMessagesSource(unittest.TestCase):
         self.assertEqual(classified[1]["type"], "tool_result")
         self.assertEqual(classified[1]["timestamp"], 2001.0)
         self.assertEqual(classified[1]["msg_id"], "r1")
+        self.assertEqual(classified[1]["tc_id"], "tc1")
+
+    def test_display_only_tool_result_gets_tc_id_for_reload_grouping(self):
+        from tasks.ai.agent_loop import AgentLoopTask
+
+        raw = [{
+            "role": "tool_result",
+            "content": "ok",
+            "tool_call_id": "tc-display",
+            "display_only": True,
+            "ts": 2002.0,
+        }]
+
+        classified = AgentLoopTask._classify_messages_for_display(raw)
+
+        self.assertEqual(classified[0]["type"], "tool_result")
+        self.assertEqual(classified[0]["tool_call_id"], "tc-display")
+        self.assertEqual(classified[0]["tc_id"], "tc-display")
 
 
 

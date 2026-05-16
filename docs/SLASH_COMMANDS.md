@@ -242,17 +242,15 @@ Rebuild the derived context state from the canonical transcript. The command reb
 ### /restart_from
 
 ```
-/restart_from [@agent|ALL] [N]
+/restart_from <index|msg_id>
 ```
 
-Keep only the last N messages as LLM context (default 5). Earlier messages stay in history but are ignored by the agent. Use 0 for a fresh start (keeps system prompt only).
+Truncate the current conversation transcript at an absolute message index or at a message id. The shared context is rebuilt from the kept transcript, all private agent contexts are deleted, and CLI sessions are invalidated. Use 0 to empty the transcript and contexts.
 
 ```
-/restart_from              -- keep last 5 messages
-/restart_from 10           -- keep last 10
-/restart_from @grok 3      -- keep last 3 for grok
-/restart_from @ALL 5       -- restart all agents
-/restart_from 0            -- empty context (fresh start)
+/restart_from 0            -- empty transcript, shared context, and agent contexts
+/restart_from 10           -- keep the first 10 transcript messages
+/restart_from abc123def456 -- keep messages through msg_id abc123def456
 ```
 
 Alias: `/restart`
@@ -366,7 +364,7 @@ Remove a specific message from the conversation by its index.
 /clear
 ```
 
-Clear the visible chat display. History is preserved server-side.
+Clear the visible chat display only. History is preserved server-side and the view leaves a load-more button so the current conversation can be reloaded on demand. It does not create a new conversation.
 
 ### /clear-store
 

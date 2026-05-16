@@ -27,7 +27,6 @@ HELP: Dict[str, Dict[str, str]] = {
         "usage": "/new",
         "short": "Start a new conversation",
         "detail": "Creates a new conversation and switches to it.",
-        "aliases": "/clear",
     },
     "/conv": {
         "usage": "/conv [list | select <id> | info]",
@@ -199,9 +198,14 @@ HELP: Dict[str, Dict[str, str]] = {
         "detail": "Set the agent context to the full conversation (no compaction).",
     },
     "/restart": {
-        "usage": "/restart [N] [agent]",
-        "short": "Restart context from last N messages",
-        "detail": "Keep only the last N messages (default: 5) as context.\n\n  /restart 10 grok",
+        "usage": "/restart <index|msg_id>",
+        "short": "Restart conversation from a point",
+        "detail": (
+            "Truncate transcript/shared context at an absolute index or msg_id.\n\n"
+            "  /restart 0          — Empty transcript and contexts\n"
+            "  /restart 10         — Keep the first 10 messages\n"
+            "  /restart abc123     — Keep messages through msg_id abc123"
+        ),
         "aliases": "/restart_from",
     },
     "/rewind": {
@@ -843,15 +847,23 @@ def _parse_command(text: str, conversation_id: str, user_id: str,
 
     if cmd in ("/restart", "/restart_from"):
         p = arg.split()
-        n = 5
-        agt = agent_name
+        restart_index = None
+        restart_msg_id = ""
         for part in p:
+            if part.startswith("@"):
+                continue
             if part.isdigit():
-                n = int(part)
+                restart_index = int(part)
             else:
-                agt = part
-        return {"action": "restart_from", "count": n, "agent_name": agt,
-                **base}
+                restart_msg_id = part
+        out = {"action": "restart_from", **base}
+        if restart_msg_id:
+            out["msg_id"] = restart_msg_id
+        elif restart_index is not None:
+            out["restart_index"] = restart_index
+        else:
+            out["error"] = "Usage: /restart_from <index|msg_id>"
+        return out
 
     if cmd in ("/rewind", "/checkpoint"):
         return {"action": "rewind", "checkpoint": arg.strip(), **base}
@@ -1242,7 +1254,7 @@ def _parse_command(text: str, conversation_id: str, user_id: str,
         return {"action": "remote_fs_status", **base}
 
     # ── Client-only (not handled server-side) ──
-    if cmd in ("/clear-ui", "/connect", "/disconnect", "/exit", "/quit",
+    if cmd in ("/clear", "/clear-ui", "/connect", "/disconnect", "/exit", "/quit",
                "/copy", "/paste", "/upload", "/files"):
         return {"_client_only": True, "command": cmd, "arg": arg}
 

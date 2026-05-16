@@ -351,6 +351,33 @@ function _createTechnicalGroupBefore(container, anchor) {
   return group;
 }
 
+function _technicalGroupKey(el) {
+  if (!el || !el.dataset) return '';
+  const role = el.dataset.messageRole || '';
+  const tcId = el.dataset.tcId || '';
+  if ((role === 'tool_call' || role === 'tool' || role === 'tool_result') && tcId) {
+    return 'tool:' + tcId;
+  }
+  const taskId = el.dataset.taskId || el.dataset.delegateTaskId || '';
+  if (taskId) return 'task:' + taskId;
+  return '';
+}
+
+function _technicalGroupShouldSplit(group, childKey) {
+  if (!group || !group.dataset) return false;
+  const body = group.querySelector('.technical-group-body');
+  if (!body || !body.children.length) return false;
+  const groupKey = group.dataset.technicalGroupKey || '';
+  if (!groupKey && !childKey) return false;
+  return groupKey !== childKey;
+}
+
+function _setTechnicalGroupKey(group, childKey) {
+  if (!group || !group.dataset) return;
+  if (childKey) group.dataset.technicalGroupKey = childKey;
+  else delete group.dataset.technicalGroupKey;
+}
+
 function applyTechnicalMessageGrouping() {
   if (window.PAWFLOW_SUSPEND_TECHNICAL_GROUPING) return;
   const container = document.getElementById('messages');
@@ -369,6 +396,13 @@ function applyTechnicalMessageGrouping() {
       continue;
     }
     if (child.classList && child.classList.contains('technical-group')) {
+      const childKey = child.dataset ? (child.dataset.technicalGroupKey || '') : '';
+      if (group && group !== child) {
+        if (_technicalGroupShouldSplit(group, childKey)) {
+          _updateTechnicalGroupSummary(group);
+          group = null;
+        }
+      }
       if (group && group !== child) {
         const body = group.querySelector('.technical-group-body');
         const childBody = child.querySelector('.technical-group-body');
@@ -398,7 +432,15 @@ function applyTechnicalMessageGrouping() {
       child.remove();
       continue;
     }
+    const childKey = _technicalGroupKey(child);
+    if (_technicalGroupShouldSplit(group, childKey)) {
+      _updateTechnicalGroupSummary(group);
+      group = null;
+    }
     if (!group) group = _createTechnicalGroupBefore(container, child);
+    if (group && !(group.dataset && group.dataset.technicalGroupKey)) {
+      _setTechnicalGroupKey(group, childKey);
+    }
     const body = group.querySelector('.technical-group-body');
     const liveChild = _isLiveTechnicalElement(child);
     if (body) body.appendChild(child);
@@ -526,6 +568,8 @@ function addMsg(role, text, extra) {
     actionsHtml = '<span class="msg-actions">'
       + '<button onclick="setReplyTo(this)" title="' + escapeHtml(t('reply')) + '">\u21A9</button>'
       + '<button onclick="copyMsg(this)" title="' + escapeHtml(t('copy')) + '">\u{1F4CB}</button>'
+      + '<button onclick="copyMsgId(this)" title="' + escapeHtml(t('copyMsgId')) + '">ID</button>'
+      + '<button onclick="restartFromMsg(this)" title="' + escapeHtml(t('restartFromHere')) + '">\u21BA</button>'
       + '<button onclick="deleteMsg(this)" title="' + escapeHtml(t('delete')) + '">\u{1F5D1}</button>'
       + '</span>';
   }
@@ -592,6 +636,7 @@ function addMsg(role, text, extra) {
       }
     } else if (role === 'tool_result') {
       const tcId = (extra && extra.tc_id) || '';
+      if (tcId) _inner.dataset.tcId = tcId;
       if (tcId) {
         const tcEl = findToolCallElement(tcId, _existing || document);
         if (tcEl) { _attachToolResult(tcEl, text || ''); el.style.display = 'none'; return el; }
@@ -660,6 +705,7 @@ function addMsg(role, text, extra) {
     }
   } else if (role === 'tool_result') {
     const tcId = (extra && extra.tc_id) || '';
+    if (tcId) el.dataset.tcId = tcId;
     const resultText = text || '';
     // Try to attach to the matching tool_call element
     if (tcId) {
@@ -1688,6 +1734,7 @@ function toggleTrace(headerEl) {
 // Auto-scroll state: true by default. Only explicit user scroll input may turn
 // it off; DOM growth/reflow must not be interpreted as the user scrolling up.
 let _autoScroll = true;
+let _suppressTopLoadUntil = 0;
 function isNearBottom() { return _autoScroll; }
 
 (function() {
@@ -1746,11 +1793,23 @@ function setMessagesScrollTop(value) {
   if (m) m.scrollTop = value;
 }
 
+function scrollMessagesTop() {
+  _autoScroll = false;
+  _suppressTopLoadUntil = Date.now() + 700;
+  setMessagesScrollTop(0);
+  updateScrollNav();
+}
+
 function scrollBottom(force) {
   if (force) _autoScroll = true;
+  const m = document.getElementById('messages');
+  if (!m) return;
   if (_autoScroll) {
-    const m = document.getElementById('messages');
     setMessagesScrollTop(m.scrollHeight);
+    window.requestAnimationFrame(() => {
+      if (_autoScroll) setMessagesScrollTop(m.scrollHeight);
+      updateScrollNav();
+    });
   }
   updateScrollNav();
 }
@@ -1770,7 +1829,7 @@ document.getElementById('messages').addEventListener('scroll', updateScrollNav);
 
 // Auto-load older messages when user scrolls to top
 document.getElementById('messages').addEventListener('scroll', function() {
-  if (this.scrollTop === 0 && hasMoreMessages && !loadingMore) {
+  if (this.scrollTop === 0 && Date.now() > _suppressTopLoadUntil && hasMoreMessages && !loadingMore) {
     loadMoreMessages();
   }
 });

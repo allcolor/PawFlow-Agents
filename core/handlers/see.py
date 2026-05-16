@@ -129,14 +129,35 @@ class SeeHandler(BaseFsHandler):
         except Exception as e:
             return f"Error: screen capture failed: {e}"
 
-        if isinstance(result, dict) and not result.get("ok", True):
-            return f"Error: {result.get('error', 'unknown error')}"
+        data = result.get("data", result) if isinstance(result, dict) else result
+        if isinstance(data, dict) and not data.get("ok", True):
+            return f"Error: {data.get('error', 'unknown error')}"
 
-        if isinstance(result, str):
+        b64_data = None
+        width = height = None
+        if isinstance(data, dict):
+            for key in ("image", "base64", "content"):
+                if isinstance(data.get(key), str):
+                    b64_data = data[key]
+                    break
+            width = data.get("width")
+            height = data.get("height")
+        elif isinstance(data, str):
+            b64_data = data
+
+        if b64_data:
             try:
                 import base64
-                img_bytes = base64.b64decode(result)
-                return self._see_image("screenshot.png", img_bytes, "png")
+                img_bytes = base64.b64decode(b64_data)
+                rendered = self._see_image("screenshot.png", img_bytes, "png")
+                if width and height:
+                    return (
+                        f"Screen resolution: {width}x{height}. Use physical screen "
+                        "pixels for screen click/move/scroll coordinates; do not "
+                        "derive coordinates from the resized image rendered in chat.\n"
+                        + rendered
+                    )
+                return rendered
             except Exception as e:
                 return f"Error: screen capture decode failed: {e}"
 

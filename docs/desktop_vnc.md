@@ -55,7 +55,9 @@ Actions:
 | `scroll` | `x`, `y`, `amount` | Scroll at a coordinate. |
 | `mouse_position` | - | Read current pointer location. |
 
-Always take a screenshot first. The result includes the screen resolution, and all coordinates are physical pixels in that screenshot coordinate space.
+Always take a screenshot first. The result includes the screen resolution, and all coordinates are physical pixels in that screenshot coordinate space. Do not derive click positions from the resized screenshot preview rendered inside the chat; use the returned resolution, for example `2560x1440`, as the coordinate space for `x` and `y`.
+
+Use `see(path="screen", local=true)` or `see(path="screenshot", local=true)` when the agent needs to inspect the real desktop through the multimodal vision path. The shortcut accepts the relay screenshot format `{image, width, height}` and includes the same physical-pixel coordinate hint before the image payload.
 
 ## VNC Proxy
 

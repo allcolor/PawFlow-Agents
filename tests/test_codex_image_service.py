@@ -129,7 +129,7 @@ def test_codex_image_service_ref_ui_filters_fixed_provider():
 
     assert "pdef.provider || ''" in src
     assert "data-provider=\"' + fp + '\"" in src
-    assert "!wantedProvider || s.provider === wantedProvider" in src
+    assert "_serviceRefProviderMatches(s.provider, wantedProvider, aliases)" in src
 
 
 def test_codex_image_runtime_context_accepts_agent_name():

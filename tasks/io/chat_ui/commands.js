@@ -274,15 +274,13 @@ const HELP_DATA = {
       + '  /stop @ALL              — Force stop all agents',
   },
   '/restart_from': {
-    usage: '/restart_from [@agent|ALL] [N]',
+    usage: '/restart_from <index|msg_id>',
     short: t('commandShort.29'),
-    detail: 'Keeps only the last N messages as LLM context. Earlier messages stay in history but are ignored by the agent.\n\n'
-      + '  /restart_from            \u2014 Keep last 5 messages (shared)\n'
-      + '  /restart_from 10         \u2014 Keep last 10 messages\n'
-      + '  /restart_from @grok 3    \u2014 Keep last 3 for grok\'s context\n'
-      + '  /restart_from @ALL 5     \u2014 Restart all agents\n'
-      + '  /restart_from 0          — Empty context (fresh start, keeps system prompt)\n\n'
-      + 'Useful when the conversation gets too long or the agent loses focus.',
+    detail: 'Truncates the current conversation transcript at an absolute index or message id. Shared context is rebuilt and agent contexts are deleted.\n\n'
+      + '  /restart_from 0          — Empty transcript and contexts\n'
+      + '  /restart_from 10         — Keep the first 10 transcript messages\n'
+      + '  /restart_from abc123     — Keep messages through msg_id abc123\n\n'
+      + 'Use the message action button to copy a msg_id or restart from that message.',
   },
   '/summary': {
     usage: '/summary [@agent|ALL] [tokens]',

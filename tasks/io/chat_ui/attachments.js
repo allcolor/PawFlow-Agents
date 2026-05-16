@@ -80,6 +80,28 @@ function copyMsg(btn) {
   });
 }
 
+function copyMsgId(btn) {
+  const msg = btn.closest('.msg');
+  if (!msg || !msg.dataset.msgid) return;
+  navigator.clipboard.writeText(msg.dataset.msgid).then(() => {
+    btn.textContent = '\u2705';
+    setTimeout(() => { btn.textContent = 'ID'; }, 1500);
+  });
+}
+
+function restartFromMsg(btn) {
+  const msg = btn.closest('.msg');
+  if (!msg || !msg.dataset.msgid || !conversationId) return;
+  if (!confirm(t('restartFromHereConfirm'))) return;
+  showContextOp(t('contextRestarting'));
+  action$('restart_from', { msg_id: msg.dataset.msgid }).subscribe(data => {
+    if (data.error) {
+      hideContextOp();
+      addMsg('error', data.error);
+    }
+  });
+}
+
 function deleteMsg(btn) {
   const msg = btn.closest('.msg');
   if (!msg || !conversationId) return;

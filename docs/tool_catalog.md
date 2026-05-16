@@ -49,7 +49,7 @@ Editing preference: use `apply_patch` for patch-shaped changes and `batch_edit` 
 | `bash` | Run a shell command through the relay. Accepts `command` or `cmd`. |
 | `Monitor` | Run a command and return early on exit or regex match. |
 | `execute_script` | Execute a script/tool-backed snippet. |
-| `run_tests` | Run tests through the project environment. |
+| `run_tests` | Run tests through the project environment; accepts `max_output` to cap returned output. |
 | `security_scan` | Run security checks. |
 | `screen` | Screenshot/click/type/key/scroll/mouse-position against local or Docker desktop. |
 | `browser` | Browser automation action through the browser service. |

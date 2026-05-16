@@ -3,20 +3,20 @@
 // Loaded before commands.js — all functions are global.
 
 function cmdRestartFrom(text, parts) {
-  let restartAgent = '';
-  let restartN = 5;
+  let restartTarget = '';
   for (let i = 1; i < parts.length; i++) {
-    const v = parseInt(parts[i]);
-    if (!isNaN(v)) { restartN = v; }
-    else { restartAgent = stripTarget(parts[i]); }
+    const part = stripTarget(parts[i]);
+    if (!part || parts[i].startsWith('@')) continue;
+    restartTarget = part;
   }
   if (!conversationId) { addMsg('system', t('noConv')); return true; }
+  if (!restartTarget) { addMsg('system', 'Usage: /restart_from <index|msg_id>'); return true; }
   showContextOp(t('contextRestarting'));
-  const restartParams = { keep_last: restartN };
-  if (restartAgent) restartParams.agent_name = restartAgent;
+  const restartParams = /^\d+$/.test(restartTarget)
+    ? { restart_index: parseInt(restartTarget, 10) }
+    : { msg_id: restartTarget };
   action$('restart_from', restartParams).subscribe(data => {
     if (data.error) addMsg('error', data.error);
-    hideContextOp();
   });
   return true;
 }

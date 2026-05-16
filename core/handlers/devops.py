@@ -46,7 +46,7 @@ class RunTestsHandler(ToolHandler):
     def description(self) -> str:
         return (
             "Run pytest on test files. Returns pass/fail summary with first failure details. "
-            "Parameters: test_files (list), test_pattern (string, e.g. 'test_foo'), timeout (int, optional — no timeout by default)."
+            "Parameters: test_files (list), test_pattern (string, e.g. 'test_foo'), timeout (int, optional — no timeout by default), max_output (int, optional)."
         )
 
     @property
@@ -66,6 +66,10 @@ class RunTestsHandler(ToolHandler):
                 "timeout": {
                     "type": "integer",
                     "description": "Timeout in seconds. If omitted, no timeout is enforced (tests run to completion).",
+                },
+                "max_output": {
+                    "type": "integer",
+                    "description": "Max output characters (default: 3000, max: 150000).",
                 },
                 "service": {
                     "type": "string",
@@ -135,6 +139,11 @@ class RunTestsHandler(ToolHandler):
         test_pattern = arguments.get("test_pattern", "")
         timeout = arguments.get("timeout")  # None = uncapped (rely on real signals)
         service_name = arguments.get("service", "")
+        try:
+            max_output = int(arguments.get("max_output", 3000) or 3000)
+        except (TypeError, ValueError):
+            max_output = 3000
+        max_output = max(1, min(max_output, 150000))
 
         if not test_files:
             return "Error: no test files specified"
@@ -163,9 +172,8 @@ class RunTestsHandler(ToolHandler):
             output = stdout
             if stderr:
                 output += "\n" + stderr
-            # Truncate to 3000 chars
-            if len(output) > 3000:
-                output = output[:3000] + "\n... (truncated)"
+            if len(output) > max_output:
+                output = output[:max_output] + "\n... (truncated)"
             status = "PASSED" if rc == 0 else "FAILED"
             return f"Tests {status} (exit code {rc}):\n{output}"
         except Exception as e:

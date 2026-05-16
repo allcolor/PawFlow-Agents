@@ -1100,36 +1100,97 @@ class TestAgentLoopPersistentContext(unittest.TestCase):
         assert ctx is not None
         assert len(ctx) == 2
 
-    def test_restart_from_action_saves_context(self):
-        """restart_from saves a new context with last N messages."""
+    def test_restart_from_action_truncates_transcript_and_contexts(self):
+        """restart_from N keeps the first N messages and cascades context truncation."""
         from core.conversation_store import ConversationStore
         store = ConversationStore.instance()
         msgs = [
-            {"role": "system", "content": "sys"},
-            {"role": "user", "content": "msg1"},
-            {"role": "assistant", "content": "resp1"},
-            {"role": "user", "content": "msg2"},
-            {"role": "assistant", "content": "resp2"},
-            {"role": "user", "content": "msg3"},
-            {"role": "assistant", "content": "resp3"},
+            {"role": "user", "content": "msg1", "msg_id": "m1"},
+            {"role": "assistant", "content": "resp1", "msg_id": "m2"},
+            {"role": "user", "content": "msg2", "msg_id": "m3"},
+            {"role": "assistant", "content": "resp2", "msg_id": "m4"},
         ]
         store.save("cx4", msgs, user_id="testuser")
+        store.save_context("cx4", list(msgs))
+        store.save_agent_context("cx4", "assistant", list(msgs))
         task = self._make_task()
         ff = FlowFile(content=json.dumps({
             "action": "restart_from",
             "conversation_id": "cx4",
-            "keep_last": 2,
+            "restart_index": 2,
         }).encode())
-        result = task.execute(ff)
+        def _run_sync(_cid, op_name, fn, flowfile, agent_name=""):
+            flowfile.set_content(json.dumps({
+                "status": "accepted", "action": op_name,
+                "result": fn(),
+            }).encode())
+            return [flowfile]
+
+        from tasks.ai.actions.context_ops import _handle_context_ops
+        with patch.object(task, "_run_bg_context_op", side_effect=_run_sync):
+            result = _handle_context_ops(
+                task, "restart_from",
+                {"conversation_id": "cx4", "restart_index": 2},
+                store, "testuser", ff)
         data = json.loads(result[0].get_content())
         assert data["status"] == "accepted"
-        import time; time.sleep(0.5)  # background thread
-        # Context should be saved
-        ctx = store.load_context("cx4")
-        assert ctx is not None
-        # Should have system + 2 recent non-system messages
-        deserialized = ctx
-        assert len(deserialized) == 3  # system + 2 kept
+
+        transcript = store.load("cx4", user_id="testuser")
+        assert [m["msg_id"] for m in transcript] == ["m1", "m2"]
+        shared = store.load_context("cx4")
+        assert [m["content"] for m in shared] == ["msg1", "resp1"]
+        agent_ctx = store.load_agent_context("cx4", "assistant")
+        assert agent_ctx is not None
+        assert [m["msg_id"] for m in agent_ctx] == ["m1", "m2"]
+
+    def test_restart_from_action_accepts_msg_id_and_zero(self):
+        """restart_from supports msg_id targets and index 0 clears everything."""
+        from core.conversation_store import ConversationStore
+        store = ConversationStore.instance()
+        store.save("cx5", [
+            {"role": "user", "content": "a", "msg_id": "a1"},
+            {"role": "assistant", "content": "b", "msg_id": "b2"},
+            {"role": "user", "content": "c", "msg_id": "c3"},
+        ], user_id="testuser")
+        task = self._make_task()
+        def _run_sync(_cid, op_name, fn, flowfile, agent_name=""):
+            flowfile.set_content(json.dumps({
+                "status": "accepted", "action": op_name,
+                "result": fn(),
+            }).encode())
+            return [flowfile]
+
+        from tasks.ai.actions.context_ops import _handle_context_ops
+        ff_msg = FlowFile(content=json.dumps({
+            "action": "restart_from",
+            "conversation_id": "cx5",
+            "msg_id": "b2",
+        }).encode())
+        with patch.object(task, "_run_bg_context_op", side_effect=_run_sync):
+            result = _handle_context_ops(
+                task, "restart_from",
+                {"conversation_id": "cx5", "msg_id": "b2"},
+                store, "testuser", ff_msg)
+        assert json.loads(result[0].get_content())["status"] == "accepted"
+        assert [m["msg_id"] for m in store.load("cx5", user_id="testuser")] == ["a1", "b2"]
+        store.save_agent_context("cx5", "assistant", [
+            {"role": "user", "content": "a", "msg_id": "a1"},
+        ])
+
+        ff_zero = FlowFile(content=json.dumps({
+            "action": "restart_from",
+            "conversation_id": "cx5",
+            "restart_index": 0,
+        }).encode())
+        with patch.object(task, "_run_bg_context_op", side_effect=_run_sync):
+            result = _handle_context_ops(
+                task, "restart_from",
+                {"conversation_id": "cx5", "restart_index": 0},
+                store, "testuser", ff_zero)
+        assert json.loads(result[0].get_content())["status"] == "accepted"
+        assert store.load("cx5", user_id="testuser") == []
+        assert store.load_context("cx5") in (None, [])
+        assert store.load_agent_context("cx5", "assistant") is None
 
 
 class TestContextActionsAsync(unittest.TestCase):

@@ -1319,43 +1319,125 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
 
     if action == "restart_from":
         conv_id = body.get("conversation_id", "")
-        _rf_agent = body.get("agent_name", "")
-        keep_last = int(body.get("keep_last", 5))
+        _rf_target = str(
+            body.get("msg_id")
+            or body.get("restart_msg_id")
+            or body.get("restart_from")
+            or ""
+        ).strip()
+        _rf_index_raw = body.get("restart_index", None)
+        if _rf_index_raw is None and "keep_last" in body:
+            _rf_index_raw = body.get("keep_last")
+        if _rf_index_raw is None and "count" in body:
+            _rf_index_raw = body.get("count")
         if not conv_id:
             flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         _rf_msgs = store.load(conv_id, user_id=user_id)
-        if _rf_msgs:
-            _rf_msgs = [m for m in _rf_msgs
-                        if isinstance(m, dict)
-                        and not m.get("display_only")
-                        and not m.get("tool_calls")
-                        and m.get("role") != "tool"]
         if not _rf_msgs:
             flowfile.set_content(json.dumps({"error": "Conversation not found"}).encode())
             flowfile.set_attribute("http.response.status", "404")
             return [flowfile]
 
-        def _do_restart():
-            deserialized = self._deserialize_messages(_rf_msgs, conversation_id=conv_id)
-            system_msgs = [m for m in deserialized if m.role == "system"]
-            non_system = [m for m in deserialized if m.role != "system"]
-            if keep_last == 0:
-                new_context = system_msgs
-            else:
-                kept = non_system[-keep_last:] if len(non_system) > keep_last else non_system
-                new_context = system_msgs + kept
-            serialized_ctx = self._serialize_messages(new_context)
-            store.save_agent_context(conv_id, _rf_agent, serialized_ctx)
-            return {"kept_messages": len(new_context) - len(system_msgs),
-                    "agent": _rf_agent or "shared"}
+        if _rf_target:
+            _rf_idx = next(
+                (i for i, m in enumerate(_rf_msgs)
+                 if isinstance(m, dict) and m.get("msg_id") == _rf_target),
+                -1,
+            )
+            if _rf_idx < 0:
+                flowfile.set_content(json.dumps({
+                    "error": f"msg_id {_rf_target} not found",
+                }).encode())
+                flowfile.set_attribute("http.response.status", "404")
+                return [flowfile]
+            keep_count = _rf_idx + 1
+        else:
+            if _rf_index_raw is None:
+                flowfile.set_content(json.dumps({
+                    "error": "Missing restart_index or msg_id",
+                }).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            try:
+                keep_count = int(_rf_index_raw)
+            except (TypeError, ValueError):
+                flowfile.set_content(json.dumps({
+                    "error": "restart_index must be an integer or use msg_id",
+                }).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            if keep_count < 0:
+                flowfile.set_content(json.dumps({
+                    "error": "restart_index must be >= 0",
+                }).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
 
-        _rf_lock_agent = (
-            "" if _rf_agent in ("", "ALL", "shared") else _rf_agent)
+        kept_msgs = list(_rf_msgs[:keep_count])
+        drop_ids = {
+            str(m.get("msg_id") or "")
+            for m in _rf_msgs[keep_count:]
+            if isinstance(m, dict) and m.get("msg_id")
+        }
+
+        def _do_restart():
+            import time as _time
+
+            deleted_contexts = 0
+            if keep_count == 0:
+                lock = store._get_conv_lock(conv_id)
+                with lock:
+                    rows = list(store._transcript_log(conv_id).iter_rows())
+                    meta = next((dict(r) for r in rows if r.get("t") == "meta"), None)
+                    if meta is None:
+                        meta = {
+                            "t": "meta", "user_id": user_id, "status": "idle",
+                            "created_at": _time.time(), "expires_at": 0,
+                        }
+                    meta["status"] = "idle"
+                    meta["ts"] = _time.time()
+                    store._transcript_log(conv_id).replace_dicts([
+                        store._stamp_line(conv_id, meta),
+                    ])
+                with store._cache_lock:
+                    store._cache.pop(conv_id, None)
+                store._invalidate_ctx_cache(conv_id)
+                store._reload_cache(conv_id)
+                store.save_agent_context(conv_id, "", [])
+                agent_names = {
+                    a for a in store.list_agent_contexts(conv_id)
+                    if a and a != "*"
+                }
+                conv_dir = store._conv_dir(conv_id)
+                if conv_dir.is_dir():
+                    for entry in conv_dir.iterdir():
+                        if (entry.is_dir()
+                                and store._jsonl_exists(entry / "context.jsonl")):
+                            agent_names.add(entry.name)
+                for agent_name in sorted(agent_names):
+                    if store.delete_agent_context(conv_id, agent_name):
+                        deleted_contexts += 1
+            elif drop_ids:
+                store._remove_msg_ids_from_files(conv_id, drop_ids)
+            try:
+                from core.bucket_store import BucketStore
+                BucketStore.get(store._conv_dir(conv_id)).wipe()
+            except Exception:
+                logger.debug("restart_from bucket wipe failed", exc_info=True)
+            return {
+                "operation": "restart_from",
+                "kept_messages": len(kept_msgs),
+                "deleted_contexts": deleted_contexts,
+                "msg_id": _rf_target or None,
+                "restart_index": keep_count,
+                "agent": "shared",
+            }
+
         return self._run_bg_context_op(
             conv_id, "restart_from", _do_restart, flowfile,
-            agent_name=_rf_lock_agent)
+            agent_name="")
 
     if action == "edit_message":
         conv_id = body.get("conversation_id", "")

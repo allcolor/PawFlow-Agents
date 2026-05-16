@@ -711,7 +711,7 @@ if (typeof hljs !== 'undefined') {
 <div class="messages-wrap">
   <div class="messages" id="messages"></div>
   <div class="scroll-nav" id="scrollNav">
-    <button onclick="document.getElementById('messages').scrollTop=0;document.getElementById('input').focus()" title="Scroll to top" data-i18n-title="scrollTopTitle">&#x2191;</button>
+    <button onclick="scrollMessagesTop();document.getElementById('input').focus()" title="Scroll to top" data-i18n-title="scrollTopTitle">&#x2191;</button>
     <button onclick="scrollBottom(true);document.getElementById('input').focus()" title="Scroll to bottom" data-i18n-title="scrollBottomTitle">&#x2193;</button>
   </div>
 </div>

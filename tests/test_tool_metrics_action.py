@@ -22,6 +22,23 @@ def test_toolmetrics_alias_parses_to_action():
     assert body["conversation_id"] == "conv1"
 
 
+def test_restart_from_slash_parses_index_and_msg_id():
+    by_index = _parse_command("/restart_from 0", "conv1", "user1", "agent1")
+    by_msg = _parse_command("/restart_from abc123", "conv1", "user1", "agent1")
+
+    assert by_index["action"] == "restart_from"
+    assert by_index["restart_index"] == 0
+    assert by_msg["action"] == "restart_from"
+    assert by_msg["msg_id"] == "abc123"
+
+
+def test_clear_slash_is_client_only_not_new_conversation():
+    body = _parse_command("/clear", "conv1", "user1", "agent1")
+
+    assert body["_client_only"] is True
+    assert body["command"] == "/clear"
+
+
 def test_tool_metrics_action_returns_metrics_snapshot():
     ToolRegistry.reset_metrics()
     ToolRegistry._record_metric("read", True, 12.5)

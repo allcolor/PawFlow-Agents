@@ -846,6 +846,7 @@ function connectSSE(cid, onReady, opts) {
       }
     }
     if (typeof applyTechnicalMessageGrouping === 'function') applyTechnicalMessageGrouping();
+    scrollBottom();
     if (!data.task_id) document.getElementById('status').textContent = t('usingTool', {tool: (_TOOL_DISPLAY[data.tool] || data.tool)});
   });
 
@@ -869,6 +870,7 @@ function connectSSE(cid, onReady, opts) {
         if (tcEl.dataset) delete tcEl.dataset.live;
         if (data.msg_id && typeof _seenMsgIds !== 'undefined') _seenMsgIds.add(data.msg_id);
         if (typeof applyTechnicalMessageGrouping === 'function') applyTechnicalMessageGrouping();
+        scrollBottom();
         return;
       }
     }
@@ -890,6 +892,7 @@ function connectSSE(cid, onReady, opts) {
       if (tb) { tb.content.appendChild(trEl); scrollBottom(); }
     }
     if (typeof applyTechnicalMessageGrouping === 'function') applyTechnicalMessageGrouping();
+    scrollBottom();
   });
 
   eventSource.addEventListener('bg_task_update', (e) => {

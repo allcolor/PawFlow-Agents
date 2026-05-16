@@ -51,21 +51,28 @@ The proxy parses HTTP keep-alive traffic as a sequence of request/response
 exchanges on the same TLS socket. Each exchange receives its own request id so a
 Claude Code startup probe cannot be confused with the real model turn. The known
 quota probe (`/v1/messages` with `max_tokens: 1` and user content `quota`) is
-observed for diagnostics but its response body is ignored. If Anthropic compresses
-an observed response (`gzip` or `deflate`), only the side-channel copy is decoded
-before SSE/JSON parsing; the proxied bytes sent back to Claude Code remain
-unchanged.
+observed for diagnostics but its response body is ignored. Claude Code internal
+JSON title responses are filtered after parsing so title payloads are not shown
+as assistant messages without blocking real SSE streams. The provider also drops
+first text blocks that are exactly JSON title objects when Claude Code emits them
+as SSE deltas. If Anthropic compresses an observed response (`gzip` or
+`deflate`), only the side-channel copy is decoded before SSE/JSON parsing; the
+proxied bytes sent back to Claude Code remain unchanged.
 
 The provider assembles responses from those events:
 
-- `content_block_delta` text deltas become assistant text.
-- `thinking_delta` becomes hidden thinking.
+- `content_block_delta` text deltas stream to the UI immediately and are
+  persisted as assistant messages when the corresponding content block stops.
+- `thinking_delta` streams to the thinking UI immediately and is persisted on
+  the flushed assistant block.
 - `tool_use` blocks and `input_json_delta` are emitted as live observed tool
   events for display/persistence only. PawFlow never re-executes them; Claude
   Code already ran those tools inside its own session.
-- Outgoing `/v1/messages` request bodies are observed for `tool_result` blocks
-  so tool results can appear live as soon as Claude Code sends them back to the
-  model.
+- Outgoing `/v1/messages` request bodies are observed for both assistant
+  `tool_use` blocks and user `tool_result` blocks. This preserves live ordering
+  even when a response-side tool block is delayed or missed; provider events are
+  deduplicated by tool id. Tool results keep the real result content; only
+  diagnostic wire dumps are scrubbed/redacted.
 - `message_delta.usage` updates token usage.
 - Claude Code command hooks publish `Stop`, `StopFailure`, `PreCompact`,
   `PostCompact`, and `SessionEnd` lifecycle events over the same WebSocket.
@@ -96,9 +103,13 @@ over `/cc_sessions`, then starts Claude Code with `HOME` and
 credential, MCP config, prompt file, and attachment paths identical to the
 working `claude-code` execution path. Before launch, PawFlow also writes the
 session-local Claude settings that mark onboarding complete, trust the generated
-session workdir, approve the PawFlow MCP server from `.mcp.json`, and accept
-bypass-permissions mode inside the isolated container. This prevents first-run
-interactive prompts from consuming the pasted PawFlow prompt.
+session workdir, approve the PawFlow MCP server from `.mcp.json`, accept
+bypass-permissions mode inside the isolated container, and add `Agent` plus
+`Bash` to `permissions.deny`. CC interactive must not launch Claude Code's
+internal sub-agent tool or run its local shell directly; PawFlow owns agent
+delegation, shell execution, and records those turns itself. This prevents
+first-run interactive prompts from consuming the pasted PawFlow prompt and keeps
+multi-agent/tool execution inside PawFlow.
 
 ## Live Debugging
 

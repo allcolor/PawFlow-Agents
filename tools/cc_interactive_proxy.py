@@ -239,7 +239,8 @@ class EventClient:
         event.setdefault("timestamp", time.time())
         with self.lock:
             try:
-                self._send({"type": "event", "event": _scrub(event)})
+                payload = _scrub(event) if event.get("type") == "wire" else event
+                self._send({"type": "event", "event": payload})
             except Exception as exc:
                 _log(f"event send failed: {exc}")
                 try:
@@ -458,7 +459,15 @@ def _content_text(content) -> str:
     return str(content)
 
 
-def _emit_observed_tool_results(request_id: str, path: str, body: bytes) -> None:
+def _is_title_json_text(text: str) -> bool:
+    try:
+        payload = json.loads(text)
+    except Exception:
+        return False
+    return isinstance(payload, dict) and set(payload.keys()) == {"title"}
+
+
+def _emit_observed_tool_blocks(request_id: str, path: str, body: bytes) -> None:
     if not path.startswith("/v1/messages"):
         return
     try:
@@ -469,30 +478,49 @@ def _emit_observed_tool_results(request_id: str, path: str, body: bytes) -> None
     if not isinstance(messages, list):
         return
     for message in messages:
-        if not isinstance(message, dict) or message.get("role") != "user":
+        if not isinstance(message, dict):
             continue
+        role = message.get("role")
         content = message.get("content") or []
         if not isinstance(content, list):
             continue
         for block in content:
-            if not isinstance(block, dict) or block.get("type") != "tool_result":
+            if not isinstance(block, dict):
                 continue
-            tool_use_id = block.get("tool_use_id") or block.get("id") or ""
-            if not tool_use_id:
-                continue
-            result = _content_text(block.get("content"))
-            _log(
-                f"emit tool_result request={request_id} path={path} "
-                f"tool_use_id={tool_use_id} result_len={len(result)} "
-                f"preview={_preview(result)!r}")
-            EVENTS.emit({
-                "type": "tool_result",
-                "request_id": request_id,
-                "path": path,
-                "tool_use_id": tool_use_id,
-                "content": result,
-                "is_error": bool(block.get("is_error")),
-            })
+            btype = block.get("type")
+            if role == "assistant" and btype == "tool_use":
+                tool_use_id = block.get("id") or ""
+                if not tool_use_id:
+                    continue
+                args = block.get("input") or {}
+                _log(
+                    f"emit tool_use request={request_id} path={path} "
+                    f"tool_use_id={tool_use_id} name={block.get('name', '')}")
+                EVENTS.emit({
+                    "type": "tool_use",
+                    "request_id": request_id,
+                    "path": path,
+                    "tool_use_id": tool_use_id,
+                    "name": block.get("name", ""),
+                    "arguments": args if isinstance(args, dict) else {},
+                })
+            elif role == "user" and btype == "tool_result":
+                tool_use_id = block.get("tool_use_id") or block.get("id") or ""
+                if not tool_use_id:
+                    continue
+                result = _content_text(block.get("content"))
+                _log(
+                    f"emit tool_result request={request_id} path={path} "
+                    f"tool_use_id={tool_use_id} result_len={len(result)} "
+                    f"preview={_preview(result)!r}")
+                EVENTS.emit({
+                    "type": "tool_result",
+                    "request_id": request_id,
+                    "path": path,
+                    "tool_use_id": tool_use_id,
+                    "content": result,
+                    "is_error": bool(block.get("is_error")),
+                })
 
 
 class HTTPRequestObserver:
@@ -516,8 +544,10 @@ class HTTPRequestObserver:
             method = parts[0] if parts else ""
             path = parts[1] if len(parts) > 1 else ""
             request_id = self.tracker.new_request_id()
-            ignore_response = _is_quota_probe(path, body)
-            reason = "quota_probe" if ignore_response else ""
+            reason = ""
+            if _is_quota_probe(path, body):
+                reason = "quota_probe"
+            ignore_response = bool(reason)
             self.tracker.push({
                 "request_id": request_id,
                 "method": method,
@@ -537,7 +567,7 @@ class HTTPRequestObserver:
                 "body_bytes": len(body),
                 "ignore_reason": reason,
             })
-            _emit_observed_tool_results(request_id, path, body)
+            _emit_observed_tool_blocks(request_id, path, body)
 
 
 class ChunkedBodyObserver:
@@ -804,6 +834,10 @@ class JSONResponseObserver:
         content = payload.get("content") or []
         if not isinstance(content, list):
             self._ignore("message_content_not_list", "")
+            return
+        text_blocks = [block for block in content if isinstance(block, dict) and block.get("type") == "text"]
+        if len(text_blocks) == 1 and _is_title_json_text(str(text_blocks[0].get("text", ""))):
+            self._ignore("title_json_message", "message")
             return
         emitted_blocks = 0
         for idx, block in enumerate(content):

@@ -59,7 +59,7 @@ def test_technical_grouping_is_expression_driven_and_post_rendered():
     assert "String(text || '').trim()) collapseTechnicalGroups()" in MESSAGES_JS
     assert "displayText.trim() && s.el && !s.el.dataset.technicalGroupsCollapsed" in SSE_JS
     assert "_attachToolResult(tcEl, data.result || '');" in SSE_JS
-    assert "if (typeof applyTechnicalMessageGrouping === 'function') applyTechnicalMessageGrouping();\n        return;" in SSE_JS
+    assert "_attachToolResult(tcEl, data.result || '');" in SSE_JS
     assert "const groupTechnicalMessages = !!data.group_technical_messages" in CONVERSATIONS_JS
     assert "setTechnicalMessageGrouping(groupTechnicalMessages)" in CONVERSATIONS_JS
     assert "updateTechnicalGroupingToggle(groupTechnicalMessages)" in CONVERSATIONS_JS
@@ -95,6 +95,13 @@ def test_autoscroll_only_stops_on_user_scroll_intent():
     assert "hasUserScrollIntent()" in MESSAGES_JS
     assert "m.scrollTop < _lastScrollTop" not in MESSAGES_JS
     assert "container.scrollTop = container.scrollHeight - prevHeight" not in CONVERSATIONS_JS
+
+
+def test_live_tool_events_keep_chat_scrolled():
+    tool_call_block = SSE_JS[SSE_JS.index("eventSource.addEventListener('tool_call'"):SSE_JS.index("eventSource.addEventListener('tool_result'")]
+    tool_result_block = SSE_JS[SSE_JS.index("eventSource.addEventListener('tool_result'"):SSE_JS.index("eventSource.addEventListener('bg_task_update'")]
+    assert "scrollBottom();" in tool_call_block
+    assert "scrollBottom();" in tool_result_block
 
 
 def test_inline_audio_uses_stable_global_player():

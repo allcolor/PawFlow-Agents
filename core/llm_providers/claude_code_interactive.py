@@ -19,23 +19,37 @@ from core.llm_providers.cli_shared import textualize_message
 from core.llm_providers.claude_code_session import ClaudeCodeSessionMixin
 
 
+def _is_title_json_text(text: str) -> bool:
+    try:
+        payload = json.loads((text or "").strip())
+    except Exception:
+        return False
+    return isinstance(payload, dict) and set(payload.keys()) == {"title"}
+
+
 class _CCITurnCoordinator:
     def __init__(self, event_service, session_token: str, callback=None,
-                 thinking_callback=None, block_callback=None):
+                 thinking_callback=None, block_callback=None,
+                 turn_callback=None):
         self.event_service = event_service
         self.session_token = session_token
         self.callback = callback
         self.thinking_callback = thinking_callback
         self.block_callback = block_callback
+        self.turn_callback = turn_callback
         self.text_parts: list[str] = []
         self.thinking_parts: list[str] = []
         self.tool_blocks: dict[int, dict] = {}
         self.tool_by_id: dict[str, dict] = {}
+        self.pending_tool_results: dict[str, list[dict]] = {}
+        self.emitted_tool_use_ids: set[str] = set()
+        self.emitted_tool_result_ids: set[str] = set()
         self.usage = {}
         self.lifecycle_events: list[dict] = []
         self.current_block_type = None
         self._text_block_buf = ""
         self._thinking_block_buf = ""
+        self._defer_text_block = False
 
     def run(self, abort_event=None):
         from core.llm_client import LLMResponse
@@ -50,6 +64,9 @@ class _CCITurnCoordinator:
             etype = event.get("type", "")
             if etype == "request_error":
                 raise RuntimeError(event.get("error", "CC interactive proxy request failed"))
+            if etype == "tool_use":
+                self._emit_observed_tool_use(event)
+                continue
             if etype == "tool_result":
                 self._emit_tool_result(event)
                 continue
@@ -57,6 +74,8 @@ class _CCITurnCoordinator:
                 self.lifecycle_events.append(event)
                 hook_name = event.get("hook_event_name", "")
                 if hook_name == "Stop":
+                    self._flush_text_block()
+                    self._flush_thinking_block()
                     self._emit_pending_tool_uses()
                     done = True
                 elif hook_name == "StopFailure":
@@ -115,12 +134,8 @@ class _CCITurnCoordinator:
                 idx = int(payload.get("index", 0) or 0)
                 if idx in self.tool_blocks:
                     self._emit_tool_use(idx)
-                if self._text_block_buf and self.callback:
-                    self.callback(self._text_block_buf)
-                if self._thinking_block_buf and self.thinking_callback:
-                    self.thinking_callback(self._thinking_block_buf)
-                self._text_block_buf = ""
-                self._thinking_block_buf = ""
+                self._flush_text_block()
+                self._flush_thinking_block()
                 self.current_block_type = None
             elif ptype == "message_delta":
                 usage = payload.get("usage") or {}
@@ -151,30 +166,68 @@ class _CCITurnCoordinator:
 
     def _append_text(self, text: str) -> None:
         if text:
-            self.text_parts.append(text)
             self._text_block_buf += text
+            if not self.text_parts and not self._defer_text_block:
+                self._defer_text_block = self._text_block_buf.lstrip().startswith("{")
+            if self._defer_text_block:
+                return
+            self.text_parts.append(text)
+            if self.callback:
+                self.callback(text)
 
     def _append_thinking(self, text: str) -> None:
         if text:
             self.thinking_parts.append(text)
             self._thinking_block_buf += text
+            if self.thinking_callback:
+                self.thinking_callback(text)
+
+    def _flush_text_block(self) -> None:
+        if not self._text_block_buf:
+            return
+        text = self._text_block_buf
+        self._text_block_buf = ""
+        deferred = self._defer_text_block
+        self._defer_text_block = False
+        if deferred:
+            if _is_title_json_text(text):
+                return
+            self.text_parts.append(text)
+            if self.callback:
+                self.callback(text)
+        if self.turn_callback:
+            self.turn_callback(text, [], "")
+
+    def _flush_thinking_block(self) -> None:
+        if not self._thinking_block_buf:
+            return
+        thinking = self._thinking_block_buf
+        self._thinking_block_buf = ""
+        if self.turn_callback:
+            self.turn_callback("", [], thinking)
 
     def _emit_tool_use(self, idx: int) -> None:
         block = self.tool_blocks.get(idx) or {}
         if not block or block.get("emitted"):
             return
+        tool_id = block.get("id") or f"cci_{uuid.uuid4().hex[:12]}"
         raw = block.get("json", "") or "{}"
         try:
             args = json.loads(raw)
         except Exception:
             args = {}
         block["emitted"] = True
+        if tool_id in self.emitted_tool_use_ids:
+            self._emit_pending_tool_results(tool_id)
+            return
+        self.emitted_tool_use_ids.add(tool_id)
         if self.block_callback:
             self.block_callback("tool_use", {
-                "id": block.get("id") or f"cci_{uuid.uuid4().hex[:12]}",
+                "id": tool_id,
                 "name": block.get("name", ""),
                 "arguments": args,
             })
+        self._emit_pending_tool_results(tool_id)
 
     def _emit_pending_tool_uses(self) -> None:
         for idx in list(self.tool_blocks):
@@ -184,12 +237,61 @@ class _CCITurnCoordinator:
         tc_id = event.get("tool_use_id", "") or ""
         if not tc_id:
             return
+        if tc_id in self.emitted_tool_result_ids:
+            return
         block = self.tool_by_id.get(tc_id) or {}
-        if block:
-            for idx, candidate in self.tool_blocks.items():
-                if candidate is block:
-                    self._emit_tool_use(idx)
-                    break
+        if not block.get("emitted"):
+            self.pending_tool_results.setdefault(tc_id, []).append(dict(event))
+            return
+        self._emit_tool_result_now(event, block)
+
+    def _emit_observed_tool_use(self, event: dict) -> None:
+        tc_id = event.get("tool_use_id", "") or event.get("id", "") or ""
+        if not tc_id:
+            return
+        block = self.tool_by_id.get(tc_id)
+        if block is None:
+            args = event.get("arguments") or {}
+            block = {
+                "id": tc_id,
+                "name": event.get("name", ""),
+                "json": json.dumps(args if isinstance(args, dict) else {}, ensure_ascii=False),
+                "emitted": False,
+            }
+            self.tool_by_id[tc_id] = block
+        if block.get("emitted") or tc_id in self.emitted_tool_use_ids:
+            block["emitted"] = True
+            self._emit_pending_tool_results(tc_id)
+            return
+        block["emitted"] = True
+        self.emitted_tool_use_ids.add(tc_id)
+        try:
+            args = json.loads(block.get("json", "") or "{}")
+        except Exception:
+            args = {}
+        if self.block_callback:
+            self.block_callback("tool_use", {
+                "id": tc_id,
+                "name": block.get("name", ""),
+                "arguments": args,
+            })
+        self._emit_pending_tool_results(tc_id)
+
+    def _emit_pending_tool_results(self, tc_id: str) -> None:
+        if not tc_id:
+            return
+        block = self.tool_by_id.get(tc_id) or {}
+        if not block.get("emitted"):
+            return
+        pending = self.pending_tool_results.pop(tc_id, [])
+        for event in pending:
+            self._emit_tool_result_now(event, block)
+
+    def _emit_tool_result_now(self, event: dict, block: dict) -> None:
+        tc_id = event.get("tool_use_id", "") or ""
+        if not tc_id or tc_id in self.emitted_tool_result_ids:
+            return
+        self.emitted_tool_result_ids.add(tc_id)
         if self.block_callback:
             self.block_callback("tool_result", {
                 "tc_id": tc_id,
@@ -233,11 +335,10 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
 
         coord = _CCITurnCoordinator(
             event_service, state.session_token, callback=callback,
-            thinking_callback=thinking_callback, block_callback=block_callback)
+            thinking_callback=thinking_callback, block_callback=block_callback,
+            turn_callback=turn_callback)
         response = coord.run(getattr(self, "_abort", None))
         response.model = model or self.default_model
-        if turn_callback:
-            turn_callback(response.content, response.tool_calls)
         return response
 
     def _cci_prompt(self, messages, tools, workdir: str, container_workdir: str,

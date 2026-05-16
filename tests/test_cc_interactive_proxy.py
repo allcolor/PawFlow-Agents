@@ -105,6 +105,75 @@ def test_request_observer_emits_observed_tool_results(monkeypatch):
     }
 
 
+def test_request_observer_emits_observed_tool_use_before_result(monkeypatch):
+    monkeypatch.setenv("PAWFLOW_CCI_SESSION_TOKEN", "sess")
+    proxy = importlib.import_module("tools.cc_interactive_proxy")
+    events = []
+    monkeypatch.setattr(proxy.EVENTS, "emit", events.append)
+    body = json.dumps({
+        "messages": [
+            {"role": "assistant", "content": [{
+                "type": "tool_use",
+                "id": "toolu_1",
+                "name": "Bash",
+                "input": {"command": "git status"},
+            }]},
+            {"role": "user", "content": [{
+                "type": "tool_result",
+                "tool_use_id": "toolu_1",
+                "content": "clean",
+            }]},
+        ],
+    }).encode()
+    chunk = (
+        b"POST /v1/messages?beta=true HTTP/1.1\r\n"
+        b"Host: api.anthropic.com\r\n"
+        + f"Content-Length: {len(body)}\r\n\r\n".encode()
+        + body
+    )
+
+    proxy.HTTPRequestObserver(proxy.HTTPExchangeTracker("r1")).feed(chunk)
+
+    assert [event["type"] for event in events] == ["request_start", "tool_use", "tool_result"]
+    assert events[1] == {
+        "type": "tool_use",
+        "request_id": "r1",
+        "path": "/v1/messages?beta=true",
+        "tool_use_id": "toolu_1",
+        "name": "Bash",
+        "arguments": {"command": "git status"},
+    }
+    assert events[2]["tool_use_id"] == "toolu_1"
+    assert events[2]["content"] == "clean"
+
+
+def test_request_observer_does_not_ignore_title_prompt_requests(monkeypatch):
+    monkeypatch.setenv("PAWFLOW_CCI_SESSION_TOKEN", "sess")
+    proxy = importlib.import_module("tools.cc_interactive_proxy")
+    events = []
+    monkeypatch.setattr(proxy.EVENTS, "emit", events.append)
+    body = json.dumps({
+        "messages": [{
+            "role": "user",
+            "content": "Generate a JSON title for this conversation: Continue PawFlow session context",
+        }],
+    }).encode()
+    chunk = (
+        b"POST /v1/messages?beta=true HTTP/1.1\r\n"
+        b"Host: api.anthropic.com\r\n"
+        + f"Content-Length: {len(body)}\r\n\r\n".encode()
+        + body
+    )
+
+    tracker = proxy.HTTPExchangeTracker("r1")
+    proxy.HTTPRequestObserver(tracker).feed(chunk)
+
+    ctx = tracker.pop()
+    assert ctx["ignore_response"] is False
+    assert ctx["ignore_reason"] == ""
+    assert events[0]["ignore_reason"] == ""
+
+
 def test_proxy_observer_errors_do_not_affect_forwarding(monkeypatch):
     monkeypatch.setenv("PAWFLOW_CCI_SESSION_TOKEN", "sess")
     proxy = importlib.import_module("tools.cc_interactive_proxy")
@@ -131,6 +200,23 @@ def test_proxy_scrubs_large_payload_values(monkeypatch):
     assert scrubbed["ok"] == "short"
     assert scrubbed["source"]["length"] == 600
     assert len(scrubbed["source"]["sha256"]) == 64
+
+
+def test_event_client_preserves_provider_payload_but_scrubs_wire(monkeypatch):
+    monkeypatch.setenv("PAWFLOW_CCI_SESSION_TOKEN", "sess")
+    proxy = importlib.import_module("tools.cc_interactive_proxy")
+    sent = []
+    client = proxy.EventClient("", "", "sess")
+    client.sock = object()
+    monkeypatch.setattr(client, "_send", sent.append)
+
+    large = "x" * 800
+    client.emit({"type": "tool_result", "content": large})
+    client.emit({"type": "wire", "content": large})
+
+    assert sent[0]["event"]["content"] == large
+    assert sent[1]["event"]["content"]["length"] == len(large)
+    assert len(sent[1]["event"]["content"]["sha256"]) == 64
 
 
 def test_wire_logger_emits_full_body_with_redacted_sensitive_headers(monkeypatch):
@@ -374,6 +460,46 @@ def test_response_observer_converts_json_message_to_stream_events(monkeypatch):
             "request_id": "r-json",
             "event": "message_stop",
             "payload": {"type": "message_stop"},
+        },
+    ]
+
+
+def test_response_observer_ignores_json_title_message(monkeypatch):
+    monkeypatch.setenv("PAWFLOW_CCI_SESSION_TOKEN", "sess")
+    proxy = importlib.import_module("tools.cc_interactive_proxy")
+    events = []
+    monkeypatch.setattr(proxy.EVENTS, "emit", events.append)
+    body = json.dumps({
+        "type": "message",
+        "content": [{"type": "text", "text": json.dumps({"title": "Continue PawFlow session context"})}],
+    }).encode()
+    response = (
+        b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: "
+        + str(len(body)).encode()
+        + b"\r\n\r\n"
+        + body
+    )
+
+    tracker = proxy.HTTPExchangeTracker("r-title")
+    tracker.push({"request_id": "r-title", "path": "/v1/messages", "ignore_response": False})
+    proxy.HTTPResponseObserver(tracker).feed(response)
+
+    assert events == [
+        {
+            "type": "response_start",
+            "request_id": "r-title",
+            "path": "/v1/messages",
+            "status": "200",
+            "content_type": "application/json",
+            "content_length": len(body),
+            "content_encoding": "",
+            "chunked": False,
+        },
+        {
+            "type": "response_ignored",
+            "request_id": "r-title",
+            "reason": "title_json_message",
+            "payload_type": "message",
         },
     ]
 

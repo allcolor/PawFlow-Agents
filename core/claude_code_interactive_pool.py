@@ -331,6 +331,7 @@ class InteractiveClaudeCodePool:
         settings_path = Path(workdir) / ".claude" / "settings.json"
         settings_path.parent.mkdir(parents=True, exist_ok=True)
         settings = self._read_json(settings_path)
+        self._deny_claude_agent_tool(settings)
         settings.update({
             "hooks": hooks,
             "enableAllProjectMcpServers": True,
@@ -375,6 +376,20 @@ class InteractiveClaudeCodePool:
         except Exception:
             pass
         return {}
+
+    @staticmethod
+    def _deny_claude_agent_tool(settings: dict) -> None:
+        permissions = settings.get("permissions")
+        if not isinstance(permissions, dict):
+            permissions = {}
+        deny = permissions.get("deny")
+        if not isinstance(deny, list):
+            deny = []
+        for tool_name in ("Agent", "Bash"):
+            if tool_name not in deny:
+                deny.append(tool_name)
+        permissions["deny"] = deny
+        settings["permissions"] = permissions
 
     def _start_claude_tmux(self, *, name: str, container_workdir: str,
                            mcp_path: str, model: str, ca_path: str,

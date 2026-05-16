@@ -51,13 +51,12 @@ The proxy parses HTTP keep-alive traffic as a sequence of request/response
 exchanges on the same TLS socket. Each exchange receives its own request id so a
 Claude Code startup probe cannot be confused with the real model turn. The known
 quota probe (`/v1/messages` with `max_tokens: 1` and user content `quota`) is
-observed for diagnostics but its response body is ignored. Claude Code internal
-JSON title responses are filtered after parsing so title payloads are not shown
-as assistant messages without blocking real SSE streams. The provider also drops
-first text blocks that are exactly JSON title objects when Claude Code emits them
-as SSE deltas. If Anthropic compresses an observed response (`gzip` or
-`deflate`), only the side-channel copy is decoded before SSE/JSON parsing; the
-proxied bytes sent back to Claude Code remain unchanged.
+observed for diagnostics but its response body is ignored. Interactive sessions
+set Claude Code's prompt-suggestion and terminal-title environment toggles off
+so UI hints do not become PawFlow transcript messages. If Anthropic compresses
+an observed response (`gzip` or `deflate`), only the side-channel copy is decoded
+before SSE/JSON parsing; the proxied bytes sent back to Claude Code remain
+unchanged.
 
 The provider assembles responses from those events:
 

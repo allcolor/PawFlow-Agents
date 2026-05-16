@@ -25,6 +25,11 @@ import uuid
 import zlib
 from urllib.parse import urlparse
 
+try:
+    from cc_interactive_filters import is_hidden_native_tool
+except ImportError:  # Unit tests import this file as tools.cc_interactive_proxy.
+    from tools.cc_interactive_filters import is_hidden_native_tool
+
 
 UPSTREAM_HOST = "api.anthropic.com"
 UPSTREAM_PORT = 443
@@ -463,44 +468,6 @@ def _content_text(content) -> str:
         return ""
     return str(content)
 
-
-def _is_title_json_text(text: str) -> bool:
-    try:
-        payload = json.loads(text)
-    except Exception:
-        return False
-    return isinstance(payload, dict) and set(payload.keys()) == {"title"}
-
-
-def _is_hidden_native_tool(name: str, args: dict) -> bool:
-    tool = (name or "").lower().replace("_", "")
-    if tool in {"getschema", "toolsearch", "toolschema", "listtools"}:
-        return True
-    if tool == "read":
-        path = str(args.get("file_path") or args.get("path") or "")
-        return "/.pawflow_cci/initial_context.md" in path.replace("\\", "/")
-    return False
-
-
-def _is_title_prompt(path: str, body: bytes) -> bool:
-    if not path.startswith("/v1/messages"):
-        return False
-    try:
-        payload = json.loads(body.decode("utf-8"))
-    except Exception:
-        return False
-    messages = payload.get("messages") or []
-    if not isinstance(messages, list):
-        return False
-    text = "\n".join(_content_text(message.get("content"))
-                     for message in messages if isinstance(message, dict))
-    lowered = text.lower()
-    return (
-        lowered.startswith("generate a json title for this conversation")
-        or lowered.startswith("generate a concise json title for this conversation")
-    )
-
-
 def _emit_observed_tool_blocks(request_id: str, path: str, body: bytes,
                                hidden_tool_use_ids: set[str] | None = None) -> set[str]:
     hidden_tool_use_ids = hidden_tool_use_ids or set()
@@ -531,7 +498,7 @@ def _emit_observed_tool_blocks(request_id: str, path: str, body: bytes,
                     continue
                 args = block.get("input") or {}
                 tool_name = block.get("name", "")
-                if _is_hidden_native_tool(tool_name, args if isinstance(args, dict) else {}):
+                if is_hidden_native_tool(tool_name, args if isinstance(args, dict) else {}):
                     newly_hidden.add(tool_use_id)
                     continue
                 _log(
@@ -592,8 +559,6 @@ class HTTPRequestObserver:
             reason = ""
             if _is_quota_probe(path, body):
                 reason = "quota_probe"
-            elif _is_title_prompt(path, body):
-                reason = "title_prompt"
             ignore_response = bool(reason)
             self.tracker.push({
                 "request_id": request_id,
@@ -882,10 +847,6 @@ class JSONResponseObserver:
         content = payload.get("content") or []
         if not isinstance(content, list):
             self._ignore("message_content_not_list", "")
-            return
-        text_blocks = [block for block in content if isinstance(block, dict) and block.get("type") == "text"]
-        if len(text_blocks) == 1 and _is_title_json_text(str(text_blocks[0].get("text", ""))):
-            self._ignore("title_json_message", "message")
             return
         emitted_blocks = 0
         for idx, block in enumerate(content):

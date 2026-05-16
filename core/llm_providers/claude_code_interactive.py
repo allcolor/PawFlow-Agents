@@ -17,26 +17,7 @@ import uuid
 from core.claude_code_interactive_pool import InteractiveClaudeCodePool
 from core.llm_providers.cli_shared import textualize_message
 from core.llm_providers.claude_code_session import ClaudeCodeSessionMixin
-
-
-def _is_title_json_text(text: str) -> bool:
-    try:
-        payload = json.loads((text or "").strip())
-    except Exception:
-        return False
-    return isinstance(payload, dict) and set(payload.keys()) == {"title"}
-
-
-def _is_hidden_native_tool(name: str, args: dict) -> bool:
-    """Hide Claude Code bootstrap/discovery tools from PawFlow transcript UI."""
-    tool = (name or "").lower().replace("_", "")
-    if tool in {"getschema", "toolsearch", "toolschema", "listtools"}:
-        return True
-    if tool == "read":
-        path = str(args.get("file_path") or args.get("path") or "")
-        normalized = path.replace("\\", "/")
-        return "/.pawflow_cci/initial_context.md" in normalized
-    return False
+from tools.cc_interactive_filters import is_hidden_native_tool
 
 
 class _CCITurnCoordinator:
@@ -249,8 +230,6 @@ class _CCITurnCoordinator:
         deferred = self._defer_text_block
         self._defer_text_block = False
         if deferred:
-            if _is_title_json_text(text):
-                return
             self.text_parts.append(text)
             if self.callback:
                 self.callback(text)
@@ -277,7 +256,7 @@ class _CCITurnCoordinator:
             args = {}
         if not isinstance(args, dict):
             args = {}
-        block["hidden"] = _is_hidden_native_tool(block.get("name", ""), args)
+        block["hidden"] = is_hidden_native_tool(block.get("name", ""), args)
         block["emitted"] = True
         if tool_id in self.emitted_tool_use_ids:
             self._emit_pending_tool_results(tool_id)
@@ -319,7 +298,7 @@ class _CCITurnCoordinator:
                 "name": event.get("name", ""),
                 "json": json.dumps(args if isinstance(args, dict) else {}, ensure_ascii=False),
                 "emitted": False,
-                "hidden": _is_hidden_native_tool(event.get("name", ""), args if isinstance(args, dict) else {}),
+                "hidden": is_hidden_native_tool(event.get("name", ""), args if isinstance(args, dict) else {}),
             }
             self.tool_by_id[tc_id] = block
         if block.get("emitted") or tc_id in self.emitted_tool_use_ids:
@@ -334,7 +313,7 @@ class _CCITurnCoordinator:
             args = {}
         if not isinstance(args, dict):
             args = {}
-        block["hidden"] = _is_hidden_native_tool(block.get("name", ""), args)
+        block["hidden"] = is_hidden_native_tool(block.get("name", ""), args)
         if self.block_callback and not block.get("hidden"):
             self.block_callback("tool_use", {
                 "id": tc_id,

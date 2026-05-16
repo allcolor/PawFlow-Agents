@@ -185,31 +185,16 @@ def test_request_observer_hides_bootstrap_native_tools(monkeypatch):
     assert [event["type"] for event in events] == ["request_start"]
 
 
-def test_request_observer_ignores_title_prompt_requests(monkeypatch):
-    monkeypatch.setenv("PAWFLOW_CCI_SESSION_TOKEN", "sess")
-    proxy = importlib.import_module("tools.cc_interactive_proxy")
-    events = []
-    monkeypatch.setattr(proxy.EVENTS, "emit", events.append)
-    body = json.dumps({
-        "messages": [{
-            "role": "user",
-            "content": "Generate a JSON title for this conversation: Continue PawFlow session context",
-        }],
-    }).encode()
-    chunk = (
-        b"POST /v1/messages?beta=true HTTP/1.1\r\n"
-        b"Host: api.anthropic.com\r\n"
-        + f"Content-Length: {len(body)}\r\n\r\n".encode()
-        + body
-    )
+def test_hidden_native_tool_filter_matches_only_bootstrap_read():
+    from tools.cc_interactive_filters import is_hidden_native_tool
 
-    tracker = proxy.HTTPExchangeTracker("r1")
-    proxy.HTTPRequestObserver(tracker).feed(chunk)
-
-    ctx = tracker.pop()
-    assert ctx["ignore_response"] is True
-    assert ctx["ignore_reason"] == "title_prompt"
-    assert events[0]["ignore_reason"] == "title_prompt"
+    assert is_hidden_native_tool("GetSchema", {}) is True
+    assert is_hidden_native_tool("ToolSearch", {}) is True
+    assert is_hidden_native_tool(
+        "Read", {"file_path": "/cc_sessions/c/a/.pawflow_cci/initial_context.md"}) is True
+    assert is_hidden_native_tool(
+        "Read", {"file_path": "/cc_sessions/c/a/.pawflow_cci/initial_context.md.bak"}) is False
+    assert is_hidden_native_tool("Bash", {"command": "git status"}) is False
 
 
 def test_proxy_observer_errors_do_not_affect_forwarding(monkeypatch):
@@ -521,7 +506,7 @@ def test_response_observer_converts_json_message_to_stream_events(monkeypatch):
     ]
 
 
-def test_response_observer_ignores_json_title_message(monkeypatch):
+def test_response_observer_emits_json_text_message(monkeypatch):
     monkeypatch.setenv("PAWFLOW_CCI_SESSION_TOKEN", "sess")
     proxy = importlib.import_module("tools.cc_interactive_proxy")
     events = []
@@ -541,24 +526,22 @@ def test_response_observer_ignores_json_title_message(monkeypatch):
     tracker.push({"request_id": "r-title", "path": "/v1/messages", "ignore_response": False})
     proxy.HTTPResponseObserver(tracker).feed(response)
 
-    assert events == [
-        {
-            "type": "response_start",
-            "request_id": "r-title",
-            "path": "/v1/messages",
-            "status": "200",
-            "content_type": "application/json",
-            "content_length": len(body),
-            "content_encoding": "",
-            "chunked": False,
-        },
-        {
-            "type": "response_ignored",
-            "request_id": "r-title",
-            "reason": "title_json_message",
-            "payload_type": "message",
-        },
+    assert [event.get("event") for event in events] == [
+        None,
+        "content_block_start",
+        "content_block_delta",
+        "content_block_stop",
+        "message_stop",
     ]
+    assert events[1]["payload"] == {
+        "type": "content_block_start",
+        "index": 0,
+        "content_block": {"type": "text"},
+    }
+    assert events[2]["payload"]["delta"] == {
+        "type": "text_delta",
+        "text": json.dumps({"title": "Continue PawFlow session context"}),
+    }
 
 
 def test_keep_alive_quota_probe_response_is_ignored_before_real_response(monkeypatch):

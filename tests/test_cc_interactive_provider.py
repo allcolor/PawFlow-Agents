@@ -155,7 +155,7 @@ def test_turn_coordinator_waits_for_proxy_message_stop_after_stop_hook():
     assert resp.content == "first second"
 
 
-def test_turn_coordinator_drops_title_json_text_block():
+def test_turn_coordinator_emits_deferred_json_text_block():
     events = [
         _sse("content_block_delta", {
             "type": "content_block_delta",
@@ -178,9 +178,10 @@ def test_turn_coordinator_drops_title_json_text_block():
         turn_callback=lambda text, tool_calls, thinking="": turns.append((text, tool_calls, thinking)),
     ).run()
 
-    assert resp.content == ""
-    assert seen == []
-    assert turns == []
+    text = '{"title":"Review PawFlow initial context file"}'
+    assert resp.content == text
+    assert seen == [text]
+    assert turns == [(text, [], "")]
 
 
 def test_turn_coordinator_keeps_non_title_json_text_block():
@@ -491,6 +492,8 @@ def test_interactive_pool_writes_lifecycle_hooks(tmp_path):
     assert stop_hook["command"] == "python3"
     assert stop_hook["args"] == ["/opt/pawflow/cc_interactive_hook.py"]
     assert settings["permissions"]["deny"] == ["Agent", "Bash"]
+    assert settings["env"]["CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION"] == "false"
+    assert settings["env"]["CLAUDE_CODE_DISABLE_TERMINAL_TITLE"] == "1"
 
 
 def test_interactive_pool_preserves_existing_permissions_when_denying_agent(tmp_path):
@@ -503,6 +506,7 @@ def test_interactive_pool_preserves_existing_permissions_when_denying_agent(tmp_
             "allow": ["mcp__pawflow__*", "Read"],
             "deny": ["WebFetch"],
         },
+        "env": {"EXISTING": "1"},
     }), encoding="utf-8")
 
     InteractiveClaudeCodePool()._write_hook_settings(str(tmp_path))
@@ -510,6 +514,9 @@ def test_interactive_pool_preserves_existing_permissions_when_denying_agent(tmp_
     settings = json.loads(settings_path.read_text())
     assert settings["permissions"]["allow"] == ["mcp__pawflow__*", "Read"]
     assert settings["permissions"]["deny"] == ["WebFetch", "Agent", "Bash"]
+    assert settings["env"]["EXISTING"] == "1"
+    assert settings["env"]["CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION"] == "false"
+    assert settings["env"]["CLAUDE_CODE_DISABLE_TERMINAL_TITLE"] == "1"
 
 
 def test_interactive_pool_preaccepts_claude_interactive_prompts(tmp_path, monkeypatch):
@@ -532,6 +539,8 @@ def test_interactive_pool_preaccepts_claude_interactive_prompts(tmp_path, monkey
     assert claude_settings["enableAllProjectMcpServers"] is True
     assert claude_settings["enabledMcpjsonServers"] == ["pawflow"]
     assert claude_settings["permissions"]["deny"] == ["Agent", "Bash"]
+    assert claude_settings["env"]["CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION"] == "false"
+    assert claude_settings["env"]["CLAUDE_CODE_DISABLE_TERMINAL_TITLE"] == "1"
 
     claude_json = json.loads((workdir / ".claude.json").read_text())
     assert claude_json["hasCompletedOnboarding"] is True

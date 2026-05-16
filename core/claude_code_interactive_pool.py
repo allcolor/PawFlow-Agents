@@ -304,6 +304,7 @@ class InteractiveClaudeCodePool:
         mounts = ["-v", f"{sessions_host}:/cc_sessions"]
         files = [
             (project_root / "tools" / "mcp_bridge.py", "/opt/pawflow/mcp_bridge.py"),
+            (project_root / "tools" / "cc_interactive_filters.py", "/opt/pawflow/cc_interactive_filters.py"),
             (project_root / "tools" / "cc_interactive_proxy.py", "/opt/pawflow/cc_interactive_proxy.py"),
             (project_root / "tools" / "cc_interactive_hook.py", "/opt/pawflow/cc_interactive_hook.py"),
             (project_root / "docker" / "pawflow_sdk" / "pawflow.py", "/opt/pawflow/pawflow.py"),
@@ -386,10 +387,18 @@ class InteractiveClaudeCodePool:
         settings_path.parent.mkdir(parents=True, exist_ok=True)
         settings = self._read_json(settings_path)
         self._deny_claude_agent_tool(settings)
+        env = settings.get("env")
+        if not isinstance(env, dict):
+            env = {}
+        env.update({
+            "CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION": "false",
+            "CLAUDE_CODE_DISABLE_TERMINAL_TITLE": "1",
+        })
         settings.update({
             "hooks": hooks,
             "enableAllProjectMcpServers": True,
             "enabledMcpjsonServers": ["pawflow"],
+            "env": env,
         })
         settings_path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
 

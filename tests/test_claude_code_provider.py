@@ -12,40 +12,6 @@ from core.llm_client import (
 )
 
 
-class TestBuildToolPrompt(unittest.TestCase):
-    """Test _build_tool_prompt rendering."""
-
-    def setUp(self):
-        self.client = LLMClient(provider="claude-code", config={"api_key": "test-key"})
-        self.client._conversation_id = "test-conv"
-        self.client._agent_name = "test-agent"
-        self.client._user_id = "test-user"
-
-    def test_empty_tools(self):
-        self.assertEqual(self.client._build_tool_prompt([]), "")
-
-    def test_single_tool(self):
-        tools = [LLMToolDefinition(
-            name="fetch_http",
-            description="Fetch a URL via HTTP.",
-            parameters={"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]},
-        )]
-        result = self.client._build_tool_prompt(tools)
-        self.assertIn("<available_tools>", result)
-        self.assertIn("## fetch_http", result)
-        self.assertIn("Fetch a URL via HTTP.", result)
-        self.assertIn("</available_tools>", result)
-        self.assertIn("<tool_call>", result)
-
-    def test_multiple_tools(self):
-        tools = [
-            LLMToolDefinition(name="t1", description="D1", parameters={}),
-            LLMToolDefinition(name="t2", description="D2", parameters={}),
-        ]
-        result = self.client._build_tool_prompt(tools)
-        self.assertIn("## t1", result)
-        self.assertIn("## t2", result)
-
 
 class TestSerializeMessages(unittest.TestCase):
     """Test _serialize_messages_for_cli."""
@@ -97,9 +63,6 @@ class TestSerializeMessages(unittest.TestCase):
         ]
         _, user_text = self.client._serialize_messages_for_cli(msgs, None)
         self.assertIn("Searching...", user_text)
-        # Raw <tool_call> XML stays out (CC manages its own tool calls),
-        # but a human-readable synopsis of what was called is preserved.
-        self.assertNotIn("<tool_call>", user_text)
         self.assertIn("[ran:", user_text)
         self.assertIn("web_search", user_text)
         # Tool result is rendered as a tagged snippet in a role="tool" message.
@@ -133,15 +96,14 @@ class TestSerializeMessages(unittest.TestCase):
         self.assertIn("[tool_result:", user_text)
         self.assertIn("...[+", user_text)  # truncation marker
 
-    def test_system_with_tools(self):
+    def test_cli_serialization_rejects_prompt_tool_injection(self):
         msgs = [
             LLMMessage(role="system", content="System instruction", conversation_id="test_conv"),
             LLMMessage(role="user", content="Do something", conversation_id="test_conv"),
         ]
         tools = [LLMToolDefinition(name="t1", description="D1", parameters={})]
-        sys_prompt, _ = self.client._serialize_messages_for_cli(msgs, tools)
-        self.assertIn("System instruction", sys_prompt)
-        self.assertIn("<available_tools>", sys_prompt)
+        with self.assertRaisesRegex(ValueError, "native tool channels"):
+            self.client._serialize_messages_for_cli(msgs, tools)
 
     def test_cli_serialization_escapes_message_markup(self):
         msgs = [
@@ -195,53 +157,6 @@ class TestSerializeMessages(unittest.TestCase):
         self.assertEqual(provider_workdir, "/cc_sessions/conv1/assistant")
 
 
-class TestExtractToolCalls(unittest.TestCase):
-    """Test _extract_tool_calls parsing."""
-
-    def setUp(self):
-        self.client = LLMClient(provider="claude-code", config={"api_key": "test-key"})
-        self.client._conversation_id = "test-conv"
-        self.client._agent_name = "test-agent"
-        self.client._user_id = "test-user"
-
-    def test_no_tool_calls(self):
-        clean, tcs = self.client._extract_tool_calls("Just a plain response.")
-        self.assertEqual(clean, "Just a plain response.")
-        self.assertEqual(tcs, [])
-
-    def test_single_tool_call(self):
-        text = 'I will search.\n<tool_call>{"name": "web_search", "arguments": {"query": "test"}}</tool_call>'
-        clean, tcs = self.client._extract_tool_calls(text)
-        self.assertEqual(clean, "I will search.")
-        self.assertEqual(len(tcs), 1)
-        self.assertEqual(tcs[0].name, "web_search")
-        self.assertEqual(tcs[0].arguments, {"query": "test"})
-        self.assertTrue(tcs[0].id.startswith("cc_"))
-
-    def test_multiple_tool_calls(self):
-        text = (
-            '<tool_call>{"name": "t1", "arguments": {"a": 1}}</tool_call>\n'
-            '<tool_call>{"name": "t2", "arguments": {"b": 2}}</tool_call>'
-        )
-        clean, tcs = self.client._extract_tool_calls(text)
-        self.assertEqual(len(tcs), 2)
-        self.assertEqual(tcs[0].name, "t1")
-        self.assertEqual(tcs[1].name, "t2")
-
-    def test_malformed_json_skipped(self):
-        text = '<tool_call>{not valid json}</tool_call>\nOK response.'
-        clean, tcs = self.client._extract_tool_calls(text)
-        self.assertEqual(tcs, [])
-        self.assertIn("OK response.", clean)
-
-    def test_multiline_tool_call(self):
-        text = '<tool_call>\n{\n  "name": "t1",\n  "arguments": {"x": 1}\n}\n</tool_call>'
-        _, tcs = self.client._extract_tool_calls(text)
-        self.assertEqual(len(tcs), 1)
-        self.assertEqual(tcs[0].name, "t1")
-
-
-
 
 def _make_mock_popen(returncode=0, stdout="", stderr=""):
     """Create a mock proc + _pool_popen for claude-code tests."""
@@ -257,6 +172,7 @@ def _make_mock_popen(returncode=0, stdout="", stderr=""):
     _pool_popen._last_kwargs = None
     _pool_popen._last_workdir = None
     return mock_proc, _pool_popen
+
 
 class TestStreamClaude(unittest.TestCase):
     """Test _stream_claude_code with mocked subprocess."""

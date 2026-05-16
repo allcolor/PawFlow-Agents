@@ -377,9 +377,6 @@ class LLMClient(
     _circuit_lock = threading.Lock()
     _circuit_state: Dict[str, Dict[str, Any]] = {}
 
-    # Regex for parsing <tool_call>...</tool_call> tags from claude-code responses
-    TOOL_CALL_RE = re.compile(r'<tool_call>\s*(\{.*?\})\s*</tool_call>', re.DOTALL)
-
     def __init__(self, provider: str = "openai", config: Dict[str, Any] = None):
         self.provider = provider
         self._config_ref = config or {}

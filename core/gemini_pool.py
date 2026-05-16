@@ -329,7 +329,7 @@ class GeminiPool:
                          settings.json + tmp/<project_hash>/chats/ stay
                          isolated per conv.
             gemini_args: args for the gemini CLI (after 'gemini'), typically
-                         '-p ... --output-format stream-json' for non-interactive
+                         '-p ... --output-format stream-json' for streaming turns
             extra_env: additional env vars (e.g. GEMINI_API_KEY)
             **popen_kwargs: extra args for subprocess.Popen
 

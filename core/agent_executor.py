@@ -388,34 +388,8 @@ class SubAgentExecutor:
             if hasattr(h, 'set_user_id') and task.user_id:
                 h.set_user_id(task.user_id)
 
-        # Detect CLI-based providers that cannot execute tools directly
-        _provider = getattr(client, "provider", "") or ""
-        _is_cli_provider = _provider == "claude-code"
-        if _is_cli_provider:
-            # CLI providers (claude-code) cannot execute tools
-            # natively — they try to run them interactively which causes
-            # permission prompts and timeouts.  Instead, we pass tool
-            # definitions as text in the system prompt and let the model
-            # emit <tool_call> tags which LLMClient will parse.
-            # tool_defs stays populated (LLMClient._build_tool_prompt
-            # injects them into the prompt), but the model knows it must
-            # use tags, not native tool execution.
-            logger.info("[sub-agent:%s] CLI provider '%s' — tools will be "
-                        "injected as text prompt, not native tool_use",
-                        task.agent_name, _provider)
-
         # Build system prompt with spawn context
         sys_prompt = task.system_prompt
-        if _is_cli_provider:
-            sys_prompt += (
-                "\n\n[TOOL CONSTRAINTS] You are running through a CLI pipe "
-                "and CANNOT execute tools directly. You must respond with "
-                "plain text only. If tools are listed above, you may request "
-                "their execution by emitting <tool_call> XML tags in your "
-                "response — the orchestrator will execute them and feed you "
-                "the results. Do NOT attempt to use any built-in tools "
-                "(Read, Write, Bash, etc.) — they are not available."
-            )
         if task.source_agent:
             src_svc = f" via {task.source_llm_service}" if task.source_llm_service else ""
             if task.source_agent_nickname:

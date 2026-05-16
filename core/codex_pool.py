@@ -334,7 +334,7 @@ class CodexPool:
                          (e.g. /cc_sessions/<user>/<conv>/<agent>) — codex
                          reads config.toml + writes sessions/ rollouts there
             codex_args: args for the codex CLI (after 'codex'), typically
-                         starts with 'exec --json' for non-interactive runs
+                         starts with 'exec --json' for streaming turns
             extra_env: additional env vars (e.g. CODEX_API_KEY)
             **popen_kwargs: extra args for subprocess.Popen
 

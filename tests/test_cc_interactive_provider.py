@@ -178,62 +178,6 @@ def test_turn_coordinator_keeps_non_title_json_text_block():
     assert turns == [('{"answer":"ok"}', [], "")]
 
 
-def test_turn_coordinator_extracts_legacy_xml_tool_call_from_text():
-    events = [
-        _sse("content_block_delta", {
-            "type": "content_block_delta",
-            "index": 0,
-            "delta": {
-                "type": "text_delta",
-                "text": '<tool_call>{"name":"use_tool","arguments":{"tool_name":"bash","arguments_json":"{\\"command\\":\\"git status\\"}"}}</tool_call>',
-            },
-        }),
-        _sse("content_block_stop", {"type": "content_block_stop", "index": 0}),
-        {"type": "hook", "hook_event_name": "Stop", "input": {"hook_event_name": "Stop"}},
-    ]
-
-    seen = []
-    turns = []
-    resp = _CCITurnCoordinator(
-        _Events(events), "sess", callback=seen.append,
-        turn_callback=lambda text, tool_calls, thinking="": turns.append((text, tool_calls, thinking)),
-    ).run()
-
-    assert resp.content == ""
-    assert seen == []
-    assert turns == []
-    assert len(resp.tool_calls) == 1
-    assert resp.tool_calls[0].name == "use_tool"
-    assert resp.tool_calls[0].arguments["tool_name"] == "bash"
-
-
-def test_turn_coordinator_suppresses_split_legacy_xml_streaming():
-    events = [
-        _sse("content_block_delta", {
-            "type": "content_block_delta",
-            "index": 0,
-            "delta": {"type": "text_delta", "text": "<tool"},
-        }),
-        _sse("content_block_delta", {
-            "type": "content_block_delta",
-            "index": 0,
-            "delta": {
-                "type": "text_delta",
-                "text": '_call>{"name":"bash","arguments":{"command":"git status"}}</tool_call>',
-            },
-        }),
-        _sse("content_block_stop", {"type": "content_block_stop", "index": 0}),
-        {"type": "hook", "hook_event_name": "Stop", "input": {"hook_event_name": "Stop"}},
-    ]
-
-    seen = []
-    resp = _CCITurnCoordinator(_Events(events), "sess", callback=seen.append).run()
-
-    assert seen == []
-    assert resp.content == ""
-    assert len(resp.tool_calls) == 1
-    assert resp.tool_calls[0].name == "bash"
-
 
 def test_turn_coordinator_synthesizes_redacted_thinking_from_signature():
     events = [
@@ -506,7 +450,7 @@ def test_initial_interactive_prompt_writes_context_file(tmp_path):
     assert "compact summary" not in prompt
 
 
-def test_interactive_prompt_uses_native_tool_mode_not_xml_protocol(tmp_path):
+def test_interactive_prompt_uses_native_tool_mode(tmp_path):
     from core.llm_client import LLMMessage, LLMToolDefinition
 
     client = LLMClient("claude-code-interactive")
@@ -519,8 +463,6 @@ def test_interactive_prompt_uses_native_tool_mode_not_xml_protocol(tmp_path):
         "conv",
     )
 
-    assert "<tool_use_instructions>" not in prompt
-    assert "<tool_call>" not in prompt
     assert "Use Claude Code's native tools" in prompt
 
 

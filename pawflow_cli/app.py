@@ -795,7 +795,7 @@ class PawCode:
 
     def run_prompt(self, prompt: str, conversation_id: str = None,
                    output_format: str = "text"):
-        """Non-interactive mode: send one prompt, stream response, exit."""
+        """Prompt mode: send one prompt, stream response, exit."""
         import json as _json
 
         # Authenticate silently
@@ -946,7 +946,7 @@ def main():
     parser.add_argument("--login", action="store_true",
                         help="Force re-authentication")
     parser.add_argument("-p", "--prompt", nargs="?", const="-", default=None,
-                        help="Non-interactive mode: send a prompt and exit. "
+                        help="Prompt mode: send a prompt and exit. "
                              "Use -p \"prompt\" or pipe via stdin with -p -")
     parser.add_argument("-c", "--conversation", default=None,
                         help="Conversation ID to use with -p (default: last or new)")
@@ -1055,7 +1055,7 @@ def main():
         from pawflow_cli.config import clear_session
         clear_session()
 
-    # Non-interactive prompt mode: -p "prompt" or echo "q" | pawcode -p -
+    # Prompt mode: -p "prompt" or echo "q" | pawcode -p -
     if args.prompt is not None:
         prompt_text = args.prompt
         if prompt_text == "-":

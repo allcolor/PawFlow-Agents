@@ -36,13 +36,10 @@ class _CCITurnCoordinator:
         self.pending_tool_results: dict[str, list[dict]] = {}
         self.emitted_tool_use_ids: set[str] = set()
         self.emitted_tool_result_ids: set[str] = set()
-        self.xml_tool_calls: list = []
         self.usage = {}
         self.lifecycle_events: list[dict] = []
         self.current_block_type = None
         self._text_block_buf = ""
-        self._text_callback_hold = ""
-        self._suppress_text_callback = False
         self._thinking_block_buf = ""
         self._thinking_redacted = False
         self._thinking_start = 0.0
@@ -189,7 +186,7 @@ class _CCITurnCoordinator:
         text = "".join(self.text_parts)
         return LLMResponse(
             content=text,
-            tool_calls=self.xml_tool_calls,
+            tool_calls=[],
             tokens_in=int(self.usage.get("input_tokens", 0) or 0),
             tokens_out=int(self.usage.get("output_tokens", 0) or 0),
             total_tokens=(int(self.usage.get("input_tokens", 0) or 0)
@@ -217,27 +214,9 @@ class _CCITurnCoordinator:
     def _append_text(self, text: str) -> None:
         if text:
             self._text_block_buf += text
-            self._stream_text_if_safe(text)
-
-    def _stream_text_if_safe(self, text: str) -> None:
-        if not self.callback or self._suppress_text_callback:
-            return
-        marker = "<tool_call>"
-        candidate = self._text_callback_hold + text
-        if "<tool_call" in candidate:
-            self._text_callback_hold = ""
-            self._suppress_text_callback = True
-            return
-        hold_len = 0
-        max_len = min(len(candidate), len(marker) - 1)
-        for n in range(max_len, 0, -1):
-            if candidate.endswith(marker[:n]):
-                hold_len = n
-                break
-        emit = candidate[:-hold_len] if hold_len else candidate
-        self._text_callback_hold = candidate[-hold_len:] if hold_len else ""
-        if emit:
-            self.callback(emit)
+            self.text_parts.append(text)
+            if self.callback:
+                self.callback(text)
 
     def _append_thinking(self, text: str) -> None:
         if text:
@@ -257,46 +236,8 @@ class _CCITurnCoordinator:
             return
         text = self._text_block_buf
         self._text_block_buf = ""
-        text, tool_calls = self._extract_xml_tool_calls(text)
-        if not tool_calls and self._text_callback_hold and self.callback and not self._suppress_text_callback:
-            self.callback(self._text_callback_hold)
-        self._text_callback_hold = ""
-        self._suppress_text_callback = False
-        if text:
-            self.text_parts.append(text)
-        if tool_calls:
-            self.xml_tool_calls.extend(tool_calls)
-            return
         if self.turn_callback and text:
             self.turn_callback(text, [], "")
-
-    def _extract_xml_tool_calls(self, text: str):
-        """Convert legacy CLI XML tool tags into provider tool calls.
-
-        Claude Code interactive has native tools, but older sessions may still
-        carry PawFlow's legacy CLI instruction to emit <tool_call> XML. Never
-        persist that XML as assistant text; extract it so the normal agent loop
-        can execute the call.
-        """
-        if "<tool_call>" not in text:
-            return text, []
-        from core.llm_client import LLMClient, LLMToolCall
-
-        tool_calls = []
-        for match in LLMClient.TOOL_CALL_RE.finditer(text):
-            try:
-                data = json.loads(match.group(1))
-            except (json.JSONDecodeError, TypeError):
-                continue
-            if not isinstance(data, dict):
-                continue
-            tool_calls.append(LLMToolCall(
-                id=f"cci_xml_{uuid.uuid4().hex[:12]}",
-                name=data.get("name", ""),
-                arguments=data.get("arguments", {}) or {},
-            ))
-        clean = LLMClient.TOOL_CALL_RE.sub("", text).strip()
-        return clean, tool_calls
 
     def _flush_thinking_block(self) -> None:
         if not self._thinking_block_buf and not self._thinking_redacted:
@@ -465,15 +406,11 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
     def _cci_prompt(self, messages, tools, workdir: str, container_workdir: str,
                     user_id: str, conversation_id: str,
                     initial_context: bool = False) -> str:
-        # Claude Code interactive already has a native tool protocol. The
-        # legacy CLI XML prompt makes it print <tool_call> tags as plain text,
-        # which then leaks into chat instead of executing through Claude Code.
         system_prompt, user_text = self._serialize_messages_for_cli(messages, None)
         if tools:
             tool_mode = (
                 "Use Claude Code's native tools for shell, filesystem, and "
-                "project work. Do not print legacy XML tool tags; that syntax "
-                "is only for non-interactive CLI providers."
+                "project work."
             )
             system_prompt = (system_prompt + "\n\n" + tool_mode).strip()
         image_lines = self._cci_materialize_images(

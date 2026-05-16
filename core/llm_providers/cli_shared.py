@@ -1,12 +1,11 @@
 """Shared utilities for CLI-based LLM providers and HTTP helpers.
 
-Contains methods used by multiple providers: HTTP POST, tool prompt
-rendering, CLI message serialization, and tool call extraction.
+Contains methods used by multiple providers: HTTP POST and CLI message
+serialization.
 """
 
 import json
 import http.client
-import logging
 import os
 import re
 import ssl
@@ -14,9 +13,6 @@ from html import escape
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
-from uuid import uuid4
-
-logger = logging.getLogger(__name__)
 
 
 # ── Tool-call synopsis helpers ───────────────────────────────────
@@ -234,48 +230,21 @@ class LLMCliSharedMixin:
         finally:
             conn.close()
 
-    def _build_tool_prompt(self, tools: List[Any]) -> str:
-        """Render tool definitions as text for the system prompt."""
-        if not tools:
-            return ""
-        lines = ["<available_tools>"]
-        for t in tools:
-            lines.append(f"## {t.name}")
-            lines.append(t.description)
-            lines.append(f"Parameters: {json.dumps(t.parameters)}")
-            lines.append("")
-        lines.append("</available_tools>")
-        lines.append("")
-        lines.append("<tool_use_instructions>")
-        lines.append("To use a tool, you MUST output this EXACT XML format (multiple calls allowed):")
-        lines.append('<tool_call>{"name": "tool_name", "arguments": {"param": "value"}}</tool_call>')
-        lines.append("")
-        lines.append("CRITICAL RULES:")
-        lines.append("- NEVER describe what you would do. EMIT the <tool_call> tag directly.")
-        lines.append("- Do NOT wrap tool calls in markdown code blocks.")
-        lines.append("- After emitting <tool_call> tags, the system executes them and returns results in the next turn.")
-        lines.append("- You may include text before or after <tool_call> tags.")
-        lines.append("- If you need more information or another turn to complete your work, output: [NEED_MORE]")
-        lines.append("- When no tool is needed and your answer is complete, respond with plain text (no tags).")
-        lines.append("")
-        lines.append("EXAMPLE \u2014 correct:")
-        lines.append('Let me check that for you.')
-        lines.append('<tool_call>{"name": "fetch_http", "arguments": {"url": "https://api.example.com/data"}}</tool_call>')
-        lines.append("")
-        lines.append("EXAMPLE \u2014 WRONG (never do this):")
-        lines.append('I would use the fetch_http tool to retrieve the data from the API.')
-        lines.append("</tool_use_instructions>")
-        return "\n".join(lines)
-
     def _serialize_messages_for_cli(
         self, messages: List[Any], tools: Optional[List[Any]],
     ) -> Tuple[str, str]:
         """Convert messages to (system_prompt, user_text) for the CLI.
 
-        System messages + tool definitions -> system_prompt.
-        Conversation history -> structured XML in user_text so the model
-        understands it's a multi-turn conversation to continue.
+        System messages -> system_prompt. Tool definitions are handled by each
+        provider's native tool channel and are not serialized into prompt text.
+        Conversation history -> marked transcript text in user_text so the
+        model understands it's a multi-turn conversation to continue.
         """
+        if tools:
+            raise ValueError(
+                "CLI message serialization does not accept tools; providers "
+                "must use native tool channels")
+
         system_parts: List[str] = []
         history_lines: List[str] = []
         last_user_text = ""
@@ -303,7 +272,7 @@ class LLMCliSharedMixin:
                             _text_parts.append(
                                 f"[attached file: {p.get('filename', '?')} ({p.get('mime_type', '?')}) "
                                 f"— read via: read(path='{p.get('file_id', '?')}', source='filestore')]")
-                        # skip image_url, image, document (legacy inline)
+                        # Other multipart payloads are unsupported here.
                     text = "\n".join(p for p in _text_parts if p.strip())
                 else:
                     text = text or ""
@@ -325,30 +294,25 @@ class LLMCliSharedMixin:
                 history_lines.append(self._cli_message_block("assistant", rendered, agent_name))
                 has_history = True
             elif m.role == "tool":
-                # Truncated tool result — CC dispatches its own tools live,
-                # but on resume/compact the historical results are needed
-                # to understand what happened.
+                # Truncated tool result — providers dispatch tools live, but
+                # on resume/compact the historical results are needed to
+                # understand what happened.
                 rendered = textualize_message(m)
                 if not rendered:
                     continue
                 history_lines.append(self._cli_message_block("tool", rendered))
                 has_history = True
 
-        # Build system prompt
-        tool_prompt = self._build_tool_prompt(tools) if tools else ""
-        if tool_prompt:
-            system_parts.append(tool_prompt)
         system_prompt = "\n\n".join(system_parts)
 
-        # Build user text
+
         if has_history:
-            # Multi-turn: wrap in conversation tags with clear instruction
             user_text = (
                 "<conversation_history>\n"
                 + "\n".join(history_lines)
                 + "\n</conversation_history>\n\n"
                 "Continue the conversation. Reply to the latest user message. "
-                "You are a participant in this conversation \u2014 read the full "
+                "You are a participant in this conversation — read the full "
                 "history above and respond naturally, referencing previous "
                 "messages from any participant (user or other agents) as needed."
             )
@@ -356,24 +320,3 @@ class LLMCliSharedMixin:
             user_text = last_user_text
 
         return system_prompt, user_text
-
-    def _extract_tool_calls(self, text: str) -> Tuple[str, list]:
-        """Extract <tool_call> tags from response text.
-
-        Returns (clean_text, tool_calls) where clean_text has tags removed.
-        """
-        from core.llm_client import LLMToolCall
-        tool_calls = []
-        for match in self.TOOL_CALL_RE.finditer(text):
-            try:
-                data = json.loads(match.group(1))
-                tool_calls.append(LLMToolCall(
-                    id=f"cc_{uuid4().hex[:12]}",
-                    name=data.get("name", ""),
-                    arguments=data.get("arguments", {}),
-                ))
-            except (json.JSONDecodeError, KeyError, TypeError):
-                logger.warning("Failed to parse tool_call: %s", match.group(1)[:200])
-        clean = self.TOOL_CALL_RE.sub("", text).strip()
-        return clean, tool_calls
-

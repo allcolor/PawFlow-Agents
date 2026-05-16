@@ -417,28 +417,9 @@ class AgentToolExecMixin:
                                         conversation_id=conversation_id))
             msgs.append(LLMMessage(role="system", content=(
                 "Continue. You have another turn. "
-                "Use <tool_call> tags if you need tools, "
-                "or provide your final answer."
+                "Use the available native tools if needed, or provide your final answer."
             ), conversation_id=conversation_id))
             return "continue", msgs, "", need_more_retried
-
-        # Heuristic: tool mentioned by name without <tool_call> tag
-        if client_provider == "claude-code" and tool_defs:
-            tool_names = [td.name for td in tool_defs]
-            mentioned = [tn for tn in tool_names if tn in response_text]
-            if mentioned and not need_more_retried:
-                msgs = [
-                    LLMMessage(role="assistant", content=response_text, source=source,
-                                conversation_id=conversation_id),
-                    LLMMessage(role="system", content=(
-                        f"You mentioned tool(s) {mentioned} but did not emit <tool_call> tags. "
-                        "You MUST use <tool_call> tags to invoke tools. Example:\n"
-                        '<tool_call>{"name": "' + mentioned[0] + '", "arguments": {...}}</tool_call>\n'
-                        "Please emit the correct <tool_call> tag(s) now, "
-                        "or provide your final answer without mentioning tools."
-                    ), conversation_id=conversation_id),
-                ]
-                return "continue", msgs, "", True
 
         # Final response. An empty provider response is handled by the caller's
         # forced-synthesis path; do not persist a blank assistant message first.

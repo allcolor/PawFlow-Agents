@@ -351,33 +351,6 @@ function _createTechnicalGroupBefore(container, anchor) {
   return group;
 }
 
-function _technicalGroupKey(el) {
-  if (!el || !el.dataset) return '';
-  const role = el.dataset.messageRole || '';
-  const tcId = el.dataset.tcId || '';
-  if ((role === 'tool_call' || role === 'tool' || role === 'tool_result') && tcId) {
-    return 'tool:' + tcId;
-  }
-  const taskId = el.dataset.taskId || el.dataset.delegateTaskId || '';
-  if (taskId) return 'task:' + taskId;
-  return '';
-}
-
-function _technicalGroupShouldSplit(group, childKey) {
-  if (!group || !group.dataset) return false;
-  const body = group.querySelector('.technical-group-body');
-  if (!body || !body.children.length) return false;
-  const groupKey = group.dataset.technicalGroupKey || '';
-  if (!groupKey && !childKey) return false;
-  return groupKey !== childKey;
-}
-
-function _setTechnicalGroupKey(group, childKey) {
-  if (!group || !group.dataset) return;
-  if (childKey) group.dataset.technicalGroupKey = childKey;
-  else delete group.dataset.technicalGroupKey;
-}
-
 function applyTechnicalMessageGrouping() {
   if (window.PAWFLOW_SUSPEND_TECHNICAL_GROUPING) return;
   const container = document.getElementById('messages');
@@ -396,13 +369,6 @@ function applyTechnicalMessageGrouping() {
       continue;
     }
     if (child.classList && child.classList.contains('technical-group')) {
-      const childKey = child.dataset ? (child.dataset.technicalGroupKey || '') : '';
-      if (group && group !== child) {
-        if (_technicalGroupShouldSplit(group, childKey)) {
-          _updateTechnicalGroupSummary(group);
-          group = null;
-        }
-      }
       if (group && group !== child) {
         const body = group.querySelector('.technical-group-body');
         const childBody = child.querySelector('.technical-group-body');
@@ -432,15 +398,7 @@ function applyTechnicalMessageGrouping() {
       child.remove();
       continue;
     }
-    const childKey = _technicalGroupKey(child);
-    if (_technicalGroupShouldSplit(group, childKey)) {
-      _updateTechnicalGroupSummary(group);
-      group = null;
-    }
     if (!group) group = _createTechnicalGroupBefore(container, child);
-    if (group && !(group.dataset && group.dataset.technicalGroupKey)) {
-      _setTechnicalGroupKey(group, childKey);
-    }
     const body = group.querySelector('.technical-group-body');
     const liveChild = _isLiveTechnicalElement(child);
     if (body) body.appendChild(child);

@@ -52,10 +52,10 @@ def test_technical_grouping_is_expression_driven_and_post_rendered():
     assert "t('technicalDetailsSummary'" in MESSAGES_JS
     assert "Technical details ·" not in MESSAGES_JS
     assert "function findToolCallElement(tcId, root)" in MESSAGES_JS
-    assert "function _technicalGroupKey(el)" in MESSAGES_JS
-    assert "function _technicalGroupShouldSplit(group, childKey)" in MESSAGES_JS
-    assert "return 'tool:' + tcId" in MESSAGES_JS
-    assert "group.dataset.technicalGroupKey" in MESSAGES_JS
+    assert "function _technicalGroupKey(el)" not in MESSAGES_JS
+    assert "function _technicalGroupShouldSplit(group, childKey)" not in MESSAGES_JS
+    assert "return 'tool:' + tcId" not in MESSAGES_JS
+    assert "group.dataset.technicalGroupKey" not in MESSAGES_JS
     assert "className = 'msg technical-group'" in MESSAGES_JS
     assert "el.dataset.messageRole = role" in MESSAGES_JS
     assert "details.dataset.live = '1'" in SSE_JS

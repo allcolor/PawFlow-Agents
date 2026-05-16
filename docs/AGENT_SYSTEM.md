@@ -131,9 +131,9 @@ Runtime hook events are:
 | `post_llm_message` | Before an assistant message is persisted. Can block or rewrite content/thinking. |
 | `post_llm_thinking` | Before assistant thinking is persisted. Can rewrite thinking text. |
 | `pre_compact` | Before context compaction. Can block compaction or add compact instructions. |
-| `post_compact` | After compaction has produced the replacement context. |
+| `post_compact` | After compaction has produced the replacement context. The payload includes `compacted_messages` and a compatibility alias `compacted`, both as serialized message dictionaries. |
 
-Hook code returns a JSON object shaped as `{"decision":"allow|block|replace","reason":"optional","payload":{...}}`. Empty event/agent/tool filters mean all. `fail_policy: "closed"` blocks the triggering operation when the hook fails; the default is fail-open. PFP hooks are installed as `agent_hook` runtime objects and run through the same signed package runtime bridge as package tools.
+Hook code returns a JSON object shaped as `{"decision":"allow|block|replace","reason":"optional","payload":{...}}`. Empty event/agent/tool filters mean all. `fail_policy: "closed"` blocks the triggering operation when the hook fails; the default is fail-open. PFP hooks are installed as `agent_hook` runtime objects and run through the same signed package runtime bridge as package tools. Inline source hooks run through the restricted `execute_script` sandbox path, not through auto-detected user relays.
 
 ---
 

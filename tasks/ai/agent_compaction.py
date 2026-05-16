@@ -986,6 +986,7 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                 self._persist_context(compacted, conversation_id, agent_name)
                 if conversation_id:
                     self._cleanup_orphan_files(compacted, conversation_id)
+                _compacted_payload = self._serialize_messages(compacted)
                 _post_ctx = {
                     "trigger": _trigger_label,
                     "conversation_id": conversation_id,
@@ -995,7 +996,8 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                     "after_messages": len(compacted),
                     "tokens_before": _original_tokens,
                     "tokens_after": new_estimate,
-                    "compacted_messages": self._serialize_messages(compacted),
+                    "compacted_messages": _compacted_payload,
+                    "compacted": _compacted_payload,
                     "independent_context": True,
                 }
                 try:
@@ -1227,8 +1229,7 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                 except Exception:
                     logger.debug("compact SSE publish failed", exc_info=True)
             # ── Post-compact hooks ──
-            # Hooks can mutate _post_ctx["compacted"] in place to append
-            # extra messages (e.g. plan attachment, skill listing).
+            _compacted_payload = self._serialize_messages(compacted)
             _post_ctx = {
                 "trigger": _trigger_label,
                 "conversation_id": conversation_id,
@@ -1238,7 +1239,8 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                 "after_messages": len(compacted),
                 "tokens_before": _original_tokens,
                 "tokens_after": new_estimate,
-                "compacted_messages": self._serialize_messages(compacted),
+                "compacted_messages": _compacted_payload,
+                "compacted": _compacted_payload,
             }
             try:
                 _hook_runner.run("post_compact", _post_ctx)

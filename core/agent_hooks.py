@@ -299,7 +299,10 @@ def _invoke_source_hook(hook: Dict[str, Any], envelope: Dict[str, Any]) -> Dict[
     code = _source_wrapper(source, envelope)
     try:
         from core.handlers.web_fetch import ExecuteScriptHandler
-        output = ExecuteScriptHandler().execute({"code": code})
+        output = ExecuteScriptHandler().execute({
+            "code": code,
+            "destination": "sandbox",
+        })
     except Exception as exc:
         raise AgentHookError(str(exc)) from exc
     return _parse_hook_stdout(output)
@@ -325,11 +328,11 @@ def _parse_hook_stdout(output: Any) -> Dict[str, Any]:
     text = str(output or "").strip()
     if not text:
         return {}
-    line = [ln for ln in text.splitlines() if ln.strip()][-1]
-    try:
-        parsed = json.loads(line)
-    except Exception as exc:
-        raise AgentHookError("hook stdout did not end with JSON") from exc
-    if not isinstance(parsed, dict):
-        raise AgentHookError("hook stdout JSON must be an object")
-    return parsed
+    for line in reversed([ln for ln in text.splitlines() if ln.strip()]):
+        try:
+            parsed = json.loads(line)
+        except Exception:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    raise AgentHookError("hook stdout did not contain a JSON object")

@@ -991,8 +991,9 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                     elif "content" in _payload:
                         _umsg.content = _payload.get("content")
             except Exception as _hook_err:
-                logger.warning("pre_user_message hook failed: %s", _hook_err,
-                               exc_info=True)
+                logger.error("pre_user_message hook failed: %s", _hook_err,
+                             exc_info=True)
+                _append_user_message = False
             if _append_user_message:
                 messages.append(_umsg)
 

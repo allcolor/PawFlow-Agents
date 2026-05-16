@@ -115,11 +115,11 @@ def _compact_input(raw: dict) -> dict:
         injected = _consume_injected_prompt(prompt)
         managed = _looks_like_pawflow_prompt(prompt)
         out["pawflow_injected_prompt"] = injected
-        if managed:
+        if managed and injected:
             out["pawflow_managed_prompt"] = True
-            if not injected:
-                out["pawflow_injected_prompt_missing"] = True
-        if prompt and not injected and not managed:
+        elif managed:
+            out["pawflow_injected_prompt_missing"] = True
+        if prompt and not injected:
             out["prompt"] = prompt
     return out
 

@@ -8,6 +8,7 @@ MITM proxy's copy of Anthropic SSE events.
 from __future__ import annotations
 
 import base64
+from html import escape
 import json
 import mimetypes
 from pathlib import Path
@@ -462,7 +463,9 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
                 continue
             rendered = textualize_message(msg)
             if rendered:
-                lines.append(f"<message role=\"{role}\">\n{rendered}\n</message>")
+                safe_role = escape(str(role), quote=True)
+                safe_rendered = escape(rendered, quote=False)
+                lines.append(f"<message role=\"{safe_role}\">\n{safe_rendered}\n</message>")
         if not lines:
             return ""
         return "\n".join(lines) + "\n\nContinue from this latest turn."

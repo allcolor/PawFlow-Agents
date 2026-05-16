@@ -711,7 +711,7 @@ def test_hook_keeps_manual_user_prompt(monkeypatch):
     assert compact["prompt"] == "Manual tmux prompt"
 
 
-def test_hook_masks_pawflow_prompt_when_marker_is_missing(monkeypatch):
+def test_hook_keeps_sentinel_like_manual_prompt_when_marker_is_missing(monkeypatch):
     hook = importlib.import_module("tools.cc_interactive_hook")
     monkeypatch.setenv("PAWFLOW_CCI_INJECTED_PROMPTS", "/tmp/missing-pawflow-cci-marker.jsonl")
     prompt = (
@@ -726,7 +726,7 @@ def test_hook_masks_pawflow_prompt_when_marker_is_missing(monkeypatch):
     })
 
     assert compact["pawflow_injected_prompt"] is False
-    assert compact["pawflow_managed_prompt"] is True
+    assert "pawflow_managed_prompt" not in compact
     assert compact["pawflow_injected_prompt_missing"] is True
     assert compact["prompt_sha256"] == hook.hashlib.sha256(prompt.encode("utf-8")).hexdigest()
-    assert "prompt" not in compact
+    assert compact["prompt"] == prompt

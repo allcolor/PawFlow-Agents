@@ -1038,6 +1038,13 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         workdir = self._get_session_workdir(conv_id, agent_name, user_id)
         _rel = os.path.relpath(workdir, _get_sessions_base()).replace("\\", "/")
         _session_dir = f"/cc_sessions/{_rel}"
+        _rel_parts = [p for p in _rel.split("/") if p]
+        _provider_workdir = _session_dir
+        if len(_rel_parts) >= 3:
+            # Claude runs in a private mount namespace where /cc_sessions/<user>
+            # is bind-mounted over /cc_sessions, so the visible path starts at
+            # the conversation segment.
+            _provider_workdir = "/cc_sessions/" + "/".join(_rel_parts[1:])
 
         # Session-aware serialization:
         # - New session (no session_id): feed the full PawFlow ctx ONCE.
@@ -1071,7 +1078,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                 system_prompt=system_prompt,
                 user_text=user_text,
                 workdir=workdir,
-                provider_workdir=_session_dir,
+                provider_workdir=_provider_workdir,
                 provider_name="claude-code",
             )
         logger.debug("[claude-code] prompt: system=%d user=%d images=%d msgs=%d session=%s",

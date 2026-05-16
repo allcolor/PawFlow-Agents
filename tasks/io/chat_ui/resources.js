@@ -2775,7 +2775,9 @@ function _saveResourceEdit(rtype, name, scope) {
       } else data[key] = el.value;
     }
   }
-  action$('update_resource', { resource_type: rtype, name, scope, data }).subscribe(d => {
+  const payload = { resource_type: rtype, name, scope, data };
+  if (scope === 'conversation' && typeof conversationId !== 'undefined' && conversationId) payload.conversation_id = conversationId;
+  action$('update_resource', payload).subscribe(d => {
     if (d.error) addMsg('error', d.error);
     else { addMsg('system', t('resourceUpdated', { type: rtype, name: name })); document.getElementById('resourceEditorOverlay').remove(); loadResources(); }
   });
@@ -2845,7 +2847,9 @@ function _saveResourceCreate(rtype, assignAfterCreate) {
     });
     return;
   }
-  action$('create_resource', { resource_type: rtype, name, scope, data }).subscribe(d => {
+  const payload = { resource_type: rtype, name, scope, data };
+  if (scope === 'conversation' && typeof conversationId !== 'undefined' && conversationId) payload.conversation_id = conversationId;
+  action$('create_resource', payload).subscribe(d => {
     if (d.error) addMsg('error', d.error);
     else {
       addMsg('system', t('resourceCreated', { type: rtype, name: name }));

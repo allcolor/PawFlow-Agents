@@ -974,40 +974,43 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             if _umid:
                 _umsg.msg_id = _umid
             _append_user_message = True
-            try:
-                from core.agent_hooks import AgentHookRunner
-                _pre_user = AgentHookRunner(
-                    user_id=user_id,
-                    conversation_id=conversation_id,
-                    agent_name=_target_agent or "",
-                ).run("pre_user_message", {
-                    "message": {
-                        "role": _umsg.role,
+            if flowfile.get_attribute("pre_user_message_hook_applied"):
+                logger.debug("pre_user_message hook already applied during ingress")
+            else:
+                try:
+                    from core.agent_hooks import AgentHookRunner
+                    _pre_user = AgentHookRunner(
+                        user_id=user_id,
+                        conversation_id=conversation_id,
+                        agent_name=_target_agent or "",
+                    ).run("pre_user_message", {
+                        "message": {
+                            "role": _umsg.role,
+                            "content": _umsg.content,
+                            "source": _umsg.source,
+                            "msg_id": getattr(_umsg, "msg_id", ""),
+                        },
                         "content": _umsg.content,
-                        "source": _umsg.source,
-                        "msg_id": getattr(_umsg, "msg_id", ""),
-                    },
-                    "content": _umsg.content,
-                    "target_agent": _target_agent or "",
-                    "channel": "agent_context",
-                }, fail_policy="closed")
-                if _pre_user.get("decision") == "block":
-                    logger.info("pre_user_message hook blocked context user message")
+                        "target_agent": _target_agent or "",
+                        "channel": "agent_context",
+                    }, fail_policy="closed")
+                    if _pre_user.get("decision") == "block":
+                        logger.info("pre_user_message hook blocked context user message")
+                        _append_user_message = False
+                    if _pre_user.get("decision") == "replace":
+                        _payload = _pre_user.get("payload") or {}
+                        _msg = _payload.get("message")
+                        if isinstance(_msg, dict):
+                            if "content" in _msg:
+                                _umsg.content = _msg.get("content")
+                            if isinstance(_msg.get("source"), dict):
+                                _umsg.source = _msg.get("source")
+                        elif "content" in _payload:
+                            _umsg.content = _payload.get("content")
+                except Exception as _hook_err:
+                    logger.error("pre_user_message hook failed: %s", _hook_err,
+                                 exc_info=True)
                     _append_user_message = False
-                if _pre_user.get("decision") == "replace":
-                    _payload = _pre_user.get("payload") or {}
-                    _msg = _payload.get("message")
-                    if isinstance(_msg, dict):
-                        if "content" in _msg:
-                            _umsg.content = _msg.get("content")
-                        if isinstance(_msg.get("source"), dict):
-                            _umsg.source = _msg.get("source")
-                    elif "content" in _payload:
-                        _umsg.content = _payload.get("content")
-            except Exception as _hook_err:
-                logger.error("pre_user_message hook failed: %s", _hook_err,
-                             exc_info=True)
-                _append_user_message = False
             if _append_user_message:
                 messages.append(_umsg)
 

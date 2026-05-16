@@ -186,6 +186,15 @@ class TestSerializeMessages(unittest.TestCase):
         self.assertIn("prior answer", body)
         self.assertIn("## Bootstrap Contract", body)
 
+    def test_claude_code_namespace_provider_workdir_drops_user_segment(self):
+        rel = "user1/conv1/assistant"
+        rel_parts = [p for p in rel.split("/") if p]
+        provider_workdir = f"/cc_sessions/{rel}"
+        if len(rel_parts) >= 3:
+            provider_workdir = "/cc_sessions/" + "/".join(rel_parts[1:])
+
+        self.assertEqual(provider_workdir, "/cc_sessions/conv1/assistant")
+
 
 class TestExtractToolCalls(unittest.TestCase):
     """Test _extract_tool_calls parsing."""

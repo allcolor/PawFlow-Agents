@@ -127,7 +127,8 @@ def _compact_input(raw: dict) -> dict:
 def _looks_like_pawflow_prompt(prompt: str) -> bool:
     text = prompt.lstrip()
     return (
-        text.startswith("Read this PawFlow initial context file before answering:")
+        text.startswith("PawFlow cold-session bootstrap.")
+        or text.startswith("Read this PawFlow initial context file before answering:")
         or text.startswith("PawFlow initial context was already loaded for this live Claude Code session.")
     )
 

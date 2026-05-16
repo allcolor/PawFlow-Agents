@@ -883,6 +883,14 @@ def test_cc_interactive_event_service_logs_wire_without_queueing(caplog):
     assert "Authorization: <redacted>" in caplog.text
 
 
+def test_cc_interactive_hook_detects_shared_cold_bootstrap_prompt():
+    from tools.cc_interactive_hook import _looks_like_pawflow_prompt
+
+    assert _looks_like_pawflow_prompt(
+        "PawFlow cold-session bootstrap.\n\nYou must first read this initial context file before answering."
+    ) is True
+
+
 def test_cc_interactive_event_service_persists_manual_tmux_prompt(monkeypatch):
     from services.cc_interactive_event_service import CCInteractiveEventService
 

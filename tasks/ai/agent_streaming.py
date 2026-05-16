@@ -149,6 +149,10 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                         _stamped_user["content"] = _payload.get("content")
                     if isinstance(_stamped_user.get("content"), str):
                         _user_text = _stamped_user.get("content") or ""
+                        if isinstance(_body, dict):
+                            _body["message"] = _user_text
+                            flowfile.set_content(json.dumps(_body).encode("utf-8"))
+                flowfile.set_attribute("pre_user_message_hook_applied", "1")
             except Exception as _hook_err:
                 flowfile.set_content(json.dumps({
                     "error": f"pre_user_message hook failed: {_hook_err}",

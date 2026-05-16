@@ -1035,6 +1035,10 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             except Exception:
                 logger.debug("exception suppressed", exc_info=True)
 
+        workdir = self._get_session_workdir(conv_id, agent_name, user_id)
+        _rel = os.path.relpath(workdir, _get_sessions_base()).replace("\\", "/")
+        _session_dir = f"/cc_sessions/{_rel}"
+
         # Session-aware serialization:
         # - New session (no session_id): feed the full PawFlow ctx ONCE.
         # - Resume (session_id set): CC already has the history; send only
@@ -1061,16 +1065,23 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         else:
             system_prompt, user_text = self._serialize_messages_for_cli(messages, None)
             system_prompt = append_cli_mcp_system_prompt(system_prompt)
+            initial_text, _initial_ctx = self._build_cli_initial_context_prompt(
+                messages,
+                system_prompt=system_prompt,
+                user_text=user_text,
+                workdir=workdir,
+                provider_workdir=_session_dir,
+                provider_name="claude-code",
+            )
 
-        initial_text = self._build_stdin_with_system(system_prompt, user_text)
+        if session_id:
+            initial_text = self._build_stdin_with_system(system_prompt, user_text)
         logger.debug("[claude-code] prompt: system=%d user=%d images=%d msgs=%d session=%s",
                      len(system_prompt), len(user_text), len(image_blocks), len(messages),
                      "resume" if session_id else "new")
 
         logger.info("claude-code stream: conv_id='%s' user='%s' agent='%s' session='%s'",
                      conv_id, user_id, agent_name, session_id[:12] if session_id else "new")
-
-        workdir = self._get_session_workdir(conv_id, agent_name, user_id)
         # Resume with same credential that created the session (approach 3)
         _resume_pool_idx = -1
         if session_id and conv_id:

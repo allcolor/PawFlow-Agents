@@ -124,7 +124,8 @@ def test_codex_app_server_recovers_from_stale_thread_rollout():
     src = inspect.getsource(LLMCodexAppServerMixin._stream_codex_app_server)
     assert "_codex_app_missing_rollout_error" in src
     assert "store.set_extra(conv_id, thread_key, \"\")" in src
-    assert "initial_text = self._codex_app_full_initial_text(messages)" in src
+    assert "initial_text = self._codex_app_full_initial_text(" in src
+    assert "messages, workdir, container_dir" in src
     assert "stale thread id" in src
 
 

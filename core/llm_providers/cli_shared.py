@@ -7,8 +7,11 @@ rendering, CLI message serialization, and tool call extraction.
 import json
 import http.client
 import logging
+import os
 import re
 import ssl
+from html import escape
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 from uuid import uuid4
@@ -112,6 +115,97 @@ def textualize_message(m: Any) -> Optional[str]:
 
 class LLMCliSharedMixin:
     """Methods shared across CLI and HTTP providers."""
+
+    @staticmethod
+    def _cli_escape_text(text: str, *, quote: bool = False) -> str:
+        return escape(str(text or ""), quote=quote)
+
+    def _cli_message_block(self, role: str, rendered: str,
+                           agent_name: str = "") -> str:
+        attr = f' role="{self._cli_escape_text(role or "message", quote=True)}"'
+        if agent_name:
+            attr += f' agent="{self._cli_escape_text(agent_name, quote=True)}"'
+        return (
+            f"<message{attr}>\n"
+            f"{self._cli_escape_text(rendered, quote=False)}\n"
+            "</message>"
+        )
+
+    def _cli_current_turn_text(self, messages: List[Any]) -> str:
+        if not messages:
+            return ""
+        last_user_idx = -1
+        for idx in range(len(messages) - 1, -1, -1):
+            if getattr(messages[idx], "role", "") == "user":
+                last_user_idx = idx
+                break
+        start = last_user_idx if last_user_idx >= 0 else max(0, len(messages) - 3)
+        lines = []
+        for msg in messages[start:]:
+            role = getattr(msg, "role", "") or "message"
+            if role == "system":
+                continue
+            rendered = textualize_message(msg)
+            if rendered:
+                lines.append(self._cli_message_block(role, rendered))
+        if not lines:
+            return ""
+        return "\n".join(lines) + "\n\nContinue from this latest turn."
+
+    def _build_cli_initial_context_prompt(
+        self,
+        messages: List[Any],
+        *,
+        system_prompt: str,
+        user_text: str,
+        workdir: str,
+        provider_workdir: str,
+        rel_path: str = ".pawflow_cli/initial_context.md",
+        provider_name: str = "CLI",
+    ) -> Tuple[str, Dict[str, Any]]:
+        """Write full cold-start context to a session file and return bootstrap text."""
+        rel = Path(rel_path)
+        host_path = Path(workdir) / rel
+        host_path.parent.mkdir(parents=True, exist_ok=True)
+        body = ["# PawFlow Initial Context", ""]
+        if system_prompt:
+            body.extend(["## System Instructions", "", system_prompt.strip(), ""])
+        if user_text:
+            body.extend(["## Serialized Conversation Context", "", user_text.strip(), ""])
+        latest = self._cli_current_turn_text(messages)
+        if latest:
+            body.extend(["## Latest User Request", "", latest.strip(), ""])
+        body.extend([
+            "## Bootstrap Contract",
+            "",
+            "- Treat this file as PawFlow conversation context, not as a new user command.",
+            "- Continue from the latest user request.",
+            "- Do not ask what to do unless both the file and the latest request are ambiguous.",
+            "",
+        ])
+        host_path.write_text("\n".join(body).rstrip() + "\n", encoding="utf-8")
+        provider_path = os.path.join(provider_workdir, rel.as_posix()).replace("\\", "/")
+        prompt = [
+            "PawFlow cold-session bootstrap.",
+            "",
+            "You must first read this initial context file before answering.",
+            f"Path: {provider_path}",
+            "If your CLI supports file mentions, this is the same file:",
+            f"@{provider_path}",
+            "",
+            "Use your local filesystem/file-read capability if the file mention is not expanded automatically.",
+            "It contains system instructions, project instructions, compacted conversation context, prior decisions, tool/result history, and the latest user request.",
+            "After reading it, answer the latest user request below. Treat the file as context, not as a user-visible task.",
+        ]
+        if latest:
+            prompt.extend(["", "Latest turn to answer now:", latest.strip()])
+        return "\n".join(prompt).strip() + "\n", {
+            "host_path": str(host_path),
+            "provider_path": provider_path,
+            "context_chars": len("\n".join(body)),
+            "latest_chars": len(latest),
+            "provider_name": provider_name,
+        }
 
     @staticmethod
     def _clean_control_chars(text: str) -> str:
@@ -224,7 +318,7 @@ class LLMCliSharedMixin:
                 text = _b64_pattern.sub('[image]', text)
                 last_user_text = text
                 if text.strip():
-                    history_lines.append(f"<message role=\"user\">\n{text}\n</message>")
+                    history_lines.append(self._cli_message_block("user", text))
             elif m.role == "assistant":
                 # Keep tool-call-only messages as a synopsis so CC sees the
                 # full trail of work (commits, tests, edits) after compaction
@@ -235,10 +329,7 @@ class LLMCliSharedMixin:
                     continue
                 source = getattr(m, "source", None) or {}
                 agent_name = source.get("name", "") if isinstance(source, dict) else ""
-                attr = ' role="assistant"'
-                if agent_name:
-                    attr += f' agent="{agent_name}"'
-                history_lines.append(f"<message{attr}>\n{rendered}\n</message>")
+                history_lines.append(self._cli_message_block("assistant", rendered, agent_name))
                 has_history = True
             elif m.role == "tool":
                 # Truncated tool result — CC dispatches its own tools live,
@@ -247,7 +338,7 @@ class LLMCliSharedMixin:
                 rendered = textualize_message(m)
                 if not rendered:
                     continue
-                history_lines.append(f'<message role="tool">\n{rendered}\n</message>')
+                history_lines.append(self._cli_message_block("tool", rendered))
                 has_history = True
 
         # Build system prompt

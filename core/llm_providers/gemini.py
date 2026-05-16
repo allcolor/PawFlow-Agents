@@ -533,13 +533,22 @@ class LLMGeminiMixin(GeminiSessionMixin):
             + "\n</system_instructions>\n\n" + user_text
         )
 
-    def _gemini_acp_full_initial_text(self, messages) -> str:
+    def _gemini_acp_full_initial_text(self, messages, workdir: str,
+                                      container_dir: str) -> str:
         system_prompt, user_text = self._serialize_messages_for_cli(messages, None)
         system_prompt = (
             self._GEMINI_PAWFLOW_PREAMBLE
             + ("\n\n" + system_prompt if system_prompt else "")
         )
-        return self._gemini_acp_build_stdin_with_system(system_prompt, user_text)
+        prompt, _meta = self._build_cli_initial_context_prompt(
+            messages,
+            system_prompt=system_prompt,
+            user_text=user_text,
+            workdir=workdir,
+            provider_workdir=container_dir,
+            provider_name="gemini",
+        )
+        return prompt
 
     def _gemini_acp_live_text(self, user_text: str) -> str:
         return user_text or ""
@@ -694,6 +703,10 @@ class LLMGeminiMixin(GeminiSessionMixin):
         image_blocks = self._gemini_acp_extract_images(
             messages, user_id=user_id, conversation_id=conv_id)
 
+        workdir = self._gemini_get_session_workdir(conv_id, agent_name, user_id)
+        os.makedirs(workdir, exist_ok=True)
+        container_dir = self._gemini_acp_container_dir(workdir)
+
         def _estimate_prompt_tokens(text: str) -> int:
             try:
                 from core.token_counter import (
@@ -712,7 +725,7 @@ class LLMGeminiMixin(GeminiSessionMixin):
         def _prompt_text_for_mode(mode: str) -> str:
             if str(mode or "").startswith("resume"):
                 return self._gemini_acp_resume_text(messages)
-            return self._gemini_acp_full_initial_text(messages)
+            return self._gemini_acp_full_initial_text(messages, workdir, container_dir)
 
         store = None
         session_id = ""
@@ -740,9 +753,6 @@ class LLMGeminiMixin(GeminiSessionMixin):
 
         prompt_mode = "resume" if session_id else "cold"
         initial_text = _prompt_text_for_mode(prompt_mode)
-        workdir = self._gemini_get_session_workdir(conv_id, agent_name, user_id)
-        os.makedirs(workdir, exist_ok=True)
-        container_dir = self._gemini_acp_container_dir(workdir)
 
         resume_pool_idx = -1
         if session_id and conv_id and store is not None:

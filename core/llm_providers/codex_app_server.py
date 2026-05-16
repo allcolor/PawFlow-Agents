@@ -351,13 +351,22 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
             return "unread"
         return "done"
 
-    def _codex_app_full_initial_text(self, messages) -> str:
+    def _codex_app_full_initial_text(self, messages, workdir: str,
+                                     container_dir: str) -> str:
         system_prompt, user_text = self._serialize_messages_for_cli(messages, None)
         system_prompt = (
             self._CODEX_PAWFLOW_PREAMBLE
             + ("\n" + system_prompt if system_prompt else "")
         )
-        return self._codex_app_build_stdin_with_system(system_prompt, user_text)
+        prompt, _meta = self._build_cli_initial_context_prompt(
+            messages,
+            system_prompt=system_prompt,
+            user_text=user_text,
+            workdir=workdir,
+            provider_workdir=container_dir,
+            provider_name="codex-app-server",
+        )
+        return prompt
 
     def _codex_app_resume_text(self, messages) -> str:
         return self._codex_app_last_user_text(messages)
@@ -536,20 +545,20 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                     fallback, exc_info=True)
                 return fallback
 
+        workdir = self._codex_get_session_workdir(conv_id, agent_name, user_id)
+        os.makedirs(workdir, exist_ok=True)
+        container_dir = self._codex_app_container_dir(workdir)
+
         if thread_id:
             prompt_mode = "resume"
             initial_text = self._codex_app_resume_text(messages)
         else:
             prompt_mode = "cold"
-            initial_text = self._codex_app_full_initial_text(messages)
+            initial_text = self._codex_app_full_initial_text(messages, workdir, container_dir)
         prompt_tokens = _estimate_prompt_tokens(initial_text)
         logger.info(
             "[codex-app] gauge: prompt_tokens=%d mode=%s (msgs=%d, input=%d chars)",
             prompt_tokens, prompt_mode, len(messages), len(initial_text))
-
-        workdir = self._codex_get_session_workdir(conv_id, agent_name, user_id)
-        os.makedirs(workdir, exist_ok=True)
-        container_dir = self._codex_app_container_dir(workdir)
 
         resume_pool_idx = -1
         if thread_id and conv_id and store is not None:
@@ -779,7 +788,8 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                                 logger.debug("[codex-app] failed to clear stale thread id", exc_info=True)
                         thread_id = ""
                         prompt_mode = "cold-after-stale-resume"
-                        initial_text = self._codex_app_full_initial_text(messages)
+                        initial_text = self._codex_app_full_initial_text(
+                            messages, workdir, container_dir)
                         prompt_tokens = _estimate_prompt_tokens(initial_text)
                         logger.info(
                             "[codex-app] gauge: prompt_tokens=%d mode=%s (msgs=%d, input=%d chars)",

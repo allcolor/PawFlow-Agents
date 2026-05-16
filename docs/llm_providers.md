@@ -14,6 +14,15 @@ PawFlow can run agents through direct HTTP APIs and through CLI-backed coding ag
 
 Direct API providers are normal HTTP clients. CLI providers launch a provider CLI, keep provider-specific session state, and route tools through PawFlow's relay/MCP bridge.
 
+On a cold CLI session, PawFlow writes the full serialized initial context to a
+session-local `.pawflow_cli/initial_context.md` file and sends a short bootstrap
+prompt that tells the CLI to read that file first. The bootstrap also repeats the
+latest user turn with XML-sensitive characters escaped, so the immediate request
+is visible even if the CLI reads the context file selectively. Resume turns keep
+the existing delta-only behavior because the provider session already carries the
+prior context. Direct API providers do not use this file bootstrap; they receive
+their message context directly in the API request.
+
 ## Agent Configuration
 
 Agents reference a service id:

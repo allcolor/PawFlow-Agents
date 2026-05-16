@@ -8,7 +8,6 @@ MITM proxy's copy of Anthropic SSE events.
 from __future__ import annotations
 
 import base64
-from html import escape
 import json
 import mimetypes
 from pathlib import Path
@@ -16,7 +15,6 @@ import time
 import uuid
 
 from core.claude_code_interactive_pool import InteractiveClaudeCodePool
-from core.llm_providers.cli_shared import textualize_message
 from core.llm_providers.claude_code_session import ClaudeCodeSessionMixin
 from tools.cc_interactive_filters import is_hidden_native_tool
 
@@ -413,62 +411,25 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
             messages, workdir, container_workdir, user_id, conversation_id)
         parts = []
         if initial_context:
-            context_path = self._cci_write_initial_context(
-                system_prompt, user_text, workdir, container_workdir)
-            parts.append(
-                "Read this PawFlow initial context file before answering:\n"
-                f"@{context_path}\n\n"
-                "It contains the compacted conversation summary/context and "
-                "the latest user request. After reading it, continue the "
-                "conversation and answer the latest user request.")
-            current = self._cci_current_turn_text(messages)
-            if current:
-                parts.append("Latest turn to answer now:\n" + current)
+            prompt, _meta = self._build_cli_initial_context_prompt(
+                messages,
+                system_prompt=system_prompt,
+                user_text=user_text,
+                workdir=workdir,
+                provider_workdir=container_workdir,
+                rel_path=".pawflow_cci/initial_context.md",
+                provider_name="claude-code-interactive",
+            )
+            parts.append(prompt)
         elif system_prompt:
             parts.append("<system_instructions>\n" + system_prompt + "\n</system_instructions>")
         if image_lines:
             parts.append("Attachments:\n" + "\n".join(image_lines))
         if not initial_context:
-            current = self._cci_current_turn_text(messages) or user_text
+            current = self._cli_current_turn_text(messages) or user_text
             if current:
                 parts.append(current)
         return "\n\n".join(parts).strip() + "\n"
-
-    def _cci_write_initial_context(self, system_prompt: str, user_text: str,
-                                   workdir: str, container_workdir: str) -> str:
-        rel = Path(".pawflow_cci") / "initial_context.md"
-        path = Path(workdir) / rel
-        path.parent.mkdir(parents=True, exist_ok=True)
-        body = ["# PawFlow Initial Context", ""]
-        if system_prompt:
-            body.extend(["## System Instructions", "", system_prompt.strip(), ""])
-        if user_text:
-            body.extend(["## Compacted Conversation Context", "", user_text.strip(), ""])
-        path.write_text("\n".join(body).rstrip() + "\n", encoding="utf-8")
-        return f"{container_workdir}/{rel.as_posix()}"
-
-    def _cci_current_turn_text(self, messages) -> str:
-        if not messages:
-            return ""
-        last_user_idx = -1
-        for idx in range(len(messages) - 1, -1, -1):
-            if getattr(messages[idx], "role", "") == "user":
-                last_user_idx = idx
-                break
-        start = last_user_idx if last_user_idx >= 0 else max(0, len(messages) - 3)
-        lines = []
-        for msg in messages[start:]:
-            role = getattr(msg, "role", "") or "message"
-            if role == "system":
-                continue
-            rendered = textualize_message(msg)
-            if rendered:
-                safe_role = escape(str(role), quote=True)
-                safe_rendered = escape(rendered, quote=False)
-                lines.append(f"<message role=\"{safe_role}\">\n{safe_rendered}\n</message>")
-        if not lines:
-            return ""
-        return "\n".join(lines) + "\n\nContinue from this latest turn."
 
     def _cci_materialize_images(self, messages, workdir: str, container_workdir: str,
                                 user_id: str, conversation_id: str) -> list[str]:

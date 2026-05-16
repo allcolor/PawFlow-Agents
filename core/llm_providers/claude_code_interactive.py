@@ -50,6 +50,12 @@ class _CCITurnCoordinator:
         self._text_block_buf = ""
         self._thinking_block_buf = ""
         self._defer_text_block = False
+        self._active_message_requests: set[str] = set()
+        self._request_stop_reasons: dict[str, str] = {}
+        self._saw_message_request = False
+        self._saw_model_content = False
+        self._final_model_stop_seen = False
+        self._stop_seen = False
 
     def run(self, abort_event=None):
         from core.llm_client import LLMResponse
@@ -64,6 +70,20 @@ class _CCITurnCoordinator:
             etype = event.get("type", "")
             if etype == "request_error":
                 raise RuntimeError(event.get("error", "CC interactive proxy request failed"))
+            if etype == "request_start":
+                request_id = event.get("request_id", "") or ""
+                path = event.get("path", "") or ""
+                if request_id and path.startswith("/v1/messages") and not event.get("ignore_reason"):
+                    self._saw_message_request = True
+                    self._active_message_requests.add(request_id)
+                continue
+            if etype == "response_ignored":
+                request_id = event.get("request_id", "") or ""
+                if request_id:
+                    self._active_message_requests.discard(request_id)
+                if self._stop_seen and not self._active_message_requests:
+                    done = self._finish_turn_if_ready()
+                continue
             if etype == "tool_use":
                 self._emit_observed_tool_use(event)
                 continue
@@ -74,10 +94,9 @@ class _CCITurnCoordinator:
                 self.lifecycle_events.append(event)
                 hook_name = event.get("hook_event_name", "")
                 if hook_name == "Stop":
-                    self._flush_text_block()
-                    self._flush_thinking_block()
-                    self._emit_pending_tool_uses()
-                    done = True
+                    self._stop_seen = True
+                    if not self._active_message_requests:
+                        done = self._finish_turn_if_ready()
                 elif hook_name == "StopFailure":
                     info = event.get("input") or {}
                     detail = info.get("error") or "Claude Code interactive turn failed"
@@ -89,6 +108,7 @@ class _CCITurnCoordinator:
             payload = event.get("payload") or {}
             ptype = payload.get("type") or name
             if ptype == "content_block_start":
+                self._saw_model_content = True
                 block = payload.get("content_block") or {}
                 idx = int(payload.get("index", 0) or 0)
                 block_type = block.get("type")
@@ -113,6 +133,7 @@ class _CCITurnCoordinator:
                 elif block_type == "text":
                     self._append_text(block.get("text", ""))
             elif ptype == "content_block_delta":
+                self._saw_model_content = True
                 idx = int(payload.get("index", 0) or 0)
                 delta = payload.get("delta") or {}
                 dtype = delta.get("type", "")
@@ -138,14 +159,27 @@ class _CCITurnCoordinator:
                 self._flush_thinking_block()
                 self.current_block_type = None
             elif ptype == "message_delta":
+                request_id = event.get("request_id", "") or ""
+                delta = payload.get("delta") or {}
+                stop_reason = delta.get("stop_reason") or payload.get("stop_reason") or ""
+                if request_id and stop_reason:
+                    self._request_stop_reasons[request_id] = str(stop_reason)
                 usage = payload.get("usage") or {}
                 if usage:
                     self.usage.update(usage)
             elif ptype == "message_stop":
-                # In interactive mode the Anthropic request lifecycle is not
-                # the Claude Code turn lifecycle. Claude Code may issue
-                # intermediate requests while the tmux turn is still active;
-                # only the Claude Code Stop hook closes the PawFlow turn.
+                request_id = event.get("request_id", "") or ""
+                if request_id:
+                    self._active_message_requests.discard(request_id)
+                    stop_reason = self._request_stop_reasons.get(request_id, "")
+                    if stop_reason != "tool_use" and self._saw_model_content:
+                        self._final_model_stop_seen = True
+                elif self._saw_model_content:
+                    self._final_model_stop_seen = True
+                if self._stop_seen and not self._active_message_requests:
+                    done = self._finish_turn_if_ready()
+                # Anthropic message_stop ends one model request. The tmux turn
+                # ends only after Claude Code's Stop hook has also arrived.
                 continue
 
         text = "".join(self.text_parts)
@@ -163,6 +197,18 @@ class _CCITurnCoordinator:
                 "lifecycle_events": self.lifecycle_events,
             },
         )
+
+    def _finish_turn_if_ready(self) -> bool:
+        if not self._stop_seen:
+            return False
+        if self._active_message_requests:
+            return False
+        if self._saw_message_request and self._saw_model_content and not self._final_model_stop_seen:
+            return False
+        self._flush_text_block()
+        self._flush_thinking_block()
+        self._emit_pending_tool_uses()
+        return True
 
     def _append_text(self, text: str) -> None:
         if text:
@@ -211,22 +257,11 @@ class _CCITurnCoordinator:
         if not block or block.get("emitted"):
             return
         tool_id = block.get("id") or f"cci_{uuid.uuid4().hex[:12]}"
-        raw = block.get("json", "") or "{}"
-        try:
-            args = json.loads(raw)
-        except Exception:
-            args = {}
         block["emitted"] = True
         if tool_id in self.emitted_tool_use_ids:
             self._emit_pending_tool_results(tool_id)
             return
         self.emitted_tool_use_ids.add(tool_id)
-        if self.block_callback:
-            self.block_callback("tool_use", {
-                "id": tool_id,
-                "name": block.get("name", ""),
-                "arguments": args,
-            })
         self._emit_pending_tool_results(tool_id)
 
     def _emit_pending_tool_uses(self) -> None:
@@ -265,16 +300,6 @@ class _CCITurnCoordinator:
             return
         block["emitted"] = True
         self.emitted_tool_use_ids.add(tc_id)
-        try:
-            args = json.loads(block.get("json", "") or "{}")
-        except Exception:
-            args = {}
-        if self.block_callback:
-            self.block_callback("tool_use", {
-                "id": tc_id,
-                "name": block.get("name", ""),
-                "arguments": args,
-            })
         self._emit_pending_tool_results(tc_id)
 
     def _emit_pending_tool_results(self, tc_id: str) -> None:
@@ -292,12 +317,6 @@ class _CCITurnCoordinator:
         if not tc_id or tc_id in self.emitted_tool_result_ids:
             return
         self.emitted_tool_result_ids.add(tc_id)
-        if self.block_callback:
-            self.block_callback("tool_result", {
-                "tc_id": tc_id,
-                "tool": block.get("name", ""),
-                "result": event.get("content", "") or "(no output)",
-            })
 
 
 class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):

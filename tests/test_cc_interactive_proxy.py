@@ -69,7 +69,7 @@ def test_proxy_request_observer_does_not_modify_forwarded_bytes(monkeypatch):
     }]
 
 
-def test_request_observer_emits_observed_tool_results(monkeypatch):
+def test_request_observer_hides_native_claude_tool_results(monkeypatch):
     monkeypatch.setenv("PAWFLOW_CCI_SESSION_TOKEN", "sess")
     proxy = importlib.import_module("tools.cc_interactive_proxy")
     events = []
@@ -94,18 +94,10 @@ def test_request_observer_emits_observed_tool_results(monkeypatch):
     tracker = proxy.HTTPExchangeTracker("r1")
     proxy.HTTPRequestObserver(tracker).feed(chunk)
 
-    assert events[0]["type"] == "request_start"
-    assert events[1] == {
-        "type": "tool_result",
-        "request_id": "r1",
-        "path": "/v1/messages?beta=true",
-        "tool_use_id": "toolu_1",
-        "content": "file body",
-        "is_error": False,
-    }
+    assert [event["type"] for event in events] == ["request_start"]
 
 
-def test_request_observer_emits_observed_tool_use_before_result(monkeypatch):
+def test_request_observer_hides_native_claude_tool_use_before_result(monkeypatch):
     monkeypatch.setenv("PAWFLOW_CCI_SESSION_TOKEN", "sess")
     proxy = importlib.import_module("tools.cc_interactive_proxy")
     events = []
@@ -134,20 +126,10 @@ def test_request_observer_emits_observed_tool_use_before_result(monkeypatch):
 
     proxy.HTTPRequestObserver(proxy.HTTPExchangeTracker("r1")).feed(chunk)
 
-    assert [event["type"] for event in events] == ["request_start", "tool_use", "tool_result"]
-    assert events[1] == {
-        "type": "tool_use",
-        "request_id": "r1",
-        "path": "/v1/messages?beta=true",
-        "tool_use_id": "toolu_1",
-        "name": "Bash",
-        "arguments": {"command": "git status"},
-    }
-    assert events[2]["tool_use_id"] == "toolu_1"
-    assert events[2]["content"] == "clean"
+    assert [event["type"] for event in events] == ["request_start"]
 
 
-def test_request_observer_does_not_ignore_title_prompt_requests(monkeypatch):
+def test_request_observer_ignores_title_prompt_requests(monkeypatch):
     monkeypatch.setenv("PAWFLOW_CCI_SESSION_TOKEN", "sess")
     proxy = importlib.import_module("tools.cc_interactive_proxy")
     events = []
@@ -169,9 +151,9 @@ def test_request_observer_does_not_ignore_title_prompt_requests(monkeypatch):
     proxy.HTTPRequestObserver(tracker).feed(chunk)
 
     ctx = tracker.pop()
-    assert ctx["ignore_response"] is False
-    assert ctx["ignore_reason"] == ""
-    assert events[0]["ignore_reason"] == ""
+    assert ctx["ignore_response"] is True
+    assert ctx["ignore_reason"] == "title_prompt"
+    assert events[0]["ignore_reason"] == "title_prompt"
 
 
 def test_proxy_observer_errors_do_not_affect_forwarding(monkeypatch):
@@ -664,3 +646,24 @@ def test_hook_keeps_manual_user_prompt(monkeypatch):
 
     assert compact["pawflow_injected_prompt"] is False
     assert compact["prompt"] == "Manual tmux prompt"
+
+
+def test_hook_masks_pawflow_prompt_when_marker_is_missing(monkeypatch):
+    hook = importlib.import_module("tools.cc_interactive_hook")
+    monkeypatch.setenv("PAWFLOW_CCI_INJECTED_PROMPTS", "/tmp/missing-pawflow-cci-marker.jsonl")
+    prompt = (
+        "Read this PawFlow initial context file before answering:\n"
+        "@/cc_sessions/c/a/.pawflow_cci/initial_context.md\n\n"
+        "It contains the compacted conversation summary/context."
+    )
+
+    compact = hook._compact_input({
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": prompt,
+    })
+
+    assert compact["pawflow_injected_prompt"] is False
+    assert compact["pawflow_managed_prompt"] is True
+    assert compact["pawflow_injected_prompt_missing"] is True
+    assert compact["prompt_sha256"] == hook.hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+    assert "prompt" not in compact

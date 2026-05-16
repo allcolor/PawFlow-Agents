@@ -59,6 +59,7 @@ class CCInteractiveSessionEvents:
     unreliable: bool = False
     error: str = ""
     manual_capture_active: bool = False
+    manual_capture_pending: int = 0
     created_at: float = field(default_factory=time.time)
     last_event_at: float = 0.0
 
@@ -262,6 +263,13 @@ class CCInteractiveEventService(BaseService):
             return
         if data.get("pawflow_injected_prompt"):
             return
+        if data.get("pawflow_managed_prompt"):
+            if data.get("pawflow_injected_prompt_missing"):
+                logger.warning(
+                    "CC interactive managed tmux prompt ignored without marker: session=%s sha256=%s len=%s",
+                    state.session_token[:8], data.get("prompt_sha256", ""),
+                    data.get("prompt_len", ""))
+            return
         prompt = data.get("prompt", "")
         if not isinstance(prompt, str) or not prompt.strip():
             return
@@ -297,6 +305,7 @@ class CCInteractiveEventService(BaseService):
     def _start_manual_capture(self, state: CCInteractiveSessionEvents) -> None:
         with self._sessions_lock:
             if state.manual_capture_active:
+                state.manual_capture_pending += 1
                 return
             state.manual_capture_active = True
         thread = threading.Thread(
@@ -342,7 +351,21 @@ class CCInteractiveEventService(BaseService):
         finally:
             state = self.session_state(session_token)
             if state:
-                state.manual_capture_active = False
+                restart = False
+                with self._sessions_lock:
+                    if state.manual_capture_pending > 0:
+                        state.manual_capture_pending -= 1
+                        restart = True
+                    else:
+                        state.manual_capture_active = False
+                if restart:
+                    thread = threading.Thread(
+                        target=self._run_manual_capture,
+                        args=(session_token,),
+                        name=f"cci-manual-capture-{session_token[:8]}",
+                        daemon=True,
+                    )
+                    thread.start()
 
     def _handle_ws(self, sock, path_params, meta):
         from services.filesystem_service import _attach_sync_sock_to_loop

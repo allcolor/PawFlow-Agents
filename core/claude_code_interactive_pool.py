@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Optional
+import fcntl
 import hashlib
 import json
 import os
@@ -180,6 +181,7 @@ class InteractiveClaudeCodePool:
                 "ts": time.time(),
             }
             with open(marker, "a", encoding="utf-8") as fh:
+                fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
                 fh.write(json.dumps(payload, separators=(",", ":")) + "\n")
         except Exception:
             pass

@@ -472,7 +472,27 @@ def _is_title_json_text(text: str) -> bool:
     return isinstance(payload, dict) and set(payload.keys()) == {"title"}
 
 
+def _is_title_prompt(path: str, body: bytes) -> bool:
+    if not path.startswith("/v1/messages"):
+        return False
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except Exception:
+        return False
+    messages = payload.get("messages") or []
+    if not isinstance(messages, list):
+        return False
+    text = "\n".join(_content_text(message.get("content"))
+                     for message in messages if isinstance(message, dict))
+    lowered = text.lower()
+    return "json title" in lowered or ("\"title\"" in lowered and "conversation" in lowered)
+
+
 def _emit_observed_tool_blocks(request_id: str, path: str, body: bytes) -> None:
+    # Claude Code native tools are implementation details of the interactive
+    # session. PawFlow exposes PawFlow toolcalls separately; mirroring Claude's
+    # own Read/ToolSearch/Bash transcript pollutes the webchat and context.
+    return
     if not path.startswith("/v1/messages"):
         return
     try:
@@ -552,6 +572,8 @@ class HTTPRequestObserver:
             reason = ""
             if _is_quota_probe(path, body):
                 reason = "quota_probe"
+            elif _is_title_prompt(path, body):
+                reason = "title_prompt"
             ignore_response = bool(reason)
             self.tracker.push({
                 "request_id": request_id,
@@ -900,8 +922,15 @@ class JSONResponseObserver:
             self._ignore("message_without_supported_content", "")
             return
         usage = payload.get("usage") or {}
+        delta = payload.get("delta") or {}
+        stop_reason = payload.get("stop_reason") or delta.get("stop_reason") or ""
+        message_delta = {"type": "message_delta"}
         if usage:
-            self._emit("message_delta", {"type": "message_delta", "usage": usage})
+            message_delta["usage"] = usage
+        if stop_reason:
+            message_delta["delta"] = {"stop_reason": stop_reason}
+        if len(message_delta) > 1:
+            self._emit("message_delta", message_delta)
         self._emit("message_stop", {"type": "message_stop"})
 
     def _ignore(self, reason: str, payload_type: str):

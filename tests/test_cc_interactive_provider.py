@@ -15,7 +15,7 @@ class _Events:
 
     def wait_event(self, session_token, timeout=None):
         if self.q.empty():
-            return {}
+            raise AssertionError("test event queue exhausted before CC interactive turn completed")
         return self.q.get()
 
 
@@ -38,7 +38,7 @@ def test_claude_code_interactive_provider_registered_and_dispatched():
     assert "_cci_send_user_message" in send_src
 
 
-def test_turn_coordinator_assembles_text_thinking_and_tool_use():
+def test_turn_coordinator_assembles_text_thinking_and_hides_native_tool_use():
     events = [
         _sse("content_block_delta", {
             "type": "content_block_delta",
@@ -98,11 +98,7 @@ def test_turn_coordinator_assembles_text_thinking_and_tool_use():
     assert resp.tokens_in == 11
     assert resp.tokens_out == 7
     assert resp.tool_calls == []
-    assert blocks == [("tool_use", {
-        "id": "toolu_1",
-        "name": "read",
-        "arguments": {"path": "a.png"},
-    })]
+    assert blocks == []
     assert turns == [("Hi there", [], ""), ("", [], "plan")]
 
 
@@ -126,6 +122,33 @@ def test_turn_coordinator_flushes_unstopped_text_at_stop_hook():
     assert resp.content == "partial"
     assert seen == ["partial"]
     assert turns == [("partial", [], "")]
+
+
+def test_turn_coordinator_waits_for_proxy_message_stop_after_stop_hook():
+    events = [
+        {"type": "request_start", "request_id": "r1", "path": "/v1/messages"},
+        _sse("content_block_delta", {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "text_delta", "text": "first "},
+        }) | {"request_id": "r1"},
+        {"type": "hook", "hook_event_name": "Stop", "input": {"hook_event_name": "Stop"}},
+        _sse("content_block_delta", {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "text_delta", "text": "second"},
+        }) | {"request_id": "r1"},
+        _sse("content_block_stop", {"type": "content_block_stop", "index": 0}) | {"request_id": "r1"},
+        _sse("message_delta", {
+            "type": "message_delta",
+            "delta": {"stop_reason": "end_turn"},
+        }) | {"request_id": "r1"},
+        _sse("message_stop", {"type": "message_stop"}) | {"request_id": "r1"},
+    ]
+
+    resp = _CCITurnCoordinator(_Events(events), "sess").run()
+
+    assert resp.content == "first second"
 
 
 def test_turn_coordinator_drops_title_json_text_block():
@@ -179,7 +202,7 @@ def test_turn_coordinator_keeps_non_title_json_text_block():
     assert turns == [('{"answer":"ok"}', [], "")]
 
 
-def test_turn_coordinator_publishes_observed_tool_result_live():
+def test_turn_coordinator_hides_native_tool_result_live():
     events = [
         _sse("content_block_start", {
             "type": "content_block_start",
@@ -204,18 +227,7 @@ def test_turn_coordinator_publishes_observed_tool_result_live():
     ).run()
 
     assert resp.tool_calls == []
-    assert blocks == [
-        ("tool_use", {
-            "id": "toolu_1",
-            "name": "read",
-            "arguments": {"path": "README.md"},
-        }),
-        ("tool_result", {
-            "tc_id": "toolu_1",
-            "tool": "read",
-            "result": "file body",
-        }),
-    ]
+    assert blocks == []
 
 
 def test_turn_coordinator_buffers_tool_result_until_tool_use_is_emitted():
@@ -241,18 +253,7 @@ def test_turn_coordinator_buffers_tool_result_until_tool_use_is_emitted():
         block_callback=lambda event_type, payload: blocks.append((event_type, payload)),
     ).run()
 
-    assert blocks == [
-        ("tool_use", {
-            "id": "toolu_1",
-            "name": "read",
-            "arguments": {"path": "README.md"},
-        }),
-        ("tool_result", {
-            "tc_id": "toolu_1",
-            "tool": "read",
-            "result": "file body",
-        }),
-    ]
+    assert blocks == []
 
 
 def test_turn_coordinator_observed_tool_use_unblocks_result_before_sse_stop():
@@ -279,18 +280,7 @@ def test_turn_coordinator_observed_tool_use_unblocks_result_before_sse_stop():
         block_callback=lambda event_type, payload: blocks.append((event_type, payload)),
     ).run()
 
-    assert blocks == [
-        ("tool_use", {
-            "id": "toolu_1",
-            "name": "Bash",
-            "arguments": {"command": "git status"},
-        }),
-        ("tool_result", {
-            "tc_id": "toolu_1",
-            "tool": "Bash",
-            "result": "clean",
-        }),
-    ]
+    assert blocks == []
 
 
 def test_turn_coordinator_accepts_stop_hook_as_lifecycle_end():

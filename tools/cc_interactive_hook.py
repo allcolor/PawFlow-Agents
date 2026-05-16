@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import base64
+import fcntl
 import hashlib
 import json
 import os
@@ -109,10 +110,23 @@ def _compact_input(raw: dict) -> dict:
         out["prompt_sha256"] = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
         out["prompt_len"] = len(prompt)
         injected = _consume_injected_prompt(prompt)
+        managed = _looks_like_pawflow_prompt(prompt)
         out["pawflow_injected_prompt"] = injected
-        if prompt and not injected:
+        if managed:
+            out["pawflow_managed_prompt"] = True
+            if not injected:
+                out["pawflow_injected_prompt_missing"] = True
+        if prompt and not injected and not managed:
             out["prompt"] = prompt
     return out
+
+
+def _looks_like_pawflow_prompt(prompt: str) -> bool:
+    text = prompt.lstrip()
+    return (
+        text.startswith("Read this PawFlow initial context file before answering:")
+        or text.startswith("PawFlow initial context was already loaded for this live Claude Code session.")
+    )
 
 
 def _consume_injected_prompt(prompt: str) -> bool:
@@ -121,30 +135,30 @@ def _consume_injected_prompt(prompt: str) -> bool:
         return False
     digest = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
     try:
-        with open(path, "r", encoding="utf-8") as fh:
+        with open(path, "a+", encoding="utf-8") as fh:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+            fh.seek(0)
             rows = fh.readlines()
+            found = False
+            kept = []
+            for row in rows:
+                try:
+                    payload = json.loads(row)
+                except Exception:
+                    continue
+                if not found and payload.get("sha256") == digest:
+                    found = True
+                    continue
+                kept.append(row)
+            if found:
+                fh.seek(0)
+                fh.truncate()
+                fh.writelines(kept)
+            return found
     except FileNotFoundError:
         return False
     except Exception:
         return False
-    found = False
-    kept = []
-    for row in rows:
-        try:
-            payload = json.loads(row)
-        except Exception:
-            continue
-        if not found and payload.get("sha256") == digest:
-            found = True
-            continue
-        kept.append(row)
-    if found:
-        try:
-            with open(path, "w", encoding="utf-8") as fh:
-                fh.writelines(kept)
-        except Exception:
-            pass
-    return found
 
 
 def main() -> int:

@@ -1062,6 +1062,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                         last_user = _c or ""
                     break
             user_text = last_user
+            initial_text = self._build_stdin_with_system(system_prompt, user_text)
         else:
             system_prompt, user_text = self._serialize_messages_for_cli(messages, None)
             system_prompt = append_cli_mcp_system_prompt(system_prompt)
@@ -1073,9 +1074,6 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                 provider_workdir=_session_dir,
                 provider_name="claude-code",
             )
-
-        if session_id:
-            initial_text = self._build_stdin_with_system(system_prompt, user_text)
         logger.debug("[claude-code] prompt: system=%d user=%d images=%d msgs=%d session=%s",
                      len(system_prompt), len(user_text), len(image_blocks), len(messages),
                      "resume" if session_id else "new")

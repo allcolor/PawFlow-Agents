@@ -358,13 +358,12 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
             self._CODEX_PAWFLOW_PREAMBLE
             + ("\n" + system_prompt if system_prompt else "")
         )
-        prompt, _meta = self._build_cli_initial_context_prompt(
+        prompt = self._build_cli_initial_context_prompt(
             messages,
             system_prompt=system_prompt,
             user_text=user_text,
             workdir=workdir,
             provider_workdir=container_dir,
-            provider_name="codex-app-server",
         )
         return prompt
 

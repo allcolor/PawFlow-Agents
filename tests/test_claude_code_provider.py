@@ -166,15 +166,14 @@ class TestSerializeMessages(unittest.TestCase):
         system_prompt, user_text = self.client._serialize_messages_for_cli(msgs, None)
 
         with tempfile.TemporaryDirectory() as tmp:
-            prompt, meta = self.client._build_cli_initial_context_prompt(
+            prompt = self.client._build_cli_initial_context_prompt(
                 msgs,
                 system_prompt=system_prompt,
                 user_text=user_text,
                 workdir=tmp,
                 provider_workdir="/cc_sessions/u/c/a",
-                provider_name="test-cli",
             )
-            with open(meta["host_path"], encoding="utf-8") as fh:
+            with open(f"{tmp}/.pawflow_cli/initial_context.md", encoding="utf-8") as fh:
                 body = fh.read()
 
         self.assertIn("PawFlow cold-session bootstrap", prompt)
@@ -187,11 +186,11 @@ class TestSerializeMessages(unittest.TestCase):
         self.assertIn("## Bootstrap Contract", body)
 
     def test_claude_code_namespace_provider_workdir_drops_user_segment(self):
-        rel = "user1/conv1/assistant"
-        rel_parts = [p for p in rel.split("/") if p]
-        provider_workdir = f"/cc_sessions/{rel}"
-        if len(rel_parts) >= 3:
-            provider_workdir = "/cc_sessions/" + "/".join(rel_parts[1:])
+        with tempfile.TemporaryDirectory() as tmp:
+            workdir = f"{tmp}/user1/conv1/assistant"
+            with patch("core.llm_providers.claude_code._get_sessions_base",
+                       return_value=tmp):
+                provider_workdir = self.client._cc_namespace_workdir(workdir)
 
         self.assertEqual(provider_workdir, "/cc_sessions/conv1/assistant")
 

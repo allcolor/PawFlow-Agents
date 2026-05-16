@@ -64,6 +64,15 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
     # _recover_tokens, _setup_mcp_config, _build_claude_cmd,
     # _get_tool_relay_info, _DISALLOWED_BUILTIN_TOOLS
 
+    @staticmethod
+    def _cc_namespace_workdir(workdir: str) -> str:
+        """Return the session path as seen inside claude_code_pool's namespace."""
+        rel = os.path.relpath(workdir, _get_sessions_base()).replace("\\", "/")
+        parts = [part for part in rel.split("/") if part]
+        if len(parts) < 3:
+            raise ValueError(f"invalid Claude Code workdir layout: {workdir}")
+        return "/cc_sessions/" + "/".join(parts[1:])
+
     # ── Process management ──────────────────────────────────────────
 
     def _cc_send_user_message(self, text: str, attachments: list = None):
@@ -1038,13 +1047,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         workdir = self._get_session_workdir(conv_id, agent_name, user_id)
         _rel = os.path.relpath(workdir, _get_sessions_base()).replace("\\", "/")
         _session_dir = f"/cc_sessions/{_rel}"
-        _rel_parts = [p for p in _rel.split("/") if p]
-        _provider_workdir = _session_dir
-        if len(_rel_parts) >= 3:
-            # Claude runs in a private mount namespace where /cc_sessions/<user>
-            # is bind-mounted over /cc_sessions, so the visible path starts at
-            # the conversation segment.
-            _provider_workdir = "/cc_sessions/" + "/".join(_rel_parts[1:])
+        _provider_workdir = self._cc_namespace_workdir(workdir)
 
         # Session-aware serialization:
         # - New session (no session_id): feed the full PawFlow ctx ONCE.
@@ -1073,13 +1076,12 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         else:
             system_prompt, user_text = self._serialize_messages_for_cli(messages, None)
             system_prompt = append_cli_mcp_system_prompt(system_prompt)
-            initial_text, _initial_ctx = self._build_cli_initial_context_prompt(
+            initial_text = self._build_cli_initial_context_prompt(
                 messages,
                 system_prompt=system_prompt,
                 user_text=user_text,
                 workdir=workdir,
                 provider_workdir=_provider_workdir,
-                provider_name="claude-code",
             )
         logger.debug("[claude-code] prompt: system=%d user=%d images=%d msgs=%d session=%s",
                      len(system_prompt), len(user_text), len(image_blocks), len(messages),

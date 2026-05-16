@@ -161,8 +161,7 @@ class LLMCliSharedMixin:
         workdir: str,
         provider_workdir: str,
         rel_path: str = ".pawflow_cli/initial_context.md",
-        provider_name: str = "CLI",
-    ) -> Tuple[str, Dict[str, Any]]:
+    ) -> str:
         """Write full cold-start context to a session file and return bootstrap text."""
         rel = Path(rel_path)
         host_path = Path(workdir) / rel
@@ -199,13 +198,7 @@ class LLMCliSharedMixin:
         ]
         if latest:
             prompt.extend(["", "Latest turn to answer now:", latest.strip()])
-        return "\n".join(prompt).strip() + "\n", {
-            "host_path": str(host_path),
-            "provider_path": provider_path,
-            "context_chars": len("\n".join(body)),
-            "latest_chars": len(latest),
-            "provider_name": provider_name,
-        }
+        return "\n".join(prompt).strip() + "\n"
 
     @staticmethod
     def _clean_control_chars(text: str) -> str:

@@ -120,6 +120,26 @@ def test_cli_providers_pass_identity_to_workspace_mount_builder():
             assert needle in src
 
 
+def test_cli_provider_namespace_workdirs_drop_user_segment(tmp_path, monkeypatch):
+    from core.claude_code_interactive_pool import InteractiveClaudeCodePool
+    from core.llm_providers import codex_app_server, gemini
+    from core.llm_providers.codex_app_server import LLMCodexAppServerMixin
+    from core.llm_providers.gemini import LLMGeminiMixin
+
+    workdir = tmp_path / "user1" / "conv1" / "assistant"
+    monkeypatch.setattr(codex_app_server, "_get_sessions_base", lambda: str(tmp_path))
+    monkeypatch.setattr(gemini, "_get_sessions_base", lambda: str(tmp_path))
+
+    assert LLMCodexAppServerMixin._codex_app_container_dir(
+        str(workdir)) == "/cc_sessions/conv1/assistant"
+    assert LLMGeminiMixin._gemini_acp_container_dir(
+        str(workdir)) == "/cc_sessions/conv1/assistant"
+    assert InteractiveClaudeCodePool._physical_container_workdir(
+        "user1", "conv1", "assistant") == "/cc_sessions/user1/conv1/assistant"
+    assert InteractiveClaudeCodePool._container_workdir(
+        "user1", "conv1", "assistant") == "/cc_sessions/conv1/assistant"
+
+
 class _FakeStore:
     def __init__(self):
         self.data = {"linked": {}, "default": {}}

@@ -401,6 +401,99 @@ class TestAgentLoopStreaming(unittest.TestCase):
         assert body["conversation_id"] == "test-conv-123"
         assert results[0].get_attribute("agent.streaming") == "true"
 
+    def test_pre_user_message_hook_runs_once_between_streaming_ingress_and_context(self):
+        from tasks.ai.agent_loop import AgentLoopTask
+
+        hook_calls = []
+
+        class _HookRunner:
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+
+            def run(self, event, payload, fail_policy=""):
+                hook_calls.append({
+                    "event": event,
+                    "payload": payload,
+                    "fail_policy": fail_policy,
+                })
+                return {"decision": "allow"}
+
+        class _EmptyRegistry:
+            def __init__(self):
+                self.tools = []
+
+            def list_tools(self):
+                return list(self.tools)
+
+            def register(self, handler):
+                self.tools.append(handler)
+
+        class _FakeClient:
+            provider = "openai"
+            default_model = "test-model"
+            base_url = ""
+            _real_context_size = 200000
+
+        class _FakeService:
+            provider = "openai"
+            default_model = "test-model"
+            base_url = ""
+            TYPE = "llm"
+            config = {"max_context_size": 200000}
+
+        class _SyncThread:
+            def __init__(self, target, daemon=False, name=""):
+                self.target = target
+                self.daemon = daemon
+                self.name = name
+
+            def start(self):
+                self.target()
+
+        fake_store = MagicMock()
+        fake_store.message_count.return_value = 0
+        fake_store.get_extra.return_value = None
+
+        task = AgentLoopTask({
+            "api_key": "test-key",
+            "streaming": True,
+            "conversation_store": False,
+        })
+        task.get_tool_registry = MagicMock(return_value=_EmptyRegistry())
+        task._resolve_client = MagicMock(return_value=(_FakeClient(), _FakeService()))
+        task._resolve_service_param = MagicMock(return_value="")
+        task._wire_embed_fn = MagicMock()
+        task._configure_tool_handlers = MagicMock()
+        task._get_summarizer_client = MagicMock(return_value=(None, 0, ""))
+        task._streaming_agent_loop = MagicMock()
+
+        ff = FlowFile(content=json.dumps({
+            "message": "hello",
+            "conversation_id": "test-conv-hook-once",
+            "target_agent": "assistant",
+        }).encode(), attributes={"http.auth.principal": "alice"})
+
+        with patch("core.agent_hooks.AgentHookRunner", _HookRunner), \
+                patch("core.conversation_store.ConversationStore.instance",
+                      return_value=fake_store), \
+                patch("core.conversation_writer.ConversationWriter.for_conversation") as writer_for_conv, \
+                patch("tasks.ai.agent_streaming.threading.Thread", _SyncThread):
+            writer_for_conv.return_value.enqueue_message = MagicMock()
+            results = task._execute_streaming(ff)
+
+        assert len(results) == 1
+        assert json.loads(results[0].get_content().decode())["status"] == "accepted"
+        assert len(hook_calls) == 1
+        assert hook_calls[0]["event"] == "pre_user_message"
+        assert hook_calls[0]["payload"]["content"] == "hello"
+        assert hook_calls[0]["payload"]["attachments"] == []
+        assert hook_calls[0]["payload"]["target_agent"] == "assistant"
+        assert hook_calls[0]["payload"]["channel"] == "web"
+        assert hook_calls[0]["fail_policy"] == "closed"
+        task._streaming_agent_loop.assert_called_once()
+        ctx = task._streaming_agent_loop.call_args.args[0]
+        assert ctx["messages"][-1].content == "hello"
+
     def test_streaming_wakes_pending_after_active_cleanup(self):
         from tasks.ai.agent_loop import AgentLoopTask
         from core.pending_queue import PendingQueue

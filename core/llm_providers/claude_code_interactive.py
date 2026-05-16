@@ -411,14 +411,13 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
             messages, workdir, container_workdir, user_id, conversation_id)
         parts = []
         if initial_context:
-            prompt, _meta = self._build_cli_initial_context_prompt(
+            prompt = self._build_cli_initial_context_prompt(
                 messages,
                 system_prompt=system_prompt,
                 user_text=user_text,
                 workdir=workdir,
                 provider_workdir=container_workdir,
                 rel_path=".pawflow_cci/initial_context.md",
-                provider_name="claude-code-interactive",
             )
             parts.append(prompt)
         elif system_prompt:

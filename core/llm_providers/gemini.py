@@ -540,13 +540,12 @@ class LLMGeminiMixin(GeminiSessionMixin):
             self._GEMINI_PAWFLOW_PREAMBLE
             + ("\n\n" + system_prompt if system_prompt else "")
         )
-        prompt, _meta = self._build_cli_initial_context_prompt(
+        prompt = self._build_cli_initial_context_prompt(
             messages,
             system_prompt=system_prompt,
             user_text=user_text,
             workdir=workdir,
             provider_workdir=container_dir,
-            provider_name="gemini",
         )
         return prompt
 

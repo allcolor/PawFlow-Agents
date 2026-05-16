@@ -231,7 +231,8 @@ function skillParser(parts, text) {
   if (sub === 'list') return { _action: 'list_resources' };
   if (sub === 'add' || sub === 'create') return { _action: 'create_resource', resource_type: 'skill', name: parts[2] || '', prompt: parts.slice(3).join(' ') };
   if (sub === 'del' || sub === 'delete') return { _action: 'delete_resource', resource_type: 'skill', name: parts[2] || '' };
-  addMsg('system', 'Usage: /skill list | add <name> <prompt> | del <name>');
+  if (sub === 'run' || sub === 'search' || sub === 'import') return { _action: 'command', text: text, agent_name: window._selectedAgent || '' };
+  addMsg('system', 'Usage: /skill list | add <name> <prompt> | del <name> | run [@agent] <name> [args...]');
   return null;
 }
 function taskParser(parts, text) {

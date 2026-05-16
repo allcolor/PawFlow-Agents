@@ -350,8 +350,10 @@ function cmdSkill(text, parts) {
     const agent = _stripAt(parts[2]);
     if (!agent) { addMsg('system', t('usageLine', { usage: '/skill assigned @agent' })); return true; }
     cmdSkillAssigned(agent);
+  } else if (sub === 'run' || sub === 'search' || sub === 'import') {
+    return tryServerCommand(text);
   } else {
-    addMsg('system', t('usageLine', { usage: '/skill list | add @name <prompt> | del @name | assign @agent @skill | unassign @agent @skill | assigned @agent' }));
+    addMsg('system', t('usageLine', { usage: '/skill list | add @name <prompt> | del @name | assign @agent @skill | unassign @agent @skill | assigned @agent | run [@agent] <name> [args...]' }));
   }
   return true;
 }

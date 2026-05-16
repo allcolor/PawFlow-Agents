@@ -308,7 +308,7 @@ HELP: Dict[str, Dict[str, str]] = {
         ),
     },
     "/skill": {
-        "usage": "/skill list | search [--source src] <query> | import [--source src] [--review-only] [--force] <ref> | add <name> <prompt> | del <name> | run [@agent] <name> [args...]",
+        "usage": "/skill list | search [--source src] <query> | import [--source src] [--review-only] [--force] <ref> | add <name> <prompt> | del <name> | run [@agent] <name> [args...] | //<name> [@agent] [args...]",
         "short": "Manage skills",
         "detail": (
             "  /skill list                    — List all skills\n"
@@ -316,7 +316,8 @@ HELP: Dict[str, Dict[str, str]] = {
             "  /skill import [--source src] [--review-only] [--force] <ref> — Review/import an external skill\n"
             "  /skill add <name> <prompt>     — Create a skill\n"
             "  /skill del <name>              — Delete a skill\n"
-            "  /skill run [@agent] <name> [args...] — Invoke a skill now"
+            "  /skill run [@agent] <name> [args...] — Invoke a skill now\n"
+            "  //<name> [@agent] [args...]    — Shortcut for /skill run"
         ),
     },
     "/pfp": {
@@ -757,6 +758,11 @@ def _parse_command(text: str, conversation_id: str, user_id: str,
     text = text.strip()
     if not text.startswith("/"):
         return None
+
+    # Skill-run sugar: //skill-name [@agent] [args...]
+    if text.startswith("//"):
+        return _parse_skill_sugar_command(
+            text, {"conversation_id": conversation_id}, agent_name)
 
     # Split command and args
     parts = text.split(None, 1)
@@ -1301,6 +1307,28 @@ def _parse_agent_command(arg: str, base: dict, agent_name: str) -> dict:
     # Unknown subcommand — treat as select (supports @agent or plain name)
     agt, _ = _extract_at_agent(arg, subcmd)
     return {"action": "select_agent", "agent_name": agt, **base}
+
+
+def _parse_skill_sugar_command(text: str, base: dict, agent_name: str = "") -> dict:
+    """Parse //skill-name [@agent] [args...] as /skill run syntax."""
+    rest = text[2:].strip()
+    parts = rest.split(None, 2)
+    skill_name = parts[0].lstrip("@") if parts else ""
+    target = agent_name
+    arguments = ""
+    if len(parts) > 1:
+        if parts[1].startswith("@"):
+            target = parts[1].lstrip("@")
+            arguments = parts[2] if len(parts) > 2 else ""
+        else:
+            arguments = rest[len(parts[0]):].strip()
+    return {
+        "action": "run_skill",
+        "target_agent": target,
+        "skill_name": skill_name,
+        "arguments": arguments,
+        **base,
+    }
 
 
 def _parse_skill_command(arg: str, base: dict, agent_name: str = "") -> dict:

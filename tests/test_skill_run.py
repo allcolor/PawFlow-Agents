@@ -26,6 +26,47 @@ def test_skill_run_slash_command_defaults_to_selected_agent():
     assert body["arguments"] == "42"
 
 
+def test_skill_run_sugar_defaults_to_selected_agent():
+    body = _parse_command(
+        "//review-pr 42", "conv1", "alice", "assistant")
+
+    assert body["action"] == "run_skill"
+    assert body["conversation_id"] == "conv1"
+    assert body["target_agent"] == "assistant"
+    assert body["skill_name"] == "review-pr"
+    assert body["arguments"] == "42"
+
+
+def test_skill_run_sugar_parses_immediate_agent():
+    body = _parse_command(
+        "//review-pr @reviewer 42", "conv1", "alice", "assistant")
+
+    assert body["action"] == "run_skill"
+    assert body["target_agent"] == "reviewer"
+    assert body["skill_name"] == "review-pr"
+    assert body["arguments"] == "42"
+
+
+def test_skill_run_sugar_accepts_at_prefixed_skill_name():
+    body = _parse_command(
+        "//@review-pr @reviewer 42", "conv1", "alice", "assistant")
+
+    assert body["action"] == "run_skill"
+    assert body["target_agent"] == "reviewer"
+    assert body["skill_name"] == "review-pr"
+    assert body["arguments"] == "42"
+
+
+def test_skill_run_sugar_only_treats_second_token_as_agent():
+    body = _parse_command(
+        "//notify email user@example.com", "conv1", "alice", "assistant")
+
+    assert body["action"] == "run_skill"
+    assert body["target_agent"] == "assistant"
+    assert body["skill_name"] == "notify"
+    assert body["arguments"] == "email user@example.com"
+
+
 def test_resolve_runnable_skill_prompt_renders_args_and_placeholders(monkeypatch):
     from core import skill_resolver
 

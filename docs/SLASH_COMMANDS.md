@@ -466,7 +466,7 @@ Supported task options mirror `/task assign`: `--criteria`, `--interval`, `--ver
 ### /skill
 
 ```
-/skill list | search [--source codex|claude|hermes|openclaw|all] <query> | import [--source src] [--review-only] [--force] [--scope user|conversation] [--name name] <ref> | add @name <prompt> | del @name | assign @agent @skill | unassign @agent @skill | assigned @agent | run [@agent] <skill> [args...]
+/skill list | search [--source codex|claude|hermes|openclaw|all] <query> | import [--source src] [--review-only] [--force] [--scope user|conversation] [--name name] <ref> | add @name <prompt> | del @name | assign @agent @skill | unassign @agent @skill | assigned @agent | run [@agent] <skill> [args...] | //<skill> [@agent] [args...]
 ```
 
 | Subcommand | Description |
@@ -480,8 +480,9 @@ Supported task options mirror `/task assign`: `--criteria`, `--interval`, `--ver
 | `unassign @agent @skill` | Remove a skill from an agent |
 | `assigned @agent` | List skills assigned to an agent |
 | `run [@agent] <skill> [args...]` | Invoke a visible skill immediately in the current conversation |
+| `//<skill> [@agent] [args...]` | Shortcut for `/skill run [@agent] <skill> [args...]` |
 
-Skills are assigned only through an agent's `assigned_skills`. The old generic resource activation path is not used for skills; use `assign` and `unassign` instead. Assigning a skill advertises it to the agent with a lightweight context message; the full prompt is loaded only when the agent calls `load_skill(name="skill-name")`. `/skill run [@agent] <skill> [args...]` is a one-shot invocation: it renders a visible skill immediately and queues it as a user message for the target agent, defaulting to the selected conversation agent when `@agent` is omitted. Imported or untrusted skill content can be checked with `manage_resource(action="review", resource_type="skill", data={"prompt": "..."})` before creating or assigning it.
+Skills are assigned only through an agent's `assigned_skills`. The old generic resource activation path is not used for skills; use `assign` and `unassign` instead. Assigning a skill advertises it to the agent with a lightweight context message; the full prompt is loaded only when the agent calls `load_skill(name="skill-name")`. `/skill run [@agent] <skill> [args...]` is a one-shot invocation: it renders a visible skill immediately and queues it as a user message for the target agent, defaulting to the selected conversation agent when `@agent` is omitted. The `//<skill> [@agent] [args...]` shortcut invokes the same path; in this shortcut, `@agent` is recognized only when it appears immediately after the skill name, so `@` inside later arguments is preserved. Imported or untrusted skill content can be checked with `manage_resource(action="review", resource_type="skill", data={"prompt": "..."})` before creating or assigning it.
 
 Marketplace import supports Codex (`openai/skills`), Claude/Anthropic plugin marketplaces, HermesHub, and OpenClaw GitHub tree URLs. Imports fetch only bounded text packages with a root `SKILL.md`; binary files, oversized packages, unsafe paths, and blocked review findings are rejected. Package scripts and `allowed-tools` declarations are treated as untrusted content: they are reviewed and stored as package data, but never executed automatically and never grant tool approval. Skills that require human review are not created unless `--force` is provided after review; blocked skills cannot be imported with `--force`.
 

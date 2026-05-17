@@ -1093,3 +1093,30 @@ def test_cc_interactive_event_service_ignores_pawflow_injected_prompt(monkeypatc
     event = svc.wait_event("sess", timeout=0)
     assert event["type"] == "hook"
     assert event["hook_event_name"] == "UserPromptSubmit"
+
+
+def test_cc_interactive_event_service_ignores_exact_server_injected_prompt(monkeypatch):
+    from services.cc_interactive_event_service import CCInteractiveEventService
+
+    monkeypatch.setattr(
+        CCInteractiveEventService, "_start_manual_capture",
+        lambda self, state: (_ for _ in ()).throw(AssertionError("should not capture")))
+
+    svc = CCInteractiveEventService({"token": "tok", "_service_id": "events"})
+    svc.register_session(
+        "sess", user_id="uid1", conversation_id="cid1", agent_name="assistant")
+    injected = "PawFlow cold-session bootstrap.\n\nPath: /x/.pawflow_cci/initial_context.md\n"
+    svc.remember_injected_prompt("sess", injected)
+    svc.publish_event("sess", {
+        "type": "hook",
+        "hook_event_name": "UserPromptSubmit",
+        "input": {
+            "hook_event_name": "UserPromptSubmit",
+            "prompt": injected.rstrip("\n"),
+            "pawflow_injected_prompt": False,
+        },
+    })
+
+    event = svc.wait_event("sess", timeout=0)
+    assert event["type"] == "hook"
+    assert event["hook_event_name"] == "UserPromptSubmit"

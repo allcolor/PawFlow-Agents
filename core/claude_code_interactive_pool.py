@@ -155,6 +155,7 @@ class InteractiveClaudeCodePool:
             state.last_error = f"Container {state.name} is not running"
             return False
         self._remember_injected_prompt(state, text)
+        self._remember_injected_prompt_for_event_service(state, text)
         if not self._load_buffer(state, text):
             return False
         if not self._paste_buffer(state):
@@ -201,12 +202,23 @@ class InteractiveClaudeCodePool:
         except Exception:
             pass
 
+    @staticmethod
+    def _remember_injected_prompt_for_event_service(state: InteractiveContainer,
+                                                    text: str) -> None:
+        try:
+            from services.cc_interactive_event_service import get_or_create_cc_interactive_event_service
+            _, _, event_service = get_or_create_cc_interactive_event_service()
+            event_service.remember_injected_prompt(state.session_token, text or "")
+        except Exception:
+            pass
+
     def send_interrupt(self, state: InteractiveContainer, text: str) -> bool:
         state.last_error = ""
         if not self._is_alive(state.name):
             state.last_error = f"Container {state.name} is not running"
             return False
         self._remember_injected_prompt(state, text)
+        self._remember_injected_prompt_for_event_service(state, text)
         return (self._load_buffer(state, text)
                 and self._paste_buffer(state)
                 and self.send_keys(state, ["Escape", "Escape", "Enter"]))

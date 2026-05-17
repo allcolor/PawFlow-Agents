@@ -427,10 +427,7 @@ class HTTPExchangeTracker:
         self._pending.put(context)
 
     def pop(self) -> dict:
-        try:
-            return self._pending.get(timeout=5)
-        except queue.Empty:
-            return {"request_id": self.connection_id, "path": "", "ignore_response": False}
+        return self._pending.get()
 
 
 def _is_quota_probe(path: str, body: bytes) -> bool:
@@ -1034,11 +1031,13 @@ def _pipe_exact(src, dst, observer=None, wire_logger=None, observer_before_send:
                 except Exception:
                     pass
                 return
+            if async_observer and observer_before_send:
+                async_observer.feed(chunk)
             dst.sendall(chunk)
             if async_wire:
                 async_wire.log("in", chunk)
                 async_wire.log("out", chunk)
-            if async_observer:
+            if async_observer and not observer_before_send:
                 async_observer.feed(chunk)
     finally:
         if async_observer:

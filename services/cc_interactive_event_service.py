@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import json
 import logging
 import queue
@@ -60,6 +61,7 @@ class CCInteractiveSessionEvents:
     error: str = ""
     manual_capture_active: bool = False
     manual_capture_pending: int = 0
+    injected_prompts: dict[str, float] = field(default_factory=dict)
     created_at: float = field(default_factory=time.time)
     last_event_at: float = 0.0
 
@@ -156,6 +158,20 @@ class CCInteractiveEventService(BaseService):
     def unregister_session(self, session_token: str) -> None:
         with self._sessions_lock:
             self._sessions.pop(session_token, None)
+
+    def remember_injected_prompt(self, session_token: str, prompt: str) -> None:
+        if not session_token or not prompt:
+            return
+        state = self.register_session(session_token)
+        digest = self._prompt_digest(prompt)
+        now = time.time()
+        cutoff = now - 600
+        with self._sessions_lock:
+            state.injected_prompts = {
+                key: ts for key, ts in state.injected_prompts.items()
+                if ts >= cutoff
+            }
+            state.injected_prompts[digest] = now
 
     def session_state(self, session_token: str) -> Optional[CCInteractiveSessionEvents]:
         with self._sessions_lock:
@@ -261,17 +277,14 @@ class CCInteractiveEventService(BaseService):
         data = event.get("input") or {}
         if not isinstance(data, dict):
             return
-        if data.get("pawflow_injected_prompt"):
+        prompt = data.get("prompt", "")
+        if not isinstance(prompt, str):
+            prompt = ""
+        if data.get("pawflow_injected_prompt") or self._consume_injected_prompt(state, prompt):
             return
         if data.get("pawflow_managed_prompt"):
-            if data.get("pawflow_injected_prompt_missing"):
-                logger.warning(
-                    "CC interactive managed tmux prompt ignored without marker: session=%s sha256=%s len=%s",
-                    state.session_token[:8], data.get("prompt_sha256", ""),
-                    data.get("prompt_len", ""))
             return
-        prompt = data.get("prompt", "")
-        if not isinstance(prompt, str) or not prompt.strip():
+        if not prompt.strip():
             return
         if not state.conversation_id or not state.agent_name:
             logger.debug("manual CC prompt ignored without session binding")
@@ -301,6 +314,28 @@ class CCInteractiveEventService(BaseService):
             logger.warning("CC interactive manual prompt persist failed", exc_info=True)
             return
         self._start_manual_capture(state)
+
+    @staticmethod
+    def _prompt_digest(prompt: str) -> str:
+        normalized = (prompt or "").rstrip("\r\n")
+        return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+    def _consume_injected_prompt(self, state: CCInteractiveSessionEvents,
+                                 prompt: str) -> bool:
+        if not prompt:
+            return False
+        digest = self._prompt_digest(prompt)
+        now = time.time()
+        cutoff = now - 600
+        with self._sessions_lock:
+            state.injected_prompts = {
+                key: ts for key, ts in state.injected_prompts.items()
+                if ts >= cutoff
+            }
+            if digest not in state.injected_prompts:
+                return False
+            state.injected_prompts.pop(digest, None)
+            return True
 
     def _start_manual_capture(self, state: CCInteractiveSessionEvents) -> None:
         with self._sessions_lock:

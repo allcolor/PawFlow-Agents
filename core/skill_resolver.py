@@ -348,15 +348,6 @@ def normalize_skill_entry(entry) -> Tuple[str, Dict[str, str], str]:
     return "", {}, ""
 
 
-def _evaluate_condition(condition: str, user_id: str) -> bool:
-    """Evaluate a condition expression. Returns False if result is empty/false/0."""
-    if not condition:
-        return True
-    from core.expression import resolve_value
-    resolved = resolve_value(condition, owner=user_id)
-    return bool(resolved) and resolved not in ("false", "False", "0")
-
-
 def _evaluate_condition_for_scope(condition: str, user_id: str,
                                   conversation_id: str = "") -> bool:
     """Evaluate a condition expression with conversation scope available."""

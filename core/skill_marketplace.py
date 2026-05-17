@@ -528,8 +528,6 @@ def _fetch_text(url: str) -> str:
             raise SkillMarketplaceError(f"Fetched text exceeds import cap: {url}")
         chunks.append(chunk)
     data = b"".join(chunks)
-    if len(data) > _MAX_FILE_BYTES * 2 and "README.md" not in url:
-        raise SkillMarketplaceError(f"Fetched text exceeds import cap: {url}")
     return data.decode("utf-8")
 
 

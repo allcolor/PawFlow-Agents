@@ -253,6 +253,36 @@ def test_skill_add_rejects_existing_skill_and_update_requires_existing(monkeypat
     assert calls[0][0] == "update"
 
 
+def test_resource_store_skill_update_is_patch_not_replace(tmp_path, monkeypatch):
+    from core import paths
+    from core.repository import ScopedRepository
+    from core.resource_store import ResourceStore
+
+    monkeypatch.setattr(paths, "REPOSITORY_DIR", tmp_path / "repository")
+    ScopedRepository.reset()
+    ResourceStore.reset()
+
+    store = ResourceStore.instance()
+    store.create("skill", "review-pr", "alice", {
+        "prompt": "old",
+        "description": "old desc",
+        "parameters": {"target": {"type": "string"}},
+        "extends": "base-skill",
+        "template_engine": "pawflow",
+        "imported_from": {"source": "test"},
+    })
+
+    store.update("skill", "review-pr", "alice", {"prompt": "new"})
+    updated = store.get("skill", "review-pr", "alice")
+
+    assert updated["prompt"] == "new"
+    assert updated["description"] == "old desc"
+    assert updated["parameters"] == {"target": {"type": "string"}}
+    assert updated["extends"] == "base-skill"
+    assert updated["template_engine"] == "pawflow"
+    assert updated["imported_from"] == {"source": "test"}
+
+
 def test_delete_skill_removes_agent_assignments(monkeypatch):
     updated = []
     enqueued = []

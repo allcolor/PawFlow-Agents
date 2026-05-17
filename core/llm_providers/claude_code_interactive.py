@@ -19,6 +19,9 @@ from core.llm_providers.claude_code_session import ClaudeCodeSessionMixin
 from tools.cc_interactive_filters import is_hidden_native_tool, normalize_observed_tool
 
 
+_POST_STOP_IDLE_DRAIN_SECONDS = 0.25
+
+
 class _CCITurnCoordinator:
     def __init__(self, event_service, session_token: str, callback=None,
                  thinking_callback=None, block_callback=None,
@@ -44,14 +47,12 @@ class _CCITurnCoordinator:
         self._thinking_redacted = False
         self._thinking_start = 0.0
         self._thinking_end = 0.0
-        self._active_message_requests: set[str] = set()
         self._request_stop_reasons: dict[str, str] = {}
         self._request_saw_model_content: dict[str, bool] = {}
         self._request_saw_tool_use: dict[str, bool] = {}
-        self._saw_message_request = False
         self._saw_model_content = False
-        self._final_model_stop_seen = False
         self._stop_seen = False
+        self._post_stop_last_event_at = 0.0
 
     def run(self, abort_event=None):
         from core.llm_client import LLMResponse
@@ -60,9 +61,16 @@ class _CCITurnCoordinator:
         while not done:
             if abort_event is not None and abort_event.is_set():
                 raise RuntimeError("claude-code-interactive aborted")
-            event = self.event_service.wait_event(self.session_token, timeout=0.25)
+            timeout = 0.05 if self._stop_seen else 0.25
+            event = self.event_service.wait_event(self.session_token, timeout=timeout)
             if not event:
+                if self._stop_seen:
+                    idle_for = time.time() - self._post_stop_last_event_at
+                    if idle_for >= _POST_STOP_IDLE_DRAIN_SECONDS:
+                        done = self._finish_turn_if_ready()
                 continue
+            if self._stop_seen:
+                self._post_stop_last_event_at = time.time()
             etype = event.get("type", "")
             if etype == "request_error":
                 raise RuntimeError(event.get("error", "CC interactive proxy request failed"))
@@ -70,29 +78,12 @@ class _CCITurnCoordinator:
                 request_id = event.get("request_id", "") or ""
                 path = event.get("path", "") or ""
                 if request_id and path.startswith("/v1/messages") and not event.get("ignore_reason"):
-                    self._saw_message_request = True
-                    self._active_message_requests.add(request_id)
                     self._request_saw_model_content.setdefault(request_id, False)
                     self._request_saw_tool_use.setdefault(request_id, False)
                 continue
             if etype == "request_stop":
-                request_id = event.get("request_id", "") or ""
-                if request_id:
-                    self._active_message_requests.discard(request_id)
-                    stop_reason = self._request_stop_reasons.get(request_id, "")
-                    saw_content = self._request_saw_model_content.get(request_id, False)
-                    saw_tool = self._request_saw_tool_use.get(request_id, False)
-                    if saw_content and stop_reason != "tool_use" and not saw_tool:
-                        self._final_model_stop_seen = True
-                if not self._active_message_requests:
-                    done = self._finish_turn_if_ready()
                 continue
             if etype == "response_ignored":
-                request_id = event.get("request_id", "") or ""
-                if request_id:
-                    self._active_message_requests.discard(request_id)
-                if self._stop_seen and not self._active_message_requests:
-                    done = self._finish_turn_if_ready()
                 continue
             if etype == "tool_use":
                 self._emit_observed_tool_use(event)
@@ -105,8 +96,7 @@ class _CCITurnCoordinator:
                 hook_name = event.get("hook_event_name", "")
                 if hook_name == "Stop":
                     self._stop_seen = True
-                    if not self._active_message_requests:
-                        done = self._finish_turn_if_ready()
+                    self._post_stop_last_event_at = time.time()
                 elif hook_name == "StopFailure":
                     info = event.get("input") or {}
                     detail = info.get("error") or "Claude Code interactive turn failed"
@@ -192,18 +182,6 @@ class _CCITurnCoordinator:
                 if usage:
                     self.usage.update(usage)
             elif ptype == "message_stop":
-                request_id = event.get("request_id", "") or ""
-                if request_id:
-                    self._active_message_requests.discard(request_id)
-                    stop_reason = self._request_stop_reasons.get(request_id, "")
-                    saw_content = self._request_saw_model_content.get(request_id, self._saw_model_content)
-                    saw_tool = self._request_saw_tool_use.get(request_id, False)
-                    if stop_reason != "tool_use" and saw_content and not saw_tool:
-                        self._final_model_stop_seen = True
-                elif self._saw_model_content:
-                    self._final_model_stop_seen = True
-                if not self._active_message_requests:
-                    done = self._finish_turn_if_ready()
                 continue
 
         text = "".join(self.text_parts)
@@ -223,11 +201,7 @@ class _CCITurnCoordinator:
         )
 
     def _finish_turn_if_ready(self) -> bool:
-        if not self._stop_seen and not self._final_model_stop_seen:
-            return False
-        if self._active_message_requests:
-            return False
-        if self._saw_message_request and self._saw_model_content and not self._final_model_stop_seen:
+        if not self._stop_seen:
             return False
         self._flush_text_block()
         self._flush_thinking_block()

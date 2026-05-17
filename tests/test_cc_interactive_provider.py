@@ -15,6 +15,8 @@ class _Events:
 
     def wait_event(self, session_token, timeout=None):
         if self.q.empty():
+            if timeout is not None:
+                return {}
             raise AssertionError("test event queue exhausted before CC interactive turn completed")
         return self.q.get()
 
@@ -155,7 +157,7 @@ def test_turn_coordinator_waits_for_proxy_message_stop_after_stop_hook():
     assert resp.content == "first second"
 
 
-def test_turn_coordinator_finishes_on_final_proxy_message_stop_without_stop_hook():
+def test_turn_coordinator_waits_for_stop_hook_after_proxy_message_stop():
     events = [
         {"type": "request_start", "request_id": "r1", "path": "/v1/messages"},
         _sse("content_block_delta", {
@@ -169,14 +171,21 @@ def test_turn_coordinator_finishes_on_final_proxy_message_stop_without_stop_hook
             "delta": {"stop_reason": "end_turn"},
         }) | {"request_id": "r1"},
         _sse("message_stop", {"type": "message_stop"}) | {"request_id": "r1"},
+        _sse("content_block_delta", {
+            "type": "content_block_delta",
+            "index": 1,
+            "delta": {"type": "text_delta", "text": " after stop"},
+        }) | {"request_id": "r1"},
+        _sse("content_block_stop", {"type": "content_block_stop", "index": 1}) | {"request_id": "r1"},
+        {"type": "hook", "hook_event_name": "Stop", "input": {"hook_event_name": "Stop"}},
     ]
 
     resp = _CCITurnCoordinator(_Events(events), "sess").run()
 
-    assert resp.content == "final answer"
+    assert resp.content == "final answer after stop"
 
 
-def test_turn_coordinator_finishes_decoded_final_text_on_request_stop_fallback():
+def test_turn_coordinator_waits_for_stop_hook_after_request_stop():
     events = [
         {"type": "request_start", "request_id": "r1", "path": "/v1/messages"},
         _sse("content_block_delta", {
@@ -186,11 +195,18 @@ def test_turn_coordinator_finishes_decoded_final_text_on_request_stop_fallback()
         }) | {"request_id": "r1"},
         _sse("content_block_stop", {"type": "content_block_stop", "index": 0}) | {"request_id": "r1"},
         {"type": "request_stop", "request_id": "r1"},
+        _sse("content_block_delta", {
+            "type": "content_block_delta",
+            "index": 1,
+            "delta": {"type": "text_delta", "text": " still running"},
+        }) | {"request_id": "r1"},
+        _sse("content_block_stop", {"type": "content_block_stop", "index": 1}) | {"request_id": "r1"},
+        {"type": "hook", "hook_event_name": "Stop", "input": {"hook_event_name": "Stop"}},
     ]
 
     resp = _CCITurnCoordinator(_Events(events), "sess").run()
 
-    assert resp.content == "final from bytes"
+    assert resp.content == "final from bytes still running"
 
 
 def test_turn_coordinator_request_stop_does_not_finish_tool_use_boundary():
@@ -216,6 +232,7 @@ def test_turn_coordinator_request_stop_does_not_finish_tool_use_boundary():
         }) | {"request_id": "r2"},
         _sse("content_block_stop", {"type": "content_block_stop", "index": 0}) | {"request_id": "r2"},
         {"type": "request_stop", "request_id": "r2"},
+        {"type": "hook", "hook_event_name": "Stop", "input": {"hook_event_name": "Stop"}},
     ]
 
     resp = _CCITurnCoordinator(_Events(events), "sess").run()
@@ -1183,6 +1200,32 @@ def test_cc_interactive_event_service_ignores_exact_server_injected_prompt(monke
         "input": {
             "hook_event_name": "UserPromptSubmit",
             "prompt": injected.rstrip("\n"),
+            "pawflow_injected_prompt": False,
+        },
+    })
+
+    event = svc.wait_event("sess", timeout=0)
+    assert event["type"] == "hook"
+    assert event["hook_event_name"] == "UserPromptSubmit"
+
+
+def test_cc_interactive_event_service_ignores_next_prompt_after_server_injection(monkeypatch):
+    from services.cc_interactive_event_service import CCInteractiveEventService
+
+    monkeypatch.setattr(
+        CCInteractiveEventService, "_start_manual_capture",
+        lambda self, state: (_ for _ in ()).throw(AssertionError("should not capture")))
+
+    svc = CCInteractiveEventService({"token": "tok", "_service_id": "events"})
+    svc.register_session(
+        "sess", user_id="uid1", conversation_id="cid1", agent_name="assistant")
+    svc.remember_injected_prompt("sess", "exact text PawFlow pasted into tmux")
+    svc.publish_event("sess", {
+        "type": "hook",
+        "hook_event_name": "UserPromptSubmit",
+        "input": {
+            "hook_event_name": "UserPromptSubmit",
+            "prompt": "same prompt after Claude Code normalized it differently",
             "pawflow_injected_prompt": False,
         },
     })

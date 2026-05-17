@@ -62,6 +62,7 @@ class CCInteractiveSessionEvents:
     manual_capture_active: bool = False
     manual_capture_pending: int = 0
     injected_prompts: dict[str, float] = field(default_factory=dict)
+    pending_injected_prompt_ignores: list[float] = field(default_factory=list)
     created_at: float = field(default_factory=time.time)
     last_event_at: float = 0.0
 
@@ -172,6 +173,11 @@ class CCInteractiveEventService(BaseService):
                 if ts >= cutoff
             }
             state.injected_prompts[digest] = now
+            state.pending_injected_prompt_ignores = [
+                ts for ts in state.pending_injected_prompt_ignores
+                if ts >= cutoff
+            ]
+            state.pending_injected_prompt_ignores.append(now)
 
     def session_state(self, session_token: str) -> Optional[CCInteractiveSessionEvents]:
         with self._sessions_lock:
@@ -280,7 +286,10 @@ class CCInteractiveEventService(BaseService):
         prompt = data.get("prompt", "")
         if not isinstance(prompt, str):
             prompt = ""
-        if data.get("pawflow_injected_prompt") or self._consume_injected_prompt(state, prompt):
+        if data.get("pawflow_injected_prompt"):
+            self._consume_pending_injected_prompt(state)
+            return
+        if self._consume_injected_prompt(state, prompt):
             return
         if data.get("pawflow_managed_prompt"):
             return
@@ -322,9 +331,7 @@ class CCInteractiveEventService(BaseService):
 
     def _consume_injected_prompt(self, state: CCInteractiveSessionEvents,
                                  prompt: str) -> bool:
-        if not prompt:
-            return False
-        digest = self._prompt_digest(prompt)
+        digest = self._prompt_digest(prompt) if prompt else ""
         now = time.time()
         cutoff = now - 600
         with self._sessions_lock:
@@ -332,9 +339,40 @@ class CCInteractiveEventService(BaseService):
                 key: ts for key, ts in state.injected_prompts.items()
                 if ts >= cutoff
             }
-            if digest not in state.injected_prompts:
+            state.pending_injected_prompt_ignores = [
+                ts for ts in state.pending_injected_prompt_ignores
+                if ts >= cutoff
+            ]
+            if digest and digest in state.injected_prompts:
+                state.injected_prompts.pop(digest, None)
+                if state.pending_injected_prompt_ignores:
+                    state.pending_injected_prompt_ignores.pop(0)
+                return True
+            if state.pending_injected_prompt_ignores:
+                state.pending_injected_prompt_ignores.pop(0)
+                self._pop_oldest_injected_prompt_locked(state)
+                return True
+            return False
+
+    @staticmethod
+    def _pop_oldest_injected_prompt_locked(state: CCInteractiveSessionEvents) -> None:
+        if not state.injected_prompts:
+            return
+        oldest = min(state.injected_prompts, key=state.injected_prompts.get)
+        state.injected_prompts.pop(oldest, None)
+
+    def _consume_pending_injected_prompt(self, state: CCInteractiveSessionEvents) -> bool:
+        now = time.time()
+        cutoff = now - 600
+        with self._sessions_lock:
+            state.pending_injected_prompt_ignores = [
+                ts for ts in state.pending_injected_prompt_ignores
+                if ts >= cutoff
+            ]
+            if not state.pending_injected_prompt_ignores:
                 return False
-            state.injected_prompts.pop(digest, None)
+            state.pending_injected_prompt_ignores.pop(0)
+            self._pop_oldest_injected_prompt_locked(state)
             return True
 
     def _start_manual_capture(self, state: CCInteractiveSessionEvents) -> None:

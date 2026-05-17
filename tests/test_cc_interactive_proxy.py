@@ -1,6 +1,8 @@
 import importlib
 import gzip
 import json
+import threading
+import time
 
 
 class _RecvSocket:
@@ -212,6 +214,37 @@ def test_proxy_observer_errors_do_not_affect_forwarding(monkeypatch):
     proxy._pipe_exact(src, dst, BadObserver())
 
     assert dst.sent == chunks
+
+
+def test_proxy_observer_work_cannot_block_forwarding(monkeypatch):
+    monkeypatch.setenv("PAWFLOW_CCI_SESSION_TOKEN", "sess")
+    proxy = importlib.import_module("tools.cc_interactive_proxy")
+    started = threading.Event()
+    release = threading.Event()
+
+    class BlockingObserver:
+        def feed(self, _data):
+            started.set()
+            release.wait(timeout=5)
+
+    chunks = [b"one", b"two"]
+    src = _RecvSocket(chunks)
+    dst = _SendSocket()
+    thread = threading.Thread(
+        target=proxy._pipe_exact,
+        args=(src, dst, BlockingObserver()),
+        daemon=True)
+
+    thread.start()
+    deadline = time.time() + 2
+    while time.time() < deadline and dst.sent != chunks:
+        time.sleep(0.01)
+
+    assert started.wait(timeout=1) is True
+    assert dst.sent == chunks
+    release.set()
+    thread.join(timeout=2)
+    assert thread.is_alive() is False
 
 
 def test_proxy_scrubs_large_payload_values(monkeypatch):

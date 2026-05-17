@@ -428,7 +428,7 @@ class HTTPExchangeTracker:
 
     def pop(self) -> dict:
         try:
-            return self._pending.get_nowait()
+            return self._pending.get(timeout=5)
         except queue.Empty:
             return {"request_id": self.connection_id, "path": "", "ignore_response": False}
 
@@ -532,6 +532,86 @@ def _emit_observed_tool_blocks(request_id: str, path: str, body: bytes,
                     "is_error": bool(block.get("is_error")),
                 })
     return newly_hidden
+
+
+class AsyncObserver:
+    def __init__(self, observer, label: str):
+        self.observer = observer
+        self.label = label
+        self.q = queue.SimpleQueue()
+        self.thread = threading.Thread(target=self._run, name=f"cci-{label}", daemon=True)
+        self.closed = False
+        self.thread.start()
+
+    def feed(self, data: bytes):
+        if self.closed:
+            return
+        self.q.put(("feed", data))
+
+    def finish(self):
+        if self.closed:
+            return
+        self.closed = True
+        self.q.put(("finish", b""))
+        self.thread.join(timeout=10)
+        if self.thread.is_alive():
+            _log(f"async {self.label} observer did not finish before timeout")
+
+    def _run(self):
+        while True:
+            op, data = self.q.get()
+            try:
+                if op == "feed":
+                    self.observer.feed(data)
+                    continue
+                finish = getattr(self.observer, "finish", None)
+                if finish:
+                    finish()
+                return
+            except Exception as exc:
+                _log(f"async {self.label} observer failed without affecting proxy stream: {exc}")
+                if op == "finish":
+                    return
+
+
+class AsyncWireLogger:
+    def __init__(self, wire_logger):
+        self.wire_logger = wire_logger
+        self.direction = getattr(wire_logger, "direction", "")
+        self.request_context = getattr(wire_logger, "request_context", {})
+        self.q = queue.SimpleQueue()
+        self.thread = threading.Thread(
+            target=self._run,
+            name=f"cci-wire-{self.direction or 'unknown'}",
+            daemon=True)
+        self.closed = False
+        self.thread.start()
+
+    def log(self, stage: str, data: bytes):
+        if self.closed:
+            return
+        if self.direction == "upstream_to_client" and stage == "out" and data:
+            self.request_context["upstream_to_client_forwarded"] = True
+        self.q.put((stage, data))
+
+    def finish(self):
+        if self.closed:
+            return
+        self.closed = True
+        self.q.put(("", b""))
+        self.thread.join(timeout=10)
+        if self.thread.is_alive():
+            _log(f"async {self.direction or 'wire'} logger did not finish before timeout")
+
+    def _run(self):
+        while True:
+            stage, data = self.q.get()
+            if stage == "":
+                return
+            try:
+                self.wire_logger.log(stage, data)
+            except Exception as exc:
+                _log(f"async wire log failed without affecting proxy stream: {exc}")
 
 
 class HTTPRequestObserver:
@@ -939,46 +1019,38 @@ class _NullObserver:
 
 
 def _pipe_exact(src, dst, observer=None, wire_logger=None, observer_before_send: bool = False):
-    while True:
-        chunk = src.recv(65536)
-        if not chunk:
-            if observer:
-                finish = getattr(observer, "finish", None)
-                if finish:
-                    try:
-                        finish()
-                    except Exception as exc:
-                        _log(f"observer finish failed without affecting proxy stream: {exc}")
+    async_observer = None
+    async_wire = None
+    if observer:
+        async_observer = observer if isinstance(observer, AsyncObserver) else AsyncObserver(observer, "http")
+    if wire_logger:
+        async_wire = wire_logger if isinstance(wire_logger, AsyncWireLogger) else AsyncWireLogger(wire_logger)
+    try:
+        while True:
+            chunk = src.recv(65536)
+            if not chunk:
+                try:
+                    dst.shutdown(socket.SHUT_WR)
+                except Exception:
+                    pass
+                return
+            dst.sendall(chunk)
+            if async_wire:
+                async_wire.log("in", chunk)
+                async_wire.log("out", chunk)
+            if async_observer:
+                async_observer.feed(chunk)
+    finally:
+        if async_observer:
             try:
-                dst.shutdown(socket.SHUT_WR)
-            except Exception:
-                pass
-            return
-        if wire_logger:
-            try:
-                wire_logger.log("in", chunk)
+                async_observer.finish()
             except Exception as exc:
-                _log(f"wire log failed without affecting proxy stream: {exc}")
-                wire_logger = None
-        if observer and observer_before_send:
+                _log(f"observer finish failed without affecting proxy stream: {exc}")
+        if async_wire:
             try:
-                observer.feed(chunk)
+                async_wire.finish()
             except Exception as exc:
-                _log(f"observer failed without affecting proxy stream: {exc}")
-                observer = None
-        dst.sendall(chunk)
-        if wire_logger:
-            try:
-                wire_logger.log("out", chunk)
-            except Exception as exc:
-                _log(f"wire log failed without affecting proxy stream: {exc}")
-                wire_logger = None
-        if observer and not observer_before_send:
-            try:
-                observer.feed(chunk)
-            except Exception as exc:
-                _log(f"observer failed without affecting proxy stream: {exc}")
-                observer = None
+                _log(f"wire logger finish failed without affecting proxy stream: {exc}")
 
 
 def handle_client(client):
@@ -1013,7 +1085,8 @@ def handle_client(client):
         u2c.join()
         if not errors.empty():
             exc = errors.get()
-            if int(wire_context.get("upstream_to_client_bytes", 0) or 0) > 0:
+            if (wire_context.get("upstream_to_client_forwarded")
+                    or int(wire_context.get("upstream_to_client_bytes", 0) or 0) > 0):
                 _log(
                     "request_late_pipe_error_ignored request="
                     f"{request_id} error={exc}")

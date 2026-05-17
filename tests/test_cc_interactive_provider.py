@@ -661,7 +661,7 @@ def test_interactive_pool_interrupt_and_force_stop_keys(monkeypatch):
     )
 
     assert pool.send_interrupt(state, "interrupt message") is True
-    assert calls[0][0][-1:] == ["Escape"]
+    assert calls[0][0][-2:] == ["Escape", "Escape"]
     assert calls[1][0][-2:] == ["load-buffer", "-"]
     assert calls[1][1] == b"interrupt message"
     assert calls[3][0][-1:] == ["Enter"]

@@ -193,7 +193,7 @@ class InteractiveClaudeCodePool:
             pass
 
     def send_interrupt(self, state: InteractiveContainer, text: str) -> bool:
-        return self.send_keys(state, ["Escape"]) and self.send_text(state, text)
+        return self.send_keys(state, ["Escape", "Escape"]) and self.send_text(state, text)
 
     def force_stop(self, state: InteractiveContainer) -> bool:
         return self.send_keys(state, ["Escape", "Escape"])

@@ -105,7 +105,12 @@ def test_turn_coordinator_assembles_text_thinking_and_native_tool_use():
         "name": "read",
         "arguments": {"path": "a.png"},
     })]
-    assert turns == [("Hi there", [], ""), ("", [], "plan")]
+    assert turns == [("Hi there", [{
+        "id": "toolu_1",
+        "name": "read",
+        "arguments": {"path": "a.png"},
+        "thinking": "plan",
+    }], "plan")]
 
 
 def test_turn_coordinator_flushes_unstopped_text_at_stop_hook():
@@ -601,8 +606,10 @@ def test_initial_interactive_prompt_writes_context_file(tmp_path):
     assert "compact summary" in body
     assert "latest request" in body
     assert body.count('<message role="user">\nlatest request\n</message>') == 1
-    assert "Latest turn to answer now:" not in prompt
-    assert "latest request" not in prompt
+    assert body.index("## Latest User Request") > body.index("## Bootstrap Contract")
+    assert "Latest turn to answer now:" in prompt
+    assert "latest request" in prompt
+    assert "newest and most important request is at the END" in prompt
     assert "compact summary" not in prompt
 
 

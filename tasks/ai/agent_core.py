@@ -1177,10 +1177,6 @@ class AgentCoreMixin:
                                 _turn_cb = _claude_code_turn_callback
                             except NameError:
                                 _turn_cb = None
-                            try:
-                                _block_cb = _cli_block_callback
-                            except NameError:
-                                _block_cb = None
                             _irpt_resp = client.interrupt_claude_code_interactive(
                                 SOFT_INTERRUPT_USER_COMMAND,
                                 user_id=user_id,
@@ -1191,7 +1187,7 @@ class AgentCoreMixin:
                                 thinking_callback=(
                                     emitter.get_thinking_callback(False) if _tb > 0 else None),
                                 turn_callback=_turn_cb,
-                                block_callback=_block_cb,
+                                block_callback=None,
                             )
                             if _turn_cb is None and (_irpt_resp.content or "").strip():
                                 _append(LLMMessage(
@@ -1643,7 +1639,7 @@ class AgentCoreMixin:
                                 thinking_budget=_tb,
                                 thinking_callback=emitter.get_thinking_callback(ps) if _tb > 0 else None,
                                 turn_callback=_claude_code_turn_callback if _client_provider in ("claude-code", "claude-code-interactive", "codex-app-server", "gemini") else None,
-                                block_callback=_cli_block_callback if _client_provider in ("claude-code-interactive", "codex-app-server", "gemini") else None,
+                                block_callback=_cli_block_callback if _client_provider in ("codex-app-server", "gemini") else None,
                                 **_call_kwargs)
                         return client.complete(
                             messages=msgs, model=model or None,

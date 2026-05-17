@@ -195,8 +195,6 @@ class LLMCliSharedMixin:
             body.extend(["## Serialized Conversation Context", "", prior_context.strip(), ""])
         elif user_text and not latest:
             body.extend(["## Serialized Conversation Context", "", user_text.strip(), ""])
-        if latest:
-            body.extend(["## Latest User Request", "", latest.strip(), ""])
         body.extend([
             "## Bootstrap Contract",
             "",
@@ -205,6 +203,8 @@ class LLMCliSharedMixin:
             "- Do not ask what to do unless both the file and the latest request are ambiguous.",
             "",
         ])
+        if latest:
+            body.extend(["## Latest User Request", "", latest.strip(), ""])
         host_path.write_text("\n".join(body).rstrip() + "\n", encoding="utf-8")
         provider_path = os.path.join(provider_workdir, rel.as_posix()).replace("\\", "/")
         prompt = [
@@ -217,8 +217,12 @@ class LLMCliSharedMixin:
             "",
             "Use your local filesystem/file-read capability if the file mention is not expanded automatically.",
             "It contains system instructions, project instructions, compacted conversation context, prior decisions, tool/result history, and the latest user request.",
+            "The newest and most important request is at the END of the file, under 'Latest User Request'. If you only read the beginning, you will likely answer stale compacted context and fail the task.",
+            "Read the tail/end of the file before deciding what to do.",
             "After reading it, answer the latest user request below. Treat the file as context, not as a user-visible task.",
         ]
+        if latest:
+            prompt.extend(["", "Latest turn to answer now:", latest.strip()])
         return "\n".join(prompt).strip() + "\n"
 
     @staticmethod

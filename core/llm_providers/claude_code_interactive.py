@@ -34,6 +34,7 @@ class _CCITurnCoordinator:
         self.turn_callback = turn_callback
         self.text_parts: list[str] = []
         self.thinking_parts: list[str] = []
+        self.turn_tool_calls: list[dict] = []
         self.tool_blocks: dict[int, dict] = {}
         self.tool_by_id: dict[str, dict] = {}
         self.pending_tool_results: dict[str, list[dict]] = {}
@@ -53,6 +54,7 @@ class _CCITurnCoordinator:
         self._saw_model_content = False
         self._stop_seen = False
         self._post_stop_last_event_at = 0.0
+        self._turn_callback_sent = False
 
     def run(self, abort_event=None):
         from core.llm_client import LLMResponse
@@ -206,6 +208,7 @@ class _CCITurnCoordinator:
         self._flush_text_block()
         self._flush_thinking_block()
         self._emit_pending_tool_uses()
+        self._emit_turn_callback()
         return True
 
     def _append_text(self, text: str) -> None:
@@ -232,8 +235,6 @@ class _CCITurnCoordinator:
             return
         text = self._text_block_buf
         self._text_block_buf = ""
-        if self.turn_callback and text:
-            self.turn_callback(text, [], "")
 
     def _flush_thinking_block(self) -> None:
         if not self._thinking_block_buf and not self._thinking_redacted:
@@ -262,8 +263,21 @@ class _CCITurnCoordinator:
         self._thinking_end = 0.0
         if synthesized and thinking and self.thinking_callback:
             self.thinking_callback(thinking)
-        if self.turn_callback:
-            self.turn_callback("", [], thinking)
+
+
+    def _emit_turn_callback(self) -> None:
+        if self._turn_callback_sent or not self.turn_callback:
+            return
+        text = "".join(self.text_parts).strip()
+        thinking = "".join(self.thinking_parts)
+        tool_calls = [dict(tc) for tc in self.turn_tool_calls]
+        if thinking and tool_calls:
+            tool_calls[0]["thinking"] = thinking
+        if not text and not thinking and not tool_calls:
+            self._turn_callback_sent = True
+            return
+        self.turn_callback(text, tool_calls, thinking)
+        self._turn_callback_sent = True
 
     def _emit_tool_use(self, idx: int) -> None:
         block = self.tool_blocks.get(idx) or {}
@@ -289,6 +303,8 @@ class _CCITurnCoordinator:
             self._emit_pending_tool_results(tool_id)
             return
         self.emitted_tool_use_ids.add(tool_id)
+        if not block.get("hidden"):
+            self._remember_turn_tool_call(tool_id, display_name, display_args)
         if self.block_callback and not block.get("hidden"):
             self.block_callback("tool_use", {
                 "id": tool_id,
@@ -353,7 +369,22 @@ class _CCITurnCoordinator:
                 "name": display_name,
                 "arguments": display_args,
             })
+        if not block.get("hidden"):
+            self._remember_turn_tool_call(tc_id, display_name, display_args)
         self._emit_pending_tool_results(tc_id)
+
+    def _remember_turn_tool_call(self, tc_id: str, name: str, args: dict) -> None:
+        if not tc_id:
+            return
+        entry = {"id": tc_id, "name": name or "", "arguments": args or {}}
+        for idx, existing in enumerate(self.turn_tool_calls):
+            if existing.get("id") == tc_id:
+                existing_result = existing.get("result")
+                if existing_result is not None:
+                    entry["result"] = existing_result
+                self.turn_tool_calls[idx] = entry
+                return
+        self.turn_tool_calls.append(entry)
 
     def _emit_pending_tool_results(self, tc_id: str) -> None:
         if not tc_id:
@@ -370,12 +401,18 @@ class _CCITurnCoordinator:
         if not tc_id or tc_id in self.emitted_tool_result_ids:
             return
         self.emitted_tool_result_ids.add(tc_id)
+        result = event.get("content", "") or "(no output)"
+        if not block.get("hidden"):
+            for tc in self.turn_tool_calls:
+                if tc.get("id") == tc_id:
+                    tc["result"] = result
+                    break
         if self.block_callback and not block.get("hidden"):
             display_name = block.get("display_name") or block.get("name", "")
             self.block_callback("tool_result", {
                 "tc_id": tc_id,
                 "tool": display_name,
-                "result": event.get("content", "") or "(no output)",
+                "result": result,
             })
 
 

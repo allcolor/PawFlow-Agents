@@ -308,13 +308,14 @@ HELP: Dict[str, Dict[str, str]] = {
         ),
     },
     "/skill": {
-        "usage": "/skill list | search [--source src] <query> | import [--source src] [--review-only] [--force] <ref> | add <name> <prompt> | del <name> | run [@agent] <name> [args...] | //<name> [@agent] [args...]",
+        "usage": "/skill list | search [--source src] <query> | import [--source src] [--review-only] [--force] <ref> | add <name> <prompt> | update <name> <prompt> | del <name> | run [@agent] <name> [args...] | //<name> [@agent] [args...]",
         "short": "Manage skills",
         "detail": (
             "  /skill list                    — List all skills\n"
             "  /skill search [--source src] <query> — Search external skill marketplaces\n"
             "  /skill import [--source src] [--review-only] [--force] <ref> — Review/import an external skill\n"
             "  /skill add <name> <prompt>     — Create a skill\n"
+            "  /skill update <name> <prompt>  — Update a skill\n"
             "  /skill del <name>              — Delete a skill\n"
             "  /skill run [@agent] <name> [args...] — Invoke a skill now\n"
             "  //<name> [@agent] [args...]    — Shortcut for /skill run"
@@ -1342,6 +1343,9 @@ def _parse_skill_command(arg: str, base: dict, agent_name: str = "") -> dict:
         return {"action": "list_skills", **base}
     if subcmd == "add":
         return {"action": "create_skill", "name": p[1] if len(p) > 1 else "",
+                "prompt": p[2] if len(p) > 2 else "", **base}
+    if subcmd in ("update", "modify", "edit"):
+        return {"action": "update_skill", "name": p[1] if len(p) > 1 else "",
                 "prompt": p[2] if len(p) > 2 else "", **base}
     if subcmd == "del":
         return {"action": "delete_skill", "name": p[1] if len(p) > 1 else "",

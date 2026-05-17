@@ -741,7 +741,8 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 if _agent_skills:
                     from core.skill_resolver import inject_available_skills_into_prompt
                     system_prompt = inject_available_skills_into_prompt(
-                        system_prompt, _agent_skills, _uid)
+                        system_prompt, _agent_skills, _uid,
+                        conversation_id=conversation_id)
                 # Auto-load tools from all MCP servers accessible in scope
                 # (global + user + conversation). No linking needed: any MCP
                 # visible via rs.list_all is automatically active in this conv.

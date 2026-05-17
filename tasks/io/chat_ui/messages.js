@@ -418,8 +418,13 @@ function _toolCallSelector(tcId) {
 function findToolCallElement(tcId, root) {
   if (!tcId) return null;
   const base = root || document;
-  try { return base.querySelector(_toolCallSelector(tcId)); }
-  catch (_err) { return base.querySelector('[data-tc-id="' + tcId + '"]'); }
+  let matches;
+  try { matches = base.querySelectorAll(_toolCallSelector(tcId)); }
+  catch (_err) { matches = base.querySelectorAll('[data-tc-id="' + tcId + '"]'); }
+  for (const el of matches) {
+    if (el.dataset && el.dataset.messageRole === 'tool_call') return el;
+  }
+  return null;
 }
 
 function addMsg(role, text, extra) {
@@ -664,7 +669,11 @@ function addMsg(role, text, extra) {
   } else if (role === 'tool_result') {
     const tcId = (extra && extra.tc_id) || '';
     if (tcId) el.dataset.tcId = tcId;
-    const resultText = text || '';
+    let resultText = text || '';
+    if (typeof resultText !== 'string') {
+      try { resultText = JSON.stringify(resultText, null, 2); }
+      catch (_err) { resultText = String(resultText || ''); }
+    }
     // Try to attach to the matching tool_call element
     if (tcId) {
       const tcEl = findToolCallElement(tcId);
@@ -930,6 +939,10 @@ function _renderToolOutput(text, toolHint, pathHint) {
 function _attachToolResult(tcEl, resultText) {
   // Guard: don't attach if result already present
   if (tcEl.querySelector('.tc-result')) return;
+  if (typeof resultText !== 'string') {
+    try { resultText = JSON.stringify(resultText, null, 2); }
+    catch (_err) { resultText = String(resultText || ''); }
+  }
   const bullet = tcEl.querySelector('.tc-bullet');
   if (bullet) { bullet.classList.remove('pending'); bullet.classList.add('done'); }
   // Remove BG/KL buttons (tool is done)

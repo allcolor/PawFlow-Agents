@@ -1346,7 +1346,8 @@ def resolve_agent_task(
     if _all_skills:
         from core.skill_resolver import inject_available_skills_into_prompt
         _sys_prompt = inject_available_skills_into_prompt(
-            _sys_prompt, _all_skills, user_id)
+            _sys_prompt, _all_skills, user_id,
+            conversation_id=conversation_id)
 
     # 5) Identity injection
     _nick = None

@@ -217,6 +217,20 @@ def test_pfp_build_inspect_and_selective_install(tmp_path, monkeypatch):
     assert listed["packages"][0]["package"] == "community.wavespeed"
 
 
+def test_pfp_inspect_blocks_invalid_agent_skill_name(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    keypair = pfp_package.create_signing_key()
+    pkgdir = _write_package_dir(tmp_path, keypair, skill_name="Bad_Skill")
+    built = pfp_package.build_pfp(str(pkgdir), private_key=keypair["private_key"])
+
+    plan = pfp_package.inspect_pfp(built["path"], user_id="alice")
+
+    skill_row = next(row for row in plan["objects"] if row["id"] == "skill:Bad_Skill")
+    assert skill_row["status"] == "blocked"
+    assert skill_row["reason"] == "invalid Agent Skill name"
+    assert skill_row["selected"] is False
+
+
 def test_pfp_installs_agent_hook_runtime_resource(tmp_path, monkeypatch):
     _reset_repo(tmp_path, monkeypatch)
     keypair = pfp_package.create_signing_key()

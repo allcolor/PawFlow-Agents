@@ -20,6 +20,10 @@ class _Response:
             return json.loads(self._payload)
         return self._payload
 
+    def iter_content(self, chunk_size=1):
+        for idx in range(0, len(self.content), chunk_size):
+            yield self.content[idx:idx + chunk_size]
+
 
 def _patch_safe_review(monkeypatch):
     import core.review_bindings as review_bindings
@@ -68,7 +72,10 @@ def test_skill_import_slash_command_parses_safety_flags():
 def test_search_codex_uses_github_index_and_skill_frontmatter(monkeypatch):
     from core import skill_marketplace
 
-    def fake_get(url, headers=None):
+    calls = []
+
+    def fake_get(url, headers=None, **kwargs):
+        calls.append((url, kwargs))
         if url.endswith("/contents/skills/.curated?ref=main"):
             return _Response([{
                 "name": "gh-address-comments",
@@ -91,6 +98,46 @@ def test_search_codex_uses_github_index_and_skill_frontmatter(monkeypatch):
     assert result["count"] == 1
     assert result["results"][0]["name"] == "gh-address-comments"
     assert result["results"][0]["import_supported"] is True
+    assert all(call[1].get("timeout") == 15 for call in calls)
+    assert any(call[1].get("stream") is True for call in calls)
+
+
+def test_fetch_text_streams_with_size_cap(monkeypatch):
+    from core import skill_marketplace
+
+    class LargeResponse:
+        status_code = 200
+
+        def iter_content(self, chunk_size=1):
+            yield b"x" * (skill_marketplace._MAX_FILE_BYTES * 2 + 1)
+
+    monkeypatch.setattr(
+        skill_marketplace.requests, "get",
+        lambda url, headers=None, **kwargs: LargeResponse())
+
+    try:
+        skill_marketplace._fetch_text("https://raw.test/SKILL.md")
+    except skill_marketplace.SkillMarketplaceError as exc:
+        assert "exceeds import cap" in str(exc)
+    else:
+        raise AssertionError("oversized fetch should fail")
+
+
+def test_claude_repo_ref_validates_owner_repo(monkeypatch):
+    from core import skill_marketplace
+
+    calls = []
+    monkeypatch.setattr(
+        skill_marketplace, "_fetch_json",
+        lambda url: calls.append(url) or {"plugins": []})
+
+    try:
+        skill_marketplace._fetch_claude_ref("../repo:skill")
+    except skill_marketplace.SkillMarketplaceError as exc:
+        assert "Invalid GitHub owner" in str(exc)
+    else:
+        raise AssertionError("unsafe owner should fail")
+    assert calls == []
 
 
 def test_import_marketplace_review_only_does_not_create(monkeypatch):
@@ -99,7 +146,7 @@ def test_import_marketplace_review_only_does_not_create(monkeypatch):
     created = []
     _patch_safe_review(monkeypatch)
 
-    def fake_get(url, headers=None):
+    def fake_get(url, headers=None, **kwargs):
         if url.endswith("/contents/skills/.curated/review-pr?ref=main"):
             return _Response([{
                 "name": "SKILL.md",
@@ -138,7 +185,7 @@ def test_import_marketplace_omits_binary_assets(monkeypatch):
 
     _patch_safe_review(monkeypatch)
 
-    def fake_get(url, headers=None):
+    def fake_get(url, headers=None, **kwargs):
         if url.endswith("/contents/skills/.curated/review-pr?ref=main"):
             return _Response([
                 {
@@ -186,7 +233,7 @@ def test_import_marketplace_creates_low_risk_skill(monkeypatch):
     created = []
     _patch_safe_review(monkeypatch)
 
-    def fake_get(url, headers=None):
+    def fake_get(url, headers=None, **kwargs):
         if url.endswith("/contents/skills/.curated/review-pr?ref=main"):
             return _Response([{
                 "name": "SKILL.md",

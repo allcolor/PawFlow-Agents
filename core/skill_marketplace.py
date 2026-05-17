@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import os
 import re
 from typing import Any, Dict, Iterable, List, Tuple
 from urllib.parse import urlparse
@@ -23,6 +24,8 @@ _MAX_RESULTS = 25
 _MAX_PACKAGE_FILES = 80
 _MAX_FILE_BYTES = 120_000
 _MAX_TOTAL_BYTES = 500_000
+_FETCH_TIMEOUT_SECONDS = 15
+_GITHUB_REF_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 _SKILL_NAME_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
 _FRONTMATTER_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*\n(.*)\Z", re.DOTALL)
 _SAFE_TEXT_EXTENSIONS = {
@@ -266,6 +269,8 @@ def _fetch_claude_ref(ref: str) -> Dict[str, Any]:
     if ":" in ref and "/" in ref.split(":", 1)[0]:
         repo_ref, skill_ref = ref.split(":", 1)
         owner, repo = repo_ref.split("/", 1)
+        _validate_github_ref_part(owner, "owner")
+        _validate_github_ref_part(repo, "repo")
         market = _fetch_json(
             f"https://raw.githubusercontent.com/{owner}/{repo}/main/.claude-plugin/marketplace.json")
         for plugin in market.get("plugins") or []:
@@ -340,12 +345,18 @@ def _fetch_github_tree_url(url: str, source: str) -> Dict[str, Any]:
     if len(parts) < 5 or parts[2] != "tree":
         raise SkillMarketplaceError("GitHub URL must point to a repository tree path")
     owner, repo, ref = parts[0], parts[1], parts[3]
+    _validate_github_ref_part(owner, "owner")
+    _validate_github_ref_part(repo, "repo")
+    _validate_github_ref_part(ref, "ref")
     path = "/".join(parts[4:])
     return _fetch_github_tree(owner, repo, ref, path, source)
 
 
 def _fetch_github_tree(owner: str, repo: str, ref: str, path: str,
                        source: str) -> Dict[str, Any]:
+    _validate_github_ref_part(owner, "owner")
+    _validate_github_ref_part(repo, "repo")
+    _validate_github_ref_part(ref, "ref")
     path = path.strip("/")
     items = _github_contents(owner, repo, path, ref=ref)
     if isinstance(items, dict):
@@ -451,6 +462,19 @@ def _github_contents(owner: str, repo: str, path: str, ref: str = "main"):
     return _fetch_json(url)
 
 
+def _validate_github_ref_part(value: str, label: str) -> None:
+    if not value or not _GITHUB_REF_RE.match(value) or value in {".", ".."}:
+        raise SkillMarketplaceError(f"Invalid GitHub {label}: {value}")
+
+
+def _request_headers() -> Dict[str, str]:
+    headers = {"User-Agent": _USER_AGENT}
+    token = os.environ.get("GITHUB_TOKEN", "") or os.environ.get("GH_TOKEN", "")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
 def _github_path_exists(owner: str, repo: str, path: str, ref: str = "main") -> bool:
     try:
         _github_contents(owner, repo, path, ref=ref)
@@ -480,17 +504,30 @@ def _github_skill_description(owner: str, repo: str, path: str) -> str:
 
 
 def _fetch_json(url: str) -> Any:
-    response = requests.get(url, headers={"User-Agent": _USER_AGENT})
+    response = requests.get(
+        url, headers=_request_headers(), timeout=_FETCH_TIMEOUT_SECONDS)
     if response.status_code >= 400:
         raise SkillMarketplaceError(f"Fetch failed {response.status_code}: {url}")
     return response.json()
 
 
 def _fetch_text(url: str) -> str:
-    response = requests.get(url, headers={"User-Agent": _USER_AGENT})
+    response = requests.get(
+        url, headers=_request_headers(), timeout=_FETCH_TIMEOUT_SECONDS,
+        stream=True)
     if response.status_code >= 400:
         raise SkillMarketplaceError(f"Fetch failed {response.status_code}: {url}")
-    data = response.content
+    cap = _MAX_FILE_BYTES * 2 if "README.md" not in url else _MAX_TOTAL_BYTES
+    chunks = []
+    total = 0
+    for chunk in response.iter_content(chunk_size=16384):
+        if not chunk:
+            continue
+        total += len(chunk)
+        if total > cap:
+            raise SkillMarketplaceError(f"Fetched text exceeds import cap: {url}")
+        chunks.append(chunk)
+    data = b"".join(chunks)
     if len(data) > _MAX_FILE_BYTES * 2 and "README.md" not in url:
         raise SkillMarketplaceError(f"Fetched text exceeds import cap: {url}")
     return data.decode("utf-8")

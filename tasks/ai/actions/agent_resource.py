@@ -299,7 +299,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         }).encode())
         return [flowfile]
 
-    if action in ("create_skill", "add_skill"):
+    if action in ("create_skill", "add_skill", "update_skill", "modify_skill"):
         skill_name = body.get("name", "").strip()
         skill_prompt = body.get("prompt", "").strip()
         conv_id = body.get("conversation_id", "")
@@ -314,6 +314,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         rs = ResourceStore.instance()
         uid = user_id
         try:
+            is_update = action in ("update_skill", "modify_skill")
             data = {"prompt": skill_prompt}
             description = body.get("description", "")
             if description:
@@ -321,19 +322,33 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             from core.review_bindings import attach_review_metadata, review_for_write
             review_meta = review_for_write(
                 data,
-                operation="create",
+                operation="update" if is_update else "create",
                 user_id=uid,
                 conversation_id=conv_id,
             )
             if review_meta:
                 data = attach_review_metadata(data, review_meta)
             scope_kwargs = {"conversation_id": conv_id} if scope == "conversation" and conv_id else {}
-            if rs.get("skill", skill_name, uid, **scope_kwargs):
+            exists = rs.get("skill", skill_name, uid, **scope_kwargs)
+            if is_update:
+                if not exists:
+                    flowfile.set_content(json.dumps({
+                        "error": f"Skill '{skill_name}' not found in {scope} scope",
+                    }).encode())
+                    flowfile.set_attribute("http.response.status", "404")
+                    return [flowfile]
                 rs.update("skill", skill_name, uid, data, **scope_kwargs)
             else:
+                if exists:
+                    flowfile.set_content(json.dumps({
+                        "error": f"Skill '{skill_name}' already exists in {scope} scope. Use /skill update to modify it.",
+                    }).encode())
+                    flowfile.set_attribute("http.response.status", "409")
+                    return [flowfile]
                 rs.create("skill", skill_name, uid, data, **scope_kwargs)
             flowfile.set_content(json.dumps({
-                "created": True, "name": skill_name, "scope": scope,
+                "created": not is_update, "updated": is_update,
+                "name": skill_name, "scope": scope,
             }).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
@@ -370,10 +385,63 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         from core.resource_store import ResourceStore
+        from core.skill_resolver import normalize_skill_entry
         uid = user_id
-        deleted = ResourceStore.instance().delete("skill", skill_name, uid)
+        rs = ResourceStore.instance()
+        skill_def = rs.get_any(
+            "skill", skill_name, uid, conversation_id=conv_id)
+        if not skill_def:
+            flowfile.set_content(json.dumps({
+                "deleted": False, "name": skill_name,
+                "error": f"Skill '{skill_name}' not found",
+            }).encode())
+            flowfile.set_attribute("http.response.status", "404")
+            return [flowfile]
+        scope = skill_def.get("_scope", "user")
+        delete_kwargs = {"conversation_id": conv_id} if scope == "conversation" and conv_id else {}
+        delete_uid = uid if scope in ("conversation", "user") else "__global__"
+        deleted = rs.delete("skill", skill_name, delete_uid, **delete_kwargs)
+        cleaned_agents = []
+        if deleted:
+            for agent_def in rs.list_all("agent", uid, conversation_id=conv_id):
+                assigned = list(agent_def.get("assigned_skills", []) or [])
+                kept = []
+                changed = False
+                for entry in assigned:
+                    name, _params, _condition = normalize_skill_entry(entry)
+                    if name == skill_name:
+                        changed = True
+                        continue
+                    kept.append(entry)
+                if not changed:
+                    continue
+                agent_scope = agent_def.get("_scope", "user")
+                agent_name = agent_def.get("name", "")
+                update_kwargs = {"conversation_id": conv_id} if agent_scope == "conversation" and conv_id else {}
+                update_uid = uid if agent_scope in ("conversation", "user") else "__global__"
+                rs.update("agent", agent_name, update_uid,
+                          {"assigned_skills": kept}, **update_kwargs)
+                cleaned_agents.append(agent_name)
+                if conv_id:
+                    try:
+                        from core.llm_client import stamp_message
+                        from core.pending_queue import PendingQueue
+                        from core.skill_resolver import removed_skill_context_message
+                        msg = stamp_message({
+                            "role": "system",
+                            "content": removed_skill_context_message(skill_name),
+                            "source": {"type": "context", "name": "pawflow"},
+                        }, conv_id)
+                        store.append_message(conv_id, msg, agent_name=agent_name,
+                                             user_id=uid)
+                        PendingQueue.for_agent(conv_id, agent_name).enqueue(
+                            dict(msg), source="skill_delete")
+                    except Exception:
+                        logger.debug("skill delete context injection failed",
+                                     exc_info=True)
         flowfile.set_content(json.dumps({
             "deleted": deleted, "name": skill_name,
+            "cleaned_agents": cleaned_agents,
         }).encode())
         return [flowfile]
 
@@ -394,11 +462,13 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                 _def_name = get_agent_config(conv_id, agent_name).get("definition") or agent_name
             except Exception:
                 _def_name = agent_name
-        agent_def = rs.get_any("agent", _def_name, uid)
+        agent_def = rs.get_any("agent", _def_name, uid,
+                               conversation_id=conv_id)
         if not agent_def:
             flowfile.set_content(json.dumps({"error": f"Agent '{agent_name}' not found"}).encode())
             return [flowfile]
-        skill_def = rs.get_any("skill", skill_name, uid)
+        skill_def = rs.get_any("skill", skill_name, uid,
+                               conversation_id=conv_id)
         if not skill_def:
             flowfile.set_content(json.dumps({"error": f"Skill '{skill_name}' not found"}).encode())
             return [flowfile]
@@ -408,8 +478,9 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             assigned.append(skill_name)
         # Update agent in the correct scope
         _scope = agent_def.get("_scope", "user")
-        _uid = uid if _scope == "user" else "__global__"
-        rs.update("agent", _def_name, _uid, {"assigned_skills": assigned})
+        _uid = uid if _scope in ("conversation", "user") else "__global__"
+        _scope_kwargs = {"conversation_id": conv_id} if _scope == "conversation" and conv_id else {}
+        rs.update("agent", _def_name, _uid, {"assigned_skills": assigned}, **_scope_kwargs)
         if conv_id and newly_assigned:
             try:
                 from core.llm_client import stamp_message
@@ -451,7 +522,8 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                 _def_name = get_agent_config(conv_id, agent_name).get("definition") or agent_name
             except Exception:
                 _def_name = agent_name
-        agent_def = rs.get_any("agent", _def_name, uid)
+        agent_def = rs.get_any("agent", _def_name, uid,
+                               conversation_id=conv_id)
         if not agent_def:
             flowfile.set_content(json.dumps({"error": f"Agent '{agent_name}' not found"}).encode())
             return [flowfile]
@@ -460,8 +532,9 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         if was_assigned:
             assigned.remove(skill_name)
         _scope = agent_def.get("_scope", "user")
-        _uid = uid if _scope == "user" else "__global__"
-        rs.update("agent", _def_name, _uid, {"assigned_skills": assigned})
+        _uid = uid if _scope in ("conversation", "user") else "__global__"
+        _scope_kwargs = {"conversation_id": conv_id} if _scope == "conversation" and conv_id else {}
+        rs.update("agent", _def_name, _uid, {"assigned_skills": assigned}, **_scope_kwargs)
         if conv_id and was_assigned:
             try:
                 from core.llm_client import stamp_message
@@ -584,6 +657,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "Missing agent_name"}).encode())
             return [flowfile]
         from core.resource_store import ResourceStore
+        from core.skill_resolver import normalize_skill_entry
         rs = ResourceStore.instance()
         uid = user_id
         conv_id = body.get("conversation_id", "")
@@ -594,16 +668,18 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                 _def_name = get_agent_config(conv_id, agent_name).get("definition") or agent_name
             except Exception:
                 _def_name = agent_name
-        agent_def = rs.get_any("agent", _def_name, uid)
+        agent_def = rs.get_any("agent", _def_name, uid,
+                               conversation_id=conv_id)
         if not agent_def:
             flowfile.set_content(json.dumps({"error": f"Agent '{agent_name}' not found"}).encode())
             return [flowfile]
         assigned = agent_def.get("assigned_skills", [])
         skills_detail = []
         for sn in assigned:
-            sd = rs.get_any("skill", sn, uid)
+            name, _params, _condition = normalize_skill_entry(sn)
+            sd = rs.get_any("skill", name, uid, conversation_id=conv_id)
             skills_detail.append({
-                "name": sn,
+                "name": name,
                 "description": sd.get("description", "") if sd else "(not found)",
             })
         flowfile.set_content(json.dumps({

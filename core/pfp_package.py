@@ -52,6 +52,7 @@ LOCK_FILE = "pfp.lock.json"
 _SAFE_PATH_RE = re.compile(r"^[A-Za-z0-9._/@:+-]+$")
 _PACKAGE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{1,120}[a-z0-9]$")
 _RESOURCE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,127}$")
+_SKILL_NAME_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
 _FRONTMATTER_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*\n(.*)\Z", re.DOTALL)
 _VERSION_REF_RE = re.compile(r"^[A-Za-z0-9._+*<>=!~,^ -]{1,80}$")
 
@@ -892,6 +893,8 @@ def _object_plan(obj: Dict[str, Any], package: Dict[str, Any], user_id: str,
         status, reason, installable = "blocked", f"unsupported object type: {obj_type}", False
     elif not name or not _RESOURCE_NAME_RE.match(name):
         status, reason, installable = "blocked", "invalid object name", False
+    elif obj_type == "skill" and (not _SKILL_NAME_RE.match(name) or "--" in name):
+        status, reason, installable = "blocked", "invalid Agent Skill name", False
     elif path and _safe_relpath(path) not in package["files"]:
         status, reason, installable = "blocked", f"missing package file: {path}", False
     elif obj_type == "ui_extension":
@@ -1888,13 +1891,18 @@ def _parse_skill_md(text: str, default_name: str = "") -> Dict[str, Any]:
     body = match.group(2).strip()
     if not body:
         raise PfpError("SKILL.md body is required")
+    name = str(meta.get("name") or default_name)
+    if not _SKILL_NAME_RE.match(name) or "--" in name:
+        raise PfpError("Skill name must follow Agent Skills spec: lowercase letters, numbers, single hyphens")
     return {
         "prompt": body,
         "description": str(meta.get("description", "") or ""),
         "parameters": meta.get("parameters", {}) if isinstance(meta.get("parameters", {}), dict) else {},
         "extends": str(meta.get("extends", "") or ""),
+        # PFP packages are reviewed/signed install artifacts, so they may opt
+        # into programmable skills. Marketplace imports strip template_engine.
         "template_engine": str(meta.get("template_engine", "") or ""),
-        "name": str(meta.get("name") or default_name),
+        "name": name,
     }
 
 

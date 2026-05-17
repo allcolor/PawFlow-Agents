@@ -53,8 +53,8 @@ function connectSSE(cid, onReady, opts) {
     };
   }
   // noReplay=true: caller is an explicit reload/switch that just refetched
-  // the authoritative history from disk. The server must discard any
-  // buffered events for this conv instead of replaying them -- otherwise
+  // the authoritative history from disk. The server must skip replaying
+  // buffered events to this socket -- otherwise
   // the client _seenMsgIds gets populated with ids from the replayed
   // message_meta/done events before _renderHistory runs, and addMsg() dedups
   // legitimate history entries out of the render (transcript truncation).
@@ -69,6 +69,63 @@ function connectSSE(cid, onReady, opts) {
 
   // ── Task block grouping ─────────────────────────────────────────
   const _taskBlocks = {};
+  const _pendingToolResults = {};
+
+  function _resultText(value) {
+    if (typeof value === 'string') return value;
+    try { return JSON.stringify(value, null, 2); }
+    catch (_err) { return String(value || ''); }
+  }
+
+  function _attachPendingToolResult(tcEl, tcId) {
+    if (!tcEl || !tcId || !_pendingToolResults[tcId]) return false;
+    const pending = _pendingToolResults[tcId];
+    if (pending.timer) clearTimeout(pending.timer);
+    delete _pendingToolResults[tcId];
+    _attachToolResult(tcEl, _resultText((pending.data || {}).result || ''));
+    if ((pending.data || {}).msg_id && typeof _seenMsgIds !== 'undefined') {
+      _seenMsgIds.add(pending.data.msg_id);
+    }
+    return true;
+  }
+
+  function _queueUnmatchedToolResult(tcId, data) {
+    if (!tcId) return false;
+    if (_pendingToolResults[tcId] && _pendingToolResults[tcId].timer) {
+      clearTimeout(_pendingToolResults[tcId].timer);
+    }
+    _pendingToolResults[tcId] = { data: data || {}, timer: null };
+    _pendingToolResults[tcId].timer = setTimeout(() => {
+      const pending = _pendingToolResults[tcId];
+      if (!pending) return;
+      const tcEl = (typeof findToolCallElement === 'function')
+        ? findToolCallElement(tcId)
+        : document.querySelector('[data-message-role="tool_call"][data-tc-id="' + tcId + '"]');
+      if (tcEl) {
+        _attachPendingToolResult(tcEl, tcId);
+        return;
+      }
+      delete _pendingToolResults[tcId];
+      const row = addMsg('tool_result', _resultText((pending.data || {}).result || ''), {
+        tool_name: pending.data.tool,
+        tool: pending.data.tool,
+        source: pending.data.source || {type: 'agent', name: pending.data.agent_name || '', llm_service: pending.data.llm_service || ''},
+        agent_name: pending.data.agent_name || '',
+        llm_service: pending.data.llm_service || '',
+        path: pending.data.path || '',
+        ts: pending.data.ts,
+        msg_id: pending.data.msg_id || '',
+        tc_id: tcId,
+      });
+      if (pending.data.task_id && row) {
+        const tb = _getTaskBlock(pending.data.task_id, pending.data.task_iteration, pending.data.agent_name || '');
+        if (tb) tb.content.appendChild(row);
+      }
+      if (typeof applyTechnicalMessageGrouping === 'function') applyTechnicalMessageGrouping();
+      scrollBottom();
+    }, 750);
+    return true;
+  }
 
   // Expose a reset hook so resumeConv (which clears #messages but
   // keeps the SSE socket open) can drop stale DOM references — without
@@ -78,6 +135,10 @@ function connectSSE(cid, onReady, opts) {
     for (const k in _taskBlocks) delete _taskBlocks[k];
     for (const k in _delegateGroups) delete _delegateGroups[k];
     for (const k in _delegateSubBlocks) delete _delegateSubBlocks[k];
+    for (const k in _pendingToolResults) {
+      if (_pendingToolResults[k] && _pendingToolResults[k].timer) clearTimeout(_pendingToolResults[k].timer);
+      delete _pendingToolResults[k];
+    }
   };
 
   function _getTaskBlock(taskId, iteration, agentName) {
@@ -845,6 +906,7 @@ function connectSSE(cid, onReady, opts) {
         childContainer.appendChild(tcEl);
       }
     }
+    if (tcEl && data.tc_id) _attachPendingToolResult(tcEl, data.tc_id);
     if (typeof applyTechnicalMessageGrouping === 'function') applyTechnicalMessageGrouping();
     scrollBottom();
     if (!data.task_id) document.getElementById('status').textContent = t('usingTool', {tool: (_TOOL_DISPLAY[data.tool] || data.tool)});
@@ -866,7 +928,7 @@ function connectSSE(cid, onReady, opts) {
         ? findToolCallElement(tcId)
         : document.querySelector('[data-tc-id="' + tcId + '"]');
       if (tcEl) {
-        _attachToolResult(tcEl, data.result || '');
+        _attachToolResult(tcEl, _resultText(data.result || ''));
         if (tcEl.dataset) delete tcEl.dataset.live;
         if (data.msg_id && typeof _seenMsgIds !== 'undefined') _seenMsgIds.add(data.msg_id);
         if (typeof applyTechnicalMessageGrouping === 'function') applyTechnicalMessageGrouping();
@@ -874,8 +936,9 @@ function connectSSE(cid, onReady, opts) {
         return;
       }
     }
+    if (tcId && _queueUnmatchedToolResult(tcId, data)) return;
     // Fallback: standalone element
-    const trEl = addMsg('tool_result', data.result || '', {
+    const trEl = addMsg('tool_result', _resultText(data.result || ''), {
       tool_name: data.tool,
       tool: data.tool,
       source: data.source || {type: 'agent', name: data.agent_name || '', llm_service: data.llm_service || ''},
@@ -1161,6 +1224,8 @@ function connectSSE(cid, onReady, opts) {
       // tool call is finalized instead of leaving it visually stuck.
       const tcEl = bullet.closest('[data-tc-id]');
       if (tcEl && !tcEl.querySelector('.tc-result')) {
+        const tcId = tcEl.dataset ? (tcEl.dataset.tcId || '') : '';
+        if (tcId && _attachPendingToolResult(tcEl, tcId)) return;
         try { _attachToolResult(tcEl, '[result not delivered]'); } catch (e) {}
       }
     });

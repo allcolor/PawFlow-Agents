@@ -62,8 +62,7 @@ def test_technical_grouping_is_expression_driven_and_post_rendered():
     assert "te.el.setAttribute('open', '')" in SSE_JS
     assert "String(text || '').trim()) collapseTechnicalGroups()" in MESSAGES_JS
     assert "displayText.trim() && s.el && !s.el.dataset.technicalGroupsCollapsed" in SSE_JS
-    assert "_attachToolResult(tcEl, data.result || '');" in SSE_JS
-    assert "_attachToolResult(tcEl, data.result || '');" in SSE_JS
+    assert "_attachToolResult(tcEl, _resultText(data.result || ''));" in SSE_JS
     assert "const groupTechnicalMessages = !!data.group_technical_messages" in CONVERSATIONS_JS
     assert "setTechnicalMessageGrouping(groupTechnicalMessages)" in CONVERSATIONS_JS
     assert "updateTechnicalGroupingToggle(groupTechnicalMessages)" in CONVERSATIONS_JS
@@ -109,6 +108,21 @@ def test_autoscroll_only_stops_on_user_scroll_intent():
 def test_tool_results_carry_tc_id_for_reload_grouping():
     assert "if (tcId) el.dataset.tcId = tcId;" in MESSAGES_JS
     assert "if (tcId) _inner.dataset.tcId = tcId;" in MESSAGES_JS
+
+
+def test_live_tool_results_are_reconciled_when_sse_arrives_out_of_order():
+    assert "const _pendingToolResults = {};" in SSE_JS
+    assert "function _attachPendingToolResult(tcEl, tcId)" in SSE_JS
+    assert "function _queueUnmatchedToolResult(tcId, data)" in SSE_JS
+    tool_call_block = SSE_JS[
+        SSE_JS.index("eventSource.addEventListener('tool_call'"):
+        SSE_JS.index("eventSource.addEventListener('tool_result'")]
+    tool_result_block = SSE_JS[
+        SSE_JS.index("eventSource.addEventListener('tool_result'"):
+        SSE_JS.index("eventSource.addEventListener('bg_task_update'")]
+    assert "_attachPendingToolResult(tcEl, data.tc_id)" in tool_call_block
+    assert "_queueUnmatchedToolResult(tcId, data)" in tool_result_block
+    assert "dataset.messageRole === 'tool_call'" in MESSAGES_JS
 
 
 def test_clear_keeps_conversation_and_load_more_entrypoint():

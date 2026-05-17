@@ -90,8 +90,13 @@ class ConversationEventBus:
                     replaced = True
                 self._clients[client_key] = writer
             self._subscribers[conversation_id].add(writer)
-            # Pop the buffer either way so it doesn't grow forever.
-            buffered = self._buffer.pop(conversation_id, [])
+            buffered = list(self._buffer.get(conversation_id, []) or [])
+            if replay:
+                # A replaying subscriber consumes the buffered tail. Explicit
+                # no-replay reloads only skip delivery for that subscriber;
+                # they must not discard events produced after the history
+                # fetch but before the new SSE socket attaches.
+                self._buffer.pop(conversation_id, None)
 
         if replay:
             for _ts, event in buffered:
@@ -101,7 +106,7 @@ class ConversationEventBus:
                          f"(replayed {len(buffered)} buffered events)")
         else:
             logger.debug(f"EventBus: new subscriber for conv={conversation_id} "
-                         f"(discarded {len(buffered)} buffered events, replay=False)")
+                         f"(skipped {len(buffered)} buffered events, replay=False)")
         if replaced:
             logger.info("EventBus: replaced stale SSE subscriber for conv=%s client=%s",
                         conversation_id[:8], client_id[:12])

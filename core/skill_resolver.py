@@ -357,6 +357,17 @@ def _evaluate_condition(condition: str, user_id: str) -> bool:
     return bool(resolved) and resolved not in ("false", "False", "0")
 
 
+def _evaluate_condition_for_scope(condition: str, user_id: str,
+                                  conversation_id: str = "") -> bool:
+    """Evaluate a condition expression with conversation scope available."""
+    if not condition:
+        return True
+    from core.expression import resolve_value
+    resolved = resolve_value(
+        condition, owner=user_id, conversation_id=conversation_id or None)
+    return bool(resolved) and resolved not in ("false", "False", "0")
+
+
 def _substitute_params(prompt: str, params: Dict[str, str],
                        defaults: Dict[str, Any]) -> str:
     """Replace ${param_name} in prompt with values from params, falling back to defaults."""
@@ -466,11 +477,8 @@ _MAX_EXTENDS_DEPTH = 5
 
 def _get_skill_any(rs, skill_name: str, user_id: str,
                    conversation_id: str = ""):
-    try:
-        return rs.get_any(
-            "skill", skill_name, user_id, conversation_id=conversation_id)
-    except TypeError:
-        return rs.get_any("skill", skill_name, user_id)
+    return rs.get_any(
+        "skill", skill_name, user_id, conversation_id=conversation_id)
 
 
 def _resolve_prompt_chain(skill_name: str, rs, user_id: str,
@@ -554,7 +562,8 @@ def resolve_skill_prompts(
         if not name or name in seen:
             continue
         seen.add(name)
-        if condition and not _evaluate_condition(condition, user_id):
+        if condition and not _evaluate_condition_for_scope(
+                condition, user_id, conversation_id):
             continue
         skill_def = _get_skill_any(rs, name, user_id, conversation_id)
         if not skill_def or not skill_def.get("prompt"):
@@ -627,6 +636,7 @@ def _skill_summary(skill_def: Dict[str, Any]) -> str:
 def resolve_skill_manifests(
     skill_entries: List,
     user_id: str,
+    conversation_id: str = "",
 ) -> List[str]:
     """Resolve assigned skills to lightweight availability manifest lines."""
     from core.resource_store import ResourceStore
@@ -638,9 +648,10 @@ def resolve_skill_manifests(
         if not name or name in seen:
             continue
         seen.add(name)
-        if condition and not _evaluate_condition(condition, user_id):
+        if condition and not _evaluate_condition_for_scope(
+                condition, user_id, conversation_id):
             continue
-        skill_def = rs.get_any("skill", name, user_id)
+        skill_def = _get_skill_any(rs, name, user_id, conversation_id)
         if not skill_def:
             continue
         summary = _skill_summary(skill_def)
@@ -671,9 +682,11 @@ def removed_skill_context_message(skill_name: str) -> str:
 
 
 def inject_available_skills_into_prompt(system_prompt: str, skill_entries: List,
-                                        user_id: str) -> str:
+                                        user_id: str,
+                                        conversation_id: str = "") -> str:
     """Append only lightweight skill manifests to the provider system prompt."""
-    lines = resolve_skill_manifests(skill_entries, user_id)
+    lines = resolve_skill_manifests(
+        skill_entries, user_id, conversation_id=conversation_id)
     if lines:
         system_prompt += "\n\n# Available Skills\n\n" + "\n".join(lines)
     return system_prompt
@@ -700,7 +713,8 @@ def _agent_assigned_skill_entry(skill_name: str, user_id: str,
         name, _params, condition = normalize_skill_entry(entry)
         if name != skill_name:
             continue
-        if condition and not _evaluate_condition(condition, user_id):
+        if condition and not _evaluate_condition_for_scope(
+                condition, user_id, conversation_id):
             return None
         return entry
     return None

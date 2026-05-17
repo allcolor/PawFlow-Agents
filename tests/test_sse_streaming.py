@@ -321,6 +321,22 @@ class TestConversationEventBus(unittest.TestCase):
         assert len(chunks) == 1
         assert b"event: custom" in chunks[0]
 
+    def test_no_replay_subscriber_does_not_discard_buffer_for_next_reconnect(self):
+        bus = ConversationEventBus.instance()
+        bus.publish_event("conv1", "tool_result", {"tc_id": "tc1", "result": "ok"})
+
+        no_replay = bus.subscribe("conv1", replay=False, client_id="tab-a")
+        no_replay.close()
+        assert list(no_replay.iterate(timeout=0.1)) == []
+
+        replay = bus.subscribe("conv1", replay=True, client_id="tab-b")
+        replay.close()
+        chunks = list(replay.iterate(timeout=0.1))
+
+        assert len(chunks) == 1
+        assert b"event: tool_result" in chunks[0]
+        assert b'"tc_id": "tc1"' in chunks[0]
+
     def test_isolation_between_conversations(self):
         bus = ConversationEventBus.instance()
         w1 = bus.subscribe("conv1")

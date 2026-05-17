@@ -5,7 +5,7 @@ def test_dynamic_skill_template_renders_pawflow_snapshot(monkeypatch):
     from core import skill_resolver
 
     class Store:
-        def get_any(self, rtype, name, user_id):
+        def get_any(self, rtype, name, user_id, conversation_id=""):
             assert rtype == "skill"
             assert name == "dynamic-image"
             return {
@@ -58,7 +58,7 @@ def test_static_skill_prompt_still_uses_param_substitution(monkeypatch):
     from core import skill_resolver
 
     class Store:
-        def get_any(self, rtype, name, user_id):
+        def get_any(self, rtype, name, user_id, conversation_id=""):
             return {
                 "description": "Static skill",
                 "prompt": "Use ${tool_name} carefully.",
@@ -79,7 +79,7 @@ def test_skill_manifest_advertises_without_prompt_body(monkeypatch):
     from core import skill_resolver
 
     class Store:
-        def get_any(self, rtype, name, user_id):
+        def get_any(self, rtype, name, user_id, conversation_id=""):
             return {
                 "description": "Static skill",
                 "prompt": "SECRET FULL PROMPT BODY",
@@ -93,6 +93,28 @@ def test_skill_manifest_advertises_without_prompt_body(monkeypatch):
     assert "Static skill" in lines[0]
     assert "load_skill" in lines[0]
     assert "SECRET FULL PROMPT BODY" not in lines[0]
+
+
+def test_skill_manifest_resolves_conversation_scoped_skill(monkeypatch):
+    from core import skill_resolver
+
+    calls = []
+
+    class Store:
+        def get_any(self, rtype, name, user_id, conversation_id=""):
+            calls.append((rtype, name, user_id, conversation_id))
+            if conversation_id == "conv1":
+                return {"description": "Conversation skill", "prompt": "secret"}
+            return None
+
+    from core.resource_store import ResourceStore
+    monkeypatch.setattr(ResourceStore, "instance", staticmethod(lambda: Store()))
+
+    lines = skill_resolver.resolve_skill_manifests(
+        ["conv-skill"], "alice", conversation_id="conv1")
+
+    assert "Conversation skill" in lines[0]
+    assert calls == [("skill", "conv-skill", "alice", "conv1")]
 
 
 def test_load_skill_only_returns_assigned_skill(monkeypatch):

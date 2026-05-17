@@ -270,7 +270,8 @@ class _CCITurnCoordinator:
             return
         text = "".join(self.text_parts).strip()
         thinking = "".join(self.thinking_parts)
-        tool_calls = [dict(tc) for tc in self.turn_tool_calls]
+        tool_calls = [] if self.block_callback else [
+            dict(tc) for tc in self.turn_tool_calls]
         if thinking and tool_calls:
             tool_calls[0]["thinking"] = thinking
         if not text and not thinking and not tool_calls:

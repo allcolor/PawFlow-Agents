@@ -105,12 +105,7 @@ def test_turn_coordinator_assembles_text_thinking_and_native_tool_use():
         "name": "read",
         "arguments": {"path": "a.png"},
     })]
-    assert turns == [("Hi there", [{
-        "id": "toolu_1",
-        "name": "read",
-        "arguments": {"path": "a.png"},
-        "thinking": "plan",
-    }], "plan")]
+    assert turns == [("Hi there", [], "plan")]
 
 
 def test_turn_coordinator_flushes_unstopped_text_at_stop_hook():
@@ -336,6 +331,39 @@ def test_turn_coordinator_publishes_native_tool_result_live():
             "result": "file body",
         }),
     ]
+
+
+def test_turn_coordinator_publishes_proxy_tool_use_before_stop_hook():
+    events = [
+        {"type": "tool_use", "tool_use_id": "toolu_1", "name": "read",
+         "arguments": {"path": "README.md"}},
+        {"type": "hook", "hook_event_name": "Stop", "input": {"hook_event_name": "Stop"}},
+    ]
+    seen = []
+
+    class Events:
+        def __init__(self, rows):
+            self.rows = list(rows)
+
+        def wait_event(self, session_token, timeout=None):
+            if not self.rows:
+                return {}
+            event = self.rows.pop(0)
+            if event.get("type") == "hook" and not seen:
+                raise AssertionError("tool_use was not published before Stop")
+            return event
+
+    _CCITurnCoordinator(
+        Events(events), "sess",
+        block_callback=lambda event_type, payload: seen.append((event_type, payload)),
+        turn_callback=lambda text, tool_calls, thinking="": None,
+    ).run()
+
+    assert seen == [("tool_use", {
+        "id": "toolu_1",
+        "name": "read",
+        "arguments": {"path": "README.md"},
+    })]
 
 
 def test_turn_coordinator_unwraps_pawflow_tool_wrapper_for_live_blocks():

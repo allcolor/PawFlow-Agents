@@ -155,6 +155,27 @@ def test_turn_coordinator_waits_for_proxy_message_stop_after_stop_hook():
     assert resp.content == "first second"
 
 
+def test_turn_coordinator_finishes_on_final_proxy_message_stop_without_stop_hook():
+    events = [
+        {"type": "request_start", "request_id": "r1", "path": "/v1/messages"},
+        _sse("content_block_delta", {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "text_delta", "text": "final answer"},
+        }) | {"request_id": "r1"},
+        _sse("content_block_stop", {"type": "content_block_stop", "index": 0}) | {"request_id": "r1"},
+        _sse("message_delta", {
+            "type": "message_delta",
+            "delta": {"stop_reason": "end_turn"},
+        }) | {"request_id": "r1"},
+        _sse("message_stop", {"type": "message_stop"}) | {"request_id": "r1"},
+    ]
+
+    resp = _CCITurnCoordinator(_Events(events), "sess").run()
+
+    assert resp.content == "final answer"
+
+
 def test_turn_coordinator_keeps_non_title_json_text_block():
     events = [
         _sse("content_block_delta", {
@@ -450,7 +471,7 @@ def test_initial_interactive_prompt_writes_context_file(tmp_path):
     assert "compact summary" not in prompt
 
 
-def test_interactive_prompt_uses_native_tool_mode(tmp_path):
+def test_interactive_prompt_requires_pawflow_mcp_tools(tmp_path):
     from core.llm_client import LLMMessage, LLMToolDefinition
 
     client = LLMClient("claude-code-interactive")
@@ -463,7 +484,9 @@ def test_interactive_prompt_uses_native_tool_mode(tmp_path):
         "conv",
     )
 
-    assert "Use Claude Code's native tools" in prompt
+    assert "Use PawFlow MCP tools" in prompt
+    assert "built-in tools are disabled" in prompt
+    assert "Use Claude Code's native tools" not in prompt
 
 
 def test_resume_interactive_prompt_uses_current_turn_only(tmp_path):
@@ -517,8 +540,24 @@ def test_interactive_provider_is_treated_as_stateful_cli():
     assert 'if _is_claude_code and ctx.get("_cli_has_session"):' in agent_core
 
 
+def test_cc_interactive_interrupt_turn_sends_only_stop_transport():
+    from pathlib import Path
+
+    agent_core = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
+    cci_start = agent_core.index('if _client_provider == "claude-code-interactive":')
+    cci_end = agent_core.index('logger.info(f"[agent:{conversation_id[:8]}] interrupted', cci_start)
+    cci_branch = agent_core[cci_start:cci_end]
+
+    assert "interrupt_claude_code_interactive" in cci_branch
+    assert "SOFT_INTERRUPT_USER_COMMAND" in cci_branch
+    assert "_compact(" not in cci_branch
+    assert "_with_provider_system_prompt" not in cci_branch
+    assert "role=\"user\"" not in cci_branch
+
+
 def test_interactive_pool_writes_lifecycle_hooks(tmp_path):
     from core.claude_code_interactive_pool import InteractiveClaudeCodePool
+    from core.llm_providers.claude_code_session import ClaudeCodeSessionMixin
 
     pool = InteractiveClaudeCodePool()
     pool._write_hook_settings(str(tmp_path))
@@ -531,13 +570,15 @@ def test_interactive_pool_writes_lifecycle_hooks(tmp_path):
     stop_hook = settings["hooks"]["Stop"][0]["hooks"][0]
     assert stop_hook["command"] == "python3"
     assert stop_hook["args"] == ["/opt/pawflow/cc_interactive_hook.py"]
-    assert settings["permissions"]["deny"] == ["Agent", "Bash"]
+    assert set(settings["permissions"]["deny"]) == set(
+        ClaudeCodeSessionMixin._DISALLOWED_BUILTIN_TOOLS.split(","))
     assert settings["env"]["CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION"] == "false"
     assert settings["env"]["CLAUDE_CODE_DISABLE_TERMINAL_TITLE"] == "1"
 
 
 def test_interactive_pool_preserves_existing_permissions_when_denying_agent(tmp_path):
     from core.claude_code_interactive_pool import InteractiveClaudeCodePool
+    from core.llm_providers.claude_code_session import ClaudeCodeSessionMixin
 
     settings_path = tmp_path / ".claude" / "settings.json"
     settings_path.parent.mkdir(parents=True)
@@ -552,8 +593,9 @@ def test_interactive_pool_preserves_existing_permissions_when_denying_agent(tmp_
     InteractiveClaudeCodePool()._write_hook_settings(str(tmp_path))
 
     settings = json.loads(settings_path.read_text())
-    assert settings["permissions"]["allow"] == ["mcp__pawflow__*", "Read"]
-    assert settings["permissions"]["deny"] == ["WebFetch", "Agent", "Bash"]
+    assert settings["permissions"]["allow"] == ["mcp__pawflow__*"]
+    assert set(settings["permissions"]["deny"]) == set(
+        ClaudeCodeSessionMixin._DISALLOWED_BUILTIN_TOOLS.split(","))
     assert settings["env"]["EXISTING"] == "1"
     assert settings["env"]["CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION"] == "false"
     assert settings["env"]["CLAUDE_CODE_DISABLE_TERMINAL_TITLE"] == "1"
@@ -562,6 +604,7 @@ def test_interactive_pool_preserves_existing_permissions_when_denying_agent(tmp_
 def test_interactive_pool_preaccepts_claude_interactive_prompts(tmp_path, monkeypatch):
     import core.claude_code_interactive_pool as pool_mod
     from core.claude_code_interactive_pool import InteractiveClaudeCodePool
+    from core.llm_providers.claude_code_session import ClaudeCodeSessionMixin
 
     sessions = tmp_path / "sessions"
     workdir = sessions / "user" / "conv" / "agent"
@@ -578,7 +621,8 @@ def test_interactive_pool_preaccepts_claude_interactive_prompts(tmp_path, monkey
     claude_settings = json.loads((workdir / ".claude" / "settings.json").read_text())
     assert claude_settings["enableAllProjectMcpServers"] is True
     assert claude_settings["enabledMcpjsonServers"] == ["pawflow"]
-    assert claude_settings["permissions"]["deny"] == ["Agent", "Bash"]
+    assert set(claude_settings["permissions"]["deny"]) == set(
+        ClaudeCodeSessionMixin._DISALLOWED_BUILTIN_TOOLS.split(","))
     assert claude_settings["env"]["CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION"] == "false"
     assert claude_settings["env"]["CLAUDE_CODE_DISABLE_TERMINAL_TITLE"] == "1"
 
@@ -750,6 +794,8 @@ def test_interactive_pool_starts_tmux_in_normal_provider_namespace(monkeypatch):
     assert "HOME=/cc_sessions/c/a" in shell
     assert "CLAUDE_CONFIG_DIR=/cc_sessions/c/a" in shell
     assert "--mcp-config /cc_sessions/c/a/.mcp.json" in shell
+    assert "--disallowedTools" in shell
+    assert "Bash,Edit,Read,Write,Glob,Grep" in shell
     assert "--verbose" in shell
     assert "--thinking-display summarized" in shell
     assert "--effort high" in shell
@@ -900,12 +946,19 @@ def test_cc_interactive_event_service_logs_wire_without_queueing(caplog):
     assert "Authorization: <redacted>" in caplog.text
 
 
-def test_cc_interactive_hook_detects_shared_cold_bootstrap_prompt():
-    from tools.cc_interactive_hook import _looks_like_pawflow_prompt
+def test_cc_interactive_hook_does_not_classify_prompts_by_content(monkeypatch):
+    from tools.cc_interactive_hook import _compact_input
 
-    assert _looks_like_pawflow_prompt(
-        "PawFlow cold-session bootstrap.\n\nYou must first read this initial context file before answering."
-    ) is True
+    monkeypatch.delenv("PAWFLOW_CCI_INJECTED_PROMPTS", raising=False)
+    prompt = "PawFlow cold-session bootstrap.\n\nYou must first read this initial context file before answering."
+
+    compact = _compact_input({
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": prompt,
+    })
+
+    assert compact["pawflow_injected_prompt"] is False
+    assert compact["prompt"] == prompt
 
 
 def test_cc_interactive_event_service_persists_manual_tmux_prompt(monkeypatch):

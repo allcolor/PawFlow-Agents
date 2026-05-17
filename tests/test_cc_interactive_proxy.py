@@ -671,7 +671,16 @@ def test_hook_marks_pawflow_injected_prompts_without_forwarding_text(tmp_path, m
     assert compact["pawflow_injected_prompt"] is True
     assert compact["prompt_len"] == len(prompt)
     assert "prompt" not in compact
-    assert marker.read_text(encoding="utf-8") == ""
+    assert "consumed_at" in marker.read_text(encoding="utf-8")
+
+    duplicate = hook._compact_input({
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": prompt,
+        "cwd": "/workspace",
+    })
+
+    assert duplicate["pawflow_injected_prompt"] is True
+    assert "prompt" not in duplicate
 
 
 def test_hook_matches_injected_prompt_when_claude_strips_trailing_newline(tmp_path, monkeypatch):
@@ -692,10 +701,8 @@ def test_hook_matches_injected_prompt_when_claude_strips_trailing_newline(tmp_pa
     })
 
     assert compact["pawflow_injected_prompt"] is True
-    assert compact["pawflow_managed_prompt"] is True
-    assert "pawflow_injected_prompt_missing" not in compact
     assert "prompt" not in compact
-    assert marker.read_text(encoding="utf-8") == ""
+    assert "consumed_at" in marker.read_text(encoding="utf-8")
 
 
 def test_hook_keeps_manual_user_prompt(monkeypatch):
@@ -711,7 +718,7 @@ def test_hook_keeps_manual_user_prompt(monkeypatch):
     assert compact["prompt"] == "Manual tmux prompt"
 
 
-def test_hook_keeps_sentinel_like_manual_prompt_when_marker_is_missing(monkeypatch):
+def test_hook_keeps_manual_prompt_when_marker_is_missing(monkeypatch):
     hook = importlib.import_module("tools.cc_interactive_hook")
     monkeypatch.setenv("PAWFLOW_CCI_INJECTED_PROMPTS", "/tmp/missing-pawflow-cci-marker.jsonl")
     prompt = (
@@ -727,6 +734,6 @@ def test_hook_keeps_sentinel_like_manual_prompt_when_marker_is_missing(monkeypat
 
     assert compact["pawflow_injected_prompt"] is False
     assert "pawflow_managed_prompt" not in compact
-    assert compact["pawflow_injected_prompt_missing"] is True
+    assert "pawflow_injected_prompt_missing" not in compact
     assert compact["prompt_sha256"] == hook.hashlib.sha256(prompt.encode("utf-8")).hexdigest()
     assert compact["prompt"] == prompt

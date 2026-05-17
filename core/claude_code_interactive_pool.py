@@ -27,6 +27,7 @@ import uuid
 
 from core.cc_interactive_certs import generate_leaf, ca_private_key_is_host_only
 from core.docker_utils import docker_cmd, get_host_ip, get_server_id, to_host_path, translate_path
+from core.llm_providers.claude_code_session import ClaudeCodeSessionMixin
 import core.paths as _paths
 
 
@@ -61,6 +62,7 @@ class InteractiveClaudeCodePool:
     def __init__(self):
         self._lock = threading.RLock()
         self._sessions: Dict[tuple[str, str, str, str], InteractiveContainer] = {}
+        self._disallowed_builtin_tools = ClaudeCodeSessionMixin._DISALLOWED_BUILTIN_TOOLS
 
     @staticmethod
     def _safe(value: str) -> str:
@@ -387,7 +389,7 @@ class InteractiveClaudeCodePool:
         settings_path = Path(workdir) / ".claude" / "settings.json"
         settings_path.parent.mkdir(parents=True, exist_ok=True)
         settings = self._read_json(settings_path)
-        self._deny_claude_agent_tool(settings)
+        self._deny_builtin_tools(settings)
         env = settings.get("env")
         if not isinstance(env, dict):
             env = {}
@@ -442,15 +444,22 @@ class InteractiveClaudeCodePool:
             pass
         return {}
 
-    @staticmethod
-    def _deny_claude_agent_tool(settings: dict) -> None:
+    def _deny_builtin_tools(self, settings: dict) -> None:
         permissions = settings.get("permissions")
         if not isinstance(permissions, dict):
             permissions = {}
+        disallowed = [
+            item.strip() for item in self._disallowed_builtin_tools.split(",")
+            if item.strip()
+        ]
+        disallowed_set = set(disallowed)
+        allow = permissions.get("allow")
+        if isinstance(allow, list):
+            permissions["allow"] = [item for item in allow if item not in disallowed_set]
         deny = permissions.get("deny")
         if not isinstance(deny, list):
             deny = []
-        for tool_name in ("Agent", "Bash"):
+        for tool_name in disallowed:
             if tool_name not in deny:
                 deny.append(tool_name)
         permissions["deny"] = deny
@@ -484,6 +493,7 @@ class InteractiveClaudeCodePool:
             args.extend(["--model", model])
         if effort:
             args.extend(["--effort", effort])
+        args.extend(["--disallowedTools", self._disallowed_builtin_tools])
         quoted = " ".join(shlex.quote(a) for a in args)
         drop_privs = "setpriv --reuid=1000 --regid=1000 --clear-groups --"
         shell = (

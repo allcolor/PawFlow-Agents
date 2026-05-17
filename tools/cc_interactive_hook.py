@@ -18,6 +18,9 @@ import time
 from urllib.parse import urlparse
 
 
+_INJECTED_PROMPT_TTL_SECONDS = 300
+
+
 def _masked_frame(obj: dict) -> bytes:
     data = json.dumps(obj, separators=(",", ":")).encode("utf-8")
     header = bytearray([0x81])
@@ -113,24 +116,10 @@ def _compact_input(raw: dict) -> dict:
         out["prompt_sha256"] = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
         out["prompt_len"] = len(prompt)
         injected = _consume_injected_prompt(prompt)
-        managed = _looks_like_pawflow_prompt(prompt)
         out["pawflow_injected_prompt"] = injected
-        if managed and injected:
-            out["pawflow_managed_prompt"] = True
-        elif managed:
-            out["pawflow_injected_prompt_missing"] = True
         if prompt and not injected:
             out["prompt"] = prompt
     return out
-
-
-def _looks_like_pawflow_prompt(prompt: str) -> bool:
-    text = prompt.lstrip()
-    return (
-        text.startswith("PawFlow cold-session bootstrap.")
-        or text.startswith("Read this PawFlow initial context file before answering:")
-        or text.startswith("PawFlow initial context was already loaded for this live Claude Code session.")
-    )
 
 
 def _consume_injected_prompt(prompt: str) -> bool:
@@ -141,6 +130,8 @@ def _consume_injected_prompt(prompt: str) -> bool:
         hashlib.sha256(candidate.encode("utf-8")).hexdigest()
         for candidate in (prompt, prompt + "\n", prompt + "\r\n", prompt.rstrip("\r\n"))
     }
+    now = time.time()
+    cutoff = now - _INJECTED_PROMPT_TTL_SECONDS
     try:
         with open(path, "a+", encoding="utf-8") as fh:
             if fcntl is not None:
@@ -154,8 +145,14 @@ def _consume_injected_prompt(prompt: str) -> bool:
                     payload = json.loads(row)
                 except Exception:
                     continue
+                ts = float(payload.get("ts") or 0)
+                consumed_at = float(payload.get("consumed_at") or 0)
+                if max(ts, consumed_at) and max(ts, consumed_at) < cutoff:
+                    continue
                 if payload.get("sha256") in digest_candidates:
                     found = True
+                    payload["consumed_at"] = now
+                    kept.append(json.dumps(payload, separators=(",", ":")) + "\n")
                     continue
                 kept.append(row)
             if found:

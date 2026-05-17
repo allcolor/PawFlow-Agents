@@ -177,10 +177,8 @@ class _CCITurnCoordinator:
                         self._final_model_stop_seen = True
                 elif self._saw_model_content:
                     self._final_model_stop_seen = True
-                if self._stop_seen and not self._active_message_requests:
+                if not self._active_message_requests:
                     done = self._finish_turn_if_ready()
-                # Anthropic message_stop ends one model request. The tmux turn
-                # ends only after Claude Code's Stop hook has also arrived.
                 continue
 
         text = "".join(self.text_parts)
@@ -200,7 +198,7 @@ class _CCITurnCoordinator:
         )
 
     def _finish_turn_if_ready(self) -> bool:
-        if not self._stop_seen:
+        if not self._stop_seen and not self._final_model_stop_seen:
             return False
         if self._active_message_requests:
             return False
@@ -381,6 +379,10 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
 
         pool = InteractiveClaudeCodePool.instance()
         state = pool.ensure_started(self, model or "", user_id, conversation_id, agent_name)
+        self._cci_active_user_id = user_id
+        self._cci_active_conversation_id = conversation_id
+        self._cci_active_agent_name = agent_name
+        self._cci_active_service_id = getattr(self, "_agent_service", "") or ""
         prompt = self._cci_prompt(
             messages, tools, state.workdir, state.container_workdir,
             user_id, conversation_id,
@@ -403,14 +405,44 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
         response.model = model or self.default_model
         return response
 
+    def interrupt_claude_code_interactive(
+        self, text: str, *, callback=None, thinking_callback=None,
+        turn_callback=None, block_callback=None, user_id: str = "",
+        conversation_id: str = "", agent_name: str = "", model: str = "",
+    ):
+        from core.llm_client import LLMClientError
+        from services.cc_interactive_event_service import get_or_create_cc_interactive_event_service
+
+        state = self._cci_session_state(
+            user_id=user_id, conversation_id=conversation_id,
+            agent_name=agent_name)
+        if not state:
+            raise LLMClientError("No active Claude Code interactive session for interrupt")
+
+        _, _, event_service = get_or_create_cc_interactive_event_service()
+        event_service.drain_session(state.session_token)
+        if not InteractiveClaudeCodePool.instance().send_interrupt(state, text):
+            detail = getattr(state, "last_error", "") or "unknown tmux error"
+            raise LLMClientError(
+                "Failed to send interrupt to Claude Code interactive tmux session: "
+                f"{detail}")
+
+        coord = _CCITurnCoordinator(
+            event_service, state.session_token, callback=callback,
+            thinking_callback=thinking_callback, block_callback=block_callback,
+            turn_callback=turn_callback)
+        response = coord.run(getattr(self, "_abort", None))
+        response.model = model or self.default_model
+        return response
+
     def _cci_prompt(self, messages, tools, workdir: str, container_workdir: str,
                     user_id: str, conversation_id: str,
                     initial_context: bool = False) -> str:
         system_prompt, user_text = self._serialize_messages_for_cli(messages, None)
         if tools:
             tool_mode = (
-                "Use Claude Code's native tools for shell, filesystem, and "
-                "project work."
+                "Use PawFlow MCP tools for shell, filesystem, browser, and "
+                "project work. Claude Code built-in tools are disabled."
             )
             system_prompt = (system_prompt + "\n\n" + tool_mode).strip()
         image_lines = self._cci_materialize_images(
@@ -482,29 +514,35 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
                 lines.append(f"@{container_workdir}/.pawflow_vision/{name}")
         return lines
 
-    def _cci_send_user_message(self, text: str, attachments: list = None, **kwargs):
+    def _cci_session_state(self, *, user_id: str = "", conversation_id: str = "",
+                           agent_name: str = ""):
         pool = InteractiveClaudeCodePool.instance()
-        user_id = kwargs.get("user_id") or getattr(self, "_user_id", "") or ""
-        conversation_id = kwargs.get("conversation_id") or getattr(self, "_conversation_id", "") or ""
-        agent_name = kwargs.get("agent_name") or getattr(self, "_agent_name", "") or ""
-        service_id = getattr(self, "_agent_service", "") or ""
-        key = (user_id, conversation_id, agent_name, service_id)
-        state = pool._sessions.get(key)
+        uid = (user_id or getattr(self, "_cci_active_user_id", "")
+               or getattr(self, "_user_id", "") or "")
+        cid = (conversation_id or getattr(self, "_cci_active_conversation_id", "")
+               or getattr(self, "_conversation_id", "") or "")
+        agent = (agent_name or getattr(self, "_cci_active_agent_name", "")
+                 or getattr(self, "_agent_name", "") or "")
+        service_id = (getattr(self, "_cci_active_service_id", "")
+                      or getattr(self, "_agent_service", "") or "")
+        if not uid or not cid or not agent:
+            return None
+        return pool.find_session(uid, cid, agent, service_id)
+
+    def _cci_send_user_message(self, text: str, attachments: list = None, **kwargs):
+        state = self._cci_session_state(
+            user_id=kwargs.get("user_id") or "",
+            conversation_id=kwargs.get("conversation_id") or "",
+            agent_name=kwargs.get("agent_name") or "",
+        )
         if not state:
             return False
-        return pool.send_interrupt(state, text)
+        return InteractiveClaudeCodePool.instance().send_interrupt(state, text)
 
     def cancel_claude_code_interactive(self, force: bool = False):
         if not force:
             return False
-        pool = InteractiveClaudeCodePool.instance()
-        key = (
-            getattr(self, "_user_id", "") or "",
-            getattr(self, "_conversation_id", "") or "",
-            getattr(self, "_agent_name", "") or "",
-            getattr(self, "_agent_service", "") or "",
-        )
-        state = pool._sessions.get(key)
+        state = self._cci_session_state()
         if not state:
             return False
-        return pool.force_stop(state)
+        return InteractiveClaudeCodePool.instance().force_stop(state)

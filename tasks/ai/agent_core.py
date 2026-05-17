@@ -1169,6 +1169,43 @@ class AgentCoreMixin:
                     def _run_interrupt_turn():
                         nonlocal response_content, total_tokens_in, total_tokens_out
                         nonlocal total_cache_read, total_cache_write, final_model
+                        if _client_provider == "claude-code-interactive":
+                            logger.info(
+                                "[agent:%s] interrupted — sending CCI STOP via tmux only",
+                                conversation_id[:8])
+                            try:
+                                _turn_cb = _claude_code_turn_callback
+                            except NameError:
+                                _turn_cb = None
+                            try:
+                                _block_cb = _cli_block_callback
+                            except NameError:
+                                _block_cb = None
+                            _irpt_resp = client.interrupt_claude_code_interactive(
+                                SOFT_INTERRUPT_USER_COMMAND,
+                                user_id=user_id,
+                                conversation_id=conversation_id,
+                                agent_name=ctx.get("active_agent_name", ""),
+                                model=model or None,
+                                callback=emitter.get_token_callback(False) if emitter.is_streaming else None,
+                                thinking_callback=(
+                                    emitter.get_thinking_callback(False) if _tb > 0 else None),
+                                turn_callback=_turn_cb,
+                                block_callback=_block_cb,
+                            )
+                            if _turn_cb is None and (_irpt_resp.content or "").strip():
+                                _append(LLMMessage(
+                                    role="assistant", content=_irpt_resp.content,
+                                    source=_agent_source(),
+                                    conversation_id=conversation_id))
+                            response_content = _irpt_resp.content
+                            total_tokens_in += _irpt_resp.tokens_in
+                            total_tokens_out += _irpt_resp.tokens_out
+                            total_cache_read += getattr(_irpt_resp, 'cache_read_tokens', 0)
+                            total_cache_write += getattr(_irpt_resp, 'cache_creation_tokens', 0)
+                            final_model = _irpt_resp.model
+                            raise _InterruptComplete()
+
                         logger.info(f"[agent:{conversation_id[:8]}] interrupted — injecting user STOP command")
                         _append(LLMMessage(
                             role="user",

@@ -140,11 +140,14 @@ class TestSerializeMessages(unittest.TestCase):
 
         self.assertIn("PawFlow cold-session bootstrap", prompt)
         self.assertIn("@/cc_sessions/u/c/a/.pawflow_cli/initial_context.md", prompt)
-        self.assertIn("Latest turn to answer now:", prompt)
-        self.assertIn("latest request", prompt)
+        self.assertNotIn("Latest turn to answer now:", prompt)
+        self.assertNotIn("latest request", prompt)
         self.assertIn("## System Instructions", body)
         self.assertIn("system rules", body)
         self.assertIn("prior answer", body)
+        self.assertIn("## Latest User Request", body)
+        self.assertIn("latest request", body)
+        self.assertEqual(body.count('<message role="user">\nlatest request\n</message>'), 1)
         self.assertIn("## Bootstrap Contract", body)
 
     def test_claude_code_namespace_provider_workdir_drops_user_segment(self):

@@ -220,6 +220,7 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
         # are currently in the active stack. Warm idle sessions are exposed in
         # the side-channel lists below, but must not create Active Agents rows.
         cc_live_list = []
+        cci_live_list = []
         codex_live_list = []
         gemini_live_list = []
 
@@ -244,6 +245,18 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
             cc_live_list = _cc_entries
         except Exception:
             logger.debug("cc_live enrichment failed", exc_info=True)
+        try:
+            from core.claude_code_interactive_pool import InteractiveClaudeCodePool
+            _cci_entries = InteractiveClaudeCodePool.instance().list_sessions(
+                user_id, conv_id)
+            _by_agent_cci = {e["agent_name"]: e for e in _cci_entries}
+            for row in active:
+                _ent = _by_agent_cci.get(row.get("agent_name"))
+                if _ent:
+                    _apply_live(row, _ent, "cci")
+            cci_live_list = _cci_entries
+        except Exception:
+            logger.debug("cci_live enrichment failed", exc_info=True)
         try:
             from core.codex_live_registry import CodexLiveRegistry
             _cdx_entries = [
@@ -276,6 +289,7 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
         flowfile.set_content(json.dumps({
             "active": active,
             "cc_live": cc_live_list,
+            "cci_live": cci_live_list,
             "codex_live": codex_live_list,
             "gemini_live": gemini_live_list,
         }).encode())

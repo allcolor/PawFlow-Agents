@@ -148,6 +148,30 @@ class LLMCliSharedMixin:
             return ""
         return "\n".join(lines) + "\n\nContinue from this latest turn."
 
+    def _cli_context_before_latest_text(self, messages: List[Any]) -> str:
+        if not messages:
+            return ""
+        last_user_idx = -1
+        for idx in range(len(messages) - 1, -1, -1):
+            if getattr(messages[idx], "role", "") == "user":
+                last_user_idx = idx
+                break
+        end = last_user_idx if last_user_idx >= 0 else len(messages)
+        lines = []
+        for msg in messages[:end]:
+            role = getattr(msg, "role", "") or "message"
+            if role == "system":
+                continue
+            rendered = textualize_message(msg)
+            if not rendered:
+                continue
+            source = getattr(msg, "source", None) or {}
+            agent_name = source.get("name", "") if isinstance(source, dict) else ""
+            lines.append(self._cli_message_block(role, rendered, agent_name))
+        if not lines:
+            return ""
+        return "<conversation_history>\n" + "\n".join(lines) + "\n</conversation_history>"
+
     def _build_cli_initial_context_prompt(
         self,
         messages: List[Any],
@@ -165,9 +189,12 @@ class LLMCliSharedMixin:
         body = ["# PawFlow Initial Context", ""]
         if system_prompt:
             body.extend(["## System Instructions", "", system_prompt.strip(), ""])
-        if user_text:
-            body.extend(["## Serialized Conversation Context", "", user_text.strip(), ""])
         latest = self._cli_current_turn_text(messages)
+        prior_context = self._cli_context_before_latest_text(messages)
+        if prior_context:
+            body.extend(["## Serialized Conversation Context", "", prior_context.strip(), ""])
+        elif user_text and not latest:
+            body.extend(["## Serialized Conversation Context", "", user_text.strip(), ""])
         if latest:
             body.extend(["## Latest User Request", "", latest.strip(), ""])
         body.extend([
@@ -192,8 +219,6 @@ class LLMCliSharedMixin:
             "It contains system instructions, project instructions, compacted conversation context, prior decisions, tool/result history, and the latest user request.",
             "After reading it, answer the latest user request below. Treat the file as context, not as a user-visible task.",
         ]
-        if latest:
-            prompt.extend(["", "Latest turn to answer now:", latest.strip()])
         return "\n".join(prompt).strip() + "\n"
 
     @staticmethod

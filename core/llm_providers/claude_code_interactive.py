@@ -463,10 +463,21 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
         if image_lines:
             parts.append("Attachments:\n" + "\n".join(image_lines))
         if not initial_context:
-            current = self._cli_current_turn_text(messages) or user_text
+            current = self._cci_live_text(messages) or user_text
             if current:
                 parts.append(current)
         return "\n\n".join(parts).strip() + "\n"
+
+    def _cci_live_text(self, messages) -> str:
+        """Return only the latest user text for an already-live tmux session."""
+        from core.llm_providers.cli_shared import textualize_message
+
+        for msg in reversed(messages or []):
+            if getattr(msg, "role", "") != "user":
+                continue
+            rendered = textualize_message(msg)
+            return rendered.strip() if isinstance(rendered, str) else ""
+        return ""
 
     def _cci_materialize_images(self, messages, workdir: str, container_workdir: str,
                                 user_id: str, conversation_id: str) -> list[str]:

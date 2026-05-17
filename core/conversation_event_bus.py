@@ -131,6 +131,18 @@ class ConversationEventBus:
         If no live subscribers exist, the event is buffered for replay
         when a subscriber connects (up to _MAX_BUFFER events, _BUFFER_TTL seconds).
         """
+        def _buffer_locked() -> None:
+            if event.event in ("done", "error_event"):
+                logger.info(f"EventBus: buffering '{event.event}' for "
+                            f"conv={conversation_id[:8]} (no subscribers)")
+            if conversation_id not in self._buffer:
+                self._buffer[conversation_id] = []
+            buf = self._buffer[conversation_id]
+            buf.append((time.time(), event))
+            if len(buf) > _MAX_BUFFER:
+                buf[:] = buf[-_MAX_BUFFER:]
+            self._cleanup_expired_buffers()
+
         with self._lock:
             subs = self._subscribers.get(conversation_id)
             if subs:
@@ -147,19 +159,7 @@ class ConversationEventBus:
             # Re-check after cleanup — all subscribers might have been dead
             subs = self._subscribers.get(conversation_id)
             if not subs:
-                # No live subscribers — buffer for replay
-                if event.event in ("done", "error_event"):
-                    logger.info(f"EventBus: buffering '{event.event}' for "
-                                f"conv={conversation_id[:8]} (no subscribers)")
-                if conversation_id not in self._buffer:
-                    self._buffer[conversation_id] = []
-                buf = self._buffer[conversation_id]
-                buf.append((time.time(), event))
-                # Enforce size limit
-                if len(buf) > _MAX_BUFFER:
-                    buf[:] = buf[-_MAX_BUFFER:]
-                # Cleanup expired buffers from other conversations
-                self._cleanup_expired_buffers()
+                _buffer_locked()
                 return
             # Copy to avoid holding lock during send
             writers = list(subs)
@@ -182,6 +182,14 @@ class ConversationEventBus:
                             del self._clients[key]
                     if not subs:
                         del self._subscribers[conversation_id]
+                if len(dead) == len(writers):
+                    # Every apparent subscriber rejected the event while we
+                    # published. This is the common switch/reconnect race:
+                    # EventSource.close() has happened client-side, but the
+                    # server stream has not reached its finally/unsubscribe
+                    # yet. The event reached nobody, so keep it for the next
+                    # replaying subscriber instead of dropping it on the floor.
+                    _buffer_locked()
             logger.warning("EventBus: removed %d stale SSE subscriber(s) for conv=%s",
                            len(dead), conversation_id[:8])
 

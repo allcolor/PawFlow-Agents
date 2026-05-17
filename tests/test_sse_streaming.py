@@ -264,6 +264,23 @@ class TestConversationEventBus(unittest.TestCase):
         assert writer.overflowed
         assert bus.subscriber_count("conv1") == 0
 
+    def test_event_replayed_when_only_subscriber_dies_during_publish(self):
+        bus = ConversationEventBus.instance()
+        writer = bus.subscribe("conv1", client_id="tab-a")
+        writer._max_queue = 1
+        writer._queue = queue.Queue(maxsize=1)
+
+        bus.publish_event("conv1", "token", {"n": 1})
+        bus.publish_event("conv1", "token", {"n": 2})
+
+        replay = bus.subscribe("conv1", replay=True, client_id="tab-a")
+        replay.close()
+        chunks = list(replay.iterate(timeout=0.1))
+
+        assert len(chunks) == 1
+        assert b"event: token" in chunks[0]
+        assert b'"n": 2' in chunks[0]
+
     def test_active_conversations(self):
         bus = ConversationEventBus.instance()
         bus.subscribe("conv1")

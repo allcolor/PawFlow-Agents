@@ -140,6 +140,12 @@ class InteractiveClaudeCodePool:
                     "service_id": key[3],
                     "container_name": state.name,
                     "last_used": state.last_used,
+                    "live": True,
+                    "reuse_count": 1 if state.initial_context_loaded else 0,
+                    "created_at": state.created_at,
+                    "idle_seconds": max(0.0, time.time() - state.last_used),
+                    "lived_seconds": max(0.0, time.time() - state.created_at),
+                    "provider": "claude-code-interactive",
                 })
         return sessions
 
@@ -149,6 +155,13 @@ class InteractiveClaudeCodePool:
             state.last_error = f"Container {state.name} is not running"
             return False
         self._remember_injected_prompt(state, text)
+        if not self._load_buffer(state, text):
+            return False
+        if not self._paste_buffer(state):
+            return False
+        return self.send_keys(state, ["Enter"])
+
+    def _load_buffer(self, state: InteractiveContainer, text: str) -> bool:
         cmd = docker_cmd() + [
             "exec", "-i", "--user", "1000:1000", state.name,
             "tmux", "load-buffer", "-",
@@ -157,19 +170,15 @@ class InteractiveClaudeCodePool:
         if r.returncode != 0:
             state.last_error = self._command_error("tmux load-buffer", r)
             return False
+        return True
+
+    def _paste_buffer(self, state: InteractiveContainer) -> bool:
         r = subprocess.run(
             docker_cmd() + ["exec", "--user", "1000:1000", state.name,
                             "tmux", "paste-buffer", "-t", "pawflow"],
             capture_output=True, timeout=10)
         if r.returncode != 0:
             state.last_error = self._command_error("tmux paste-buffer", r)
-            return False
-        r = subprocess.run(
-            docker_cmd() + ["exec", "--user", "1000:1000", state.name,
-                            "tmux", "send-keys", "-t", "pawflow", "Enter"],
-            capture_output=True, timeout=10)
-        if r.returncode != 0:
-            state.last_error = self._command_error("tmux send-keys Enter", r)
             return False
         return True
 
@@ -193,10 +202,18 @@ class InteractiveClaudeCodePool:
             pass
 
     def send_interrupt(self, state: InteractiveContainer, text: str) -> bool:
-        return self.send_keys(state, ["Escape", "Escape"]) and self.send_text(state, text)
+        state.last_error = ""
+        if not self._is_alive(state.name):
+            state.last_error = f"Container {state.name} is not running"
+            return False
+        self._remember_injected_prompt(state, text)
+        return (self._load_buffer(state, text)
+                and self._paste_buffer(state)
+                and self.send_keys(state, ["Escape", "Escape", "Enter"]))
 
     def force_stop(self, state: InteractiveContainer) -> bool:
-        return self.send_keys(state, ["Escape", "Escape"])
+        return self.send_keys(
+            state, ["Space", "Space", "Escape", "Escape", "BSpace", "BSpace"])
 
     def send_keys(self, state: InteractiveContainer, keys: list[str]) -> bool:
         state.last_error = ""

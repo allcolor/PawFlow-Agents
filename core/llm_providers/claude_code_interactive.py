@@ -46,6 +46,8 @@ class _CCITurnCoordinator:
         self._thinking_end = 0.0
         self._active_message_requests: set[str] = set()
         self._request_stop_reasons: dict[str, str] = {}
+        self._request_saw_model_content: dict[str, bool] = {}
+        self._request_saw_tool_use: dict[str, bool] = {}
         self._saw_message_request = False
         self._saw_model_content = False
         self._final_model_stop_seen = False
@@ -70,6 +72,20 @@ class _CCITurnCoordinator:
                 if request_id and path.startswith("/v1/messages") and not event.get("ignore_reason"):
                     self._saw_message_request = True
                     self._active_message_requests.add(request_id)
+                    self._request_saw_model_content.setdefault(request_id, False)
+                    self._request_saw_tool_use.setdefault(request_id, False)
+                continue
+            if etype == "request_stop":
+                request_id = event.get("request_id", "") or ""
+                if request_id:
+                    self._active_message_requests.discard(request_id)
+                    stop_reason = self._request_stop_reasons.get(request_id, "")
+                    saw_content = self._request_saw_model_content.get(request_id, False)
+                    saw_tool = self._request_saw_tool_use.get(request_id, False)
+                    if saw_content and stop_reason != "tool_use" and not saw_tool:
+                        self._final_model_stop_seen = True
+                if not self._active_message_requests:
+                    done = self._finish_turn_if_ready()
                 continue
             if etype == "response_ignored":
                 request_id = event.get("request_id", "") or ""
@@ -101,8 +117,11 @@ class _CCITurnCoordinator:
             name = event.get("event", "")
             payload = event.get("payload") or {}
             ptype = payload.get("type") or name
+            request_id = event.get("request_id", "") or ""
             if ptype == "content_block_start":
                 self._saw_model_content = True
+                if request_id:
+                    self._request_saw_model_content[request_id] = True
                 block = payload.get("content_block") or {}
                 idx = int(payload.get("index", 0) or 0)
                 block_type = block.get("type")
@@ -117,6 +136,8 @@ class _CCITurnCoordinator:
                     elif block.get("signature"):
                         self._mark_redacted_thinking()
                 elif block_type == "tool_use":
+                    if request_id:
+                        self._request_saw_tool_use[request_id] = True
                     block_state = {
                         "id": block.get("id") or f"cci_{uuid.uuid4().hex[:12]}",
                         "name": block.get("name", ""),
@@ -133,6 +154,8 @@ class _CCITurnCoordinator:
                     self._append_text(block.get("text", ""))
             elif ptype == "content_block_delta":
                 self._saw_model_content = True
+                if request_id:
+                    self._request_saw_model_content[request_id] = True
                 idx = int(payload.get("index", 0) or 0)
                 delta = payload.get("delta") or {}
                 dtype = delta.get("type", "")
@@ -173,7 +196,9 @@ class _CCITurnCoordinator:
                 if request_id:
                     self._active_message_requests.discard(request_id)
                     stop_reason = self._request_stop_reasons.get(request_id, "")
-                    if stop_reason != "tool_use" and self._saw_model_content:
+                    saw_content = self._request_saw_model_content.get(request_id, self._saw_model_content)
+                    saw_tool = self._request_saw_tool_use.get(request_id, False)
+                    if stop_reason != "tool_use" and saw_content and not saw_tool:
                         self._final_model_stop_seen = True
                 elif self._saw_model_content:
                     self._final_model_stop_seen = True

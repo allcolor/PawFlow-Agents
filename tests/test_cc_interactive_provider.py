@@ -176,6 +176,53 @@ def test_turn_coordinator_finishes_on_final_proxy_message_stop_without_stop_hook
     assert resp.content == "final answer"
 
 
+def test_turn_coordinator_finishes_decoded_final_text_on_request_stop_fallback():
+    events = [
+        {"type": "request_start", "request_id": "r1", "path": "/v1/messages"},
+        _sse("content_block_delta", {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "text_delta", "text": "final from bytes"},
+        }) | {"request_id": "r1"},
+        _sse("content_block_stop", {"type": "content_block_stop", "index": 0}) | {"request_id": "r1"},
+        {"type": "request_stop", "request_id": "r1"},
+    ]
+
+    resp = _CCITurnCoordinator(_Events(events), "sess").run()
+
+    assert resp.content == "final from bytes"
+
+
+def test_turn_coordinator_request_stop_does_not_finish_tool_use_boundary():
+    events = [
+        {"type": "request_start", "request_id": "r1", "path": "/v1/messages"},
+        _sse("content_block_start", {
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {"type": "tool_use", "id": "toolu_1", "name": "read"},
+        }) | {"request_id": "r1"},
+        _sse("content_block_delta", {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "input_json_delta", "partial_json": '{"path":"README.md"}'},
+        }) | {"request_id": "r1"},
+        _sse("content_block_stop", {"type": "content_block_stop", "index": 0}) | {"request_id": "r1"},
+        {"type": "request_stop", "request_id": "r1"},
+        {"type": "request_start", "request_id": "r2", "path": "/v1/messages"},
+        _sse("content_block_delta", {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "text_delta", "text": "done after tool"},
+        }) | {"request_id": "r2"},
+        _sse("content_block_stop", {"type": "content_block_stop", "index": 0}) | {"request_id": "r2"},
+        {"type": "request_stop", "request_id": "r2"},
+    ]
+
+    resp = _CCITurnCoordinator(_Events(events), "sess").run()
+
+    assert resp.content == "done after tool"
+
+
 def test_turn_coordinator_keeps_non_title_json_text_block():
     events = [
         _sse("content_block_delta", {

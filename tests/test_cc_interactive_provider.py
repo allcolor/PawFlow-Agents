@@ -316,6 +316,76 @@ def test_turn_coordinator_publishes_native_tool_result_live():
     ]
 
 
+def test_turn_coordinator_unwraps_pawflow_tool_wrapper_for_live_blocks():
+    events = [
+        _sse("content_block_start", {
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {
+                "type": "tool_use",
+                "id": "toolu_1",
+                "name": "mcp__pawflow__use_tool",
+            },
+        }),
+        _sse("content_block_delta", {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {
+                "type": "input_json_delta",
+                "partial_json": json.dumps({
+                    "tool_name": "bash",
+                    "arguments": {"command": "git status"},
+                }),
+            },
+        }),
+        _sse("content_block_stop", {"type": "content_block_stop", "index": 0}),
+        {"type": "tool_result", "tool_use_id": "toolu_1", "content": "clean"},
+        {"type": "hook", "hook_event_name": "Stop", "input": {"hook_event_name": "Stop"}},
+    ]
+
+    blocks = []
+    _CCITurnCoordinator(
+        _Events(events), "sess",
+        block_callback=lambda event_type, payload: blocks.append((event_type, payload)),
+    ).run()
+
+    assert blocks == [
+        ("tool_use", {
+            "id": "toolu_1",
+            "name": "bash",
+            "arguments": {"command": "git status"},
+        }),
+        ("tool_result", {
+            "tc_id": "toolu_1",
+            "tool": "bash",
+            "result": "clean",
+        }),
+    ]
+
+
+def test_turn_coordinator_drops_single_character_thinking_block():
+    events = [
+        _sse("content_block_start", {
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {"type": "thinking", "thinking": "/"},
+        }),
+        _sse("content_block_stop", {"type": "content_block_stop", "index": 0}),
+        {"type": "hook", "hook_event_name": "Stop", "input": {"hook_event_name": "Stop"}},
+    ]
+
+    thinking_seen = []
+    turns = []
+    resp = _CCITurnCoordinator(
+        _Events(events), "sess", thinking_callback=thinking_seen.append,
+        turn_callback=lambda text, tool_calls, thinking="": turns.append((text, tool_calls, thinking)),
+    ).run()
+
+    assert thinking_seen == ["/"]
+    assert resp.thinking == ""
+    assert turns == []
+
+
 def test_turn_coordinator_buffers_tool_result_until_tool_use_is_emitted():
     events = [
         _sse("content_block_start", {

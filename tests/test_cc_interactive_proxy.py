@@ -149,6 +149,44 @@ def test_request_observer_emits_observed_tool_use_before_result(monkeypatch):
     assert events[2]["content"] == "clean"
 
 
+def test_request_observer_unwraps_observed_pawflow_use_tool(monkeypatch):
+    monkeypatch.setenv("PAWFLOW_CCI_SESSION_TOKEN", "sess")
+    proxy = importlib.import_module("tools.cc_interactive_proxy")
+    events = []
+    monkeypatch.setattr(proxy.EVENTS, "emit", events.append)
+    body = json.dumps({
+        "messages": [{
+            "role": "assistant",
+            "content": [{
+                "type": "tool_use",
+                "id": "toolu_1",
+                "name": "mcp__pawflow__use_tool",
+                "input": {
+                    "tool_name": "bash",
+                    "arguments": {"command": "git status"},
+                },
+            }],
+        }],
+    }).encode()
+    chunk = (
+        b"POST /v1/messages?beta=true HTTP/1.1\r\n"
+        b"Host: api.anthropic.com\r\n"
+        + f"Content-Length: {len(body)}\r\n\r\n".encode()
+        + body
+    )
+
+    proxy.HTTPRequestObserver(proxy.HTTPExchangeTracker("r1")).feed(chunk)
+
+    assert events[1] == {
+        "type": "tool_use",
+        "request_id": "r1",
+        "path": "/v1/messages?beta=true",
+        "tool_use_id": "toolu_1",
+        "name": "bash",
+        "arguments": {"command": "git status"},
+    }
+
+
 def test_request_observer_hides_bootstrap_native_tools(monkeypatch):
     monkeypatch.setenv("PAWFLOW_CCI_SESSION_TOKEN", "sess")
     proxy = importlib.import_module("tools.cc_interactive_proxy")

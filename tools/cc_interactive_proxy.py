@@ -26,9 +26,9 @@ import zlib
 from urllib.parse import urlparse
 
 try:
-    from cc_interactive_filters import is_hidden_native_tool
+    from cc_interactive_filters import is_hidden_native_tool, normalize_observed_tool
 except ImportError:  # Unit tests import this file as tools.cc_interactive_proxy.
-    from tools.cc_interactive_filters import is_hidden_native_tool
+    from tools.cc_interactive_filters import is_hidden_native_tool, normalize_observed_tool
 
 
 UPSTREAM_HOST = "api.anthropic.com"
@@ -495,19 +495,21 @@ def _emit_observed_tool_blocks(request_id: str, path: str, body: bytes,
                     continue
                 args = block.get("input") or {}
                 tool_name = block.get("name", "")
-                if is_hidden_native_tool(tool_name, args if isinstance(args, dict) else {}):
+                display_name, display_args = normalize_observed_tool(tool_name, args)
+                if (is_hidden_native_tool(tool_name, args if isinstance(args, dict) else {})
+                        or is_hidden_native_tool(display_name, display_args)):
                     newly_hidden.add(tool_use_id)
                     continue
                 _log(
                     f"emit tool_use request={request_id} path={path} "
-                    f"tool_use_id={tool_use_id} name={tool_name}")
+                    f"tool_use_id={tool_use_id} name={display_name}")
                 EVENTS.emit({
                     "type": "tool_use",
                     "request_id": request_id,
                     "path": path,
                     "tool_use_id": tool_use_id,
-                    "name": tool_name,
-                    "arguments": args if isinstance(args, dict) else {},
+                    "name": display_name,
+                    "arguments": display_args,
                 })
             elif role == "user" and btype == "tool_result":
                 tool_use_id = block.get("tool_use_id") or block.get("id") or ""

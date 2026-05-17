@@ -16,7 +16,7 @@ import uuid
 
 from core.claude_code_interactive_pool import InteractiveClaudeCodePool
 from core.llm_providers.claude_code_session import ClaudeCodeSessionMixin
-from tools.cc_interactive_filters import is_hidden_native_tool
+from tools.cc_interactive_filters import is_hidden_native_tool, normalize_observed_tool
 
 
 class _CCITurnCoordinator:
@@ -243,7 +243,6 @@ class _CCITurnCoordinator:
 
     def _append_thinking(self, text: str) -> None:
         if text:
-            self.thinking_parts.append(text)
             self._thinking_block_buf += text
             if self.thinking_callback:
                 self.thinking_callback(text)
@@ -275,6 +274,14 @@ class _CCITurnCoordinator:
             )
             synthesized = True
             self.thinking_parts.append(thinking)
+        elif len(thinking.strip()) <= 1:
+            self._thinking_block_buf = ""
+            self._thinking_redacted = False
+            self._thinking_start = 0.0
+            self._thinking_end = 0.0
+            return
+        else:
+            self.thinking_parts.append(thinking)
         self._thinking_block_buf = ""
         self._thinking_redacted = False
         self._thinking_start = 0.0
@@ -296,7 +303,13 @@ class _CCITurnCoordinator:
             args = {}
         if not isinstance(args, dict):
             args = {}
-        block["hidden"] = is_hidden_native_tool(block.get("name", ""), args)
+        display_name, display_args = normalize_observed_tool(block.get("name", ""), args)
+        block["display_name"] = display_name
+        block["display_args"] = display_args
+        block["hidden"] = (
+            is_hidden_native_tool(block.get("name", ""), args)
+            or is_hidden_native_tool(display_name, display_args)
+        )
         block["emitted"] = True
         if tool_id in self.emitted_tool_use_ids:
             self._emit_pending_tool_results(tool_id)
@@ -305,8 +318,8 @@ class _CCITurnCoordinator:
         if self.block_callback and not block.get("hidden"):
             self.block_callback("tool_use", {
                 "id": tool_id,
-                "name": block.get("name", ""),
-                "arguments": args,
+                "name": display_name,
+                "arguments": display_args,
             })
         self._emit_pending_tool_results(tool_id)
 
@@ -353,12 +366,18 @@ class _CCITurnCoordinator:
             args = {}
         if not isinstance(args, dict):
             args = {}
-        block["hidden"] = is_hidden_native_tool(block.get("name", ""), args)
+        display_name, display_args = normalize_observed_tool(block.get("name", ""), args)
+        block["display_name"] = display_name
+        block["display_args"] = display_args
+        block["hidden"] = (
+            is_hidden_native_tool(block.get("name", ""), args)
+            or is_hidden_native_tool(display_name, display_args)
+        )
         if self.block_callback and not block.get("hidden"):
             self.block_callback("tool_use", {
                 "id": tc_id,
-                "name": block.get("name", ""),
-                "arguments": args,
+                "name": display_name,
+                "arguments": display_args,
             })
         self._emit_pending_tool_results(tc_id)
 
@@ -378,9 +397,10 @@ class _CCITurnCoordinator:
             return
         self.emitted_tool_result_ids.add(tc_id)
         if self.block_callback and not block.get("hidden"):
+            display_name = block.get("display_name") or block.get("name", "")
             self.block_callback("tool_result", {
                 "tc_id": tc_id,
-                "tool": block.get("name", ""),
+                "tool": display_name,
                 "result": event.get("content", "") or "(no output)",
             })
 

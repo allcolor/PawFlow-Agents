@@ -59,8 +59,8 @@ summarized`, plus configured `--effort`) so Claude Code emits observable
 thinking blocks. On a cold interactive start, PawFlow stores the full compacted
 context in `.pawflow_cci/initial_context.md` and repeats the latest turn in the
 tmux prompt itself with XML-sensitive characters escaped, so Claude Code has the
-immediate user request even if it uses targeted reads over the large context
-file. Hook-side suppression of PawFlow-injected prompts requires the injection
+immediate user request while still being instructed to read the full context
+file before acting. Hook-side suppression of PawFlow-injected prompts requires the injection
 marker; a manual tmux prompt that resembles the sentinel remains a user prompt.
 If Anthropic compresses an
 observed response (`gzip` or `deflate`), only the side-channel copy is decoded

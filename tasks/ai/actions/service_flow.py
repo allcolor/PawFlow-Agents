@@ -2612,10 +2612,12 @@ except Exception:
     pass
 env = dict(os.environ)
 env.setdefault("TERM", "xterm-256color")
-subprocess.run(["tmux", "set-option", "-g", "mouse", "on"],
-               capture_output=True, timeout=2)
-subprocess.run(["tmux", "set-option", "-g", "history-limit", "50000"],
-               capture_output=True, timeout=2)
+for option in (("mouse", "on"), ("history-limit", "50000")):
+    try:
+        subprocess.run(["tmux", "set-option", "-g", *option],
+                       capture_output=True, timeout=2)
+    except Exception:
+        pass
 proc = subprocess.Popen(
     ["tmux", "attach-session", "-t", "pawflow"],
     stdin=slave,

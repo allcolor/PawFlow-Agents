@@ -411,8 +411,10 @@ def test_terminal_frontend_keeps_scrollback_and_cci_tmux_mouse():
 
     assert "scrollback: 10000" in terminal_src
     assert "fastScrollModifier" in terminal_src
-    assert '["tmux", "set-option", "-g", "mouse", "on"]' in service_flow_src
-    assert '["tmux", "set-option", "-g", "history-limit", "50000"]' in service_flow_src
+    assert '("mouse", "on")' in service_flow_src
+    assert '("history-limit", "50000")' in service_flow_src
+    assert '["tmux", "set-option", "-g", *option]' in service_flow_src
+    assert "except Exception:\n        pass" in service_flow_src
 
 
 def test_open_desktop_backend_does_not_emit_audio_session_without_token():

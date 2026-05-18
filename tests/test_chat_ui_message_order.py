@@ -185,6 +185,13 @@ def test_primary_chat_controls_are_i18n_bound():
     assert "Thought for " not in SSE_JS
 
 
+def test_thinking_merge_separator_only_after_tool_call_soft_finalize():
+    assert "te.softFinalized && te.text && textDelta" in SSE_JS
+    assert "te.softFinalized = false" in SSE_JS
+    assert "if (reason === 'tool_call') te.softFinalized = true;" in SSE_JS
+    assert "if (te.text && textDelta)" not in SSE_JS
+
+
 
 def test_active_agents_sse_hint_restores_panel_before_poll():
     active_agents_js = Path("tasks/io/chat_ui/active_agents.js").read_text(encoding="utf-8")

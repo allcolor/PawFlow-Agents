@@ -310,10 +310,11 @@ function connectSSE(cid, onReady, opts) {
     }
     const te = thinkingElements[aKey];
     // Reusing a soft-finalized block (after tool_call): reopen the live
-    // summary label and add a blank line between merged phases.
-    if (te.text && textDelta) {
+    // summary label and add one blank line between merged phases.
+    if (te.softFinalized && te.text && textDelta) {
       te.summary.textContent = t('thinking') + '...';
       te.text += '\n\n';
+      te.softFinalized = false;
     }
     te.text += textDelta;
     te.content.textContent = te.text;
@@ -339,7 +340,8 @@ function connectSSE(cid, onReady, opts) {
     } else {
       te.summary.textContent = t('thoughtFor', { sec: elapsed.toFixed(1) });
       te.el.setAttribute('open', '');
-      if (reason !== 'tool_call') delete thinkingElements[aKey];
+      if (reason === 'tool_call') te.softFinalized = true;
+      else delete thinkingElements[aKey];
     }
     if (typeof applyTechnicalMessageGrouping === 'function') applyTechnicalMessageGrouping();
   }

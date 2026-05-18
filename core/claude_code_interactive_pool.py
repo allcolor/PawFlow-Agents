@@ -61,6 +61,7 @@ class InteractiveClaudeCodePool:
         with cls._instance_lock:
             if cls._instance is None:
                 cls._instance = cls()
+                cls._instance._register_death_handlers()
             return cls._instance
 
     def __init__(self):
@@ -71,6 +72,42 @@ class InteractiveClaudeCodePool:
         self._sweeper_stop = threading.Event()
         self._tick_seconds = 60
         self._idle_ttl = float(os.environ.get("PAWFLOW_CCI_IDLE_TTL_SECONDS", "1800"))
+        self._shutdown_once = False
+
+    def _register_death_handlers(self):
+        """Kill tracked interactive containers when the Python process exits."""
+        import atexit
+        import signal
+        import sys
+
+        def _kill_all(*_args, **_kwargs):
+            if getattr(self, "_shutdown_once", False):
+                return
+            self._shutdown_once = True
+            try:
+                self.shutdown_all()
+            except Exception:
+                pass
+
+        atexit.register(_kill_all)
+        try:
+            if threading.current_thread() is threading.main_thread():
+                for _sig in (signal.SIGINT, signal.SIGTERM):
+                    try:
+                        _prev = signal.getsignal(_sig)
+
+                        def _handler(signum, frame, prev=_prev):
+                            _kill_all()
+                            if callable(prev):
+                                prev(signum, frame)
+                            elif prev == signal.SIG_DFL:
+                                sys.exit(128 + signum)
+
+                        signal.signal(_sig, _handler)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
 
     @staticmethod
     def _safe(value: str) -> str:
@@ -281,7 +318,7 @@ class InteractiveClaudeCodePool:
     def ensure_sweeper(self, tick_seconds: int = 60,
                        idle_ttl_seconds: Optional[int] = None) -> None:
         if idle_ttl_seconds and idle_ttl_seconds > 0:
-            self._idle_ttl = float(idle_ttl_seconds)
+            self._idle_ttl = max(self._idle_ttl, float(idle_ttl_seconds))
         self._tick_seconds = max(1, int(tick_seconds or 60))
         if self._sweeper_started:
             return
@@ -301,15 +338,23 @@ class InteractiveClaudeCodePool:
         cutoff = time.time() - ttl
         to_kill: list[tuple[str, str]] = []
         with self._lock:
-            for key, state in list(self._sessions.items()):
+            snapshot = list(self._sessions.items())
+        dead: Dict[tuple[str, str, str, str], bool] = {}
+        for key, state in snapshot:
+            dead[key] = not self._is_alive(state.name)
+        with self._lock:
+            for key, state in snapshot:
+                current = self._sessions.get(key)
+                if current is not state:
+                    continue
                 reason = ""
-                if not self._is_alive(state.name):
+                if dead.get(key):
                     reason = "dead_container"
-                elif state.last_used < cutoff:
+                elif current.last_used < cutoff:
                     reason = f"idle>{int(ttl)}s"
                 if reason:
                     self._sessions.pop(key, None)
-                    to_kill.append((state.name, reason))
+                    to_kill.append((current.name, reason))
         for name, reason in to_kill:
             logger.info("[cci-live] evict %s (%s)", name, reason)
             self._kill_container(name)

@@ -55,10 +55,10 @@ _NO_PROXY_EVENT_TIMEOUT_SECONDS = _env_seconds(
 class _CCITurnCoordinator:
     def __init__(self, event_service, session_token: str, callback=None,
                  thinking_callback=None, block_callback=None,
-                 turn_callback=None):
+                 turn_callback=None, touch_callback=None):
         self.event_service = event_service
         self.session_token = session_token
-        self.touch_callback = None
+        self.touch_callback = touch_callback
         self.callback = callback
         self.thinking_callback = thinking_callback
         self.block_callback = block_callback
@@ -515,8 +515,7 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
         coord = _CCITurnCoordinator(
             event_service, state.session_token, callback=callback,
             thinking_callback=thinking_callback, block_callback=block_callback,
-            turn_callback=turn_callback)
-        coord.touch_callback = lambda: pool.touch(state)
+            turn_callback=turn_callback, touch_callback=lambda: pool.touch(state))
         response = coord.run(getattr(self, "_abort", None))
         response.model = model or self.default_model
         return response
@@ -548,8 +547,7 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
         coord = _CCITurnCoordinator(
             event_service, state.session_token, callback=callback,
             thinking_callback=thinking_callback, block_callback=block_callback,
-            turn_callback=turn_callback)
-        coord.touch_callback = lambda: pool.touch(state)
+            turn_callback=turn_callback, touch_callback=lambda: pool.touch(state))
         response = coord.run(getattr(self, "_abort", None))
         response.model = model or self.default_model
         return response

@@ -213,6 +213,7 @@ class LLMCliSharedMixin:
             "## Bootstrap Contract",
             "",
             "- Treat this file as PawFlow conversation context, not as a new user command.",
+            "- Read the entire file at least once: the earlier sections contain mandatory system/project instructions, skills, tool-use hints, prior decisions, and safety constraints.",
             "- For filesystem, shell, search, edit, patch, browser, web, image, or desktop work, use PawFlow MCP tools first. Prefer get_tool_schema/use_tool and do not switch to native provider tools unless the explicit user request is only about the provider runtime itself.",
             "- Continue from the latest user request.",
             "- Do not ask what to do unless both the file and the latest request are ambiguous.",
@@ -232,10 +233,10 @@ class LLMCliSharedMixin:
             "",
             "Use your local filesystem/file-read capability if the file mention is not expanded automatically.",
             "After that read, use PawFlow MCP tools for PawFlow work: get_tool_schema/use_tool for filesystem, shell, search, edit, patch, browser, web, image, and desktop actions. Native provider tools are only for reading this bootstrap file or provider-runtime diagnostics explicitly requested by the user.",
-            "It contains system instructions, project instructions, compacted conversation context, prior decisions, tool/result history, and the latest user request.",
-            "The newest and most important request is at the END of the file, under 'Latest User Request'. If you only read the beginning, you will likely answer stale compacted context and fail the task.",
-            "Read the tail/end of the file before deciding what to do.",
-            "After reading it, answer the latest user request below. Treat the file as context, not as a user-visible task.",
+            "It contains mandatory system/project instructions, available skills, tool-use hints, compacted conversation context, prior decisions, tool/result history, and the latest user request.",
+            "Read the entire file at least once before deciding what to do; do not rely only on a head or tail read, because skills, tool guidance, and constraints may appear before the latest request.",
+            "The newest and most important request is at the END of the file, under 'Latest User Request'. Use the tail/end to identify the current task after you have loaded the full context.",
+            "After reading the full file, answer the latest user request below. Treat the file as context, not as a user-visible task.",
         ]
         if latest:
             prompt.extend(["", "Latest turn to answer now:", latest.strip()])

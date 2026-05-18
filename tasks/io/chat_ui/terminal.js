@@ -278,6 +278,9 @@ function _initXterm(container, sessionId, token) {
     cursorBlink: true,
     fontSize: 13,
     fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+    scrollback: 10000,
+    fastScrollModifier: 'alt',
+    fastScrollSensitivity: 5,
     theme: { background: '#0f0f23', foreground: '#e0e0e0', cursor: '#e94560' },
   });
   const fitAddon = new window.FitAddon.FitAddon();

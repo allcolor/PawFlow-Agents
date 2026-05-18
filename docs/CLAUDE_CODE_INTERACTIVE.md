@@ -67,6 +67,22 @@ observed response (`gzip` or `deflate`), only the side-channel copy is decoded
 before SSE/JSON parsing; the proxied bytes sent back to Claude Code remain
 unchanged.
 
+Timing controls are read once when the provider modules are imported:
+
+- `PAWFLOW_CCI_POST_STOP_IDLE_DRAIN_SECONDS` sets how long PawFlow waits after
+  Claude Code's `Stop` hook for late proxy events before closing the turn.
+  Default: `2.5` seconds.
+- `PAWFLOW_CCI_POST_STOP_IDLE_DRAIN_MS` is the millisecond alias for the same
+  value. The seconds variable wins if both are set.
+- `PAWFLOW_CCI_NO_PROXY_EVENT_TIMEOUT_SECONDS` sets how long a submitted tmux
+  prompt may produce no observed proxy event before PawFlow treats the turn as
+  failed. Default: `300` seconds.
+- `PAWFLOW_CCI_NO_PROXY_EVENT_TIMEOUT_MS` is the millisecond alias for the same
+  value. The seconds variable wins if both are set.
+- `PAWFLOW_CCI_IDLE_TTL_SECONDS` controls idle container eviction. Default:
+  `1800` seconds. A service request timeout can only extend this process-wide
+  TTL, never shorten an explicitly configured or already larger value.
+
 The provider assembles responses from those events:
 
 - `content_block_delta` text deltas stream to the UI immediately and are
@@ -145,6 +161,10 @@ provider-owned Docker container. The bridge creates the PTY inside that Linux
 container, then runs `tmux attach-session -t pawflow`. This is a live debug view
 of the same tmux session receiving prompts, interrupts, and force-stop keys;
 model output is still assembled only from MITM-observed response events.
+The web terminal keeps local scrollback and enables tmux mouse mode for the
+attached session, so wheel/trackpad scrolling can enter tmux copy-mode and move
+back through Claude Code's interactive history instead of showing only the last
+screenful.
 
 ## Vision
 

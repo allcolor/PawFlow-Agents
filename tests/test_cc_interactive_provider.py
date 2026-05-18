@@ -702,8 +702,10 @@ def test_initial_interactive_prompt_writes_context_file(tmp_path):
     assert body.index("## Latest User Request") > body.index("## Bootstrap Contract")
     assert "Latest turn to answer now:" in prompt
     assert "latest request" in prompt
-    assert "newest and most important request is at the END" in prompt
-    assert "After that read, use PawFlow MCP tools" in prompt
+    assert "Read the entire file at least once" in prompt
+    assert "do not rely only on a head or tail read" in prompt
+    assert "Use the tail/end to identify the current task" in prompt
+    assert "Read the entire file at least once" in body
     assert "use PawFlow MCP tools first" in body
     assert "compact summary" not in prompt
 
@@ -1149,7 +1151,80 @@ def test_interactive_pool_sweeps_idle_sessions_by_sliding_last_used(monkeypatch)
     assert recent.key in pool._sessions
 
 
-def test_interactive_pool_uses_client_timeout_for_idle_ttl(monkeypatch):
+def test_interactive_pool_client_timeout_only_extends_idle_ttl(monkeypatch):
+    from core.claude_code_interactive_pool import InteractiveClaudeCodePool
+
+    pool = InteractiveClaudeCodePool()
+    pool._idle_ttl = 3600
+
+    pool.ensure_sweeper(idle_ttl_seconds=60)
+    assert pool._idle_ttl == 3600
+
+    pool.ensure_sweeper(idle_ttl_seconds=7200)
+    assert pool._idle_ttl == 7200
+    pool._sweeper_stop.set()
+
+
+def test_interactive_pool_checks_liveness_outside_sweep_lock(monkeypatch):
+    import threading
+
+    from core.claude_code_interactive_pool import InteractiveClaudeCodePool, InteractiveContainer
+
+    pool = InteractiveClaudeCodePool()
+    pool._lock = threading.Lock()
+    state = InteractiveContainer(
+        key=("u", "c", "a", "svc"),
+        name="container",
+        workdir="/host",
+        container_workdir="/cc_sessions/u/c/a",
+        session_token="sess",
+        event_service_id="events",
+        internal_token="internal",
+        last_used=0,
+    )
+    pool._sessions[state.key] = state
+    monkeypatch.setattr("core.claude_code_interactive_pool.time.time", lambda: 10)
+    monkeypatch.setattr(pool, "_kill_container", lambda name: None)
+
+    def _is_alive(_name):
+        assert pool._lock.acquire(blocking=False), "_is_alive called while sweep lock is held"
+        pool._lock.release()
+        return True
+
+    monkeypatch.setattr(pool, "_is_alive", _is_alive)
+
+    assert pool.sweep_idle(1) == 1
+
+
+def test_interactive_pool_instance_registers_death_handlers():
+    import inspect
+
+    from core.claude_code_interactive_pool import InteractiveClaudeCodePool
+
+    instance_src = inspect.getsource(InteractiveClaudeCodePool.instance)
+    handler_src = inspect.getsource(InteractiveClaudeCodePool._register_death_handlers)
+
+    assert "_register_death_handlers" in instance_src
+    assert "atexit.register" in handler_src
+    assert "signal.SIGTERM" in handler_src
+    assert "shutdown_all" in handler_src
+
+
+def test_cci_turn_coordinator_accepts_touch_callback():
+    events = [
+        _sse("message_stop", {"type": "message_stop"}),
+        {"type": "hook", "hook_event_name": "Stop", "input": {"hook_event_name": "Stop"}},
+    ]
+    touched = []
+
+    _CCITurnCoordinator(
+        _Events(events), "sess", touch_callback=lambda: touched.append(True)
+    ).run()
+
+    assert touched
+
+
+def test_interactive_pool_passes_client_timeout_for_idle_ttl(monkeypatch):
     from core.claude_code_interactive_pool import InteractiveClaudeCodePool
 
     class _Client:
@@ -1167,6 +1242,23 @@ def test_interactive_pool_uses_client_timeout_for_idle_ttl(monkeypatch):
         assert str(exc) == "stop"
 
     assert seen == [{"idle_ttl_seconds": 7200}]
+
+
+def test_cc_interactive_timing_env_is_documented():
+    from pathlib import Path
+
+    doc = Path("docs/CLAUDE_CODE_INTERACTIVE.md").read_text(encoding="utf-8")
+
+    for name in (
+        "PAWFLOW_CCI_POST_STOP_IDLE_DRAIN_SECONDS",
+        "PAWFLOW_CCI_POST_STOP_IDLE_DRAIN_MS",
+        "PAWFLOW_CCI_NO_PROXY_EVENT_TIMEOUT_SECONDS",
+        "PAWFLOW_CCI_NO_PROXY_EVENT_TIMEOUT_MS",
+        "PAWFLOW_CCI_IDLE_TTL_SECONDS",
+    ):
+        assert name in doc
+    assert "seconds variable wins" in doc
+    assert "can only extend" in doc
 
 
 def test_cc_interactive_event_route_bypasses_gateway_but_stays_private(monkeypatch):

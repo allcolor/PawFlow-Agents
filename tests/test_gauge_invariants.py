@@ -405,6 +405,16 @@ def test_audio_frontend_never_opens_stream_without_token():
     assert "audioConnect(sid, token)" in audio_src
 
 
+def test_terminal_frontend_keeps_scrollback_and_cci_tmux_mouse():
+    terminal_src = Path("tasks/io/chat_ui/terminal.js").read_text(encoding="utf-8")
+    service_flow_src = Path("tasks/ai/actions/service_flow.py").read_text(encoding="utf-8")
+
+    assert "scrollback: 10000" in terminal_src
+    assert "fastScrollModifier" in terminal_src
+    assert '["tmux", "set-option", "-g", "mouse", "on"]' in service_flow_src
+    assert '["tmux", "set-option", "-g", "history-limit", "50000"]' in service_flow_src
+
+
 def test_open_desktop_backend_does_not_emit_audio_session_without_token():
     src = Path("tasks/ai/actions/service_flow.py").read_text(encoding="utf-8")
     assert "_audio_token = register_audio_source" in src

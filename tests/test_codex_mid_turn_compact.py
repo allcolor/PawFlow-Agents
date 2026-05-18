@@ -4,6 +4,7 @@ from pathlib import Path
 
 _GEMINI = Path("core/llm_providers/gemini.py").read_text(encoding="utf-8")
 _AGENT_CORE = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
+_AGENT_CONTEXT = Path("tasks/ai/agent_context.py").read_text(encoding="utf-8")
 _AGENT_EMITTER = Path("tasks/ai/agent_emitter.py").read_text(encoding="utf-8")
 _AGENT_ACTIONS = Path("tasks/ai/agent_actions.py").read_text(encoding="utf-8")
 _AGENT_COMPACTION = Path("tasks/ai/agent_compaction.py").read_text(
@@ -33,6 +34,21 @@ def test_gemini_acp_gauge_counts_actual_prompt_payload():
     assert "prompt_mode = \"resume\" if session_id else \"cold\"" in _GEMINI
     assert "mode=%s" in _GEMINI
     assert "tokens_in=max(0, int(prompt_tokens or 0))" in _GEMINI
+
+
+def test_stateful_cli_resume_skips_pawflow_context_load():
+    """Codex/Gemini/CCI resume sends only the live delta.
+
+    Loading hundreds of persisted messages before immediately reducing the
+    provider payload to the latest user message adds seconds to cold resume.
+    The skip must key off the generic CLI session flag, not Claude-only state.
+    """
+    block = _AGENT_CONTEXT[
+        _AGENT_CONTEXT.index("elif use_conv_store and conversation_id:"):
+        _AGENT_CONTEXT.index("elif conv_attr:")]
+    assert "if _cli_has_session:" in block
+    assert "CLI session active — skipping context load" in block
+    assert "if _claude_has_session:" not in block
 
 
 def test_gemini_acp_preempt_is_live_prompt_reuse_not_reloop():

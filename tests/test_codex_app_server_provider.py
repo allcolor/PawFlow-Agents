@@ -163,6 +163,16 @@ def test_codex_app_server_steers_mcp_hint_after_native_tool():
     assert "_send_native_tool_hint(native_name)" in src
 
 
+def test_codex_app_server_streams_live_thinking_before_turn_end():
+    src = inspect.getsource(LLMCodexAppServerMixin._stream_codex_app_server)
+    client_src = inspect.getsource(LLMClient.complete_stream)
+    assert "thinking_callback=None" in src
+    assert "def _flush_live_thinking" in src
+    assert 'block_callback("thinking"' in src
+    assert 'method in ("item/reasoning/summaryTextDelta", "item/reasoning/textDelta")' in src
+    assert "thinking_callback=thinking_callback" in client_src
+
+
 def test_codex_app_server_container_dir_matches_pool_namespace():
     from core.llm_providers.codex_session import _get_sessions_base
 

@@ -504,22 +504,26 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                             f"{len(messages)} messages")
             except (KeyError, TypeError) as e:
                 logger.error(f"[context] preloaded messages deser failed: {e}")
-            # Auto-compact on preloaded messages (skip for claude-code with active session)
-            if messages and not _claude_has_session:
+            # Auto-compact on preloaded messages (skip for stateful CLI
+            # providers with active sessions; their resume path sends only the
+            # live delta, not the full PawFlow context).
+            if messages and not _cli_has_session:
                 _uid_pl = flowfile.get_attribute("http.auth.principal") or ""
                 messages = self._auto_compact_messages(
                     messages, preloaded_conversation_id or conversation_id or "",
                     _context_agent, _uid_pl, max_context=_max_ctx,
                     independent_context=independent_context)
         elif use_conv_store and conversation_id:
-            if _claude_has_session:
-                # CC has an active session — it already has the context.
-                # User message is appended later; provider-only prompt state
-                # is reconstructed per call and must not enter stored context.
+            if _cli_has_session:
+                # Stateful CLI has an active session — it already has the
+                # context. User message is appended later; provider-only
+                # prompt state is reconstructed per call and must not enter
+                # stored context.
                 messages = []
                 base_message_count = 0
                 _context_diverged = True  # skip compact
-                logger.info(f"[context:{conversation_id[:8]}] CC session active — skipping context load")
+                logger.info(
+                    f"[context:{conversation_id[:8]}] CLI session active — skipping context load")
             else:
                 from core.conversation_store import ConversationStore
                 store = ConversationStore.instance()

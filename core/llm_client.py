@@ -1094,6 +1094,7 @@ class LLMClient(
             elif self.provider == "codex-app-server":
                 result = self._stream_codex_app_server(messages, mdl, temperature, max_tokens, tools, callback,
                                                        thinking_budget=thinking_budget,
+                                                       thinking_callback=thinking_callback,
                                                        turn_callback=turn_callback,
                                                        block_callback=block_callback,
                                                        call_user_id=call_user_id,

@@ -489,6 +489,7 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
         callback=None,
         *,
         thinking_budget: int = 0,
+        thinking_callback=None,
         turn_callback=None,
         block_callback=None,
         call_user_id: Optional[str] = None,
@@ -670,6 +671,9 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
         turn_text_is_final = False
         final_text_parts: List[str] = []
         thinking_parts: List[str] = []
+        live_thinking_parts: List[str] = []
+        emitted_thinking_parts: List[str] = []
+        last_thinking_emit = 0.0
         stream_uniq = f"codexapp-{uuid.uuid4().hex[:8]}"
         stream_tc_names: Dict[str, str] = {}
         completed_tool_ids = set()
@@ -702,9 +706,32 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                 except TypeError:
                     turn_callback(text, [])
 
+        def _flush_live_thinking(force: bool = False) -> None:
+            nonlocal last_thinking_emit
+            if not live_thinking_parts:
+                return
+            now = time.time()
+            text = "".join(live_thinking_parts).strip()
+            if not text:
+                live_thinking_parts.clear()
+                return
+            if not force and len(text) < 160 and now - last_thinking_emit < 1.0:
+                return
+            live_thinking_parts.clear()
+            thinking_parts.clear()
+            emitted_thinking_parts.append(text)
+            last_thinking_emit = now
+            if thinking_callback:
+                thinking_callback(text)
+            if block_callback:
+                block_callback("thinking", {"thinking": text})
+
         def _append_final_reasoning(text: str) -> None:
             text = (text or "").strip()
             if not text:
+                return
+            emitted = "".join(emitted_thinking_parts).strip()
+            if emitted and (text in emitted or emitted in text):
                 return
             existing = "".join(thinking_parts).strip()
             if existing and (text in existing or existing in text):
@@ -913,6 +940,8 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                     delta = params.get("delta") or params.get("text") or ""
                     if delta:
                         thinking_parts.append(delta)
+                        live_thinking_parts.append(delta)
+                        _flush_live_thinking()
                     continue
 
                 if method == "item/completed":
@@ -957,6 +986,7 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                         raise CCCompactDetected(
                             "Codex app-server contextCompaction detected")
                     if item.get("type") in ("commandExecution", "fileChange", "dynamicToolCall"):
+                        _flush_live_thinking(force=True)
                         if block_callback and turn_text_parts:
                             _flush_text()
                         tc_id = f"{stream_uniq}:{item.get('id') or uuid.uuid4().hex[:8]}"
@@ -973,6 +1003,7 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                             thinking_parts.clear()
                         continue
                     if item.get("type") == "mcpToolCall":
+                        _flush_live_thinking(force=True)
                         if block_callback and turn_text_parts:
                             _flush_text()
                         tc_id = f"{stream_uniq}:{item.get('id') or uuid.uuid4().hex[:8]}"
@@ -1067,6 +1098,7 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                     raise LLMClientError(f"codex app-server error: {params.get('error') or params}")
 
             _flush_text()
+            _flush_live_thinking(force=True)
             content = "".join(final_text_parts).strip() or "".join(text_parts).strip()
             return LLMResponse(
                 content=content,

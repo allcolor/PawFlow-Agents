@@ -363,13 +363,6 @@ function _createTechnicalGroupBefore(container, anchor) {
   return group;
 }
 
-const _NESTED_TECHNICAL_SCOPE_SELECTOR = '.task-block > div:not(summary), .delegate-body, .delegate-sub-body';
-
-function _nestedTechnicalScopes(container) {
-  if (!container || !container.querySelectorAll) return [];
-  return Array.from(container.querySelectorAll(_NESTED_TECHNICAL_SCOPE_SELECTOR));
-}
-
 function _groupTechnicalIn(container) {
   let group = null;
   for (const child of Array.from(container.children)) {
@@ -428,11 +421,9 @@ function applyTechnicalMessageGrouping() {
   if (!container) return;
   if (!window.PAWFLOW_GROUP_TECHNICAL_MESSAGES) {
     _unwrapTechnicalGroups(container);
-    for (const inner of _nestedTechnicalScopes(container)) _unwrapTechnicalGroups(inner);
     return;
   }
   _groupTechnicalIn(container);
-  for (const inner of _nestedTechnicalScopes(container)) _groupTechnicalIn(inner);
 }
 
 function _toolCallSelector(tcId) {

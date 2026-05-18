@@ -398,6 +398,14 @@ class InteractiveClaudeCodePool:
             "-e", f"PAWFLOW_CCI_LEAF_CERT={container_workdir}/.pawflow_cci/certs/api-anthropic.crt",
             "-e", f"PAWFLOW_CCI_LEAF_KEY={container_workdir}/.pawflow_cci/certs/api-anthropic.key",
         ]
+        for key in (
+            "PAWFLOW_CCI_PROXY_WIRE_LOG",
+            "PAWFLOW_CCI_PROXY_WIRE_LOG_ALL",
+            "PAWFLOW_CCI_PROXY_WIRE_LOG_PATHS",
+        ):
+            value = os.environ.get(key)
+            if value:
+                env += ["-e", f"{key}={value}"]
         r = subprocess.run(
             docker_cmd() + ["exec", "-d", "--user", "root", *env, name,
                             "python3", "/opt/pawflow/cc_interactive_proxy.py"],

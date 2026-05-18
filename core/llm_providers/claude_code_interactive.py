@@ -14,6 +14,7 @@ from pathlib import Path
 import time
 import uuid
 
+from core.agent_prompt_policy import append_cli_mcp_system_prompt
 from core.claude_code_interactive_pool import InteractiveClaudeCodePool
 from core.llm_providers.claude_code_session import ClaudeCodeSessionMixin
 from tools.cc_interactive_filters import is_hidden_native_tool, normalize_observed_tool
@@ -522,11 +523,7 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
                     initial_context: bool = False) -> str:
         system_prompt, user_text = self._serialize_messages_for_cli(messages, None)
         if tools:
-            tool_mode = (
-                "Use PawFlow MCP tools for shell, filesystem, browser, and "
-                "project work. Claude Code built-in tools are disabled."
-            )
-            system_prompt = (system_prompt + "\n\n" + tool_mode).strip()
+            system_prompt = append_cli_mcp_system_prompt(system_prompt)
         image_lines = self._cci_materialize_images(
             messages, workdir, container_workdir, user_id, conversation_id)
         parts = []

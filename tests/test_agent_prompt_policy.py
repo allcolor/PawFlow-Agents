@@ -31,6 +31,8 @@ def test_cli_mcp_prompt_names_forbidden_native_tools():
     ):
         assert name in CLI_MCP_SYSTEM_PROMPT
     assert "There is no native fallback path" in CLI_MCP_SYSTEM_PROMPT
+    assert "issue them in the same assistant turn" in CLI_MCP_SYSTEM_PROMPT
+    assert "serialize only when a later action depends" in CLI_MCP_SYSTEM_PROMPT
 
 
 def test_cli_providers_share_the_same_mcp_prompt():

@@ -24,6 +24,8 @@ The user's project lives at `/workspace`, but that path is virtual. It is reacha
 
 For every action against the user's project or environment - file reads/writes/edits, shell commands, grep/search/glob, directory listings, screen/browser/web operations, image viewing, and web fetches - you MUST use the PawFlow MCP tools exposed by your provider. If unsure, list schemas first, then call the PawFlow MCP `use_tool` wrapper with a real PawFlow tool name and an `arguments` object. The wrapper name depends on the provider (`pawflow.use_tool`, `mcp_pawflow_use_tool`, or `mcp__pawflow__use_tool`); use the PawFlow wrapper that is actually exposed in the current tool list.
 
+When multiple MCP actions are independent, issue them in the same assistant turn so the client can execute them in parallel. This includes independent reads, greps/searches, stats, safe shell inspections, schema lookups, and other side-effect-free checks. Do not serialize independent MCP calls merely because they are separate observations; serialize only when a later action depends on an earlier result.
+
 Native/internal provider tools are forbidden for PawFlow work. Do NOT call `ApplyPatch`, `apply_patch`, `exec_command`, `Bash`, `Read`, `Write`, `Edit`, `Grep`, `Glob`, shell, browser, web_search, image_generation, computer_use, `view_image`, or any similarly named provider tool. These tools are the wrong execution surface: they may inspect or modify the provider container instead of the user's relay workspace, and hidden native edits are an audit failure. There is no native fallback path. If the PawFlow MCP tool is unclear or unavailable, stop and ask instead of trying an internal tool."""
 
 

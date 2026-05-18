@@ -707,8 +707,9 @@ def test_interactive_prompt_requires_pawflow_mcp_tools(tmp_path):
         "conv",
     )
 
-    assert "Use PawFlow MCP tools" in prompt
-    assert "built-in tools are disabled" in prompt
+    assert "PawFlow Runtime - MCP-only" in prompt
+    assert "Native/internal provider tools are forbidden" in prompt
+    assert "issue them in the same assistant turn" in prompt
     assert "Use Claude Code's native tools" not in prompt
 
 
@@ -1027,6 +1028,41 @@ def test_interactive_pool_starts_tmux_in_normal_provider_namespace(monkeypatch):
     assert "--effort high" in shell
     assert "NODE_EXTRA_CA_CERTS=/cc_sessions/c/a/ca.crt" in shell
     assert "--resume" not in shell
+
+
+def test_interactive_pool_proxy_passes_wire_log_env(monkeypatch):
+    from core.claude_code_interactive_pool import InteractiveClaudeCodePool
+
+    calls = []
+
+    class _Run:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return _Run()
+
+    monkeypatch.setenv("PAWFLOW_CCI_PROXY_WIRE_LOG", "1")
+    monkeypatch.setenv("PAWFLOW_CCI_PROXY_WIRE_LOG_PATHS", "/v1/messages")
+    monkeypatch.delenv("PAWFLOW_CCI_PROXY_WIRE_LOG_ALL", raising=False)
+    monkeypatch.setattr("core.claude_code_interactive_pool.docker_cmd", lambda: ["docker"])
+    monkeypatch.setattr("core.claude_code_interactive_pool.subprocess.run", fake_run)
+
+    InteractiveClaudeCodePool()._start_proxy(
+        name="container",
+        container_workdir="/cc_sessions/u/c/a",
+        session_token="session-token",
+        event_url="wss://events",
+        event_token="event-token",
+        internal_token="internal-token",
+    )
+
+    cmd = calls[0]
+    assert "PAWFLOW_CCI_PROXY_WIRE_LOG=1" in cmd
+    assert "PAWFLOW_CCI_PROXY_WIRE_LOG_PATHS=/v1/messages" in cmd
+    assert not any(str(part).startswith("PAWFLOW_CCI_PROXY_WIRE_LOG_ALL=") for part in cmd)
 
 
 def test_interactive_pool_finds_latest_live_session(monkeypatch):

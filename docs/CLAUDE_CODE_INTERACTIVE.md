@@ -121,9 +121,9 @@ prompt references that file with `@/cc_sessions/.../.pawflow_cci/initial_context
 and instructs Claude Code to read it before answering. Existing live sessions do
 not receive the full context again; PawFlow sends only the latest turn delta.
 
-Live interrupt sends `Escape`, then pastes the interrupt message, then sends
-`Enter`. Force stop sends `Escape Escape` to the tmux session and leaves the
-container lifecycle intact.
+Live interrupt pastes the interrupt message, then sends `Escape`, then `Enter`.
+Force stop sends `Escape Escape` to the tmux session and leaves the container
+lifecycle intact.
 
 If a user attaches to the provider-owned tmux and submits a prompt manually,
 Claude Code's `UserPromptSubmit` hook sends that prompt to PawFlow. PawFlow

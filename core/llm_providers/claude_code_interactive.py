@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import json
 import mimetypes
+import os
 from pathlib import Path
 import time
 import uuid
@@ -20,8 +21,35 @@ from core.llm_providers.claude_code_session import ClaudeCodeSessionMixin
 from tools.cc_interactive_filters import is_hidden_native_tool, normalize_observed_tool
 
 
-_POST_STOP_IDLE_DRAIN_SECONDS = 0.25
-_NO_PROXY_EVENT_TIMEOUT_SECONDS = 15.0
+def _env_seconds(names: tuple[str, ...], ms_names: tuple[str, ...] = (),
+                 default: float = 0.0) -> float:
+    for name in names:
+        raw = os.environ.get(name, "")
+        if raw.strip():
+            try:
+                return max(0.0, float(raw))
+            except ValueError:
+                return default
+    for name in ms_names:
+        raw = os.environ.get(name, "")
+        if raw.strip():
+            try:
+                return max(0.0, float(raw) / 1000.0)
+            except ValueError:
+                return default
+    return default
+
+
+_POST_STOP_IDLE_DRAIN_SECONDS = _env_seconds(
+    ("PAWFLOW_CCI_POST_STOP_IDLE_DRAIN_SECONDS", "PAWFLOW_CCI_DRAIN_SECONDS"),
+    ("PAWFLOW_CCI_POST_STOP_IDLE_DRAIN_MS", "PAWFLOW_CCI_DRAIN_MS"),
+    default=2.5,
+)
+_NO_PROXY_EVENT_TIMEOUT_SECONDS = _env_seconds(
+    ("PAWFLOW_CCI_NO_PROXY_EVENT_TIMEOUT_SECONDS", "PAWFLOW_CCI_NOEVENT_TIMEOUT_SECONDS"),
+    ("PAWFLOW_CCI_NO_PROXY_EVENT_TIMEOUT_MS", "PAWFLOW_CCI_NOEVENT_TIMEOUT_MS"),
+    default=300.0,
+)
 
 
 class _CCITurnCoordinator:

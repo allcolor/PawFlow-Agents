@@ -181,6 +181,20 @@ def test_turn_coordinator_times_out_when_stop_has_no_proxy_events(monkeypatch):
         _CCITurnCoordinator(_Events(events), "sess").run()
 
 
+def test_cci_timeouts_are_env_configurable(monkeypatch):
+    import core.llm_providers.claude_code_interactive as cci
+
+    monkeypatch.setenv("PAWFLOW_CCI_NO_PROXY_EVENT_TIMEOUT_SECONDS", "600")
+    assert cci._env_seconds(("PAWFLOW_CCI_NO_PROXY_EVENT_TIMEOUT_SECONDS",), default=300) == 600
+
+    monkeypatch.delenv("PAWFLOW_CCI_NO_PROXY_EVENT_TIMEOUT_SECONDS", raising=False)
+    monkeypatch.setenv("PAWFLOW_CCI_DRAIN_MS", "1500")
+    assert cci._env_seconds((), ("PAWFLOW_CCI_DRAIN_MS",), default=1) == 1.5
+
+    monkeypatch.setenv("PAWFLOW_CCI_DRAIN_MS", "bad")
+    assert cci._env_seconds((), ("PAWFLOW_CCI_DRAIN_MS",), default=1) == 1
+
+
 def test_turn_coordinator_waits_for_proxy_message_stop_after_stop_hook():
     events = [
         {"type": "request_start", "request_id": "r1", "path": "/v1/messages"},

@@ -443,6 +443,9 @@ def test_view_menu_has_three_grouping_toggles():
     assert get_or_create_sub.split("\n", 4)[1].strip() == "if (!window.PAWFLOW_GROUP_DELEGATE_MESSAGES) return null;"
     # Ungrouped task_msg must use addMsg to keep chrome (timestamp, badge, dedup).
     assert "addMsg('user', data.message || '', {" in sse
+    # Live delegate tool_call must only be hidden when grouping is on,
+    # otherwise the main timeline loses the launch + result.
+    assert "data.tool === 'delegate' && window.PAWFLOW_GROUP_DELEGATE_MESSAGES" in sse
 
     assert '_resolve_chat_flag("group_task_messages")' in conversation_py
     assert '_resolve_chat_flag("group_delegate_messages")' in conversation_py

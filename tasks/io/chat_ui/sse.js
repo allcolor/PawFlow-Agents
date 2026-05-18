@@ -865,8 +865,10 @@ function connectSSE(cid, onReady, opts) {
       tcs.el = null; tcs.text = '';
     }
     trackAgentTool(tcAgent, data.tool);
-    // Hide delegate tool_call — the delegate block replaces it
-    if (data.tool === 'delegate') {
+    // Hide delegate tool_call — the delegate block replaces it.
+    // When delegate grouping is disabled, render the call normally so the
+    // user still sees the live launch + result in the main timeline.
+    if (data.tool === 'delegate' && window.PAWFLOW_GROUP_DELEGATE_MESSAGES) {
       // Store tc_id so we can suppress the tool_result too
       if (data.tc_id) _delegateGroups['__tc__' + data.tc_id] = true;
       if (!data.task_id) document.getElementById('status').textContent = t('usingTool', {tool: (_TOOL_DISPLAY[data.tool] || data.tool)});

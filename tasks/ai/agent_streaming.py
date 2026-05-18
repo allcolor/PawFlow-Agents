@@ -299,19 +299,23 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                     conversation_id[:8], _target or "default")
                 _already_active = False
 
-            # Queue this user message in the agent's PendingQueue —
-            # the active turn will drain at its end, or a wake will
-            # fire if the turn somehow ended before we got here.
-            _queue_pending_user(source="http")
-            ack = json.dumps({"status": "queued", "conversation_id": conversation_id,
-                              "message_count": ConversationStore.instance().message_count(conversation_id),
-                              "server_start_time": SERVER_START_TIME})
-            flowfile.set_content(ack.encode("utf-8"))
-            flowfile.set_attribute("agent.conversation_id", conversation_id)
-            if not _fast_restart_after_preempt:
+            if _fast_restart_after_preempt:
+                # The stale/preempted worker has been generation-cancelled and
+                # this same FlowFile will seed the fresh loop below. Do not also
+                # enqueue it: that would make the new loop wait for a
+                # PendingQueue drain and can duplicate the same msg_id.
+                flowfile.set_attribute("agent.fast_restart_after_preempt", "true")
+            else:
+                # Queue this user message in the agent's PendingQueue —
+                # the active turn will drain at its end, or a wake will
+                # fire if the turn somehow ended before we got here.
+                _queue_pending_user(source="http")
+                ack = json.dumps({"status": "queued", "conversation_id": conversation_id,
+                                  "message_count": ConversationStore.instance().message_count(conversation_id),
+                                  "server_start_time": SERVER_START_TIME})
+                flowfile.set_content(ack.encode("utf-8"))
+                flowfile.set_attribute("agent.conversation_id", conversation_id)
                 return [flowfile]
-            flowfile.set_attribute("agent.fast_restart_after_preempt", "true")
-            flowfile.set_content(_original_content)
 
         # Mark active before context preparation. Active Agents is a PawFlow
         # execution-state panel, so it must stay correct while compact/context

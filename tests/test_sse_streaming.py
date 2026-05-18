@@ -667,7 +667,7 @@ class TestAgentLoopStreaming(unittest.TestCase):
                 assert results[0].get_attribute("agent.fast_restart_after_preempt") == "true"
                 assert len(started_threads) == 1
                 assert task._conv_generation[agent_key] == 1
-                assert PendingQueue.for_agent(conversation_id, agent_name).peek_count() == 1
+                assert PendingQueue.for_agent(conversation_id, agent_name).peek_count() == 0
 
                 with task._active_contexts_lock:
                     assert task._active_turns[agent_key]["generation"] == 1

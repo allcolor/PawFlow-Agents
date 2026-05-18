@@ -25,8 +25,9 @@ def test_preempt_kill_fast_restarts_streaming_loop():
     assert "preempt killed provider CLI" in _AGENT_STREAMING
     assert "self._conv_generation[_agent_key]" in _AGENT_STREAMING
     assert "self._active_contexts.pop(_agent_key, None)" in _AGENT_STREAMING
-    assert "if not _fast_restart_after_preempt:" in _AGENT_STREAMING
-    assert "flowfile.set_content(_original_content)" in _AGENT_STREAMING
+    assert "if _fast_restart_after_preempt:" in _AGENT_STREAMING
+    assert "Do not also" in _AGENT_STREAMING
+    assert "PendingQueue drain" in _AGENT_STREAMING
 
 
 # ---------------------------------------------------------------------------

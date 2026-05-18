@@ -436,6 +436,13 @@ def test_view_menu_has_three_grouping_toggles():
 
     assert "PAWFLOW_GROUP_TASK_MESSAGES" in sse
     assert "PAWFLOW_GROUP_DELEGATE_MESSAGES" in messages
+    # Live delegate path must also honour the toggle, not just the historical render.
+    get_or_create_group = sse[sse.index("function _getOrCreateGroup"):]
+    assert get_or_create_group.split("\n", 4)[1].strip() == "if (!window.PAWFLOW_GROUP_DELEGATE_MESSAGES) return null;"
+    get_or_create_sub = sse[sse.index("function _getOrCreateSubBlock"):]
+    assert get_or_create_sub.split("\n", 4)[1].strip() == "if (!window.PAWFLOW_GROUP_DELEGATE_MESSAGES) return null;"
+    # Ungrouped task_msg must use addMsg to keep chrome (timestamp, badge, dedup).
+    assert "addMsg('user', data.message || '', {" in sse
 
     assert '_resolve_chat_flag("group_task_messages")' in conversation_py
     assert '_resolve_chat_flag("group_delegate_messages")' in conversation_py

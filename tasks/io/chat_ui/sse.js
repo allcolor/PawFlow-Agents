@@ -530,6 +530,7 @@ function connectSSE(cid, onReady, opts) {
   const _delegateSubBlocks = {};
 
   function _getOrCreateGroup(delegateTcId, srcAgent, total, sourceTaskId) {
+    if (!window.PAWFLOW_GROUP_DELEGATE_MESSAGES) return null;
     if (!delegateTcId) return null;
     if (_delegateGroups[delegateTcId]) return _delegateGroups[delegateTcId];
     const details = document.createElement('details');
@@ -571,6 +572,7 @@ function connectSSE(cid, onReady, opts) {
   }
 
   function _getOrCreateSubBlock(delegateTcId, taskId, dstAgent, llmService, message) {
+    if (!window.PAWFLOW_GROUP_DELEGATE_MESSAGES) return null;
     if (_delegateSubBlocks[taskId]) return _delegateSubBlocks[taskId];
     // Ensure group exists (fallback for missing delegate_group_start)
     let group = _delegateGroups[delegateTcId];
@@ -1071,11 +1073,17 @@ function connectSSE(cid, onReady, opts) {
     const data = JSON.parse(e.data);
     if (data.task_id && data.from === 'user') {
       const block = _getTaskBlock(data.task_id, data.task_iteration, '');
-      const el = document.createElement('div');
-      el.className = 'msg user';
-      el.textContent = data.message;
-      if (block) block.content.appendChild(el);
-      else document.getElementById('messages').appendChild(el);
+      if (block) {
+        const el = document.createElement('div');
+        el.className = 'msg user';
+        el.textContent = data.message;
+        block.content.appendChild(el);
+      } else {
+        addMsg('user', data.message || '', {
+          task_id: data.task_id,
+          source: data.source || { type: 'task', task_id: data.task_id },
+        });
+      }
     }
   });
 

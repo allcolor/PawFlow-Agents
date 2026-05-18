@@ -405,6 +405,49 @@ def test_audio_frontend_never_opens_stream_without_token():
     assert "audioConnect(sid, token)" in audio_src
 
 
+def test_view_menu_has_three_grouping_toggles():
+    template = Path("tasks/io/chat_ui/template.html").read_text(encoding="utf-8")
+    convs = Path("tasks/io/chat_ui/conversations.js").read_text(encoding="utf-8")
+    messages = Path("tasks/io/chat_ui/messages.js").read_text(encoding="utf-8")
+    sse = Path("tasks/io/chat_ui/sse.js").read_text(encoding="utf-8")
+    conversation_py = Path("tasks/ai/actions/conversation.py").read_text(encoding="utf-8")
+
+    for item_id in ("viewMenuToggle", "viewItemTechnical", "viewItemTask", "viewItemDelegate"):
+        assert item_id in template
+    assert 'onclick="onViewGroupingToggle(\'technical\')"' in template
+    assert 'onclick="onViewGroupingToggle(\'task\')"' in template
+    assert 'onclick="onViewGroupingToggle(\'delegate\')"' in template
+    assert "technicalGroupingToggle" not in template
+
+    for key in ("technical", "task", "delegate"):
+        assert f"chat.group_{key}_messages" in convs
+    assert "VIEW_TOGGLES" in convs
+    assert "onViewGroupingToggle" in convs
+    assert "toggleViewMenu" in convs
+
+    for flag in (
+        "PAWFLOW_GROUP_TECHNICAL_MESSAGES",
+        "PAWFLOW_GROUP_TASK_MESSAGES",
+        "PAWFLOW_GROUP_DELEGATE_MESSAGES",
+    ):
+        assert flag in messages
+    assert "setTaskMessageGrouping" in messages
+    assert "setDelegateMessageGrouping" in messages
+
+    assert "PAWFLOW_GROUP_TASK_MESSAGES" in sse
+    assert "PAWFLOW_GROUP_DELEGATE_MESSAGES" in messages
+
+    assert '_resolve_chat_flag("group_task_messages")' in conversation_py
+    assert '_resolve_chat_flag("group_delegate_messages")' in conversation_py
+    assert '"group_task_messages": group_task_messages' in conversation_py
+    assert '"group_delegate_messages": group_delegate_messages' in conversation_py
+
+    for lang in ("en", "fr", "es"):
+        i18n = Path(f"tasks/io/chat_ui/i18n/{lang}.json").read_text(encoding="utf-8")
+        for key in ("viewMenuTitle", "viewGroupTechnical", "viewGroupTasks", "viewGroupDelegates"):
+            assert f'"{key}"' in i18n, f"{lang} missing {key}"
+
+
 def test_terminal_frontend_keeps_scrollback_and_cci_tmux_mouse():
     terminal_src = Path("tasks/io/chat_ui/terminal.js").read_text(encoding="utf-8")
     service_flow_src = Path("tasks/ai/actions/service_flow.py").read_text(encoding="utf-8")

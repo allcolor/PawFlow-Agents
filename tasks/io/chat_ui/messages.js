@@ -165,6 +165,8 @@ function _insertMessageChronologically(container, el, sortTs) {
 }
 
 window.PAWFLOW_GROUP_TECHNICAL_MESSAGES = true;
+window.PAWFLOW_GROUP_TASK_MESSAGES = true;
+window.PAWFLOW_GROUP_DELEGATE_MESSAGES = true;
 window.PAWFLOW_SUSPEND_TECHNICAL_GROUPING = 0;
 
 function suspendTechnicalMessageGrouping() {
@@ -179,6 +181,14 @@ function resumeTechnicalMessageGrouping(applyNow) {
 function setTechnicalMessageGrouping(enabled) {
   window.PAWFLOW_GROUP_TECHNICAL_MESSAGES = !!enabled;
   applyTechnicalMessageGrouping();
+}
+
+function setTaskMessageGrouping(enabled) {
+  window.PAWFLOW_GROUP_TASK_MESSAGES = !!enabled;
+}
+
+function setDelegateMessageGrouping(enabled) {
+  window.PAWFLOW_GROUP_DELEGATE_MESSAGES = !!enabled;
 }
 
 function _visibleTextWithoutMessageChrome(el) {
@@ -555,7 +565,8 @@ function addMsg(role, text, extra) {
   // message role (delegate request is user-role to ingest into target,
   // delegate reply is assistant-role from the target).
   const _isDelegateMsg = extra && extra.source
-      && (extra.source.type === 'agent_delegate');
+      && (extra.source.type === 'agent_delegate')
+      && window.PAWFLOW_GROUP_DELEGATE_MESSAGES !== false;
   console.log('[delegate-render]', role, 'isDelegate=', _isDelegateMsg, 'source=', extra && extra.source);
   if (_isDelegateMsg) {
     const _from = extra.source.from || '?';
@@ -712,6 +723,10 @@ function addMsg(role, text, extra) {
   } else if (role === 'user') {
     el.innerHTML = replyQuoteHtml + actionsHtml + timeHtml + badge + escapeHtml(text) + _attachHtml;
   } else if (role === 'sub_agent_trace') {
+    if (window.PAWFLOW_GROUP_DELEGATE_MESSAGES === false) {
+      el.innerHTML = replyQuoteHtml + actionsHtml + timeHtml + badge + renderMarkdown(text) + buildMetaLine(extra);
+      return el;
+    }
     const dtcId = (extra && extra.source && extra.source.delegate_tc_id) || '';
     const taskId = (extra && extra.source && extra.source.task_id) || '';
     // Dedupe: if the live SSE already rendered a sub-block for this

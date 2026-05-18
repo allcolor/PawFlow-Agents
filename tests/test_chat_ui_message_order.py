@@ -65,26 +65,29 @@ def test_technical_grouping_is_expression_driven_and_post_rendered():
     assert "_attachToolResult(tcEl, _resultText(data.result || ''));" in SSE_JS
     assert "const groupTechnicalMessages = !!data.group_technical_messages" in CONVERSATIONS_JS
     assert "setTechnicalMessageGrouping(groupTechnicalMessages)" in CONVERSATIONS_JS
-    assert "updateTechnicalGroupingToggle(groupTechnicalMessages)" in CONVERSATIONS_JS
+    assert "updateViewMenuItem('technical', groupTechnicalMessages)" in CONVERSATIONS_JS
     assert "suspendTechnicalMessageGrouping()" in CONVERSATIONS_JS
     assert "resumeTechnicalMessageGrouping(false)" in CONVERSATIONS_JS
     assert "applyTechnicalMessageGrouping();" in SSE_JS
 
 
-def test_technical_grouping_toggle_sets_conversation_parameter_and_reloads():
-    assert 'id="technicalGroupingToggle"' in TEMPLATE_HTML
-    assert "onclick=\"onTechnicalGroupingToggle()\"" in TEMPLATE_HTML
-    assert "const TECHNICAL_GROUPING_PARAM = 'chat.group_technical_messages'" in CONVERSATIONS_JS
+def test_view_menu_grouping_toggles_set_conversation_parameter_and_reload():
+    assert 'id="viewMenuToggle"' in TEMPLATE_HTML
+    assert 'id="viewItemTechnical"' in TEMPLATE_HTML
+    assert 'id="viewItemTask"' in TEMPLATE_HTML
+    assert 'id="viewItemDelegate"' in TEMPLATE_HTML
+    assert "onclick=\"onViewGroupingToggle('technical')\"" in TEMPLATE_HTML
+    assert "onclick=\"onViewGroupingToggle('task')\"" in TEMPLATE_HTML
+    assert "onclick=\"onViewGroupingToggle('delegate')\"" in TEMPLATE_HTML
+    assert "paramKey: 'chat.group_technical_messages'" in CONVERSATIONS_JS
+    assert "paramKey: 'chat.group_task_messages'" in CONVERSATIONS_JS
+    assert "paramKey: 'chat.group_delegate_messages'" in CONVERSATIONS_JS
     assert "action$('set_param'" in CONVERSATIONS_JS
     assert "scope: 'conversation'" in CONVERSATIONS_JS
-    assert "key: TECHNICAL_GROUPING_PARAM" in CONVERSATIONS_JS
+    assert "key: cfg.paramKey" in CONVERSATIONS_JS
     assert "value: next ? 'true' : 'false'" in CONVERSATIONS_JS
     assert "resumeConv(conversationId, true)" in CONVERSATIONS_JS
-    assert "btn.style.display = conversationId ? 'inline-flex' : 'none'" in CONVERSATIONS_JS
-    assert "btn.innerHTML = active ? '&#x25A3;' : '&#x25A1;'" in CONVERSATIONS_JS
-    assert "btn.setAttribute('aria-label', label)" in CONVERSATIONS_JS
-    assert 'title="Group technical details.' in TEMPLATE_HTML
-    assert 'Group tech</button>' not in TEMPLATE_HTML
+    assert "wrap.style.display = conversationId ? 'inline-flex' : 'none'" in CONVERSATIONS_JS
 
 
 def test_autoscroll_only_stops_on_user_scroll_intent():

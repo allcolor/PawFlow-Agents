@@ -62,18 +62,21 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
         active_res = store.get_extra(conv_id, "active_resources", user_id=user_id) or {}
         active_res = self._ensure_active_agent(conv_id, active_res, user_id)
         custom_css = store.get_extra(conv_id, "custom_css", user_id=user_id) or ""
-        try:
-            from core.expression import resolve_expression
-            _group_technical_raw = resolve_expression(
-                "$" + '{chat.group_technical_messages:default("true")}',
-                owner=user_id,
-                conversation_id=conv_id,
-            )
-        except Exception:
-            _group_technical_raw = "true"
-        group_technical_messages = str(_group_technical_raw).strip().lower() in (
-            "1", "true", "yes", "on",
-        )
+        def _resolve_chat_flag(key: str, default: str = "true") -> bool:
+            try:
+                from core.expression import resolve_expression
+                raw = resolve_expression(
+                    "$" + '{chat.' + key + ':default("' + default + '")}',
+                    owner=user_id,
+                    conversation_id=conv_id,
+                )
+            except Exception:
+                raw = default
+            return str(raw).strip().lower() in ("1", "true", "yes", "on")
+
+        group_technical_messages = _resolve_chat_flag("group_technical_messages")
+        group_task_messages = _resolve_chat_flag("group_task_messages")
+        group_delegate_messages = _resolve_chat_flag("group_delegate_messages")
 
         result = json.dumps({
             "conversation_id": conv_id,
@@ -86,6 +89,8 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
             "active_agent": active_res.get("agent", ""),
             "custom_css": custom_css,
             "group_technical_messages": group_technical_messages,
+            "group_task_messages": group_task_messages,
+            "group_delegate_messages": group_delegate_messages,
         }, ensure_ascii=False)
         flowfile.set_content(result.encode("utf-8"))
         return [flowfile]

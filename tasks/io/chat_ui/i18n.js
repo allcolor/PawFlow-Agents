@@ -174,7 +174,7 @@ function applyI18n(root) {
   _setTitle('#stopBtn', t('stopTitle'));
   _setTitle('#themeSelect', t('globalThemeTitle'));
   _setTitle('#conversationThemeSelect', t('convThemeLabel'));
-  _setTitle('#technicalGroupingToggle', t('groupTechnicalDisabledTitle'));
+  _setTitle('#viewMenuToggle', t('viewMenuTitle'));
   _setTitle('#permissionMode', t('permissionModeTitle'));
   _setText('.sidebar-header h2', t('conversations'));
   _setText('.btn-new', t('newChat'));

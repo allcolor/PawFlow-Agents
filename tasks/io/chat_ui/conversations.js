@@ -171,30 +171,82 @@ function _clearConvState() {
   if (typeof _syncToggleBtn === 'function') _syncToggleBtn();
 }
 
-const TECHNICAL_GROUPING_PARAM = 'chat.group_technical_messages';
+const VIEW_TOGGLES = {
+  technical: {
+    paramKey: 'chat.group_technical_messages',
+    itemId: 'viewItemTechnical',
+    flag: 'PAWFLOW_GROUP_TECHNICAL_MESSAGES',
+    setter: 'setTechnicalMessageGrouping',
+  },
+  task: {
+    paramKey: 'chat.group_task_messages',
+    itemId: 'viewItemTask',
+    flag: 'PAWFLOW_GROUP_TASK_MESSAGES',
+    setter: 'setTaskMessageGrouping',
+  },
+  delegate: {
+    paramKey: 'chat.group_delegate_messages',
+    itemId: 'viewItemDelegate',
+    flag: 'PAWFLOW_GROUP_DELEGATE_MESSAGES',
+    setter: 'setDelegateMessageGrouping',
+  },
+};
 
-function updateTechnicalGroupingToggle(enabled) {
-  const btn = document.getElementById('technicalGroupingToggle');
-  if (!btn) return;
+function updateViewMenuItem(kind, enabled) {
+  const cfg = VIEW_TOGGLES[kind];
+  if (!cfg) return;
+  const item = document.getElementById(cfg.itemId);
+  if (!item) return;
   const active = !!enabled;
-  btn.style.display = conversationId ? 'inline-flex' : 'none';
-  btn.classList.toggle('active', active);
-  btn.setAttribute('aria-pressed', active ? 'true' : 'false');
-  const label = active ? t('groupTechnicalEnabledTitle') : t('groupTechnicalDisabledTitle');
-  btn.setAttribute('aria-label', label);
-  btn.title = label;
-  btn.innerHTML = active ? '&#x25A3;' : '&#x25A1;';
+  item.classList.toggle('active', active);
+  item.setAttribute('aria-checked', active ? 'true' : 'false');
 }
 
-function onTechnicalGroupingToggle() {
+function updateViewMenuVisibility() {
+  const wrap = document.getElementById('viewMenuWrap');
+  if (!wrap) return;
+  wrap.style.display = conversationId ? 'inline-flex' : 'none';
+  if (!conversationId) closeViewMenu();
+}
+
+function toggleViewMenu() {
+  const menu = document.getElementById('viewMenu');
+  const btn = document.getElementById('viewMenuToggle');
+  if (!menu) return;
+  const willOpen = !menu.classList.contains('open');
+  menu.classList.toggle('open', willOpen);
+  if (btn) btn.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+  if (willOpen) {
+    setTimeout(() => document.addEventListener('click', _viewMenuOutsideClick, { capture: true }), 0);
+  } else {
+    document.removeEventListener('click', _viewMenuOutsideClick, { capture: true });
+  }
+}
+
+function closeViewMenu() {
+  const menu = document.getElementById('viewMenu');
+  const btn = document.getElementById('viewMenuToggle');
+  if (menu) menu.classList.remove('open');
+  if (btn) btn.setAttribute('aria-expanded', 'false');
+  document.removeEventListener('click', _viewMenuOutsideClick, { capture: true });
+}
+
+function _viewMenuOutsideClick(ev) {
+  const wrap = document.getElementById('viewMenuWrap');
+  if (wrap && !wrap.contains(ev.target)) closeViewMenu();
+}
+
+function onViewGroupingToggle(kind) {
   if (!conversationId) return;
-  const btn = document.getElementById('technicalGroupingToggle');
-  const next = !window.PAWFLOW_GROUP_TECHNICAL_MESSAGES;
-  if (btn) btn.disabled = true;
+  const cfg = VIEW_TOGGLES[kind];
+  if (!cfg) return;
+  const item = document.getElementById(cfg.itemId);
+  const next = !window[cfg.flag];
+  if (item) item.classList.add('disabled');
   action$('set_param', {
     conversation_id: conversationId,
     scope: 'conversation',
-    key: TECHNICAL_GROUPING_PARAM,
+    key: cfg.paramKey,
     value: next ? 'true' : 'false',
   }).subscribe({
     next: data => {
@@ -202,13 +254,21 @@ function onTechnicalGroupingToggle() {
         addMsg('error', data.error);
         return;
       }
-      if (typeof setTechnicalMessageGrouping === 'function') setTechnicalMessageGrouping(next);
-      updateTechnicalGroupingToggle(next);
+      const setter = typeof window[cfg.setter] === 'function' ? window[cfg.setter] : null;
+      if (setter) setter(next);
+      else window[cfg.flag] = next;
+      updateViewMenuItem(kind, next);
       resumeConv(conversationId, true);
     },
     error: e => addMsg('error', t('failedToUpdateTechnicalGrouping', { error: e.message })),
-    complete: () => { if (btn) btn.disabled = false; },
+    complete: () => { if (item) item.classList.remove('disabled'); },
   });
+}
+
+// Kept for backwards-compatible callers (e.g. resetConv, _renderHistory).
+function updateTechnicalGroupingToggle(enabled) {
+  updateViewMenuVisibility();
+  updateViewMenuItem('technical', enabled);
 }
 
 // THE single canonical "load this conv" path. ONE function, period.
@@ -284,6 +344,7 @@ function renderEmptyState() {
 let _histTaskBlocks = {};
 
 function _getHistTaskBlock(taskId, agentName) {
+  if (!window.PAWFLOW_GROUP_TASK_MESSAGES) return null;
   if (_histTaskBlocks[taskId]) return _histTaskBlocks[taskId];
   const details = document.createElement('details');
   details.className = 'msg task-block';
@@ -316,10 +377,17 @@ function _renderHistory(data) {
     return;
   }
   const groupTechnicalMessages = !!data.group_technical_messages;
+  const groupTaskMessages = data.group_task_messages === undefined ? true : !!data.group_task_messages;
+  const groupDelegateMessages = data.group_delegate_messages === undefined ? true : !!data.group_delegate_messages;
   if (typeof setTechnicalMessageGrouping === 'function') {
     setTechnicalMessageGrouping(groupTechnicalMessages);
   }
-  updateTechnicalGroupingToggle(groupTechnicalMessages);
+  if (typeof setTaskMessageGrouping === 'function') setTaskMessageGrouping(groupTaskMessages);
+  if (typeof setDelegateMessageGrouping === 'function') setDelegateMessageGrouping(groupDelegateMessages);
+  updateViewMenuVisibility();
+  updateViewMenuItem('technical', groupTechnicalMessages);
+  updateViewMenuItem('task', groupTaskMessages);
+  updateViewMenuItem('delegate', groupDelegateMessages);
   _histTaskBlocks = {};  // reset on full render
   nicknameMap = data.nicknames || {};
   if (typeof suspendTechnicalMessageGrouping === 'function') suspendTechnicalMessageGrouping();
@@ -341,7 +409,7 @@ function _renderHistory(data) {
         const _iter = (m.source && m.source.task_iteration) || 1;
         const _blockKey = _taskId + '::iter' + _iter;
         const tb = _getHistTaskBlock(_blockKey, agentName);
-        tb.content.appendChild(el);
+        if (tb) tb.content.appendChild(el);
       }
     }
   } finally {
@@ -466,13 +534,18 @@ function loadMoreMessages() {
         let tb = _histTaskBlocks[tid];
         if (!tb) {
           tb = _getHistTaskBlock(tid, entries[0].agentName);
-          if (tb.el.parentNode) tb.el.parentNode.removeChild(tb.el);
-          frag.appendChild(tb.el);
+          if (tb && tb.el.parentNode) tb.el.parentNode.removeChild(tb.el);
+          if (tb) frag.appendChild(tb.el);
         }
-        // Insert all entries before the current first child (in order)
-        const anchor = tb.content.firstChild;
-        for (const entry of entries) {
-          tb.content.insertBefore(entry.el, anchor);
+        if (tb) {
+          // Insert all entries before the current first child (in order)
+          const anchor = tb.content.firstChild;
+          for (const entry of entries) {
+            tb.content.insertBefore(entry.el, anchor);
+          }
+        } else {
+          // Ungrouped: keep entries in the fragment as-is (chronological)
+          for (const entry of entries) frag.appendChild(entry.el);
         }
       }
       // Insert non-task elements

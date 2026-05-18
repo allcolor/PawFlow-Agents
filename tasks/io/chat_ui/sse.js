@@ -143,6 +143,7 @@ function connectSSE(cid, onReady, opts) {
 
   function _getTaskBlock(taskId, iteration, agentName) {
     if (!taskId) return null;
+    if (!window.PAWFLOW_GROUP_TASK_MESSAGES) return null;
     const blockKey = taskId + '::iter' + (iteration || 0);
     if (_taskBlocks[blockKey]) return _taskBlocks[blockKey];
     // First event for this iteration — create the block
@@ -1070,12 +1071,11 @@ function connectSSE(cid, onReady, opts) {
     const data = JSON.parse(e.data);
     if (data.task_id && data.from === 'user') {
       const block = _getTaskBlock(data.task_id, data.task_iteration, '');
-      if (block) {
-        const el = document.createElement('div');
-        el.className = 'msg user';
-        el.textContent = data.message;
-        block.content.appendChild(el);
-      }
+      const el = document.createElement('div');
+      el.className = 'msg user';
+      el.textContent = data.message;
+      if (block) block.content.appendChild(el);
+      else document.getElementById('messages').appendChild(el);
     }
   });
 
@@ -1181,10 +1181,10 @@ function connectSSE(cid, onReady, opts) {
       let taskResp = (data.response || '').replace(/\s*\[NO_PENDING_WORK\]/g, '').replace(/\s*\[RECHECK_IN:\d+\]/g, '').trim();
       taskResp = taskResp.replace(/^\[[^\]]+\]:\s*/, '');
       const block = _getTaskBlock(data.task_id, data.task_iteration, doneAgent);
-      if (taskResp && block) {
+      if (taskResp) {
         const src = data.source || {type: 'agent', name: doneAgent};
         const msgEl = addMsg('assistant', taskResp, {source: src, msg_id: data.msg_id || ''});
-        if (msgEl) block.content.appendChild(msgEl);
+        if (msgEl && block) block.content.appendChild(msgEl);
       }
       _finalizeTaskBlock(data.task_id, data.task_iteration, '\u2713 done', '#4ecdc4');
       clearStream(doneAgent);

@@ -3,6 +3,8 @@ import inspect
 import json
 from queue import Queue
 
+import pytest
+
 from core.llm_client import LLMClient
 from core.llm_providers.claude_code_interactive import _CCITurnCoordinator
 
@@ -128,6 +130,51 @@ def test_turn_coordinator_flushes_unstopped_text_at_stop_hook():
     assert resp.content == "partial"
     assert seen == ["partial"]
     assert turns == [("partial", [], "")]
+
+
+def test_turn_coordinator_waits_for_delayed_proxy_event_after_stop_hook(monkeypatch):
+    import core.llm_providers.claude_code_interactive as cci
+
+    monkeypatch.setattr(cci, "_POST_STOP_IDLE_DRAIN_SECONDS", 0)
+    monkeypatch.setattr(cci, "_NO_PROXY_EVENT_TIMEOUT_SECONDS", 60)
+
+    class DelayedEvents:
+        def __init__(self):
+            self.rows = [
+                {"type": "hook", "hook_event_name": "Stop", "input": {"hook_event_name": "Stop"}},
+                {},
+                {},
+                _sse("content_block_delta", {
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": {"type": "text_delta", "text": "late"},
+                }),
+                _sse("content_block_stop", {"type": "content_block_stop", "index": 0}),
+                {},
+            ]
+
+        def wait_event(self, session_token, timeout=None):
+            assert session_token == "sess"
+            if not self.rows:
+                return {}
+            return self.rows.pop(0)
+
+    resp = _CCITurnCoordinator(DelayedEvents(), "sess").run()
+
+    assert resp.content == "late"
+
+
+def test_turn_coordinator_times_out_when_stop_has_no_proxy_events(monkeypatch):
+    import core.llm_providers.claude_code_interactive as cci
+
+    monkeypatch.setattr(cci, "_NO_PROXY_EVENT_TIMEOUT_SECONDS", 0)
+
+    events = [
+        {"type": "hook", "hook_event_name": "Stop", "input": {"hook_event_name": "Stop"}},
+    ]
+
+    with pytest.raises(RuntimeError, match="no observed proxy events"):
+        _CCITurnCoordinator(_Events(events), "sess").run()
 
 
 def test_turn_coordinator_waits_for_proxy_message_stop_after_stop_hook():

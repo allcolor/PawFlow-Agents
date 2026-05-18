@@ -57,7 +57,8 @@ def test_gemini_system_prompt_prefers_pawflow_mcp_over_builtins():
     from core.llm_providers.gemini import LLMGeminiMixin
 
     assert LLMGeminiMixin._GEMINI_PAWFLOW_PREAMBLE == CLI_MCP_SYSTEM_PROMPT
-    assert "Do not call native/internal provider tools" in CLI_MCP_SYSTEM_PROMPT
+    assert "Native/internal provider tools are forbidden" in CLI_MCP_SYSTEM_PROMPT
+    assert "hidden native edits are an audit failure" in CLI_MCP_SYSTEM_PROMPT
     assert "list schemas first" in CLI_MCP_SYSTEM_PROMPT
     assert "use_tool" in CLI_MCP_SYSTEM_PROMPT
     assert "`/workspace`" in CLI_MCP_SYSTEM_PROMPT

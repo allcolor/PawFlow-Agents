@@ -313,6 +313,39 @@ def test_event_client_preserves_provider_payload_but_scrubs_wire(monkeypatch):
     assert len(sent[1]["event"]["content"]["sha256"]) == 64
 
 
+def test_event_client_retries_same_event_after_send_failure(monkeypatch):
+    monkeypatch.setenv("PAWFLOW_CCI_SESSION_TOKEN", "sess")
+    proxy = importlib.import_module("tools.cc_interactive_proxy")
+    client = proxy.EventClient("wss://events", "tok", "sess")
+    client.sock = object()
+    sends = []
+    connects = []
+
+    def fake_send(obj):
+        if not sends:
+            sends.append(("failed", obj))
+            raise ConnectionError("stale socket")
+        sends.append(("sent", obj))
+
+    def fake_connect():
+        connects.append(True)
+        client.sock = object()
+
+    monkeypatch.setattr(client, "_send", fake_send)
+    monkeypatch.setattr(client, "connect", fake_connect)
+
+    client.emit({"type": "sse", "event": "content_block_delta"})
+
+    assert connects == [True]
+    assert sends[0][1] == sends[1][1]
+    assert sends[1][0] == "sent"
+    assert sends[1][1]["type"] == "event"
+    assert sends[1][1]["event"]["type"] == "sse"
+    assert sends[1][1]["event"]["event"] == "content_block_delta"
+    assert sends[1][1]["event"]["session_token"] == "sess"
+    assert sends[1][1]["event"]["timestamp"] > 0
+
+
 def test_wire_logger_emits_full_body_with_redacted_sensitive_headers(monkeypatch):
     monkeypatch.setenv("PAWFLOW_CCI_SESSION_TOKEN", "sess")
     proxy = importlib.import_module("tools.cc_interactive_proxy")

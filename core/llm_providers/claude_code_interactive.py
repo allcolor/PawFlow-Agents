@@ -20,6 +20,7 @@ from tools.cc_interactive_filters import is_hidden_native_tool, normalize_observ
 
 
 _POST_STOP_IDLE_DRAIN_SECONDS = 0.25
+_NO_PROXY_EVENT_TIMEOUT_SECONDS = 15.0
 
 
 class _CCITurnCoordinator:
@@ -55,10 +56,12 @@ class _CCITurnCoordinator:
         self._stop_seen = False
         self._post_stop_last_event_at = 0.0
         self._turn_callback_sent = False
+        self._saw_proxy_event = False
 
     def run(self, abort_event=None):
         from core.llm_client import LLMResponse
 
+        started_at = time.time()
         done = False
         while not done:
             if abort_event is not None and abort_event.is_set():
@@ -66,7 +69,15 @@ class _CCITurnCoordinator:
             timeout = 0.05 if self._stop_seen else 0.25
             event = self.event_service.wait_event(self.session_token, timeout=timeout)
             if not event:
+                if not self._saw_proxy_event:
+                    waited = time.time() - started_at
+                    if waited >= _NO_PROXY_EVENT_TIMEOUT_SECONDS:
+                        raise RuntimeError(
+                            "Claude Code interactive produced no observed proxy "
+                            "events after tmux prompt submit")
                 if self._stop_seen:
+                    if not self._saw_proxy_event:
+                        continue
                     idle_for = time.time() - self._post_stop_last_event_at
                     if idle_for >= _POST_STOP_IDLE_DRAIN_SECONDS:
                         done = self._finish_turn_if_ready()
@@ -75,8 +86,10 @@ class _CCITurnCoordinator:
                 self._post_stop_last_event_at = time.time()
             etype = event.get("type", "")
             if etype == "request_error":
+                self._saw_proxy_event = True
                 raise RuntimeError(event.get("error", "CC interactive proxy request failed"))
             if etype == "request_start":
+                self._saw_proxy_event = True
                 request_id = event.get("request_id", "") or ""
                 path = event.get("path", "") or ""
                 if request_id and path.startswith("/v1/messages") and not event.get("ignore_reason"):
@@ -84,13 +97,20 @@ class _CCITurnCoordinator:
                     self._request_saw_tool_use.setdefault(request_id, False)
                 continue
             if etype == "request_stop":
+                self._saw_proxy_event = True
                 continue
             if etype == "response_ignored":
+                self._saw_proxy_event = True
+                continue
+            if etype == "response_start":
+                self._saw_proxy_event = True
                 continue
             if etype == "tool_use":
+                self._saw_proxy_event = True
                 self._emit_observed_tool_use(event)
                 continue
             if etype == "tool_result":
+                self._saw_proxy_event = True
                 self._emit_tool_result(event)
                 continue
             if etype == "hook":
@@ -106,6 +126,7 @@ class _CCITurnCoordinator:
                 continue
             if etype != "sse":
                 continue
+            self._saw_proxy_event = True
             name = event.get("event", "")
             payload = event.get("payload") or {}
             ptype = payload.get("type") or name

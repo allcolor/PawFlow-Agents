@@ -926,6 +926,21 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                         _hard_kill_for_context_compaction("item/started")
                         raise CCCompactDetected(
                             "Codex app-server contextCompaction detected")
+                    if item.get("type") in ("commandExecution", "fileChange", "dynamicToolCall"):
+                        if block_callback and turn_text_parts:
+                            _flush_text()
+                        tc_id = f"{stream_uniq}:{item.get('id') or uuid.uuid4().hex[:8]}"
+                        native_name = self._codex_app_native_tool_name(item)
+                        stream_tc_names[tc_id] = native_name
+                        if block_callback:
+                            block_callback("tool_use", {
+                                "id": tc_id,
+                                "name": native_name,
+                                "arguments": self._codex_app_native_tool_args(item),
+                                "thinking": "".join(thinking_parts).strip(),
+                            })
+                            thinking_parts.clear()
+                        continue
                     if item.get("type") == "mcpToolCall":
                         if block_callback and turn_text_parts:
                             _flush_text()
@@ -959,6 +974,20 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                         _hard_kill_for_context_compaction("item/completed")
                         raise CCCompactDetected(
                             "Codex app-server contextCompaction completed")
+                    if item.get("type") in ("commandExecution", "fileChange", "dynamicToolCall"):
+                        raw_id = item.get("id") or ""
+                        tc_id = f"{stream_uniq}:{raw_id}" if raw_id else ""
+                        if not tc_id:
+                            continue
+                        native_name = stream_tc_names.get(tc_id) or self._codex_app_native_tool_name(item)
+                        completed_tool_ids.add(tc_id)
+                        if block_callback:
+                            block_callback("tool_result", {
+                                "tc_id": tc_id,
+                                "tool": native_name,
+                                "result": self._codex_app_native_tool_result(item),
+                            })
+                        continue
                     if item.get("type") == "mcpToolCall":
                         raw_id = item.get("id") or ""
                         tc_id = f"{stream_uniq}:{raw_id}" if raw_id else ""
@@ -1320,3 +1349,51 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
         if item.get("status"):
             return str(item.get("status"))
         return ""
+
+    @staticmethod
+    def _codex_app_native_tool_name(item: dict) -> str:
+        item_type = item.get("type") or "nativeToolCall"
+        if item_type == "commandExecution":
+            return "codex_native_commandExecution"
+        if item_type == "fileChange":
+            return "codex_native_fileChange"
+        if item_type == "dynamicToolCall":
+            return f"codex_native_{item.get('tool') or 'dynamicToolCall'}"
+        return f"codex_native_{item_type}"
+
+    @staticmethod
+    def _codex_app_native_tool_args(item: dict) -> dict:
+        item_type = item.get("type") or ""
+        if item_type == "commandExecution":
+            return {
+                "command": item.get("command") or "",
+                "cwd": item.get("cwd") or "",
+                "source": item.get("source") or "",
+            }
+        if item_type == "fileChange":
+            return {"changes": item.get("changes") or []}
+        if item_type == "dynamicToolCall":
+            args = item.get("arguments")
+            return args if isinstance(args, dict) else {"arguments": args}
+        return {"item": item}
+
+    @staticmethod
+    def _codex_app_native_tool_result(item: dict) -> str:
+        item_type = item.get("type") or ""
+        if item_type == "commandExecution":
+            output = item.get("aggregatedOutput") or ""
+            prefix = "status=%s exit_code=%s" % (
+                item.get("status") or "", item.get("exitCode"))
+            return prefix + (("\n" + output) if output else "")
+        if item_type == "fileChange":
+            return json.dumps({
+                "status": item.get("status"),
+                "changes": item.get("changes") or [],
+            }, ensure_ascii=False, default=str)
+        if item_type == "dynamicToolCall":
+            return json.dumps({
+                "status": item.get("status"),
+                "success": item.get("success"),
+                "contentItems": item.get("contentItems"),
+            }, ensure_ascii=False, default=str)
+        return json.dumps(item, ensure_ascii=False, default=str)

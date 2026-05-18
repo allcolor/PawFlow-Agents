@@ -248,13 +248,27 @@ class EventClient:
         event.setdefault("container_id", CONTAINER_ID)
         event.setdefault("timestamp", time.time())
         with self.lock:
+            payload = _scrub(event) if event.get("type") == "wire" else event
             try:
-                payload = _scrub(event) if event.get("type") == "wire" else event
                 self._send({"type": "event", "event": payload})
+                return
             except Exception as exc:
                 _log(f"event send failed: {exc}")
                 try:
                     self.sock.close()
+                except Exception:
+                    pass
+                self.sock = None
+            try:
+                self.connect()
+                if self.sock:
+                    self._send({"type": "event", "event": payload})
+                    return
+            except Exception as exc:
+                _log(f"event retry failed after reconnect: {exc}")
+                try:
+                    if self.sock:
+                        self.sock.close()
                 except Exception:
                     pass
                 self.sock = None

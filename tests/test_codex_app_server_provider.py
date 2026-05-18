@@ -111,6 +111,44 @@ def test_codex_preamble_names_disabled_native_tools():
     assert "ApplyPatch" in preamble
     assert "exec_command" in preamble
     assert "PawFlow MCP tools" in preamble
+    assert "Native/internal provider tools are forbidden" in preamble
+    assert "There is no native fallback path" in preamble
+
+
+def test_codex_app_server_surfaces_native_tool_leaks():
+    cmd = {
+        "type": "commandExecution",
+        "id": "cmd-1",
+        "command": "git status",
+        "cwd": "/workspace",
+        "source": "agent",
+        "status": "completed",
+        "exitCode": 0,
+        "aggregatedOutput": "ok",
+    }
+    patch = {
+        "type": "fileChange",
+        "id": "patch-1",
+        "status": "completed",
+        "changes": [{"path": "a.py"}],
+    }
+    dyn = {
+        "type": "dynamicToolCall",
+        "id": "dyn-1",
+        "tool": "apply_patch",
+        "arguments": {"patch": "..."},
+        "status": "completed",
+        "success": True,
+        "contentItems": [],
+    }
+
+    assert LLMCodexAppServerMixin._codex_app_native_tool_name(cmd) == "codex_native_commandExecution"
+    assert LLMCodexAppServerMixin._codex_app_native_tool_args(cmd)["command"] == "git status"
+    assert "exit_code=0" in LLMCodexAppServerMixin._codex_app_native_tool_result(cmd)
+    assert LLMCodexAppServerMixin._codex_app_native_tool_name(patch) == "codex_native_fileChange"
+    assert "a.py" in LLMCodexAppServerMixin._codex_app_native_tool_result(patch)
+    assert LLMCodexAppServerMixin._codex_app_native_tool_name(dyn) == "codex_native_apply_patch"
+    assert LLMCodexAppServerMixin._codex_app_native_tool_args(dyn) == {"patch": "..."}
 
 
 def test_codex_app_server_container_dir_matches_pool_namespace():

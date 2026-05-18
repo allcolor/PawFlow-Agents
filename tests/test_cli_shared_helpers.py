@@ -74,6 +74,21 @@ class TestSummarizeToolCall(unittest.TestCase):
         )
         self.assertEqual(out, 'read(path="/f")')
 
+    def test_parallel_wrapper_preserves_inner_calls(self):
+        out = summarize_tool_call(
+            "multi_tool_use.parallel",
+            {"tool_uses": [
+                {"recipient_name": "mcp__pawflow__.use_tool",
+                 "parameters": {"tool_name": "read", "arguments": {"path": "/a"}}},
+                {"recipient_name": "mcp__pawflow__.use_tool",
+                 "parameters": {"tool_name": "grep", "arguments": {"pattern": "x"}}},
+            ]},
+        )
+        self.assertTrue(out.startswith("parallel("))
+        self.assertIn('read(path="/a")', out)
+        self.assertIn('grep(pattern="x")', out)
+        self.assertNotIn("tool_uses=<list", out)
+
     def test_quote_escaping(self):
         out = summarize_tool_call("t", {"s": 'he said "hi"'})
         # inner quotes are escaped so the wrapping quotes stay balanced

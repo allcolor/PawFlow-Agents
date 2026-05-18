@@ -23,6 +23,7 @@ from urllib.parse import urlparse
 # two free-text turns (commit SHAs, test results, file edits…).
 
 _TOOL_ARG_TRUNC = 120
+_TOOL_PARALLEL_ARG_TRUNC = 80
 _TOOL_RESULT_TRUNC = 400
 
 
@@ -34,8 +35,20 @@ def summarize_tool_call(name: str, args: Any) -> str:
     """
     if not name:
         name = "<tool>"
+    if name in ("multi_tool_use.parallel", "parallel") and isinstance(args, dict):
+        tool_uses = args.get("tool_uses") or []
+        if isinstance(tool_uses, list) and tool_uses:
+            rendered = []
+            for item in tool_uses:
+                if not isinstance(item, dict):
+                    continue
+                inner_name = item.get("recipient_name") or item.get("name") or "<tool>"
+                inner_args = item.get("parameters") or item.get("arguments") or {}
+                rendered.append(summarize_tool_call(inner_name, inner_args))
+            if rendered:
+                return "parallel(" + "; ".join(rendered) + ")"
     # Unwrap MCP bridge wrapper
-    if name in ("mcp__pawflow__use_tool", "use_tool") and isinstance(args, dict):
+    if name in ("mcp__pawflow__use_tool", "mcp__pawflow__.use_tool", "use_tool") and isinstance(args, dict):
         inner_name = args.get("tool_name") or args.get("name") or ""
         inner_args = args.get("arguments", {})
         if inner_name:
@@ -45,7 +58,8 @@ def summarize_tool_call(name: str, args: Any) -> str:
     parts: List[str] = []
     for k, v in args.items():
         if isinstance(v, str):
-            vs = v if len(v) <= _TOOL_ARG_TRUNC else v[:_TOOL_ARG_TRUNC - 3] + "..."
+            limit = _TOOL_PARALLEL_ARG_TRUNC if name in ("multi_tool_use.parallel", "parallel") else _TOOL_ARG_TRUNC
+            vs = v if len(v) <= limit else v[:limit - 3] + "..."
             # escape double quotes in value
             vs = vs.replace('"', '\\"')
             parts.append(f'{k}="{vs}"')

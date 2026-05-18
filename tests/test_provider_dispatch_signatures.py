@@ -287,6 +287,15 @@ def test_mcp_bridge_aliases_gemini_builtin_list_directory_to_list_dir():
     assert '"search": "grep"' not in alias_block
 
 
+def test_mcp_bridge_dispatches_tool_calls_concurrently():
+    src = Path("tools/mcp_bridge.py").read_text(encoding="utf-8")
+    assert "_respond_lock = threading.Lock()" in src
+    assert "self._pending = {}" in src
+    assert "name=\"mcp-bridge-ws-reader\"" in src
+    assert "target=_handle_tool_call" in src
+    assert "_do_request_serial" not in src
+
+
 def test_mcp_use_tool_preserves_registered_search_tool_name():
     name, args = unwrap_mcp_tool(
         "mcp__pawflow__use_tool",

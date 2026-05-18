@@ -205,7 +205,7 @@ class ConversationEventBus:
             pct_calc = (used / max_tokens) if max_tokens > 0 else 0.0
             pct_payload = float(data.get("context_pct") or 0.0)
         except (TypeError, ValueError):
-            logger.info(
+            logger.debug(
                 "[context-gauge:%s] send event=%s invalid payload used=%r max=%r pct=%r",
                 conversation_id[:8], event_type,
                 data.get("context_used"), data.get("context_max"),
@@ -215,7 +215,7 @@ class ConversationEventBus:
         src = data.get("source") if isinstance(data.get("source"), dict) else {}
         if not source:
             source = src.get("context_source") or src.get("provider") or src.get("type") or ""
-        logger.info(
+        logger.debug(
             "[context-gauge:%s] send event=%s agent=%s msg_id=%s "
             "formula=used/max used=%d max=%d pct_calc=%.4f pct_payload=%.4f "
             "source=%s cache_mode=%s message_count=%s updated_at=%s ts=%s live=%s",

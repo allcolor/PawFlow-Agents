@@ -43,7 +43,11 @@ class ToolRelayClient:
         self._conversation_id = conversation_id
         self._agent_name = agent_name
         self._sock = None
-        self._lock = threading.Lock()
+        self._send_lock = threading.Lock()
+        self._pending = {}
+        self._pending_lock = threading.Lock()
+        self._reader_thread = None
+        self._reader_error = None
 
     def connect(self):
         """Connect and register with the tool relay service."""
@@ -116,7 +120,39 @@ class ToolRelayClient:
         msg = json.loads(self._ws_recv())
         if msg.get("type") == "error":
             raise ConnectionError(f"Registration failed: {msg.get('message', '?')}")
+        self._start_reader()
         _log(f"Connected to {self._url}, registered as user={self._user_id}")
+
+    def _start_reader(self):
+        self._reader_error = None
+        def _reader():
+            try:
+                while self._sock:
+                    raw = self._ws_recv()
+                    msg = json.loads(raw)
+                    if msg.get("type") == "ping":
+                        with self._send_lock:
+                            self._ws_send(json.dumps({"type": "pong"}))
+                        continue
+                    rid = msg.get("request_id")
+                    if rid:
+                        with self._pending_lock:
+                            waiter = self._pending.get(rid)
+                        if waiter:
+                            waiter["msg"] = msg
+                            waiter["event"].set()
+                            continue
+                    _log(f"Unexpected WS message: {raw[:200]}")
+            except Exception as e:
+                self._reader_error = e
+                with self._pending_lock:
+                    pending = list(self._pending.values())
+                for waiter in pending:
+                    waiter["error"] = e
+                    waiter["event"].set()
+        self._reader_thread = threading.Thread(
+            target=_reader, daemon=True, name="mcp-bridge-ws-reader")
+        self._reader_thread.start()
 
     def _ensure_connected(self):
         """Reconnect if the connection is dead."""
@@ -124,6 +160,8 @@ class ToolRelayClient:
             try:
                 # Quick liveness check
                 self._sock.getpeername()
+                if self._reader_error:
+                    raise ConnectionError(f"reader stopped: {self._reader_error}")
                 return
             except Exception:
                 pass
@@ -168,19 +206,22 @@ class ToolRelayClient:
             _log(f"→ RELAY {method} {kwargs.get('tool_name','?')} "
                  f"args={json.dumps(kwargs.get('arguments',''))[:300]} "
                  f"[req={request_id}]")
-        with self._lock:
-            self._ws_send(json.dumps(payload))
-            while True:
-                raw = self._ws_recv()
-                msg = json.loads(raw)
-                if msg.get("type") == "ping":
-                    self._ws_send(json.dumps({"type": "pong"}))
-                    continue
-                if msg.get("request_id") == request_id:
-                    if msg.get("type") == "error":
-                        return f"Error: {msg.get('error', 'unknown')}"
-                    return msg.get("data")
-                _log(f"Unexpected WS message: {raw[:200]}")
+        waiter = {"event": threading.Event(), "msg": None, "error": None}
+        with self._pending_lock:
+            self._pending[request_id] = waiter
+        try:
+            with self._send_lock:
+                self._ws_send(json.dumps(payload))
+            waiter["event"].wait()
+            if waiter.get("error"):
+                raise ConnectionError(str(waiter["error"]))
+            msg = waiter.get("msg") or {}
+            if msg.get("type") == "error":
+                return f"Error: {msg.get('error', 'unknown')}"
+            return msg.get("data")
+        finally:
+            with self._pending_lock:
+                self._pending.pop(request_id, None)
 
     def close(self):
         if self._sock:
@@ -189,6 +230,12 @@ class ToolRelayClient:
             except Exception:
                 pass
             self._sock = None
+        with self._pending_lock:
+            pending = list(self._pending.values())
+            self._pending.clear()
+        for waiter in pending:
+            waiter["error"] = ConnectionError("Tool relay connection closed")
+            waiter["event"].set()
 
     # ── WS frame helpers (thin wrappers around tools.ws_frame) ──
 
@@ -209,14 +256,18 @@ class ToolRelayClient:
 
 # ── MCP stdio server ────────────────────────────────────────────
 
+_respond_lock = threading.Lock()
+
+
 def _respond(req_id, result=None, error=None):
     resp = {"jsonrpc": "2.0", "id": req_id}
     if error:
         resp["error"] = error
     else:
         resp["result"] = result
-    sys.stdout.write(json.dumps(resp) + "\n")
-    sys.stdout.flush()
+    with _respond_lock:
+        sys.stdout.write(json.dumps(resp) + "\n")
+        sys.stdout.flush()
 
 
 _log_file = None
@@ -392,6 +443,194 @@ def main():
     _log(f"MCP bridge ready: {len(mcp_tools)} tools, "
          f"relay={'connected' if client else 'unavailable'}")
 
+    def _handle_tool_call(req_id, params, raw_line):
+        name = params.get("name", "")
+        args = params.get("arguments", {})
+        if name == "use_tool" and isinstance(args, dict):
+            _inner = args.get("arguments", {})
+            if not _inner or _inner == {} or _inner == "{}":
+                _log(f"EMPTY INNER ARGS! raw stdin line: {raw_line[:1000]}")
+                _log(f"EMPTY INNER ARGS! parsed args: {json.dumps(args)[:500]}")
+        for _ in range(3):
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args)
+                except (json.JSONDecodeError, TypeError):
+                    break
+            else:
+                break
+        _log(f"CALL {name}({json.dumps(args)[:300]})")
+
+        if not client:
+            result = "Error: tool relay not connected"
+        elif name == "get_tool_schema":
+            tool_name = args.get("tool_name", "") if isinstance(args, dict) else ""
+            result = client.request("get_tool_schema", tool_name=tool_name) if tool_name else client.request("list_tools")
+            result = json.dumps(result, indent=2, ensure_ascii=False) if isinstance(result, (dict, list)) else str(result)
+        elif name == "use_tool":
+            if not isinstance(args, dict):
+                result = "Error: use_tool arguments must be a JSON object"
+            else:
+                tool_name = args.get("tool_name", "")
+                # Unwrap double-wrapped calls: use_tool(tool_name='use_tool', arguments={tool_name:X, arguments:Y}).
+                _unwrap_budget = 3
+                while (tool_name in ("mcp__pawflow__use_tool", "mcp_pawflow_use_tool", "use_tool")
+                       and _unwrap_budget > 0):
+                    _inner_args = args.get("arguments", {})
+                    if isinstance(_inner_args, str):
+                        try:
+                            _inner_args = json.loads(_inner_args)
+                        except (json.JSONDecodeError, TypeError):
+                            break
+                    if not isinstance(_inner_args, dict) or "tool_name" not in _inner_args:
+                        break
+                    _log(f"USE_TOOL unwrap double-wrap: {tool_name} -> {_inner_args.get('tool_name')}")
+                    args = _inner_args
+                    tool_name = args.get("tool_name", "")
+                    _unwrap_budget -= 1
+                # Map hallucinated/legacy tool names to real PawFlow names.
+                _TOOL_ALIASES = {
+                    "run_command": "bash", "shell": "bash", "execute": "bash",
+                    "run": "bash", "terminal": "bash", "exec": "bash",
+                    "find_files": "glob", "list_files": "glob",
+                    "list_directory": "list_dir", "ls": "list_dir",
+                    "read_file": "read", "cat": "read", "view": "read", "open": "read",
+                    "create_file": "write", "save": "write",
+                    "replace": "edit", "patch": "edit", "modify": "edit",
+                    "web_fetch": "fetch", "http": "fetch",
+                    "Task": "Agent", "Brief": "SendUserMessage",
+                    "KillShell": "TaskStop",
+                    "AgentOutputTool": "TaskOutput", "BashOutputTool": "TaskOutput",
+                }
+                # Case-insensitive alias lookup for provider/native-style names.
+                _alias_match = _TOOL_ALIASES.get(tool_name) or _TOOL_ALIASES.get(str(tool_name).lower())
+                if _alias_match:
+                    _log(f"USE_TOOL alias: {tool_name} -> {_alias_match}")
+                    tool_name = _alias_match
+                elif tool_name and tool_name[0].isupper() and tool_name.lower() != tool_name:
+                    _lower = tool_name.lower()
+                    _log(f"USE_TOOL lowering CC native: {tool_name} -> {_lower}")
+                    tool_name = _lower
+                if not tool_name or not str(tool_name).strip():
+                    _other_keys = [k for k in args.keys() if k != "tool_name"]
+                    result = (
+                        "Error: missing required parameter 'tool_name'. "
+                        "use_tool requires {\"tool_name\": \"<name>\", "
+                        "\"arguments\": {...}}. Got keys: "
+                        f"{sorted(args.keys()) or '[]'}."
+                        + (f" (Did you forget to wrap your call -- the keys "
+                           f"{_other_keys} look like tool arguments without "
+                           f"a tool_name?)" if _other_keys else "")
+                    )
+                    _log(f"USE_TOOL REJECTED: empty tool_name, args_keys={sorted(args.keys())}")
+                else:
+                    tool_args_raw = args.get("arguments")
+                    if tool_args_raw is None:
+                        harvested = {k: v for k, v in args.items() if k != "tool_name"}
+                        if harvested:
+                            _log(f"USE_TOOL {tool_name} harvested flat args (missing 'arguments' wrapper): keys={list(harvested.keys())}")
+                        tool_args_raw = harvested
+                    _log(f"USE_TOOL {tool_name} raw_type={type(tool_args_raw).__name__} raw={json.dumps(tool_args_raw, default=str)[:300]}")
+                    tool_args = tool_args_raw
+                    _decode_failed = False
+                    _decode_err = None
+                    _unwrap_passes = 0
+                    for _ in range(3):
+                        if not isinstance(tool_args, str):
+                            break
+                        try:
+                            tool_args = json.loads(tool_args)
+                            _unwrap_passes += 1
+                        except json.JSONDecodeError as _je:
+                            _decode_err = _je
+                            if "Extra data" in str(_je):
+                                try:
+                                    tool_args, _ = json.JSONDecoder().raw_decode(tool_args)
+                                    _unwrap_passes += 1
+                                    _decode_err = None
+                                    _log(f"USE_TOOL {tool_name} raw_decode OK (stripped trailing junk)")
+                                    continue
+                                except (json.JSONDecodeError, TypeError) as _je2:
+                                    _decode_err = _je2
+                                    _log(f"USE_TOOL {tool_name} raw_decode also FAILED: {_je2}")
+                                    _decode_failed = True
+                                    break
+                            msg = str(_je)
+                            trunc_like = (
+                                "Expecting ',' delimiter" in msg
+                                or "Expecting property name" in msg
+                                or "Expecting value" in msg
+                                or "Unterminated string" in msg
+                            )
+                            at_end = getattr(_je, "pos", -1) >= len(tool_args) - 4
+                            if trunc_like and at_end:
+                                patched = _shared_autoclose_truncated_json(tool_args)
+                                if patched != tool_args:
+                                    try:
+                                        tool_args = json.loads(patched)
+                                        _unwrap_passes += 1
+                                        _decode_err = None
+                                        _log(f"USE_TOOL {tool_name} truncation-repair OK")
+                                        continue
+                                    except (json.JSONDecodeError, TypeError) as _je3:
+                                        _decode_err = _je3
+                                        _log(f"USE_TOOL {tool_name} truncation-repair FAILED: {_je3}")
+                            _log(f"USE_TOOL {tool_name} JSON decode FAILED: {_je} value={str(tool_args)[:200]}")
+                            _decode_failed = True
+                            break
+                        except TypeError as _je:
+                            _decode_err = _je
+                            _log(f"USE_TOOL {tool_name} JSON decode TypeError: {_je}")
+                            _decode_failed = True
+                            break
+                    if _unwrap_passes > 0:
+                        _log(f"USE_TOOL {tool_name} unwrapped {_unwrap_passes} pass(es): {type(tool_args_raw).__name__} -> {type(tool_args).__name__}")
+                    if _decode_failed and tool_args_raw and tool_args_raw != {} and tool_args_raw != "{}":
+                        raw_str = tool_args_raw if isinstance(tool_args_raw, str) else str(tool_args_raw)
+                        _log(f"USE_TOOL {tool_name} DECODE FAIL (forensic): raw_len={len(raw_str)} raw={raw_str!r}")
+                        detail = str(_decode_err) if _decode_err else "unknown JSON error"
+                        window = ""
+                        pos = getattr(_decode_err, "pos", None)
+                        if isinstance(pos, int) and 0 <= pos <= len(raw_str):
+                            lo = max(0, pos - 120)
+                            hi = min(len(raw_str), pos + 120)
+                            prefix = "..." if lo > 0 else ""
+                            suffix = "..." if hi < len(raw_str) else ""
+                            window = f" Window around char {pos}: {prefix}{raw_str[lo:hi]!r}{suffix}"
+                        result = (
+                            f"Error: failed to decode arguments for {tool_name}. "
+                            f"Arguments must be a JSON object (dict), not a JSON-encoded string. "
+                            f"Parse error: {detail}.{window} Fix: resend with `arguments` "
+                            f"as a literal dict, e.g. {{\"tool_name\": \"edit\", "
+                            f"\"arguments\": {{\"path\": ..., \"old_string\": ...}}}} -- "
+                            f"NOT a quoted string of JSON."
+                        )
+                    elif isinstance(tool_args, str):
+                        _log(f"USE_TOOL {tool_name} args still string after unwrap: {tool_args[:200]}")
+                        result = f"Error: arguments for {tool_name} must be a JSON object, got string: {tool_args[:200]}"
+                    else:
+                        _log(f"USE_TOOL {tool_name} final_type={type(tool_args).__name__} final={json.dumps(tool_args, default=str)[:300]}")
+                        result = client.request("execute_tool", tool_name=tool_name, arguments=tool_args)
+                        if result is None or result == "":
+                            result = "(no output)"
+        else:
+            result = f"Error: unknown tool '{name}'"
+
+        _log(f"RESULT {name}: {str(result)[:100]}")
+        if isinstance(result, list):
+            content = result
+            is_error = False
+        else:
+            result_str = str(result)
+            try:
+                from core.sanitization import sanitize_unicode
+                result_str = sanitize_unicode(result_str)
+            except ImportError:
+                pass
+            content = [{"type": "text", "text": result_str}]
+            is_error = result_str.startswith("Error:")
+        _respond(req_id, {"content": content, "isError": is_error})
+
     # MCP stdio loop
     for line in sys.stdin:
         line = line.strip()
@@ -424,267 +663,10 @@ def main():
         elif method == "tools/list":
             _respond(req_id, {"tools": mcp_tools})
         elif method == "tools/call":
-            name = params.get("name", "")
-            args = params.get("arguments", {})
-            # Log the RAW stdin line for diagnosis of empty args
-            if name == "use_tool" and isinstance(args, dict):
-                _inner = args.get("arguments", {})
-                if not _inner or _inner == {} or _inner == "{}":
-                    _log(f"EMPTY INNER ARGS! raw stdin line: {line[:1000]}")
-                    _log(f"EMPTY INNER ARGS! parsed args: {json.dumps(args)[:500]}")
-            # Robust: LLM sometimes double-encodes arguments as a JSON string
-            for _ in range(3):
-                if isinstance(args, str):
-                    try:
-                        args = json.loads(args)
-                    except (json.JSONDecodeError, TypeError):
-                        break
-                else:
-                    break
-            _log(f"CALL {name}({json.dumps(args)[:300]})")
-
-            if not client:
-                result = "Error: tool relay not connected"
-            elif name == "get_tool_schema":
-                tool_name = args.get("tool_name", "")
-                if tool_name:
-                    result = client.request("get_tool_schema",
-                                            tool_name=tool_name)
-                else:
-                    result = client.request("list_tools")
-                if isinstance(result, (dict, list)):
-                    result = json.dumps(result, indent=2, ensure_ascii=False)
-                else:
-                    result = str(result)
-            elif name == "use_tool":
-                tool_name = args.get("tool_name", "")
-                # Unwrap double-wrapped calls: use_tool(tool_name='use_tool', arguments={tool_name:X, arguments:Y})
-                # Symmetric to summarize_tool_call in cli_shared.py — if the LLM
-                # nested the bridge wrapper inside itself, peel until we hit a
-                # real tool. Bounded to prevent pathological loops.
-                _unwrap_budget = 3
-                while (tool_name in ("mcp__pawflow__use_tool", "mcp_pawflow_use_tool", "use_tool")
-                       and _unwrap_budget > 0):
-                    _inner_args = args.get("arguments", {})
-                    if isinstance(_inner_args, str):
-                        try:
-                            _inner_args = json.loads(_inner_args)
-                        except (json.JSONDecodeError, TypeError):
-                            break
-                    if not isinstance(_inner_args, dict) or "tool_name" not in _inner_args:
-                        break
-                    _log(f"USE_TOOL unwrap double-wrap: {tool_name} → {_inner_args.get('tool_name')}")
-                    args = _inner_args
-                    tool_name = args.get("tool_name", "")
-                    _unwrap_budget -= 1
-                # Map hallucinated/legacy tool names to real PawFlow names
-                _TOOL_ALIASES = {
-                    # CC hallucinations (common LLM mistakes)
-                    "run_command": "bash", "shell": "bash", "execute": "bash",
-                    "run": "bash", "terminal": "bash", "exec": "bash",
-                    "find_files": "glob", "list_files": "glob",
-                    "list_directory": "list_dir", "ls": "list_dir",
-                    "read_file": "read", "cat": "read", "view": "read", "open": "read",
-                    "create_file": "write", "save": "write",
-                    "replace": "edit", "patch": "edit", "modify": "edit",
-                    "web_fetch": "fetch", "http": "fetch",
-                    # CC official legacy aliases
-                    "Task": "Agent", "Brief": "SendUserMessage",
-                    "KillShell": "TaskStop",
-                    "AgentOutputTool": "TaskOutput", "BashOutputTool": "TaskOutput",
-                }
-                # Case-insensitive alias lookup (CC uses Bash/Read/Edit/Write/Glob/Grep)
-                _alias_match = _TOOL_ALIASES.get(tool_name) or _TOOL_ALIASES.get(tool_name.lower())
-                if _alias_match:
-                    _log(f"USE_TOOL alias: {tool_name} → {_alias_match}")
-                    tool_name = _alias_match
-                elif tool_name and tool_name[0].isupper() and tool_name.lower() != tool_name:
-                    # CC native tool names (Bash/Read/Edit/Write/Glob/Grep/WebFetch/WebSearch)
-                    _lower = tool_name.lower()
-                    _log(f"USE_TOOL lowering CC native: {tool_name} → {_lower}")
-                    tool_name = _lower
-                # Reject empty tool_name with a clear, actionable message
-                # instead of letting it propagate to the relay (which used to
-                # respond "unknown tool ''" -- ambiguous: the LLM couldn't
-                # tell whether it had supplied a wrong name or none at all).
-                # Required by schema; checked here as defense-in-depth.
-                if not tool_name or not str(tool_name).strip():
-                    _other_keys = [k for k in args.keys() if k != "tool_name"]
-                    result = (
-                        "Error: missing required parameter 'tool_name'. "
-                        "use_tool requires {\"tool_name\": \"<name>\", "
-                        "\"arguments\": {...}}. Got keys: "
-                        f"{sorted(args.keys()) or '[]'}."
-                        + (f" (Did you forget to wrap your call -- the keys "
-                           f"{_other_keys} look like tool arguments without "
-                           f"a tool_name?)" if _other_keys else "")
-                    )
-                    _log(f"USE_TOOL REJECTED: empty tool_name, args_keys={sorted(args.keys())}")
-                else:
-                    tool_args_raw = args.get("arguments")
-                    # Tolerance: LLM sometimes forgets the "arguments" wrapper
-                    # and places the tool args flat next to tool_name.
-                    # Harvest them so the dispatch doesn't bomb with
-                    # misleading "X is required" errors. Symmetric with the
-                    # UI's flat-args unwrap.
-                    if tool_args_raw is None:
-                        _harvested = {k: v for k, v in args.items() if k != "tool_name"}
-                        if _harvested:
-                            _log(f"USE_TOOL {tool_name} harvested flat args (missing 'arguments' wrapper): keys={list(_harvested.keys())}")
-                        tool_args_raw = _harvested
-                    _log(f"USE_TOOL {tool_name} raw_type={type(tool_args_raw).__name__} raw={json.dumps(tool_args_raw, default=str)[:300]}")
-                    # Unwrap JSON string arguments (CC sometimes double/triple-encodes)
-                    tool_args = tool_args_raw
-                    _decode_failed = False
-                    _decode_err = None  # last json exception — surfaced in the reply
-                    _unwrap_passes = 0
-                    for _ in range(3):
-                        if not isinstance(tool_args, str):
-                            break
-                        try:
-                            _prev = tool_args
-                            tool_args = json.loads(tool_args)
-                            _unwrap_passes += 1
-                        except json.JSONDecodeError as _je:
-                            _decode_err = _je
-                            # "Extra data" = valid JSON followed by junk (e.g. CC appends </invoke>)
-                            # Use raw_decode to parse only the first JSON object
-                            if "Extra data" in str(_je):
-                                try:
-                                    tool_args, _ = json.JSONDecoder().raw_decode(tool_args)
-                                    _unwrap_passes += 1
-                                    _decode_err = None
-                                    _log(f"USE_TOOL {tool_name} raw_decode OK (stripped trailing junk)")
-                                except (json.JSONDecodeError, TypeError) as _je2:
-                                    _decode_err = _je2
-                                    _log(f"USE_TOOL {tool_name} raw_decode also FAILED: {_je2}")
-                                    _decode_failed = True
-                                    break
-                            else:
-                                # Targeted truncation repair: the LLM
-                                # sometimes emits `arguments` as a
-                                # stringified JSON and forgets 1-2
-                                # closing } / ]. Only kicks in when the
-                                # error position is within a few chars
-                                # of EOF AND the error is the classic
-                                # "Expecting ',' / property / value"
-                                # family — i.e. parser ran out of input
-                                # mid-object. Never rewrites content.
-                                # (The old json_repair fallback was
-                                # removed because it mangled JS ternary
-                                # patterns. See `_autoclose_truncated_json`
-                                # for the narrow replacement.)
-                                _msg = str(_je)
-                                _trunc_like = (
-                                    "Expecting ',' delimiter" in _msg
-                                    or "Expecting property name" in _msg
-                                    or "Expecting value" in _msg
-                                    or "Unterminated string" in _msg
-                                )
-                                _at_end = (
-                                    getattr(_je, "pos", -1) >= len(tool_args) - 4)
-                                if _trunc_like and _at_end:
-                                    _patched = _shared_autoclose_truncated_json(tool_args)
-                                    if _patched != tool_args:
-                                        try:
-                                            tool_args = json.loads(_patched)
-                                            _unwrap_passes += 1
-                                            _decode_err = None
-                                            _log(
-                                                f"USE_TOOL {tool_name} "
-                                                f"truncation-repair OK "
-                                                f"(appended {len(_patched) - len(tool_args if isinstance(tool_args, str) else _patched)} "
-                                                f"closer char(s))")
-                                            continue
-                                        except (json.JSONDecodeError, TypeError) as _je3:
-                                            _decode_err = _je3
-                                            _log(
-                                                f"USE_TOOL {tool_name} "
-                                                f"truncation-repair FAILED: "
-                                                f"{_je3}")
-                                _log(f"USE_TOOL {tool_name} JSON decode FAILED: "
-                                     f"{_je} value={str(tool_args)[:200]}")
-                                _decode_failed = True
-                                break
-                        except TypeError as _je:
-                            _decode_err = _je
-                            _log(f"USE_TOOL {tool_name} JSON decode TypeError: {_je}")
-                            _decode_failed = True
-                            break
-                    if _unwrap_passes > 0:
-                        _log(f"USE_TOOL {tool_name} unwrapped {_unwrap_passes} pass(es): {type(tool_args_raw).__name__} \u2192 {type(tool_args).__name__}")
-                    # Decode failed on non-empty input \u2192 error (don't silently send {})
-                    if _decode_failed and tool_args_raw and tool_args_raw != {} and tool_args_raw != "{}":
-                        # Forensic: full raw dump (no truncation) to the
-                        # bridge log — helps diagnose whether the issue
-                        # is an LLM-produced malformed escape, a CC
-                        # mid-stream cut, or something we could fix.
-                        _raw_str = tool_args_raw if isinstance(tool_args_raw, str) else str(tool_args_raw)
-                        _log(f"USE_TOOL {tool_name} DECODE FAIL (forensic): "
-                             f"raw_len={len(_raw_str)} raw={_raw_str!r}")
-                        # Surface exact failure position + ±120-char window
-                        # so the LLM can see WHICH char broke the escaping
-                        # and doesn't just retry blind. json.JSONDecodeError
-                        # carries .pos; we render a small neighborhood.
-                        _detail = str(_decode_err) if _decode_err else "unknown JSON error"
-                        _window = ""
-                        _pos = getattr(_decode_err, "pos", None)
-                        if isinstance(_pos, int) and 0 <= _pos <= len(_raw_str):
-                            _lo = max(0, _pos - 120)
-                            _hi = min(len(_raw_str), _pos + 120)
-                            _prefix = "…" if _lo > 0 else ""
-                            _suffix = "…" if _hi < len(_raw_str) else ""
-                            _window = (f" Window around char {_pos}: "
-                                       f"{_prefix}{_raw_str[_lo:_hi]!r}{_suffix}")
-                        result = (
-                            f"Error: failed to decode arguments for {tool_name}. "
-                            f"Arguments must be a JSON object (dict), not a "
-                            f"JSON-encoded string. Parse error: {_detail}.{_window} "
-                            f"Fix: resend with `arguments` as a literal dict, "
-                            f"e.g. {{\"tool_name\": \"edit\", \"arguments\": "
-                            f"{{\"path\": ..., \"old_string\": ...}}}} — NOT "
-                            f"a quoted string of JSON. If the payload contains "
-                            f"code with newlines/quotes, escape them once "
-                            f"(\\\\n, \\\\\\\"); do NOT wrap the whole value in a string."
-                        )
-                    # Still a string after unwrap \u2192 same problem
-                    elif isinstance(tool_args, str):
-                        _log(f"USE_TOOL {tool_name} args still string after unwrap: {tool_args[:200]}")
-                        result = (f"Error: arguments for {tool_name} must be a JSON object, "
-                                  f"got string: {tool_args[:200]}")
-                    else:
-                        _log(f"USE_TOOL {tool_name} final_type={type(tool_args).__name__} final={json.dumps(tool_args, default=str)[:300]}")
-                        # Server returns either a plain string OR a pre-built
-                        # list of MCP content blocks (for tools that emit
-                        # __image_data__: markers). The bridge stays dumb and
-                        # forwards whatever shape the server hands back.
-                        result = client.request("execute_tool",
-                                                tool_name=tool_name,
-                                                arguments=tool_args)
-                        if result is None or result == "":
-                            result = "(no output)"
-            else:
-                result = f"Error: unknown tool '{name}'"
-
-            _log(f"RESULT {name}: {str(result)[:100]}")
-            # Server-side splitting wins: if it's already MCP content blocks,
-            # forward as-is. Otherwise treat as plain text.
-            if isinstance(result, list):
-                content = result
-                is_error = False
-            else:
-                result_str = str(result)
-                try:
-                    from core.sanitization import sanitize_unicode
-                    result_str = sanitize_unicode(result_str)
-                except ImportError:
-                    pass  # core.sanitization not available in Docker container
-                content = [{"type": "text", "text": result_str}]
-                is_error = result_str.startswith("Error:")
-            _respond(req_id, {
-                "content": content,
-                "isError": is_error,
-            })
+            threading.Thread(
+                target=_handle_tool_call, args=(req_id, params, line),
+                daemon=True, name=f"mcp-call-{req_id}").start()
+            continue
         else:
             _respond(req_id, None,
                      error={"code": -32601, "message": f"Unknown method: {method}"})

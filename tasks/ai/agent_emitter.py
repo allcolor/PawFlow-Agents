@@ -95,6 +95,28 @@ class StreamEmitter(AgentEmitter):
         self._last_token_time = time.time()
         self._heartbeat_lock = threading.Lock()
         self._active_heartbeats = []
+        self._context_usage_input_sig = None
+        self._context_usage_payload_sig = None
+        self._context_usage_persist_sig = None
+
+    def _context_usage_input_signature(self):
+        messages = self.ctx.get("messages") or []
+        if not messages:
+            return (0, "", "", 0, int(self.ctx.get("max_context_size", 0) or 0))
+        last = messages[-1]
+        content = getattr(last, "content", "")
+        if not isinstance(content, str):
+            try:
+                content = json.dumps(content, sort_keys=True, ensure_ascii=False)
+            except Exception:
+                content = str(content)
+        return (
+            len(messages),
+            getattr(last, "role", ""),
+            getattr(last, "msg_id", "") or getattr(last, "id", ""),
+            len(content or ""),
+            int(self.ctx.get("max_context_size", 0) or 0),
+        )
 
     def _stop_all_heartbeats(self) -> None:
         with self._heartbeat_lock:
@@ -156,16 +178,38 @@ class StreamEmitter(AgentEmitter):
         return payload
 
     def _publish_context_usage(self, reason: str = "") -> None:
+        input_sig = self._context_usage_input_signature()
+        if reason == "heartbeat" and input_sig == self._context_usage_input_sig:
+            return
         payload = self._context_usage_payload(reason)
         if not payload:
             return
+        payload_sig = (
+            int(payload.get("context_used", 0) or 0),
+            int(payload.get("context_max", 0) or 0),
+            int(payload.get("context_message_count", 0) or 0),
+            payload.get("context_cache_mode") or "",
+        )
+        if reason == "heartbeat" and payload_sig == self._context_usage_payload_sig:
+            self._context_usage_input_sig = input_sig
+            return
+        self._context_usage_input_sig = input_sig
+        self._context_usage_payload_sig = payload_sig
         try:
-            from tasks.ai.context_usage import persist_context_usage
-            persist_context_usage(
-                self.event_cid, self._agent_name,
-                payload.get("context_cache") or {})
+            if payload_sig != self._context_usage_persist_sig:
+                usage = copy.deepcopy(payload.get("context_cache") or {})
+                self._context_usage_persist_sig = payload_sig
+                def _persist():
+                    try:
+                        from tasks.ai.context_usage import persist_context_usage
+                        persist_context_usage(self.event_cid, self._agent_name, usage)
+                    except Exception:
+                        logger.debug("stream context_usage persist failed", exc_info=True)
+                threading.Thread(
+                    target=_persist, daemon=True,
+                    name=f"ctx-gauge-persist-{self.event_cid[:8]}").start()
         except Exception:
-            logger.debug("stream context_usage persist failed", exc_info=True)
+            logger.debug("stream context_usage persist scheduling failed", exc_info=True)
         self._emit("message_meta", payload)
 
     # ── Lifecycle ──────────────────────────────────────────────────────

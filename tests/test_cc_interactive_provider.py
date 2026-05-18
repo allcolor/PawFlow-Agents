@@ -689,6 +689,8 @@ def test_initial_interactive_prompt_writes_context_file(tmp_path):
     assert "Latest turn to answer now:" in prompt
     assert "latest request" in prompt
     assert "newest and most important request is at the END" in prompt
+    assert "After that read, use PawFlow MCP tools" in prompt
+    assert "use PawFlow MCP tools first" in body
     assert "compact summary" not in prompt
 
 

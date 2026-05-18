@@ -676,6 +676,7 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
         self._had_preempts_this_turn = False
         self._codex_app_preempt_pending = 0
         self._codex_app_sent_preempt_texts = []
+        native_tool_hint_sent = False
 
         def _flush_text():
             nonlocal turn_text_parts, turn_text_is_final
@@ -709,6 +710,35 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
             if existing and (text in existing or existing in text):
                 return
             thinking_parts.append(text)
+
+        def _send_native_tool_hint(native_name: str) -> None:
+            nonlocal native_tool_hint_sent
+            if native_tool_hint_sent or not proc or not thread_id or not turn_id:
+                return
+            native_tool_hint_sent = True
+            hint = (
+                "PawFlow internal efficiency hint: when you need filesystem, "
+                "search, shell, edit, or patch operations, prefer PawFlow MCP "
+                "tools through get_tool_schema/use_tool. Native Codex tools "
+                "work here, but they are less efficient and less integrated "
+                "with PawFlow progress, cancellation, and relay-aware tooling."
+            )
+            try:
+                self._codex_app_send(proc, {
+                    "method": "turn/steer",
+                    "id": self._codex_app_next_id(),
+                    "params": {
+                        "threadId": thread_id,
+                        "expectedTurnId": turn_id,
+                        "input": self._codex_app_input_items(
+                            hint, [], workdir, container_dir),
+                    },
+                })
+                logger.info(
+                    "[codex-app] steered native-tool MCP hint after %s",
+                    native_name)
+            except Exception as exc:
+                logger.debug("[codex-app] native-tool hint steer failed: %s", exc)
 
         turn_failed = False
         compact_hard_killed = False
@@ -931,6 +961,7 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                             _flush_text()
                         tc_id = f"{stream_uniq}:{item.get('id') or uuid.uuid4().hex[:8]}"
                         native_name = self._codex_app_native_tool_name(item)
+                        _send_native_tool_hint(native_name)
                         stream_tc_names[tc_id] = native_name
                         if block_callback:
                             block_callback("tool_use", {

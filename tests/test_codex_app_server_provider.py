@@ -151,6 +151,14 @@ def test_codex_app_server_surfaces_native_tool_leaks():
     assert LLMCodexAppServerMixin._codex_app_native_tool_args(dyn) == {"patch": "..."}
 
 
+def test_codex_app_server_steers_mcp_hint_after_native_tool():
+    src = inspect.getsource(LLMCodexAppServerMixin._stream_codex_app_server)
+    assert "native_tool_hint_sent = False" in src
+    assert "PawFlow internal efficiency hint" in src
+    assert '"method": "turn/steer"' in src
+    assert "_send_native_tool_hint(native_name)" in src
+
+
 def test_codex_app_server_container_dir_matches_pool_namespace():
     from core.llm_providers.codex_session import _get_sessions_base
 

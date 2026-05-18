@@ -317,7 +317,7 @@ class TestConversationEventBus(unittest.TestCase):
             "context_message_count": 12,
             "updated_at": 123.4,
         }
-        with self.assertLogs("core.conversation_event_bus", level="INFO") as logs:
+        with self.assertLogs("core.conversation_event_bus", level="DEBUG") as logs:
             bus.publish_event("conv123456", "message_meta", payload)
         text = "\n".join(logs.output)
         assert "[context-gauge:conv1234] send event=message_meta" in text

@@ -24,11 +24,15 @@ import subprocess
 import threading
 import time
 import uuid
+import logging
 
 from core.cc_interactive_certs import generate_leaf, ca_private_key_is_host_only
 from core.docker_utils import docker_cmd, get_host_ip, get_server_id, to_host_path, translate_path
 from core.llm_providers.claude_code_session import ClaudeCodeSessionMixin
 import core.paths as _paths
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -63,6 +67,10 @@ class InteractiveClaudeCodePool:
         self._lock = threading.RLock()
         self._sessions: Dict[tuple[str, str, str, str], InteractiveContainer] = {}
         self._disallowed_builtin_tools = ClaudeCodeSessionMixin._DISALLOWED_BUILTIN_TOOLS
+        self._sweeper_started = False
+        self._sweeper_stop = threading.Event()
+        self._tick_seconds = 60
+        self._idle_ttl = float(os.environ.get("PAWFLOW_CCI_IDLE_TTL_SECONDS", "1800"))
 
     @staticmethod
     def _safe(value: str) -> str:
@@ -85,6 +93,8 @@ class InteractiveClaudeCodePool:
 
     def ensure_started(self, client, model: str, user_id: str,
                        conversation_id: str, agent_name: str) -> InteractiveContainer:
+        idle_ttl = getattr(client, "timeout", None)
+        self.ensure_sweeper(idle_ttl_seconds=int(idle_ttl) if idle_ttl else None)
         service_id = getattr(client, "_agent_service", "") or ""
         key = (user_id, conversation_id, agent_name, service_id)
         with self._lock:
@@ -99,6 +109,10 @@ class InteractiveClaudeCodePool:
         with self._lock:
             self._sessions[key] = state
         return state
+
+    def touch(self, state: InteractiveContainer) -> None:
+        with self._lock:
+            state.last_used = time.time()
 
     def find_session(self, user_id: str, conversation_id: str,
                      agent_name: str, service_id: str = "") -> Optional[InteractiveContainer]:
@@ -261,8 +275,57 @@ class InteractiveClaudeCodePool:
             state = self._sessions.pop(key, None)
         if not state:
             return False
-        subprocess.run(docker_cmd() + ["rm", "-f", state.name], capture_output=True, timeout=15)
+        self._kill_container(state.name)
         return True
+
+    def ensure_sweeper(self, tick_seconds: int = 60,
+                       idle_ttl_seconds: Optional[int] = None) -> None:
+        if idle_ttl_seconds and idle_ttl_seconds > 0:
+            self._idle_ttl = float(idle_ttl_seconds)
+        self._tick_seconds = max(1, int(tick_seconds or 60))
+        if self._sweeper_started:
+            return
+        self._sweeper_started = True
+
+        def _loop():
+            while not self._sweeper_stop.wait(self._tick_seconds):
+                try:
+                    self.sweep_idle()
+                except Exception:
+                    logger.debug("[cci-live] sweeper tick failed", exc_info=True)
+
+        threading.Thread(target=_loop, daemon=True, name="cci-live-sweeper").start()
+
+    def sweep_idle(self, idle_ttl_seconds: Optional[float] = None) -> int:
+        ttl = float(idle_ttl_seconds if idle_ttl_seconds is not None else self._idle_ttl)
+        cutoff = time.time() - ttl
+        to_kill: list[tuple[str, str]] = []
+        with self._lock:
+            for key, state in list(self._sessions.items()):
+                reason = ""
+                if not self._is_alive(state.name):
+                    reason = "dead_container"
+                elif state.last_used < cutoff:
+                    reason = f"idle>{int(ttl)}s"
+                if reason:
+                    self._sessions.pop(key, None)
+                    to_kill.append((state.name, reason))
+        for name, reason in to_kill:
+            logger.info("[cci-live] evict %s (%s)", name, reason)
+            self._kill_container(name)
+        return len(to_kill)
+
+    def shutdown_all(self) -> None:
+        self._sweeper_stop.set()
+        with self._lock:
+            names = [state.name for state in self._sessions.values()]
+            self._sessions.clear()
+        for name in names:
+            self._kill_container(name)
+
+    @staticmethod
+    def _kill_container(name: str) -> None:
+        subprocess.run(docker_cmd() + ["rm", "-f", name], capture_output=True, timeout=15)
 
     def _start_new(self, client, model: str, user_id: str, conversation_id: str,
                    agent_name: str, key: tuple[str, str, str, str]) -> InteractiveContainer:

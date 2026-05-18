@@ -58,6 +58,7 @@ class _CCITurnCoordinator:
                  turn_callback=None):
         self.event_service = event_service
         self.session_token = session_token
+        self.touch_callback = None
         self.callback = callback
         self.thinking_callback = thinking_callback
         self.block_callback = block_callback
@@ -111,6 +112,8 @@ class _CCITurnCoordinator:
                     if idle_for >= _POST_STOP_IDLE_DRAIN_SECONDS:
                         done = self._finish_turn_if_ready()
                 continue
+            if self.touch_callback:
+                self.touch_callback()
             if self._stop_seen:
                 self._post_stop_last_event_at = time.time()
             etype = event.get("type", "")
@@ -490,6 +493,7 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
 
         pool = InteractiveClaudeCodePool.instance()
         state = pool.ensure_started(self, model or "", user_id, conversation_id, agent_name)
+        pool.touch(state)
         self._cci_active_user_id = user_id
         self._cci_active_conversation_id = conversation_id
         self._cci_active_agent_name = agent_name
@@ -512,6 +516,7 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
             event_service, state.session_token, callback=callback,
             thinking_callback=thinking_callback, block_callback=block_callback,
             turn_callback=turn_callback)
+        coord.touch_callback = lambda: pool.touch(state)
         response = coord.run(getattr(self, "_abort", None))
         response.model = model or self.default_model
         return response
@@ -530,9 +535,11 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
         if not state:
             raise LLMClientError("No active Claude Code interactive session for interrupt")
 
+        pool = InteractiveClaudeCodePool.instance()
+        pool.touch(state)
         _, _, event_service = get_or_create_cc_interactive_event_service()
         event_service.drain_session(state.session_token)
-        if not InteractiveClaudeCodePool.instance().send_interrupt(state, text):
+        if not pool.send_interrupt(state, text):
             detail = getattr(state, "last_error", "") or "unknown tmux error"
             raise LLMClientError(
                 "Failed to send interrupt to Claude Code interactive tmux session: "
@@ -542,6 +549,7 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
             event_service, state.session_token, callback=callback,
             thinking_callback=thinking_callback, block_callback=block_callback,
             turn_callback=turn_callback)
+        coord.touch_callback = lambda: pool.touch(state)
         response = coord.run(getattr(self, "_abort", None))
         response.model = model or self.default_model
         return response

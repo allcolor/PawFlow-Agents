@@ -1111,6 +1111,64 @@ def test_interactive_pool_finds_latest_live_session(monkeypatch):
     assert dead.key not in pool._sessions
 
 
+def test_interactive_pool_sweeps_idle_sessions_by_sliding_last_used(monkeypatch):
+    from core.claude_code_interactive_pool import InteractiveClaudeCodePool, InteractiveContainer
+
+    pool = InteractiveClaudeCodePool()
+    killed = []
+    now = 1000.0
+    idle = InteractiveContainer(
+        key=("u", "c", "idle", "svc"),
+        name="idle-container",
+        workdir="/host",
+        container_workdir="/cc_sessions/u/c/idle",
+        session_token="idle",
+        event_service_id="events",
+        internal_token="internal",
+        last_used=now - 2000,
+    )
+    recent = InteractiveContainer(
+        key=("u", "c", "recent", "svc"),
+        name="recent-container",
+        workdir="/host",
+        container_workdir="/cc_sessions/u/c/recent",
+        session_token="recent",
+        event_service_id="events",
+        internal_token="internal",
+        last_used=now - 10,
+    )
+    pool._sessions[idle.key] = idle
+    pool._sessions[recent.key] = recent
+    monkeypatch.setattr("core.claude_code_interactive_pool.time.time", lambda: now)
+    monkeypatch.setattr(pool, "_is_alive", lambda name: True)
+    monkeypatch.setattr(pool, "_kill_container", lambda name: killed.append(name))
+
+    assert pool.sweep_idle(1800) == 1
+    assert killed == ["idle-container"]
+    assert idle.key not in pool._sessions
+    assert recent.key in pool._sessions
+
+
+def test_interactive_pool_uses_client_timeout_for_idle_ttl(monkeypatch):
+    from core.claude_code_interactive_pool import InteractiveClaudeCodePool
+
+    class _Client:
+        timeout = 7200
+        _agent_service = "svc"
+
+    pool = InteractiveClaudeCodePool()
+    seen = []
+    monkeypatch.setattr(pool, "ensure_sweeper", lambda **kw: seen.append(kw))
+    monkeypatch.setattr(pool, "_start_new", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("stop")))
+
+    try:
+        pool.ensure_started(_Client(), "model", "u", "c", "a")
+    except RuntimeError as exc:
+        assert str(exc) == "stop"
+
+    assert seen == [{"idle_ttl_seconds": 7200}]
+
+
 def test_cc_interactive_event_route_bypasses_gateway_but_stays_private(monkeypatch):
     from services.cc_interactive_event_service import CCInteractiveEventService
 

@@ -309,30 +309,39 @@ function connectSSE(cid, onReady, opts) {
       scrollBottom();
     }
     const te = thinkingElements[aKey];
+    // Reusing a soft-finalized block (after tool_call): reopen the live
+    // summary label and add a blank line between merged phases.
+    if (te.text && textDelta) {
+      te.summary.textContent = t('thinking') + '...';
+      te.text += '\n\n';
+    }
     te.text += textDelta;
     te.content.textContent = te.text;
     if (typeof applyTechnicalMessageGrouping === 'function') applyTechnicalMessageGrouping();
     scrollBottom();
   });
 
-  // Finalize thinking block when tokens start arriving (thinking is done)
-  function finalizeThinking(agentName) {
+  // Finalize thinking block when tokens start arriving (thinking is done).
+  // reason: 'token' | 'tool_call' | 'done'. On 'tool_call' we KEEP the entry so
+  // subsequent thinking_content events for the same agent append to the same
+  // block (matches main: one merged thinking bubble per logical turn even
+  // across multi-turn task iterations).
+  function finalizeThinking(agentName, reason) {
     const aKey = agentKey(agentName || '');
     const te = thinkingElements[aKey];
-    if (te) {
-      const elapsed = (Date.now() - te.startTime) / 1000;
-      // Remove empty thinking blocks — keep all that have content
-      const group = te.el.closest && te.el.closest('.technical-group');
-      if (!te.text.trim()) {
-        te.el.remove();
-        if (group && typeof _updateTechnicalGroupSummary === 'function') _updateTechnicalGroupSummary(group);
-      } else {
-        te.summary.textContent = t('thoughtFor', { sec: elapsed.toFixed(1) });
-        te.el.setAttribute('open', '');
-      }
-      if (typeof applyTechnicalMessageGrouping === 'function') applyTechnicalMessageGrouping();
+    if (!te) return;
+    const elapsed = (Date.now() - te.startTime) / 1000;
+    const group = te.el.closest && te.el.closest('.technical-group');
+    if (!te.text.trim()) {
+      te.el.remove();
+      if (group && typeof _updateTechnicalGroupSummary === 'function') _updateTechnicalGroupSummary(group);
       delete thinkingElements[aKey];
+    } else {
+      te.summary.textContent = t('thoughtFor', { sec: elapsed.toFixed(1) });
+      te.el.setAttribute('open', '');
+      if (reason !== 'tool_call') delete thinkingElements[aKey];
     }
+    if (typeof applyTechnicalMessageGrouping === 'function') applyTechnicalMessageGrouping();
   }
 
   eventSource.addEventListener('token', (e) => {
@@ -340,7 +349,7 @@ function connectSSE(cid, onReady, opts) {
     const data = JSON.parse(e.data);
     const agent = data.agent_name || streamingAgent || '';
     // Finalize thinking block when first text token arrives
-    finalizeThinking(agent);
+    finalizeThinking(agent, 'token');
     streamingAgent = agent;  // legacy global
     const s = getStream(agent);
     s.text += data.text;
@@ -848,8 +857,9 @@ function connectSSE(cid, onReady, opts) {
   eventSource.addEventListener('tool_call', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
-    // Finalize thinking block before showing tool call
-    finalizeThinking(data.agent_name || '');
+    // Soft-finalize thinking before tool call: keep the entry so the next
+    // thinking_content for this agent appends to the same block.
+    finalizeThinking(data.agent_name || '', 'tool_call');
     if (typeof _noteLiveHistoryAppend === 'function') {
       _noteLiveHistoryAppend(data.message_count, 1, data.msg_id || '');
     }
@@ -1186,7 +1196,7 @@ function connectSSE(cid, onReady, opts) {
     const doneAgent = data.agent_name || data.source?.name || '';
     // Task done: finalize task block
     if (data.task_id) {
-      finalizeThinking(doneAgent);
+      finalizeThinking(doneAgent, 'done');
       // Show agent's final message inside the task block before closing it
       let taskResp = (data.response || '').replace(/\s*\[NO_PENDING_WORK\]/g, '').replace(/\s*\[RECHECK_IN:\d+\]/g, '').trim();
       taskResp = taskResp.replace(/^\[[^\]]+\]:\s*/, '');
@@ -1214,7 +1224,7 @@ function connectSSE(cid, onReady, opts) {
       });
     }
     // Finalize any open thinking block for this agent
-    finalizeThinking(doneAgent);
+    finalizeThinking(doneAgent, 'done');
     // Close any pending tool calls owned by THIS agent only — other
     // agents may still be running concurrently.
     const _doneAgentKey = (doneAgent || '').toLowerCase();

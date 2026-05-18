@@ -1,12 +1,8 @@
 """Codex live container registry.
 
-Keeps a Docker container alive across turns of the same
-(user_id, conv_id, agent_name) so we don't pay the spawn cost on every
-turn. Unlike CC's LiveSessionRegistry, codex `exec --json` is one-shot
-(the process exits at end-of-turn), so what we reuse here is the
-CONTAINER — the codex binary still re-execs each turn, but inside the
-same warm Docker namespace with cached node_modules, npm warmups, mounts
-resolved, etc.
+Keeps a Codex app-server process and its Docker container alive across turns
+of the same (user_id, conv_id, agent_name), so PawFlow keeps Codex's thread
+state and avoids paying the spawn cost on every turn.
 
 Lifecycle:
     get(key)       — returns the live container_name if any (else None)
@@ -40,17 +36,11 @@ CodexLiveKey = Tuple[str, str, str, str, int]
 
 @dataclass
 class CodexLiveSession:
-    """A codex CLI session kept alive across turns of the same
+    """A Codex app-server session kept alive across turns of the same
     (user, conv, agent, service, pool_idx) tuple.
 
-    Codex `exec --json` is one-shot — the process exits at end-of-turn.
-    What we keep alive is the CONTAINER (warm Docker namespace) plus the
-    session_id (so `codex exec resume <sid>` reattaches to the same
-    rollout file) plus the internal-auth token (so the MCP bridge keeps
-    using the same scoped credential across turns). proc / event_q /
-    reader_thread / stop_event are bound to a turn and reset on each
-    spawn — they live on the session for symmetry with CC's
-    CCLiveSession (where proc is long-lived) but are recycled per call.
+    What we keep alive is the app-server process, its backing container, the
+    Codex thread_id, and the internal-auth token used by the MCP bridge.
     """
     container_name: str
     workdir: str
@@ -59,7 +49,7 @@ class CodexLiveSession:
     # Per-turn process state — reset on each spawn. Kept on the session
     # so the dispatch loop, watchdog, and reader daemon can share a single
     # source of truth.
-    proc: object = None              # subprocess.Popen of `codex exec`
+    proc: object = None              # subprocess.Popen of `codex app-server`
     event_q: object = None           # queue.Queue (reader → dispatch)
     reader_thread: object = None     # threading.Thread (stdout drain)
     stop_event: object = None        # threading.Event (shutdown signal)
@@ -71,8 +61,7 @@ class CodexLiveSession:
     spawn_at: float = field(default_factory=time.monotonic)
     last_used: float = field(default_factory=time.monotonic)
     reuse_count: int = 0
-    # Serializes concurrent _stream_codex calls that would otherwise
-    # spawn parallel codex execs writing to the same session_id.
+    # Serializes concurrent app-server turns on the same Codex thread.
     turn_lock: object = field(default_factory=threading.RLock)
     active_turn: bool = False
 

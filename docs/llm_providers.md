@@ -9,7 +9,7 @@ PawFlow can run agents through direct HTTP APIs and through CLI-backed coding ag
 | `openai` | Direct API | OpenAI and OpenAI-compatible endpoints | Set `api_key`, optional `base_url`, and `default_model`. |
 | `anthropic` | Direct API | Claude API agents | Set `api_key`, optional `base_url`, and `default_model`. |
 | `claude-code` / Claude Code | CLI container or subprocess | Coding agents using Claude Code sessions | Uses Claude credentials, session resume, and PawFlow tool bridge. |
-| `codex` / Codex CLI | CLI container or subprocess | Coding agents using Codex sessions | Uses Codex/OpenAI credentials and a Codex pool. |
+| `codex-app-server` / Codex app-server | CLI app-server in a pooled container | Coding agents using Codex app-server threads | Uses Codex/OpenAI credentials, a Codex pool, and the PawFlow MCP bridge. |
 | `gemini` / Gemini CLI | CLI container or subprocess | Gemini-backed coding agents | Uses Gemini credentials, stream-json output, and Gemini session files. |
 
 Direct API providers are normal HTTP clients. CLI providers launch a provider CLI, keep provider-specific session state, and route tools through PawFlow's relay/MCP bridge.
@@ -54,7 +54,7 @@ Common fields:
 
 | Field | Required | Description |
 |---|---:|---|
-| `provider` | yes | Provider name: `openai`, `anthropic`, `claude-code`, `codex`, `gemini`, or compatible aliases. |
+| `provider` | yes | Provider name: `openai`, `anthropic`, `claude-code`, `codex-app-server`, `gemini`, or compatible aliases. |
 | `default_model` / `model` | yes | Model used when the agent does not override it. |
 | `api_key` | provider-dependent | API key or credential reference for direct API providers and key-based CLI auth. |
 | `base_url` | no | Alternate API endpoint. For Codex/OpenAI-compatible providers this maps to `OPENAI_BASE_URL`; for Gemini it maps to `GEMINI_BASE_URL`. |
@@ -153,9 +153,13 @@ Container notes:
 - Server-side login containers are named `pawflow-claude-login-*`.
 - Pool containers are named `pf-cc-pool-*`.
 
-## Codex CLI
+## Codex App-Server
 
-Codex uses OpenAI/Codex credentials and Codex session state.
+Codex agents use `codex-app-server`. PawFlow does not expose a legacy `codex`
+agent provider. The image-generation service may run isolated `codex exec`
+jobs for `$imagegen`, but that is a media service, not an agent provider.
+
+Codex app-server uses OpenAI/Codex credentials and Codex thread state.
 
 Credential inputs:
 
@@ -170,7 +174,10 @@ Operational notes:
 
 - Configure `max_context_size` on the service unless the Codex CLI reports the model context window.
 - `compact_threshold_pct=0` means no proactive compaction; use a positive percentage such as `90` to compact before the provider hard limit.
-- Preemption uses kill/resume semantics for long-running Codex turns.
+- The provider prompt instructs Codex to use only the PawFlow MCP bridge for workspace reads, edits, shell commands, browser/screen actions, and web fetches.
+- PawFlow keeps Codex app-server's native sandbox policy at `dangerFullAccess`; restricting app-server networking or filesystem policy can break the MCP bridge and provider tool stream. Native provider tool use is constrained by the provider prompt and made auditable in PawFlow's technical stream.
+- If Codex still emits native `commandExecution`, `fileChange`, or `dynamicToolCall` items, PawFlow surfaces them in the technical tool stream instead of hiding them.
+- Preemption uses app-server `turn/steer` for active turns.
 
 ## Compaction Summarizer
 

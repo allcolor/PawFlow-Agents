@@ -12,6 +12,7 @@ Tests cover:
 """
 
 import json
+import inspect
 import time
 import uuid
 import pytest
@@ -1034,6 +1035,13 @@ class TestCleanupCliRuntimeSessions:
         assert not codex_old.exists()
         assert gemini_live.exists()
         assert not gemini_old.exists()
+
+    def test_cleanup_uses_codex_app_server_provider_name(self):
+        from core.conversation_store import ConversationStore
+
+        src = inspect.getsource(ConversationStore.cleanup_orphan_cli_sessions)
+        assert '"codex-app-server"' in src
+        assert '("codex",' not in src
 
     def test_invalidate_all_removes_codex_and_gemini_agent_dirs(self, store, tmp_path, monkeypatch):
         codex, gemini = self._setup(tmp_path, monkeypatch)

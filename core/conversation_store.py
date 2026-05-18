@@ -3100,7 +3100,7 @@ class ConversationStore:
         if not session_id or not agent_dir.is_dir():
             return 0
         removed = 0
-        if provider == "codex":
+        if provider == "codex-app-server":
             for path in agent_dir.glob(".codex/sessions/**/*.jsonl"):
                 try:
                     if session_id not in path.name:
@@ -3144,7 +3144,7 @@ class ConversationStore:
         removed = 0
         conv_base = _paths.CONVERSATIONS_DIR
         providers = (
-            ("codex", _paths.CODEX_SESSIONS_DIR, "codex_app_server_thread:"),
+            ("codex-app-server", _paths.CODEX_SESSIONS_DIR, "codex_app_server_thread:"),
             ("gemini", _paths.GEMINI_SESSIONS_DIR, "gemini_acp_session:"),
         )
         for provider, base, key_prefix in providers:

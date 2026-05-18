@@ -102,6 +102,10 @@ def test_codex_mcp_config_sets_long_tool_timeout():
     assert "tool_timeout_sec = 120" not in src
     assert "tool_timeout_sec = 300" not in src
     assert "startup_timeout_sec = 20" in src
+    assert "supports_parallel_tool_calls = true" in src
+    assert "[features]" in src
+    assert "enable_fanout = true" in src
+    assert "suppress_unstable_features_warning = true" in src
 
 
 def test_codex_preamble_names_disabled_native_tools():

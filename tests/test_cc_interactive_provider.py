@@ -710,7 +710,7 @@ def test_initial_interactive_prompt_writes_context_file(tmp_path):
     assert "compact summary" not in prompt
 
 
-def test_interactive_prompt_requires_pawflow_mcp_tools(tmp_path):
+def test_initial_interactive_prompt_requires_pawflow_mcp_tools(tmp_path):
     from core.llm_client import LLMMessage, LLMToolDefinition
 
     client = LLMClient("claude-code-interactive")
@@ -721,12 +721,39 @@ def test_interactive_prompt_requires_pawflow_mcp_tools(tmp_path):
         "/cc_sessions/u/conv/a",
         "u",
         "conv",
+        initial_context=True,
+    )
+    body = (tmp_path / ".pawflow_cci" / "initial_context.md").read_text()
+
+    assert "PawFlow Runtime - MCP-only" in body
+    assert "Native/internal provider tools are forbidden" in body
+    assert "issue them in the same assistant turn" in body
+    assert "Use Claude Code's native tools" not in body
+
+
+def test_live_interactive_prompt_does_not_repeat_system_or_tool_instructions(tmp_path):
+    from core.llm_client import LLMMessage, LLMToolDefinition
+
+    client = LLMClient("claude-code-interactive")
+    prompt = client._cci_prompt(
+        [
+            LLMMessage(role="system", content="system rules", conversation_id="conv"),
+            LLMMessage(role="assistant", content="old answer", conversation_id="conv"),
+            LLMMessage(role="user", content="new request", conversation_id="conv"),
+        ],
+        [LLMToolDefinition(name="use_tool", description="dispatch", parameters={})],
+        str(tmp_path),
+        "/cc_sessions/u/conv/a",
+        "u",
+        "conv",
+        initial_context=False,
     )
 
-    assert "PawFlow Runtime - MCP-only" in prompt
-    assert "Native/internal provider tools are forbidden" in prompt
-    assert "issue them in the same assistant turn" in prompt
-    assert "Use Claude Code's native tools" not in prompt
+    assert prompt == "new request\n"
+    assert "system rules" not in prompt
+    assert "PawFlow Runtime - MCP-only" not in prompt
+    assert "Native/internal provider tools are forbidden" not in prompt
+    assert "old answer" not in prompt
 
 
 def test_resume_interactive_prompt_uses_current_turn_only(tmp_path):
@@ -743,7 +770,7 @@ def test_resume_interactive_prompt_uses_current_turn_only(tmp_path):
         messages, None, str(tmp_path), "/cc_sessions/u/conv/a", "u", "conv",
         initial_context=False)
 
-    assert "system rules" in prompt
+    assert "system rules" not in prompt
     assert "new request" in prompt
     assert "old answer" not in prompt
     assert not (tmp_path / ".pawflow_cci" / "initial_context.md").exists()

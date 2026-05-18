@@ -571,8 +571,6 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
                 rel_path=".pawflow_cci/initial_context.md",
             )
             parts.append(prompt)
-        elif system_prompt:
-            parts.append("<system_instructions>\n" + system_prompt + "\n</system_instructions>")
         if image_lines:
             parts.append("Attachments:\n" + "\n".join(image_lines))
         if not initial_context:

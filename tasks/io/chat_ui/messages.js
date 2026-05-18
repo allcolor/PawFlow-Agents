@@ -221,16 +221,18 @@ function _isTechnicalMessageElement(el) {
   if (el.dataset && (el.dataset.transientUi === '1' || el.dataset.technicalBoundary === '1')) return false;
   if (el.classList.contains('typing') || el.classList.contains('active-row') || el.classList.contains('active-panel')) return false;
   if (_isAssistantPlaceholderElement(el)) return false;
+  // task-block / delegate-block are containers, not technical events — their
+  // inner tool_calls are grouped via the nested-scope pass in
+  // applyTechnicalMessageGrouping, so they must stay at top level themselves.
+  if (el.classList.contains('task-block') || el.classList.contains('delegate-block')) return false;
   const role = el.dataset ? (el.dataset.messageRole || '') : '';
+  if (role === 'sub_agent_trace') return false;
   if ([
-    'tool_call', 'tool', 'tool_result', 'thinking', 'sub_agent_trace',
+    'tool_call', 'tool', 'tool_result', 'thinking',
     'agent-result', 'flowfile_in',
   ].includes(role)) return true;
   return el.classList.contains('tool')
     || el.classList.contains('thinking-block')
-    || el.classList.contains('task-block')
-    || el.classList.contains('delegate-block')
-    || el.classList.contains('sub_agent_trace')
     || el.classList.contains('agent-result');
 }
 

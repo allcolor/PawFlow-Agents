@@ -28,7 +28,8 @@ def test_technical_grouping_is_expression_driven_and_post_rendered():
     assert "window.PAWFLOW_SUSPEND_TECHNICAL_GROUPING = 0" in MESSAGES_JS
     assert "function suspendTechnicalMessageGrouping()" in MESSAGES_JS
     assert "function resumeTechnicalMessageGrouping(applyNow)" in MESSAGES_JS
-    assert "'thinking', 'sub_agent_trace'" in MESSAGES_JS
+    assert "if (role === 'sub_agent_trace') return false;" in MESSAGES_JS
+    assert "'tool_result', 'thinking'," in MESSAGES_JS
     assert "'system-compact'" not in MESSAGES_JS
     assert "contains('system-compact')" not in MESSAGES_JS
     assert "function collapseTechnicalGroups()" in MESSAGES_JS

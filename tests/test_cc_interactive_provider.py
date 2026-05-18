@@ -906,13 +906,59 @@ def test_interactive_pool_interrupt_and_force_stop_keys(monkeypatch):
     assert calls[0][0][-2:] == ["load-buffer", "-"]
     assert calls[0][1] == b"interrupt message"
     assert calls[1][0][-3:] == ["paste-buffer", "-t", "pawflow"]
-    assert calls[2][0][-2:] == ["Escape", "Enter"]
+    assert calls[2][0][-1:] == ["Escape"]
+    assert calls[3][0][-1:] == ["Enter"]
 
     calls.clear()
     assert pool.force_stop(state) is True
     assert calls == [(["docker", "exec", "--user", "1000:1000", "container",
                       "tmux", "send-keys", "-t", "pawflow", "Space", "Space",
                       "Escape", "Escape", "BSpace", "BSpace"], None)]
+
+
+def test_cc_interactive_live_preempt_materializes_image_attachment(tmp_path, monkeypatch):
+    from core.llm_client import LLMClient
+
+    class _Store:
+        def get_required(self, file_id, user_id, conversation_id):
+            assert (file_id, user_id, conversation_id) == ("img1", "u", "conv")
+            return "sample.png", b"PNG", "image/png"
+
+    class _State:
+        workdir = str(tmp_path)
+        container_workdir = "/cc_sessions/u/conv/a"
+
+    class _Pool:
+        def __init__(self):
+            self.sent = []
+
+        def find_session(self, *args, **kwargs):
+            return _State()
+
+        def send_interrupt(self, state, text):
+            self.sent.append(text)
+            return True
+
+    pool = _Pool()
+    monkeypatch.setattr("core.file_store.FileStore.instance", staticmethod(lambda: _Store()))
+    monkeypatch.setattr(
+        "core.llm_providers.claude_code_interactive.InteractiveClaudeCodePool.instance",
+        staticmethod(lambda: pool),
+    )
+
+    client = LLMClient("claude-code-interactive")
+
+    assert client._cci_send_user_message(
+        "look at this",
+        attachments=[{"file_id": "img1", "filename": "sample.png", "mime_type": "image/png"}],
+        user_id="u",
+        conversation_id="conv",
+        agent_name="a",
+    ) is True
+
+    assert "Attachments:\n@/cc_sessions/u/conv/a/.pawflow_vision/img1.png" in pool.sent[0]
+    assert "look at this" in pool.sent[0]
+    assert (tmp_path / ".pawflow_vision" / "img1.png").read_bytes() == b"PNG"
 
 
 def test_interactive_pool_records_tmux_paste_errors(monkeypatch):

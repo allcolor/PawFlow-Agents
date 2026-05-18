@@ -661,7 +661,63 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
         )
         if not state:
             return False
-        return InteractiveClaudeCodePool.instance().send_interrupt(state, text)
+        user_id = kwargs.get("user_id") or ""
+        conversation_id = kwargs.get("conversation_id") or ""
+        prompt = self._cci_preempt_prompt(
+            text, attachments or [], state, user_id, conversation_id)
+        return InteractiveClaudeCodePool.instance().send_interrupt(state, prompt)
+
+    def _cci_preempt_prompt(self, text: str, attachments: list,
+                            state, user_id: str, conversation_id: str) -> str:
+        if not attachments:
+            return text
+        from core.llm_client import LLMMessage
+
+        parts = []
+        if (text or "").strip():
+            parts.append({"type": "text", "text": text})
+        for att in attachments:
+            if not isinstance(att, dict):
+                continue
+            block = self._cci_attachment_block(att, user_id, conversation_id)
+            if block:
+                parts.append(block)
+        if len(parts) <= 1:
+            return text
+        msg = LLMMessage(role="user", content=parts,
+                         conversation_id=conversation_id)
+        return self._cci_prompt(
+            [msg], None, state.workdir, state.container_workdir,
+            user_id, conversation_id, initial_context=False)
+
+    @staticmethod
+    def _cci_attachment_block(att: dict, user_id: str, conversation_id: str):
+        mime = str(att.get("mime_type") or "")
+        filename = att.get("filename") or "image"
+        file_id = att.get("file_id") or ""
+        url = att.get("url") or ""
+        if not file_id and isinstance(url, str) and url.startswith("fs://filestore/"):
+            file_id = url[len("fs://filestore/"):].split("/", 1)[0]
+        if file_id:
+            from core.file_store import FileStore
+            stored_name, _data, stored_mime = FileStore.instance().get_required(
+                file_id, user_id=user_id, conversation_id=conversation_id)
+            mime = mime or stored_mime or "application/octet-stream"
+            filename = filename or stored_name
+            if not str(mime).startswith("image/"):
+                return None
+            return {
+                "type": "image_ref",
+                "file_id": file_id,
+                "filename": filename,
+                "mime_type": mime,
+            }
+        data = att.get("data") or att.get("dataUrl") or ""
+        if isinstance(data, str) and str(mime).startswith("image/"):
+            if not data.startswith("data:"):
+                data = f"data:{mime};base64,{data}"
+            return {"type": "image", "data": data, "mime_type": mime}
+        return None
 
     def cancel_claude_code_interactive(self, force: bool = False):
         if not force:

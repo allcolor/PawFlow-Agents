@@ -415,15 +415,24 @@ function _groupTechnicalIn(container) {
   if (group) _updateTechnicalGroupSummary(group);
 }
 
+const _NESTED_TECHNICAL_SCOPE_SELECTOR = '.task-block > div:not(summary), .delegate-body, .delegate-sub-body';
+
+function _nestedTechnicalScopes(container) {
+  if (!container || !container.querySelectorAll) return [];
+  return Array.from(container.querySelectorAll(_NESTED_TECHNICAL_SCOPE_SELECTOR));
+}
+
 function applyTechnicalMessageGrouping() {
   if (window.PAWFLOW_SUSPEND_TECHNICAL_GROUPING) return;
   const container = document.getElementById('messages');
   if (!container) return;
   if (!window.PAWFLOW_GROUP_TECHNICAL_MESSAGES) {
     _unwrapTechnicalGroups(container);
+    for (const inner of _nestedTechnicalScopes(container)) _unwrapTechnicalGroups(inner);
     return;
   }
   _groupTechnicalIn(container);
+  for (const inner of _nestedTechnicalScopes(container)) _groupTechnicalIn(inner);
 }
 
 function _toolCallSelector(tcId) {

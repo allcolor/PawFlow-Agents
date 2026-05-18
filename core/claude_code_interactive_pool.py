@@ -272,7 +272,8 @@ class InteractiveClaudeCodePool:
         self._remember_injected_prompt_for_event_service(state, text)
         return (self._load_buffer(state, text)
                 and self._paste_buffer(state)
-                and self.send_keys(state, ["Escape", "Enter"]))
+                and self.send_keys(state, ["Escape"])
+                and self.send_keys(state, ["Enter"]))
 
     def force_stop(self, state: InteractiveContainer) -> bool:
         return self.send_keys(

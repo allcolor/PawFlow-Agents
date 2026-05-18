@@ -374,6 +374,26 @@ class TestClassifyMessagesSource(unittest.TestCase):
         self.assertEqual(classified[0]["timestamp"], 1234.5)
         self.assertEqual(classified[0]["msg_id"], "m1")
 
+    def test_assistant_thinking_only_message_rehydrates_as_thinking_row(self):
+        from tasks.ai.agent_loop import AgentLoopTask
+        raw = [{
+            "role": "assistant",
+            "content": "",
+            "thinking": "live plan",
+            "msg_id": "m1",
+            "ts": 1234.5,
+            "source": {"type": "agent", "name": "bot"},
+        }]
+
+        classified = AgentLoopTask._classify_messages_for_display(raw)
+
+        self.assertEqual(len(classified), 1)
+        self.assertEqual(classified[0]["type"], "thinking")
+        self.assertEqual(classified[0]["content"], "live plan")
+        self.assertEqual(classified[0]["timestamp"], 1234.5)
+        self.assertEqual(classified[0]["msg_id"], "m1")
+        self.assertEqual(classified[0]["source"]["name"], "bot")
+
     def test_empty_display_thinking_is_not_replayed_as_technical_row(self):
         from tasks.ai.agent_loop import AgentLoopTask
         raw = [
@@ -533,4 +553,3 @@ class TestFlowMigration(unittest.TestCase):
             self.assertNotIn("provider", params, f"{name} still has provider")
             self.assertNotIn("api_key", params, f"{name} still has api_key")
             self.assertIn("llm_service", params, f"{name} missing llm_service")
-

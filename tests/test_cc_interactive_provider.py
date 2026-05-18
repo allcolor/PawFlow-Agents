@@ -102,12 +102,16 @@ def test_turn_coordinator_assembles_text_thinking_and_native_tool_use():
     assert resp.tokens_in == 11
     assert resp.tokens_out == 7
     assert resp.tool_calls == []
-    assert blocks == [("tool_use", {
-        "id": "toolu_1",
-        "name": "read",
-        "arguments": {"path": "a.png"},
-    })]
-    assert turns == [("Hi there", [], "plan")]
+    assert blocks == [
+        ("text", {"text": "Hi there"}),
+        ("thinking_content", {"text": "plan"}),
+        ("tool_use", {
+            "id": "toolu_1",
+            "name": "read",
+            "arguments": {"path": "a.png"},
+        }),
+    ]
+    assert turns == []
 
 
 def test_turn_coordinator_flushes_unstopped_text_at_stop_hook():

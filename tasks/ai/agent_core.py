@@ -1588,6 +1588,34 @@ class AgentCoreMixin:
                         from core.llm_client import LLMToolCall, unwrap_mcp_tool
 
                         _src = _agent_source(include_context=False)
+                        if event_type == "text":
+                            _text = payload.get("text", "") or ""
+                            if not _text.strip():
+                                return
+                            msg = LLMMessage(
+                                role="assistant", content=_text,
+                                source=_src,
+                                conversation_id=conversation_id)
+                            _append(msg)
+                            client._last_turn_msg_id = getattr(msg, "msg_id", "")
+                            return
+
+                        if event_type in ("thinking", "thinking_content"):
+                            _thinking = (
+                                payload.get("thinking", "")
+                                or payload.get("text", "")
+                                or "")
+                            if not _thinking.strip():
+                                return
+                            msg = LLMMessage(
+                                role="assistant", content="",
+                                thinking=_thinking,
+                                source=_src,
+                                conversation_id=conversation_id)
+                            _append(msg)
+                            client._last_turn_msg_id = getattr(msg, "msg_id", "")
+                            return
+
                         if event_type == "tool_use":
                             _raw_name = payload.get("name", "")
                             _raw_args = payload.get("arguments", {}) or {}

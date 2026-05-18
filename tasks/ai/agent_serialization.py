@@ -383,6 +383,23 @@ class AgentSerializationMixin:
                 if isinstance(_src, dict) and _src.get("type") == "context":
                     continue
                 if role == "assistant" and not str(content).strip():
+                    _thinking = str(m.get("thinking") or "")
+                    if not _thinking.strip():
+                        continue
+                    entry = {
+                        "type": "thinking",
+                        "role": "thinking",
+                        "content": _thinking,
+                        "raw_index": raw_idx,
+                        "display_only": True,
+                    }
+                    if m.get("msg_id"):
+                        entry["msg_id"] = m["msg_id"]
+                    if _display_ts:
+                        entry["timestamp"] = _display_ts
+                    if m.get("source"):
+                        entry["source"] = m["source"]
+                    result.append(entry)
                     continue
                 _type = role
                 if role == "assistant" and (
@@ -470,4 +487,3 @@ class AgentSerializationMixin:
         # Replace null bytes that may survive
         text = text.replace('\x00', '')
         return text
-

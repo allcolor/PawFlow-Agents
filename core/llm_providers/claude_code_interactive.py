@@ -256,6 +256,8 @@ class _CCITurnCoordinator:
             return
         text = self._text_block_buf
         self._text_block_buf = ""
+        if self.block_callback:
+            self.block_callback("text", {"text": text})
 
     def _flush_thinking_block(self) -> None:
         if not self._thinking_block_buf and not self._thinking_redacted:
@@ -284,13 +286,15 @@ class _CCITurnCoordinator:
         self._thinking_end = 0.0
         if synthesized and thinking and self.thinking_callback:
             self.thinking_callback(thinking)
+        if self.block_callback and thinking:
+            self.block_callback("thinking_content", {"text": thinking})
 
 
     def _emit_turn_callback(self) -> None:
         if self._turn_callback_sent or not self.turn_callback:
             return
-        text = "".join(self.text_parts).strip()
-        thinking = "".join(self.thinking_parts)
+        text = "" if self.block_callback else "".join(self.text_parts).strip()
+        thinking = "" if self.block_callback else "".join(self.thinking_parts)
         tool_calls = [] if self.block_callback else [
             dict(tc) for tc in self.turn_tool_calls]
         if thinking and tool_calls:

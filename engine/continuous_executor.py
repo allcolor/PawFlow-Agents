@@ -1256,7 +1256,7 @@ class ContinuousFlowExecutor:
         try:
             self._checkpoint_mgr.clear()
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     def save_checkpoint_now(self) -> Optional[str]:
         """Manually trigger a checkpoint. Returns checkpoint path."""

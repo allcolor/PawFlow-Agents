@@ -100,7 +100,7 @@ class ValidateSessionAuthTask(BaseTask):
                             flowfile.set_attribute("http.auth.roles", "viewer")
                             return [flowfile]
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
         # Try to extract session token from multiple sources
         token = self._extract_token(flowfile, cookie_name)

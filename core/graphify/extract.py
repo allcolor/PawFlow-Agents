@@ -1,5 +1,6 @@
 """Deterministic structural extraction from source code using tree-sitter. Outputs nodes+edges dicts."""
 from __future__ import annotations
+import logging
 import importlib
 import json
 import re
@@ -1860,6 +1861,7 @@ def _resolve_cross_file_imports(
             source = path.read_bytes()
             tree = parser.parse(source)
         except Exception:
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             continue
 
         def walk_imports(node) -> None:

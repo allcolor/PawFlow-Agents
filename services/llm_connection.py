@@ -286,7 +286,7 @@ class LLMConnectionService(BaseService):
                     import json as _json
                     return [k for k in _json.loads(raw) if k]
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             return [k.strip() for k in raw.split(",") if k.strip()]
         return []
 
@@ -311,7 +311,7 @@ class LLMConnectionService(BaseService):
                     f"llm_api_key_idx:{self._service_id}",
                     idx)
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         return idx
 
     def try_acquire(self) -> bool:

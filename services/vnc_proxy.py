@@ -37,11 +37,11 @@ def vnc_ws_proxy(client_sock, path_params: dict, meta: dict):
         try:
             client_sock.sendall(err)
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         try:
             client_sock.close()
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         return
 
     # Look up the target host:port for this session
@@ -131,7 +131,7 @@ def vnc_ws_proxy(client_sock, path_params: dict, meta: dict):
         try:
             s.close()
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     logger.info("VNC proxy: session %s disconnected", session_id)
 
@@ -185,7 +185,7 @@ def unregister_session(session_id: str):
         from core.capability_routes import revoke_route_tokens
         revoke_route_tokens(session_id)
     except Exception:
-        pass
+        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
 
 def get_session_token(session_id: str) -> str:
@@ -211,7 +211,7 @@ def update_session_error(session_id: str, error: str):
 
 def cleanup_user_login_sessions(user_id: str):
     """Kill all login containers for a specific user."""
-    import subprocess
+    import subprocess  # nosec B404
     with _lock:
         to_remove = [sid for sid, s in _sessions.items()
                      if s.get("user_id") == user_id]
@@ -223,10 +223,10 @@ def cleanup_user_login_sessions(user_id: str):
         if container:
             try:
                 from core.server_relay_manager import _docker_cmd
-                subprocess.run(_docker_cmd() + ["rm", "-f", container],
+                subprocess.run(_docker_cmd() + ["rm", "-f", container],  # nosec B603
                                capture_output=True, timeout=10)
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         unregister_session(sid)
     if to_remove:
         logger.info("Cleaned up %d login container(s) for user %s", len(to_remove), user_id)
@@ -360,7 +360,7 @@ def vnc_http_proxy(pending_req):
     target = f"http://{host}:{port}/{sub_path}"
     try:
         req = urllib.request.Request(target, method="GET")
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with urllib.request.urlopen(req, timeout=10) as resp:  # nosec B310 - internal noVNC asset proxy target.
             body = resp.read()
             content_type = resp.headers.get("Content-Type", "application/octet-stream")
             pending_req.complete(200, {
@@ -389,4 +389,4 @@ def _ws_close(sock, code: int, reason: str):
         sock.sendall(frame)
         sock.close()
     except Exception:
-        pass
+        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)

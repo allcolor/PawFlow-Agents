@@ -184,7 +184,7 @@ class AgentActionsMixin:
             if isinstance(_body, dict):
                 _call_conv = _body.get("conversation_id", "") or _call_conv
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         payload = {
             "action": action,
             "result": _content,
@@ -439,7 +439,7 @@ class AgentActionsMixin:
                     "agent": _tgt,
                     "frequency": freq,
                 })
-                delay = _rng.randint(min_iv, max_iv)
+                delay = _rng.randint(min_iv, max_iv)  # nosec B311
                 scheduler.schedule_delay(
                     conv_id, delay, key=_tgt_thought_key,
                     reason=f"[random_thought] spontaneous thought ({_tgt})",
@@ -451,7 +451,7 @@ class AgentActionsMixin:
                         "agent": _tgt, "delay": delay, "frequency": freq,
                     })
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 results.append({"agent": _tgt, "delay": delay})
 
             flowfile.set_content(json.dumps({

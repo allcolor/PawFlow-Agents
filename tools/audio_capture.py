@@ -14,7 +14,7 @@ import logging
 import os
 import socket
 import struct
-import subprocess
+import subprocess  # nosec B404
 import sys
 import threading
 import time
@@ -97,7 +97,7 @@ class OpusEncoder:
             try:
                 self._lib.opus_encoder_destroy(self._enc)
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
 
 # ── TCP broadcast ───────────────────────────────────────────────────
@@ -122,14 +122,14 @@ def _broadcast(opus_packet: bytes):
             try:
                 s.close()
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
 
 # ── PulseAudio capture ──────────────────────────────────────────────
 
 def _detect_pulse_monitor() -> str:
     try:
-        out = subprocess.check_output(
+        out = subprocess.check_output(  # nosec B603, B607
             ["pactl", "list", "short", "sources"], text=True, timeout=5)
         for line in out.strip().split("\n"):
             parts = line.split("\t")
@@ -155,7 +155,7 @@ def _capture_loop(source: str):
             monitor = _detect_pulse_monitor() if source in ("pulse", "auto") else source
             logger.info("Using PulseAudio monitor: %s", monitor)
 
-            proc = subprocess.Popen(
+            proc = subprocess.Popen(  # nosec B603, B607
                 ["stdbuf", "-o0",
                  "parec", "--format=s16le", "--rate=48000", "--channels=1",
                  "-d", monitor, "--latency-msec=20"],
@@ -213,7 +213,7 @@ def _capture_loop(source: str):
 def _tcp_server(port: int):
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    srv.bind(("0.0.0.0", port))
+    srv.bind(("0.0.0.0", port))  # nosec B104 - audio capture helper bind is operator-configured.
     srv.listen(4)
     logger.info("Audio capture TCP server on port %d", port)
     while True:

@@ -351,34 +351,6 @@ class TestSFTPRegistration:
 
 
 # ============================================================================
-# FTP Tasks registration
-# ============================================================================
-
-class TestFTPRegistration:
-
-    def test_get_ftp_registered(self):
-        cls = TaskFactory.get("getFTP")
-        assert cls.TYPE == "getFTP"
-
-    def test_put_ftp_registered(self):
-        cls = TaskFactory.get("putFTP")
-        assert cls.TYPE == "putFTP"
-
-    def test_get_ftp_schema(self):
-        task = TaskFactory.get("getFTP")({})
-        schema = task.get_parameter_schema()
-        assert 'hostname' in schema
-        assert 'remote_path' in schema
-        assert 'use_tls' in schema
-
-    def test_put_ftp_schema(self):
-        task = TaskFactory.get("putFTP")({})
-        schema = task.get_parameter_schema()
-        assert 'hostname' in schema
-        assert 'remote_directory' in schema
-
-
-# ============================================================================
 # Kafka Tasks registration
 # ============================================================================
 

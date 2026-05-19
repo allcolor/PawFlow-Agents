@@ -198,7 +198,7 @@ class LinkIdentityHandler(ToolHandler):
             if not self._user_id:
                 return "Error: You must be authenticated to generate a link code."
 
-            code = str(random.randint(100000, 999999))
+            code = str(random.randint(100000, 999999))  # nosec B311
             with self._codes_lock:
                 # Clean expired codes
                 now = _time.time()

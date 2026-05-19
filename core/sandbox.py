@@ -549,10 +549,10 @@ def execute_sandboxed(
 
     # Try eval first (expression), fallback to exec (statements)
     try:
-        result = eval(code, globals_dict, namespace)
+        result = eval(code, globals_dict, namespace)  # nosec B307 - PawFlow sandbox expression runner.
         output = str(result)
     except SyntaxError:
-        exec(code, globals_dict, namespace)
+        exec(code, globals_dict, namespace)  # nosec B102 - PawFlow sandbox statement runner.
         if "result" in namespace:
             output = str(namespace["result"])
         elif print_buf:

@@ -12,7 +12,6 @@ from tasks.io.listen_http import ListenHTTPTask
 from tasks.io.send_email import SendEmailTask
 from tasks.io.notify_slack import NotifySlackTask
 from tasks.io.sftp_tasks import GetSFTPTask, PutSFTPTask
-from tasks.io.ftp_tasks import GetFTPTask, PutFTPTask
 from tasks.io.kafka_tasks import PublishKafkaTask, ConsumeKafkaTask
 from tasks.io.s3_tasks import GetS3Task, PutS3Task
 from tasks.io.mqtt_tasks import PublishMQTTTask, ConsumeMQTTTask
@@ -26,7 +25,7 @@ from tasks.io.validate_http_auth import ValidateHTTPAuthTask
 __all__ = [
     'GetFileTask', 'PutFileTask', 'FetchHTTPTask', 'ListenHTTPTask',
     'SendEmailTask', 'NotifySlackTask',
-    'GetSFTPTask', 'PutSFTPTask', 'GetFTPTask', 'PutFTPTask',
+    'GetSFTPTask', 'PutSFTPTask',
     'PublishKafkaTask', 'ConsumeKafkaTask', 'GetS3Task', 'PutS3Task',
     'PublishMQTTTask', 'ConsumeMQTTTask',
     'GetGCSTask', 'PutGCSTask', 'GetAzureBlobTask', 'PutAzureBlobTask',

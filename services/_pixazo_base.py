@@ -577,7 +577,7 @@ class _PixazoBaseService(BaseService):
             return relay_result
         req = urllib.request.Request(url, method="GET", headers=headers)
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:  # nosec B310 - configured Pixazo API endpoint.
                 body = resp.read().decode("utf-8", errors="replace")
         except urllib.error.HTTPError as e:
             body = e.read().decode("utf-8", errors="replace")
@@ -600,7 +600,7 @@ class _PixazoBaseService(BaseService):
         """Fetch bytes from a public CDN URL — no Pixazo auth needed."""
         req = urllib.request.Request(
             url, headers={"User-Agent": _BROWSER_UA})
-        with urllib.request.urlopen(req, timeout=120) as r:
+        with urllib.request.urlopen(req, timeout=120) as r:  # nosec B310 - provider-returned media download URL.
             return r.read(), r.headers.get("Content-Type", default_mime)
 
     # ── Polling ────────────────────────────────────────────────────────

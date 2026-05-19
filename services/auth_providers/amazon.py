@@ -14,7 +14,7 @@ class AmazonAuthProvider(OAuthBaseProvider):
         config.setdefault("scope", self.DEFAULT_SCOPE)
         super().__init__(config)
         self._authorize_url = "https://www.amazon.com/ap/oa"
-        self._token_url = "https://api.amazon.com/auth/o2/token"
+        self._token_url = "https://api.amazon.com/auth/o2/token"  # nosec B105
         self._userinfo_url = "https://api.amazon.com/user/profile"
 
     @property

@@ -173,7 +173,7 @@ def _kill_running_task_agent(self, conv_id: str, task_id: str, agent_name: str, 
         from services.tool_relay_service import ToolRelayService
         ToolRelayService.cancel_agent(sub_cid, agent_name)
     except Exception:
-        pass
+        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
     # 5. Publish done event to parent conv
     try:
         from core.conversation_event_bus import ConversationEventBus
@@ -184,7 +184,7 @@ def _kill_running_task_agent(self, conv_id: str, task_id: str, agent_name: str, 
                 "force": force,
             })
     except Exception:
-        pass
+        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
     logger.info("[task:%s] agent killed (force=%s)", task_id, force)
 
 
@@ -562,7 +562,7 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
                     store.invalidate_claude_sessions(_sub_cid)
                     store.delete(_sub_cid)
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 # Remove instance from agent_tasks — only task_def + log remain
                 del all_tasks[tid]
                 continue  # skip all_tasks[tid] = task below
@@ -591,7 +591,7 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
                     store.invalidate_claude_sessions(_sub_cid)
                     store.delete(_sub_cid)
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 # Remove from dict entirely
                 del all_tasks[tid]
                 # Also delete task log

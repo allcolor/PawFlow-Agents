@@ -956,7 +956,7 @@ def _existing_status_name(obj_type: str, obj: Dict[str, Any], package: Dict[str,
                 if service_id:
                     return service_id
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
     return name
 
 
@@ -1223,7 +1223,7 @@ def _secret_key_exists(secret_key: str, user_id: str, conversation_id: str) -> b
             if key in conv_secrets:
                 return True
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
     if user_id:
         from core.config_store import ConfigStore
         if key in ConfigStore.load_secrets_raw(_paths.user_secrets_path(user_id)):
@@ -2185,6 +2185,7 @@ def _find_replacement_flow_task_record(task_type: str,
         try:
             record = _read_json_file(path)
         except Exception:
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             continue
         for obj in record.get("objects") or []:
             if obj.get("kind") != "flow_task" or obj.get("task_type") != task_type:
@@ -2297,6 +2298,7 @@ def _dependent_packages(package_id: str, user_id: str, conversation_id: str,
             try:
                 record = _read_json_file(path)
             except Exception:
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 continue
             dependent_package = str(record.get("package") or "")
             if not dependent_package or dependent_package == package_id:
@@ -2328,6 +2330,7 @@ def _version_blocking_dependents(package_id: str, new_version: str, user_id: str
             try:
                 record = _read_json_file(path)
             except Exception:
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 continue
             dependent_package = str(record.get("package") or "")
             if not dependent_package or dependent_package == package_id:

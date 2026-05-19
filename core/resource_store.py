@@ -285,7 +285,7 @@ class ResourceStore:
                 _merge_by_name(conv_items, "conversation")
                 result = list(merged.values())
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             # Also check conversation_task_defs extras (task_defs still in extras)
             if resource_type == "task_def":
                 try:
@@ -300,7 +300,7 @@ class ResourceStore:
                         merged[td_name] = entry
                     result = list(merged.values())
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             # Filter disabled agents
             if resource_type == "agent":
                 try:
@@ -311,7 +311,7 @@ class ResourceStore:
                     result = [r for r in result
                               if r.get("name") not in disabled]
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
         return result
 
@@ -331,7 +331,7 @@ class ResourceStore:
                     if name in disabled:
                         return None
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             rtype = _repo_type(resource_type)
             from core.repository import ScopedRepository
             result = ScopedRepository.instance().get(
@@ -352,7 +352,7 @@ class ResourceStore:
                         entry["_scope"] = "conversation"
                         return entry
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         # 2. User-scoped
         if user_id != GLOBAL_USER_ID:
             result = self.get(resource_type, name, user_id)

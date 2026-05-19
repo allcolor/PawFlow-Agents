@@ -20,7 +20,7 @@ import json
 import os
 import shlex
 import socket
-import subprocess
+import subprocess  # nosec B404
 import threading
 import time
 import uuid
@@ -87,7 +87,7 @@ class InteractiveClaudeCodePool:
             try:
                 self.shutdown_all()
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
         atexit.register(_kill_all)
         try:
@@ -105,9 +105,9 @@ class InteractiveClaudeCodePool:
 
                         signal.signal(_sig, _handler)
                     except Exception:
-                        pass
+                        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     @staticmethod
     def _safe(value: str) -> str:
@@ -218,14 +218,14 @@ class InteractiveClaudeCodePool:
             "exec", "-i", "--user", "1000:1000", state.name,
             "tmux", "load-buffer", "-",
         ]
-        r = subprocess.run(cmd, input=text.encode("utf-8"), capture_output=True, timeout=15)
+        r = subprocess.run(cmd, input=text.encode("utf-8"), capture_output=True, timeout=15)  # nosec B603
         if r.returncode != 0:
             state.last_error = self._command_error("tmux load-buffer", r)
             return False
         return True
 
     def _paste_buffer(self, state: InteractiveContainer) -> bool:
-        r = subprocess.run(
+        r = subprocess.run(  # nosec B603
             docker_cmd() + ["exec", "--user", "1000:1000", state.name,
                             "tmux", "paste-buffer", "-t", "pawflow"],
             capture_output=True, timeout=10)
@@ -251,7 +251,7 @@ class InteractiveClaudeCodePool:
                     fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
                 fh.write(json.dumps(payload, separators=(",", ":")) + "\n")
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     @staticmethod
     def _remember_injected_prompt_for_event_service(state: InteractiveContainer,
@@ -261,7 +261,7 @@ class InteractiveClaudeCodePool:
             _, _, event_service = get_or_create_cc_interactive_event_service()
             event_service.remember_injected_prompt(state.session_token, text or "")
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     def send_interrupt(self, state: InteractiveContainer, text: str) -> bool:
         state.last_error = ""
@@ -284,7 +284,7 @@ class InteractiveClaudeCodePool:
         if not self._is_alive(state.name):
             state.last_error = f"Container {state.name} is not running"
             return False
-        r = subprocess.run(
+        r = subprocess.run(  # nosec B603
             docker_cmd() + ["exec", "--user", "1000:1000", state.name,
                             "tmux", "send-keys", "-t", "pawflow", *keys],
             capture_output=True, timeout=10)
@@ -371,7 +371,7 @@ class InteractiveClaudeCodePool:
 
     @staticmethod
     def _kill_container(name: str) -> None:
-        subprocess.run(docker_cmd() + ["rm", "-f", name], capture_output=True, timeout=15)
+        subprocess.run(docker_cmd() + ["rm", "-f", name], capture_output=True, timeout=15)  # nosec B603
 
     def _start_new(self, client, model: str, user_id: str, conversation_id: str,
                    agent_name: str, key: tuple[str, str, str, str]) -> InteractiveContainer:
@@ -434,7 +434,7 @@ class InteractiveClaudeCodePool:
             )
             state.claude_started = True
         except Exception:
-            subprocess.run(docker_cmd() + ["rm", "-f", name], capture_output=True, timeout=15)
+            subprocess.run(docker_cmd() + ["rm", "-f", name], capture_output=True, timeout=15)  # nosec B603
             raise
         return state
 
@@ -469,17 +469,17 @@ class InteractiveClaudeCodePool:
             "--add-host", "host.docker.internal:host-gateway",
             "--cap-add", "SYS_ADMIN",
             "--shm-size", "512m",
-            "--tmpfs", "/tmp:rw,nosuid,size=512m",
+            "--tmpfs", "/tmp:rw,nosuid,size=512m",  # nosec B108 - Docker tmpfs mount target inside ephemeral container.
             "--user", "root",
             "--entrypoint", "/usr/bin/sleep",
             image,
             "infinity",
         ]
-        result = subprocess.run(docker_cmd() + ["run"] + run_args,
+        result = subprocess.run(docker_cmd() + ["run"] + run_args,  # nosec B603
                                 capture_output=True, text=True, timeout=30)
         if result.returncode != 0:
             raise RuntimeError(f"Failed to spawn CC interactive container: {result.stderr[:500]}")
-        subprocess.run(docker_cmd() + ["exec", "--user", "root", name, "chronyd"],
+        subprocess.run(docker_cmd() + ["exec", "--user", "root", name, "chronyd"],  # nosec B603
                        capture_output=True, timeout=5)
         return name
 
@@ -489,7 +489,7 @@ class InteractiveClaudeCodePool:
             f"cp {shlex.quote(ca_path)} /usr/local/share/ca-certificates/pawflow-cci.crt && "
             "update-ca-certificates"
         )
-        r = subprocess.run(docker_cmd() + ["exec", "--user", "root", name, "bash", "-lc", cmd],
+        r = subprocess.run(docker_cmd() + ["exec", "--user", "root", name, "bash", "-lc", cmd],  # nosec B603
                            capture_output=True, text=True, timeout=30)
         if r.returncode != 0:
             raise RuntimeError(f"Failed to install CC interactive CA: {r.stderr[:300]}")
@@ -515,7 +515,7 @@ class InteractiveClaudeCodePool:
             value = os.environ.get(key)
             if value:
                 env += ["-e", f"{key}={value}"]
-        r = subprocess.run(
+        r = subprocess.run(  # nosec B603
             docker_cmd() + ["exec", "-d", "--user", "root", *env, name,
                             "python3", "/opt/pawflow/cc_interactive_proxy.py"],
             capture_output=True, text=True, timeout=10)
@@ -587,7 +587,7 @@ class InteractiveClaudeCodePool:
                 if isinstance(data, dict):
                     return data
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         return {}
 
     def _deny_builtin_tools(self, settings: dict) -> None:
@@ -658,14 +658,14 @@ class InteractiveClaudeCodePool:
             "CLAUDE_CODE_CERT_STORE=system TERM=xterm-256color "
             f"{quoted}')"
         )
-        r = subprocess.run(
+        r = subprocess.run(  # nosec B603
             docker_cmd() + ["exec", "--user", "root", name,
                             "setsid", "--wait", "unshare", "-m", "--",
                             "bash", "-lc", shell],
             capture_output=True, text=True, timeout=15)
         if r.returncode != 0:
             raise RuntimeError(f"Failed to start Claude tmux: {r.stderr[:500]}")
-        probe = subprocess.run(
+        probe = subprocess.run(  # nosec B603
             docker_cmd() + ["exec", "--user", "1000:1000", name,
                             "tmux", "has-session", "-t", "pawflow"],
             capture_output=True, text=True, timeout=10)
@@ -687,7 +687,7 @@ class InteractiveClaudeCodePool:
     @staticmethod
     def _is_alive(name: str) -> bool:
         try:
-            result = subprocess.run(
+            result = subprocess.run(  # nosec B603
                 docker_cmd() + ["inspect", "-f", "{{.State.Running}}", name],
                 capture_output=True, text=True, timeout=5)
             return result.stdout.strip() == "true"

@@ -23,7 +23,7 @@ class PawFlowApiClient:
         flows = client.list_flows()
     """
 
-    def __init__(self, base_url: str = "http://localhost:8000", token: str = ""):
+    def __init__(self, base_url: str = "http://localhost:8000", token: str = ""):  # nosec B107
         self.base_url = base_url.rstrip("/")
         self.token = token
         self.timeout = 30
@@ -45,7 +45,7 @@ class PawFlowApiClient:
             req.add_header("Authorization", f"Bearer {self.token}")
 
         try:
-            with urlopen(req, timeout=self.timeout) as resp:
+            with urlopen(req, timeout=self.timeout) as resp:  # nosec B310 - HTTP API client only accepts configured HTTP(S) servers.
                 content = resp.read().decode("utf-8")
                 if content:
                     try:
@@ -86,7 +86,7 @@ class PawFlowApiClient:
     def logout(self):
         """Logout current session."""
         result = self._post("/api/v1/auth/logout")
-        self.token = ""
+        self.token = ""  # nosec B105
         return result
 
     def me(self) -> Dict:

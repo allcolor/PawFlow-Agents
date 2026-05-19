@@ -369,7 +369,7 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             if owner:
                 hidden.add(owner)
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         visible = {"*": raw_map.get("*", "messages")}
         for name, status in raw_map.items():
             if not name or name == "*" or name in hidden:
@@ -606,7 +606,7 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
                         from core.service_registry import ServiceRegistry
                         return ServiceRegistry.get_instance().get_live_instance("global", "", svc_id)
                     except Exception:
-                        pass
+                        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 # Default: try to find any filesystem service
                 try:
                     return self._find_filesystem_service(user_id)

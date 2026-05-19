@@ -235,7 +235,7 @@ class SunoAudioService(BaseAudioGenerationService):
 
     def _download_audio(self, url: str) -> dict:
         req = urllib.request.Request(url, headers={"User-Agent": "PawFlow-Agent/1.0"})
-        with urllib.request.urlopen(req, timeout=120) as resp:
+        with urllib.request.urlopen(req, timeout=120) as resp:  # nosec B310 - provider-returned audio download URL.
             audio_bytes = resp.read()
             content_type = resp.headers.get("Content-Type", "audio/mpeg")
         return {"audio_bytes": audio_bytes, "content_type": content_type}

@@ -346,12 +346,12 @@ class DeleteToolHandler(ToolHandler):
                     removed = rs.delete("tool", tool_name, uid,
                                          conversation_id=cid)
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             if not removed and uid:
                 try:
                     rs.delete("tool", tool_name, uid)
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         except Exception as e:
             logger.warning("Failed to remove dynamic tool '%s' from store: %s",
                            tool_name, e)

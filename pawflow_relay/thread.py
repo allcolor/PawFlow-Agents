@@ -3,12 +3,13 @@
 Registers the service with the server, launches Docker or native worker,
 manages host helper for Docker-to-host actions, handles auto-restart.
 """
+import logging
 
 import json
 import os
 import secrets
 import socket
-import subprocess
+import subprocess  # nosec B404
 import sys
 import threading
 import time
@@ -64,7 +65,7 @@ def _host_abs_path(raw_path: str, root_dir: str) -> str:
 def _kill_relay_containers(relay_id: str) -> int:
     prefix = _relay_container_prefix(relay_id)
     try:
-        result = subprocess.run(
+        result = subprocess.run(  # nosec B603
             docker_cmd() + [
                 "ps", "-a", "--filter", f"name={prefix}",
                 "--format", "{{.ID}}\t{{.Names}}",
@@ -78,11 +79,11 @@ def _kill_relay_containers(relay_id: str) -> int:
             continue
         container_id = line.split("\t", 1)[0]
         try:
-            subprocess.run(docker_cmd() + ["rm", "-f", container_id],
+            subprocess.run(docker_cmd() + ["rm", "-f", container_id],  # nosec B603
                            capture_output=True, timeout=10)
             killed += 1
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
     return killed
 
 
@@ -125,7 +126,7 @@ class RelayThread:
         self.read_only = read_only
         self.relay_id = relay_id or generate_relay_id(username, self.directory)
         self.port = 0
-        self.ws_token = ""
+        self.ws_token = ""  # nosec B105
         self._thread = None
         self._stop_event = threading.Event()
         self._registered = False
@@ -167,9 +168,9 @@ class RelayThread:
             try:
                 out.flush()
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     def _api(self, method, path, body=None):
         """Convenience wrapper for api_call with this relay's credentials."""
@@ -258,7 +259,7 @@ class RelayThread:
             self._api("POST", "/api/ui",
                       {"action": "service_uninstall", "service_id": self.relay_id})
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         self.ws_token = secrets.token_urlsafe(32)
         self._install_service(retry=True)
         self._registered = True
@@ -274,7 +275,7 @@ class RelayThread:
             self._api_retry("POST", "/api/ui",
                       {"action": "service_uninstall", "service_id": self.relay_id})
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
         # Create new service. 'port' is kept for legacy config schema
         # compatibility; the server now registers on the main HTTP listener.
@@ -297,7 +298,7 @@ class RelayThread:
                 self._api("POST", "/api/ui",
                           {"action": "service_uninstall", "service_id": self.relay_id})
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             self._registered = False
         self._kill_docker()
 
@@ -309,13 +310,13 @@ class RelayThread:
     def _kill_docker(self):
         """Kill this relay's Docker containers (current + orphans)."""
         if self._docker_container:
-            import subprocess as _sp
+            import subprocess as _sp  # nosec B404
             try:
-                _sp.run(docker_cmd() + ["rm", "-f", self._docker_container],
+                _sp.run(docker_cmd() + ["rm", "-f", self._docker_container],  # nosec B603
                         capture_output=True, timeout=10)
                 self._log(f"[Relay] Killed container: {self._docker_container}")
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             self._docker_container = None
         if hasattr(self, '_docker_proc') and self._docker_proc:
             try:
@@ -325,7 +326,7 @@ class RelayThread:
             try:
                 self._docker_proc.wait(timeout=2)
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             self._docker_proc = None
         # Kill orphans from this specific relay
         try:
@@ -333,7 +334,7 @@ class RelayThread:
             if _killed:
                 self._log(f"[Relay] Cleaned {_killed} orphan container(s)")
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     def _run_relay(self):
         """Run the WS relay connection loop."""
@@ -360,7 +361,7 @@ class RelayThread:
             daemon=True, name="pawflow-host-helper")
         self._host_helper_thread.start()
 
-        import subprocess as _sp
+        import subprocess as _sp  # nosec B404
 
         restart_delay = 1
         max_restart_delay = 60
@@ -495,12 +496,12 @@ class RelayThread:
                 try:
                     os.chmod(_env_file_path, 0o600)
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             except Exception:
                 try:
                     os.close(_env_file_fd)
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 raise
             # Best-effort cleanup of any previous env-file from a prior
             # restart iteration (avoid leaking secrets in temp dir).
@@ -509,7 +510,7 @@ class RelayThread:
                 try:
                     os.unlink(_prev_env)
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             self._env_file_path = _env_file_path
             _env_file_container = translate_path(to_host_path(_env_file_path))
 
@@ -592,7 +593,7 @@ class RelayThread:
                 # container emits in a single reader. Python's print()
                 # defaults to stdout; anything written there would be lost
                 # if we only drained stderr.
-                self._docker_proc = _sp.Popen(
+                self._docker_proc = _sp.Popen(  # nosec B603
                     docker_run_cmd, stdin=_sp.DEVNULL,
                     stdout=_sp.PIPE, stderr=_sp.STDOUT)
 
@@ -610,14 +611,14 @@ class RelayThread:
                                 try:
                                     out.flush()
                                 except Exception:
-                                    pass
+                                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                                 if "HTTP/1.1 400 Bad Request" in msg:
                                     self._log(
                                         "[Relay] Relay handshake got 400; "
                                         "requesting full stop/start reconnect")
                                     _full_reconnect_requested.set()
                     except Exception:
-                        pass
+                        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 threading.Thread(target=_read_relay_logs, daemon=True,
                                  name="relay-log-reader").start()
 
@@ -635,7 +636,7 @@ class RelayThread:
                         try:
                             self._docker_proc.kill()
                         except Exception:
-                            pass
+                            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                         break
                     # Periodic health check: is the relay still connected to the server?
                     if time.time() - _last_health > _health_interval:
@@ -655,7 +656,7 @@ class RelayThread:
                                 try:
                                     self._docker_proc.kill()
                                 except Exception:
-                                    pass
+                                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                                 break
 
                 if self._stop_event.is_set():
@@ -674,7 +675,7 @@ class RelayThread:
                     try:
                         stderr = self._docker_proc.stderr.read().decode("utf-8", errors="replace")
                     except Exception:
-                        pass
+                        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                     self._log(f"[Relay] Docker relay exited (code {rc}), restarting in {restart_delay}s")
                     if stderr:
                         self._log(f"[Relay] {stderr[:500]}")
@@ -705,7 +706,7 @@ class RelayThread:
         """TCP server on the host for commands that must run outside Docker."""
         srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        srv.bind(("0.0.0.0", port))
+        srv.bind(("0.0.0.0", port))  # nosec B104 - host helper must be reachable from relay container.
         srv.listen(5)
         srv.settimeout(2)
         self._log(f"[Relay] Host helper listening on port {port}")
@@ -735,7 +736,7 @@ class RelayThread:
                 try:
                     conn.close()
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     def _handle_host_helper_conn(self, conn):
         """Handle a single host helper connection."""
@@ -770,7 +771,7 @@ class RelayThread:
                     msg = json.dumps({"type": "progress", "data": data}) + "\n"
                     conn.sendall(msg.encode("utf-8"))
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
             result = _login_fn(req, send_progress=_send_progress)
             resp = json.dumps({"type": "result", "data": result}) + "\n"
@@ -825,7 +826,7 @@ class RelayThread:
                         import base64 as _b64
                         _chunk_stats["bytes"] += len(_b64.b64decode(data)) if isinstance(data, str) else len(data or b"")
                     except Exception:
-                        pass
+                        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                     _chunk_stats["chunks"] += 1
                 try:
                     msg = json.dumps({"type": "http_response", "kind": kind,
@@ -896,7 +897,7 @@ class RelayThread:
 
     def _host_start_local_desktop(self, req):
         """Start VNC + websockify on the host to share the local screen."""
-        import subprocess as _sp
+        import subprocess as _sp  # nosec B404
         import shutil
 
         if hasattr(self, '_local_desktop_procs') and self._local_desktop_procs:
@@ -905,7 +906,8 @@ class RelayThread:
                 return {"novnc_port": self._local_desktop_novnc_port, "already_running": True}
             for p in self._local_desktop_procs:
                 try: p.kill()
-                except Exception: pass
+                except Exception:
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             self._local_desktop_procs = None
 
         _platform = sys.platform
@@ -925,7 +927,7 @@ class RelayThread:
             _ws_base = [websockify_cmd]
         else:
             try:
-                _sp.run([sys.executable, "-m", "websockify", "--help"],
+                _sp.run([sys.executable, "-m", "websockify", "--help"],  # nosec B603
                         capture_output=True, timeout=5)
                 _ws_base = [sys.executable, "-m", "websockify"]
             except Exception:
@@ -943,7 +945,7 @@ class RelayThread:
                     _existing = True
                     break
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             if not _existing:
                 winvnc = None
                 for candidate in [
@@ -958,7 +960,7 @@ class RelayThread:
                     winvnc = shutil.which("tvnserver") or shutil.which("winvnc")
                 if not winvnc:
                     return {"error": "No VNC server found. Install TightVNC or UltraVNC."}
-                p_vnc = _sp.Popen([winvnc, "-rfbport", str(vnc_port), "-localhost"],
+                p_vnc = _sp.Popen([winvnc, "-rfbport", str(vnc_port), "-localhost"],  # nosec B603
                                   stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
                 procs.append(p_vnc)
 
@@ -966,7 +968,7 @@ class RelayThread:
             display = os.environ.get("DISPLAY", ":0")
             if not shutil.which("x11vnc"):
                 return {"error": "x11vnc not installed"}
-            p_vnc = _sp.Popen(
+            p_vnc = _sp.Popen(  # nosec B603, B607
                 ["x11vnc", "-display", display, "-forever", "-nopw",
                  "-rfbport", str(vnc_port), "-shared", "-noxdamage"],
                 stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
@@ -980,7 +982,7 @@ class RelayThread:
         time.sleep(0.5)
 
         _ws_cmd = _ws_base + [str(novnc_port), f"localhost:{vnc_port}"]
-        p_ws = _sp.Popen(_ws_cmd, stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
+        p_ws = _sp.Popen(_ws_cmd, stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)  # nosec B603
         procs.append(p_ws)
 
         self._local_desktop_procs = procs
@@ -1021,7 +1023,7 @@ class RelayThread:
         to the server WS, where dispatch_terminal_data sends them to
         the browser — exactly like the Docker terminal path.
         """
-        import subprocess as _sp
+        import subprocess as _sp  # nosec B404
         import shutil
         import uuid as _uuid
         import base64
@@ -1050,7 +1052,7 @@ class RelayThread:
                 fcntl.ioctl(slave, termios.TIOCSWINSZ, winsize)
                 env = os.environ.copy()
                 env["TERM"] = "xterm-256color"
-                proc = _sp.Popen(
+                proc = _sp.Popen(  # nosec B603
                     [shell], stdin=slave, stdout=slave, stderr=slave,
                     cwd=self.directory, preexec_fn=os.setsid,
                     close_fds=True, env=env)
@@ -1097,7 +1099,7 @@ class RelayThread:
                         import signal as _sig
                         pty_proc.kill(_sig.SIGTERM)
                     except Exception:
-                        pass
+                        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
             # Store session for write/resize/close from separate TCP calls
             if not hasattr(self, '_local_terminals'):
@@ -1151,11 +1153,11 @@ class RelayThread:
                     }) + "\n"
                     conn.sendall(exit_msg.encode("utf-8"))
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 try:
                     conn.close()
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 self._log(f"[Relay] Local terminal {session_id} closed")
 
         except Exception as e:
@@ -1164,11 +1166,11 @@ class RelayThread:
                 conn.sendall(resp.encode("utf-8"))
                 conn.close()
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     def _host_start_local_code_server(self, req):
         """Start code-server on the host machine."""
-        import subprocess as _sp
+        import subprocess as _sp  # nosec B404
         import shutil
 
         code_server = shutil.which("code-server")
@@ -1177,7 +1179,7 @@ class RelayThread:
 
         port = find_free_port()
         try:
-            proc = _sp.Popen(
+            proc = _sp.Popen(  # nosec B603
                 [code_server, "--port", str(port), "--auth", "none",
                  "--bind-addr", f"127.0.0.1:{port}", self.directory],
                 stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)

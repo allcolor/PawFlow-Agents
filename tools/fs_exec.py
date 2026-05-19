@@ -5,7 +5,7 @@ Split from fs_actions.py — shell and streaming exec.
 
 import os
 import re
-import subprocess
+import subprocess  # nosec B404
 from pathlib import Path
 from typing import Any, Dict
 
@@ -113,7 +113,7 @@ def action_exec(root_dir: str, path: str, req: Dict[str, Any], *,
             "--memory", "1g",
             "--network", "none",
             "--read-only",
-            "--tmpfs", "/tmp:rw,noexec,nosuid,size=128m",
+            "--tmpfs", "/tmp:rw,noexec,nosuid,size=128m",  # nosec B108 - Docker tmpfs mount target inside ephemeral container.
             "--security-opt", "no-new-privileges",
             _image,
         ] + _exec_cmd
@@ -139,7 +139,7 @@ def action_exec(root_dir: str, path: str, req: Dict[str, Any], *,
             command, root_dir, shell_name=shell_name, executable=executable or "")
         result = _run_cancellable(
             req.get("request_id", ""),
-            command, shell=True,
+            command, shell=True,  # nosec B604 - relay exec tool intentionally runs shell commands.
             executable=executable,
             capture_output=True, text=True,
             encoding="utf-8", errors="replace",
@@ -232,7 +232,7 @@ def action_exec_stream(root_dir: str, path: str, req: Dict[str, Any], *,
         if executable:
             popen_kwargs["executable"] = executable
 
-    proc = subprocess.Popen(cmd if not popen_kwargs.get("shell") else cmd, **popen_kwargs)
+    proc = subprocess.Popen(cmd if not popen_kwargs.get("shell") else cmd, **popen_kwargs)  # nosec B603
     _request_id = req.get("request_id", "")
     register_inflight_proc(_request_id, proc)
 

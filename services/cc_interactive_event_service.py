@@ -456,7 +456,7 @@ class CCInteractiveEventService(BaseService):
     async def _serve(self, reader, writer, remote: str):
         from services.filesystem_service import _ws_recv_frame, _ws_send_frame
 
-        session_token = ""
+        session_token = ""  # nosec B105
         try:
             opcode, payload = await _ws_recv_frame(reader)
             if opcode != 0x01:
@@ -515,7 +515,7 @@ class CCInteractiveEventService(BaseService):
             try:
                 writer.close()
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
 
 def get_or_create_cc_interactive_event_service() -> tuple[str, str, CCInteractiveEventService]:
@@ -540,7 +540,7 @@ def get_or_create_cc_interactive_event_service() -> tuple[str, str, CCInteractiv
         try:
             reg.uninstall(sdef.scope, sdef.scope_id, sdef.service_id)
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     token = uuid.uuid4().hex
     reg.install(SCOPE_GLOBAL, "", service_id=service_id,

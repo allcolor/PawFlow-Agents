@@ -10,7 +10,7 @@ Pour POST/PUT/PATCH/DELETE ou quand Scrapling n'est pas disponible, fallback url
 import json
 import logging
 import re
-import subprocess
+import subprocess  # nosec B404
 import sys
 from typing import Dict, Any, List
 from core import FlowFile, TaskFactory, TaskError
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 # Minimal GDPR consent cookies to bypass European consent walls
 _GDPR_COOKIES = {
     "authId": "anonymous",
-    "didomi_token": (
+    "didomi_token": (  # nosec B105
         "eyJ1c2VyX2lkIjoiIiwiY3JlYXRlZCI6IjIwMjQtMDEtMDFUMDA6M"
         "DA6MDAuMDAwWiIsInVwZGF0ZWQiOiIyMDI0LTAxLTAxVDAwOjAwOjAw"
         "LjAwMFoiLCJ2ZW5kb3JzIjp7ImVuYWJsZWQiOltdfSwicHVycG9zZXM"
@@ -192,7 +192,7 @@ class FetchHTTPTask(BaseTask):
 
         try:
             req = Request(url, data=body, headers=headers, method=self.method)
-            with urlopen(req, timeout=self.timeout) as response:
+            with urlopen(req, timeout=self.timeout) as response:  # nosec B310 - task intentionally fetches user-configured HTTP(S) URLs.
                 content = response.read()
                 status_code = response.status
                 response_headers = dict(response.getheaders())
@@ -253,7 +253,7 @@ class FetchHTTPTask(BaseTask):
                 'latin-1', errors='replace')
         # Download directly if scrapling didn't give us bytes
         from urllib.request import urlopen as _urlopen
-        with _urlopen(url, timeout=30) as resp:
+        with _urlopen(url, timeout=30) as resp:  # nosec B310 - fallback fetch for previously requested URL.
             return resp.read()
 
     @staticmethod
@@ -310,7 +310,7 @@ class FetchHTTPTask(BaseTask):
             args = [sys.executable, "-c", script, url]
             if selector:
                 args.append(selector)
-            proc = subprocess.run(
+            proc = subprocess.run(  # nosec B603
                 args, capture_output=True, text=True, timeout=60,
             )
             if proc.returncode != 0:

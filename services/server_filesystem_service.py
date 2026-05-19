@@ -123,6 +123,7 @@ class ServerFilesystemBackend(FilesystemBackend):
             try:
                 text = fp.read_text(encoding="utf-8", errors="replace")
             except Exception:
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 continue
             for i, line in enumerate(text.splitlines(), 1):
                 m = compiled.search(line)

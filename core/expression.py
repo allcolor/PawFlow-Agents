@@ -385,7 +385,7 @@ def resolve_expression(template: str, parameters: Optional[Dict[str, Any]] = Non
                 if _rid:
                     return _return_val(_rid)
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
         # ── Unified resolution: secrets cascade → params cascade ──
         # 1. Secrets: flow(n/a) → conv → user → global

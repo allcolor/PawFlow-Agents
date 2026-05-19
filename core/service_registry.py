@@ -711,7 +711,7 @@ class ServiceRegistry:
                     "service_id": service_id,
                 })
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     # ---- Sensitive field encryption ----
 
@@ -759,7 +759,7 @@ class ServiceRegistry:
                 try:
                     out[k] = sm.decrypt(v)
                 except Exception:
-                    pass  # leave encrypted if key changed
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         return out
 
     # ---- Persistence ----
@@ -945,7 +945,7 @@ class ServiceRegistry:
                 try:
                     tmp_path.unlink(missing_ok=True)
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
         # Remove files for services that no longer exist
         for f in svc_dir.glob("*.json"):
@@ -954,7 +954,7 @@ class ServiceRegistry:
                     f.unlink()
                     logger.info("Removed stale service file: %s", f)
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     def _save_conv(self, scope_id: str) -> None:
         """Save to ConversationStore extras."""

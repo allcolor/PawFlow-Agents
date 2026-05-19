@@ -1287,7 +1287,7 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                         _conv_total = int(ConversationStore.instance()
                             .message_count(conversation_id))
                     except Exception:
-                        pass
+                        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                     ConversationEventBus.instance().publish_event(
                         conversation_id, "compact_progress", {
                             "stage": "done",

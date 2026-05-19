@@ -183,7 +183,7 @@ def _store_claude_tokens(service_id, access_token, refresh_token, expires_at):
     logger.info("Claude Code credential added to pool for '%s'", service_id)
 
 
-def _store_codex_tokens(service_id, access_token, refresh_token, expires_at,
+def _store_codex_tokens(service_id, access_token, refresh_token, expires_at,  # nosec B107
                         account="", id_token=""):
     from core.llm_providers.codex_session import add_credential_to_pool
     add_credential_to_pool(
@@ -290,6 +290,7 @@ def _resolve_flow_template_path(template_id: str, user_id: str,
                 }:
                     return vfile
             except Exception:
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 continue
     return None
 
@@ -396,6 +397,7 @@ def _load_flow_instance_template_raw(inst, user_id: str) -> Dict[str, Any]:
             if path.is_file():
                 return json.loads(path.read_text(encoding="utf-8"))
         except Exception:
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             continue
     return {}
 
@@ -792,7 +794,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             from core.service_registry import ServiceRegistry
             svc = ServiceRegistry.get_instance().resolve(svc_id, user_id=user_id)
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         if not svc:
             flowfile.set_content(json.dumps({"error": f"Service '{svc_id}' not found"}).encode())
             return [flowfile]
@@ -820,7 +822,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                         # Invalidate CC session (new credential = new session)
                         store.invalidate_claude_sessions(conv_id)
                     except Exception:
-                        pass
+                        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 flowfile.set_content(json.dumps({
                     "ok": True,
                     "message": f"Rotated to credential {new_idx} for {svc_id}. Session invalidated.",
@@ -1053,7 +1055,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 from core.service_registry import ServiceRegistry
                 relay_svc = ServiceRegistry.get_instance().resolve(relay_id, user_id=user_id)
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         if not relay_svc:
             flowfile.set_content(json.dumps({"error": f"Relay service '{relay_id}' not found"}).encode())
             return [flowfile]
@@ -1117,7 +1119,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 from core.service_registry import ServiceRegistry
                 relay_svc = ServiceRegistry.get_instance().resolve(relay_id, user_id=user_id)
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         if not relay_svc:
             flowfile.set_content(json.dumps({"error": f"Relay service '{relay_id}' not found"}).encode())
             return [flowfile]
@@ -1179,7 +1181,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 from core.service_registry import ServiceRegistry
                 relay_svc = ServiceRegistry.get_instance().resolve(relay_id, user_id=user_id)
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         if not relay_svc:
             flowfile.set_content(json.dumps({"error": f"Relay service '{relay_id}' not found"}).encode())
             return [flowfile]
@@ -1272,7 +1274,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             return [flowfile]
 
         def _bg_setup():
-            import subprocess as _sp
+            import subprocess as _sp  # nosec B404
             from core.docker_utils import docker_cmd as _docker_cmd
             try:
                 docker_cmd = _docker_cmd() + [
@@ -1287,7 +1289,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                     "/opt/pawflow/auth_login.sh",
                 ]
                 logger.info("[vnc-login] Starting container %s on port %d", container_name, free_port)
-                result = _sp.run(docker_cmd, capture_output=True, text=True, timeout=30)
+                result = _sp.run(docker_cmd, capture_output=True, text=True, timeout=30)  # nosec B603
                 if result.returncode != 0:
                     logger.error("[vnc-login] Docker failed: %s", result.stderr[:300])
                     from services.vnc_proxy import update_session_error
@@ -1305,7 +1307,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             import urllib.request
             for _attempt in range(15):
                 try:
-                    urllib.request.urlopen(f"http://127.0.0.1:{free_port}/", timeout=2)
+                    urllib.request.urlopen(f"http://127.0.0.1:{free_port}/", timeout=2)  # nosec B310 - local noVNC readiness probe.
                     logger.info("[vnc-login] noVNC ready on port %d", free_port)
                     break
                 except Exception:
@@ -1323,7 +1325,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                             if svc:
                                 break
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 if svc:
                     _vnc_owner = "_vnc_proxy"
                     existing = [r for r in svc.get_routes() if r.get("owner") == _vnc_owner]
@@ -1365,13 +1367,13 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         from services.vnc_proxy import _sessions as _vnc_sessions, unregister_session
         session = _vnc_sessions.get(session_id)
         if session:
-            import subprocess as _sp
+            import subprocess as _sp  # nosec B404
             from core.docker_utils import docker_cmd as _docker_cmd
             try:
-                _sp.run(_docker_cmd() + ["rm", "-f", session.get("container", "")],
+                _sp.run(_docker_cmd() + ["rm", "-f", session.get("container", "")],  # nosec B603
                         capture_output=True, timeout=10)
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             unregister_session(session_id)
         flowfile.set_content(json.dumps({"ok": True}).encode())
         return [flowfile]
@@ -1397,14 +1399,14 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"status": "starting"}).encode())
             return [flowfile]
 
-        import subprocess as _sp
+        import subprocess as _sp  # nosec B404
         from core.docker_utils import docker_cmd as _docker_cmd
         container = session["container"]
         launch_time = session.get("launch_time", 0)
 
         # Check timeout (2 min max)
         if time.time() - launch_time > 120:
-            _sp.run(_docker_cmd() + ["rm", "-f", container],
+            _sp.run(_docker_cmd() + ["rm", "-f", container],  # nosec B603
                     capture_output=True, timeout=10)
             unregister_session(session_id)
             flowfile.set_content(json.dumps({"error": "Login timed out (2 min)"}).encode())
@@ -1412,7 +1414,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
 
         # Check if .credentials.json was updated since launch
         try:
-            stat_result = _sp.run(
+            stat_result = _sp.run(  # nosec B603
                 _docker_cmd() + ["exec", container, "bash", "-c",
                                   "stat -c %Y /home/pawflow/.credentials.json 2>/dev/null || stat -c %Y /workspace/.credentials.json 2>/dev/null"],
                 capture_output=True, text=True, timeout=5)
@@ -1431,7 +1433,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
 
         # Credentials updated — read them
         try:
-            read_result = _sp.run(
+            read_result = _sp.run(  # nosec B603
                 _docker_cmd() + ["exec", container, "bash", "-c",
                                   "cat /home/pawflow/.credentials.json 2>/dev/null || cat /workspace/.credentials.json"],
                 capture_output=True, text=True, timeout=10)
@@ -1439,7 +1441,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         except Exception as e:
             flowfile.set_content(json.dumps({"error": f"Failed to read credentials: {e}"}).encode())
             # Cleanup
-            _sp.run(_docker_cmd() + ["rm", "-f", container],
+            _sp.run(_docker_cmd() + ["rm", "-f", container],  # nosec B603
                     capture_output=True, timeout=10)
             unregister_session(session_id)
             return [flowfile]
@@ -1469,16 +1471,16 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({
                 "error": f"Login returned expired token ({abs(_remaining)/3600:.0f}h ago). Try again."
             }).encode())
-            _sp.run(_docker_cmd() + ["rm", "-f", container], capture_output=True, timeout=10)
+            _sp.run(_docker_cmd() + ["rm", "-f", container], capture_output=True, timeout=10)  # nosec B603
             unregister_session(session_id)
             return [flowfile]
 
         # Cleanup container (volume stays)
         try:
-            _sp.run(_docker_cmd() + ["rm", "-f", container],
+            _sp.run(_docker_cmd() + ["rm", "-f", container],  # nosec B603
                     capture_output=True, timeout=10)
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         unregister_session(session_id)
         # Cleanup VNC proxy routes
         # Routes are shared (/vnc/{session_id}/...) — don't unregister
@@ -1577,7 +1579,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                         _store_codex_tokens(service_id, access_token, refresh_token, expires_at, account=account, id_token=id_token)
                         _stored = True
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             if not _stored:
                 flowfile.set_content(json.dumps({"error": f"Service '{service_id}' not found"}).encode())
                 return [flowfile]
@@ -1657,7 +1659,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                         _store_gemini_tokens(service_id, access_token, refresh_token, expires_at)
                         _stored = True
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             if not _stored:
                 flowfile.set_content(json.dumps({"error": f"Service '{service_id}' not found"}).encode())
                 return [flowfile]
@@ -1736,7 +1738,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                         _store_claude_tokens(service_id, access_token, refresh_token, expires_at)
                         _stored = True
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
             if not _stored:
                 flowfile.set_content(json.dumps({
@@ -1792,7 +1794,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
 
         # Generate IDs for the child relay
         import hashlib
-        _dir_hash = hashlib.md5(path.encode()).hexdigest()[:8]
+        _dir_hash = hashlib.md5(path.encode(), usedforsecurity=False).hexdigest()[:8]
         child_relay_id = f"fs_{user_id}_{_dir_hash}"
 
         # Send spawn_relay command to the source relay
@@ -1860,11 +1862,11 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             try:
                 svc.disconnect()
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             try:
                 ureg.uninstall("user", user_id, service_id)
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
         # Also try to send stop_relay to all connected relays
         try:
@@ -1890,9 +1892,9 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
 
                         asyncio.run_coroutine_threadsafe(_send_stop(), _loop).result(timeout=5)
                     except Exception:
-                        pass
+                        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
         flowfile.set_content(json.dumps({
             "ok": True,
@@ -2157,7 +2159,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                         service_overrides=inst.service_overrides,
                         service_configs=inst.service_configs)
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             payload = {
                 "instance_id": inst.instance_id,
                 "flow_name": inst.flow_name,
@@ -2422,7 +2424,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
 
         Same pattern as Claude login: find the container, docker port 6080.
         """
-        import subprocess
+        import subprocess  # nosec B404
         from core.docker_utils import docker_cmd as _dkr_cmd
 
         # 1) Server relay: container name in conversation metadata
@@ -2437,13 +2439,13 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                     # Fallback: docker port on the container
                     cname = entry.get("container_name", "")
                     if cname:
-                        r = subprocess.run(
+                        r = subprocess.run(  # nosec B603
                             _dkr_cmd() + ["port", cname, "6080"],
                             capture_output=True, text=True, timeout=5)
                         if r.returncode == 0:
                             return int(r.stdout.strip().split(":")[-1])
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
         # 2) Any relay: get container_id from relay info, then docker port
         svc = _find_relay_svc(relay_id)
@@ -2451,18 +2453,18 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             container_id = getattr(svc, '_relay_info', {}).get('container_id', '')
             if container_id:
                 try:
-                    r = subprocess.run(
+                    r = subprocess.run(  # nosec B603
                         _dkr_cmd() + ["port", container_id, "6080"],
                         capture_output=True, text=True, timeout=5)
                     if r.returncode == 0:
                         return int(r.stdout.strip().split(":")[-1])
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         return 0
 
     def _get_container_port(relay_id, container_port):
         """Get the published host port for a given container port."""
-        import subprocess
+        import subprocess  # nosec B404
         from core.docker_utils import docker_cmd as _dkr_cmd
         try:
             from core.server_relay_manager import ServerRelayManager
@@ -2470,25 +2472,25 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 if entry.get("relay_id") == relay_id:
                     cname = entry.get("container_name", "")
                     if cname:
-                        r = subprocess.run(
+                        r = subprocess.run(  # nosec B603
                             _dkr_cmd() + ["port", cname, str(container_port)],
                             capture_output=True, text=True, timeout=5)
                         if r.returncode == 0:
                             return int(r.stdout.strip().split(":")[-1])
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         svc = _find_relay_svc(relay_id)
         if svc:
             cid = getattr(svc, '_relay_info', {}).get('container_id', '')
             if cid:
                 try:
-                    r = subprocess.run(
+                    r = subprocess.run(  # nosec B603
                         _dkr_cmd() + ["port", cid, str(container_port)],
                         capture_output=True, text=True, timeout=5)
                     if r.returncode == 0:
                         return int(r.stdout.strip().split(":")[-1])
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         return 0
 
     if action == "open_terminal":
@@ -2506,8 +2508,9 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 flowfile.set_content(json.dumps({"error": f"Relay '{relay_id}' not found"}).encode())
                 return [flowfile]
             _term_action = "open_local_terminal" if local else "open_terminal"
+            terminal_kwargs = {"shell": shell} if shell else {}
             result = svc._request(_term_action, cols=cols, rows=rows,
-                                  **(dict(shell=shell) if shell else {}))
+                                  **terminal_kwargs)
             session_id = result.get("session_id", "") if isinstance(result, dict) else str(result)
 
             # Register terminal session for WS proxy
@@ -2728,7 +2731,7 @@ finally:
                 if tsess:
                     relay_id = tsess.get("relay_service_id", "")
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         if not relay_id:
             flowfile.set_content(json.dumps({"error": "Missing relay_id"}).encode())
             return [flowfile]
@@ -2858,7 +2861,7 @@ finally:
                 from services.code_server_proxy import unregister_code_server
                 unregister_code_server(relay_id)
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             flowfile.set_content(json.dumps({"ok": True}).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
@@ -2896,7 +2899,7 @@ finally:
                             login_session_id=_login_sid)
                         _ensure_vnc_routes()
                         # Re-register audio for already-running desktop
-                        _audio_token = ""
+                        _audio_token = ""  # nosec B105
                         try:
                             from services.audio_proxy import register_audio_source
                             _audio_port = status.get("local_screen_audio_port")
@@ -2906,7 +2909,7 @@ finally:
                                                                      owner_user_id=user_id,
                                                                      login_session_id=_login_sid)
                         except Exception:
-                            pass
+                            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                         flowfile.set_content(json.dumps({
                             "ok": True, "already_running": True, "local_screen": True,
                             "relay_id": relay_id,
@@ -2927,7 +2930,7 @@ finally:
                             login_session_id=_login_sid)
                         _ensure_vnc_routes()
                         # Re-register audio for already-running desktop
-                        _audio_token = ""
+                        _audio_token = ""  # nosec B105
                         try:
                             from services.audio_proxy import register_audio_source
                             _ahp = 0
@@ -2938,7 +2941,7 @@ finally:
                                         _ahp = _entry.get("audio_host_port", 0)
                                         break
                             except Exception:
-                                pass
+                                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                             if not _ahp:
                                 _ahp = _get_container_port(relay_id, 6180)
                             if _ahp:
@@ -2946,7 +2949,7 @@ finally:
                                                                      owner_user_id=user_id,
                                                                      login_session_id=_login_sid)
                         except Exception:
-                            pass
+                            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                         flowfile.set_content(json.dumps({
                             "ok": True, "already_running": True,
                             "relay_id": relay_id,
@@ -2996,7 +2999,7 @@ finally:
             _ensure_vnc_routes()
 
             # Register audio source if available
-            _audio_token = ""
+            _audio_token = ""  # nosec B105
             try:
                 from services.audio_proxy import register_audio_source
                 if local_screen:
@@ -3016,7 +3019,7 @@ finally:
                                 _audio_host_port = _entry.get("audio_host_port", 0)
                                 break
                     except Exception:
-                        pass
+                        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                     if not _audio_host_port:
                         _audio_host_port = _get_container_port(relay_id, 6180)
                     if _audio_host_port:
@@ -3054,7 +3057,7 @@ finally:
                 from services.audio_proxy import unregister_audio_source
                 unregister_audio_source(_session_id)
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             flowfile.set_content(json.dumps({"ok": True}).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
@@ -3283,7 +3286,7 @@ finally:
             return [flowfile]
 
         def _bg_setup():
-            import subprocess as _sp
+            import subprocess as _sp  # nosec B404
             from core.docker_utils import docker_cmd as _docker_cmd
             try:
                 docker_cmd = _docker_cmd() + [
@@ -3298,7 +3301,7 @@ finally:
                     "/opt/pawflow/codex_auth_login.sh",
                 ]
                 logger.info("[codex-login] Starting container %s on port %d", container_name, free_port)
-                result = _sp.run(docker_cmd, capture_output=True, text=True, timeout=30)
+                result = _sp.run(docker_cmd, capture_output=True, text=True, timeout=30)  # nosec B603
                 if result.returncode != 0:
                     logger.error("[codex-login] Docker failed: %s", result.stderr[:300])
                     from services.vnc_proxy import update_session_error
@@ -3315,7 +3318,7 @@ finally:
             import urllib.request
             for _attempt in range(15):
                 try:
-                    urllib.request.urlopen(f"http://127.0.0.1:{free_port}/", timeout=2)
+                    urllib.request.urlopen(f"http://127.0.0.1:{free_port}/", timeout=2)  # nosec B310 - local noVNC readiness probe.
                     logger.info("[codex-login] noVNC ready on port %d", free_port)
                     break
                 except Exception:
@@ -3336,7 +3339,7 @@ finally:
                             if svc:
                                 break
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 if svc:
                     _vnc_owner = "_vnc_proxy"
                     existing = [r for r in svc.get_routes() if r.get("owner") == _vnc_owner]
@@ -3373,13 +3376,13 @@ finally:
         from services.vnc_proxy import _sessions as _vnc_sessions, unregister_session
         session = _vnc_sessions.get(session_id)
         if session:
-            import subprocess as _sp
+            import subprocess as _sp  # nosec B404
             from core.docker_utils import docker_cmd as _docker_cmd
             try:
-                _sp.run(_docker_cmd() + ["rm", "-f", session.get("container", "")],
+                _sp.run(_docker_cmd() + ["rm", "-f", session.get("container", "")],  # nosec B603
                         capture_output=True, timeout=10)
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             unregister_session(session_id)
         flowfile.set_content(json.dumps({"ok": True}).encode())
         return [flowfile]
@@ -3400,18 +3403,18 @@ finally:
             flowfile.set_content(json.dumps({"status": "starting"}).encode())
             return [flowfile]
 
-        import subprocess as _sp
+        import subprocess as _sp  # nosec B404
         from core.docker_utils import docker_cmd as _docker_cmd
         container = session["container"]
         launch_time = session.get("launch_time", 0)
         if time.time() - launch_time > 180:
-            _sp.run(_docker_cmd() + ["rm", "-f", container], capture_output=True, timeout=10)
+            _sp.run(_docker_cmd() + ["rm", "-f", container], capture_output=True, timeout=10)  # nosec B603
             unregister_session(session_id)
             flowfile.set_content(json.dumps({"error": "Codex login timed out (3 min)"}).encode())
             return [flowfile]
 
         try:
-            stat_result = _sp.run(
+            stat_result = _sp.run(  # nosec B603
                 _docker_cmd() + ["exec", container, "bash", "-c",
                                   "stat -c %Y /home/pawflow/.codex/auth.json 2>/dev/null || stat -c %Y /workspace/auth.json 2>/dev/null"],
                 capture_output=True, text=True, timeout=5)
@@ -3427,7 +3430,7 @@ finally:
             return [flowfile]
 
         try:
-            read_result = _sp.run(
+            read_result = _sp.run(  # nosec B603
                 _docker_cmd() + ["exec", container, "bash", "-c",
                                   "cat /home/pawflow/.codex/auth.json 2>/dev/null || cat /workspace/auth.json"],
                 capture_output=True, text=True, timeout=10)
@@ -3435,7 +3438,7 @@ finally:
             parsed = parse_auth_json(read_result.stdout)
         except Exception as e:
             flowfile.set_content(json.dumps({"error": f"Failed to read codex credentials: {e}"}).encode())
-            _sp.run(_docker_cmd() + ["rm", "-f", container], capture_output=True, timeout=10)
+            _sp.run(_docker_cmd() + ["rm", "-f", container], capture_output=True, timeout=10)  # nosec B603
             unregister_session(session_id)
             return [flowfile]
 
@@ -3450,9 +3453,9 @@ finally:
             except Exception as e:
                 logger.warning("Failed to save codex credentials: %s", e)
         try:
-            _sp.run(_docker_cmd() + ["rm", "-f", container], capture_output=True, timeout=10)
+            _sp.run(_docker_cmd() + ["rm", "-f", container], capture_output=True, timeout=10)  # nosec B603
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         unregister_session(session_id)
         if not access_token:
             flowfile.set_content(json.dumps({"error": "No access_token in codex auth.json"}).encode())
@@ -3510,7 +3513,7 @@ finally:
 
         def _bg_setup_gemini():
             import os as _os
-            import subprocess as _sp
+            import subprocess as _sp  # nosec B404
             from core.docker_utils import (
                 docker_cmd as _docker_cmd,
                 to_host_path as _to_host_path,
@@ -3540,7 +3543,7 @@ finally:
                     "/opt/pawflow/gemini_auth_login.sh",
                 ]
                 logger.info("[gemini-login] Starting container %s on port %d", container_name, free_port)
-                result = _sp.run(docker_cmd, capture_output=True, text=True, timeout=30)
+                result = _sp.run(docker_cmd, capture_output=True, text=True, timeout=30)  # nosec B603
                 if result.returncode != 0:
                     logger.error("[gemini-login] Docker failed: %s", result.stderr[:300])
                     from services.vnc_proxy import update_session_error
@@ -3557,7 +3560,7 @@ finally:
             import urllib.request
             for _attempt in range(15):
                 try:
-                    urllib.request.urlopen(f"http://127.0.0.1:{free_port}/", timeout=2)
+                    urllib.request.urlopen(f"http://127.0.0.1:{free_port}/", timeout=2)  # nosec B310 - local noVNC readiness probe.
                     logger.info("[gemini-login] noVNC ready on port %d", free_port)
                     break
                 except Exception:
@@ -3575,7 +3578,7 @@ finally:
                             if svc:
                                 break
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 if svc:
                     _vnc_owner = "_vnc_proxy"
                     existing = [r for r in svc.get_routes() if r.get("owner") == _vnc_owner]
@@ -3612,13 +3615,13 @@ finally:
         from services.vnc_proxy import _sessions as _vnc_sessions, unregister_session
         session = _vnc_sessions.get(session_id)
         if session:
-            import subprocess as _sp
+            import subprocess as _sp  # nosec B404
             from core.docker_utils import docker_cmd as _docker_cmd
             try:
-                _sp.run(_docker_cmd() + ["rm", "-f", session.get("container", "")],
+                _sp.run(_docker_cmd() + ["rm", "-f", session.get("container", "")],  # nosec B603
                         capture_output=True, timeout=10)
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             unregister_session(session_id)
         flowfile.set_content(json.dumps({"ok": True}).encode())
         return [flowfile]
@@ -3639,18 +3642,18 @@ finally:
             flowfile.set_content(json.dumps({"status": "starting"}).encode())
             return [flowfile]
 
-        import subprocess as _sp
+        import subprocess as _sp  # nosec B404
         from core.docker_utils import docker_cmd as _docker_cmd
         container = session["container"]
         launch_time = session.get("launch_time", 0)
         if time.time() - launch_time > 180:
-            _sp.run(_docker_cmd() + ["rm", "-f", container], capture_output=True, timeout=10)
+            _sp.run(_docker_cmd() + ["rm", "-f", container], capture_output=True, timeout=10)  # nosec B603
             unregister_session(session_id)
             flowfile.set_content(json.dumps({"error": "Gemini login timed out (3 min)"}).encode())
             return [flowfile]
 
         try:
-            stat_result = _sp.run(
+            stat_result = _sp.run(  # nosec B603
                 _docker_cmd() + ["exec", container, "bash", "-c",
                                   "stat -c %Y /home/pawflow/.gemini/oauth_creds.json 2>/dev/null || stat -c %Y /workspace/oauth_creds.json 2>/dev/null"],
                 capture_output=True, text=True, timeout=5)
@@ -3666,7 +3669,7 @@ finally:
             return [flowfile]
 
         try:
-            read_result = _sp.run(
+            read_result = _sp.run(  # nosec B603
                 _docker_cmd() + ["exec", container, "bash", "-c",
                                   "cat /home/pawflow/.gemini/oauth_creds.json 2>/dev/null || cat /workspace/oauth_creds.json"],
                 capture_output=True, text=True, timeout=10)
@@ -3675,7 +3678,7 @@ finally:
             # Also try to read google_accounts.json for the account label.
             account = ""
             try:
-                acc_result = _sp.run(
+                acc_result = _sp.run(  # nosec B603
                     _docker_cmd() + ["exec", container, "bash", "-c",
                                       "cat /home/pawflow/.gemini/google_accounts.json 2>/dev/null || cat /workspace/google_accounts.json"],
                     capture_output=True, text=True, timeout=5)
@@ -3684,10 +3687,10 @@ finally:
                     if isinstance(_accs, dict) and _accs:
                         account = next(iter(_accs.keys()), "") or ""
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         except Exception as e:
             flowfile.set_content(json.dumps({"error": f"Failed to read gemini credentials: {e}"}).encode())
-            _sp.run(_docker_cmd() + ["rm", "-f", container], capture_output=True, timeout=10)
+            _sp.run(_docker_cmd() + ["rm", "-f", container], capture_output=True, timeout=10)  # nosec B603
             unregister_session(session_id)
             return [flowfile]
 
@@ -3700,9 +3703,9 @@ finally:
             except Exception as e:
                 logger.warning("Failed to save gemini credentials: %s", e)
         try:
-            _sp.run(_docker_cmd() + ["rm", "-f", container], capture_output=True, timeout=10)
+            _sp.run(_docker_cmd() + ["rm", "-f", container], capture_output=True, timeout=10)  # nosec B603
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         unregister_session(session_id)
         if not access_token:
             flowfile.set_content(json.dumps({"error": "No access_token in gemini oauth_creds.json"}).encode())
@@ -3770,7 +3773,7 @@ finally:
 
         def _bg_setup_rclone():
             import os as _os
-            import subprocess as _sp
+            import subprocess as _sp  # nosec B404
             from core.docker_utils import (
                 docker_cmd as _docker_cmd,
                 to_host_path as _to_host_path,
@@ -3800,7 +3803,7 @@ finally:
                     "/opt/pawflow/rclone_auth_login.sh",
                 ]
                 logger.info("[rclone-login] Starting container %s on port %d", container_name, free_port)
-                result = _sp.run(docker_cmd, capture_output=True, text=True, timeout=30)
+                result = _sp.run(docker_cmd, capture_output=True, text=True, timeout=30)  # nosec B603
                 if result.returncode != 0:
                     logger.error("[rclone-login] Docker failed: %s", result.stderr[:300])
                     from services.vnc_proxy import update_session_error
@@ -3817,7 +3820,7 @@ finally:
             import urllib.request
             for _attempt in range(15):
                 try:
-                    urllib.request.urlopen(f"http://127.0.0.1:{free_port}/", timeout=2)
+                    urllib.request.urlopen(f"http://127.0.0.1:{free_port}/", timeout=2)  # nosec B310 - local noVNC readiness probe.
                     logger.info("[rclone-login] noVNC ready on port %d", free_port)
                     break
                 except Exception:
@@ -3863,13 +3866,13 @@ finally:
         from services.vnc_proxy import _sessions as _vnc_sessions, unregister_session
         session = _vnc_sessions.get(session_id)
         if session:
-            import subprocess as _sp
+            import subprocess as _sp  # nosec B404
             from core.docker_utils import docker_cmd as _docker_cmd
             try:
-                _sp.run(_docker_cmd() + ["rm", "-f", session.get("container", "")],
+                _sp.run(_docker_cmd() + ["rm", "-f", session.get("container", "")],  # nosec B603
                         capture_output=True, timeout=10)
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             unregister_session(session_id)
         flowfile.set_content(json.dumps({"ok": True}).encode())
         return [flowfile]
@@ -3890,24 +3893,24 @@ finally:
             flowfile.set_content(json.dumps({"status": "starting"}).encode())
             return [flowfile]
 
-        import subprocess as _sp
+        import subprocess as _sp  # nosec B404
         from core.docker_utils import docker_cmd as _docker_cmd
         container = session["container"]
         try:
-            result_dir = "/tmp/pawflow-rclone-login"
-            error_result = _sp.run(
+            result_dir = "/tmp/pawflow-rclone-login"  # nosec B108 - relay-container rclone login scratch dir.
+            error_result = _sp.run(  # nosec B603
                 _docker_cmd() + ["exec", container, "bash", "-c", f"cat {result_dir}/rclone_error.txt 2>/dev/null"],
                 capture_output=True, text=True)
             if error_result.returncode == 0 and error_result.stdout.strip():
                 flowfile.set_content(json.dumps({"error": error_result.stdout.strip()[:500]}).encode())
                 return [flowfile]
-            stat_result = _sp.run(
+            stat_result = _sp.run(  # nosec B603
                 _docker_cmd() + ["exec", container, "bash", "-c", f"test -s {result_dir}/rclone_config_body.txt"],
                 capture_output=True, text=True)
             if stat_result.returncode != 0:
                 flowfile.set_content(json.dumps({"status": "pending"}).encode())
                 return [flowfile]
-            read_result = _sp.run(
+            read_result = _sp.run(  # nosec B603
                 _docker_cmd() + ["exec", container, "bash", "-c", f"cat {result_dir}/rclone_config_body.txt"],
                 capture_output=True, text=True)
             rclone_config = read_result.stdout.strip()
@@ -3938,9 +3941,9 @@ finally:
             return [flowfile]
 
         try:
-            _sp.run(_docker_cmd() + ["rm", "-f", container], capture_output=True, timeout=10)
+            _sp.run(_docker_cmd() + ["rm", "-f", container], capture_output=True, timeout=10)  # nosec B603
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         unregister_session(session_id)
         flowfile.set_content(json.dumps({
             "ok": True,

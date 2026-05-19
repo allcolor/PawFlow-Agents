@@ -97,7 +97,7 @@ def remove_forward(forward_id: str = "", *,
             from core.capability_routes import revoke_route_tokens
             revoke_route_tokens(forward_id)
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         logger.info(
             "Port forward removed: forward_id=%s relay=%s ext=%d",
             forward_id, entry.get("relay_id", ""), entry.get("ext_port", 0))

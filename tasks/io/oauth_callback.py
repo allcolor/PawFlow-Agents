@@ -34,7 +34,7 @@ def _http_post(url: str, data: Dict, headers: Optional[Dict] = None,
             req.add_header(k, v)
 
     ctx = ssl.create_default_context()
-    with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
+    with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:  # nosec B310 - OAuth provider token endpoint.
         body = resp.read().decode("utf-8")
         # GitHub returns form-encoded by default, try JSON first
         try:
@@ -53,7 +53,7 @@ def _http_get(url: str, token: str, timeout: int = 15) -> Dict:
     req.add_header("Accept", "application/json")
 
     ctx = ssl.create_default_context()
-    with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
+    with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:  # nosec B310 - OAuth provider userinfo endpoint.
         return json.loads(resp.read().decode("utf-8"))
 
 
@@ -164,7 +164,7 @@ class OAuthCallbackTask(BaseTask):
                                 email = e.get("email", "")
                                 break
                     except Exception:
-                        pass
+                        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             else:
                 # Google, Microsoft, custom OIDC
                 userinfo = _http_get(service.userinfo_url, access_token)

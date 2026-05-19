@@ -35,7 +35,7 @@ import json
 import logging
 import os
 import shutil
-import subprocess
+import subprocess  # nosec B404
 import sys
 import threading
 import time
@@ -304,7 +304,7 @@ class ConversationStore:
             "-c", "gc.auto=0",
             "-c", "maintenance.auto=false",
         ]
-        return subprocess.run(
+        return subprocess.run(  # nosec B603
             ["git", *git_cfg] + list(args),
             cwd=str(conv_dir), capture_output=True, text=True,
             check=check, timeout=10,
@@ -645,12 +645,12 @@ class ConversationStore:
         new_cid = self.generate_id()
         dest_dir = self._store_dir / self._safe_name(user_id) / self._safe_name(new_cid)
         try:
-            subprocess.run(
+            subprocess.run(  # nosec B603, B607
                 ["git", "clone", str(source_dir), str(dest_dir)],
                 capture_output=True, text=True, check=True, timeout=30,
             )
             # Remove the remote origin (it points to the source conv)
-            subprocess.run(
+            subprocess.run(  # nosec B603, B607
                 ["git", "-C", str(dest_dir), "remote", "remove", "origin"],
                 capture_output=True, text=True, check=False, timeout=10,
             )
@@ -723,7 +723,7 @@ class ConversationStore:
                     try:
                         total += len(json.dumps(args, ensure_ascii=False))
                     except Exception:
-                        pass
+                        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         cu = row.get("content_update")
         if isinstance(cu, str):
             total += len(cu)

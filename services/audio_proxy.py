@@ -72,7 +72,7 @@ def unregister_audio_source(session_id: str):
         from core.capability_routes import revoke_route_tokens
         revoke_route_tokens(session_id)
     except Exception:
-        pass
+        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
 
 def kill_audio_proxies(session_id: str):
@@ -88,11 +88,11 @@ def _kill_proxies(proxies):
         try:
             backend_sock.shutdown(socket.SHUT_RDWR)
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         try:
             backend_sock.close()
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
     if proxies:
         logger.info("Audio proxy: killed %d active proxy(ies)", len(proxies))
 
@@ -118,11 +118,11 @@ def audio_ws_proxy(client_sock, path_params: dict, meta: dict):
         try:
             client_sock.sendall(err)
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         try:
             client_sock.close()
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         return
 
     target_host, target_port = _get_audio_target(session_id)
@@ -164,7 +164,7 @@ def audio_ws_proxy(client_sock, path_params: dict, meta: dict):
         if hasattr(socket, "TCP_KEEPCNT"):
             client_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3)
     except Exception:
-        pass
+        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     stop = threading.Event()
 
@@ -199,7 +199,7 @@ def audio_ws_proxy(client_sock, path_params: dict, meta: dict):
                     _pkt_count = 0
                     _interval_start = _now
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         finally:
             stop.set()
             queue_event.set()
@@ -238,7 +238,7 @@ def audio_ws_proxy(client_sock, path_params: dict, meta: dict):
                     stop.set()
                     return
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         finally:
             stop.set()
 
@@ -255,7 +255,7 @@ def audio_ws_proxy(client_sock, path_params: dict, meta: dict):
                 if opcode is None or opcode == 0x8:
                     break
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         finally:
             stop.set()
 
@@ -281,15 +281,15 @@ def audio_ws_proxy(client_sock, path_params: dict, meta: dict):
     try:
         backend_sock.shutdown(socket.SHUT_RDWR)
     except Exception:
-        pass
+        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
     try:
         backend_sock.close()
     except Exception:
-        pass
+        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
     try:
         _ws_close(client_sock, 1000, "")
     except Exception:
-        pass
+        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     t0.join(timeout=2)
     t1.join(timeout=2)
@@ -393,4 +393,4 @@ def _ws_close(sock, code: int, reason: str):
         sock.sendall(bytes(hdr) + payload)
         sock.shutdown(socket.SHUT_WR)
     except Exception:
-        pass
+        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)

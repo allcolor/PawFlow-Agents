@@ -44,7 +44,7 @@ def _resolve_relay_service(user_id: str, relay_id: str):
             if svc:
                 return svc
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
     return None
 
 

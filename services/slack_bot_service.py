@@ -199,7 +199,7 @@ class SlackBotService(BaseMessagingService):
             try:
                 self._socket_handler.close()
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             self._socket_handler = None
         self._client = None
         self._bot_user_id = ""

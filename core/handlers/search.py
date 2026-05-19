@@ -1,4 +1,5 @@
 """search - Combined file filtering, regex search, and ranked snippets."""
+import logging
 
 import fnmatch
 import os
@@ -248,7 +249,7 @@ class SearchHandler(BaseFsHandler):
             try:
                 lines = reader(fpath).splitlines()
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             for item in items[:8]:
                 line_no = item.get("line_number", "?")
                 if context > 0 and isinstance(line_no, int) and lines:

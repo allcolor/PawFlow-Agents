@@ -7,6 +7,7 @@ The CA private key never leaves ``data/system``.
 """
 
 from __future__ import annotations
+import logging
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -168,5 +169,6 @@ def ca_private_key_is_host_only(paths: Iterable[str | Path]) -> bool:
             if Path(item).resolve() == ca_key:
                 return False
         except Exception:
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             continue
     return True

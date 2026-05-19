@@ -13,7 +13,7 @@ import json
 import logging
 import socket
 import struct
-import subprocess
+import subprocess  # nosec B404
 import threading
 
 logger = logging.getLogger(__name__)
@@ -78,12 +78,12 @@ def unregister_terminal(session_id: str):
             try:
                 proc.kill()
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
     try:
         from core.capability_routes import revoke_route_tokens
         revoke_route_tokens(session_id)
     except Exception:
-        pass
+        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
 
 def get_terminal(session_id: str):
@@ -105,7 +105,7 @@ def dispatch_terminal_data(session_id: str, data_b64: str):
         }).encode("utf-8")
         _ws_send(sess["browser_sock"], msg)
     except Exception:
-        pass
+        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
 
 def dispatch_terminal_exit(session_id: str):
@@ -121,7 +121,7 @@ def dispatch_terminal_exit(session_id: str):
         }).encode("utf-8")
         _ws_send(sess["browser_sock"], msg)
     except Exception:
-        pass
+        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
 
 # ── WS handler (called by HTTPListenerService after handshake) ──
@@ -146,11 +146,11 @@ def terminal_ws_handler(client_sock, path_params: dict, meta: dict):
         try:
             client_sock.sendall(err)
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         try:
             client_sock.close()
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         return
 
     with _lock:
@@ -213,7 +213,7 @@ def terminal_ws_handler(client_sock, path_params: dict, meta: dict):
         try:
             client_sock.close()
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
 def _server_pipe_ws_loop(client_sock, session_id: str, sess: dict):
     """Bridge a browser terminal to a server-side subprocess pipe.
@@ -265,10 +265,10 @@ def _server_pipe_ws_loop(client_sock, session_id: str, sess: dict):
             try:
                 _send_json({"type": "terminal_exit", "session_id": session_id})
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     try:
-        proc = subprocess.Popen(
+        proc = subprocess.Popen(  # nosec B603
             cmd,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
@@ -314,7 +314,7 @@ def _server_pipe_ws_loop(client_sock, session_id: str, sess: dict):
                 try:
                     proc.kill()
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         with _lock:
             if session_id in _sessions:
                 _sessions[session_id]["browser_sock"] = None
@@ -322,7 +322,7 @@ def _server_pipe_ws_loop(client_sock, session_id: str, sess: dict):
         try:
             client_sock.close()
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
 
 def _send_command_to_relay(relay_service, cmd: dict):
@@ -420,4 +420,4 @@ def _ws_close(sock, code=1000, reason=""):
         sock.sendall(frame)
         sock.close()
     except Exception:
-        pass
+        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)

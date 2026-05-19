@@ -47,7 +47,7 @@ def _api_request(method: str, url: str, token: str,
         req.add_header("Content-Type", content_type)
 
     ctx = ssl.create_default_context()
-    with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
+    with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:  # nosec B310 - Google API endpoint.
         data = resp.read()
         if resp.headers.get("Content-Type", "").startswith("application/json"):
             return json.loads(data.decode("utf-8"))
@@ -72,7 +72,7 @@ def _multipart_upload(url: str, token: str, metadata: dict,
     req.add_header("Content-Type", f"multipart/related; boundary={boundary}")
 
     ctx = ssl.create_default_context()
-    with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
+    with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:  # nosec B310 - Google API endpoint.
         return json.loads(resp.read().decode("utf-8"))
 
 
@@ -342,7 +342,7 @@ class GoogleDriveBackend(FilesystemBackend):
                                 "match": m.group(),
                             })
                 except Exception:
-                    pass  # Skip binary/unreadable files
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
         return results
 

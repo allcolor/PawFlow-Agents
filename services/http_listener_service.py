@@ -933,7 +933,7 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
             try:
                 sock.settimeout(None)
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             return True
         except Exception:
             return False
@@ -973,12 +973,12 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
             )
             sock.sendall(response.encode("latin-1"))
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         finally:
             try:
                 sock.close()
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     def process_request(self, request, client_address):
         """Spawn a bounded dispatch thread without blocking the accept loop."""
@@ -994,7 +994,7 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
             try:
                 request.close()
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             return
 
         with self._dispatch_lock:
@@ -1041,13 +1041,13 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
             try:
                 request.close()
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             return
         finally:
             try:
                 request.settimeout(None)
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
         # Private gateway - reject banned IPs before any processing.
         try:
@@ -1057,7 +1057,7 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
                 request.close()
                 return
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
         if b"Upgrade: websocket" in data or b"upgrade: websocket" in data:
             # WS — handle directly on raw socket.
@@ -1248,7 +1248,7 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
 
             _MAGIC = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
             accept = base64.b64encode(
-                hashlib.sha1(ws_key.encode() + _MAGIC).digest()
+                hashlib.sha1(ws_key.encode() + _MAGIC, usedforsecurity=False).digest()
             ).decode()
 
             response = (
@@ -1286,7 +1286,7 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
             try:
                 sock.close()
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
 
 
@@ -1350,7 +1350,7 @@ class HTTPListenerService(BaseService):
         if hasattr(self, '_port'):
             return  # already initialized (singleton)
         super().__init__(config)
-        self._host = self.config.get("host", "0.0.0.0")
+        self._host = self.config.get("host", "0.0.0.0")  # nosec B104 - listener bind is explicit configuration.
         self._port = int(self.config.get("port", 9090))
         self._request_timeout = float(self.config.get("request_timeout", 120.0))
         self._max_dispatch_threads = self.config.get("max_dispatch_threads")
@@ -1377,7 +1377,7 @@ class HTTPListenerService(BaseService):
 
     def get_parameter_schema(self) -> Dict[str, Any]:
         return {
-            "host": {"type": "string", "required": False, "default": "0.0.0.0", "description": "Bind address"},
+            "host": {"type": "string", "required": False, "default": "0.0.0.0", "description": "Bind address"},  # nosec B104 - documented listener default.
             "port": {"type": "integer", "required": True, "default": 9090, "description": "Listen port"},
             "request_timeout": {"type": "float", "required": False, "default": 30.0, "description": "Request timeout (seconds)"},
             "max_dispatch_threads": {"type": "integer", "required": False, "default": 128, "description": "Maximum concurrent HTTP/WebSocket dispatch threads"},
@@ -1494,7 +1494,7 @@ class HTTPListenerService(BaseService):
 
         return ctx
 
-    def register_cert(self, hostname: str, certfile: str, keyfile: str = "",
+    def register_cert(self, hostname: str, certfile: str, keyfile: str = "",  # nosec B107
                       password: str = ""):
         """Register an SSL certificate for a specific hostname (SNI).
 

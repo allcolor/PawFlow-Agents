@@ -198,7 +198,7 @@ class NotificationManager:
             headers.update(webhook.get('headers', {}))
 
             req = Request(webhook['url'], data=data, headers=headers, method='POST')
-            with urlopen(req, timeout=10) as resp:
+            with urlopen(req, timeout=10) as resp:  # nosec B310 - configured webhook endpoint.
                 resp.read()
 
             webhook['call_count'] += 1

@@ -185,7 +185,7 @@ class RememberHandler(ToolHandler):
                                 msg += f"\n\u26a0 KG conflicts: {'; '.join(conflicts[:3])}"
                             break  # only check first matching entity
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
             return msg
         except Exception as e:

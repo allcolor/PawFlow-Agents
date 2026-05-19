@@ -72,7 +72,7 @@ def unregister_code_server(relay_id: str):
             from core.capability_routes import revoke_route_tokens
             revoke_route_tokens(session_id)
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
     if sess:
         for ws_sess in sess.get("cs_ws_sessions", {}).values():
             sock = ws_sess.get("browser_sock")
@@ -80,7 +80,7 @@ def unregister_code_server(relay_id: str):
                 try:
                     sock.close()
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
 
 # —— HTTP proxy callback ——
@@ -183,11 +183,11 @@ def code_ws_proxy(client_sock, path_params: dict, meta: dict):
         try:
             client_sock.sendall(err)
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         try:
             client_sock.close()
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         return
 
     with _lock:
@@ -273,7 +273,7 @@ def code_ws_proxy(client_sock, path_params: dict, meta: dict):
                 "session_id": ws_session_id,
             })
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
         with _lock:
             if session_id in _sessions:
@@ -281,7 +281,7 @@ def code_ws_proxy(client_sock, path_params: dict, meta: dict):
         try:
             client_sock.close()
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         logger.debug("Code WS proxy: session=%s disconnected", ws_session_id)
 
 
@@ -316,7 +316,7 @@ def dispatch_cs_ws_close(relay_id: str, ws_session_id: str):
         try:
             _ws_close(ws_sess["browser_sock"], 1000, "Backend closed")
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
 
 def _send_command_to_relay(relay_service, cmd: dict):
@@ -393,4 +393,4 @@ def _ws_close(sock, code=1000, reason=""):
         sock.sendall(frame)
         sock.close()
     except Exception:
-        pass
+        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)

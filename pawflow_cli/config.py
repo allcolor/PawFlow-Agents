@@ -1,4 +1,5 @@
 """Configuration and session persistence for PawCode."""
+import logging
 
 import json
 import os
@@ -50,7 +51,7 @@ def load_session(include_expired: bool = False) -> Dict[str, Any]:
                 try:
                     SESSION_FILE.unlink()
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 return {}
             if "plain" in _result:
                 data["token"] = _result["plain"]

@@ -16,7 +16,7 @@ _PRESETS = {
         "icon": "🔑",
         "scope": "openid email profile",
         "authorize_url": "https://{host}/realms/{realm}/protocol/openid-connect/auth",
-        "token_url": "https://{host}/realms/{realm}/protocol/openid-connect/token",
+        "token_url": "https://{host}/realms/{realm}/protocol/openid-connect/token",  # nosec B105
         "userinfo_url": "https://{host}/realms/{realm}/protocol/openid-connect/userinfo",
     },
     "okta": {
@@ -24,7 +24,7 @@ _PRESETS = {
         "icon": "🔒",
         "scope": "openid email profile",
         "authorize_url": "https://{domain}/oauth2/default/v1/authorize",
-        "token_url": "https://{domain}/oauth2/default/v1/token",
+        "token_url": "https://{domain}/oauth2/default/v1/token",  # nosec B105
         "userinfo_url": "https://{domain}/oauth2/default/v1/userinfo",
     },
     "auth0": {
@@ -32,7 +32,7 @@ _PRESETS = {
         "icon": "🛡",
         "scope": "openid email profile",
         "authorize_url": "https://{domain}/authorize",
-        "token_url": "https://{domain}/oauth/token",
+        "token_url": "https://{domain}/oauth/token",  # nosec B105
         "userinfo_url": "https://{domain}/userinfo",
     },
     "gitlab": {
@@ -40,7 +40,7 @@ _PRESETS = {
         "icon": "🦊",
         "scope": "openid email profile",
         "authorize_url": "https://gitlab.com/oauth/authorize",
-        "token_url": "https://gitlab.com/oauth/token",
+        "token_url": "https://gitlab.com/oauth/token",  # nosec B105
         "userinfo_url": "https://gitlab.com/oauth/userinfo",
     },
 }

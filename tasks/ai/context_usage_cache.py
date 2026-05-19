@@ -1,6 +1,7 @@
 """Cached context-window usage for PawFlow agent contexts."""
 
 from __future__ import annotations
+import logging
 
 import hashlib
 import json
@@ -53,7 +54,10 @@ def _strip_for_count(messages: Iterable[Any]) -> List[Dict[str, str]]:
 def _marker(msg: Any) -> str:
     text = _content_text(_message_content(msg))
     sample = f"{text[:160]}\0{text[-160:] if len(text) > 160 else text}"
-    digest = hashlib.sha1(sample.encode("utf-8", "ignore")).hexdigest()[:16]
+    digest = hashlib.sha1(
+        sample.encode("utf-8", "ignore"),
+        usedforsecurity=False,
+    ).hexdigest()[:16]
     return f"{_message_role(msg)}:{_message_id(msg)}:{len(text)}:{digest}"
 
 
@@ -127,7 +131,7 @@ def context_usage_from_cache(messages: Iterable[Any], max_context_size: int,
                     source=source, token_multiplier=token_multiplier,
                     cache_mode="delta")
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     return context_usage_entry(
         msg_list, _count(msg_list, token_multiplier), max_ctx,

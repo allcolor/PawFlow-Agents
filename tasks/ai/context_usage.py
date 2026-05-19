@@ -1,6 +1,7 @@
 """Single source of truth for PawFlow agent context gauge calculation."""
 
 from __future__ import annotations
+import logging
 
 import time
 from typing import Any, Dict, Optional, Tuple
@@ -187,7 +188,7 @@ def compute_context_usage(conversation_id: str, agent_name: str, *,
                             ctx["_context_usage_cache"] = usage
                             break
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
     return usage
 
 

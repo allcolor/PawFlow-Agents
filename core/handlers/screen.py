@@ -126,7 +126,7 @@ class ScreenHandler(BaseFsHandler):
                 if data.get("running"):
                     return
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         try:
             logger.info("[screen] auto-starting Docker desktop")
             svc._request("start_desktop", ".")

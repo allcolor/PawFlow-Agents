@@ -168,7 +168,7 @@ def register_tool_tasks():
             if TaskFactory.get(task_type):
                 continue
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
         handler_class = type(handler)
         desc = handler.description[:120] if handler.description else handler.name

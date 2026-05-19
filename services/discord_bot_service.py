@@ -173,7 +173,7 @@ class DiscordBotService(BaseMessagingService):
                 )
                 future.result(timeout=5)
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         self._client = None
         self._loop = None
         self._ready_event.clear()

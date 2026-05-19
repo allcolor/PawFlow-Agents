@@ -152,7 +152,7 @@ class ScraplingFetchTask(BaseTask):
             # Minimal GDPR consent cookies to bypass European consent walls
             gdpr_cookies = {
                 "authId": "anonymous",
-                "didomi_token": (
+                "didomi_token": (  # nosec B105
                     "eyJ1c2VyX2lkIjoiIiwiY3JlYXRlZCI6IjIwMjQtMDEtMDFUMDA6M"
                     "DA6MDAuMDAwWiIsInVwZGF0ZWQiOiIyMDI0LTAxLTAxVDAwOjAwOjAw"
                     "LjAwMFoiLCJ2ZW5kb3JzIjp7ImVuYWJsZWQiOltdfSwicHVycG9zZXM"

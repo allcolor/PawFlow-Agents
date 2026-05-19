@@ -174,7 +174,7 @@ def _initial_extensions_block(user_id: str = "", conversation_id: str = "") -> s
 
 def _compute_js_version() -> str:
     """Short hash of all chat assets that affect boot-time rendering."""
-    h = hashlib.md5()
+    h = hashlib.md5(usedforsecurity=False)
     for mod in _JS_MODULES:
         p = _CHAT_UI_DIR / mod
         if p.exists():
@@ -287,7 +287,7 @@ class ServeChatUITask(BaseTask):
                 if css_path.is_file():
                     custom_css += "\n" + css_path.read_text(encoding="utf-8")
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         if custom_css:
             html = html.replace("</style>",
                                 f"\n/* Custom theme */\n{custom_css}\n</style>", 1)

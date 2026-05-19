@@ -624,7 +624,7 @@ class SpawnAgentsHandler(ToolHandler):
                 if _src_nickname:
                     _self_names.add(_src_nickname.lower())
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
         # Per-pair de-duplication: if the same caller delegates to the
         # same target while a previous delegate is still running, inject
@@ -901,7 +901,10 @@ class SpawnAgentsHandler(ToolHandler):
         import time as _t
         _key = "|".join([
             conv_id, from_agent, to_agent,
-            _h.sha1(message.encode("utf-8", errors="replace")).hexdigest(),
+            _h.sha1(
+                message.encode("utf-8", errors="replace"),
+                usedforsecurity=False,
+            ).hexdigest(),
         ])
         now = _t.time()
         with self._shared_dedup_lock:

@@ -177,7 +177,7 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
                                       "relationship": rel.get("type", "success"),
                                       "queue_size": 0, "max_queue": 10000, "backpressured": False})
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
             # Compute pending flowfiles per node (sum of incoming queue sizes)
             for e in edges:
@@ -209,7 +209,7 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
                     raw = json.loads(_Path(inst.flow_path).read_text(encoding="utf-8"))
                     tasks_count = len(raw.get("tasks", {}))
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 flows_list.append({
                     "id": inst.instance_id,
                     "name": inst.flow_name,
@@ -266,7 +266,7 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
                     try:
                         existing.stop()
                     except Exception:
-                        pass
+                        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                     reg.unregister(flow_id)
                 executor = ContinuousFlowExecutor(
                     flow, max_workers=inst.max_workers,
@@ -351,7 +351,7 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
                         if v:
                             return v
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         return 0
 
     def _ctx_max_tokens(agent_name=""):
@@ -395,7 +395,7 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
                 for sdef in reg.resolve_by_type(fs_type, user_id=user_id):
                     services.append({"id": sdef.service_id, "type": sdef.service_type, "scope": sdef.scope})
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         flowfile.set_content(json.dumps({"services": services}).encode())
         return [flowfile]
 
@@ -590,7 +590,7 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
             # Sanitize dir_path for use as a filename
             _safe_name = dir_path.strip("/").replace("/", "_").replace("..", "") or "workspace"
             zip_name = f"{_safe_name}.zip"
-            tmp_zip = f"/tmp/pawflow_zip_{zip_name}"
+            tmp_zip = f"/tmp/pawflow_zip_{zip_name}"  # nosec B108 - relay-local zip scratch path.
             # Build zip inside the relay via exec
             zip_cmd = f"cd '{dir_path}' && zip -r '{tmp_zip}' . && cat '{tmp_zip}' | base64"
             result = _fs_svc.exec(".", zip_cmd, 120)

@@ -104,7 +104,8 @@ class PollScheduler:
     ) -> str:
         """Schedule a recurring prompt loop. Returns the loop key."""
         import hashlib
-        loop_key = key or f"loop::{conversation_id}::{hashlib.md5(prompt.encode()).hexdigest()[:6]}"
+        prompt_hash = hashlib.md5(prompt.encode(), usedforsecurity=False).hexdigest()[:6]
+        loop_key = key or f"loop::{conversation_id}::{prompt_hash}"
         recheck_at = time.time() + interval_seconds
         with self._lock:
             self._schedules[loop_key] = {

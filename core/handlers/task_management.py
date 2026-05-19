@@ -70,7 +70,7 @@ def _activate_dependents(conversation_id: str, completed_task_id: str,
                 "detail": f"Dependencies met: {', '.join(deps)}",
             })
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         try:
             from core.conversation_event_bus import ConversationEventBus
             ConversationEventBus.instance().publish_event(
@@ -80,7 +80,7 @@ def _activate_dependents(conversation_id: str, completed_task_id: str,
                 },
             )
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
     if activated:
         store.set_extra(conversation_id, "agent_tasks", all_tasks)
         logger.info("Activated %d dependent tasks after %s completed: %s",
@@ -345,7 +345,7 @@ class AssignTaskHandler(ToolHandler):
         if isinstance(iv, int):
             return iv
         if isinstance(iv, dict):
-            return random.randint(iv.get("min", 60), iv.get("max", 60))
+            return random.randint(iv.get("min", 60), iv.get("max", 60))  # nosec B311
         return 60
 
     @staticmethod
@@ -543,7 +543,7 @@ class AssignTaskHandler(ToolHandler):
                 },
             )
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
         try:
             _append_task_log(self._conversation_id, task_id, {
@@ -553,7 +553,7 @@ class AssignTaskHandler(ToolHandler):
                 "detail": f"Assigned by {self._agent_name or 'user'}, verifier={verifier or 'none'}",
             })
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
         v_info = f" (verifier: {verifier})" if verifier else ""
         iv_label = interval_data.get("spec", str(first_delay))
@@ -581,7 +581,7 @@ class AssignTaskHandler(ToolHandler):
                         seen.add(n)
                         merged.append(s)
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         # 2. Task definition skills
         for s in (def_skills or []):
             n = s if isinstance(s, str) else s.get("name", "")
@@ -703,7 +703,7 @@ class CompleteTaskHandler(ToolHandler):
                 },
             )
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
         try:
             _log_type = "completed" if done else "progress"
@@ -714,7 +714,7 @@ class CompleteTaskHandler(ToolHandler):
                 "detail": _log_detail,
             })
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
         if done:
             # Don't touch cancelled/paused tasks — user cancelled intentionally
@@ -772,7 +772,7 @@ class CompleteTaskHandler(ToolHandler):
                     store.invalidate_claude_sessions(_sub_cid)
                     store.delete(_sub_cid)
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 # Activate dependent tasks
                 _activated = _activate_dependents(
                     _parent_cid, task_id, result=result,
@@ -797,7 +797,7 @@ class CompleteTaskHandler(ToolHandler):
                             "task_id": task_id, "agent_name": agent,
                             "reason": _cancel_reason, "force": True})
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 return f"Task {task_id} cancelled: {_cancel_reason}"
             task["status"] = "active"
             all_tasks[task_id] = task
@@ -890,7 +890,7 @@ class VerifyTaskHandler(ToolHandler):
                 },
             )
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
         try:
             _append_task_log(_parent_cid, task_id, {
@@ -901,7 +901,7 @@ class VerifyTaskHandler(ToolHandler):
                 "detail": reason[:200] if reason else ("approved" if approved else "rejected"),
             })
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
         if approved:
             # Remove completed task
@@ -919,7 +919,7 @@ class VerifyTaskHandler(ToolHandler):
                 store.invalidate_claude_sessions(_sub_cid)
                 store.delete(_sub_cid)
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             # Activate dependent tasks
             _activated = _activate_dependents(
                 _parent_cid, task_id, result=_result,

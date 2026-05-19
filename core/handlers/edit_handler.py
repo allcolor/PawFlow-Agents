@@ -122,7 +122,7 @@ class EditHandler(BaseFsHandler):
                     with open(self._sandbox_path(path, self._workdir), "rb") as _f:
                         track_write(_uid, _cid, _agent, path, _f.read())
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             return _result
 
         if svc is None or svc == "filestore":

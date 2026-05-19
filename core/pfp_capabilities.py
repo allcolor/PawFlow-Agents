@@ -1,6 +1,7 @@
 """Capability checks for PawFlow Package runtime calls."""
 
 from __future__ import annotations
+import logging
 
 import json
 import re
@@ -262,6 +263,7 @@ def _installed_package_records(user_id: str, conversation_id: str, scope: str) -
             try:
                 record = json.loads(path.read_text(encoding="utf-8"))
             except Exception:
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 continue
             package_id = str(record.get("package") or "")
             version = str(record.get("version") or "")

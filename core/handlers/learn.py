@@ -205,7 +205,7 @@ class LearnHandler(ToolHandler):
                 stored += 1
                 results.append(f"- [{entry.id}] ({category}) {text[:100]}")
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
         if not stored:
             return "LLM extracted insights but none could be stored."
@@ -227,5 +227,5 @@ class LearnHandler(ToolHandler):
             if svc and hasattr(svc, 'complete'):
                 return svc, 0, svc_id
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         return None, 0, ""

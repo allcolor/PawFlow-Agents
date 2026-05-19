@@ -6,6 +6,7 @@ and local workspace shares, then starts relay processes on demand.
 """
 
 from __future__ import annotations
+import logging
 
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
@@ -246,7 +247,7 @@ def stop_workspace_runtime(name: str) -> Dict[str, Any]:
             )
             service_uninstalled = True
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
     from pawflow_relay.thread import cleanup_relay_containers
     containers_removed = cleanup_relay_containers(relay_id)
     return {
@@ -291,7 +292,7 @@ def start_workspace(name: str):
             previous_handlers[sig] = signal.getsignal(sig)
             signal.signal(sig, _request_stop)
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
     try:
         relay.start()
         relay.wait()
@@ -303,5 +304,5 @@ def start_workspace(name: str):
             try:
                 signal.signal(sig, handler)
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
     return relay

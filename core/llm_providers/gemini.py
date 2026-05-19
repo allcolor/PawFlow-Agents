@@ -16,7 +16,7 @@ import logging
 import os
 import queue
 import re
-import subprocess
+import subprocess  # nosec B404
 import threading
 import time
 import uuid
@@ -767,7 +767,7 @@ class LLMGeminiMixin(GeminiSessionMixin):
         owns_live_lock = False
         is_reuse = False
         mcp_servers: list = []
-        internal_token = ""
+        internal_token = ""  # nosec B105
         proc = None
         container = None
         reuse_container = ""
@@ -1536,7 +1536,7 @@ class LLMGeminiMixin(GeminiSessionMixin):
                 for line in proc.stdout:
                     sink.put(line)
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             finally:
                 try:
                     sink.put_nowait(None)
@@ -1574,7 +1574,7 @@ class LLMGeminiMixin(GeminiSessionMixin):
                         if text and not text.startswith("__PF_GEMINI_PID="):
                             logger.info("[gemini-acp][stderr] %s", text[:1000])
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         threading.Thread(target=_drain, daemon=True, name="gemini-acp-stderr").start()
 
     @staticmethod

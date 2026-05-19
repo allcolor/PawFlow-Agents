@@ -134,7 +134,7 @@ class AgentUtilsMixin:
                     pool_idx = int(ConversationStore.instance().get_extra(
                         conversation_id, f"llm_api_key_idx:{service_id}") or -1)
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             client = svc.get_client(pool_index=pool_idx)
             # Store the pool index for this conversation (first use)
             if conversation_id and hasattr(client, '_active_pool_index'):
@@ -144,7 +144,7 @@ class AgentUtilsMixin:
                     ConversationStore.instance().set_extra(
                         conversation_id, f"llm_api_key_idx:{service_id}", _pidx)
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             return client
 
         # 1. Flow-level services (defined in flow JSON)
@@ -315,7 +315,7 @@ class AgentUtilsMixin:
             from tasks import _register_all_services
             _register_all_services()
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         from core import ServiceFactory
         types = set()
         for stype, sclass in ServiceFactory._services.items():
@@ -419,7 +419,7 @@ class AgentUtilsMixin:
             return ServiceRegistry.get_instance().resolve(
                 service_id, user_id=user_id, conv_id=conversation_id)
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         return None
 
     @staticmethod
@@ -441,7 +441,7 @@ class AgentUtilsMixin:
             return registry.resolve(
                 service_id, user_id=user_id, conv_id=conversation_id)
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         return None
 
 
@@ -613,7 +613,7 @@ class AgentUtilsMixin:
                             and provides.intersection({"media.video_generation", "media.lipsync"})):
                         available.append(sdef)
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
             available = [
                 item for _idx, item in sorted(
@@ -756,7 +756,7 @@ class AgentUtilsMixin:
             )
             TokenTracker.instance().flush()
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
 
     @staticmethod
@@ -1006,7 +1006,7 @@ class AgentUtilsMixin:
                 _stripped.append({"content": c})
             return count_messages_tokens(_stripped, multiplier=token_multiplier)
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         # Fallback to character estimation
         # Modern tokenizers average ~3.5 chars/token for natural language.
         # JSON is denser (brackets, keys, less natural language) — use 2 chars/token.
@@ -1152,7 +1152,7 @@ class AgentUtilsMixin:
                             "root": sdef.description or "?",
                         })
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         return result
 
 
@@ -1176,7 +1176,7 @@ class AgentUtilsMixin:
                     if svc:
                         return svc
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         return None
 
 
@@ -1199,7 +1199,7 @@ class AgentUtilsMixin:
                 if svc and getattr(svc, 'is_connected', lambda: False)():
                     return svc
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         return None
 
 

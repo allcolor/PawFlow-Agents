@@ -67,7 +67,10 @@ def _args_hash(args) -> str:
         canonical = json.dumps(args, sort_keys=True, default=str, ensure_ascii=False)
     except Exception:
         canonical = repr(args)
-    return hashlib.md5(canonical.encode("utf-8", errors="replace")).hexdigest()[:12]
+    return hashlib.md5(
+        canonical.encode("utf-8", errors="replace"),
+        usedforsecurity=False,
+    ).hexdigest()[:12]
 
 
 def enqueue_cc_tc(conv_id: str, agent_name: str, tc_id: str,
@@ -386,7 +389,7 @@ def _inject_result(tc_id: str, result_text: str, is_cancel: bool = False):
             "agent_name": agent_name,
         })
     except Exception:
-        pass
+        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     # Inject result into the conversation.
     # Strategy depends on provider:

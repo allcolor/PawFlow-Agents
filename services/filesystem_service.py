@@ -92,7 +92,7 @@ def _sync_relay_scripts(service, reg_info):
             logger.debug("Relay scripts up to date (hash=%s)", bundle["hash"])
             return
     except Exception:
-        pass  # Relay doesn't support script_hash yet, push anyway
+        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
     # Push scripts
     try:
         result = service._request("update_scripts",
@@ -193,7 +193,7 @@ def _attach_sync_sock_to_loop(sock, loop):
             try:
                 self._sock.close()
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     return reader, _SockWriter(sock, stop_event)
 
@@ -705,7 +705,7 @@ class RelayService(BaseService):
                 bus.publish_event(cid, "relay_status_changed", {
                     "relay_id": self._service_id, "connected": True})
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     def push_remote_fs_manifest(self, user_id: str = "") -> None:
         """Push the current conversation remote-FS manifest to all relay sockets."""
@@ -779,7 +779,7 @@ class RelayService(BaseService):
                 bus.publish_event(cid, "relay_status_changed", {
                     "relay_id": self._service_id, "connected": alive > 0})
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     def _resolve_pending(self, msg: dict):
         request_id = msg.get("request_id", "")
@@ -861,7 +861,7 @@ class RelayService(BaseService):
                     from services.terminal_proxy import dispatch_terminal_exit
                     dispatch_terminal_exit(data.get("session_id", ""))
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             return
 
         request_id = msg.get("request_id", "")
@@ -874,7 +874,7 @@ class RelayService(BaseService):
                 try:
                     cb(data)
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     def _dispatch_exec_output(self, msg: dict):
         """Forward streaming exec_output to the registered callback (if any)."""
@@ -888,7 +888,7 @@ class RelayService(BaseService):
                 try:
                     cb(msg.get("stream", "stdout"), msg.get("data", ""))
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     def _dispatch_http_response(self, msg: dict):
         """Forward streaming http_response chunks to the registered callback.
@@ -905,7 +905,7 @@ class RelayService(BaseService):
                 try:
                     cb(msg.get("kind", ""), msg.get("data"))
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     def _send_to_pool(self, pool: List[Dict], payload: bytes,
                       request_id: str = ""):
@@ -993,7 +993,7 @@ class RelayService(BaseService):
             from services.tool_relay_service import register_kill_hook
             register_kill_hook(lambda rid=request_id: self.cancel_pending(rid))
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
         if not evt.wait(timeout=wait_timeout):
             self.cancel_pending(request_id)
@@ -1048,7 +1048,7 @@ class RelayService(BaseService):
             from services.tool_relay_service import register_kill_hook
             register_kill_hook(lambda rid=request_id: self.cancel_pending(rid))
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
         evt.wait(timeout=timeout)
 
@@ -1107,7 +1107,7 @@ class RelayService(BaseService):
             from services.tool_relay_service import register_kill_hook
             register_kill_hook(lambda rid=request_id: self.cancel_pending(rid))
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
         # Wait for relay response — no limit unless timeout explicitly given
         _wait_timeout = kwargs.get("timeout")

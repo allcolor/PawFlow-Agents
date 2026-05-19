@@ -190,7 +190,8 @@ class CheckpointManager:
         """Start a new checkpoint for a user turn. Returns checkpoint_id."""
         import hashlib
         cp_id = hashlib.md5(
-            f"{conversation_id}:{time.time()}".encode()
+            f"{conversation_id}:{time.time()}".encode(),
+            usedforsecurity=False,
         ).hexdigest()[:12]
         # Register checkpoint in conversation store
         try:
@@ -262,6 +263,7 @@ class CheckpointManager:
                 try:
                     data = json.loads(fs.get(entry["id"])[1].decode("utf-8"))
                 except Exception:
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                     continue
                 if data.get("checkpoint_id") != cp_id:
                     continue
@@ -321,7 +323,7 @@ class CheckpointManager:
                     if data.get("checkpoint_id") == cp_id:
                         fs.delete(entry["id"])
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             # Also clean up binary entries
             try:
                 bin_entries = fs.list_by_category("checkpoint_bin",
@@ -330,9 +332,9 @@ class CheckpointManager:
                     try:
                         fs.delete(be["id"])
                     except Exception:
-                        pass
+                        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
         # Remove rewound checkpoints from the list
         checkpoints = checkpoints[:target_idx + 1]
@@ -341,7 +343,7 @@ class CheckpointManager:
             ConversationStore.instance().set_extra(
                 conversation_id, "checkpoints", checkpoints)
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
         # Clear captured cache for this conversation
         cls._captured = {k for k in cls._captured
@@ -366,15 +368,15 @@ class CheckpointManager:
                             fs.delete(entry["id"])
                             count += 1
                     except Exception:
-                        pass
+                        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         return count
 
 
 def _apply_reverse_diff(svc, path: str, diff: str) -> None:
     """Apply a unified diff to a file (reverse direction)."""
-    import subprocess
+    import subprocess  # nosec B404
     import tempfile
     import os
 
@@ -392,7 +394,7 @@ def _apply_reverse_diff(svc, path: str, diff: str) -> None:
         svc.write_file(path, result.encode("utf-8"))
         return
     except Exception:
-        pass
+        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     # Fallback: try system `patch` command
     try:
@@ -404,7 +406,7 @@ def _apply_reverse_diff(svc, path: str, diff: str) -> None:
                                           delete=False) as tf:
             tf.write(current)
             tmp_path = tf.name
-        subprocess.run(
+        subprocess.run(  # nosec B603, B607
             ["patch", tmp_path, patch_path],
             check=True, capture_output=True)
         with open(tmp_path, "rb") as f:

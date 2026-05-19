@@ -11,9 +11,10 @@ Execution modes:
   docker  — spawn containers via docker.sock (host or DinD)
   sidecar — pre-deployed containers, communicate via network
 """
+import logging
 
 import os
-import subprocess
+import subprocess  # nosec B404
 
 
 def is_windows() -> bool:
@@ -194,7 +195,7 @@ def docker_available() -> bool:
     """Check if Docker is available and running."""
     try:
         cmd = docker_cmd() + ["info"]
-        r = subprocess.run(cmd, capture_output=True, timeout=10)
+        r = subprocess.run(cmd, capture_output=True, timeout=10)  # nosec B603
         return r.returncode == 0
     except Exception:
         return False
@@ -219,7 +220,7 @@ def docker_run(args: list, **kwargs) -> subprocess.CompletedProcess:
         args = translated
 
     cmd.extend(args)
-    return subprocess.run(cmd, **kwargs)
+    return subprocess.run(cmd, **kwargs)  # nosec B603
 
 
 def docker_popen(args: list, **kwargs) -> subprocess.Popen:
@@ -245,13 +246,13 @@ def docker_popen(args: list, **kwargs) -> subprocess.Popen:
         args = translated
 
     cmd.extend(args)
-    return subprocess.Popen(cmd, **kwargs)
+    return subprocess.Popen(cmd, **kwargs)  # nosec B603
 
 
 def docker_exec(container: str, cmd_args: list, **kwargs) -> subprocess.CompletedProcess:
     """Run 'docker exec' with correct prefix."""
     cmd = docker_cmd() + ["exec"] + cmd_args
-    return subprocess.run(cmd, **kwargs)
+    return subprocess.run(cmd, **kwargs)  # nosec B603
 
 
 def docker_rm(container: str, force: bool = True, **kwargs) -> subprocess.CompletedProcess:
@@ -260,7 +261,7 @@ def docker_rm(container: str, force: bool = True, **kwargs) -> subprocess.Comple
     if force:
         cmd.append("-f")
     cmd.append(container)
-    return subprocess.run(cmd, capture_output=True, timeout=10, **kwargs)
+    return subprocess.run(cmd, capture_output=True, timeout=10, **kwargs)  # nosec B603
 
 
 # ── Server/Relay identity for container naming ────────────────────
@@ -306,7 +307,7 @@ def list_containers(owner_id: str = "") -> list:
     """
     prefix = f"pf-{owner_id[:12].replace('.', '-').replace('_', '-')}" if owner_id else "pf-"
     try:
-        result = subprocess.run(
+        result = subprocess.run(  # nosec B603
             docker_cmd() + ["ps", "-a", "--filter", f"name={prefix}",
                             "--format", "{{.ID}}\t{{.Names}}\t{{.Status}}\t{{.Image}}"],
             capture_output=True, text=True, timeout=10)
@@ -331,9 +332,9 @@ def kill_containers(owner_id: str) -> int:
     killed = 0
     for c in containers:
         try:
-            subprocess.run(docker_cmd() + ["rm", "-f", c["id"]],
+            subprocess.run(docker_cmd() + ["rm", "-f", c["id"]],  # nosec B603
                            capture_output=True, timeout=10)
             killed += 1
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
     return killed

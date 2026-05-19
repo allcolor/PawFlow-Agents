@@ -118,7 +118,7 @@ class SpawnAgentTask(BaseTask):
                     if svc:
                         client = svc.get_client()
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             if not client:
                 # Fallback to default service
                 try:
@@ -127,7 +127,7 @@ class SpawnAgentTask(BaseTask):
                     if svc:
                         client = svc.get_client()
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             if not client:
                 flowfile.set_content(json.dumps({
                     "error": f"No LLM client available for agent '{agent_name}'",

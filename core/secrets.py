@@ -171,7 +171,7 @@ class SecretsManager:
         try:
             os.chmod(path, 0o600)
         except Exception:
-            pass  # Windows / no-op filesystems
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         logger.warning(
             "[secrets] generated new random master key at %s — set "
             "PAWFLOW_SECRET_KEY_B64 in production to avoid relying on "

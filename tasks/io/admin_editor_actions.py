@@ -80,7 +80,7 @@ def _admin_get_service_schema(body, exec_reg, deploy_reg, gsvc_reg, tmpl_svc):
             instance = cls({})
             schema = instance.get_parameter_schema()
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
     return {"type": svc_type, "schema": schema}
 
 
@@ -111,7 +111,7 @@ def _admin_save_flow_json(body, exec_reg, deploy_reg, gsvc_reg, tmpl_svc):
                 json.dumps(old, ensure_ascii=False, indent=2), encoding="utf-8"
             )
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     flow_path.write_text(
         json.dumps(flow_data, ensure_ascii=False, indent=2), encoding="utf-8"

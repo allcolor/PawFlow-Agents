@@ -4,7 +4,7 @@ import logging
 import os
 import re
 import shlex
-import subprocess
+import subprocess  # nosec B404
 from typing import Any, Dict, Optional
 
 from core.handlers._fs_base import BaseFsHandler, cap_binary_output
@@ -353,7 +353,7 @@ class BashHandler(BaseFsHandler):
                     exec_command = self._maybe_rewrite_with_rtk(
                         svc, path, command, arguments, timeout)
                     result = svc.exec(
-                        path, exec_command, shell=shell, timeout=timeout,
+                        path, exec_command, shell=shell, timeout=timeout,  # nosec B604 - explicit shell relay tool.
                         local=bool(arguments.get("local", False)))
                 else:
                     result = {"stdout": "Error: no relay", "returncode": 1}
@@ -382,20 +382,20 @@ class BashHandler(BaseFsHandler):
 
     def _exec_local_raw(self, command: str, arguments: dict) -> dict:
         """Execute locally, return dict with stdout/stderr/returncode."""
-        import subprocess
+        import subprocess  # nosec B404
         shell_name = arguments.get("shell", "") or "bash"
         cwd = arguments.get("path", "") or self._workdir
         if cwd and not cwd.startswith("/"):
             cwd = self._sandbox_path(cwd, self._workdir)
         timeout = self._resolve_timeout(arguments)
-        _run_kwargs = dict(shell=True, capture_output=True, text=True,
+        _run_kwargs = dict(shell=True, capture_output=True, text=True,  # nosec B604 - explicit shell tool executes user command.
                            cwd=cwd or self._workdir, timeout=timeout)
         if arguments.get("_secret_env"):
             import os
             _env = os.environ.copy()
             _env.update(arguments["_secret_env"])
             _run_kwargs["env"] = _env
-        result = subprocess.run(command, **_run_kwargs,
+        result = subprocess.run(command, **_run_kwargs,  # nosec B603
             executable=f"/bin/{shell_name}" if shell_name in ("bash", "sh") else None)
         return {"stdout": result.stdout, "stderr": result.stderr, "returncode": result.returncode}
 

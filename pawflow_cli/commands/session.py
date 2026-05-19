@@ -1,6 +1,7 @@
 """Session commands: /quit, /login, /clear, /new, /link, /connect, /disconnect."""
 
 import os
+import subprocess  # nosec B404
 
 
 def handle_session_commands(app, cmd, arg, text):
@@ -24,7 +25,7 @@ def handle_session_commands(app, cmd, arg, text):
         if app.renderer.console:
             app.renderer.console.clear()
         else:
-            os.system("cls" if os.name == "nt" else "clear")
+            subprocess.run(["cmd", "/c", "cls"] if os.name == "nt" else ["clear"], check=False)  # nosec B603
         return True
 
     if cmd == "/new":

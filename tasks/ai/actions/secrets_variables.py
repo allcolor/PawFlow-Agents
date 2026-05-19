@@ -36,7 +36,7 @@ def _handle_secrets_variables(self, action, body, store, user_id, flowfile):
             try:
                 secrets = json.loads(secrets_path.read_text(encoding="utf-8"))
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         secrets[key] = encrypted
         secrets_path.write_text(json.dumps(secrets, ensure_ascii=False, indent=2), encoding="utf-8")
         flowfile.set_content(json.dumps({
@@ -61,7 +61,7 @@ def _handle_secrets_variables(self, action, body, store, user_id, flowfile):
             try:
                 params = json.loads(params_path.read_text(encoding="utf-8"))
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         params[key] = value
         params_path.write_text(json.dumps(params, ensure_ascii=False, indent=2), encoding="utf-8")
         flowfile.set_content(json.dumps({

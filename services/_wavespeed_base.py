@@ -330,7 +330,7 @@ class _WaveSpeedBaseService(BaseService):
                         ) -> Tuple[bytes, str]:
         req = urllib.request.Request(
             url, headers={"User-Agent": "PawFlow-Agent/1.0"})
-        with urllib.request.urlopen(req, timeout=120) as resp:
+        with urllib.request.urlopen(req, timeout=120) as resp:  # nosec B310 - provider-returned media download URL.
             return resp.read(), resp.headers.get("Content-Type", default_mime)
 
     def _invoke(self, op_name: str, body: Dict[str, Any],

@@ -24,8 +24,9 @@ Usage in an action that spawns a process:
 The worker's main loop calls `kill_inflight_proc(request_id)` when it
 receives a `cancel_request` envelope from the server.
 """
+import logging
 
-import subprocess
+import subprocess  # nosec B404
 import threading
 from typing import Any, Dict
 
@@ -72,7 +73,7 @@ def kill_inflight_proc(request_id: str) -> bool:
             try:
                 proc.kill()
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
     except Exception:
         return False
     return True

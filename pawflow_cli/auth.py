@@ -1,4 +1,5 @@
 """OAuth browser authentication for PawCode."""
+import logging
 
 import json
 import sys
@@ -101,7 +102,7 @@ def authenticate(server_url: str, force: bool = False,
             return cached
 
     # Start local callback server
-    result = {"token": None, "username": None}
+    result = {"token": None, "username": None}  # nosec B105
     ready = Event()
 
     class CallbackHandler(BaseHTTPRequestHandler):
@@ -136,7 +137,7 @@ def authenticate(server_url: str, force: bool = False,
     try:
         webbrowser.open(auth_url)
     except Exception:
-        pass
+        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
     # Always print URL — browser may fail in headless/WSL/SSH environments
     sys.stderr.write(f"\nIf the browser didn't open, visit this URL:\n{auth_url}\n\n")
 

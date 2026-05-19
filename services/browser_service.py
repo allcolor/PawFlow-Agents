@@ -206,12 +206,12 @@ class BrowserService(BaseService):
             try:
                 self._browser.close()
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         if pw:
             try:
                 pw.stop()
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     def _init_browser(self):
         """Initialize Chromium browser (runs on worker thread)."""
@@ -276,7 +276,7 @@ class BrowserService(BaseService):
             try:
                 session.context.close()
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             logger.info(f"Browser session closed for {conversation_id[:8]}")
 
     def _close_all_sessions(self):
@@ -411,4 +411,4 @@ class BrowserService(BaseService):
 try:
     ServiceFactory.register(BrowserService)
 except Exception:
-    pass  # Registration may fail if already registered
+    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)

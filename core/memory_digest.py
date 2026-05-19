@@ -73,7 +73,7 @@ def build_memory_digest(user_id: str, agent_name: str = "",
             lines.append("Central topics: " + ", ".join(
                 f"{g['entity']}({g['connections']})" for g in gods))
     except Exception:
-        pass
+        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     if not lines:
         return ""

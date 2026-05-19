@@ -243,6 +243,7 @@ def _bootstrap_seq_for(conversation_id: str) -> int:
                 try:
                     m = _json.loads(raw.decode("utf-8", errors="replace"))
                 except Exception:
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                     continue
                 s = m.get("seq")
                 if isinstance(s, int) and s > max_seq:
@@ -976,7 +977,7 @@ class LLMClient(
                 if retryable and attempt < self.max_retries:
                     server_delay = self._parse_retry_after(err_str)
                     base_delay = 2.0
-                    exp_delay = base_delay * (2 ** (attempt - 1)) * (0.75 + random.random() * 0.5)
+                    exp_delay = base_delay * (2 ** (attempt - 1)) * (0.75 + random.random() * 0.5)  # nosec B311
                     wait = server_delay if server_delay != 2.0 else exp_delay
                     if is_429:
                         logger.warning(f"Rate limited (429), waiting {wait:.1f}s (attempt {attempt}/{self.max_retries})")
@@ -1241,7 +1242,7 @@ class LLMClient(
                     # Prefer server-specified delay, fall back to exponential backoff with jitter
                     server_delay = self._parse_retry_after(err_str)
                     base_delay = 2.0
-                    exp_delay = base_delay * (2 ** (attempt - 1)) * (0.75 + random.random() * 0.5)
+                    exp_delay = base_delay * (2 ** (attempt - 1)) * (0.75 + random.random() * 0.5)  # nosec B311
                     wait = server_delay if server_delay != 2.0 else exp_delay
                     if is_429:
                         logger.warning(f"Rate limited (429), waiting {wait:.1f}s (attempt {attempt}/{self.max_retries})")

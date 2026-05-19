@@ -436,6 +436,6 @@ class DeploymentRegistry:
                         if data.get("id") == flow_id:
                             return str(p)
                     except Exception:
-                        pass
+                        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         return None
 

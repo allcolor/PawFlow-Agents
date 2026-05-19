@@ -98,7 +98,7 @@ class NotifyUserHandler(ToolHandler):
                     )
                     sent_channels.append("telegram_queued")
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
         if sent_channels:
             return f"Notification sent via: {', '.join(sent_channels)}"
@@ -167,7 +167,7 @@ class AskUserHandler(ToolHandler):
                 event_data["options"] = options
             bus.publish_event(self._conversation_id, "ask_user", event_data)
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
         # Return a message that tells the agent loop to pause and wait for user input
         options_text = ""

@@ -283,6 +283,7 @@ class PendingQueue:
                                 if line.strip():
                                     n += 1
                     except Exception:
+                        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                         continue
                     if n > 0:
                         agent = sub.name if sub.name != "_shared" else ""

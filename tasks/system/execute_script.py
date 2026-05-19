@@ -9,6 +9,7 @@ Uses the unified sandbox from core.sandbox:
 - Sandboxed open() backed by FileStore (virtual filesystem)
 - Print capture
 """
+import logging
 
 from typing import Dict, Any, List
 from core import FlowFile, TaskFactory, TaskError
@@ -38,7 +39,7 @@ class ExecuteScriptTask(BaseTask):
 
     def _execute_docker(self, flowfile: FlowFile) -> List[FlowFile]:
         """Execute script inside a Docker container with PawFlow SDK access."""
-        import subprocess, json, tempfile, os
+        import subprocess, json, tempfile, os  # nosec B404
 
         content = flowfile.get_content().decode('utf-8', errors='replace')
         attributes = dict(flowfile.get_attributes())
@@ -180,11 +181,11 @@ with open("/data/output.json", "w") as f:
                                 fs_svc = _s
                                 break
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             if fs_svc:
                 local_ns['fs'] = fs_svc
 
-            exec(self.script, globals_dict, local_ns)
+            exec(self.script, globals_dict, local_ns)  # nosec B102 - executeScript task is an explicit scripting primitive.
 
             if 'result' in local_ns:
                 flowfile.set_content(str(local_ns['result']).encode('utf-8'))

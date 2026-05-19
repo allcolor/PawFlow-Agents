@@ -12,7 +12,7 @@ import logging
 import os
 import queue
 import re
-import subprocess
+import subprocess  # nosec B404
 import threading
 import time
 from typing import Dict, List, Optional
@@ -264,12 +264,12 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                 "[claude-code] _kill_cc_hard SKIPPED -- container=%r "
                 "pid=%d -- CC PROCESS LIKELY ORPHANED", _container, _pid)
             return
-        import subprocess as _sp
+        import subprocess as _sp  # nosec B404
         from pawflow_relay.utils import docker_cmd
         # SIGKILL the entire process group (negative PID). claude CLI
         # forks Node workers; killing only the root PID leaves them
         # orphaned (reparented to PID 1) and they keep running.
-        _r = _sp.run(
+        _r = _sp.run(  # nosec B603
             docker_cmd() + ["exec", _container,
                              "kill", "-9", f"-{_pid}"],
             capture_output=True, timeout=5,
@@ -1207,7 +1207,8 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             except BaseException:
                 if _owns_turn_lock:
                     try: _live_session.turn_lock.release()
-                    except Exception: pass
+                    except Exception:
+                        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 raise
         else:
             _owns_turn_lock = False
@@ -1929,7 +1930,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                             try:
                                 _live_reg.touch(_live_key, bump_reuse=False)
                             except Exception:
-                                pass
+                                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                         _line = _line.strip()
                         if not _line:
                             continue
@@ -2158,7 +2159,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                                     _hb_state["last_dispatched_tc"] = (
                                         f"{_persist_name}({_block_id[:8]})")
                             except Exception:
-                                pass
+                                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                             # Unwrap MCP wrapper for display:
                             # mcp__pawflow__use_tool(tool_name=X, arguments={...})
                             # → X({...})  (with alias resolution: shell→bash etc.)

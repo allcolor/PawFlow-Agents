@@ -26,8 +26,8 @@ logger = logging.getLogger(__name__)
 # Auth0 endpoint used by the Codex CLI for the OAuth PKCE refresh flow.
 # Discovered via the publicly documented behaviour of `codex login` and
 # the openai/codex source. Refresh body is RFC 6749 standard.
-_CODEX_TOKEN_ENDPOINT_HOST = "auth.openai.com"
-_CODEX_TOKEN_ENDPOINT_PATH = "/oauth/token"
+_CODEX_TOKEN_ENDPOINT_HOST = "auth.openai.com"  # nosec B105
+_CODEX_TOKEN_ENDPOINT_PATH = "/oauth/token"  # nosec B105
 # The Codex CLI client_id, embedded in the binary. Picked up from the
 # documented OAuth PKCE flow; if OpenAI rotate this we'll see refresh
 # 401 + need to update the constant. Kept here (not env) because the
@@ -86,7 +86,7 @@ def _save_credentials_pool(pool: list, service_id: str = ""):
     logger.info("[codex] credentials pool (%d) persisted for '%s'", len(pool), sid)
 
 
-def add_credential_to_pool(access_token: str, refresh_token: str,
+def add_credential_to_pool(access_token: str, refresh_token: str,  # nosec B107
                             expires_at, account: str = "",
                             service_id: str = "",
                             id_token: str = ""):
@@ -229,7 +229,7 @@ def parse_auth_json(auth_json_text: str) -> dict:
     }
 
 
-def _persist_tokens_to_service(access_token: str, refresh_token: str,
+def _persist_tokens_to_service(access_token: str, refresh_token: str,  # nosec B107
                                 expires_at, service_id: str = "",
                                 pool_index: int = -1,
                                 id_token: str = "",
@@ -317,9 +317,9 @@ class CodexSessionMixin:
         svc_id = getattr(self, '_agent_service', '') or ''
         pool = _load_credentials_pool(svc_id)
         if not pool:
-            return {"access_token": "", "refresh_token": "",
+            return {"access_token": "", "refresh_token": "",  # nosec B105
                     "expires_at": 0, "pool_index": -1,
-                    "id_token": "", "account": ""}
+                    "id_token": "", "account": ""}  # nosec B105
         now_ms = int(_t.time() * 1000)
         valid = [(i, c) for i, c in enumerate(pool) if c.get("expires_at", 0) > now_ms]
         if not valid and pool:
@@ -519,7 +519,7 @@ class CodexSessionMixin:
                 "during this stream. Re-authenticate via the Login button.")
 
         dead_indices = []
-        access_token = refresh_token = id_token = account = ""
+        access_token = refresh_token = id_token = account = ""  # nosec B105
         expires_at = 0
         for _pidx in indices:
             cred = pool[_pidx]

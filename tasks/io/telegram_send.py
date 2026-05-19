@@ -114,7 +114,7 @@ class TelegramSendTask(BaseTask):
             if resolved_user:
                 return ids.get_bot_token(resolved_user, "telegram")
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         return None
 
 

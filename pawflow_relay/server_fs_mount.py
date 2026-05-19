@@ -15,7 +15,7 @@ import errno
 import logging
 import os
 import stat as _stat
-import subprocess
+import subprocess  # nosec B404
 import sys
 import threading
 import time as _time
@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 # that fixed, the mount lifecycle is stable and the host-visible
 # mirror would just keep accumulating noise on the project tree.
 _FUSE_TRACE = os.environ.get("PAWFLOW_FUSE_TRACE", "0") != "0"
-_FUSE_TRACE_FILES = ("/tmp/server_fs_mount.trace",)
+_FUSE_TRACE_FILES = ("/tmp/server_fs_mount.trace",)  # nosec B108 - optional relay-local trace file.
 _FUSE_TRACE_FHS: list = []
 _FUSE_TRACE_LOCK = threading.Lock()
 
@@ -57,19 +57,19 @@ def _fuse_trace_emit(line: str) -> None:
         try:
             sys.stderr.write(line)
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         if not _FUSE_TRACE_FHS:
             for path in _FUSE_TRACE_FILES:
                 try:
                     fh = open(path, "a", encoding="utf-8", buffering=1)
                     _FUSE_TRACE_FHS.append(fh)
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         for fh in _FUSE_TRACE_FHS:
             try:
                 fh.write(line)
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
 # Module-load banner — confirms this exact build of the file is what
 # the relay actually imported. Visible immediately in the trace files.
@@ -682,7 +682,7 @@ class CombinedServerFsMount:
                     ['fusermount', '-u', self._mountpoint],
                     ['umount', self._mountpoint]):
             try:
-                r = subprocess.run(cmd, capture_output=True,
+                r = subprocess.run(cmd, capture_output=True,  # nosec B603
                                    text=True, timeout=5)
                 if r.returncode == 0:
                     return

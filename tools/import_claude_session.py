@@ -149,7 +149,7 @@ def convert(session_path: str, user_id: str = "imported",
 
     # Generate conversation ID from session filename
     stem = Path(session_path).stem
-    cid = hashlib.md5(stem.encode()).hexdigest()[:16]
+    cid = hashlib.md5(stem.encode(), usedforsecurity=False).hexdigest()[:16]
     out_path = os.path.join(output_dir, f"{cid}.jsonl")
 
     messages = list(parse_claude_session(session_path))

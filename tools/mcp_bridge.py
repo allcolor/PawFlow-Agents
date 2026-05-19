@@ -17,6 +17,7 @@ Env vars (set by claude-code LLM provider):
 
 Uses JSON-RPC 2.0 over stdio (MCP standard).
 """
+import logging
 
 import hashlib
 import json
@@ -164,7 +165,7 @@ class ToolRelayClient:
                     raise ConnectionError(f"reader stopped: {self._reader_error}")
                 return
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         _log("Reconnecting to tool relay...")
         try:
             self.close()
@@ -192,7 +193,7 @@ class ToolRelayClient:
                 try:
                     self.close()
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 self._sock = None
                 if attempt < 2:
                     _time.sleep(2)
@@ -228,7 +229,7 @@ class ToolRelayClient:
             try:
                 self._sock.close()
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             self._sock = None
         with self._pending_lock:
             pending = list(self._pending.values())
@@ -343,7 +344,7 @@ def _log(msg):
         _log_file.write(f"[mcp-bridge] {msg}\n")
         _log_file.flush()
     except Exception:
-        pass
+        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
 
 def main():

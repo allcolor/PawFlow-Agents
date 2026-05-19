@@ -9,6 +9,7 @@ separate WebSocket.
 """
 
 from __future__ import annotations
+import logging
 
 import base64
 import gzip
@@ -33,10 +34,10 @@ except ImportError:  # Unit tests import this file as tools.cc_interactive_proxy
 
 UPSTREAM_HOST = "api.anthropic.com"
 UPSTREAM_PORT = 443
-LISTEN_HOST = os.environ.get("PAWFLOW_CCI_PROXY_HOST", "0.0.0.0")
+LISTEN_HOST = os.environ.get("PAWFLOW_CCI_PROXY_HOST", "0.0.0.0")  # nosec B104 - container-local TLS proxy bind.
 LISTEN_PORT = int(os.environ.get("PAWFLOW_CCI_PROXY_PORT", "443"))
-CERT_FILE = os.environ.get("PAWFLOW_CCI_LEAF_CERT", "/tmp/api-anthropic.crt")
-KEY_FILE = os.environ.get("PAWFLOW_CCI_LEAF_KEY", "/tmp/api-anthropic.key")
+CERT_FILE = os.environ.get("PAWFLOW_CCI_LEAF_CERT", "/tmp/api-anthropic.crt")  # nosec B108 - container-local generated cert path.
+KEY_FILE = os.environ.get("PAWFLOW_CCI_LEAF_KEY", "/tmp/api-anthropic.key")  # nosec B108 - container-local generated key path.
 SESSION_TOKEN = os.environ.get("PAWFLOW_CCI_SESSION_TOKEN", "")
 CONTAINER_ID = os.environ.get("HOSTNAME", "")
 EVENT_URL = os.environ.get("PAWFLOW_CCI_EVENT_URL", "")
@@ -257,7 +258,7 @@ class EventClient:
                 try:
                     self.sock.close()
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 self.sock = None
             try:
                 self.connect()
@@ -270,7 +271,7 @@ class EventClient:
                     if self.sock:
                         self.sock.close()
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 self.sock = None
 
     def _send(self, obj: dict) -> None:
@@ -1045,7 +1046,7 @@ def _pipe_exact(src, dst, observer=None, wire_logger=None, observer_before_send:
                 try:
                     dst.shutdown(socket.SHUT_WR)
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 return
             if async_observer and observer_before_send:
                 async_observer.feed(chunk)
@@ -1118,7 +1119,7 @@ def handle_client(client):
                 try:
                     sock.close()
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
 
 def main():

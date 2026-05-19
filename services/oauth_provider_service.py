@@ -29,37 +29,37 @@ logger = logging.getLogger(__name__)
 _PROVIDER_PRESETS = {
     "google": {
         "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
-        "token_url": "https://oauth2.googleapis.com/token",
+        "token_url": "https://oauth2.googleapis.com/token",  # nosec B105
         "userinfo_url": "https://www.googleapis.com/oauth2/v3/userinfo",
         "scope": "openid email profile",
     },
     "github": {
         "authorize_url": "https://github.com/login/oauth/authorize",
-        "token_url": "https://github.com/login/oauth/access_token",
+        "token_url": "https://github.com/login/oauth/access_token",  # nosec B105
         "userinfo_url": "https://api.github.com/user",
         "scope": "read:user user:email",
     },
     "microsoft": {
         "authorize_url": "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
-        "token_url": "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+        "token_url": "https://login.microsoftonline.com/common/oauth2/v2.0/token",  # nosec B105
         "userinfo_url": "https://graph.microsoft.com/v1.0/me",
         "scope": "openid email profile",
     },
     "pawflow": {
         "authorize_url": "/auth/login",
-        "token_url": "",  # handled internally by AuthGateway
+        "token_url": "",  # handled internally by AuthGateway  # nosec B105
         "userinfo_url": "",
         "scope": "",
     },
     "google_drive": {
         "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
-        "token_url": "https://oauth2.googleapis.com/token",
+        "token_url": "https://oauth2.googleapis.com/token",  # nosec B105
         "userinfo_url": "https://www.googleapis.com/oauth2/v3/userinfo",
         "scope": "https://www.googleapis.com/auth/drive",
     },
     "microsoft_onedrive": {
         "authorize_url": "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
-        "token_url": "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+        "token_url": "https://login.microsoftonline.com/common/oauth2/v2.0/token",  # nosec B105
         "userinfo_url": "https://graph.microsoft.com/v1.0/me",
         "scope": "Files.ReadWrite.All offline_access",
     },

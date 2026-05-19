@@ -22,7 +22,7 @@ Architecture:
 
 import logging
 import os
-import subprocess
+import subprocess  # nosec B404
 import threading
 import time
 from dataclasses import dataclass, field
@@ -100,11 +100,11 @@ class ClaudeCodePool:
                 from core.cc_live_registry import LiveSessionRegistry
                 LiveSessionRegistry.instance().shutdown_all()
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             try:
                 self.shutdown()
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         atexit.register(_kill_all)
         # Only install signal handlers in the main thread — subprocesses /
         # worker threads can't register them and will raise ValueError.
@@ -126,7 +126,7 @@ class ClaudeCodePool:
                     except (ValueError, OSError):
                         pass
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     def __init__(self):
         # Containers currently running a CC exec. name → info.
@@ -464,7 +464,7 @@ class ClaudeCodePool:
                 "Pool exec envs=%s cmd_tail=%s",
                 _env_preview, " ".join(cmd[-6:]))
 
-        return subprocess.Popen(cmd, **popen_kwargs)
+        return subprocess.Popen(cmd, **popen_kwargs)  # nosec B603
 
     def status(self) -> dict:
         """Return pool status for diagnostics."""
@@ -620,7 +620,7 @@ class ClaudeCodePool:
             "-e", "USER=pawflow",
             # Security
             "--shm-size", "512m",
-            "--tmpfs", "/tmp:rw,nosuid,size=512m",
+            "--tmpfs", "/tmp:rw,nosuid,size=512m",  # nosec B108 - Docker tmpfs mount target inside ephemeral container.
             "--cap-add", "SYS_ADMIN",  # needed for mount --bind in exec_claude
             # Override entrypoint: keep alive (full path — PATH may be dirty)
             "--entrypoint", "/usr/bin/sleep",
@@ -631,7 +631,7 @@ class ClaudeCodePool:
         cmd = docker_cmd() + ["run"] + run_args
         logger.info("Pool spawn: %s (image=%s)", name, self.image)
 
-        result = subprocess.run(
+        result = subprocess.run(  # nosec B603
             cmd, capture_output=True, text=True, timeout=30)
         if result.returncode != 0:
             raise RuntimeError(
@@ -639,7 +639,7 @@ class ClaudeCodePool:
                 f"{result.stderr.strip()[:300]}")
 
         # Start chronyd for time sync (avoid drift in long-running containers)
-        subprocess.run(
+        subprocess.run(  # nosec B603
             docker_cmd() + ["exec", "--user", "root", name, "chronyd"],
             capture_output=True, timeout=5)
 
@@ -654,7 +654,7 @@ class ClaudeCodePool:
         docker rm -f can take ~1s.
         """
         try:
-            subprocess.run(
+            subprocess.run(  # nosec B603
                 docker_cmd() + ["rm", "-f", name],
                 capture_output=True, timeout=10)
             logger.info("Pool container killed: %s", name)
@@ -664,7 +664,7 @@ class ClaudeCodePool:
     def _is_container_alive(self, name: str) -> bool:
         """Check if a container is still running."""
         try:
-            result = subprocess.run(
+            result = subprocess.run(  # nosec B603
                 docker_cmd() + ["inspect", "-f", "{{.State.Running}}", name],
                 capture_output=True, text=True, timeout=5)
             return result.stdout.strip() == "true"
@@ -736,7 +736,7 @@ class ClaudeCodePool:
         (running, exited, created, dead) and rm -f stops+removes.
         """
         try:
-            result = subprocess.run(
+            result = subprocess.run(  # nosec B603
                 docker_cmd() + ["ps", "-a",
                                 "--filter", "name=pf-cc-pool-",
                                 "--format", "{{.Names}}"],
@@ -745,12 +745,12 @@ class ClaudeCodePool:
                 orphans = [n.strip() for n in result.stdout.strip().split("\n") if n.strip()]
                 for name in orphans:
                     try:
-                        subprocess.run(
+                        subprocess.run(  # nosec B603
                             docker_cmd() + ["rm", "-f", name],
                             capture_output=True, timeout=10)
                         logger.info("Pool: removed orphan container %s", name)
                     except Exception:
-                        pass
+                        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 if orphans:
                     logger.info("Pool: cleaned up %d orphan container(s)", len(orphans))
         except Exception as e:

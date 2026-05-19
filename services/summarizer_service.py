@@ -26,11 +26,11 @@ _BG_DEFAULTS: Dict[str, Any] = {
     "rollup_trigger_count": ROLLUP_TRIGGER_COUNT,
     "tail_reserve_msgs": TAIL_RESERVE,
     "tail_token_budget": TAIL_TOKEN_BUDGET,
-    "token_trigger_fraction": 0.7,
+    "token_trigger_fraction": 0.7,  # nosec B105
     "bulk_catchup_multiplier": 5,
     "partial_min_msgs": 5,
     "min_input_multiplier": 4,
-    "chars_per_token": 3.5,
+    "chars_per_token": 3.5,  # nosec B105
     "overshoot_warn_multiplier": 1.5,
     "header_char_multiplier": 3.0,
 }

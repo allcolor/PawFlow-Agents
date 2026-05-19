@@ -1,4 +1,5 @@
 """grep — Regex content search in files (CC-compatible parameters)."""
+import logging
 
 import os
 from typing import Any, Dict, Tuple
@@ -172,7 +173,7 @@ class GrepHandler(BaseFsHandler):
                 if os.path.exists(self._sandbox_path(path, workdir)):
                     return path, ""
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         elif os.path.isabs(path) and os.path.exists(path):
             return path, ""
 
@@ -201,7 +202,7 @@ class GrepHandler(BaseFsHandler):
                     show_line_numbers: bool = True, file_type: str = "",
                     multiline: bool = False, recursive: bool = True) -> str:
         """Execute ripgrep (rg) in workdir. Falls back to Python regex if rg not available."""
-        import subprocess, os, shutil
+        import subprocess, os, shutil  # nosec B404
 
         full = self._sandbox_path(path, self._workdir)
         rg_path = shutil.which("rg")
@@ -242,7 +243,7 @@ class GrepHandler(BaseFsHandler):
         args.append(str(full))
 
         try:
-            result = subprocess.run(
+            result = subprocess.run(  # nosec B603
                 args, capture_output=True, text=True,
                 cwd=str(self._workdir) if self._workdir else None)
             output = result.stdout

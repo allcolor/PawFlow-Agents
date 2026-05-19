@@ -27,7 +27,7 @@ import hashlib
 import logging
 import re
 import shutil
-import subprocess
+import subprocess  # nosec B404
 import time
 from typing import Any, Dict, List, Optional
 
@@ -61,7 +61,7 @@ def _normalize_pcm(audio_bytes: bytes) -> Optional[bytes]:
     if not _FFMPEG or not audio_bytes:
         return None
     try:
-        proc = subprocess.run(
+        proc = subprocess.run(  # nosec B603
             [_FFMPEG, "-hide_banner", "-loglevel", "error",
              "-i", "pipe:0",
              "-f", "s16le", "-ac", "1", "-ar", "16000",

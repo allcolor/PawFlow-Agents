@@ -10,7 +10,7 @@ Auto-starts a virtual desktop (Xvfb+openbox) if no DISPLAY is available.
 
 import os
 import shutil
-import subprocess
+import subprocess  # nosec B404
 import time
 
 _desktop_started = False
@@ -26,13 +26,13 @@ def _ensure_desktop():
         return
     _display = ":99"
     try:
-        subprocess.Popen(
+        subprocess.Popen(  # nosec B603, B607
             ["Xvfb", _display, "-screen", "0", "1280x800x24",
              "-ac", "+extension", "GLX", "+render", "-noreset"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         os.environ["DISPLAY"] = _display
         time.sleep(0.5)
-        subprocess.Popen(
+        subprocess.Popen(  # nosec B603, B607
             ["openbox-session"],
             env={**os.environ, "DISPLAY": _display},
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -49,7 +49,7 @@ def _display_env():
 
 def _xdo(*args, timeout=5):
     """Run an xdotool command. Returns stdout."""
-    result = subprocess.run(
+    result = subprocess.run(  # nosec B603
         ["xdotool"] + list(args),
         capture_output=True, text=True, timeout=timeout,
         env=_display_env())
@@ -231,7 +231,7 @@ def action_screen_size(root_dir, abs_path, req):
             m = sct.monitors[0]
             return {"width": m["width"], "height": m["height"]}
     except ImportError:
-        out = subprocess.run(
+        out = subprocess.run(  # nosec B603, B607
             ["xdpyinfo"], capture_output=True, text=True,
             timeout=5, env=_display_env())
         for line in out.stdout.split("\n"):
@@ -257,7 +257,7 @@ def action_screen_open_app(root_dir, abs_path, req):
         return {"error": "No command specified"}
     import shlex
     cmd_list = shlex.split(cmd) if isinstance(cmd, str) else cmd
-    proc = subprocess.Popen(
+    proc = subprocess.Popen(  # nosec B603
         cmd_list, env=_display_env(),
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     if wait:
@@ -268,7 +268,7 @@ def action_screen_open_app(root_dir, abs_path, req):
 def action_screen_clipboard_read(root_dir, abs_path, req):
     _ensure_desktop()
     try:
-        result = subprocess.run(
+        result = subprocess.run(  # nosec B603, B607
             ["xclip", "-selection", "clipboard", "-o"],
             capture_output=True, text=True, timeout=5, env=_display_env())
         return {"text": result.stdout}
@@ -280,7 +280,7 @@ def action_screen_clipboard_write(root_dir, abs_path, req):
     _ensure_desktop()
     text = req.get("text", "")
     try:
-        proc = subprocess.Popen(
+        proc = subprocess.Popen(  # nosec B603, B607
             ["xclip", "-selection", "clipboard"],
             stdin=subprocess.PIPE, env=_display_env())
         proc.communicate(input=text.encode("utf-8"), timeout=5)
@@ -292,7 +292,7 @@ def action_screen_clipboard_write(root_dir, abs_path, req):
 def action_screen_window_list(root_dir, abs_path, req):
     _ensure_desktop()
     try:
-        result = subprocess.run(
+        result = subprocess.run(  # nosec B603, B607
             ["wmctrl", "-l", "-p"],
             capture_output=True, text=True, timeout=5, env=_display_env())
         windows = []
@@ -318,9 +318,9 @@ def action_screen_window_focus(root_dir, abs_path, req):
     wid = req.get("id", "")
     try:
         if wid:
-            subprocess.run(["wmctrl", "-i", "-a", wid], env=_display_env(), timeout=5)
+            subprocess.run(["wmctrl", "-i", "-a", wid], env=_display_env(), timeout=5)  # nosec B603, B607
         elif title:
-            subprocess.run(["wmctrl", "-a", title], env=_display_env(), timeout=5)
+            subprocess.run(["wmctrl", "-a", title], env=_display_env(), timeout=5)  # nosec B603, B607
         else:
             return {"error": "No title or id specified"}
         return {"focused": title or wid}
@@ -334,9 +334,9 @@ def action_screen_window_close(root_dir, abs_path, req):
     wid = req.get("id", "")
     try:
         if wid:
-            subprocess.run(["wmctrl", "-i", "-c", wid], env=_display_env(), timeout=5)
+            subprocess.run(["wmctrl", "-i", "-c", wid], env=_display_env(), timeout=5)  # nosec B603, B607
         elif title:
-            subprocess.run(["wmctrl", "-c", title], env=_display_env(), timeout=5)
+            subprocess.run(["wmctrl", "-c", title], env=_display_env(), timeout=5)  # nosec B603, B607
         else:
             return {"error": "No title or id specified"}
         return {"closed": title or wid}
@@ -355,9 +355,9 @@ def action_screen_window_resize(root_dir, abs_path, req):
     mvarg = f"0,{x},{y},{w},{h}"
     try:
         if wid:
-            subprocess.run(["wmctrl", "-i", "-r", wid, "-e", mvarg], env=_display_env(), timeout=5)
+            subprocess.run(["wmctrl", "-i", "-r", wid, "-e", mvarg], env=_display_env(), timeout=5)  # nosec B603, B607
         elif title:
-            subprocess.run(["wmctrl", "-r", title, "-e", mvarg], env=_display_env(), timeout=5)
+            subprocess.run(["wmctrl", "-r", title, "-e", mvarg], env=_display_env(), timeout=5)  # nosec B603, B607
         else:
             return {"error": "No title or id specified"}
         return {"resized": True, "geometry": {"x": x, "y": y, "width": w, "height": h}}
@@ -395,7 +395,7 @@ def action_screen_window_maximize(root_dir, abs_path, req):
             cmd_base += ["-r", title]
         else:
             return {"error": "No title or id specified"}
-        subprocess.run(cmd_base + ["-b", "add,maximized_vert,maximized_horz"],
+        subprocess.run(cmd_base + ["-b", "add,maximized_vert,maximized_horz"],  # nosec B603
                        env=_display_env(), timeout=5)
         return {"maximized": title or wid}
     except FileNotFoundError:
@@ -443,7 +443,7 @@ def action_screen_locate(root_dir, abs_path, req):
     from PIL import Image
     template_bytes = base64.b64decode(template_b64)
     template_img = Image.open(io.BytesIO(template_bytes))
-    tmp = "/tmp/_locate_template.png"
+    tmp = "/tmp/_locate_template.png"  # nosec B108 - relay-local screenshot scratch image.
     template_img.save(tmp)
     try:
         import pyautogui

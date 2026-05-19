@@ -1,4 +1,5 @@
 """Flow debugger -- breakpoints, step-by-step execution, FlowFile inspection."""
+import logging
 
 import threading
 import time
@@ -76,7 +77,7 @@ class FlowDebugger:
             try:
                 cb(**kwargs)
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     # --- Breakpoint management ---
 
@@ -121,10 +122,10 @@ class FlowDebugger:
                     attrs = flowfile.get_attributes()
                 elif hasattr(flowfile, 'attributes'):
                     attrs = flowfile.attributes
-                if not eval(bp.condition, {"__builtins__": {}}, {"attrs": attrs, "ff": flowfile}):
+                if not eval(bp.condition, {"__builtins__": {}}, {"attrs": attrs, "ff": flowfile}):  # nosec B307 - debugger condition expression.
                     return False
             except Exception:
-                pass  # If condition fails, break anyway
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
         bp.hit_count += 1
 
@@ -221,7 +222,7 @@ class FlowDebugger:
 
             self._emit("snapshot", snapshot=snapshot)
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     def capture_output(self, task_id: str, flowfiles):
         """Capture output FlowFiles after task execution."""

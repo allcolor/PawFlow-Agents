@@ -65,7 +65,7 @@ def _handle_account_linking(self, action, body, store, user_id, flowfile):
                     from services.telegram_bot_service import TelegramBotPool
                     TelegramBotPool.instance().unregister_bot(bot_token)
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         unlinked = ids.unlink(user_id, provider)
         flowfile.set_content(json.dumps({
             "unlinked": unlinked, "provider": provider,

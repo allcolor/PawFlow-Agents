@@ -2,6 +2,7 @@
 """Claude Code lifecycle hook bridge for claude-code-interactive."""
 
 from __future__ import annotations
+import logging
 
 import base64
 try:
@@ -144,6 +145,7 @@ def _consume_injected_prompt(prompt: str) -> bool:
                 try:
                     payload = json.loads(row)
                 except Exception:
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                     continue
                 ts = float(payload.get("ts") or 0)
                 consumed_at = float(payload.get("consumed_at") or 0)

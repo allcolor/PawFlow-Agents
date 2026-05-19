@@ -1,4 +1,5 @@
 """Data preview — capture and inspect FlowFiles flowing through connections."""
+import logging
 
 import time
 import threading
@@ -116,7 +117,7 @@ class DataPreviewManager:
                 if len(self._samples[key]) > self._max_samples:
                     self._samples[key] = self._samples[key][-self._max_samples:]
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     @staticmethod
     def _detect_type(content: str) -> str:

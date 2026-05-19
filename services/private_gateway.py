@@ -330,7 +330,7 @@ def check_request(handler) -> bool:
             handler.wfile.write(b"Internal Server Error")
             handler.wfile.flush()
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         return True
 
 
@@ -338,7 +338,7 @@ def _check_request_inner(handler, config: Dict[str, Any]) -> bool:
     if not _truthy(config.get("enabled", False)):
         return False
 
-    ip = handler.client_address[0] if handler.client_address else "0.0.0.0"
+    ip = handler.client_address[0] if handler.client_address else "0.0.0.0"  # nosec B104 - client IP fallback, not a bind.
     path = handler.path.split('?', 1)[0]
     cookie_name = str(config.get("cookie_name") or _COOKIE_NAME)
     cookie_max_age = int(config.get("cookie_max_age") or _COOKIE_MAX_AGE)
@@ -394,7 +394,7 @@ def _check_request_inner(handler, config: Dict[str, Any]) -> bool:
                             file_id, gateway_key=key):
                         return False  # bypass gateway
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     if is_banned(ip):
         _send_page(handler, 403, b"Forbidden", "text/plain")
@@ -548,7 +548,7 @@ class PrivateGateway(BaseService):
                  internal_ok: bool = False) -> bool:
         if not self.is_enabled() or internal_ok:
             return False
-        ip = client_address[0] if client_address else "0.0.0.0"
+        ip = client_address[0] if client_address else "0.0.0.0"  # nosec B104 - client IP fallback, not a bind.
         if is_banned(ip):
             return True
         cookie_name = str(self.config.get("cookie_name") or _COOKIE_NAME)

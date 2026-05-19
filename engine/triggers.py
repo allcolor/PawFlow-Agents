@@ -1,4 +1,5 @@
 """Event triggers -- automatic flow execution based on events."""
+import logging
 
 import fnmatch
 import hashlib
@@ -298,7 +299,7 @@ class WebhookTrigger(BaseTrigger):
         super().start()
         try:
             handler_class = self._make_handler()
-            self._server = HTTPServer(("0.0.0.0", self._port), handler_class)
+            self._server = HTTPServer(("0.0.0.0", self._port), handler_class)  # nosec B104 - webhook trigger must be reachable.
             self._thread = threading.Thread(
                 target=self._server.serve_forever, daemon=True,
                 name=f"trigger-wh-{self.config.trigger_id}"
@@ -350,7 +351,7 @@ class EventTrigger(BaseTrigger):
                 nm = NotificationManager.get_instance()
                 nm.unregister_handler(self._handler_id)
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     def _handle_event(self, event_type: str, payload: Dict = None):
         """Called by NotificationManager when a matching event fires."""
@@ -427,7 +428,7 @@ class PollingTrigger(BaseTrigger):
 
         try:
             req = Request(self._url)
-            with urlopen(req, timeout=self._timeout) as resp:
+            with urlopen(req, timeout=self._timeout) as resp:  # nosec B310 - configured polling trigger URL.
                 body = resp.read()
                 status = resp.status
         except URLError:
@@ -584,7 +585,7 @@ class TriggerManager:
                     {"trigger_id": trigger_id, "flow_path": trigger.config.flow_path},
                 )
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
         except Exception as e:
             event.error = str(e)
@@ -695,4 +696,4 @@ class TriggerManager:
                     enabled=item.get("enabled", True),
                 )
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)

@@ -345,7 +345,7 @@ class SecurityManager:
             from core.capability_auth import revoke_session_capabilities
             revoke_session_capabilities(session_id)
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     def check_permission(self, session: Session, permission: str) -> bool:
         """Check if a session has a specific permission."""

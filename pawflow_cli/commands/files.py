@@ -1,4 +1,5 @@
 """File commands: /upload, /paste, /clear-files, /copy, /view, /files, /run, /diff, /multi, /watch, /call, /plan, /autoconv."""
+import logging
 
 import os
 import threading
@@ -158,7 +159,7 @@ def handle_files_commands(app, cmd, arg, text):
                         service=app.relay.relay_id if app.relay else "",
                         path=filepath)
                     content = data.get("content", "")
-                    h = hashlib.md5(content.encode()).hexdigest()
+                    h = hashlib.md5(content.encode(), usedforsecurity=False).hexdigest()
                     if last_hash and h != last_hash:
                         app.renderer.print_system(f"File changed: {filepath}")
                         import sys
@@ -166,7 +167,7 @@ def handle_files_commands(app, cmd, arg, text):
                         sys.stdout.flush()
                     last_hash = h
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 app._watch_stop.wait(3)
         app._watch_thread = threading.Thread(target=_watch, daemon=True)
         app._watch_thread.start()

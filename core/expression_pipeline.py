@@ -318,7 +318,7 @@ def _apply_op(value: Any, op: str, args: List[str]) -> Any:
                 return ""
         return s
     if op == "hash_md5":
-        return hashlib.md5(s.encode()).hexdigest()
+        return hashlib.md5(s.encode(), usedforsecurity=False).hexdigest()
     if op == "hash_sha256":
         return hashlib.sha256(s.encode()).hexdigest()
 
@@ -331,11 +331,11 @@ def _apply_op(value: Any, op: str, args: List[str]) -> Any:
         import random
         lo = int(args[0]) if args else 0
         hi = int(args[1]) if len(args) > 1 else 100
-        return str(random.randint(lo, hi))
+        return str(random.randint(lo, hi))  # nosec B311
     if op == "random_string":
         import random, string
         n = int(args[0]) if args else 16
-        return "".join(random.choices(string.ascii_letters + string.digits, k=n))
+        return "".join(random.choices(string.ascii_letters + string.digits, k=n))  # nosec B311
     if op == "timestamp":
         return str(int(time.time()))
     if op == "now":

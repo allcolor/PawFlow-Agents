@@ -14,7 +14,7 @@ class FacebookAuthProvider(OAuthBaseProvider):
         config.setdefault("scope", self.DEFAULT_SCOPE)
         super().__init__(config)
         self._authorize_url = "https://www.facebook.com/v19.0/dialog/oauth"
-        self._token_url = "https://graph.facebook.com/v19.0/oauth/access_token"
+        self._token_url = "https://graph.facebook.com/v19.0/oauth/access_token"  # nosec B105
         self._userinfo_url = "https://graph.facebook.com/me?fields=id,name,email,picture"
 
     @property

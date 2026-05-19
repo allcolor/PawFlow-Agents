@@ -47,7 +47,7 @@ def _handle_misc(self, action, body, store, user_id, flowfile):
             ConversationEventBus.instance().publish_event(
                 conv_id, "theme", {"css": css})
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         flowfile.set_content(json.dumps({
             "ok": True, "message": "Theme applied",
             "css_length": len(css),

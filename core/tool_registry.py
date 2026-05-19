@@ -284,7 +284,7 @@ class ToolRegistry:
                     from core.handlers.meta_tools import _normalize_tool_args, _schema_with_local
                     args = _normalize_tool_args(name, args, _schema_with_local(handler))
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             if name == "use_tool" and isinstance(args, dict) and "arguments" in args and "arguments_json" not in args:
                 args = dict(args)
                 raw_use_tool_args = args.pop("arguments")

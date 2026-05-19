@@ -20,7 +20,7 @@ var TASK_CATEGORIES = {
     log:"System", updateAttribute:"System", replace_text:"System", wait:"System",
     fail:"System", generateFlowFile:"System", hashContent:"System", listFiles:"System",
     executeScript:"System", getFile:"IO", putFile:"IO", fetchHTTP:"IO", listenHTTP:"IO",
-    getSFTP:"IO", putSFTP:"IO", listSFTP:"IO", getFTP:"IO", putFTP:"IO",
+    getSFTP:"IO", putSFTP:"IO", listSFTP:"IO",
     httpReceiver:"IO", handleHTTPResponse:"IO", validateHTTPAuth:"IO", scraplingFetch:"IO",
     putS3:"Cloud", getS3:"Cloud", putGCS:"Cloud", getGCS:"Cloud",
     putAzureBlob:"Cloud", getAzureBlob:"Cloud",

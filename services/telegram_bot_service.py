@@ -229,7 +229,7 @@ class TelegramBotService(BaseService):
                 "chat_id": chat_id, "action": "typing",
             })
         except Exception:
-            pass  # Non-critical
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     # ── API ────────────────────────────────────────────────────────
 

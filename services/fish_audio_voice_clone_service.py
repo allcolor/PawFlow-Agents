@@ -124,7 +124,7 @@ class FishAudioVoiceCloneService(BaseVoiceCloneService):
                 f"reference_audio_url must be an absolute URL, got {url!r}")
         req = urllib.request.Request(
             url, headers={"User-Agent": "PawFlow-Agent/1.0"})
-        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+        with urllib.request.urlopen(req, timeout=self.timeout) as resp:  # nosec B310 - HTTP(S) reference audio URL.
             return resp.read()
 
     # ── API ──────────────────────────────────────────────────────

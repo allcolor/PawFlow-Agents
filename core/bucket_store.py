@@ -295,7 +295,7 @@ class BucketStore:
                 try:
                     total += len(format_activity_digest(_tt))
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         return total
 
     def get_rollup_input(self) -> List[Dict]:
@@ -546,7 +546,7 @@ class BucketStore:
                     try:
                         p.unlink()
                     except Exception:
-                        pass
+                        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             self._meta = self._empty_meta()
             self._save_meta()
             logger.info("[bucket-store] wiped %s", self._dir)

@@ -44,7 +44,7 @@ def _api_request(method: str, url: str, token: str,
         req.add_header("Content-Type", content_type)
 
     ctx = ssl.create_default_context()
-    with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
+    with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:  # nosec B310 - Microsoft Graph endpoint.
         data = resp.read()
         ct = resp.headers.get("Content-Type", "")
         if ct.startswith("application/json") and data:
@@ -228,7 +228,7 @@ class OneDriveBackend(FilesystemBackend):
                                 "match": m.group(),
                             })
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
         return results
 

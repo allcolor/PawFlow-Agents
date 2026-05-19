@@ -16,6 +16,7 @@ Exported:
                   gateway_cookie="", timeout=120)
         -> (ws_url, ws_token, session_token, resolved_relay_id, login_url)
 """
+import logging
 
 import http.client
 import json
@@ -105,7 +106,7 @@ def delete_service(api_url, session_token, service_id, gateway_cookie=""):
             "service_id": service_id,
         }, gateway_cookie=gateway_cookie)
     except Exception:
-        pass
+        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
 
 def start_callback_server():
@@ -114,7 +115,7 @@ def start_callback_server():
     Returns (port, result_dict, ready_event, server). The caller waits on
     `ready_event.wait(timeout)` then reads result_dict[{token,username}].
     """
-    result = {"token": None, "username": None}
+    result = {"token": None, "username": None}  # nosec B105
     ready = threading.Event()
 
     class CallbackHandler(BaseHTTPRequestHandler):

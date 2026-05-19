@@ -181,7 +181,7 @@ class ScheduleContinuationHandler(ToolHandler):
         key_src = f"{self._conversation_id}:{self._agent_name}:{plan}"
         key = (
             f"{self._conversation_id}::continuation::"
-            f"{hashlib.sha1(key_src.encode('utf-8', 'ignore')).hexdigest()[:8]}"
+            f"{hashlib.sha1(key_src.encode('utf-8', 'ignore'), usedforsecurity=False).hexdigest()[:8]}"
         )
         recheck_at = PollScheduler.instance().schedule_delay(
             self._conversation_id,

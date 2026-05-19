@@ -73,7 +73,7 @@ def get_service_def(service_id: str, user_id: str = "", conv_id: str = ""):
         if found:
             return found
     except Exception:
-        pass
+        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
     for sdef in _all_service_defs(user_id=user_id, conv_id=conv_id):
         if getattr(sdef, "service_id", "") == service_id:
             return sdef

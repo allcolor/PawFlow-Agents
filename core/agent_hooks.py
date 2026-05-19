@@ -332,6 +332,7 @@ def _parse_hook_stdout(output: Any) -> Dict[str, Any]:
         try:
             parsed = json.loads(line)
         except Exception:
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             continue
         if isinstance(parsed, dict):
             return parsed

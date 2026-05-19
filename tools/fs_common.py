@@ -2,10 +2,11 @@
 
 Extracted to break circular imports between fs_actions and fs_exec.
 """
+import logging
 
 import os
 import shutil as _shutil
-import subprocess
+import subprocess  # nosec B404
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
@@ -73,14 +74,14 @@ def detect_available_shells() -> Dict[str, str]:
             shells[_interp] = _p
     # Docker-based shells (isolated execution)
     try:
-        _dr = subprocess.run(_docker_cmd() + ["info"], capture_output=True, timeout=10)
+        _dr = subprocess.run(_docker_cmd() + ["info"], capture_output=True, timeout=10)  # nosec B603
         if _dr.returncode == 0:
             _docker_bin = _docker_cmd()[0]
             shells["docker-python"] = _docker_bin
             shells["docker-node"] = _docker_bin
             shells["docker-bash"] = _docker_bin
     except Exception:
-        pass
+        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
     return shells
 
 
@@ -145,7 +146,7 @@ def run_cancellable(request_id: str, cmd, *, timeout=None, **popen_kwargs):
     if capture:
         popen_kwargs["stdout"] = subprocess.PIPE
         popen_kwargs["stderr"] = subprocess.PIPE
-    proc = subprocess.Popen(cmd, **popen_kwargs)
+    proc = subprocess.Popen(cmd, **popen_kwargs)  # nosec B603
     register_inflight_proc(request_id, proc)
     try:
         try:

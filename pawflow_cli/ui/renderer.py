@@ -1,4 +1,5 @@
 """Terminal rendering for PawCode using Rich."""
+import logging
 
 import re
 import sys
@@ -39,7 +40,7 @@ _FUN_VERBS = [
 
 def _random_verb() -> str:
     import random
-    return random.choice(_FUN_VERBS)
+    return random.choice(_FUN_VERBS)  # nosec B311
 
 
 def _agent_color(name: str) -> str:
@@ -146,7 +147,7 @@ class TerminalRenderer:
                 if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
                     kernel32.SetConsoleMode(handle, mode.value | 0x0004)
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             if hasattr(sys.stdout, "reconfigure"):
                 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
         if HAS_RICH:
@@ -464,7 +465,7 @@ class TerminalRenderer:
                                                  padding=(0, 1)))
                         return
                     except Exception:
-                        pass
+                        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 first_line = result.split("\n")[0][:200]
                 if len(result) > len(first_line):
                     self.console.print(f"  [dim]⎿  {escape(first_line)}...[/dim]")

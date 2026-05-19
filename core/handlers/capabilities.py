@@ -787,7 +787,7 @@ class CloneVoiceHandler(_CapabilityHandlerBase):
             import urllib.request
             req = urllib.request.Request(
                 ref_url, headers={"User-Agent": "PawFlow-Agent/1.0"})
-            with urllib.request.urlopen(req, timeout=60) as resp:
+            with urllib.request.urlopen(req, timeout=60) as resp:  # nosec B310 - reference audio URLs are user-provided HTTP(S) media inputs.
                 ref_bytes = resp.read()
                 ref_ct = resp.headers.get("Content-Type",
                                            "application/octet-stream")

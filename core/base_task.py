@@ -11,6 +11,7 @@ from core import Task, TaskError, FlowFile
 from core.variable_resolver import VariableResolverMixin
 from core.bulletin import BulletinBoard
 import json
+import logging
 
 
 class BaseTask(VariableResolverMixin, Task, ABC):
@@ -390,7 +391,7 @@ class BaseTask(VariableResolverMixin, Task, ABC):
                 task_dir = Path(task_mod.__file__).parent
                 candidates.append(task_dir / relative_path)
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         for p in candidates:
             if p.is_file():
                 return p

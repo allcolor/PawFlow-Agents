@@ -316,7 +316,7 @@ class ClaudeCodeSessionMixin:
         svc_id = getattr(self, '_agent_service', '') or ''
         pool = _load_credentials_pool(svc_id)
         if not pool:
-            return {"access_token": "", "refresh_token": "", "expires_at": 0, "pool_index": -1}
+            return {"access_token": "", "refresh_token": "", "expires_at": 0, "pool_index": -1}  # nosec B105
 
         # Purge expired credentials (expires_at is in milliseconds)
         now_ms = int(_t.time() * 1000)
@@ -578,7 +578,7 @@ class ClaudeCodeSessionMixin:
                 try:
                     reg.uninstall(sdef.scope, sdef.scope_id, sdef.service_id)
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
             # Create a fresh tool relay. ToolRelayService registers its
             # WS route on the main HTTPListenerService at

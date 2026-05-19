@@ -42,6 +42,10 @@ class PostgresStorage:
         self._conn = None
         self._init_database()
 
+    def _table(self, name: str):
+        from psycopg2 import sql
+        return sql.Identifier(self.schema, name)
+
     def _get_connection(self):
         """Get a PostgreSQL connection."""
         if self._conn is None or self._conn.closed:
@@ -62,32 +66,34 @@ class PostgresStorage:
             conn = self._get_connection()
             cur = conn.cursor()
 
-            cur.execute(f"""
-                CREATE TABLE IF NOT EXISTS {self.schema}.flows (
+            from psycopg2 import sql
+
+            cur.execute(sql.SQL("""
+                CREATE TABLE IF NOT EXISTS {} (
                     id TEXT PRIMARY KEY,
                     config JSONB NOT NULL,
                     created_at TIMESTAMPTZ DEFAULT NOW(),
                     modified_at TIMESTAMPTZ DEFAULT NOW()
                 )
-            """)
+            """).format(self._table("flows")))
 
-            cur.execute(f"""
-                CREATE TABLE IF NOT EXISTS {self.schema}.tasks_config (
+            cur.execute(sql.SQL("""
+                CREATE TABLE IF NOT EXISTS {} (
                     id SERIAL PRIMARY KEY,
                     task_type TEXT NOT NULL,
                     config JSONB NOT NULL,
                     created_at TIMESTAMPTZ DEFAULT NOW()
                 )
-            """)
+            """).format(self._table("tasks_config")))
 
-            cur.execute(f"""
-                CREATE TABLE IF NOT EXISTS {self.schema}.services_config (
+            cur.execute(sql.SQL("""
+                CREATE TABLE IF NOT EXISTS {} (
                     id SERIAL PRIMARY KEY,
                     service_type TEXT NOT NULL,
                     config JSONB NOT NULL,
                     created_at TIMESTAMPTZ DEFAULT NOW()
                 )
-            """)
+            """).format(self._table("services_config")))
 
             conn.commit()
             logger.info("PostgreSQL storage initialized")
@@ -106,12 +112,14 @@ class PostgresStorage:
 
             config_json = json.dumps(config, ensure_ascii=False)
 
-            cur.execute(f"""
-                INSERT INTO {self.schema}.flows (id, config, modified_at)
+            from psycopg2 import sql
+
+            cur.execute(sql.SQL("""
+                INSERT INTO {} (id, config, modified_at)
                 VALUES (%s, %s::jsonb, NOW())
                 ON CONFLICT (id) DO UPDATE
                 SET config = EXCLUDED.config, modified_at = NOW()
-            """, (flow_id, config_json))
+            """).format(self._table("flows")), (flow_id, config_json))
 
             conn.commit()
             logger.info(f"Flow saved to PostgreSQL: {flow_id}")
@@ -128,9 +136,11 @@ class PostgresStorage:
             conn = self._get_connection()
             cur = conn.cursor()
 
-            cur.execute(f"""
-                SELECT config FROM {self.schema}.flows WHERE id = %s
-            """, (flow_id,))
+            from psycopg2 import sql
+
+            cur.execute(sql.SQL("""
+                SELECT config FROM {} WHERE id = %s
+            """).format(self._table("flows")), (flow_id,))
 
             row = cur.fetchone()
             if row:
@@ -150,9 +160,11 @@ class PostgresStorage:
             conn = self._get_connection()
             cur = conn.cursor()
 
-            cur.execute(f"""
-                DELETE FROM {self.schema}.flows WHERE id = %s
-            """, (flow_id,))
+            from psycopg2 import sql
+
+            cur.execute(sql.SQL("""
+                DELETE FROM {} WHERE id = %s
+            """).format(self._table("flows")), (flow_id,))
 
             deleted = cur.rowcount > 0
             conn.commit()
@@ -171,9 +183,11 @@ class PostgresStorage:
             conn = self._get_connection()
             cur = conn.cursor()
 
-            cur.execute(f"""
-                SELECT id FROM {self.schema}.flows ORDER BY id
-            """)
+            from psycopg2 import sql
+
+            cur.execute(sql.SQL("""
+                SELECT id FROM {} ORDER BY id
+            """).format(self._table("flows")))
 
             return [row[0] for row in cur.fetchall()]
         except Exception as e:
@@ -188,10 +202,12 @@ class PostgresStorage:
 
             config_json = json.dumps(config, ensure_ascii=False)
 
-            cur.execute(f"""
-                INSERT INTO {self.schema}.tasks_config (task_type, config)
+            from psycopg2 import sql
+
+            cur.execute(sql.SQL("""
+                INSERT INTO {} (task_type, config)
                 VALUES (%s, %s::jsonb)
-            """, (task_type, config_json))
+            """).format(self._table("tasks_config")), (task_type, config_json))
 
             conn.commit()
             return True
@@ -209,10 +225,12 @@ class PostgresStorage:
 
             config_json = json.dumps(config, ensure_ascii=False)
 
-            cur.execute(f"""
-                INSERT INTO {self.schema}.services_config (service_type, config)
+            from psycopg2 import sql
+
+            cur.execute(sql.SQL("""
+                INSERT INTO {} (service_type, config)
                 VALUES (%s, %s::jsonb)
-            """, (service_type, config_json))
+            """).format(self._table("services_config")), (service_type, config_json))
 
             conn.commit()
             return True

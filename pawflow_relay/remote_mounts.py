@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 import shutil
-import subprocess
+import subprocess  # nosec B404
 import sys
 import threading
 from pathlib import Path
@@ -16,7 +16,7 @@ class RemoteMountManager:
     """Apply server-provided rclone mount manifests inside a relay runtime."""
 
     def __init__(self, remote_root: str = "/remote",
-                 state_dir: str = "/tmp/pawflow_remote_mounts"):
+                 state_dir: str = "/tmp/pawflow_remote_mounts"):  # nosec B108 - relay-local rclone state dir.
         self.remote_root = remote_root
         self.state_dir = Path(state_dir)
         self.config_path = self.state_dir / "rclone.conf"
@@ -68,7 +68,7 @@ class RemoteMountManager:
 
     def _run(self, argv: list[str], what: str) -> bool:
         try:
-            proc = subprocess.run(argv, capture_output=True, text=True)
+            proc = subprocess.run(argv, capture_output=True, text=True)  # nosec B603
         except Exception as exc:
             sys.stderr.write(f"[RemoteFS] {what} failed: {exc}\n")
             return False

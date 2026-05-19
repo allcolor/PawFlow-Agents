@@ -117,9 +117,9 @@ def _listener_bind() -> str:
                 host = getattr(inst, "_host", "") if inst else ""
                 port = getattr(inst, "_port", "") if inst else ""
                 if host or port:
-                    return f"{host or '0.0.0.0'}:{port}"
+                    return f"{host or '0.0.0.0'}:{port}"  # nosec B104 - reporting display fallback, not a bind.
     except Exception:
-        pass
+        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
     return ""
 
 

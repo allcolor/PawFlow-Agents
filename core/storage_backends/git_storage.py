@@ -9,7 +9,7 @@ Each save creates an automatic commit.
 import json
 import logging
 import os
-import subprocess
+import subprocess  # nosec B404
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from datetime import datetime
@@ -66,7 +66,7 @@ class GitStorage:
         """Run a git command."""
         cmd = ['git', '-C', str(self.repository)] + list(args)
         try:
-            result = subprocess.run(
+            result = subprocess.run(  # nosec B603
                 cmd, capture_output=True, text=True, timeout=30,
                 check=check,
             )

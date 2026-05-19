@@ -260,6 +260,7 @@ class FlowManagerHandler(ToolHandler):
                         "description": data.get("description", ""),
                     })
                 except Exception:
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                     continue
         if not templates:
             return "No flow templates found in the repository."
@@ -532,7 +533,7 @@ class FlowManagerHandler(ToolHandler):
                 try:
                     existing.stop()
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 reg.unregister(flow_id)
 
             executor = ContinuousFlowExecutor(
@@ -598,7 +599,7 @@ class FlowManagerHandler(ToolHandler):
             elif real_status == "running":
                 real_status = "not_running (no executor)"
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
         template_info = f"\nTemplate: {inst.flow_id}" if inst.flow_id != inst.instance_id else ""
         sched_info = ""

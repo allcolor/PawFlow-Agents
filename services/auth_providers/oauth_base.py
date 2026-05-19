@@ -18,7 +18,7 @@ class OAuthBaseProvider(AuthProvider):
     def __init__(self, config: Dict[str, Any]):
         self.config = config
         self._authorize_url = ""
-        self._token_url = ""
+        self._token_url = ""  # nosec B105
         self._userinfo_url = ""
 
     @property

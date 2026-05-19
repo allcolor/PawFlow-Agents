@@ -385,7 +385,7 @@ class AgentSummarizeMixin:
             if not _svc_id:
                 _svc_id = _resolved_svc
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         if not _svc_id:
             raise RuntimeError(
                 "No summarizer_service configured. Set `summarizer_service` "
@@ -640,7 +640,7 @@ class AgentSummarizeMixin:
                 try:
                     FileStore.instance().delete(_fid)
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     def _summarize_via_cc(self, client, prompt: str, file_id: str,
                           compact_key: str, target_tokens: int,
@@ -776,7 +776,7 @@ class AgentSummarizeMixin:
                 if os.path.isdir(_compact_workdir):
                     shutil.rmtree(_compact_workdir, ignore_errors=True)
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     def _summarize_via_api(self, client, prompt: str, file_id: str,
                            compact_key: str, target_tokens: int,

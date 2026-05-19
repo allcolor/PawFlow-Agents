@@ -62,7 +62,7 @@ class OAuthTokenStore:
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
 
-    def save_tokens(self, user_id: str, provider: str,
+    def save_tokens(self, user_id: str, provider: str,  # nosec B107
                     access_token: str, refresh_token: str = "",
                     expires_in: int = 3600,
                     token_url: str = "", client_id: str = "",
@@ -157,7 +157,7 @@ class OAuthTokenStore:
 
             import ssl
             ctx = ssl.create_default_context()
-            with urllib.request.urlopen(req, timeout=15, context=ctx) as resp:
+            with urllib.request.urlopen(req, timeout=15, context=ctx) as resp:  # nosec B310 - OAuth token endpoint request.
                 result = json.loads(resp.read().decode("utf-8"))
 
             new_access = result.get("access_token", "")

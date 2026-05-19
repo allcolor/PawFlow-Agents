@@ -186,7 +186,7 @@ class CodexImageService(BaseImageGenerationService):
             return name, data
         if url.startswith("http://") or url.startswith("https://"):
             req = urllib.request.Request(url, headers={"User-Agent": "PawFlow-Agent/1.0"})
-            with urllib.request.urlopen(req, timeout=60) as resp:
+            with urllib.request.urlopen(req, timeout=60) as resp:  # nosec B310 - HTTP(S) image reference already checked above.
                 return name, resp.read()
         path = Path(url)
         if path.is_file():
@@ -324,16 +324,16 @@ class CodexImageService(BaseImageGenerationService):
                 session_dir,
                 codex_args,
                 extra_env=self._codex_env(client),
-                stdin=__import__("subprocess").PIPE,
-                stdout=__import__("subprocess").PIPE,
-                stderr=__import__("subprocess").PIPE,
+                stdin=__import__("subprocess").PIPE,  # nosec B404
+                stdout=__import__("subprocess").PIPE,  # nosec B404
+                stderr=__import__("subprocess").PIPE,  # nosec B404
                 text=True,
                 encoding="utf-8",
                 errors="replace",
             )
             try:
                 stdout, stderr = proc.communicate(final_prompt, timeout=self.timeout)
-            except __import__("subprocess").TimeoutExpired as exc:
+            except __import__("subprocess").TimeoutExpired as exc:  # nosec B404
                 raise ServiceError(f"Codex image job timed out after {self.timeout}s") from exc
             rc = int(getattr(proc, "returncode", 0) or 0)
             if hasattr(client, "_codex_recover_tokens"):

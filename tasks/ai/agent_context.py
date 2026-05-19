@@ -45,7 +45,7 @@ def _find_agent_md(agent_name, user_id):
                 return result
         _agent_md_cache[cache_key] = (None, time.time())
     except Exception:
-        pass
+        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
     return None
 
 
@@ -116,7 +116,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 from core.conversation_event_bus import ConversationEventBus
                 ConversationEventBus.instance().publish_event(conversation_id, event_type, data)
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         sub_executor = SubAgentExecutor(
             client, registry, max_workers=4,
             client_resolver=_client_resolver,
@@ -337,7 +337,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 ) or {}
                 _early_agent = _early_target or _early_res.get("agent", "")
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             # Load dynamic tools (global + user + conv) for this user/conv.
             from core.tool_loader import load_tools_into_registry
             _parent_cid = conversation_id
@@ -358,7 +358,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 if _md > 0:
                     max_iterations = _md
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
         # ── Resolve active agent + LLM service EARLY ──
         # Needed before message loading to know if we should skip compact
@@ -483,7 +483,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                     _session_val = _store_session.get_extra(conversation_id, _session_key)
                     _cli_has_session = bool(_session_val)
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
         # Resolve max_context early (needed for compact-if-not-fit decision)
         _svc_cfg_early = (getattr(resolved_svc, 'config', {}) or {})
@@ -674,7 +674,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                     self._pending_channel_chat_id,
                 )
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             self._pending_channel_chat_id = ""
             self._pending_channel_name = ""
 
@@ -787,7 +787,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                                             from core.service_registry import ServiceRegistry
                                             relay_svc = ServiceRegistry.get_instance().resolve(_rsid, user_id=_uid)
                                         except Exception:
-                                            pass
+                                            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                                 if not relay_svc:
                                     relay_svc = self._find_filesystem_service(_uid)
                                 if not relay_svc:
@@ -944,7 +944,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                         and _ms_parsed.get("type") == "agent_delegate"):
                     _ms_src = _ms_parsed
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
         # agent_delegate wakes: the delegator's append_message call already
         # routed this message into our ctx (prefixed). Don't re-inject via
@@ -1101,7 +1101,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                         from core.service_registry import ServiceRegistry
                         _ureg = ServiceRegistry.get_instance()
                     except Exception:
-                        pass
+                        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                     def _get_svc(sid):
                         s = greg.get_live_instance("global", "", sid)
                         if not s and _ureg and user_id:
@@ -1123,12 +1123,12 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                         try:
                             _connected = greg.is_connected("global", "", _sid)
                         except Exception:
-                            pass
+                            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                         if not _connected and _ureg and user_id:
                             try:
                                 _connected = _ureg.is_connected("user", user_id, _sid)
                             except Exception:
-                                pass
+                                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                         _status = "connected" if _connected else "disconnected"
                         _ri = getattr(_svc, '_relay_info', {}) or {} if _svc else {}
                         _parts = [f"- **{_sid}**{_tag} — {_status}"]
@@ -1174,14 +1174,14 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                             f"`/cc_sessions/{conversation_id}/`."
                         )
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         _has_relay_bindings = False
         if conversation_id:
             try:
                 from core.relay_bindings import get_bindings as _gb
                 _has_relay_bindings = bool(_gb(conversation_id).get("linked"))
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         if not _has_relay_bindings:
             # Fallback: inject project context from all connected FS services
             try:
@@ -1195,7 +1195,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                             if _fs_prompt:
                                 system_prompt += _fs_prompt
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
         # Build ephemeral identity suffix (injected into system prompt at call
         # time, NEVER persisted — each agent gets its own identity per request)
@@ -1297,7 +1297,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                             "for filesystem operations."
                         )
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
             system_prompt += (
                 "\n\nCRITICAL TOOL RULES:"
@@ -1348,7 +1348,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             if _digest:
                 system_prompt += f"\n\n## Persistent memory\n{_digest}"
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
         # Inject agent diary digest
         try:
@@ -1358,7 +1358,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             if _diary:
                 system_prompt += f"\n\n## Your diary (past observations)\n{_diary}"
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
         # Inject knowledge graph digest (top god nodes + recent facts)
         # so the agent has a passive view of the KG without spending
@@ -1369,7 +1369,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             if _kg:
                 system_prompt += f"\n\n## Knowledge graph\n{_kg}"
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
         # Inject project-graph digest (codebase structure summary)
         # for the current conv. Empty when no graph has been built
@@ -1396,7 +1396,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                     " (rebuild via UI ‘+’ menu → Project Graph)."
                 )
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
         # Tool usage guidelines (CC-level guidance)
         system_prompt += (
@@ -1490,7 +1490,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                         "Do NOT call any other tools until the plan is approved."
                     )
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
         # Turn mode — set once per turn at the trigger site. When the
         # trigger is an agent_delegate message, the agent must auto-tag
@@ -1535,7 +1535,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                         )
                         system_prompt += _delegate_hint
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
         # Provider-only prompt. Do not insert into messages: agent context
         # persisted to PawFlow must remain compact summary + current messages.
@@ -1755,7 +1755,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                     if text:
                         return text
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             raise ValueError("python-docx not available and XML extraction failed")
 
         # ODT
@@ -1770,7 +1770,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                     if text:
                         return text
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             raise ValueError("ODT extraction failed")
 
         # XLSX
@@ -1829,7 +1829,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                     if text:
                         return text
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             raise ValueError("ODS extraction failed")
 
         # RTF
@@ -1861,7 +1861,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                     if html_parts:
                         return "\n\n".join(html_parts)
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             raise ValueError("EPUB extraction failed")
 
         raise ValueError(f"No converter for {ext}/{mime}")
@@ -1884,7 +1884,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
         except ImportError:
             pass
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
         # Try pdfminer
         try:

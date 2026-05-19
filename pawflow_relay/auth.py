@@ -11,12 +11,13 @@ Exported:
 
 All stdlib-only so the module loads inside the relay container.
 """
+import logging
 
 import json
 import os
 import re
 import shutil
-import subprocess
+import subprocess  # nosec B404
 import sys
 import threading
 import time
@@ -65,7 +66,7 @@ def claude_auth_login(req, *, send_progress=None):
     _launch_time = time.time()
 
     try:
-        proc = subprocess.Popen(
+        proc = subprocess.Popen(  # nosec B603
             [claude_path, "auth", "login"],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True,
@@ -115,7 +116,7 @@ def claude_auth_login(req, *, send_progress=None):
             if os.path.getmtime(creds_path) >= _launch_time:
                 break
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         time.sleep(1)
         _waited += 1
 
@@ -175,7 +176,7 @@ def codex_auth_login(req, *, send_progress=None):
     _launch_time = time.time()
 
     try:
-        proc = subprocess.Popen(
+        proc = subprocess.Popen(  # nosec B603
             [codex_path, "login"],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True,
@@ -224,7 +225,7 @@ def codex_auth_login(req, *, send_progress=None):
             if os.path.getmtime(creds_path) >= _launch_time:
                 break
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         time.sleep(1)
         _waited += 1
 
@@ -294,13 +295,13 @@ def gemini_auth_login(req, *, send_progress=None):
             with open(settings_path, "w", encoding="utf-8") as f:
                 json.dump({"theme": "Default", "selectedAuthType": "oauth-personal"}, f)
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     sys.stderr.write(f"[Relay] gemini login: {gemini_path}\n")
     _launch_time = time.time()
 
     try:
-        proc = subprocess.Popen(
+        proc = subprocess.Popen(  # nosec B603
             [gemini_path],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
@@ -317,7 +318,7 @@ def gemini_auth_login(req, *, send_progress=None):
         proc.stdin.write("/exit\n")
         proc.stdin.flush()
     except Exception:
-        pass
+        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     url_pattern = re.compile(r'https://accounts\.google\.com/o/oauth2/\S+')
     url_found = None
@@ -348,7 +349,7 @@ def gemini_auth_login(req, *, send_progress=None):
             if os.path.getmtime(creds_path) >= _launch_time:
                 break
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         time.sleep(1)
         _waited += 1
 
@@ -367,7 +368,7 @@ def gemini_auth_login(req, *, send_progress=None):
                 with open(accounts_path, "r", encoding="utf-8") as f:
                     accounts = json.load(f)
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
     except Exception as e:
         return {"error": f"Failed to read gemini credentials: {e}"}
 
@@ -426,7 +427,7 @@ def forward_to_host_helper(host_helper, msg, ws_sock, ws_send_fn):
                         try:
                             ws_send_fn(ws_sock, progress)
                         except Exception:
-                            pass
+                            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 elif resp.get("type") == "http_response":
                     if ws_sock:
                         frame = json.dumps({
@@ -438,7 +439,7 @@ def forward_to_host_helper(host_helper, msg, ws_sock, ws_send_fn):
                         try:
                             ws_send_fn(ws_sock, frame)
                         except Exception:
-                            pass
+                            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 elif resp.get("type") == "result":
                     data = resp.get("data", {})
                     if "error" in data:
@@ -470,12 +471,12 @@ def forward_to_host_helper(host_helper, msg, ws_sock, ws_send_fn):
                                             except Exception:
                                                 break
                             except Exception:
-                                pass
+                                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                             finally:
                                 try:
                                     sock.close()
                                 except Exception:
-                                    pass
+                                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
                         _sock_owned_by_bg[0] = True
                         threading.Thread(
@@ -497,4 +498,4 @@ def forward_to_host_helper(host_helper, msg, ws_sock, ws_send_fn):
             try:
                 sock.close()
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)

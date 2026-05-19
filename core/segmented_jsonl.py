@@ -7,6 +7,7 @@ segmented format.
 """
 
 from __future__ import annotations
+import logging
 
 import json
 import os
@@ -144,7 +145,7 @@ class SegmentedJsonl:
                     data.setdefault("total_rows", sum(int(s.get("rows") or 0) for s in data.get("segments") or []))
                     return data
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         segments = []
         if self.segment_dir.is_dir():
             for path in sorted(self.segment_dir.glob("*.jsonl")):

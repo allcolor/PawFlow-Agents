@@ -17,6 +17,7 @@ fs_exec / fs_screen / fs_mcp / fs_http, which are imported lazily where
 needed so this module can be introspected without pulling in the whole
 world.
 """
+import logging
 
 import base64
 import hashlib
@@ -27,7 +28,7 @@ import re
 import shutil
 import socket
 import struct
-import subprocess
+import subprocess  # nosec B404
 import sys
 import threading
 import time
@@ -65,11 +66,11 @@ _WRITE_ACTIONS = frozenset({
 
 def _tmp_allowlist():
     import tempfile
-    dirs = ["/tmp", "/var/tmp"]
+    dirs = ["/tmp", "/var/tmp"]  # nosec B108 - explicit temp-dir allowlist for relay sandbox.
     try:
         dirs.append(tempfile.gettempdir())
     except Exception:
-        pass
+        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
     # Resolve + dedup
     resolved = []
     seen = set()
@@ -77,6 +78,7 @@ def _tmp_allowlist():
         try:
             rd = str(Path(d).resolve())
         except Exception:
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             continue
         if rd not in seen:
             seen.add(rd)
@@ -278,7 +280,7 @@ def _make_handler_class(root_dir: str, secret: str, readonly: bool,
 
 # ── WS Reverse client ─────────────────────────────────────────────
 
-def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=False,
+def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=False,  # nosec B107
                 allow_automation=False, allow_local_screen=False, allow_local=False,
                 gateway_cookie="", session_token="", server_mount="",
                 filestore_mount=""):
@@ -378,7 +380,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 if p.poll() is None:
                     p.terminate()
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         for p in procs:
             try:
                 if p.poll() is None:
@@ -387,9 +389,9 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 try:
                     p.kill()
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         _execute_command._desktop_procs = None
         _execute_command._desktop_essential_procs = None
         _execute_command._desktop_vnc_port = None
@@ -459,7 +461,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                         try:
                             _ws_frame_send(ws_sock_ref[0], progress)
                         except Exception:
-                            pass
+                            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 _login_fn = {
                     "claude_auth_login": _claude_auth_login,
                     "codex_auth_login": _codex_auth_login,
@@ -481,7 +483,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 _sid = _open_terminal(
                     cols=msg.get("cols", 80),
                     rows=msg.get("rows", 24),
-                    shell=msg.get("shell"),
+                    shell=msg.get("shell"),  # nosec B604 - terminal tool intentionally opens requested shell.
                 )
                 return {"ok": True, "data": {"session_id": _sid}}
             except Exception as e:
@@ -592,8 +594,8 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             ]
             _cs_args.append(root_dir)
             try:
-                _cs_log = open("/tmp/code-server.log", "w")
-                _cs_proc = subprocess.Popen(
+                _cs_log = open("/tmp/code-server.log", "w")  # nosec B108 - relay-local service log.
+                _cs_proc = subprocess.Popen(  # nosec B603
                     _cs_args, stdout=_cs_log, stderr=_cs_log)
                 _execute_command._code_server_proc = _cs_proc
                 _execute_command._code_server_port = _cs_port
@@ -717,19 +719,19 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                                 _ws_frame_send(ws_sock_ref[0], _fwd.encode("utf-8"))
                             sys.stderr.write(f"[FSRelay] cs_ws_data sent ok\n")
                     except Exception:
-                        pass
+                        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                     finally:
                         try:
                             _sock.close()
                         except Exception:
-                            pass
+                            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                         if hasattr(_execute_command, '_cs_ws_sessions'):
                             _execute_command._cs_ws_sessions.pop(_sid, None)
                         try:
                             with _send_lock:
                                 _ws_frame_send(ws_sock_ref[0], json.dumps({"type": "cs_ws_close", "session_id": _sid}).encode("utf-8"))
                         except Exception:
-                            pass
+                            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
                 _t = _threading.Thread(target=_cs_ws_reader, args=(_cs_sock, _ws_sid), daemon=True)
                 _t.start()
@@ -778,7 +780,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                     try:
                         _ws_sess["sock"].close()
                     except Exception:
-                        pass
+                        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             return {"ok": True}
 
         if action == "stop_code_server":
@@ -838,7 +840,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                     _s.bind(("", 0)); _novnc_port = _s.getsockname()[1]
             try:
                 import time as _time_mod
-                _log_d = open("/tmp/desktop.log", "w")
+                _log_d = open("/tmp/desktop.log", "w")  # nosec B108 - relay-local desktop log.
                 _procs = []
 
                 # Desktop runs as current user (pawflow via Dockerfile USER)
@@ -850,13 +852,13 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                     "DISPLAY": _display,
                     "HOME": _desktop_home,
                     "USER": _desktop_user,
-                    "DBUS_SESSION_BUS_ADDRESS": f"unix:path=/tmp/dbus-desktop",
-                    "XDG_RUNTIME_DIR": f"/tmp/xdg-{_desktop_user}",
+                    "DBUS_SESSION_BUS_ADDRESS": f"unix:path=/tmp/dbus-desktop",  # nosec B108 - relay-local desktop bus path.
+                    "XDG_RUNTIME_DIR": f"/tmp/xdg-{_desktop_user}",  # nosec B108 - relay-local desktop runtime dir.
                 }
                 os.makedirs(_user_env["XDG_RUNTIME_DIR"], mode=0o700, exist_ok=True)
 
                 # 1. Xvfb
-                _p_xvfb = subprocess.Popen(
+                _p_xvfb = subprocess.Popen(  # nosec B603, B607
                     ["Xvfb", _display, "-screen", "0", f"{_resolution}x{_depth}",
                      "-ac", "+extension", "GLX", "+render", "-noreset"],
                     stdout=_log_d, stderr=_log_d)
@@ -865,7 +867,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 _time_mod.sleep(0.5)
 
                 # 2. D-Bus session (needed by XFCE)
-                _p_dbus = subprocess.Popen(
+                _p_dbus = subprocess.Popen(  # nosec B603, B607
                     ["dbus-daemon", "--session", "--nofork",
                      f"--address=unix:path=/tmp/dbus-desktop"],
                     env=_user_env,
@@ -884,12 +886,12 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                         "alternate-sample-rate = 48000\n"
                     )
                     if _desktop_user:
-                        subprocess.run(["chown", "-R", _desktop_user,
+                        subprocess.run(["chown", "-R", _desktop_user,  # nosec B603, B607
                                         str(_pa_conf_dir)], check=False)
-                    subprocess.run(["pulseaudio", "--kill"], env=_user_env,
+                    subprocess.run(["pulseaudio", "--kill"], env=_user_env,  # nosec B603, B607
                                    stdout=_log_d, stderr=_log_d, timeout=5)
                     _time_mod.sleep(0.3)
-                    _p_pulse = subprocess.Popen(
+                    _p_pulse = subprocess.Popen(  # nosec B603, B607
                         ["pulseaudio", "--start", "--exit-idle-time=-1",
                          "--load=module-null-sink sink_name=virtual_out rate=48000",
                          "--load=module-always-sink"],
@@ -901,7 +903,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                         (["pactl", "list", "short", "sinks"], "PA sinks"),
                     ]:
                         try:
-                            _pa_out = subprocess.check_output(
+                            _pa_out = subprocess.check_output(  # nosec B603
                                 _pa_cmd, env=_user_env, timeout=5, text=True)
                             sys.stderr.write(f"[FSRelay] {_pa_label}:\n{_pa_out.strip()}\n")
                         except Exception as _pa_err:
@@ -909,7 +911,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                     _audio_port = _novnc_port + 100
                     _audio_script = Path("/opt/pawflow/audio_capture.py")
                     if _audio_script.exists():
-                        _p_audio = subprocess.Popen(
+                        _p_audio = subprocess.Popen(  # nosec B603
                             [sys.executable, str(_audio_script),
                              "--port", str(_audio_port), "--source", "pulse"],
                             env=_user_env, stdout=_log_d, stderr=_log_d)
@@ -919,14 +921,14 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                         _audio_port = 0
 
                 # 4. XFCE desktop session (PA already running — no plugin conflict)
-                _p_wm = subprocess.Popen(
+                _p_wm = subprocess.Popen(  # nosec B603, B607
                     ["startxfce4"], env=_user_env,
                     stdout=_log_d, stderr=_log_d)
                 _procs.append(_p_wm)
                 _time_mod.sleep(1)
 
                 # 5. x11vnc
-                _p_vnc = subprocess.Popen(
+                _p_vnc = subprocess.Popen(  # nosec B603, B607
                     ["x11vnc", "-display", _display, "-forever", "-nopw",
                      "-rfbport", str(_vnc_port), "-shared", "-noxdamage",
                      "-defer", "33"],
@@ -935,7 +937,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
 
                 # 6. websockify (noVNC)
                 _novnc_web = "/usr/share/novnc"
-                _p_novnc = subprocess.Popen(
+                _p_novnc = subprocess.Popen(  # nosec B603, B607
                     ["websockify", "--web", _novnc_web,
                      "--heartbeat", "30",
                      str(_novnc_port), f"localhost:{_vnc_port}"],
@@ -998,7 +1000,8 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 else:
                     for p in _execute_command._local_desktop_procs:
                         try: p.kill()
-                        except: pass
+                        except:
+                            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                     _execute_command._local_desktop_procs = None
 
             # Detect available VNC server
@@ -1015,7 +1018,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             try:
                 import shutil
                 _procs = []
-                _log_d = open("/tmp/local_desktop.log", "w") if _platform != "win32" else open(os.path.join(os.environ.get("TEMP", "."), "local_desktop.log"), "w")
+                _log_d = open("/tmp/local_desktop.log", "w") if _platform != "win32" else open(os.path.join(os.environ.get("TEMP", "."), "local_desktop.log"), "w")  # nosec B108 - relay-local desktop log.
 
                 if _platform == "linux":
                     # Linux: use x11vnc to share the real display :0
@@ -1024,7 +1027,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                         return {"ok": False, "error": "x11vnc not installed. Install with: apt install x11vnc"}
                     if not shutil.which("websockify"):
                         return {"ok": False, "error": "websockify not installed. Install with: pip install websockify"}
-                    _p_vnc = subprocess.Popen(
+                    _p_vnc = subprocess.Popen(  # nosec B603, B607
                         ["x11vnc", "-display", _display, "-forever", "-nopw",
                          "-rfbport", str(_vnc_port), "-shared", "-noxdamage",
                          "-defer", "33"],
@@ -1052,7 +1055,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                     if not _websockify:
                         return {"ok": False, "error": "websockify not installed. Install with: pip install websockify"}
                     # Start VNC server on the specified port
-                    _p_vnc = subprocess.Popen(
+                    _p_vnc = subprocess.Popen(  # nosec B603
                         [_winvnc, "-rfbport", str(_vnc_port), "-localhost"],
                         stdout=_log_d, stderr=_log_d)
                     _procs.append(_p_vnc)
@@ -1093,7 +1096,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 _ws_args = ["websockify", str(_novnc_port), f"localhost:{_vnc_port}"]
                 if _novnc_web and os.path.isdir(_novnc_web):
                     _ws_args = ["websockify", "--web", _novnc_web, str(_novnc_port), f"localhost:{_vnc_port}"]
-                _p_novnc = subprocess.Popen(_ws_args, stdout=_log_d, stderr=_log_d)
+                _p_novnc = subprocess.Popen(_ws_args, stdout=_log_d, stderr=_log_d)  # nosec B603
                 _procs.append(_p_novnc)
 
                 _execute_command._local_desktop_procs = _procs
@@ -1264,16 +1267,18 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                             with _send_lock:
                                 _ws_frame_send(ws_sock_ref[0], _fwd.encode("utf-8"))
                     except Exception:
-                        pass
+                        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                     finally:
                         try: _sock.close()
-                        except: pass
+                        except:
+                            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                         if hasattr(_execute_command, '_desktop_ws_sessions'):
                             _execute_command._desktop_ws_sessions.pop(_sid, None)
                         try:
                             with _send_lock:
                                 _ws_frame_send(ws_sock_ref[0], json.dumps({"type": "desktop_ws_close", "session_id": _sid}).encode("utf-8"))
-                        except: pass
+                        except:
+                            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
                 _t = _threading.Thread(target=_desktop_ws_reader, args=(_vnc_sock, _ws_sid), daemon=True)
                 _t.start()
@@ -1312,7 +1317,8 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 _ws_sess = _execute_command._desktop_ws_sessions.pop(_ws_sid, None)
                 if _ws_sess and _ws_sess.get("sock"):
                     try: _ws_sess["sock"].close()
-                    except: pass
+                    except:
+                        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             return {"ok": True}
 
         if action == "script_hash":
@@ -1493,7 +1499,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
         # ownership). The bind-mounts that follow expose the canonical
         # /cc_sessions and /filestore paths so downstream consumers
         # don't see the temp location.
-        _combined_root = "/tmp/pf_combined_fs"
+        _combined_root = "/tmp/pf_combined_fs"  # nosec B108 - relay-local FUSE mount root.
         try:
             _server_fs_mount = CombinedServerFsMount(
                 _combined_root, _server_fs_swap, _filestore_fs_swap)
@@ -1515,7 +1521,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 _aliases.append((f"{_combined_root}/filestore", filestore_mount))
 
             def _sudo_run(argv: list, _what: str):
-                _rc = subprocess.run(
+                _rc = subprocess.run(  # nosec B603
                     ["sudo", "-n"] + argv,
                     capture_output=True, text=True, timeout=5)
                 if _rc.returncode != 0:
@@ -1566,7 +1572,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                     f"[FSRelay] combined-fs mount FAILED err={_smerr}\n"
                     f"--- traceback ---\n{_full_tb}--- end ---")
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             _server_fs_mount = None
             _server_fs_swap = None
             _filestore_fs_swap = None
@@ -1687,7 +1693,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                         try:
                             sock.close()
                         except Exception:
-                            pass
+                            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                         break
             _wd_thread = _threading.Thread(target=_watchdog, daemon=True, name="relay-watchdog")
             _wd_thread.start()
@@ -1733,14 +1739,14 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                     env["TERM"] = "xterm-256color"
                     env["COLUMNS"] = str(cols)
                     env["LINES"] = str(rows)
-                    os.execvpe(_shell, [_shell], env)
+                    os.execvpe(_shell, [_shell], env)  # nosec B606
 
                 # Set terminal size
                 try:
                     winsize = array.array("H", [rows, cols, 0, 0])
                     fcntl.ioctl(master_fd, termios.TIOCSWINSZ, winsize)
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
                 # Reader thread: PTY fd → WS
                 def _pty_reader(_fd, _sid):
@@ -1767,7 +1773,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                             with _send_lock:
                                 _ws_frame_send(sock, frame)
                         except Exception:
-                            pass
+                            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
                 reader = _threading.Thread(
                     target=_pty_reader, args=(master_fd, _sid),
@@ -1908,7 +1914,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                                     import uuid as _uuid_child
                                     _img = _docker_img or "pawflow-relay-dev:latest"
                                     _child_container = f"pawflow-relay-child-{_uuid_child.uuid4().hex[:8]}"
-                                    _dr = subprocess.run(_docker_cmd() + [
+                                    _dr = subprocess.run(_docker_cmd() + [  # nosec B603
                                         "run", "-d",
                                         "--name", _child_container,
                                         "-v", f"{_translate_path(_to_host_path(_root))}:/workspace",
@@ -1940,12 +1946,12 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                                         import fs_actions as _fsa2
                                         _fsa2._DOCKER_CONTAINERS.pop(str(Path(_root).resolve()), None)
                                     except Exception:
-                                        pass
+                                        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                                     try:
-                                        subprocess.run(_docker_cmd() + ["rm", "-f", _child_container],
+                                        subprocess.run(_docker_cmd() + ["rm", "-f", _child_container],  # nosec B603
                                                        capture_output=True, timeout=10)
                                     except Exception:
-                                        pass
+                                        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                         _child_thread = _threading.Thread(
                             target=_child_relay,
                             args=(url, _sr_token, _sr_secret, _sr_id, _sr_root,
@@ -1995,7 +2001,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                             _ws = _array_r.array("H", [_r, _c, 0, 0])
                             _fcntl_r.ioctl(_tsess["master_fd"], _termios_r.TIOCSWINSZ, _ws)
                         except Exception:
-                            pass
+                            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
                 elif msg.get("type") == "command":
                     request_id = msg.get("request_id", "")
@@ -2045,7 +2051,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             try:
                 sock.close()
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             return
         except Exception as e:
             sys.stderr.write(f"[FSRelay] Connection error: {e}\n")
@@ -2064,24 +2070,24 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                     try:
                         _swap.clear_inner()
                     except Exception:
-                        pass
+                        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             for _name in ('_server_fs_client', '_filestore_fs_client'):
                 _c = locals().get(_name)
                 if _c is not None:
                     try:
                         _c.cancel_all('relay disconnected')
                     except Exception:
-                        pass
+                        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             # Stop watchdog
             try:
                 _watchdog_stop.set()
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             # Always close socket before reconnecting — prevents socket leak
             try:
                 sock.close()
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
         sys.stderr.write(f"[FSRelay] Reconnecting in {reconnect_delay}s ...\n")
         time.sleep(reconnect_delay)

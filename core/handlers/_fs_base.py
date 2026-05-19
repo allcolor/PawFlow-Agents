@@ -100,7 +100,7 @@ def find_fs_service(user_id: str, service_name: str = "", conversation_id: str =
                     if svc:
                         return _set_uid(svc)
     except Exception:
-        pass
+        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     return None
 
@@ -128,7 +128,7 @@ def get_tool_relay_env() -> Dict[str, str]:
                         "PAWFLOW_TOOL_RELAY_TOKEN": token,
                     }
     except Exception:
-        pass
+        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
     return {}
 
 

@@ -95,7 +95,7 @@ class GeminiLiveRegistry:
         with self._lock:
             return self._containers.get(key)
 
-    def register(self, key: GeminiLiveKey,
+    def register(self, key: GeminiLiveKey,  # nosec B107
                  container_name: str, workdir: str,
                  service_id: str = "",
                  session_id: str = "",

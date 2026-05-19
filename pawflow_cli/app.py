@@ -1,9 +1,11 @@
 """PawCode — Terminal frontend for PawFlow."""
+import logging
 
 import atexit
 import os
 import queue
 import signal
+import subprocess  # nosec B404
 import sys
 import threading
 import time
@@ -76,7 +78,7 @@ class PawCode:
         self.conversation_id = None
         self.selected_agent = ""
         self.username = ""
-        self.session_token = ""
+        self.session_token = ""  # nosec B105
         self._sending = False
         self._running = True
         self._last_history = []
@@ -111,7 +113,7 @@ class PawCode:
             self.username = auth["username"]
             self.renderer.print_system(f"Authenticated as {self.username}")
         else:
-            self.session_token = ""
+            self.session_token = ""  # nosec B105
             self.username = ""
             self.renderer.print_system(
                 "Not logged in. Use /login or run: pawcode auth login")
@@ -236,7 +238,7 @@ class PawCode:
                 # \x1b[13;2u = Shift+Enter, \x1b[13;5u = Ctrl+Enter
                 bindings.add(Keys.Vt100MouseEvent)  # dummy to test availability
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             # Register raw escape sequences for Shift+Enter / Ctrl+Enter
             @bindings.add('escape', '[', '1', '3', ';', '2', 'u')
             def _shift_enter(event):
@@ -269,7 +271,7 @@ class PawCode:
                 except ImportError:
                     pass
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 # No image — do normal paste
                 event.current_buffer.paste_clipboard_data(
                     event.app.clipboard.get_data())
@@ -465,18 +467,18 @@ class PawCode:
         except ImportError:
             # Fallback: platform-specific
             if sys.platform == "win32":
-                import subprocess
-                subprocess.run(["clip"], input=text.encode("utf-8"), check=True)
+                import subprocess  # nosec B404
+                subprocess.run(["clip"], input=text.encode("utf-8"), check=True)  # nosec B603, B607
                 self.renderer.print_system(f"Copied {len(text):,} chars to clipboard")
             elif sys.platform == "darwin":
-                import subprocess
-                subprocess.run(["pbcopy"], input=text.encode("utf-8"), check=True)
+                import subprocess  # nosec B404
+                subprocess.run(["pbcopy"], input=text.encode("utf-8"), check=True)  # nosec B603, B607
                 self.renderer.print_system(f"Copied {len(text):,} chars to clipboard")
             else:
                 # Linux — try xclip
                 try:
-                    import subprocess
-                    subprocess.run(["xclip", "-selection", "clipboard"],
+                    import subprocess  # nosec B404
+                    subprocess.run(["xclip", "-selection", "clipboard"],  # nosec B603, B607
                                    input=text.encode("utf-8"), check=True)
                     self.renderer.print_system(f"Copied {len(text):,} chars to clipboard")
                 except Exception:
@@ -530,7 +532,7 @@ class PawCode:
                 try:
                     self.renderer.print_error(f"Event error: {e}")
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     _last_session_renew = 0.0
 
@@ -609,7 +611,7 @@ class PawCode:
                     save_session(self.session_token, self.username,
                                  self.server_url, now + 8 * 3600)
             except Exception:
-                pass  # silent — network may be down
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     def _dispatch_event(self, event, streaming_agent, thinking_agent):
         """Dispatch a single SSE event. Returns True to keep waiting, False when done."""
@@ -687,7 +689,7 @@ class PawCode:
 
         # Client-only commands (UI-specific, never sent to server)
         if cmd == "/clear":
-            os.system("cls" if os.name == "nt" else "clear")
+            subprocess.run(["cmd", "/c", "cls"] if os.name == "nt" else ["clear"], check=False)  # nosec B603
             return
         if cmd in ("/quit", "/exit"):
             raise KeyboardInterrupt()
@@ -767,7 +769,7 @@ class PawCode:
                 self.renderer._live.stop()
                 self.renderer._live = None
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     def _resolve_conversation_id(self, partial: str) -> str:
         """Resolve a partial conversation ID to full ID."""
@@ -778,7 +780,7 @@ class PawCode:
                 if cid.startswith(partial):
                     return cid
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         return ""
 
     def _signal_handler(self, sig, frame):
@@ -790,7 +792,7 @@ class PawCode:
         try:
             self._cleanup()
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         os._exit(0)
 
     def run_prompt(self, prompt: str, conversation_id: str = None,

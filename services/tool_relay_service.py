@@ -443,7 +443,7 @@ class ToolRelayService(BaseService):
                         if wake_evt:
                             wake_evt.set()
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 logger.debug(
                     "[tool-relay] late-bound cc_tc=%s to request_id=%s tool=%s",
                     tc_id, rid, tool_name)
@@ -703,7 +703,7 @@ class ToolRelayService(BaseService):
                     try:
                         h.set_service(fs_svc)
                     except Exception:
-                        pass
+                        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
         # Configure SpawnAgentsHandler (delegate) — needs a client_resolver
         # to look up per-agent LLM services. Without this, delegate fails
@@ -757,7 +757,7 @@ class ToolRelayService(BaseService):
                     ConversationEventBus.instance().publish_event(
                         _parent_cid_for_events, event_type, data)
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
             for h in registry.list_tools():
                 if isinstance(h, SpawnAgentsHandler):
@@ -919,7 +919,7 @@ class ToolRelayService(BaseService):
                 from tasks import _register_all_services
                 _register_all_services()
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             from core import ServiceFactory
             valid_types = set()
             for stype, sclass in ServiceFactory._services.items():
@@ -1091,7 +1091,7 @@ class ToolRelayService(BaseService):
                                 relay_svc = ServiceRegistry.get_instance().resolve(
                                     _rsid, user_id=user_id, conv_id=conversation_id)
                             except Exception:
-                                pass
+                                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                         if not relay_svc:
                             relay_svc = self._find_filesystem_service(
                                 user_id, conversation_id, agent_name)
@@ -1186,7 +1186,7 @@ class ToolRelayService(BaseService):
                             "root": getattr(svc, "root_path", "?") if svc else "?",
                         })
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 try:
                     from core.remote_fs_bindings import list_tool_filesystems
                     for item in list_tool_filesystems(user_id, conversation_id):
@@ -1196,7 +1196,7 @@ class ToolRelayService(BaseService):
                         seen.add(sid)
                         available.append(item)
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 return available
 
             for fs_type in fs_types:
@@ -1212,7 +1212,7 @@ class ToolRelayService(BaseService):
                             "root": getattr(svc, "root_path", "?"),
                         })
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         return available
 
     @staticmethod
@@ -1263,7 +1263,7 @@ class ToolRelayService(BaseService):
                     if svc:
                         return svc
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         return None
 
     def _handle_list_tools(self, request_id: str,
@@ -1728,7 +1728,7 @@ class ToolRelayService(BaseService):
                         from core.conv_agent_config import get_agent_config as _gac
                         _src_svc = (_gac(_parent_cid, agent_name) or {}).get("llm_service", "") or ""
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 for _h in registry.list_tools():
                     if isinstance(_h, SpawnAgentsHandler):
                         _h.set_source_agent(agent_name or "", _src_svc)
@@ -1744,7 +1744,7 @@ class ToolRelayService(BaseService):
                 if handler and isinstance(arguments, dict):
                     arguments = _normalize_tool_args(tool_name, arguments)
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             result = registry.execute(tool_name, arguments)
             result_str = str(result) if result is not None else "(no output)"
         except Exception as e:
@@ -1857,7 +1857,7 @@ def resolve_secrets_env(user_id: str, conversation_id: str) -> dict:
                 except Exception:
                     env[k.upper()] = str(v)
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     return env
 
@@ -1907,7 +1907,7 @@ def resolve_secret_values(user_id: str, conversation_id: str) -> tuple:
                     values.add(v)
                     names[v] = k.upper()
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     return values, names
 

@@ -473,7 +473,7 @@ class FileStore:
                 if bucket_dir.is_dir() and not any(bucket_dir.iterdir()):
                     bucket_dir.rmdir()
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             self._save_index()
 
     # ── List ─────────────────────────────────────────────────────

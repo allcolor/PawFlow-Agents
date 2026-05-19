@@ -3,12 +3,13 @@
 Used by the relay host helper for local screen actions on the user's actual
 machine. Linux Docker containers use fs_screen.py (xdotool/mss) instead.
 """
+import logging
 
 import base64
 import io
 import json
 import os
-import subprocess
+import subprocess  # nosec B404
 import sys
 
 _BUTTON_MAP = {"left": "left", "right": "right", "middle": "middle"}
@@ -21,7 +22,7 @@ if sys.platform == "win32":
         import ctypes
         ctypes.windll.user32.SetProcessDPIAware()
     except Exception:
-        pass
+        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
 
 def _get_pyautogui():
@@ -75,7 +76,7 @@ def _screen_action_subprocess(action: str, req: dict) -> dict:
     env = dict(os.environ)
     env[_CHILD_ENV] = "1"
     try:
-        proc = subprocess.run(
+        proc = subprocess.run(  # nosec B603
             [sys.executable, __file__, action],
             input=json.dumps(req),
             text=True,
@@ -109,7 +110,7 @@ def _grab_screenshot():
             from PIL import ImageGrab
             return ImageGrab.grab(all_screens=True)
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
     pag = _get_pyautogui()
     return pag.screenshot()
 

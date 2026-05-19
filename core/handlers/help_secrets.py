@@ -115,7 +115,7 @@ class PawFlowHelpHandler(ToolHandler):
                 if hasattr(inst, "get_parameter_schema"):
                     schema = inst.get_parameter_schema()
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
         if schema:
             info.append("\nParameters:")
@@ -165,7 +165,7 @@ class PawFlowHelpHandler(ToolHandler):
                 if hasattr(inst, "get_parameter_schema"):
                     schema = inst.get_parameter_schema()
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
         if schema:
             info.append("\nParameters:")

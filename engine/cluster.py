@@ -1,4 +1,5 @@
 """Cluster mode — multi-instance coordination for PawFlow."""
+import logging
 
 import json
 import os
@@ -270,7 +271,7 @@ class ClusterCoordinator:
             try:
                 cb(**kwargs)
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     def start(self):
         """Start cluster participation."""
@@ -318,7 +319,7 @@ class ClusterCoordinator:
             try:
                 self._state.update_heartbeat(self.instance_id)
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             # Sleep in small increments for responsive shutdown
             for _ in range(int(self.heartbeat_interval * 10)):
                 if not self._running:
@@ -353,7 +354,7 @@ class ClusterCoordinator:
                         self._emit("promoted", instance_id=self.instance_id)
 
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
             for _ in range(int(self.heartbeat_interval * 10)):
                 if not self._running:

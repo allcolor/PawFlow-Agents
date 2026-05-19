@@ -151,7 +151,7 @@ class WorkerServer:
         server.stop()
     """
 
-    def __init__(self, host: str = "0.0.0.0", port: int = 8081,
+    def __init__(self, host: str = "0.0.0.0", port: int = 8081,  # nosec B104 - remote worker listens on configured interface.
                  worker_name: str = "remote-worker",
                  api_key: Optional[str] = None):
         self.host = host

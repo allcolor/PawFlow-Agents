@@ -32,13 +32,13 @@ _OAUTH2_PRESETS = {
     "gmail": {
         "smtp_host": "smtp.gmail.com",
         "smtp_port": 587,
-        "token_url": "https://oauth2.googleapis.com/token",
+        "token_url": "https://oauth2.googleapis.com/token",  # nosec B105
         "scope": "https://mail.google.com/",
     },
     "microsoft": {
         "smtp_host": "smtp.office365.com",
         "smtp_port": 587,
-        "token_url": "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+        "token_url": "https://login.microsoftonline.com/common/oauth2/v2.0/token",  # nosec B105
         "scope": "https://outlook.office365.com/SMTP.Send",
     },
 }
@@ -223,7 +223,7 @@ class SendEmailTask(BaseTask):
         })
 
         try:
-            with urlopen(req, timeout=15) as resp:
+            with urlopen(req, timeout=15) as resp:  # nosec B310 - OAuth token endpoint for email provider.
                 result = json.loads(resp.read().decode('utf-8'))
         except URLError as e:
             raise TaskError(

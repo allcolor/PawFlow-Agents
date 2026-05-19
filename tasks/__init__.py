@@ -57,7 +57,7 @@ def _register_all_services():
     try:
         import services.whatsapp_service      # noqa: F401
     except Exception:
-        pass  # whatsapp service load failed
+        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
     try:
         import services.slack_bot_service     # noqa: F401
     except ImportError:
@@ -151,7 +151,6 @@ def register_all_tasks():
     from tasks.io.send_email import SendEmailTask
     from tasks.io.notify_slack import NotifySlackTask
     from tasks.io.sftp_tasks import GetSFTPTask, PutSFTPTask
-    from tasks.io.ftp_tasks import GetFTPTask, PutFTPTask
     from tasks.io.kafka_tasks import PublishKafkaTask, ConsumeKafkaTask
     from tasks.io.s3_tasks import GetS3Task, PutS3Task
     from tasks.io.gcs_tasks import GetGCSTask, PutGCSTask

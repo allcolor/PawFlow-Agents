@@ -1,4 +1,5 @@
 """PawCode — Agent API client with SSE streaming support."""
+import logging
 
 import json
 import http.client
@@ -250,7 +251,7 @@ class SSEClient:
             try:
                 self._conn.close()
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     def _run(self, conversation_id: str):
         """SSE connection loop with auto-reconnect."""
@@ -274,7 +275,7 @@ class SSEClient:
             try:
                 self._conn.close()
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             self._conn = None
 
         path = f"/api/agent/events?conversation_id={conversation_id}"

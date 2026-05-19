@@ -98,7 +98,7 @@ class FileTrackingService(BaseService):
                     return True
 
             if self._strategy in ("md5", "both") and content is not None:
-                md5 = hashlib.md5(content).hexdigest()
+                md5 = hashlib.md5(content, usedforsecurity=False).hexdigest()
                 if md5 != entry.get("md5", ""):
                     return True
 
@@ -118,7 +118,7 @@ class FileTrackingService(BaseService):
         key = self._make_key(path)
         computed_md5 = md5
         if computed_md5 is None and content is not None:
-            computed_md5 = hashlib.md5(content).hexdigest()
+            computed_md5 = hashlib.md5(content, usedforsecurity=False).hexdigest()
 
         with self._lock:
             self._tracked[key] = {

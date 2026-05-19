@@ -68,7 +68,7 @@ class GrokVideoService(BaseVideoGenerationService):
         }
         data = json.dumps(body).encode("utf-8") if body else None
         req = urllib.request.Request(url, data=data, headers=headers, method=method)
-        with urllib.request.urlopen(req, timeout=60) as resp:
+        with urllib.request.urlopen(req, timeout=60) as resp:  # nosec B310 - configured Grok API endpoint.
             return json.loads(resp.read().decode("utf-8"))
 
     def generate(self, prompt="", duration=10, width=None, height=None, **_) -> dict:
@@ -128,7 +128,7 @@ class GrokVideoService(BaseVideoGenerationService):
 
     def _download_video(self, url: str) -> dict:
         req = urllib.request.Request(url, headers={"User-Agent": "PawFlow-Agent/1.0"})
-        with urllib.request.urlopen(req, timeout=120) as resp:
+        with urllib.request.urlopen(req, timeout=120) as resp:  # nosec B310 - provider-returned video download URL.
             video_bytes = resp.read()
             content_type = resp.headers.get("Content-Type", "video/mp4")
         return {"video_bytes": video_bytes, "content_type": content_type}

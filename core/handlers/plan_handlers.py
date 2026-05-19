@@ -123,7 +123,7 @@ class CreatePlanHandler(_PlanHandlerBase):
                     ConversationEventBus.instance().publish_event(
                         self._conversation_id, "plan_created", {"plan": plan})
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             except Exception as e:
                 logger.warning(f"Failed to persist plan: {e}")
 
@@ -248,7 +248,7 @@ class UpdatePlanHandler(_PlanHandlerBase):
             ConversationEventBus.instance().publish_event(
                 self._conversation_id, "plan_updated", {"plan": plan})
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
         # Format response for the agent
         done_count = sum(1 for s in plan["steps"] if s["status"] == "done")
@@ -387,7 +387,7 @@ class ApprovePlanHandler(_PlanHandlerBase):
                 ConversationEventBus.instance().publish_event(
                     self._conversation_id, "plan_updated", {"plan": plan})
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             return f"Plan '{plan_id}' approved. Orchestrator will handle execution."
         except Exception as e:
             return f"Error: {e}"
@@ -482,7 +482,7 @@ class AssignPlanHandler(_PlanHandlerBase):
                 ConversationEventBus.instance().publish_event(
                     self._conversation_id, "plan_updated", {"plan": plan})
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             mode = f"steps {step_range}" if step_range else "full plan"
             return f"Plan '{plan_id}' assigned to {agent} ({mode}, {assigned_count} steps)."
         except Exception as e:
@@ -544,7 +544,7 @@ class CancelPlanHandler(_PlanHandlerBase):
                 ConversationEventBus.instance().publish_event(
                     self._conversation_id, "plan_updated", {"plan": plan})
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             return f"Plan '{plan_id}' cancelled."
         except Exception as e:
             return f"Error: {e}"
@@ -600,7 +600,7 @@ class DeletePlanHandler(_PlanHandlerBase):
                 ConversationEventBus.instance().publish_event(
                     self._conversation_id, "plan_deleted", {"plan_id": plan_id})
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             return f"Plan '{plan_id}' deleted."
         except Exception as e:
             return f"Error: {e}"
@@ -687,7 +687,7 @@ class VerifyPlanStepHandler(_PlanHandlerBase):
                     ConversationEventBus.instance().publish_event(
                         self._conversation_id, "plan_updated", {"plan": plan})
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
                 # Orchestrate next step if plan not completed
                 if plan["status"] != "completed":
@@ -720,7 +720,7 @@ class VerifyPlanStepHandler(_PlanHandlerBase):
                     ConversationEventBus.instance().publish_event(
                         self._conversation_id, "plan_updated", {"plan": plan})
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
                 # Re-trigger the assigned agent for rework
                 assigned = step.get("assigned_to") or plan.get("created_by", "")

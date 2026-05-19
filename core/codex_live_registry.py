@@ -147,7 +147,7 @@ class CodexLiveRegistry:
         candidates.sort(key=lambda item: item[1].last_used, reverse=True)
         return candidates[0]
 
-    def register(self, key: CodexLiveKey,
+    def register(self, key: CodexLiveKey,  # nosec B107
                  container_name: str, workdir: str,
                  service_id: str = "",
                  session_id: str = "",

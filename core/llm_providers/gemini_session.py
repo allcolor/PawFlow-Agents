@@ -22,8 +22,8 @@ logger = logging.getLogger(__name__)
 
 # Google's standard OAuth2 token endpoint. Same one used by gcloud, the
 # Gemini CLI, and all GIS clients. Refresh is RFC 6749 standard.
-_GEMINI_TOKEN_ENDPOINT_HOST = "oauth2.googleapis.com"
-_GEMINI_TOKEN_ENDPOINT_PATH = "/token"
+_GEMINI_TOKEN_ENDPOINT_HOST = "oauth2.googleapis.com"  # nosec B105
+_GEMINI_TOKEN_ENDPOINT_PATH = "/token"  # nosec B105
 # The Gemini CLI client_id + secret pair (public client — these are NOT
 # considered secret in the OAuth-installed-app threat model). Picked up
 # from the publicly distributed CLI bundle. If Google rotates them we'll
@@ -31,7 +31,7 @@ _GEMINI_TOKEN_ENDPOINT_PATH = "/token"
 _GEMINI_CLIENT_ID = (
     "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com"
 )
-_GEMINI_CLIENT_SECRET = "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"
+_GEMINI_CLIENT_SECRET = "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"  # nosec B105
 
 
 def _find_gemini_service_id(service_id: str = "") -> str:
@@ -268,7 +268,7 @@ class GeminiSessionMixin:
         svc_id = getattr(self, '_agent_service', '') or ''
         pool = _load_credentials_pool(svc_id)
         if not pool:
-            return {"access_token": "", "refresh_token": "",
+            return {"access_token": "", "refresh_token": "",  # nosec B105
                     "expires_at": 0, "pool_index": -1, "account": ""}
         now_ms = int(_t.time() * 1000)
         valid = [(i, c) for i, c in enumerate(pool) if c.get("expires_at", 0) > now_ms]
@@ -445,7 +445,7 @@ class GeminiSessionMixin:
                 "during this stream. Re-authenticate via the Login button.")
 
         dead_indices = []
-        access_token = refresh_token = account = ""
+        access_token = refresh_token = account = ""  # nosec B105
         expires_at = 0
         for _pidx in indices:
             cred = pool[_pidx]
@@ -497,7 +497,7 @@ class GeminiSessionMixin:
             "access_token": access_token,
             "refresh_token": refresh_token,
             "scope": "https://www.googleapis.com/auth/cloud-platform openid email profile",
-            "token_type": "Bearer",
+            "token_type": "Bearer",  # nosec B105
             "expiry_date": int(expires_at),
         }
         creds_path = os.path.join(gemini_home, "oauth_creds.json")

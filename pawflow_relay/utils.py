@@ -1,4 +1,5 @@
 """Shared utilities for the PawFlow relay."""
+import logging
 
 import hashlib
 import json
@@ -67,7 +68,7 @@ def get_host_ip():
             s.close()
             return ip
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
     return "host.docker.internal"
 
 
@@ -89,7 +90,7 @@ def generate_relay_id(username: str, directory: str) -> str:
     return f"fs_{username}_{h}"
 
 
-def api_call(server_url, method, path, body=None, session_token="",
+def api_call(server_url, method, path, body=None, session_token="",  # nosec B107
              gateway_cookie="", on_token_refresh=None):
     """HTTP request to PawFlow agent API (stdlib only).
 

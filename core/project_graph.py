@@ -242,7 +242,7 @@ class ProjectGraph:
                 try:
                     fs_service.delete_file(script_name, local=local)
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
             stdout = result.get("stdout", "") if isinstance(result, dict) else str(result)
             stderr = result.get("stderr", "") if isinstance(result, dict) else ""

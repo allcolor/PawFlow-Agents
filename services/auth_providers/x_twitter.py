@@ -14,7 +14,7 @@ class XTwitterAuthProvider(OAuthBaseProvider):
         config.setdefault("scope", self.DEFAULT_SCOPE)
         super().__init__(config)
         self._authorize_url = "https://twitter.com/i/oauth2/authorize"
-        self._token_url = "https://api.twitter.com/2/oauth2/token"
+        self._token_url = "https://api.twitter.com/2/oauth2/token"  # nosec B105
         self._userinfo_url = "https://api.twitter.com/2/users/me"
         self._code_verifier = ""
 

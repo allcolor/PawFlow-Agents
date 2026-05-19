@@ -117,7 +117,7 @@ def sandbox_load(source: str) -> Tuple[ToolHandler, str]:
 
     namespace: Dict[str, Any] = {}
     try:
-        exec(source, {"__builtins__": safe_builtins}, namespace)
+        exec(source, {"__builtins__": safe_builtins}, namespace)  # nosec B102 - validates user-installed tool source in restricted namespace.
     except Exception as e:
         raise ValueError(f"Failed to execute tool source: {e}")
 

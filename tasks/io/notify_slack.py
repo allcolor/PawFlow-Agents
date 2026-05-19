@@ -65,7 +65,7 @@ class NotifySlackTask(BaseTask):
             data = json.dumps(payload).encode('utf-8')
             req = Request(webhook, data=data, method='POST')
             req.add_header('Content-Type', 'application/json')
-            with urlopen(req, timeout=15) as resp:
+            with urlopen(req, timeout=15) as resp:  # nosec B310 - configured Slack webhook endpoint.
                 resp.read()
         except URLError as e:
             raise TaskError(f"notifySlack: failed to send: {e}")

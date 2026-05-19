@@ -15,7 +15,7 @@ class GoogleAuthProvider(OAuthBaseProvider):
         config.setdefault("scope", self.DEFAULT_SCOPE)
         super().__init__(config)
         self._authorize_url = "https://accounts.google.com/o/oauth2/v2/auth"
-        self._token_url = "https://oauth2.googleapis.com/token"
+        self._token_url = "https://oauth2.googleapis.com/token"  # nosec B105
         self._userinfo_url = "https://www.googleapis.com/oauth2/v3/userinfo"
 
     @property

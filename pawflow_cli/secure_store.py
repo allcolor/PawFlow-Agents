@@ -6,6 +6,7 @@ Uses OS-native credential protection:
 
 Tokens are never stored in plain text on disk.
 """
+import logging
 
 import base64
 import hashlib
@@ -93,7 +94,7 @@ def _derive_key() -> bytes:
             parts.append(Path(mid_path).read_text().strip())
             break
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
     seed = ":".join(parts).encode()
     return hashlib.pbkdf2_hmac("sha256", seed, b"pawflow-cli-v1", 100000)
 

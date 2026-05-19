@@ -31,7 +31,7 @@ def _publish(conv_id, event_type, data):
         from core.conversation_event_bus import ConversationEventBus
         ConversationEventBus.instance().publish_event(conv_id, event_type, data)
     except Exception:
-        pass
+        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
 
 def force_stop_agent(conv_id, agent_name):
@@ -52,7 +52,7 @@ def _force_stop_agent(self, conv_id, agent_name=""):
         from services.tool_relay_service import ToolRelayService
         ToolRelayService.cancel_agent(conv_id, agent_name)
     except Exception:
-        pass
+        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
     # Kill Claude Code subprocess
     try:
         with _exec._active_contexts_lock:
@@ -66,7 +66,7 @@ def _force_stop_agent(self, conv_id, agent_name=""):
             if client and hasattr(client, 'cancel_claude_code'):
                 client.cancel_claude_code(force=True)
     except Exception:
-        pass
+        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
 
 def _handle_plans(self, action, body, store, user_id, flowfile):

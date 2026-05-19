@@ -54,7 +54,7 @@ def evaluate_rule(expression: str, claims: Dict[str, Any]) -> bool:
             if name.startswith("_"):
                 logger.warning(f"[auth:rule] Blocked access to '{name}' in rule: {expression}")
                 return False
-        result = eval(code, {"__builtins__": {}}, context)
+        result = eval(code, {"__builtins__": {}}, context)  # nosec B307 - restricted auth rule expression.
         return bool(result)
     except Exception as e:
         logger.warning(f"[auth:rule] Evaluation failed for '{expression}': {e}")

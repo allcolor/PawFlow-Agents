@@ -65,7 +65,7 @@ def action_http_fetch(root_dir: str, path: str, req: Dict[str, Any], *,
     req_obj = urllib.request.Request(url, data=body_bytes, headers=_headers, method=method)
 
     try:
-        with urllib.request.urlopen(req_obj, timeout=timeout) as resp:
+        with urllib.request.urlopen(req_obj, timeout=timeout) as resp:  # nosec B310 - relay HTTP fetch tool intentionally fetches requested URLs.
             return _consume(resp, on_chunk)
     except urllib.error.HTTPError as e:
         # HTTP error status — still has a body we want to forward.
@@ -77,7 +77,7 @@ def action_http_fetch(root_dir: str, path: str, req: Dict[str, Any], *,
                 try:
                     on_chunk("end", None)
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             return {"ok": False, "status": e.code,
                     "error": f"HTTP {e.code}"}
     except urllib.error.URLError as e:

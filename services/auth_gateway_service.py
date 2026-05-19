@@ -292,7 +292,7 @@ class AuthGatewayService(BaseService):
         try:
             user = sm.create_user(
                 username=username,
-                password="",  # OAuth users don't have passwords
+                password="",  # OAuth users don't have passwords  # nosec B106
                 role=role if role_str else Role.VIEWER,
                 email=auth_result.email,
                 display_name=auth_result.display_name or username,

@@ -32,7 +32,7 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
                 for c in convs:
                     c["status"] = "active" if c["conversation_id"] in _active_cids else "idle"
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         for c in convs:
             branch = store.git_current_branch(c["conversation_id"])
             c["branch"] = branch or ""
@@ -724,7 +724,7 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
                         _src["base_url"] = _cfg.get("base_url", "") or _cfg.get("api_base", "") or ""
                         _src["containerized"] = bool(_cfg.get("docker_image", ""))
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             _src_by_agent[_ag_name] = _src
         if not temp_id:
             flowfile.set_content(json.dumps({"error": "Missing temp_id"}).encode())
@@ -764,7 +764,7 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
                         tr_rows.insert(0, meta)
                     tr_log.replace_dicts(tr_rows)
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             # Update extras with new cid, user, and agent mapping
             extras_path = conv_dir / "extras.json"
             if extras_path.exists():

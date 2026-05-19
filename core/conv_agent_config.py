@@ -163,7 +163,7 @@ def guess_llm_service(agent_name: str, conv_id: str = "") -> str:
         if all_llm:
             return all_llm[0].service_id
     except Exception:
-        pass
+        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
     return ""
 
 

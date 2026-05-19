@@ -197,7 +197,7 @@ class CheckpointManager:
                     "total_flowfiles": total_ffs,
                 })
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         return result
 
     def save_layout(self, positions: Dict[str, tuple]):

@@ -230,7 +230,7 @@ class StorageResolver:
             from core.relay_bindings import get_linked
             allowed.extend(get_linked(self._conversation_id))
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         try:
             from core.remote_fs_bindings import list_tool_filesystems
             allowed.extend(
@@ -238,7 +238,7 @@ class StorageResolver:
                 for item in list_tool_filesystems(self._user_id, self._conversation_id)
             )
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         return [sid for sid in dict.fromkeys(allowed) if sid]
 
     def _resolve_fs(self, service_name: str):
@@ -302,5 +302,5 @@ class StorageResolver:
                     if svc:
                         return svc
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         return None

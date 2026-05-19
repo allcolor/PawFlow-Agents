@@ -1,6 +1,7 @@
 """Runtime safety checks for installed PawFlow Package objects."""
 
 from __future__ import annotations
+import logging
 
 import json
 import base64
@@ -1067,17 +1068,17 @@ def _resolve_package_tool_from_store(target: Dict[str, str], *,
             for entry in repo.list("tools", "conv", user_id=user_id, conv_id=cid) or []:
                 scoped_entries.append((entry, "conversation"))
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
     try:
         for entry in repo.list("tools", "user", user_id=user_id) or []:
             scoped_entries.append((entry, "user"))
     except Exception:
-        pass
+        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
     try:
         for entry in repo.list("tools", "global") or []:
             scoped_entries.append((entry, "global"))
     except Exception:
-        pass
+        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
     filter_cid = conversation_id
     for entry, origin_scope in scoped_entries:
         if str(entry.get("name") or "") != name:
@@ -1089,7 +1090,7 @@ def _resolve_package_tool_from_store(target: Dict[str, str], *,
                         filter_cid, name, agent_name, "dynamic", origin_scope):
                     continue
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         runtime = entry.get("package_runtime") or {}
         if _runtime_matches_target(runtime, target):
             return PfpToolProxyHandler(

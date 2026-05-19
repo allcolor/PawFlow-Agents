@@ -133,7 +133,7 @@ def _handle_cancel_interrupt(self, action, body, store, user_id, flowfile):
                 from services.tool_relay_service import ToolRelayService
                 ToolRelayService.cancel_agent(_task_cid, agent_name)
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             _live_killed = _kill_live_cli_sessions(
                 _task_cid, agent_name, "force_stop")
             if _live_killed:
@@ -157,7 +157,7 @@ def _handle_cancel_interrupt(self, action, body, store, user_id, flowfile):
                 from core.agent_executor import cancel_sub_agent_task
                 cancel_sub_agent_task(task_id)
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
             # 4. Clear task's active context + active_thoughts
             with _exec._active_contexts_lock:
@@ -173,7 +173,7 @@ def _handle_cancel_interrupt(self, action, body, store, user_id, flowfile):
                 from engine.continuous_executor import PollScheduler
                 PollScheduler.instance().cancel(_task_cid)
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
             from core.conversation_event_bus import ConversationEventBus
             ConversationEventBus.instance().publish_event(
@@ -196,7 +196,7 @@ def _handle_cancel_interrupt(self, action, body, store, user_id, flowfile):
             from services.tool_relay_service import ToolRelayService
             ToolRelayService.cancel_agent(conv_id, agent_name)
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         _live_killed = _kill_live_cli_sessions(conv_id, agent_name, "force_stop")
         if _live_killed:
             logger.info("[agent:%s] force-stopped %d live CLI container(s)",

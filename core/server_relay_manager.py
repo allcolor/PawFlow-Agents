@@ -21,7 +21,7 @@ Max 1 server relay of each kind per conversation (enforced in spawn).
 
 import logging
 import secrets
-import subprocess
+import subprocess  # nosec B404
 import threading
 from typing import Any, Dict, Optional
 
@@ -291,7 +291,7 @@ class ServerRelayManager:
         ])
         cmd = docker_cmd() + ["run"] + docker_run_args
         logger.info("Spawning server relay container: %s  cmd=%s", container_name, cmd)
-        result = subprocess.run(
+        result = subprocess.run(  # nosec B603
             cmd, capture_output=True, text=True,
         )
         if result.returncode != 0:
@@ -375,7 +375,7 @@ class ServerRelayManager:
         # Remove Docker volume
         if volume:
             try:
-                subprocess.run(
+                subprocess.run(  # nosec B603
                     docker_cmd() + ["volume", "rm", "-f", volume],
                     capture_output=True,
                 )
@@ -392,7 +392,7 @@ class ServerRelayManager:
                 from core.relay_bindings import unlink_relay
                 unlink_relay(conv_id, relay_id)
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         # Clear metadata
         store.set_extra(conv_id, metadata_key, None)
         logger.info("Server %s relay destroyed for conv %s", kind, conv_id)
@@ -488,7 +488,7 @@ class ServerRelayManager:
         if not container_id:
             return False
         try:
-            result = subprocess.run(
+            result = subprocess.run(  # nosec B603
                 docker_cmd() + ["inspect", "--format", "{{.State.Running}}", container_id],
                 capture_output=True, text=True,
             )
@@ -500,7 +500,7 @@ class ServerRelayManager:
         if not container_id:
             return
         try:
-            subprocess.run(
+            subprocess.run(  # nosec B603
                 docker_cmd() + ["stop", container_id],
                 capture_output=True,
             )
@@ -508,7 +508,7 @@ class ServerRelayManager:
             logger.debug("Container stop error (%s): %s", container_id[:12], e)
         if remove:
             try:
-                subprocess.run(
+                subprocess.run(  # nosec B603
                     docker_cmd() + ["rm", "-f", container_id],
                     capture_output=True,
                 )

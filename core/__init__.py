@@ -1,6 +1,7 @@
 # PawFlow Core
 
 from __future__ import annotations
+import logging
 
 """
 PawFlow core module.
@@ -227,7 +228,7 @@ class FlowFile:
             if hasattr(self, '_content_ref') and self._content_ref is not None:
                 self._content_ref.release()
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
 
 # ============================================================================
@@ -454,7 +455,7 @@ VariableType = type('VariableType', (), {
     'INTEGER': "integer",
     'FLOAT': "float",
     'BOOLEAN': "boolean",
-    'SECRET': "secret",
+    'SECRET': "secret",  # nosec B105
     'REFERENCE': "reference",
     'JSON': "json",
 })

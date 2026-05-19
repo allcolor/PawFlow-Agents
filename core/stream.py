@@ -153,7 +153,7 @@ class SpillTracker:
                     except OSError:
                         pass
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
         with self._lock:
             self._total_cleaned += cleaned
@@ -194,7 +194,7 @@ def _cleanup_on_exit():
     try:
         _spill_tracker.cleanup_all()
     except Exception:
-        pass
+        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
 
 class ContentReference:
@@ -339,7 +339,7 @@ class ContentReference:
             if self._ref_count <= 0 and self._file_path and self._file_path.exists():
                 self._file_path.unlink()
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     def __repr__(self):
         loc = "disk" if self.is_on_disk else "memory"

@@ -74,7 +74,7 @@ class IdentityService:
 
     # ── Link / Unlink ─────────────────────────────────────────────
 
-    def link(self, user_id: str, channel: str, channel_id: str,
+    def link(self, user_id: str, channel: str, channel_id: str,  # nosec B107
              bot_token: str = "") -> bool:
         """Link a channel identity to a PawFlow user (principal).
 

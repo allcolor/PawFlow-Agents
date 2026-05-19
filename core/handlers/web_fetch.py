@@ -195,14 +195,14 @@ class ExecuteScriptHandler(ToolHandler):
                 if svc and hasattr(svc, 'exec'):
                     return svc
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         try:
             from core.handlers._fs_base import find_fs_service
             svc = find_fs_service(self._user_id)
             if svc and hasattr(svc, 'exec'):
                 return svc
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         return None
 
     def _execute_remote(self, code: str, service_name: str, env: dict = None) -> str:
@@ -222,7 +222,7 @@ class ExecuteScriptHandler(ToolHandler):
                 svc = ServiceRegistry.get_instance().resolve(
                     svc_name, user_id=self._user_id)
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         if not svc:
             return f"Error: filesystem service '{svc_name}' not found"
         try:
@@ -244,7 +244,7 @@ class ExecuteScriptHandler(ToolHandler):
                     try:
                         svc.delete_file(_fname)
                     except Exception:
-                        pass
+                        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             else:
                 result = svc.execute_command({
                     "action": "exec",
@@ -416,14 +416,14 @@ class WebSearchHandler(ToolHandler):
                 if svc and hasattr(svc, "exec"):
                     return svc
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         try:
             from core.handlers._fs_base import find_fs_service
             svc = find_fs_service(self._user_id)
             if svc and hasattr(svc, "exec"):
                 return svc
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         return None
 
     def _execute_remote_code(self, relay, code: str) -> str:
@@ -441,7 +441,7 @@ class WebSearchHandler(ToolHandler):
                 try:
                     relay.delete_file(filename)
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         except Exception as e:
             return f"Error executing web_search on relay: {e}"
 
@@ -490,7 +490,7 @@ class WebSearchHandler(ToolHandler):
                 if value and value != template and not str(value).startswith("${"):
                     return str(value).strip()
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         return (
             os.environ.get("PAWFLOW_WEB_SEARCH_PROVIDERS")
             or os.environ.get("PAWFLOW_WEB_SEARCH_PROVIDER")
@@ -724,7 +724,7 @@ class WebSearchHandler(ToolHandler):
                 try:
                     page.wait_for_load_state("networkidle", timeout=8000)
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 body_text = page.locator("body").inner_text(timeout=5000)
                 lowered = body_text.lower()
                 if "unusual traffic" in lowered or "captcha" in lowered:
@@ -809,7 +809,7 @@ class WebSearchHandler(ToolHandler):
                 if decoded.startswith("http"):
                     return decoded
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         return url
 
     def _search_google(self, query: str, max_results: int) -> List[Dict[str, str]]:
@@ -886,7 +886,7 @@ class WebSearchHandler(ToolHandler):
         return self._parse_bing_rss(body, max_results)
 
     def _parse_bing_rss(self, body: str, max_results: int) -> List[Dict[str, str]]:
-        import xml.etree.ElementTree as ET
+        import defusedxml.ElementTree as ET
 
         root = ET.fromstring(body)
         results = []
@@ -917,7 +917,7 @@ class WebSearchHandler(ToolHandler):
                 if "uddg" in qs:
                     url = qs["uddg"][0]
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             title_clean = self._clean_html_text(title)
             snippet_clean = self._clean_html_text(snippet)
             if title_clean and url.startswith("http"):
@@ -1008,7 +1008,7 @@ class ScraplingFetchHandler(ToolHandler):
     # actually accepting tracking — the scraper only reads page content.
     _GDPR_COOKIES = {
         "authId": "anonymous",
-        "didomi_token": (
+        "didomi_token": (  # nosec B105
             "eyJ1c2VyX2lkIjoiIiwiY3JlYXRlZCI6IjIwMjQtMDEtMDFUMDA6M"
             "DA6MDAuMDAwWiIsInVwZGF0ZWQiOiIyMDI0LTAxLTAxVDAwOjAwOjAw"
             "LjAwMFoiLCJ2ZW5kb3JzIjp7ImVuYWJsZWQiOltdfSwicHVycG9zZXM"
@@ -1154,7 +1154,7 @@ class ScraplingFetchHandler(ToolHandler):
         Spawns a separate Python process with its own event loop, so
         Playwright's asyncio internals don't conflict with the main process.
         """
-        import subprocess
+        import subprocess  # nosec B404
         import sys
 
         script = (
@@ -1186,7 +1186,7 @@ class ScraplingFetchHandler(ToolHandler):
             # 60s-bound headless fetch via the kill_hook (the daemon
             # exec_thread won't observe the cancel_event during a
             # blocking subprocess.run otherwise).
-            popen = subprocess.Popen(
+            popen = subprocess.Popen(  # nosec B603
                 args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 text=True,
             )
@@ -1194,7 +1194,7 @@ class ScraplingFetchHandler(ToolHandler):
                 from services.tool_relay_service import register_kill_hook
                 register_kill_hook(popen.terminate)
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             try:
                 stdout, stderr = popen.communicate(timeout=60)
             except subprocess.TimeoutExpired:

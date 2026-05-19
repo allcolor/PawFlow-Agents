@@ -54,7 +54,6 @@ code duplication.
 | `fetchHTTP` | HTTP request with intelligent scraping (anti-bot, JS rendering) |
 | `filesystemOps` | Perform filesystem operations via a filesystem service |
 | `getAzureBlob` | Download a blob from Azure Blob Storage |
-| `getFTP` | Download a file from an FTP or FTPS server |
 | `getFile` | Read a file from the filesystem |
 | `getGCS` | Download an object from Google Cloud Storage |
 | `getS3` | Download an object from AWS S3 or compatible storage |
@@ -71,7 +70,6 @@ code duplication.
 | `publishMQTT` | Publish FlowFile content to an MQTT topic |
 | `publishMessage` | Publish a message into a linked conversation |
 | `putAzureBlob` | Upload a blob to Azure Blob Storage |
-| `putFTP` | Upload a file to an FTP or FTPS server |
 | `putFile` | Write a FlowFile to the filesystem |
 | `putGCS` | Upload an object to Google Cloud Storage |
 | `putS3` | Upload an object to AWS S3 or compatible storage |

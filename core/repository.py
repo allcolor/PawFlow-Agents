@@ -556,7 +556,7 @@ class ScopedRepository:
                 try:
                     tmp.unlink(missing_ok=True)
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 raise
 
     _FRONTMATTER_RE = re.compile(
@@ -625,5 +625,5 @@ class ScopedRepository:
                 try:
                     tmp.unlink(missing_ok=True)
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 raise

@@ -6,7 +6,7 @@ import hashlib
 import json
 import logging
 import os
-import subprocess
+import subprocess  # nosec B404
 import time
 from pathlib import Path
 from typing import Any, Dict
@@ -23,9 +23,9 @@ MAIN_INSTANCE_ID = "pawflow-agent"
 MAIN_FLOW_FQN = "default.pawflow_agent:1.0.0"
 MAIN_TEMPLATE = _paths.flow_version_file("default", "pawflow_agent", "1.0.0")
 DEFAULT_BOOTSTRAP_GATEWAY_KEY = "RoyBetty"
-BOOTSTRAP_GATEWAY_SECRET_REF = "privategateway.bootstrap"
+BOOTSTRAP_GATEWAY_SECRET_REF = "privategateway.bootstrap"  # nosec B105
 BOOTSTRAP_PRIVATE_GATEWAY_SERVICE_ID = "_bootstrap_private_gateway"
-FINAL_GATEWAY_SECRET_REF = "privategateway.main"
+FINAL_GATEWAY_SECRET_REF = "privategateway.main"  # nosec B105
 FINAL_PRIVATE_GATEWAY_SERVICE_ID = "_private_gateway"
 AUTH_GATEWAY_SERVICE_ID = "_auth_gateway"
 SUMMARIZER_SERVICE_ID = "summarizer_service"
@@ -90,7 +90,7 @@ def ensure_bootstrap_self_signed_cert() -> Dict[str, str]:
         "-addext", "subjectAltName=" + ",".join(san_parts),
     ]
     try:
-        subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=30)
+        subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=30)  # nosec B603
         BOOTSTRAP_KEY_FILE.chmod(0o600)
         BOOTSTRAP_CERT_FILE.chmod(0o644)
     except Exception as exc:
@@ -177,7 +177,7 @@ def _store_global_secret(secret_ref: str, value: str) -> str:
             if sm.decrypt(current) == value:
                 return secret_ref
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
     raw[secret_ref] = sm.encrypt(value)
     _paths.GLOBAL_SECRETS_FILE.write_text(
         json.dumps(raw, ensure_ascii=False, indent=2),

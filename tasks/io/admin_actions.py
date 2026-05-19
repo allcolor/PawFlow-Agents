@@ -153,7 +153,7 @@ def _admin_get_flow(body, exec_reg, deploy_reg, gsvc_reg, tmpl_svc):
             services_def = raw.get("services", {})
             relations = raw.get("relations", [])
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     return {
         "instance_id": iid,
@@ -402,7 +402,7 @@ def _admin_list_templates(body, exec_reg, deploy_reg, gsvc_reg, tmpl_svc):
                     "services_count": len(raw.get("services", {})),
                 })
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
     return templates
 
 

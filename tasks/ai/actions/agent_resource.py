@@ -943,13 +943,13 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                 reg.reload_scope("user", user_id)
             reloaded.append("services")
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         try:
             from core.deployment_registry import DeploymentRegistry
             DeploymentRegistry.get_instance().reload()
             reloaded.append("deployments")
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         flowfile.set_content(json.dumps(
             {"ok": True, "reloaded": reloaded}).encode())
         return [flowfile]
@@ -1185,7 +1185,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                         from core.service_registry import ServiceRegistry
                         _ureg2 = ServiceRegistry.get_instance()
                     except Exception:
-                        pass
+                        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                     for _rid in _all_ids:
                         _rsvc = None
                         _connected = False
@@ -1194,13 +1194,13 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                             _connected = _greg2.is_connected("global", "", _rid)
                             _rsvc = _greg2.get_live_instance("global", "", _rid)
                         except Exception:
-                            pass
+                            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                         if not _rsvc and _ureg2 and user_id:
                             try:
                                 _connected = _ureg2.is_connected("user", user_id, _rid)
                                 _rsvc = _ureg2.get_live_instance("user", user_id, _rid)
                             except Exception:
-                                pass
+                                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                         _ri2 = getattr(_rsvc, '_relay_info', {}) or {} if _rsvc else {}
                         _relay_details[_rid] = {
                             "root": _ri2.get("root", ""),
@@ -1211,7 +1211,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                             "connected": _connected,
                         }
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 result["relay_bindings"] = {
                     "linked": _rb.get("linked", {}),
                     "default": _rb.get("default", {}),
@@ -1307,7 +1307,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                         "theme_ref": theme.get("ref", ref),
                     })
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             flowfile.set_content(json.dumps({
                 "ok": True,
                 "theme_ref": theme.get("ref", ref),
@@ -1374,7 +1374,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                         "theme_ref": "global:pawflow_dark",
                     })
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             flowfile.set_content(json.dumps({"ok": True, "deleted": deleted}).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())

@@ -304,6 +304,7 @@ def list_tool_filesystems(user_id: str, cid: str) -> List[Dict[str, Any]]:
         try:
             sdef = _resolve_service_definition(user_id, cid, service_id, item.get("scope", ""))
         except Exception:
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             continue
         if sdef.service_type not in _TOOL_COMPATIBLE_TYPES:
             continue

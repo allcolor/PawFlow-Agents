@@ -4,7 +4,8 @@
 
 import json
 import logging
-import xml.etree.ElementTree as ET
+import defusedxml.ElementTree as ET
+import xml.etree.ElementTree as StdET  # nosec B405
 from typing import Dict, Any, List
 
 from core import FlowFile, TaskError
@@ -13,7 +14,7 @@ from core.base_task import BaseTask
 logger = logging.getLogger(__name__)
 
 
-def _xml_to_dict(element: ET.Element) -> Dict[str, Any]:
+def _xml_to_dict(element: StdET.Element) -> Dict[str, Any]:
     """Convert an XML element to a dict recursively."""
     result = {}
 
@@ -49,9 +50,9 @@ def _xml_to_dict(element: ET.Element) -> Dict[str, Any]:
     return result
 
 
-def _dict_to_xml(data: Any, tag: str = "root") -> ET.Element:
+def _dict_to_xml(data: Any, tag: str = "root") -> StdET.Element:
     """Convert a dict back to an XML element."""
-    elem = ET.Element(tag)
+    elem = StdET.Element(tag)
 
     if isinstance(data, str):
         elem.text = data
@@ -145,7 +146,7 @@ class TransformXMLTask(BaseTask):
         else:
             root = _dict_to_xml(data, self.root_tag)
 
-        xml_str = ET.tostring(root, encoding='unicode')
+        xml_str = StdET.tostring(root, encoding='unicode')
         if self.xml_declaration:
             xml_str = f'<?xml version="1.0" encoding="{self.encoding}"?>\n' + xml_str
 

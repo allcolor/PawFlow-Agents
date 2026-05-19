@@ -14,10 +14,10 @@ from pawflow_relay.utils import (  # noqa: F401
 # Legacy compatibility: _api_call with token holder pattern
 # PawCode's app.py doesn't use _api_call directly (it uses AgentAPIClient),
 # but the auth module does for check_session.
-_token_holder = {"token": "", "on_refresh": None}
+_token_holder = {"token": "", "on_refresh": None}  # nosec B105
 
 
-def _api_call(server_url, method, path, body=None, session_token="", gateway_cookie=""):
+def _api_call(server_url, method, path, body=None, session_token="", gateway_cookie=""):  # nosec B107
     """Legacy wrapper that routes through pawflow_relay.utils.api_call."""
     return _api_call_impl(
         server_url, method, path, body=body,

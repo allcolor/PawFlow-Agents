@@ -14,7 +14,7 @@ class GitHubAuthProvider(OAuthBaseProvider):
         config.setdefault("scope", self.DEFAULT_SCOPE)
         super().__init__(config)
         self._authorize_url = "https://github.com/login/oauth/authorize"
-        self._token_url = "https://github.com/login/oauth/access_token"
+        self._token_url = "https://github.com/login/oauth/access_token"  # nosec B105
         self._userinfo_url = "https://api.github.com/user"
 
     @property

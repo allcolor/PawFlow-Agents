@@ -610,7 +610,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                     for _ag in _agents:
                         _cfg = _store.get_extra(conversation_id, f"random_thought::{_ag.lower()}")
                         if _cfg and _cfg.get("enabled"):
-                            _delay = _rng.randint(_cfg["min_interval"], _cfg["max_interval"])
+                            _delay = _rng.randint(_cfg["min_interval"], _cfg["max_interval"])  # nosec B311
                             _PS.instance().schedule_delay(
                                 conversation_id, _delay,
                                 key=f"{conversation_id}::thought::{_ag.lower()}",

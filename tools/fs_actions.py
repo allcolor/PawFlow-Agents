@@ -3,13 +3,14 @@
 All actions take (root_dir, abs_path, req) and return a dict result.
 The relay is responsible for path resolution and access control.
 """
+import logging
 
 import base64
 import difflib
 import json
 import os
 import re
-import subprocess
+import subprocess  # nosec B404
 import sys as _sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -144,7 +145,7 @@ def action_project_context(root_dir: str, path: str, req: Dict[str, Any]) -> Any
             for e in entries
         ]
     except Exception:
-        pass
+        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     # Read key config/context files
     _KEY_FILES = [
@@ -162,7 +163,7 @@ def action_project_context(root_dir: str, path: str, req: Dict[str, Any]) -> Any
                 # Cap at 5KB per file for the summary
                 context["config_files"][fname] = text[:5000]
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     # Build a tree (2 levels deep, max 200 entries)
     tree_lines = []
@@ -207,12 +208,12 @@ def action_project_context(root_dir: str, path: str, req: Dict[str, Any]) -> Any
     if git_dir.is_dir():
         context["git"] = True
         try:
-            import subprocess
-            br = subprocess.run(["git", "branch", "--show-current"],
+            import subprocess  # nosec B404
+            br = subprocess.run(["git", "branch", "--show-current"],  # nosec B603, B607
                                 cwd=root_dir, capture_output=True, text=True, timeout=10)
             context["git_branch"] = br.stdout.strip()
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     return context
 
@@ -1171,14 +1172,14 @@ def action_apply_patch(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
 
     # Try git apply first for real unified diffs.
     try:
-        result = subprocess.run(
+        result = subprocess.run(  # nosec B603, B607
             ["git", "apply", "--stat", "-"],
             input=patch, cwd=root_dir,
             capture_output=True, text=True, timeout=10,
         )
         if result.returncode == 0:
             stat_output = result.stdout.strip()
-            result = subprocess.run(
+            result = subprocess.run(  # nosec B603, B607
                 ["git", "apply", "-"],
                 input=patch, cwd=root_dir,
                 capture_output=True, text=True,

@@ -16,7 +16,7 @@ import core.paths as _paths
 import logging
 import re
 import uuid
-import xml.etree.ElementTree as ET
+import defusedxml.ElementTree as ET
 from dataclasses import dataclass, field
 from typing import Dict, Any, List, Optional, Tuple
 
@@ -91,13 +91,10 @@ PROCESSOR_MAP: Dict[str, str] = {
     "org.apache.nifi.processors.standard.Funnel": "funnel",
     # Communication
     "org.apache.nifi.processors.standard.PutEmail": "sendEmail",
-    # SFTP/FTP
+    # SFTP
     "org.apache.nifi.processors.standard.GetSFTP": "getSFTP",
     "org.apache.nifi.processors.standard.PutSFTP": "putSFTP",
-    "org.apache.nifi.processors.standard.GetFTP": "getFTP",
-    "org.apache.nifi.processors.standard.PutFTP": "putFTP",
     "org.apache.nifi.processors.standard.FetchSFTP": "getSFTP",
-    "org.apache.nifi.processors.standard.FetchFTP": "getFTP",
     # Kafka
     "org.apache.nifi.processors.kafka.pubsub.PublishKafka": "publishKafka",
     "org.apache.nifi.processors.kafka.pubsub.ConsumeKafka": "consumeKafka",
@@ -324,7 +321,7 @@ class NiFiConverter:
                 "type": "executeFlow",
                 "parameters": {
                     "flow_path": str(_paths.REPOSITORY_DIR / "flows" / "global" / "default" / child_id / "versions" / "1.0.0.json"),
-                    "pass_attributes": True,
+                    "pass_attributes": True,  # nosec B105
                     "parameter_mapping": {},
                 },
             }
@@ -605,7 +602,7 @@ class NiFiConverter:
                 "type": "executeFlow",
                 "parameters": {
                     "flow_path": str(_paths.REPOSITORY_DIR / "flows" / "global" / "default" / child_id / "versions" / "1.0.0.json"),
-                    "pass_attributes": True,
+                    "pass_attributes": True,  # nosec B105
                     "parameter_mapping": {},
                 },
             }
@@ -744,14 +741,14 @@ class NiFiConverter:
                 "Hostname": "hostname",
                 "Port": "port",
                 "Username": "username",
-                "Password": "password",
+                "Password": "password",  # nosec B105
                 "Remote Path": "remote_path",
             },
             "putSFTP": {
                 "Hostname": "hostname",
                 "Port": "port",
                 "Username": "username",
-                "Password": "password",
+                "Password": "password",  # nosec B105
                 "Remote Path": "remote_path",
             },
             "putS3": {

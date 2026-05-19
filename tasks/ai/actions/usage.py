@@ -214,7 +214,7 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
                         "iteration": task.get("reschedule_count", 0),
                     })
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
         # Live CLI sessions (Claude Code, Codex, Gemini). Enrich rows that
         # are currently in the active stack. Warm idle sessions are exposed in

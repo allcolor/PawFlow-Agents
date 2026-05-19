@@ -231,7 +231,7 @@ def list_available_relays(user_id: str = "") -> List[Dict[str, Any]]:
                 "allow_local_screen": bool(_ri.get('allow_local_screen', False)),
             })
     except Exception:
-        pass
+        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
     return relays
 
 

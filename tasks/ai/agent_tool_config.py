@@ -246,7 +246,7 @@ class AgentToolConfigMixin:
                             from core.service_registry import ServiceRegistry
                             _relay_svc_pg = ServiceRegistry.get_instance().resolve(_default_relay_pg, user_id=user_id)
                     except Exception:
-                        pass
+                        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 fs_svc_pg = _relay_svc_pg or self._find_filesystem_service(user_id)
                 if fs_svc_pg:
                     h.set_fs_service(fs_svc_pg)
@@ -361,7 +361,7 @@ class AgentToolConfigMixin:
                             from core.service_registry import ServiceRegistry
                             _relay_svc = ServiceRegistry.get_instance().resolve(_default_relay, user_id=user_id)
                     except Exception:
-                        pass
+                        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 fs_svc = _relay_svc or self._find_filesystem_service(user_id)
                 if fs_svc:
                     if hasattr(fs_svc, 'set_user_id') and user_id:
@@ -375,7 +375,7 @@ class AgentToolConfigMixin:
                         for _rid in get_linked(conversation_id, agent=_agent_name):
                             fs_services.append({"id": _rid, "type": "relay", "root": "?"})
                     except Exception:
-                        pass
+                        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 if not fs_services:
                     fs_services = self._list_available_services(user_id, "filesystem")
                 if fs_services:
@@ -388,7 +388,7 @@ class AgentToolConfigMixin:
                         if _dl is not None:
                             h._default_local = _dl
                     except Exception:
-                        pass
+                        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             elif isinstance(h, SecurityScanHandler):
                 if user_id:
                     h.set_user_id(user_id)

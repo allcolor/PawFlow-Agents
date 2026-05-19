@@ -195,7 +195,11 @@ class AgentPollerMixin:
                             key = f"{conversation_id}::task::{_tid_m.group(1)}"
                         else:
                             import hashlib as _hashlib_resched
-                            key = f"{conversation_id}::pending::{_hashlib_resched.sha1(r.encode('utf-8', 'ignore')).hexdigest()[:8]}"
+                            digest = _hashlib_resched.sha1(
+                                r.encode('utf-8', 'ignore'),
+                                usedforsecurity=False,
+                            ).hexdigest()[:8]
+                            key = f"{conversation_id}::pending::{digest}"
                         scheduler.schedule_delay(
                             conversation_id, 10, key=key, reason=r)
                     continue
@@ -983,7 +987,7 @@ class AgentPollerMixin:
                 # Not scheduled — recreate
                 min_iv = val.get("min_interval", 10)
                 max_iv = val.get("max_interval", 10)
-                delay = _rng.randint(min_iv, max_iv)
+                delay = _rng.randint(min_iv, max_iv)  # nosec B311
                 sched.schedule_delay(
                     cid, delay, key=thought_key,
                     reason=f"[random_thought] watchdog reschedule ({agent})",

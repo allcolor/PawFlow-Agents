@@ -12,7 +12,6 @@ TASK_CATEGORIES = {
     # IO
     "getFile": "IO", "putFile": "IO", "fetchHTTP": "IO", "listenHTTP": "IO",
     "getSFTP": "IO", "putSFTP": "IO", "listSFTP": "IO",
-    "getFTP": "IO", "putFTP": "IO",
     "httpReceiver": "IO", "handleHTTPResponse": "IO", "validateHTTPAuth": "IO",
     "scraplingFetch": "IO",
     # Cloud

@@ -11,7 +11,7 @@ import logging
 import mimetypes
 import os
 import queue
-import subprocess
+import subprocess  # nosec B404
 import threading
 import time
 import uuid
@@ -575,7 +575,7 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
         owns_live_lock = False
         is_reuse = False
         reuse_container = ""
-        internal_token = ""
+        internal_token = ""  # nosec B105
         proc = None
         container = None
         stderr_lines: queue.Queue[str] = queue.Queue(maxsize=200)
@@ -1319,7 +1319,7 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                             except queue.Full:
                                 pass
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         threading.Thread(target=_drain, daemon=True, name="codex-app-stderr").start()
 
     @staticmethod

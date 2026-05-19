@@ -99,7 +99,7 @@ class GrokImageService(BaseImageGenerationService):
                 "Content-Type": "application/json",
             },
         )
-        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+        with urllib.request.urlopen(req, timeout=self.timeout) as resp:  # nosec B310 - configured Grok API endpoint.
             result = json.loads(resp.read().decode("utf-8"))
 
         images = result.get("data", [])
@@ -114,7 +114,7 @@ class GrokImageService(BaseImageGenerationService):
         img_req = urllib.request.Request(
             image_url, headers={"User-Agent": "PawFlow-Agent/1.0"},
         )
-        with urllib.request.urlopen(img_req, timeout=60) as img_resp:
+        with urllib.request.urlopen(img_req, timeout=60) as img_resp:  # nosec B310 - provider-returned image download URL.
             image_bytes = img_resp.read()
             content_type = img_resp.headers.get("Content-Type", "image/png")
 

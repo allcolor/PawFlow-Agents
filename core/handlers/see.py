@@ -205,7 +205,7 @@ class SeeHandler(BaseFsHandler):
     def _see_video(self, fname: str, data: bytes, max_frames: int) -> str:
         """Extract key frames from video, return as image sequence."""
         import tempfile
-        import subprocess
+        import subprocess  # nosec B404
         import base64
 
         # Write to temp file
@@ -215,7 +215,7 @@ class SeeHandler(BaseFsHandler):
             tmp.close()
 
             # Get duration
-            probe = subprocess.run(
+            probe = subprocess.run(  # nosec B603, B607
                 ["ffprobe", "-v", "quiet", "-print_format", "json",
                  "-show_format", tmp.name],
                 capture_output=True, text=True, timeout=10)
@@ -225,7 +225,7 @@ class SeeHandler(BaseFsHandler):
                 info = json.loads(probe.stdout)
                 duration = float(info.get("format", {}).get("duration", 0))
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
             if duration <= 0:
                 return f"Video: {fname} ({len(data):,} bytes) — could not determine duration"
@@ -236,7 +236,7 @@ class SeeHandler(BaseFsHandler):
             for i in range(min(max_frames, int(duration))):
                 ts = i * interval
                 frame_path = f"{tmp.name}_frame_{i}.jpg"
-                subprocess.run(
+                subprocess.run(  # nosec B603, B607
                     ["ffmpeg", "-ss", str(ts), "-i", tmp.name,
                      "-frames:v", "1", "-q:v", "3", frame_path, "-y"],
                     capture_output=True, timeout=10)
@@ -262,12 +262,12 @@ class SeeHandler(BaseFsHandler):
             try:
                 os.unlink(tmp.name)
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     def _see_audio(self, fname: str, data: bytes, ext: str) -> str:
         """Transcribe audio file."""
         import tempfile
-        import subprocess
+        import subprocess  # nosec B404
 
         tmp = tempfile.NamedTemporaryFile(suffix=f".{ext}", delete=False)
         try:
@@ -275,7 +275,7 @@ class SeeHandler(BaseFsHandler):
             tmp.close()
 
             # Try whisper CLI
-            result = subprocess.run(
+            result = subprocess.run(  # nosec B603, B607
                 ["whisper", tmp.name, "--model", "base", "--output_format", "txt",
                  "--output_dir", os.path.dirname(tmp.name)],
                 capture_output=True, text=True, timeout=120)
@@ -299,7 +299,7 @@ class SeeHandler(BaseFsHandler):
             try:
                 os.unlink(tmp.name)
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     def _read_filestore_bytes(self, path: str) -> bytes:
         """Read raw bytes from FileStore."""

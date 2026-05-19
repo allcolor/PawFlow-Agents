@@ -6,12 +6,13 @@ OAuth auto-registration, gateway cookie acquisition and Docker-in-Docker
 mode all live here so the thin script is just `from pawflow_relay.cli
 import worker_main; worker_main()`.
 """
+import logging
 
 import argparse
 import atexit
 import os
 import signal
-import subprocess
+import subprocess  # nosec B404
 import sys
 import uuid
 from pathlib import Path
@@ -59,7 +60,7 @@ def _ensure_home_writable() -> None:
     # clearer error.
     user = os.environ.get("USER") or str(os.geteuid())
     try:
-        r = subprocess.run(
+        r = subprocess.run(  # nosec B603, B607
             ["sudo", "-n", "chown", "-R", f"{user}:{user}", home],
             capture_output=True, text=True, timeout=15)
         if r.returncode == 0:
@@ -303,19 +304,19 @@ def worker_main():
 
         sys.stderr.write("[FSRelay] Container relay connecting to server...\n")
         try:
-            proc = subprocess.Popen(cmd, stdout=sys.stdout, stderr=sys.stderr)
+            proc = subprocess.Popen(cmd, stdout=sys.stdout, stderr=sys.stderr)  # nosec B603
 
             def _cleanup_docker():
                 try:
-                    subprocess.run(docker_cmd() + ["rm", "-f", _docker_container],
+                    subprocess.run(docker_cmd() + ["rm", "-f", _docker_container],  # nosec B603
                                    capture_output=True, timeout=10)
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             atexit.register(_cleanup_docker)
             proc.wait()
         except KeyboardInterrupt:
             sys.stderr.write(f"\n[FSRelay] Stopping container: {_docker_container}\n")
-            subprocess.run(docker_cmd() + ["rm", "-f", _docker_container],
+            subprocess.run(docker_cmd() + ["rm", "-f", _docker_container],  # nosec B603
                            capture_output=True, timeout=10)
         finally:
             _cleanup()

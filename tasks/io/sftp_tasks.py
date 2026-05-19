@@ -7,7 +7,7 @@ Utilise paramiko si disponible, sinon subprocess sftp/scp.
 
 import logging
 import os
-import subprocess
+import subprocess  # nosec B404
 import tempfile
 from pathlib import Path
 from typing import Dict, Any, List

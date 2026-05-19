@@ -57,7 +57,7 @@ class OAuthLogoutTask(BaseTask):
                 sm._sessions.pop(token, None)
                 logger.info(f"Session invalidated: {token[:8]}...")
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
         # Clear session cookie + private gateway cookie
         clear_session = f"{cookie_name}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax"

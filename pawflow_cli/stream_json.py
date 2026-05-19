@@ -5,6 +5,7 @@ PawCode speaks the same NDJSON protocol as Claude Code on stdin/stdout.
 This allows any tool that integrates with Claude Code (VS Code, Agent SDK, etc.)
 to use PawCode instead.
 """
+import logging
 
 import json
 import queue
@@ -22,7 +23,7 @@ from pawflow_cli.stream_events import translate_sse_event
 class StreamJsonMode:
     """NDJSON stream-json protocol handler — drop-in for Claude Code."""
 
-    def __init__(self, server_url, directory, session_token="", username="",
+    def __init__(self, server_url, directory, session_token="", username="",  # nosec B107
                  gateway_cookie="", docker_image="", allow_exec=True):
         self.server_url = server_url
         self.directory = str(Path(directory).resolve())
@@ -248,5 +249,5 @@ class StreamJsonMode:
             try:
                 self._sse.disconnect()
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             self._sse = None

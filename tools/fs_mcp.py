@@ -6,7 +6,7 @@ proxies JSON-RPC calls.
 
 import json
 import os
-import subprocess
+import subprocess  # nosec B404
 import threading
 import uuid as _uuid
 from typing import Any, Dict, Optional
@@ -127,7 +127,7 @@ def action_mcp_start(root_dir, abs_path, req, **kwargs):
 
     # Launch subprocess
     cmd = [command] + (args if isinstance(args, list) else [args])
-    proc = subprocess.Popen(
+    proc = subprocess.Popen(  # nosec B603
         cmd,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,

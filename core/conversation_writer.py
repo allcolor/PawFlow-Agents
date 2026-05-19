@@ -185,7 +185,7 @@ class ConversationWriter:
             try:
                 _sub_count = bus.subscriber_count(_evt_cid)
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             logger.info(
                 "[conv-writer:%s] publish %s → cid=%s subs=%d",
                 self._cid[:8], sse_evt["type"], _evt_cid[:8], _sub_count)

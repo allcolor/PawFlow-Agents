@@ -756,6 +756,32 @@ def test_live_interactive_prompt_does_not_repeat_system_or_tool_instructions(tmp
     assert "old answer" not in prompt
 
 
+def test_live_interactive_prompt_includes_multi_agent_catchup(tmp_path):
+    from core.llm_client import LLMMessage
+
+    client = LLMClient("claude-code-interactive")
+    client._build_catchup_context = lambda cid, agent: (
+        "<catch_up_context>\n"
+        "New messages from other participants since your last response:\n"
+        "<message role=\"user\">\n[Agent reviewer]: done\n</message>\n"
+        "</catch_up_context>"
+    )
+    prompt = client._cci_prompt(
+        [LLMMessage(role="user", content="new request", conversation_id="conv")],
+        None,
+        str(tmp_path),
+        "/cc_sessions/u/conv/assistant",
+        "u",
+        "conv",
+        initial_context=False,
+        agent_name="assistant",
+    )
+
+    assert prompt.startswith("<catch_up_context>")
+    assert "[Agent reviewer]: done" in prompt
+    assert prompt.endswith("new request\n")
+
+
 def test_resume_interactive_prompt_uses_current_turn_only(tmp_path):
     from core.llm_client import LLMMessage
 
@@ -986,6 +1012,35 @@ def test_cc_interactive_live_preempt_materializes_image_attachment(tmp_path, mon
     assert "Attachments:\n@/cc_sessions/u/conv/a/.pawflow_vision/img1.png" in pool.sent[0]
     assert "look at this" in pool.sent[0]
     assert (tmp_path / ".pawflow_vision" / "img1.png").read_bytes() == b"PNG"
+
+
+def test_cc_interactive_preempt_sends_catchup_and_marks_handled(monkeypatch):
+    from core.llm_client import LLMClient
+
+    sent = []
+
+    class _Pool:
+        def find_session(self, *args, **kwargs):
+            return object()
+
+        def send_interrupt(self, state, prompt):
+            sent.append((state, prompt))
+            return True
+
+    pool = _Pool()
+    monkeypatch.setattr(
+        "core.llm_providers.claude_code_interactive.InteractiveClaudeCodePool.instance",
+        staticmethod(lambda: pool),
+    )
+
+    client = LLMClient("claude-code-interactive")
+    client._build_catchup_context = lambda cid, agent: "<catch_up_context>\n[Agent qwen]: FYI\n</catch_up_context>"
+
+    assert client.send_user_message(
+        "answer this", user_id="uid", conversation_id="conv", agent_name="assistant") is True
+
+    assert sent[0][1] == "<catch_up_context>\n[Agent qwen]: FYI\n</catch_up_context>\n\nanswer this"
+    assert client._had_preempts_this_turn is True
 
 
 def test_interactive_pool_records_tmux_paste_errors(monkeypatch):

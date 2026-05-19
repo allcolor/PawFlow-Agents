@@ -498,10 +498,12 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
         self._cci_active_conversation_id = conversation_id
         self._cci_active_agent_name = agent_name
         self._cci_active_service_id = getattr(self, "_agent_service", "") or ""
+        self._had_preempts_this_turn = False
         prompt = self._cci_prompt(
             messages, tools, state.workdir, state.container_workdir,
             user_id, conversation_id,
-            initial_context=not state.initial_context_loaded)
+            initial_context=not state.initial_context_loaded,
+            agent_name=agent_name)
         from services.cc_interactive_event_service import get_or_create_cc_interactive_event_service
         _, _, event_service = get_or_create_cc_interactive_event_service()
         event_service.drain_session(state.session_token)
@@ -554,7 +556,7 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
 
     def _cci_prompt(self, messages, tools, workdir: str, container_workdir: str,
                     user_id: str, conversation_id: str,
-                    initial_context: bool = False) -> str:
+                    initial_context: bool = False, agent_name: str = "") -> str:
         system_prompt, user_text = self._serialize_messages_for_cli(messages, None)
         if tools:
             system_prompt = append_cli_mcp_system_prompt(system_prompt)
@@ -574,10 +576,22 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
         if image_lines:
             parts.append("Attachments:\n" + "\n".join(image_lines))
         if not initial_context:
+            catchup = self._cci_catchup_context(conversation_id, agent_name)
+            if catchup:
+                parts.append(catchup)
             current = self._cci_live_text(messages) or user_text
             if current:
                 parts.append(current)
         return "\n\n".join(parts).strip() + "\n"
+
+    def _cci_catchup_context(self, conversation_id: str, agent_name: str = "") -> str:
+        agent = agent_name or getattr(self, "_cci_active_agent_name", "") or getattr(self, "_agent_name", "") or ""
+        if not conversation_id or not agent:
+            return ""
+        builder = getattr(self, "_build_catchup_context", None)
+        if builder is None:
+            return ""
+        return builder(conversation_id, agent) or ""
 
     def _cci_live_text(self, messages) -> str:
         """Return only the latest user text for an already-live tmux session."""
@@ -661,14 +675,20 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
             return False
         user_id = kwargs.get("user_id") or ""
         conversation_id = kwargs.get("conversation_id") or ""
+        agent_name = kwargs.get("agent_name") or ""
         prompt = self._cci_preempt_prompt(
-            text, attachments or [], state, user_id, conversation_id)
-        return InteractiveClaudeCodePool.instance().send_interrupt(state, prompt)
+            text, attachments or [], state, user_id, conversation_id, agent_name)
+        ok = InteractiveClaudeCodePool.instance().send_interrupt(state, prompt)
+        if ok:
+            self._had_preempts_this_turn = True
+        return ok
 
     def _cci_preempt_prompt(self, text: str, attachments: list,
-                            state, user_id: str, conversation_id: str) -> str:
+                            state, user_id: str, conversation_id: str,
+                            agent_name: str = "") -> str:
+        catchup = self._cci_catchup_context(conversation_id, agent_name)
         if not attachments:
-            return text
+            return "\n\n".join(part for part in (catchup, text) if part).strip()
         from core.llm_client import LLMMessage
 
         parts = []
@@ -686,7 +706,8 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
                          conversation_id=conversation_id)
         return self._cci_prompt(
             [msg], None, state.workdir, state.container_workdir,
-            user_id, conversation_id, initial_context=False)
+            user_id, conversation_id, initial_context=False,
+            agent_name=agent_name)
 
     @staticmethod
     def _cci_attachment_block(att: dict, user_id: str, conversation_id: str):

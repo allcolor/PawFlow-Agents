@@ -120,7 +120,8 @@ the serialized PawFlow system/context/history into
 prompt references that file with `@/cc_sessions/.../.pawflow_cci/initial_context.md`
 and instructs Claude Code to read it before answering. Existing live sessions do
 not receive the full context or tool instructions again; PawFlow sends only the
-latest turn delta and any current attachment references.
+latest turn delta, any current attachment references, and a narrow catch-up block
+containing new messages from other participants since the agent's last response.
 
 Live interrupt pastes the interrupt message, then sends `Escape`, then `Enter`
 as separate tmux key events. If the interrupt carries image attachments, PawFlow

@@ -674,6 +674,33 @@ class TestMetaToolAliases(unittest.TestCase):
         assert list_call[2]["recursive"] is True
         assert list_call[2]["max_entries"] == 5
 
+    def test_remote_fs_manifest_push_does_not_wait_for_send_result(self):
+        from services.filesystem_service import RelayService
+
+        svc = RelayService({"_service_id": "fs1", "_scope": "user", "_scope_id": "alice"})
+        svc._relay_pool = [{"writer": object(), "loop": object(), "send_lock": None}]
+        calls = []
+
+        class _Future:
+            def result(self):
+                raise AssertionError("manifest push must not block on result()")
+
+            def add_done_callback(self, cb):
+                calls.append(cb)
+
+        def fake_run(coro, loop):
+            coro.close()
+            calls.append(loop)
+            return _Future()
+
+        with patch("core.remote_fs_bindings.build_manifest_for_relay",
+                   lambda relay_id, user_id: {"relay_id": relay_id, "mounts": []}), \
+                patch("services.filesystem_service.asyncio.run_coroutine_threadsafe",
+                      fake_run):
+            svc.push_remote_fs_manifest()
+
+        assert calls
+
     def test_find_replace_schema_exposes_multiline_flag(self):
         from core.handlers.find_replace import FindReplaceHandler
 

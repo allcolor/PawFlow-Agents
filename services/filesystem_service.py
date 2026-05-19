@@ -736,7 +736,16 @@ class RelayService(BaseService):
                 else:
                     await _ws_send_frame(w, payload)
             try:
-                asyncio.run_coroutine_threadsafe(_send(), loop).result(timeout=2)
+                fut = asyncio.run_coroutine_threadsafe(_send(), loop)
+
+                def _log_manifest_result(done, sid=self._service_id):
+                    try:
+                        done.result()
+                    except Exception as exc:
+                        logger.warning("[%s] remote FS manifest push failed: %s",
+                                       sid, exc)
+
+                fut.add_done_callback(_log_manifest_result)
             except Exception as exc:
                 logger.warning("[%s] remote FS manifest push failed: %s",
                                self._service_id, exc)

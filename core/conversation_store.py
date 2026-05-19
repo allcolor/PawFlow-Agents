@@ -51,6 +51,9 @@ _CTX_CACHE_MAX_MESSAGES = int(os.getenv("PAWFLOW_CTX_CACHE_MAX_MESSAGES", "500")
 _CTX_CACHE_MAX_CHARS = int(os.getenv("PAWFLOW_CTX_CACHE_MAX_CHARS", "1000000") or "1000000")
 _CTX_CACHE_MAX_CONVS = int(os.getenv("PAWFLOW_CTX_CACHE_MAX_CONVS", "20") or "20")
 _CONV_LOCK_DIAG_MS = float(os.getenv("PAWFLOW_CONV_LOCK_DIAG_MS", "100") or "100")
+_GIT_RETENTION_DAYS = int(os.getenv("PAWFLOW_CONV_GIT_RETENTION_DAYS", "7") or "7")
+_GIT_RETENTION_COMMITS = int(os.getenv("PAWFLOW_CONV_GIT_RETENTION_COMMITS", "250") or "250")
+_GIT_RETENTION_INTERVAL_SEC = int(os.getenv("PAWFLOW_CONV_GIT_RETENTION_INTERVAL_SEC", "86400") or "86400")
 
 import core.paths as _paths
 
@@ -288,7 +291,8 @@ class ConversationStore:
 
     # ── Git per conversation ──────────────────────────────────────────
 
-    def _git(self, cid: str, *args: str, check: bool = True) -> subprocess.CompletedProcess:
+    def _git(self, cid: str, *args: str, check: bool = True,
+             timeout: int = 10) -> subprocess.CompletedProcess:
         """Run a git command in the conversation directory.
 
         Passes `-c safe.directory=*` so git doesn't reject repos that live on
@@ -307,8 +311,80 @@ class ConversationStore:
         return subprocess.run(  # nosec B603
             ["git", *git_cfg] + list(args),
             cwd=str(conv_dir), capture_output=True, text=True,
-            check=check, timeout=10,
+            check=check, timeout=timeout,
         )
+
+    def _maybe_prune_git_history(self, cid: str) -> None:
+        """Bound per-conversation Git history and reclaim unreachable objects."""
+        if _GIT_RETENTION_DAYS <= 0 and _GIT_RETENTION_COMMITS <= 0:
+            return
+        conv_dir = self._conv_dir(cid)
+        git_dir = conv_dir / ".git"
+        if not git_dir.exists():
+            return
+        marker = git_dir / "pawflow-retention-last-run"
+        now = time.time()
+        try:
+            if marker.exists() and _GIT_RETENTION_INTERVAL_SEC > 0:
+                age = now - marker.stat().st_mtime
+                if age < _GIT_RETENTION_INTERVAL_SEC:
+                    return
+        except OSError:
+            pass
+        try:
+            out = self._git(
+                cid, "log", "--first-parent", "--reverse",
+                "--format=%H%x00%ct", "live", timeout=30).stdout
+            commits = []
+            for raw in out.splitlines():
+                if "\x00" not in raw:
+                    continue
+                h, ts = raw.split("\x00", 1)
+                try:
+                    commits.append((h, int(ts)))
+                except ValueError:
+                    continue
+            if len(commits) <= 1:
+                marker.touch(exist_ok=True)
+                return
+            keep_start = len(commits) - 1
+            if _GIT_RETENTION_DAYS > 0:
+                cutoff = int(now - _GIT_RETENTION_DAYS * 86400)
+                for idx, (_h, ts) in enumerate(commits):
+                    if ts >= cutoff:
+                        keep_start = min(keep_start, idx)
+                        break
+            if _GIT_RETENTION_COMMITS > 0:
+                keep_start = min(keep_start, max(0, len(commits) - _GIT_RETENTION_COMMITS))
+            if keep_start <= 0:
+                marker.touch(exist_ok=True)
+                return
+
+            kept = commits[keep_start:]
+            first = kept[0][0]
+            tree = self._git(cid, "rev-parse", f"{first}^{{tree}}", timeout=30).stdout.strip()
+            new_head = self._git(
+                cid, "commit-tree", tree,
+                "-m", f"PawFlow retention base for {first[:12]}",
+                timeout=30).stdout.strip()
+            for commit, _ts in kept[1:]:
+                tree = self._git(cid, "rev-parse", f"{commit}^{{tree}}", timeout=30).stdout.strip()
+                msg = self._git(cid, "log", "-1", "--format=%B", commit, timeout=30).stdout
+                new_head = self._git(
+                    cid, "commit-tree", tree, "-p", new_head,
+                    "-m", msg.strip() or "snapshot",
+                    timeout=30).stdout.strip()
+            self._git(cid, "update-ref", "refs/heads/live", new_head, timeout=30)
+            self._git(cid, "symbolic-ref", "HEAD", "refs/heads/live", timeout=30)
+            self._git(cid, "reflog", "expire", "--expire=now", "--expire-unreachable=now", "--all", timeout=60)
+            self._git(cid, "gc", "--prune=now", timeout=300)
+            marker.touch(exist_ok=True)
+            logger.info("[convstore] pruned git history for %s: kept %d/%d commits",
+                        cid[:8], len(kept), len(commits))
+        except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as e:
+            detail = getattr(e, "stderr", None) or getattr(e, "stdout", None) or ""
+            logger.warning("[convstore] git retention failed for %s: %s | git stderr: %s",
+                           cid[:8], e, (detail.strip() if isinstance(detail, str) else detail))
 
     def _git_init(self, cid: str):
         """Initialize a git repo in the conversation directory (idempotent)."""
@@ -376,6 +452,7 @@ class ConversationStore:
             msg = message or f"snapshot {time.strftime('%H:%M:%S')}"
             self._git(cid, "commit", "-m", msg, "-q")
             logger.debug("[convstore] git snapshot for %s: %s", cid[:8], msg)
+            self._maybe_prune_git_history(cid)
         except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as e:
             detail = getattr(e, "stderr", None) or getattr(e, "stdout", None) or ""
             logger.warning("[convstore] git snapshot failed for %s: %s | git stderr: %s",
@@ -1249,6 +1326,62 @@ class ConversationStore:
             self._cache[cid] = c
         return c
 
+    @staticmethod
+    def _cache_ts(line: Dict[str, Any]) -> float:
+        try:
+            return float(line.get("ts") or line.get("timestamp") or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _latest_transcript_line(self, cid: str) -> Dict[str, Any]:
+        try:
+            for line in self._transcript_log(cid).iter_rows_reverse():
+                return line
+        except Exception:
+            logger.debug("latest transcript row read failed for %s", cid[:8], exc_info=True)
+        return {}
+
+    def _load_cache_metadata(self, cid: str, user_id: str = "") -> dict:
+        """Warm list/ownership cache without scanning the transcript body."""
+        extras_data = self._read_extras(cid)
+        log = self._transcript_log(cid)
+        latest = self._latest_transcript_line(cid) if log.exists() else {}
+        c = {"user_id": user_id or extras_data.get("_meta_user_id", ""),
+             "status": extras_data.get("_meta_status", "idle"),
+             "created_at": extras_data.get("_meta_created_at", 0),
+             "updated_at": extras_data.get("_meta_updated_at", 0),
+             "expires_at": extras_data.get("_meta_expires_at", 0),
+             "msg_count": int(extras_data.get("_meta_msg_count") or 0),
+             "agents": set(), "extra_keys": set(extras_data.keys()),
+             "extras": extras_data, "preview": extras_data.get("_meta_preview", "")}
+        if not c["msg_count"] and log.exists():
+            c["msg_count"] = max(0, log.total_rows() - 1)
+        if latest:
+            c["updated_at"] = max(float(c.get("updated_at") or 0), self._cache_ts(latest))
+            if latest.get("t") == "status":
+                c["status"] = latest.get("status", c["status"])
+        if "title" in extras_data:
+            c["title"] = extras_data["title"]
+        max_seq = int(extras_data.get("_meta_max_seq") or 0)
+        try:
+            max_seq = max(max_seq, int(latest.get("seq") or 0))
+        except (TypeError, ValueError):
+            pass
+        try:
+            from core.llm_client import _seed_persisted_seq
+            _seed_persisted_seq(cid, max_seq)
+        except Exception:
+            logger.debug("persisted seq seed failed for %s", cid[:8], exc_info=True)
+        conv_agents = extras_data.get("conv_agents") or {}
+        declared_agents = set()
+        if isinstance(conv_agents, dict) and conv_agents:
+            declared_agents.update(self._canon_agent(a) for a in conv_agents if a)
+            c["agents"].update(declared_agents)
+            self._prune_invalid_agent_context_dirs(cid, declared_agents)
+        with self._cache_lock:
+            self._cache[cid] = c
+        return c
+
     def _prune_invalid_agent_context_dirs(self, cid: str,
                                           declared_agents: set) -> None:
         """Delete private context dirs that do not belong to declared agents."""
@@ -1308,6 +1441,49 @@ class ConversationStore:
             if agents:
                 cached.setdefault("agents", set()).update(
                     self._canon_agent(a) for a in agents if a)
+        if transcript_line is not None:
+            self._persist_hot_metadata(cid, transcript_line)
+
+    def _persist_hot_metadata(self, cid: str, transcript_line: Dict[str, Any]) -> None:
+        lock = self._get_extras_lock(cid)
+        with lock:
+            data = self._read_extras(cid)
+            if transcript_line.get("t") == "msg":
+                if "_meta_msg_count" in data:
+                    base_count = int(data.get("_meta_msg_count") or 0)
+                else:
+                    with self._cache_lock:
+                        cached_count = int((self._cache.get(cid) or {}).get("msg_count") or 0)
+                    base_count = max(0, cached_count - 1)
+                    if not base_count:
+                        try:
+                            base_count = max(0, self._transcript_log(cid).total_rows() - 2)
+                        except Exception:
+                            base_count = 0
+                data["_meta_msg_count"] = base_count + 1
+                if not data.get("_meta_preview") and transcript_line.get("role") == "user":
+                    content = transcript_line.get("content", "")
+                    if isinstance(content, str) and content.strip():
+                        data["_meta_preview"] = content[:80]
+            ts = self._cache_ts(transcript_line)
+            if ts:
+                data["_meta_updated_at"] = max(float(data.get("_meta_updated_at") or 0), ts)
+            try:
+                from core.llm_client import _peek_persisted_seq
+                data["_meta_max_seq"] = max(
+                    int(data.get("_meta_max_seq") or 0),
+                    int(_peek_persisted_seq(cid) or 0),
+                    int(transcript_line.get("seq") or 0),
+                )
+            except Exception:
+                try:
+                    data["_meta_max_seq"] = max(
+                        int(data.get("_meta_max_seq") or 0),
+                        int(transcript_line.get("seq") or 0),
+                    )
+                except (TypeError, ValueError):
+                    pass
+            self._write_extras(cid, data)
 
     def _ensure_loaded(self):
         if self._loaded:
@@ -1334,7 +1510,7 @@ class ConversationStore:
                         continue
                     cid = conv_dir.name.replace("__", ":")
                     self._cid_user[cid] = uid
-                    self._load_cache(cid)
+                    self._load_cache_metadata(cid, uid)
                     count += 1
             self._loaded = True
         if count:
@@ -1402,7 +1578,16 @@ class ConversationStore:
             "_meta_created_at": _now,
             "_meta_expires_at": _now + ttl if ttl > 0 else 0,
             "_meta_status": status or "idle",
+            "_meta_updated_at": _now,
+            "_meta_msg_count": len(messages),
+            "_meta_max_seq": max((int(r.get("seq") or 0) for r in rows), default=0),
         }
+        for row in rows:
+            if row.get("t") == "msg" and row.get("role") == "user":
+                content = row.get("content", "")
+                if isinstance(content, str) and content.strip():
+                    extras["_meta_preview"] = content[:80]
+                    break
         self._write_extras(cid, extras)
 
         # Initialize git repo

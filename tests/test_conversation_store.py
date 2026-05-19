@@ -13,6 +13,7 @@ Tests cover:
 
 import json
 import inspect
+import subprocess
 import time
 import uuid
 import pytest
@@ -67,6 +68,59 @@ class TestCreateConversation:
         cid = store.generate_id()
         store.save(cid, [], user_id="alice")
         assert store.exists(cid)
+
+    def test_boot_cache_uses_metadata_without_transcript_scan(self, store, monkeypatch):
+        cid = store.generate_id()
+        user_id = "alice"
+        store.save(cid, [_msg(source={"type": "user", "target_agent": "bot"})],
+                   user_id=user_id)
+        ConversationStore.reset()
+        warmed = ConversationStore(store_dir=str(store._store_dir))
+
+        def fail_iter_rows(_self):
+            raise AssertionError("startup cache must not scan transcript rows")
+
+        monkeypatch.setattr("core.segmented_jsonl.SegmentedJsonl.iter_rows", fail_iter_rows)
+        warmed._ensure_loaded()
+
+        meta = warmed.get_metadata(cid)
+        assert meta["user_id"] == user_id
+        assert meta["message_count"] == 1
+
+    def test_append_persists_hot_metadata_for_fast_restart(self, conv):
+        store, cid, uid = conv
+        store.append_message(
+            cid,
+            _msg(content="first", source={"type": "user", "target_agent": "bot"}),
+            agent_name="bot",
+            user_id=uid,
+        )
+
+        extras = store.get_extras(cid)
+        assert extras["_meta_msg_count"] == 1
+        assert extras["_meta_preview"] == "first"
+        assert extras["_meta_max_seq"] >= 1
+
+    def test_git_history_retention_rewrites_to_sliding_window(self, store, monkeypatch):
+        try:
+            subprocess.run(["git", "--version"], check=True,
+                           capture_output=True, text=True, timeout=5)
+        except Exception:
+            pytest.skip("git unavailable")
+        import core.conversation_store as cs_mod
+
+        monkeypatch.setattr(cs_mod, "_GIT_RETENTION_DAYS", 0)
+        monkeypatch.setattr(cs_mod, "_GIT_RETENTION_COMMITS", 2)
+        monkeypatch.setattr(cs_mod, "_GIT_RETENTION_INTERVAL_SEC", 0)
+
+        cid = store.generate_id()
+        store.save(cid, [], user_id="alice")
+        for i in range(4):
+            assert store.set_extra(cid, "title", f"title {i}")
+            store.git_snapshot(cid, f"snapshot {i}")
+
+        commits = store._git(cid, "rev-list", "--count", "live").stdout.strip()
+        assert int(commits) <= 2
 
     def test_generate_id_is_string(self, store):
         cid = store.generate_id()

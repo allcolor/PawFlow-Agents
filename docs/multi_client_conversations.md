@@ -17,7 +17,11 @@ Clients are interchangeable frontends over that state.
 
 ## Storage Layout
 
-Conversation transcripts and contexts are logical JSONL streams. PawFlow can read legacy flat files such as `transcript.jsonl`, `shared.jsonl`, and `{agent}/context.jsonl`, while new or rewritten streams are stored as bounded segment directories such as `transcript/`, `shared/`, and `{agent}/context/` with an `index.json`.
+Conversation transcripts and contexts are logical JSONL streams. PawFlow can read legacy flat files such as `transcript.jsonl`, `shared.jsonl`, and `{agent}/context.jsonl`, while new or rewritten streams are stored as bounded segment directories such as `transcript/`, `shared/`, and `{agent}/context/` with an `index.json`. New segments default to 5,000 rows (`PAWFLOW_JSONL_SEGMENT_ROWS`). Existing larger segments remain readable and are not resegmented automatically.
+
+Conversation startup warms metadata from `extras.json`, segment indexes, and the latest transcript row instead of scanning every transcript line. Hot write paths persist `_meta_msg_count`, `_meta_preview`, `_meta_updated_at`, and `_meta_max_seq` so list/count/seq bootstrap stays O(conversations) rather than O(transcript-size).
+
+Each conversation keeps a small Git repository for recent rollback history. PawFlow bounds that history with `PAWFLOW_CONV_GIT_RETENTION_DAYS` (default 7) and `PAWFLOW_CONV_GIT_RETENTION_COMMITS` (default 250), then expires reflogs and runs `git gc --prune=now` during retention maintenance so old snapshot objects are actually reclaimable.
 
 Code that needs conversation rows must go through `ConversationStore` or `SegmentedJsonl` instead of opening those files directly. PawFlow exports still write flat `transcript.jsonl` and context JSONL files inside `.pfconv.zip` archives so archives remain portable and easy to inspect.
 

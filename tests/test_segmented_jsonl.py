@@ -5,7 +5,7 @@ import time
 import uuid
 
 from core.conversation_store import ConversationStore
-from core.segmented_jsonl import SegmentedJsonl
+from core.segmented_jsonl import DEFAULT_MAX_ROWS, SegmentedJsonl
 
 
 def _msg(role="user", content="hello", source=None, **kw):
@@ -19,6 +19,10 @@ def _msg(role="user", content="hello", source=None, **kw):
         msg["source"] = source
     msg.update(kw)
     return msg
+
+
+def test_default_segment_size_is_five_thousand_rows():
+    assert DEFAULT_MAX_ROWS == 5000
 
 
 def test_segmented_jsonl_reads_legacy_and_rewrites_to_segments(tmp_path):

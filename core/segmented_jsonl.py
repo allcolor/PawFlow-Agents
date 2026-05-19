@@ -18,7 +18,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional
 
-DEFAULT_MAX_ROWS = int(os.getenv("PAWFLOW_JSONL_SEGMENT_ROWS", "25000") or "25000")
+DEFAULT_MAX_ROWS = int(os.getenv("PAWFLOW_JSONL_SEGMENT_ROWS", "5000") or "5000")
 _INDEX_NAME = "index.json"
 
 

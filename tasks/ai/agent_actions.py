@@ -668,11 +668,12 @@ class AgentActionsMixin:
                     _set_context_usage_suspended(agent_name, True)
                 result = fn()
                 _agent = result.get("agent", "") or agent_name
-                if _agent and _agent != "shared":
-                    self._clear_claude_session(conv_id, _agent)
-                else:
-                    # Shared context changed — clear all agent sessions
-                    self._clear_claude_session(conv_id, "")
+                if result.get("context_changed", True):
+                    if _agent and _agent != "shared":
+                        self._clear_claude_session(conv_id, _agent)
+                    else:
+                        # Shared context changed — clear all agent sessions
+                        self._clear_claude_session(conv_id, "")
                 if op_name == "compact":
                     _refresh_active_context_from_store(_agent)
                     _set_context_usage_suspended(_agent, False)

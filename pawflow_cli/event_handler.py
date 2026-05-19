@@ -179,6 +179,14 @@ def dispatch_event(app, event, streaming_agent, thinking_agent):
         stage = data.get("stage", "")
         detail = data.get("detail", "")
         if stage == "done":
+            if data.get("operation") == "git_prune":
+                before = data.get("size_before", 0) / 1048576
+                after = data.get("size_after", 0) / 1048576
+                app.renderer.print_system(
+                    f"Git history pruned: {before:.1f} MB -> {after:.1f} MB")
+                if not app._active_agents:
+                    app._update_status("")
+                return False, streaming_agent, thinking_agent
             before = data.get("before", 0)
             after = data.get("after", 0)
             app.renderer.print_system(f"Compacted: {before} \u2192 {after} messages")
@@ -186,7 +194,8 @@ def dispatch_event(app, event, streaming_agent, thinking_agent):
             if not app._active_agents:
                 app._update_status("")
         else:
-            app._update_status(f"\u25b6 Compacting... {stage} {detail}")
+            label = "Pruning Git" if data.get("operation") == "git_prune" or stage == "git_prune" else "Compacting"
+            app._update_status(f"\u25b6 {label}... {stage} {detail}")
 
     elif ev_type == "task_progress":
         stage = data.get("stage", "")

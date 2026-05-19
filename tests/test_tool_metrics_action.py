@@ -32,6 +32,15 @@ def test_restart_from_slash_parses_index_and_msg_id():
     assert by_msg["msg_id"] == "abc123"
 
 
+def test_git_prune_slash_parses_to_context_action():
+    body = _parse_command("/git-prune", "conv1", "user1", "agent1")
+    alias = _parse_command("/prune-git", "conv1", "user1", "agent1")
+
+    assert body["action"] == "git_prune"
+    assert body["conversation_id"] == "conv1"
+    assert alias["action"] == "git_prune"
+
+
 def test_clear_slash_is_client_only_not_new_conversation():
     body = _parse_command("/clear", "conv1", "user1", "agent1")
 

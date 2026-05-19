@@ -1004,13 +1004,24 @@ function connectSSE(cid, onReady, opts) {
     const data = JSON.parse(e.data);
     if (data.stage === 'start') {
       var opLabel = data.detail || 'compact';
+      opLabel = String(opLabel).replace(/_/g, ' ');
       showContextOp(opLabel.charAt(0).toUpperCase() + opLabel.slice(1) + ' ' + (data.agent || '') + '...');
     } else if (data.stage === 'chunking' || data.stage === 'summarizing') {
       showContextOp((data.detail || data.stage) + '...');
+    } else if (data.stage === 'git_prune') {
+      showContextOp('Pruning conversation Git history: ' + (data.detail || 'working') + '...');
     } else if (data.stage === 'done') {
       hideContextOp();
       if (data.operation === 'restart_from') {
         if (conversationId) resumeConv(conversationId, true);
+        return;
+      }
+      if (data.operation === 'git_prune') {
+        const beforeMb = data.size_before !== undefined ? (data.size_before / 1048576).toFixed(1) : '?';
+        const afterMb = data.size_after !== undefined ? (data.size_after / 1048576).toFixed(1) : '?';
+        const beforeCommits = data.commits_before !== undefined ? data.commits_before : '?';
+        const afterCommits = data.commits_after !== undefined ? data.commits_after : '?';
+        addMsg('system', 'Git history pruned: ' + beforeCommits + ' -> ' + afterCommits + ' commits, ' + beforeMb + ' MB -> ' + afterMb + ' MB.');
         return;
       }
       const agent = data.agent || 'shared';

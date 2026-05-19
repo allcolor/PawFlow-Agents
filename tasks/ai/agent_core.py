@@ -1041,14 +1041,23 @@ class AgentCoreMixin:
                                 break
                         return provider_context
 
+                    def _threshold_estimate(stored_msgs, cpt):
+                        from core.token_counter import resolve_token_multiplier as _rtm
+                        _tmul = _rtm(getattr(
+                            ctx.get("resolved_svc"), "config", None))
+                        return self._estimate_tokens(
+                            _with_provider_system_prompt(list(stored_msgs or [])),
+                            tool_defs=tool_defs,
+                            chars_per_token=cpt,
+                            token_multiplier=_tmul)
+
                     def _should_proactive_compact(stored_msgs, max_ctx, cpt):
                         if _trigger_frac <= 0:
                             return False
                         trigger_tokens = int(max_ctx * _trigger_frac)
                         if trigger_tokens <= 0:
                             return False
-                        usage = _auto_compact_usage(max_ctx, "proactive_compact_threshold")
-                        used_tokens = int(usage.get("used", 0) or 0)
+                        used_tokens = _threshold_estimate(stored_msgs, cpt)
                         return used_tokens >= trigger_tokens
 
                     def _messages_changed(candidate, current):
@@ -1296,19 +1305,18 @@ class AgentCoreMixin:
                             f"{len(llm_context)} msgs, max={_max_ctx}")
                         if _trigger_frac > 0:
                             _trigger_tokens = int(_max_ctx * _trigger_frac)
-                            _threshold_usage = _auto_compact_usage(
-                                _max_ctx, "pre_send_compact_threshold")
-                            _threshold_used = int(_threshold_usage.get("used", 0) or 0)
+                            _threshold_used = _pre_send_est
                             if _threshold_used >= _trigger_tokens:
                                 logger.info(
                                     "[compact] pre-send threshold crossed: "
                                     "%d >= %d (%.0f%%)",
                                     _threshold_used, _trigger_tokens,
                                     _trigger_frac * 100)
-                                # The PawFlow context gauge crossed the configured
-                                # threshold. Force the compact so _compact() cannot
-                                # recompute a lower pre-assembly estimate and
-                                # silently skip.
+                                # The prompt that will actually be sent crossed
+                                # the configured threshold. Do not use the live
+                                # gauge here: resumable CLI sessions may keep a
+                                # large persisted context while the provider call
+                                # only sends the latest delta.
                                 compacted_messages = self._compact(
                                     copy.deepcopy(messages), compact_client,
                                     _max_ctx,

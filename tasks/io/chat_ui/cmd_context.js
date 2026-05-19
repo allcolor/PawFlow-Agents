@@ -1,5 +1,5 @@
 // ── Context commands ────────────────────────────────────────────
-// /compact, /rebuild, /restart_from, /context, /summary, /resume
+// /compact, /git-prune, /rebuild, /restart_from, /context, /summary, /resume
 // Loaded before commands.js — all functions are global.
 
 function cmdRestartFrom(text, parts) {
@@ -56,6 +56,11 @@ function cmdCompactCmd(text, parts) {
   return true;
 }
 
+function cmdGitPruneCmd(text, parts) {
+  cmdGitPrune();
+  return true;
+}
+
 function cmdRebuildCmd(text, parts) {
   cmdRebuild(stripTarget(parts[1] || ''));
   return true;
@@ -76,6 +81,15 @@ function cmdCompact(agentName) {
   if (_compactAgent) params.agent_name = _compactAgent;
   action$('compact', params).subscribe(data => {
     if (data.error) addMsg('error', t('compactionFailed', { error: data.error }));
+    hideContextOp();
+  });
+}
+
+function cmdGitPrune() {
+  if (!conversationId) { addMsg('system', t('noConv')); return; }
+  showContextOp('Pruning conversation Git history...');
+  action$('git_prune', {}).subscribe(data => {
+    if (data.error) addMsg('error', data.error);
     hideContextOp();
   });
 }

@@ -660,6 +660,35 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
         flowfile.set_content(json.dumps(results).encode())
         return [flowfile]
 
+    if action == "git_prune":
+        conv_id = body.get("conversation_id", "")
+        if not conv_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        if not store.exists(conv_id):
+            flowfile.set_content(json.dumps({"error": "Conversation not found"}).encode())
+            flowfile.set_attribute("http.response.status", "404")
+            return [flowfile]
+
+        def _do_git_prune():
+            from core.conversation_event_bus import ConversationEventBus
+            bus = ConversationEventBus.instance()
+
+            def _progress(stage, payload):
+                bus.publish_event(conv_id, "compact_progress", {
+                    "stage": "git_prune", "detail": stage,
+                    "operation": "git_prune", **payload,
+                })
+
+            result = store.prune_git_history_now(conv_id, progress=_progress)
+            return {"operation": "git_prune", "context_changed": False,
+                    "agent": "shared", **result}
+
+        return self._run_bg_context_op(
+            conv_id, "git_prune", _do_git_prune, flowfile,
+            agent_name="")
+
     if action == "compact":
         conv_id = body.get("conversation_id", "")
         _ctx_agent = body.get("agent_name", "")

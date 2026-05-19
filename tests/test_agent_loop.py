@@ -1192,6 +1192,39 @@ class TestAgentLoopPersistentContext(unittest.TestCase):
         assert store.load_context("cx5") in (None, [])
         assert store.load_agent_context("cx5", "assistant") is None
 
+    def test_git_prune_action_runs_as_context_op_without_context_invalidation(self):
+        from core.conversation_store import ConversationStore
+        store = ConversationStore.instance()
+        store.save("cx_git", [], user_id="testuser")
+        task = self._make_task()
+        ff = FlowFile(content=json.dumps({
+            "action": "git_prune",
+            "conversation_id": "cx_git",
+        }).encode())
+
+        def _run_sync(_cid, op_name, fn, flowfile, agent_name=""):
+            flowfile.set_content(json.dumps({
+                "status": "accepted", "action": op_name,
+                "agent_name": agent_name, "result": fn(),
+            }).encode())
+            return [flowfile]
+
+        from tasks.ai.actions.context_ops import _handle_context_ops
+        with patch.object(task, "_run_bg_context_op", side_effect=_run_sync), \
+                patch.object(store, "prune_git_history_now",
+                             return_value={"status": "pruned", "size_before": 10,
+                                           "size_after": 3}) as prune:
+            result = _handle_context_ops(
+                task, "git_prune", {"conversation_id": "cx_git"},
+                store, "testuser", ff)
+
+        data = json.loads(result[0].get_content())
+        assert data["status"] == "accepted"
+        assert data["action"] == "git_prune"
+        assert data["agent_name"] == ""
+        assert data["result"]["context_changed"] is False
+        prune.assert_called_once()
+
 
 class TestContextActionsAsync(unittest.TestCase):
     """Tests for context actions via the real async path.

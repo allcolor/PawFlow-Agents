@@ -137,6 +137,16 @@ HELP: Dict[str, Dict[str, str]] = {
             "Like Claude Code, you can add instructions to focus the compaction."
         ),
     },
+    "/git-prune": {
+        "usage": "/git-prune",
+        "short": "Prune conversation Git snapshot history",
+        "detail": (
+            "Run conversation Git retention now for the current conversation.\n"
+            "This blocks conversation context operations like /compact, rewrites "
+            "the bounded live history, expires reflogs, and runs git gc to reclaim space."
+        ),
+        "aliases": "/prune-git",
+    },
     "/context": {
         "usage": "/context [agent]",
         "short": "View the LLM context",
@@ -815,6 +825,9 @@ def _parse_command(text: str, conversation_id: str, user_id: str,
             instructions = instructions.strip()
         return {"action": "compact", "agent_name": agent,
                 "instructions": instructions, "force": force, **base}
+
+    if cmd == "/git-prune":
+        return {"action": "git_prune", **base}
 
     if cmd == "/context":
         agent, _ = _extract_at_agent(arg, agent_name)
@@ -1889,7 +1902,7 @@ def _handle_help(topic: str, flowfile: FlowFile) -> list:
             "Conversation": ["/new", "/conv", "/delete", "/rename", "/export",
                              "/history", "/search", "/fork"],
             "Agent": ["/agent", "/msg", "/btw", "/stop", "/resume", "/setname"],
-            "Context": ["/compact", "/context", "/model", "/llm", "/effort",
+            "Context": ["/compact", "/git-prune", "/context", "/model", "/llm", "/effort",
                         "/fast", "/rebuild", "/restart", "/rewind", "/summary",
                         "/cc_restart", "/cc_live",
                         "/codex_restart", "/codex_live",

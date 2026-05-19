@@ -23,6 +23,10 @@ Conversation startup warms metadata from `extras.json`, segment indexes, and the
 
 Each conversation keeps a small Git repository for recent rollback history. PawFlow bounds that history with `PAWFLOW_CONV_GIT_RETENTION_DAYS` (default 7) and `PAWFLOW_CONV_GIT_RETENTION_COMMITS` (default 250), then expires reflogs and runs `git gc --prune=now` during retention maintenance so old snapshot objects are actually reclaimable.
 
+Conversation Git snapshots track only durable state: transcript, shared context, extras, and bindings. Per-agent contexts and `summaries/_shared` bucket files are derived caches; snapshots untrack them, and rollback or branch switch deletes them so they are rebuilt from the restored transcript/shared state.
+
+Use `/git-prune` (`/prune-git`) to run that retention immediately for the current conversation. It uses the same context-operation lock/progress channel as `/compact`, so active work is stopped/blocked while Git rewrites history and garbage-collects old objects. The command reports commit and `.git` size before/after when it completes.
+
 Code that needs conversation rows must go through `ConversationStore` or `SegmentedJsonl` instead of opening those files directly. PawFlow exports still write flat `transcript.jsonl` and context JSONL files inside `.pfconv.zip` archives so archives remain portable and easy to inspect.
 
 Existing installations can migrate flat conversation logs offline:

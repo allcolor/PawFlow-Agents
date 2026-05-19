@@ -309,6 +309,11 @@ const HELP_DATA = {
       + '  /compact @grok    \u2014 Compact grok\'s context only\n'
       + '  /compact @ALL     \u2014 Compact all agents\' contexts',
   },
+  '/git-prune': {
+    usage: '/git-prune',
+    short: 'Prune conversation Git history',
+    detail: 'Runs the configured sliding-window retention for the current conversation Git snapshots and reclaims disk space with git gc.',
+  },
   '/rebuild': {
     usage: '/rebuild [@agent|ALL]',
     short: t('commandShort.33'),
@@ -672,6 +677,8 @@ const _CMD_HANDLERS = {
   '/resume':       (text, parts, cmd) => cmdResume(text),
   '/summary':      (text, parts, cmd) => cmdSummary(text, parts),
   '/compact':      (text, parts, cmd) => cmdCompactCmd(text, parts),
+  '/git-prune':    (text, parts, cmd) => cmdGitPruneCmd(text, parts),
+  '/prune-git':    (text, parts, cmd) => cmdGitPruneCmd(text, parts),
   '/rebuild':      (text, parts, cmd) => cmdRebuildCmd(text, parts),
   '/context':      (text, parts, cmd) => cmdContextCmd(text, parts),
 

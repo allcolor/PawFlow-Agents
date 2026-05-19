@@ -1179,7 +1179,7 @@ def test_api_summarizer_preserves_thinking_signature_across_tool_loop():
     assert "thinking_signature=getattr(response, \"thinking_signature\", \"\") or \"\"" in src
 
 
-def test_compact_threshold_uses_same_usage_source_as_gauge():
+def test_pre_send_compact_threshold_uses_sent_prompt_not_gauge():
     src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
     usage_block = src[
         src.index("def _auto_compact_usage"):
@@ -1192,9 +1192,10 @@ def test_compact_threshold_uses_same_usage_source_as_gauge():
         src.index("if _pre_send_est > _max_ctx:")]
     assert "compute_context_usage" in usage_block
     assert "context_usage_from_cache" not in usage_block
-    assert "_auto_compact_usage(max_ctx" in threshold_block
-    assert "_auto_compact_usage(" in pre_send_block
-    assert "_pre_send_est >= _trigger_tokens" not in pre_send_block
+    assert "_threshold_estimate(stored_msgs, cpt)" in threshold_block
+    assert "_auto_compact_usage(" not in threshold_block
+    assert "_threshold_used = _pre_send_est" in pre_send_block
+    assert "_auto_compact_usage(" not in pre_send_block
 
 
 def test_ui_actions_have_no_sync_allowlist_and_use_reply_bus():

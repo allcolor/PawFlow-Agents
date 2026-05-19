@@ -87,11 +87,28 @@ def test_agent_core_rechecks_compact_threshold_after_context_injections():
     call_start = _AGENT_CORE.index("# LLM call", guard_start)
     guard = _AGENT_CORE[guard_start:call_start]
     assert "_trigger_frac > 0" in guard
-    assert "_auto_compact_usage(" in guard
+    assert "_threshold_used = _pre_send_est" in guard
     assert "_threshold_used >= _trigger_tokens" in guard
     assert "self._compact(" in guard
     assert "force=True" in guard
     assert "llm_context, _pre_inject_chars = _build_provider_context(messages)" in guard
+
+
+def test_pre_send_threshold_uses_actual_prompt_not_live_gauge():
+    """CLI resume can have a large persisted context while sending one delta."""
+    guard_start = _AGENT_CORE.index("# Force-fit guard")
+    call_start = _AGENT_CORE.index("# LLM call", guard_start)
+    guard = _AGENT_CORE[guard_start:call_start]
+    assert "_threshold_used = _pre_send_est" in guard
+    assert "_auto_compact_usage(" not in guard
+
+
+def test_proactive_compact_threshold_uses_current_messages():
+    helper = _AGENT_CORE[
+        _AGENT_CORE.index("def _threshold_estimate"):
+        _AGENT_CORE.index("def _messages_changed")]
+    assert "_with_provider_system_prompt(list(stored_msgs or []))" in helper
+    assert "compute_context_usage" not in helper
 
 
 def test_api_pre_send_compact_replaces_active_messages_not_provider_view():

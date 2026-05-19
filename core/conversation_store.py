@@ -314,24 +314,57 @@ class ConversationStore:
             check=check, timeout=timeout,
         )
 
-    def _maybe_prune_git_history(self, cid: str) -> None:
+    @staticmethod
+    def _dir_size_bytes(path: Path) -> int:
+        total = 0
+        if not path.is_dir():
+            return 0
+        for item in path.rglob("*"):
+            if item.is_file():
+                try:
+                    total += item.stat().st_size
+                except OSError:
+                    pass
+        return total
+
+    def prune_git_history_now(self, cid: str,
+                              progress: Optional[Callable[[str, Dict[str, Any]], None]] = None) -> dict:
+        """Run conversation Git retention immediately and return size stats."""
+        return self._maybe_prune_git_history(
+            cid, force=True, progress=progress, raise_errors=True)
+
+    def _maybe_prune_git_history(self, cid: str, force: bool = False,
+                                 progress: Optional[Callable[[str, Dict[str, Any]], None]] = None,
+                                 raise_errors: bool = False) -> dict:
         """Bound per-conversation Git history and reclaim unreachable objects."""
+        def _progress(stage: str, **payload) -> None:
+            if progress:
+                try:
+                    progress(stage, payload)
+                except Exception:
+                    logger.debug("git retention progress callback failed", exc_info=True)
+
         if _GIT_RETENTION_DAYS <= 0 and _GIT_RETENTION_COMMITS <= 0:
-            return
+            return {"status": "disabled"}
         conv_dir = self._conv_dir(cid)
         git_dir = conv_dir / ".git"
         if not git_dir.exists():
-            return
+            return {"status": "missing"}
         marker = git_dir / "pawflow-retention-last-run"
         now = time.time()
+        size_before = self._dir_size_bytes(git_dir)
         try:
-            if marker.exists() and _GIT_RETENTION_INTERVAL_SEC > 0:
+            if (not force and marker.exists()
+                    and _GIT_RETENTION_INTERVAL_SEC > 0):
                 age = now - marker.stat().st_mtime
                 if age < _GIT_RETENTION_INTERVAL_SEC:
-                    return
+                    return {"status": "skipped", "reason": "interval",
+                            "size_before": size_before,
+                            "size_after": size_before}
         except OSError:
             pass
         try:
+            _progress("scan", size_before=size_before)
             out = self._git(
                 cid, "log", "--first-parent", "--reverse",
                 "--format=%H%x00%ct", "live", timeout=30).stdout
@@ -346,7 +379,11 @@ class ConversationStore:
                     continue
             if len(commits) <= 1:
                 marker.touch(exist_ok=True)
-                return
+                return {"status": "unchanged", "reason": "too_few_commits",
+                        "commits_before": len(commits),
+                        "commits_after": len(commits),
+                        "size_before": size_before,
+                        "size_after": self._dir_size_bytes(git_dir)}
             keep_start = len(commits) - 1
             if _GIT_RETENTION_DAYS > 0:
                 cutoff = int(now - _GIT_RETENTION_DAYS * 86400)
@@ -358,9 +395,14 @@ class ConversationStore:
                 keep_start = min(keep_start, max(0, len(commits) - _GIT_RETENTION_COMMITS))
             if keep_start <= 0:
                 marker.touch(exist_ok=True)
-                return
+                size_after = self._dir_size_bytes(git_dir)
+                return {"status": "unchanged", "reason": "within_retention",
+                        "commits_before": len(commits),
+                        "commits_after": len(commits),
+                        "size_before": size_before, "size_after": size_after}
 
             kept = commits[keep_start:]
+            _progress("rewrite", commits_before=len(commits), commits_after=len(kept))
             first = kept[0][0]
             tree = self._git(cid, "rev-parse", f"{first}^{{tree}}", timeout=30).stdout.strip()
             new_head = self._git(
@@ -376,15 +418,25 @@ class ConversationStore:
                     timeout=30).stdout.strip()
             self._git(cid, "update-ref", "refs/heads/live", new_head, timeout=30)
             self._git(cid, "symbolic-ref", "HEAD", "refs/heads/live", timeout=30)
+            _progress("gc", commits_before=len(commits), commits_after=len(kept))
             self._git(cid, "reflog", "expire", "--expire=now", "--expire-unreachable=now", "--all", timeout=60)
-            self._git(cid, "gc", "--prune=now", timeout=300)
+            self._git(cid, "gc", "--prune=now", timeout=1800)
             marker.touch(exist_ok=True)
+            size_after = self._dir_size_bytes(git_dir)
             logger.info("[convstore] pruned git history for %s: kept %d/%d commits",
                         cid[:8], len(kept), len(commits))
+            return {"status": "pruned", "commits_before": len(commits),
+                    "commits_after": len(kept), "size_before": size_before,
+                    "size_after": size_after}
         except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as e:
+            if raise_errors:
+                raise
             detail = getattr(e, "stderr", None) or getattr(e, "stdout", None) or ""
             logger.warning("[convstore] git retention failed for %s: %s | git stderr: %s",
                            cid[:8], e, (detail.strip() if isinstance(detail, str) else detail))
+            return {"status": "error", "error": str(e),
+                    "size_before": size_before,
+                    "size_after": self._dir_size_bytes(git_dir)}
 
     def _git_init(self, cid: str):
         """Initialize a git repo in the conversation directory (idempotent)."""
@@ -401,14 +453,92 @@ class ConversationStore:
             # Configure for this repo only (no user-level config needed)
             self._git(cid, "config", "user.email", "pawflow@local")
             self._git(cid, "config", "user.name", "PawFlow")
-            # Initial commit with whatever exists
-            self._git(cid, "add", "-A")
+            # Initial commit with durable conversation state only. Agent
+            # contexts and bg buckets are derived caches and are intentionally
+            # left outside Git.
+            self._git_untrack_derived_state(cid)
+            existing = self._git_snapshot_files(cid)
+            if existing:
+                self._git(cid, "add", "--", *existing, check=False)
             self._git(cid, "commit", "-m", "init", "--allow-empty", "-q")
             logger.debug("[convstore] git init for %s", cid[:8])
         except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as e:
             detail = getattr(e, "stderr", None) or getattr(e, "stdout", None) or ""
             logger.warning("[convstore] git init failed for %s: %s | git stderr: %s",
                            cid[:8], e, (detail.strip() if isinstance(detail, str) else detail))
+
+    def _git_snapshot_files(self, cid: str) -> List[str]:
+        """Files that form durable Git history for a conversation."""
+        conv_dir = self._conv_dir(cid)
+        files = [
+            "transcript.jsonl", "transcript",
+            "shared.jsonl", "shared",
+            "extras.json", "bindings.json",
+        ]
+        return [f for f in files if (conv_dir / f).exists()]
+
+    def _derived_state_paths(self, cid: str) -> List[str]:
+        """Return replaceable per-agent context and bucket paths."""
+        conv_dir = self._conv_dir(cid)
+        paths: set[str] = set()
+        summaries = conv_dir / "summaries"
+        if summaries.exists():
+            paths.add("summaries")
+        for entry in conv_dir.iterdir():
+            if not entry.is_dir():
+                continue
+            if entry.name in (".git", "transcript", "shared", "summaries"):
+                continue
+            if (entry / "context.jsonl").exists() or (entry / "context").exists():
+                paths.add(entry.name)
+        try:
+            tracked = self._git(cid, "ls-files", "-z", check=False, timeout=30).stdout
+            for rel in tracked.split("\0"):
+                if not rel:
+                    continue
+                if rel == "summaries" or rel.startswith("summaries/"):
+                    paths.add("summaries")
+                    continue
+                top = rel.split("/", 1)[0]
+                if top in (".git", "transcript", "shared", "summaries"):
+                    continue
+                if rel.endswith("/context.jsonl") or "/context/" in rel:
+                    paths.add(top)
+        except Exception:
+            logger.debug("git tracked derived-state scan failed for %s",
+                         cid[:8], exc_info=True)
+        return sorted(paths)
+
+    def _git_untrack_derived_state(self, cid: str) -> None:
+        """Stage removal of derived state from Git without deleting files."""
+        paths = self._derived_state_paths(cid)
+        if paths:
+            self._git(cid, "rm", "-r", "--cached", "--ignore-unmatch",
+                      "--", *paths, check=False, timeout=60)
+
+    def _purge_derived_state_after_history_change(self, cid: str) -> None:
+        """Drop contexts/buckets after rollback or branch switch.
+
+        Git restores transcript/shared/extras. Agent contexts and bucket
+        summaries are rebuilt from that durable state, so keeping old copies
+        would make agents resume from the wrong branch/rollback point.
+        """
+        conv_dir = self._conv_dir(cid)
+        paths = self._derived_state_paths(cid)
+        if paths:
+            self._git(cid, "rm", "-r", "--cached", "--ignore-unmatch",
+                      "--", *paths, check=False, timeout=60)
+        for rel in paths:
+            path = conv_dir / rel
+            if path.is_dir():
+                shutil.rmtree(path, ignore_errors=True)
+            elif path.exists():
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
+        self._invalidate_ctx_cache(cid)
+        self._invalidate_pyramid_cache(cid)
 
     def git_snapshot(self, cid: str, message: str = ""):
         """Commit current state as a snapshot (called after agent turn end).
@@ -424,24 +554,11 @@ class ConversationStore:
         if not (conv_dir / ".git").exists():
             return
         try:
-            # Selective add: transcript/shared segments + extras + all agent contexts
-            files = ["transcript.jsonl", "transcript", "shared.jsonl", "shared", "extras.json", "bindings.json"]
-            for entry in conv_dir.iterdir():
-                if entry.is_dir() and entry.name not in (".git", "transcript", "shared", "summaries"):
-                    ctx = entry / "context.jsonl"
-                    ctx_dir = entry / "context"
-                    if ctx.exists():
-                        files.append(f"{entry.name}/context.jsonl")
-                    if ctx_dir.exists():
-                        files.append(f"{entry.name}/context")
-            # Shared pyramid (bg bucket builder output). Must be tracked so
-            # rollback/fork/branch operations carry matching bucket state.
-            _shared_pyramid = conv_dir / "summaries" / "_shared"
-            if _shared_pyramid.is_dir():
-                for item in _shared_pyramid.iterdir():
-                    if item.is_file() and item.suffix == ".json":
-                        files.append(f"summaries/_shared/{item.name}")
-            existing = [f for f in files if (conv_dir / f).exists()]
+            # Selective add: durable transcript/shared/extras only. Agent
+            # contexts and summaries are derived; untrack any legacy entries
+            # so the next snapshot frees them from future history.
+            self._git_untrack_derived_state(cid)
+            existing = self._git_snapshot_files(cid)
             if not existing:
                 return
             self._git(cid, "add", "--", *existing, check=False)
@@ -488,16 +605,12 @@ class ConversationStore:
             return False
         try:
             self._git(cid, "checkout", commit_hash, "--", ".")
+            self._purge_derived_state_after_history_change(cid)
             # Reload cache from rolled-back state
             with self._cache_lock:
                 self._cache.pop(cid, None)
             self._invalidate_ctx_cache(cid)
             self._reload_cache(cid)
-            # Shared pyramid files on disk have been restored, but the
-            # bg worker's in-memory seq caches still hold post-rollback
-            # values. Drop them so the next maybe_trigger re-reads disk
-            # (via _seed_seq_caches / _read_last_seq).
-            self._invalidate_pyramid_cache(cid)
             # Commit the rollback as a new snapshot
             self.git_snapshot(cid, f"rollback to {commit_hash[:8]}")
             logger.info("[convstore] rolled back %s to %s", cid[:8], commit_hash[:8])
@@ -601,15 +714,12 @@ class ConversationStore:
         try:
             self.git_snapshot(cid, f"before switch to {branch_name}")
             self._git(cid, "checkout", branch_name)
+            self._purge_derived_state_after_history_change(cid)
             with self._cache_lock:
                 self._cache.pop(cid, None)
             self._invalidate_ctx_cache(cid)
             self._reload_cache(cid)
             self.invalidate_claude_sessions(cid)
-            # Pyramid state on disk changed — the branch we switched to
-            # has its own summaries/_shared/. Drop the bg seq caches
-            # so the next trigger re-reads the branch's state.
-            self._invalidate_pyramid_cache(cid)
             logger.info("[convstore] switched %s → %s", cid[:8], branch_name)
             return True
         except (subprocess.CalledProcessError, FileNotFoundError,

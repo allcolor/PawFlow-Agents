@@ -3,6 +3,7 @@
 import subprocess
 import time
 import uuid
+import json
 import pytest
 
 from core.conversation_store import ConversationStore
@@ -91,6 +92,42 @@ def test_git_log_has_init_commit(conv):
     log = store.git_log(cid)
     assert len(log) >= 1
     assert log[-1]["message"] == "init"
+
+
+def test_git_snapshot_tracks_only_durable_conversation_state(conv):
+    store, cid = conv
+    conv_dir = store._conv_dir(cid)
+    store.save_agent_context(cid, "assistant", [_msg(content="derived")])
+    bucket_dir = conv_dir / "summaries" / "_shared"
+    bucket_dir.mkdir(parents=True)
+    (bucket_dir / "meta.json").write_text(json.dumps({"objects": []}), encoding="utf-8")
+
+    store.git_snapshot(cid, "durable only")
+
+    tracked = store._git(cid, "ls-tree", "-r", "--name-only", "HEAD").stdout.splitlines()
+    assert "transcript.jsonl" in tracked or any(p.startswith("transcript/") for p in tracked)
+    assert not any(p.startswith("assistant/") for p in tracked)
+    assert not any(p.startswith("summaries/") for p in tracked)
+
+
+def test_rollback_purges_agent_contexts_and_buckets(conv):
+    store, cid = conv
+    conv_dir = store._conv_dir(cid)
+    store.git_snapshot(cid, "base")
+    base_hash = store.git_log(cid)[0]["hash"]
+
+    store.append_message(cid, _msg(content="after base"))
+    store.save_agent_context(cid, "assistant", [_msg(content="derived")])
+    bucket_dir = conv_dir / "summaries" / "_shared"
+    bucket_dir.mkdir(parents=True)
+    (bucket_dir / "meta.json").write_text(json.dumps({"objects": []}), encoding="utf-8")
+    store.git_snapshot(cid, "with derived")
+
+    assert (conv_dir / "assistant").exists()
+    assert (conv_dir / "summaries").exists()
+    assert store.git_rollback(cid, base_hash)
+    assert not (conv_dir / "assistant").exists()
+    assert not (conv_dir / "summaries").exists()
 
 
 # ── Branch ──

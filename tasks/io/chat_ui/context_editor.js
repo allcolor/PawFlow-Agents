@@ -51,10 +51,12 @@ function _ctxToolCallsText(m) {
     if ((name === 'use_tool' || name === 'mcp_pawflow_use_tool' || name === 'mcp_pawflow.use_tool'
         || name === 'mcp__pawflow__use_tool' || name === 'mcp__pawflow__.use_tool' || name === 'pawflow.use_tool') && args) {
       const parsed = typeof args === 'string' ? (() => { try { return JSON.parse(args); } catch (_) { return null; } })() : args;
-      const payload = parsed && !parsed.tool_name && parsed.parameters ? parsed.parameters : parsed;
-      if (payload && payload.tool_name) {
-        name = payload.tool_name;
-        args = payload.arguments || payload.parameters || {};
+      if (parsed && parsed.tool_name) {
+        name = parsed.tool_name;
+        args = parsed.arguments || parsed.parameters || {};
+      } else if (parsed && parsed.parameters && parsed.parameters.tool_name) {
+        name = parsed.parameters.tool_name;
+        args = parsed.parameters.arguments || parsed.parameters.parameters || {};
       }
     }
     let argsText = '';

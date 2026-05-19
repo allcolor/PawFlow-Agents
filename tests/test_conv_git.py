@@ -130,6 +130,29 @@ def test_rollback_purges_agent_contexts_and_buckets(conv):
     assert not (conv_dir / "summaries").exists()
 
 
+def test_rollback_rebuild_source_comes_from_restored_shared_context(conv):
+    store, cid = conv
+    conv_dir = store._conv_dir(cid)
+    store.append_message(cid, _msg(content="base shared"))
+    store.git_snapshot(cid, "base")
+    base_hash = store.git_log(cid)[0]["hash"]
+
+    store.append_message(cid, _msg(content="after base"))
+    store.save_agent_context(cid, "assistant", [_msg(content="stale derived")])
+    bucket_dir = conv_dir / "summaries" / "_shared"
+    bucket_dir.mkdir(parents=True)
+    (bucket_dir / "meta.json").write_text(json.dumps({"objects": []}), encoding="utf-8")
+    store.git_snapshot(cid, "with derived")
+
+    assert store.git_rollback(cid, base_hash)
+    assert store.load_agent_context(cid, "assistant") is None
+
+    rebuilt_source = store.load_shared_for_agent(cid, "assistant")
+    assert rebuilt_source is not None
+    assert [m["content"] for m in rebuilt_source] == ["base shared"]
+    assert all(m["content"] != "after base" for m in rebuilt_source)
+
+
 # ── Branch ──
 
 def test_branch_create(conv):

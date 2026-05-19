@@ -604,7 +604,13 @@ class ConversationStore:
         if not (conv_dir / ".git").exists():
             return False
         try:
-            self._git(cid, "checkout", commit_hash, "--", ".")
+            # Restore the durable conversation tree exactly as it existed at
+            # the target commit while keeping the current branch checked out.
+            # `git checkout <hash> -- .` restores files present in the target
+            # but can leave later tracked files behind; read-tree resets the
+            # index/worktree to the target tree so deletions are represented in
+            # the rollback commit as well.
+            self._git(cid, "read-tree", "--reset", "-u", commit_hash)
             self._purge_derived_state_after_history_change(cid)
             # Reload cache from rolled-back state
             with self._cache_lock:

@@ -1225,11 +1225,18 @@ class ToolRelayService(BaseService):
                 available = ToolRelayService._list_available_filesystem_services(
                     user_id, conversation_id, agent_name)
                 allowed = [item.get("id", "") for item in available if item.get("id")]
+                default_id = ""
+                if conversation_id:
+                    try:
+                        from core.relay_bindings import get_default
+                        default_id = get_default(conversation_id, agent_name) or ""
+                    except Exception:
+                        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 if service_id in ("", "workspace", "ws", "local") and default_service:
                     return default_service
                 if conversation_id:
                     if service_id in ("", "workspace", "ws", "local"):
-                        service_id = allowed[0] if allowed else ""
+                        service_id = default_id or (allowed[0] if allowed else "")
                     if not service_id or service_id not in allowed:
                         return None
                 return reg.resolve(service_id, user_id=user_id, conv_id=conversation_id)
@@ -1249,6 +1256,18 @@ class ToolRelayService(BaseService):
             reg = ServiceRegistry.get_instance()
             available = ToolRelayService._list_available_filesystem_services(
                 user_id, conversation_id, agent_name)
+            if conversation_id and available:
+                try:
+                    from core.relay_bindings import get_default
+                    default_id = get_default(conversation_id, agent_name) or ""
+                except Exception:
+                    default_id = ""
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+                if default_id and any(item.get("id") == default_id for item in available):
+                    svc = reg.resolve(default_id, user_id=user_id,
+                                      conv_id=conversation_id)
+                    if svc:
+                        return svc
             if available:
                 for item in available:
                     svc = reg.resolve(

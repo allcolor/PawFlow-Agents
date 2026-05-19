@@ -21,6 +21,15 @@ def _handler_with_filestore(tmp_path):
     return handler
 
 
+def test_bash_without_relay_does_not_default_to_filestore(tmp_path):
+    handler = _handler_with_filestore(tmp_path)
+
+    result = handler.execute({"command": "git diff --check", "path": "/workspace"})
+
+    assert "cannot execute commands on FileStore" not in result
+    assert "no filesystem services available" in result
+
+
 def test_background_bash_relay_returns_filestore_output_url(tmp_path):
     handler = _handler_with_filestore(tmp_path)
     handler.set_fs_service(FakeRelay())

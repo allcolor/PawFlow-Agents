@@ -77,6 +77,43 @@ def test_tool_relay_filesystem_listing_uses_agent_bindings(monkeypatch):
     assert [item["id"] for item in available] == ["relay-agent"]
 
 
+def test_tool_relay_default_filesystem_prefers_default_relay(monkeypatch):
+    from services.tool_relay_service import ToolRelayService
+    import core.relay_bindings as relay_bindings
+    from core.service_registry import SCOPE_USER
+
+    relay_other = object()
+    relay_default = object()
+
+    class _Definition:
+        service_type = "relay"
+        scope = SCOPE_USER
+
+        def __init__(self, service_id):
+            self.service_id = service_id
+
+    class _Registry:
+        def resolve_definition(self, service_id, user_id="", conv_id=""):
+            return _Definition(service_id)
+
+        def resolve(self, service_id, user_id="", conv_id=""):
+            return {
+                "relay-other": relay_other,
+                "relay-default": relay_default,
+            }.get(service_id)
+
+    monkeypatch.setattr(relay_bindings, "get_linked", lambda cid, agent="": ["relay-other", "relay-default"])
+    monkeypatch.setattr(relay_bindings, "get_default", lambda cid, agent="": "relay-default")
+    monkeypatch.setattr(
+        "core.service_registry.ServiceRegistry.get_instance",
+        staticmethod(lambda: _Registry()),
+    )
+
+    assert ToolRelayService._find_filesystem_service("alice", "conv1", "assistant") is relay_default
+    resolver = ToolRelayService._make_filesystem_resolver("alice", "conv1", "assistant")
+    assert resolver("") is relay_default
+
+
 def test_pop_cc_tc_fifo_on_hash_collision():
     _reset_state()
     h = bg._args_hash({"command": "ls"})

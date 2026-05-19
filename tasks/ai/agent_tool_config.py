@@ -359,7 +359,9 @@ class AgentToolConfigMixin:
                         _default_relay = get_default(conversation_id, agent=_agent_name) or ""
                         if _default_relay:
                             from core.service_registry import ServiceRegistry
-                            _relay_svc = ServiceRegistry.get_instance().resolve(_default_relay, user_id=user_id)
+                            _relay_svc = ServiceRegistry.get_instance().resolve(
+                                _default_relay, user_id=user_id,
+                                conv_id=conversation_id)
                     except Exception:
                         logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 fs_svc = _relay_svc or self._find_filesystem_service(user_id)

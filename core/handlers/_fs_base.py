@@ -247,8 +247,11 @@ class BaseFsHandler(ToolHandler):
         if svc:
             return (svc, None)
 
-        # No relay → FileStore fallback (LLM API only)
-        return ("filestore", None)
+        # No implicit FileStore fallback for filesystem tools. FileStore is
+        # valid only when explicitly requested (`source=filestore`,
+        # `fs://filestore/...`, etc.); otherwise omitted source means the
+        # conversation's default relay/filesystem service.
+        return (None, None)
 
     def _find_service(self, service_name: str = ""):
         """Find a filesystem service by name or auto-detect.

@@ -1,6 +1,7 @@
 import json
 import shutil
 import tempfile
+import time
 from pathlib import Path
 
 
@@ -70,6 +71,12 @@ class TestGoalTaskAssignment:
         assert assigned["max_budget"] == 5.0
         assert assigned["interactive"] is True
 
+        from core.poll_scheduler import PollScheduler
+        schedule = PollScheduler.instance().get(
+            f"goal-conv::task::{assigned['task_id']}")
+        assert schedule is not None
+        assert schedule["recheck_at"] <= time.time() + 1
+
     def test_inline_task_without_criteria_stays_open_ended(self):
         from core.conversation_store import ConversationStore
 
@@ -91,6 +98,12 @@ class TestGoalTaskAssignment:
         assigned = next(iter(tasks.values()))
         assert assigned["completion_criteria"] == ""
 
+        from core.poll_scheduler import PollScheduler
+        schedule = PollScheduler.instance().get(
+            f"task-conv::task::{assigned['task_id']}")
+        assert schedule is not None
+        assert schedule["recheck_at"] <= time.time() + 1
+
     def test_task_definition_verifier_is_used_when_assignment_omits_one(self):
         from core.conversation_store import ConversationStore
 
@@ -110,3 +123,37 @@ class TestGoalTaskAssignment:
         tasks = store.get_extra("verify-conv", "agent_tasks")
         assigned = next(iter(tasks.values()))
         assert assigned["verifier"] == "assistant"
+
+    def test_flow_assign_task_starts_immediately(self):
+        from core import FlowFile
+        from core.conversation_store import ConversationStore
+        from core.poll_scheduler import PollScheduler
+        from tasks.io.conv_task_ops import AssignTaskToAgentTask
+
+        store = ConversationStore.instance()
+        store.save("flow-conv", [], user_id="alice")
+
+        task = AssignTaskToAgentTask({
+            "conversation_id": "flow-conv",
+            "user_id": "alice",
+            "agent_name": "qwen",
+            "task_prompt": "Monitor the queue",
+            "interval": "120",
+            "max_iterations": 3,
+        })
+        ff = FlowFile(content=b"")
+        ff.set_attribute("conversation_id", "flow-conv")
+
+        out = task.execute(ff)[0]
+        data = json.loads(out.get_content().decode("utf-8"))
+        assert data["ok"] is True
+
+        stored = store.get_extra("flow-conv", "agent_tasks")[data["task_id"]]
+        assert stored["task_id"] == data["task_id"]
+        assert stored["reschedule_count"] == 0
+        assert stored["interval"]["min"] == 120
+
+        schedule = PollScheduler.instance().get(
+            f"flow-conv::task::{data['task_id']}")
+        assert schedule is not None
+        assert schedule["recheck_at"] <= time.time() + 1

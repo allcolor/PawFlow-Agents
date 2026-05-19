@@ -89,27 +89,30 @@ class AssignTaskToAgentTask(BaseTask):
         store = ConversationStore.instance()
 
         task_id = uuid.uuid4().hex[:12]
+        from core.handlers.task_management import AssignTaskHandler
         task_entry = {
+            "task_id": task_id,
             "task": prompt,
             "agent": agent,
             "status": "active",
             "created_at": time.time(),
             "iterations_done": 0,
+            "reschedule_count": 0,
             "max_iterations": max_iter,
-            "interval": interval,
+            "interval": AssignTaskHandler._parse_interval(str(interval or "6/1m")),
         }
 
         all_tasks = store.get_extra(conv_id, "agent_tasks") or {}
         all_tasks[task_id] = task_entry
         store.set_extra(conv_id, "agent_tasks", all_tasks)
 
-        # Schedule first check
-        from core.poll_scheduler import PollScheduler
-        PollScheduler.instance().schedule_delay(
-            conv_id, 5,
-            key=f"{conv_id}::task::{task_id}",
+        # Start immediately; subsequent runs are scheduled by the agent loop.
+        from core.handlers.task_management import schedule_agent_task_wake
+        schedule_agent_task_wake(
+            conv_id, task_id,
             reason=f"[agent_task:{task_id}] assigned by flow ({agent})",
             user_id=user_id,
+            delay_seconds=0,
         )
 
         logger.info(f"[assignTask] {task_id} assigned to {agent} in {conv_id[:8]}")

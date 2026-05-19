@@ -127,6 +127,11 @@ def _create_and_assign_task_def(self, body: Dict[str, Any], store,
         poller_thread.start()
         logger.info("Agent poller started (triggered by inline task assignment)")
 
+    try:
+        self._poller_wake.set()
+    except Exception:
+        logger.debug("inline task assignment poller wake failed", exc_info=True)
+
     return {"ok": True, "name": name, "agent": agent, "result": result,
             "task_def": data}
 
@@ -570,12 +575,12 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
                 _kill_running_task_agent(self, conv_id, tid, task.get("agent", ""), force=False)
             elif action == "resume_task":
                 task["status"] = "active"
-                from core.tool_registry import AssignTaskHandler as _ATH
-                scheduler.schedule_delay(
-                    conv_id, _ATH._get_task_delay(task),
-                    key=f"{conv_id}::task::{tid}",
+                from core.handlers.task_management import schedule_agent_task_wake
+                schedule_agent_task_wake(
+                    conv_id, tid,
                     reason=f"[agent_task:{tid}] resumed ({task.get('agent', '?')})",
                     user_id=user_id,
+                    delay_seconds=0,
                 )
             elif action == "delete_task":
                 # Cancel schedules & kill agent first
@@ -657,13 +662,12 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
             task["status"] = "active"
             all_tasks[task_id] = task
             store.set_extra(conv_id, "agent_tasks", all_tasks)
-        from core.poll_scheduler import PollScheduler
-        sched_key = f"{conv_id}::task::{task_id}"
-        PollScheduler.instance().schedule_delay(
-            conv_id, 1,
-            key=sched_key,
+        from core.handlers.task_management import schedule_agent_task_wake
+        schedule_agent_task_wake(
+            conv_id, task_id,
             reason=f"[agent_task:{task_id}] user message injected",
             user_id=user_id,
+            delay_seconds=0,
         )
         from core.conversation_event_bus import ConversationEventBus
         ConversationEventBus.instance().publish_event(

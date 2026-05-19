@@ -13,11 +13,36 @@ from core.tool_handler import ToolHandler
 logger = logging.getLogger(__name__)
 
 
+def wake_agent_poller() -> None:
+    """Wake the live agent poller if it is running."""
+    try:
+        from tasks.ai.agent_loop import AgentLoopTask
+        _exec = AgentLoopTask._live_instance
+        if _exec is not None and hasattr(_exec, "_poller_wake"):
+            _exec._poller_wake.set()
+    except Exception:
+        logger.debug("agent poller wake failed", exc_info=True)
+
+
+def schedule_agent_task_wake(conversation_id: str, task_id: str,
+                             reason: str, user_id: str = "",
+                             delay_seconds: int = 0) -> float:
+    """Schedule a task wake and nudge the poller immediately."""
+    from core.poll_scheduler import PollScheduler
+    recheck_at = PollScheduler.instance().schedule_delay(
+        conversation_id, delay_seconds,
+        key=f"{conversation_id}::task::{task_id}",
+        reason=reason,
+        user_id=user_id,
+    )
+    wake_agent_poller()
+    return recheck_at
+
+
 def _activate_dependents(conversation_id: str, completed_task_id: str,
                         result: str = "", user_id: str = ""):
     """Check if any waiting tasks can be activated after a task completes."""
     from core.conversation_store import ConversationStore
-    from core.poll_scheduler import PollScheduler
     store = ConversationStore.instance()
     all_tasks = store.get_extra(conversation_id, "agent_tasks") or {}
     activated = []
@@ -35,12 +60,11 @@ def _activate_dependents(conversation_id: str, completed_task_id: str,
         # Activate this task
         t["status"] = "active"
         all_tasks[tid] = t
-        delay = AssignTaskHandler._get_task_delay(t)
-        PollScheduler.instance().schedule_delay(
-            conversation_id, delay,
-            key=f"{conversation_id}::task::{tid}",
+        schedule_agent_task_wake(
+            conversation_id, tid,
             reason=f"[agent_task:{tid}] deps met, activated ({t.get('agent', '?')})",
             user_id=user_id or t.get("assigned_by", ""),
+            delay_seconds=0,
         )
         # Inject parent results into the sub-conversation
         parent_results = {}
@@ -522,13 +546,12 @@ class AssignTaskHandler(ToolHandler):
 
         # Schedule first wake-up (only if not waiting on deps)
         if _initial_status == "active":
-            first_delay = self._get_task_delay(task_data)
-            from core.poll_scheduler import PollScheduler
-            PollScheduler.instance().schedule_delay(
-                self._conversation_id, first_delay,
-                key=f"{self._conversation_id}::task::{task_id}",
+            first_delay = 0
+            schedule_agent_task_wake(
+                self._conversation_id, task_id,
                 reason=f"[agent_task:{task_id}] assigned task ({target})",
                 user_id=self._user_id,
+                delay_seconds=0,
             )
         else:
             first_delay = 0
@@ -559,7 +582,7 @@ class AssignTaskHandler(ToolHandler):
         v_info = f" (verifier: {verifier})" if verifier else ""
         iv_label = interval_data.get("spec", str(first_delay))
         dep_info = f" Waiting on: {', '.join(depends_on)}." if _initial_status == "waiting" else ""
-        sched_info = f" First in {first_delay}s." if _initial_status == "active" else ""
+        sched_info = " Starting now." if _initial_status == "active" else ""
         return f"Task {task_id} assigned to '{target}'{v_info}. Status: {_initial_status}. Interval: {iv_label}.{sched_info}{dep_info}"
 
 

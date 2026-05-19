@@ -382,7 +382,7 @@ How it works:
 
 ### Task Sub-conversations
 
-Tasks (`assign_task`, `complete_task`, `verify_task`) run in isolated sub-conversations with the format `{conversation_id}::task::{task_id}`. These have their own message store and context, allowing an agent to work on a background task without polluting the main conversation. Tasks auto-reschedule with configurable delays and support error backoff.
+Tasks (`assign_task`, `complete_task`, `verify_task`) run in isolated sub-conversations with the format `{conversation_id}::task::{task_id}`. These have their own message store and context, allowing an agent to work on a background task without polluting the main conversation. A newly assigned or resumed task wakes immediately; subsequent runs auto-reschedule with the configured interval and support error backoff.
 
 ---
 

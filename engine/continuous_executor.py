@@ -265,28 +265,45 @@ class ContinuousFlowExecutor:
 
     def start(self):
         """Start all tasks and the scheduler."""
+        _start_t0 = time.monotonic()
         # Try to recover from checkpoint before starting
         if self._checkpoint_mgr:
+            _t0 = time.monotonic()
             self._recover_from_checkpoint()
+            logger.info("[startup-timing] executor checkpoint recover: %.1fms",
+                        (time.monotonic() - _t0) * 1000)
 
         # Re-connect services (needed after stop/start cycle, idempotent)
+        _t0 = time.monotonic()
         for service_id, service in self._flow.services.items():
             if not (hasattr(service, 'is_connected') and service.is_connected()):
                 try:
+                    _svc_t0 = time.monotonic()
                     service.connect()
                     logger.info(f"Service '{service_id}' connected")
+                    logger.info("[startup-timing] executor service %s connect: %.1fms",
+                                service_id, (time.monotonic() - _svc_t0) * 1000)
                 except Exception as e:
                     logger.error(f"Service '{service_id}' failed to connect: {e}")
+        logger.info("[startup-timing] executor service reconnect phase: %.1fms",
+                    (time.monotonic() - _t0) * 1000)
 
         # Re-initialize tasks (e.g. register HTTP routes, idempotent)
+        _t0 = time.monotonic()
         for task_id, task in self._tasks.items():
             try:
                 if hasattr(task, 'initialize'):
+                    _task_t0 = time.monotonic()
                     task.initialize()
+                    logger.info("[startup-timing] executor task %s initialize: %.1fms",
+                                task_id, (time.monotonic() - _task_t0) * 1000)
             except Exception as e:
                 logger.error(f"Task '{task_id}' initialization failed: {e}")
+        logger.info("[startup-timing] executor task init phase: %.1fms",
+                    (time.monotonic() - _t0) * 1000)
 
         # Transition all tasks to RUNNING
+        _t0 = time.monotonic()
         for task_id in self._tasks:
             self._task_states.start(task_id)
 
@@ -303,17 +320,33 @@ class ContinuousFlowExecutor:
         )
         self._scheduler_thread.start()
         logger.info("ContinuousFlowExecutor started")
+        logger.info("[startup-timing] executor scheduler/start phase: %.1fms",
+                    (time.monotonic() - _t0) * 1000)
 
         # Safety net: reclaim orphan / stale Claude Code session dirs
-        # accumulated across previous runs. Runs once per boot; idempotent.
-        try:
-            from core.conversation_store import ConversationStore as _CS
-            _removed = _CS.instance().cleanup_orphan_claude_sessions()
-            if _removed:
-                logger.info("Reclaimed %d orphan/stale CC session entry(ies) on boot",
-                            _removed)
-        except Exception as _e:
-            logger.debug("CC session cleanup on boot failed: %s", _e)
+        # accumulated across previous runs. It can scan thousands of files on
+        # Windows/WSL, so run after the scheduler is live and never block the
+        # server-ready path.
+        def _cleanup_cc_sessions_async():
+            try:
+                _t0 = time.monotonic()
+                from core.conversation_store import ConversationStore as _CS
+                _removed = _CS.instance().cleanup_orphan_claude_sessions()
+                if _removed:
+                    logger.info("Reclaimed %d orphan/stale CC session entry(ies) on boot",
+                                _removed)
+                logger.info("[startup-timing] executor CC session cleanup async: %.1fms",
+                            (time.monotonic() - _t0) * 1000)
+            except Exception as _e:
+                logger.debug("CC session cleanup on boot failed: %s", _e)
+
+        threading.Thread(
+            target=_cleanup_cc_sessions_async,
+            name="cc-session-cleanup",
+            daemon=True,
+        ).start()
+        logger.info("[startup-timing] executor start total: %.1fms",
+                    (time.monotonic() - _start_t0) * 1000)
 
     def stop(self):
         """Stop the scheduler and all tasks."""

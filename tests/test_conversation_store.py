@@ -381,6 +381,25 @@ class TestExtras:
         assert store.get_extra(cid, "title") == "Recovered"
         assert len(attempted) == 2
 
+    def test_hot_metadata_write_failure_does_not_abort_append(self, conv, monkeypatch):
+        from pathlib import Path
+
+        store, cid, uid = conv
+        original_replace = Path.replace
+
+        def locked_extras_replace(self, target):
+            if self.name.startswith("extras.json.") and self.name.endswith(".tmp"):
+                raise PermissionError("persistent Windows lock")
+            return original_replace(self, target)
+
+        monkeypatch.setattr(Path, "replace", locked_extras_replace)
+
+        store.append_message(cid, _msg(role="assistant", content="persisted"),
+                             agent_name="bot", user_id=uid)
+
+        messages = store.load(cid)
+        assert messages[-1]["content"] == "persisted"
+
 
 # ── list_conversations ───────────────────────────────────────────────
 

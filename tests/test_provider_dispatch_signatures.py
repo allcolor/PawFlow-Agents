@@ -306,6 +306,26 @@ def test_mcp_use_tool_preserves_registered_search_tool_name():
     assert args == {"pattern": "placeholder"}
 
 
+def test_mcp_use_tool_unwraps_dotted_provider_wrapper():
+    name, args = unwrap_mcp_tool(
+        "mcp__pawflow__.use_tool",
+        {"tool_name": "read", "arguments": {"path": "/workspace/README.md"}},
+    )
+
+    assert name == "read"
+    assert args == {"path": "/workspace/README.md"}
+
+
+def test_mcp_use_tool_unwraps_parameters_payload():
+    name, args = unwrap_mcp_tool(
+        "mcp__pawflow__.use_tool",
+        {"parameters": {"tool_name": "search", "arguments": {"pattern": "x"}}},
+    )
+
+    assert name == "search"
+    assert args == {"pattern": "x"}
+
+
 def test_gemini_acp_permission_result_accepts_pawflow_allow_option():
     from core.llm_providers.gemini import LLMGeminiMixin
 

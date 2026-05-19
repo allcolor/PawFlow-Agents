@@ -229,6 +229,8 @@ const TYPING_COLORS = [
   '#f97316','#c084fc','#22d3ee','#ef4444','#84cc16',
 ];
 let typingColorIdx = 0;
+const TYPING_SWEEP_MS = 90;
+const TYPING_VERB_MS = 3000;
 
 function randomVerb() {
   return FUN_VERBS[Math.floor(Math.random() * FUN_VERBS.length)];
@@ -239,6 +241,47 @@ function randomColor() {
   return TYPING_COLORS[typingColorIdx];
 }
 
+function typingSweepText(text, pos) {
+  const raw = String(text || '');
+  if (!raw) return '█';
+  const idx = Math.max(0, Math.min(raw.length, pos % (raw.length + 1)));
+  return raw.slice(0, idx) + '█' + raw.slice(idx + 1);
+}
+
+function renderTypingLine(el, label, verb, pos, color) {
+  const prefix = label ? '<em style="color:' + color + '">'
+    + escapeHtml(typingSweepText(label, pos)) + '</em> ' : '';
+  const verbPos = Math.max(0, pos - String(label || '').length - 1);
+  el.innerHTML = '<span class="spinner" style="color:' + color + '">✻</span>'
+    + prefix
+    + '<span class="verb" style="color:' + color + '">'
+    + escapeHtml(typingSweepText(verb + '...', verbPos))
+    + '</span>';
+}
+
+function startTypingSweep(elementId, label) {
+  let pos = 0;
+  let verb = randomVerb();
+  let color = randomColor();
+  let lastVerbAt = Date.now();
+  const tick = () => {
+    const el = document.getElementById(elementId);
+    if (!el) return;
+    const now = Date.now();
+    if (now - lastVerbAt >= TYPING_VERB_MS) {
+      verb = randomVerb();
+      color = randomColor();
+      lastVerbAt = now;
+      pos = 0;
+    }
+    renderTypingLine(el, label || '', verb, pos, color);
+    const totalLen = String(label || '').length + 1 + verb.length + 3;
+    pos = (pos + 1) % Math.max(1, totalLen);
+  };
+  tick();
+  return setInterval(tick, TYPING_SWEEP_MS);
+}
+
 function showTyping() {
   // If already showing, don't recreate (avoids layout thrashing)
   if (document.getElementById('typing')) return;
@@ -247,19 +290,9 @@ function showTyping() {
   el.className = 'typing';
   el.id = 'typing';
   el.dataset.transientUi = '1';
-  const color = randomColor();
-  el.innerHTML = '<span class="spinner" style="color:' + color + '">✻</span>'
-    + '<span class="verb" style="color:' + color + '">' + randomVerb() + '...</span>';
   document.getElementById('messages').appendChild(el);
   scrollBottom();
-  typingInterval = setInterval(() => {
-    const t = document.getElementById('typing');
-    if (t) {
-      const c = randomColor();
-      t.innerHTML = '<span class="spinner" style="color:' + c + '">✻</span>'
-        + '<span class="verb" style="color:' + c + '">' + randomVerb() + '...</span>';
-    }
-  }, 3000);
+  typingInterval = startTypingSweep('typing', '');
 }
 
 function hideTyping() {
@@ -275,21 +308,9 @@ function showContextOp(label) {
   el.className = 'typing';
   el.id = 'contextOpTyping';
   el.dataset.transientUi = '1';
-  const c = randomColor();
-  el.innerHTML = '<span class="spinner" style="color:' + c + '">✻</span>'
-    + '<em style="color:' + c + '">' + label + '</em> '
-    + '<span class="verb" style="color:' + c + '">' + randomVerb() + '...</span>';
   document.getElementById('messages').appendChild(el);
   scrollBottom();
-  contextOpInterval = setInterval(() => {
-    const t = document.getElementById('contextOpTyping');
-    if (t) {
-      const c2 = randomColor();
-      t.innerHTML = '<span class="spinner" style="color:' + c2 + '">✻</span>'
-        + '<em style="color:' + c2 + '">' + label + '</em> '
-        + '<span class="verb" style="color:' + c2 + '">' + randomVerb() + '...</span>';
-    }
-  }, 3000);
+  contextOpInterval = startTypingSweep('contextOpTyping', label);
 }
 
 function hideContextOp() {

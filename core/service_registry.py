@@ -564,7 +564,11 @@ class ServiceRegistry:
                 if sdef.enabled
             ]
         for svc_id in ids:
+            _t0 = time.monotonic()
             self._connect_one(sid, svc_id)
+            logger.info("[startup-timing] service connect %s/%s: %.1fms",
+                        sid[:8] if len(sid) > 8 else sid, svc_id,
+                        (time.monotonic() - _t0) * 1000)
 
     def disconnect_scope(self, scope: str, scope_id: str) -> None:
         """Disconnect all live instances for a scope."""
@@ -603,8 +607,11 @@ class ServiceRegistry:
                 return
 
         try:
+            _t0 = time.monotonic()
             from tasks import _register_all_services
             _register_all_services()
+            logger.info("[startup-timing] service %s register services: %.1fms",
+                        service_id, (time.monotonic() - _t0) * 1000)
             svc_class = ServiceFactory.get(svc_def.service_type)
             from core.expression import LazyResolveDict
             lazy_config = LazyResolveDict(svc_def.config)
@@ -619,7 +626,10 @@ class ServiceRegistry:
             lazy_config["_scope"] = svc_def.scope
             lazy_config["_scope_id"] = svc_def.scope_id
             svc_instance = svc_class(lazy_config)
+            _t0 = time.monotonic()
             svc_instance.connect()
+            logger.info("[startup-timing] service %s connect call: %.1fms",
+                        service_id, (time.monotonic() - _t0) * 1000)
             with self._data_lock:
                 self._live_instances.setdefault(scope_id, {})[service_id] = svc_instance
             logger.info("Service '%s' connected (scope_id=%s)",

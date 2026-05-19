@@ -5,10 +5,17 @@ from __future__ import annotations
 import json
 
 
-_USE_TOOL_WRAPPERS = {"mcp__pawflow__use_tool", "mcp_pawflow_use_tool", "use_tool"}
+_USE_TOOL_WRAPPERS = {
+    "mcp__pawflow__use_tool", "mcp__pawflow__.use_tool",
+    "mcp_pawflow_use_tool", "mcp_pawflow.use_tool",
+    "pawflow.use_tool", "use_tool",
+}
 _SCHEMA_WRAPPERS = {
     "mcp__pawflow__get_tool_schema",
+    "mcp__pawflow__.get_tool_schema",
     "mcp_pawflow_get_tool_schema",
+    "mcp_pawflow.get_tool_schema",
+    "pawflow.get_tool_schema",
     "get_tool_schema",
 }
 
@@ -27,8 +34,10 @@ def normalize_observed_tool(name: str, args) -> tuple[str, dict]:
     raw_name = name or ""
     tool_args = _json_dict(args)
     if raw_name in _USE_TOOL_WRAPPERS:
+        if "tool_name" not in tool_args and isinstance(tool_args.get("parameters"), dict):
+            tool_args = tool_args["parameters"]
         inner_name = str(tool_args.get("tool_name") or raw_name)
-        inner_args = _json_dict(tool_args.get("arguments", {}))
+        inner_args = _json_dict(tool_args.get("arguments", tool_args.get("parameters", {})))
         return inner_name, inner_args
     if raw_name in _SCHEMA_WRAPPERS:
         return "get_tool_schema", tool_args

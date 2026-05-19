@@ -35,6 +35,7 @@ def test_preempt_kill_fast_restarts_streaming_loop():
 # ---------------------------------------------------------------------------
 
 _CONV_STORE = Path("core/conversation_store.py").read_text(encoding="utf-8")
+_CONTINUOUS_EXECUTOR = Path("engine/continuous_executor.py").read_text(encoding="utf-8")
 
 
 def test_write_extras_retries_on_permission_error():
@@ -51,3 +52,17 @@ def test_write_extras_retries_on_permission_error():
         "_write_extras must catch PermissionError to retry the rename")
     assert "for _attempt in range" in body or "for _ in range" in body, (
         "_write_extras must retry the os.replace on PermissionError")
+
+
+def test_hot_metadata_write_is_best_effort():
+    body = _CONV_STORE[_CONV_STORE.index("def _persist_hot_metadata"):]
+    body = body[:body.index("def _ensure_loaded")]
+    assert "attempts=1" in body
+    assert "hot metadata extras write skipped" in body
+
+
+def test_cc_session_cleanup_does_not_block_startup_ready_path():
+    assert "def _cleanup_cc_sessions_async" in _CONTINUOUS_EXECUTOR
+    assert "name=\"cc-session-cleanup\"" in _CONTINUOUS_EXECUTOR
+    assert "daemon=True" in _CONTINUOUS_EXECUTOR
+    assert "executor CC session cleanup async" in _CONTINUOUS_EXECUTOR

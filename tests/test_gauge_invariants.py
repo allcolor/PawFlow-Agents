@@ -120,8 +120,11 @@ def test_chat_tool_display_unwraps_meta_use_tool_calls():
     assert "function _unwrapDisplayedToolCall" in _MESSAGES_JS
     assert "mcp_pawflow_use_tool" in _MESSAGES_JS
     assert "mcp__pawflow__use_tool" in _MESSAGES_JS
+    assert "mcp__pawflow__.use_tool" in _MESSAGES_JS
+    assert "pawflow.use_tool" in _MESSAGES_JS
     assert "toolArgs.tool_name" in _MESSAGES_JS
-    assert "toolArgs.arguments || {}" in _MESSAGES_JS
+    assert "toolArgs.parameters" in _MESSAGES_JS
+    assert "payload.arguments || payload.parameters || {}" in _MESSAGES_JS
 
 
 def test_transcript_tool_events_are_not_filtered_by_cancelled_ui_state():

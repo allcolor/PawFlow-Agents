@@ -106,6 +106,7 @@ def unwrap_mcp_tool(name: str, arguments: dict) -> tuple:
     """Unwrap wrapper tool names to the inner tool name + arguments.
 
     mcp__pawflow__use_tool({tool_name: X, arguments: Y}) → (X, Y)
+    mcp__pawflow__.use_tool({tool_name: X, arguments: Y}) → (X, Y)
     mcp_pawflow_use_tool({tool_name: X, arguments: Y}) → (X, Y)
     use_tool({tool_name: X, arguments: Y}) → (X, Y)
     mcp__pawflow__get_tool_schema(...) → ("get_tool_schema", arguments)
@@ -114,7 +115,17 @@ def unwrap_mcp_tool(name: str, arguments: dict) -> tuple:
 
     Also resolves tool aliases (shell → bash, etc.) so display is correct.
     """
-    if name in ("mcp__pawflow__use_tool", "mcp_pawflow_use_tool", "use_tool"):
+    use_tool_wrappers = {
+        "mcp__pawflow__use_tool", "mcp__pawflow__.use_tool",
+        "mcp_pawflow_use_tool", "mcp_pawflow.use_tool",
+        "pawflow.use_tool", "use_tool",
+    }
+    schema_wrappers = {
+        "mcp__pawflow__get_tool_schema", "mcp__pawflow__.get_tool_schema",
+        "mcp_pawflow_get_tool_schema", "mcp_pawflow.get_tool_schema",
+        "pawflow.get_tool_schema", "get_tool_schema",
+    }
+    if name in use_tool_wrappers:
         # Arguments may arrive as a JSON string (some LLMs serialize it).
         if isinstance(arguments, str):
             try:
@@ -122,16 +133,19 @@ def unwrap_mcp_tool(name: str, arguments: dict) -> tuple:
             except (ValueError, TypeError):
                 pass
         if isinstance(arguments, dict):
-            tool_name = arguments.get("tool_name", name)
+            payload = arguments
+            if ("tool_name" not in payload and isinstance(payload.get("parameters"), dict)):
+                payload = payload["parameters"]
+            tool_name = payload.get("tool_name", name)
             tool_name = _TOOL_ALIASES.get(tool_name, tool_name)
-            inner = arguments.get("arguments", arguments)
+            inner = payload.get("arguments", payload.get("parameters", payload))
             if isinstance(inner, str):
                 try:
                     inner = json.loads(inner)
                 except (ValueError, TypeError):
                     pass
             return tool_name, inner
-    if name in ("mcp__pawflow__get_tool_schema", "mcp_pawflow_get_tool_schema", "get_tool_schema"):
+    if name in schema_wrappers:
         return "get_tool_schema", arguments
     return name, arguments
 

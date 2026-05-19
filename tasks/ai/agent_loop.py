@@ -140,8 +140,10 @@ class AgentLoopTask(
         This ensures scheduled rechecks from PollScheduler fire even if
         no user has sent a message yet after a server restart.
         """
+        _init_t0 = time.monotonic()
         poll_interval = int(self.config.get("poll_interval", 0))
         if poll_interval > 0 and not self._poller_started:
+            _t0 = time.monotonic()
             self._poller_started = True
             poller = threading.Thread(
                 target=self._poll_conversations,
@@ -151,6 +153,8 @@ class AgentLoopTask(
             )
             poller.start()
             logger.info(f"Agent poller started at flow init (interval={poll_interval}s)")
+            logger.info("[startup-timing] agentLoop poller start: %.1fms",
+                        (time.monotonic() - _t0) * 1000)
 
         # Wire the shared-pyramid background builder to this task's
         # summarizer resolver and summarize pipeline. First task that
@@ -159,6 +163,7 @@ class AgentLoopTask(
         # self — but all AgentLoopTask instances share the same
         # Class-level methods, so the specific instance is a detail).
         try:
+            _t0 = time.monotonic()
             from core.bg_bucket_builder import BgBucketBuilder
             _bb = BgBucketBuilder.instance()
             _bb.set_summarizer_resolver(
@@ -167,8 +172,12 @@ class AgentLoopTask(
             _bb.set_summarize_fn(self._summarize_messages)
             logger.info("[bg-bucket] wired resolver + summarize_fn "
                          "from AgentLoopTask.initialize()")
+            logger.info("[startup-timing] agentLoop bg bucket wiring: %.1fms",
+                        (time.monotonic() - _t0) * 1000)
         except Exception:
             logger.warning("[bg-bucket] wiring failed", exc_info=True)
+        logger.info("[startup-timing] agentLoop initialize total: %.1fms",
+                    (time.monotonic() - _init_t0) * 1000)
 
 
     @classmethod

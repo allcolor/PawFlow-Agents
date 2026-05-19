@@ -19,12 +19,17 @@ function _unwrapDisplayedToolCall(name, args) {
   if (typeof toolArgs === 'string') {
     try { toolArgs = JSON.parse(toolArgs); } catch(e) {}
   }
-  if ((toolName === 'use_tool'
-      || toolName === 'mcp_pawflow_use_tool'
-      || toolName === 'mcp__pawflow__use_tool')
-      && toolArgs && typeof toolArgs === 'object' && toolArgs.tool_name) {
-    toolName = toolArgs.tool_name;
-    toolArgs = toolArgs.arguments || {};
+  const useToolWrappers = new Set([
+    'use_tool', 'mcp_pawflow_use_tool', 'mcp_pawflow.use_tool',
+    'mcp__pawflow__use_tool', 'mcp__pawflow__.use_tool', 'pawflow.use_tool'
+  ]);
+  if (useToolWrappers.has(toolName) && toolArgs && typeof toolArgs === 'object') {
+    const payload = (!toolArgs.tool_name && toolArgs.parameters && typeof toolArgs.parameters === 'object')
+      ? toolArgs.parameters
+      : toolArgs;
+    if (!payload.tool_name) return { toolName, toolArgs };
+    toolName = payload.tool_name;
+    toolArgs = payload.arguments || payload.parameters || {};
     if (typeof toolArgs === 'string') {
       try { toolArgs = JSON.parse(toolArgs); } catch(e) {}
     }

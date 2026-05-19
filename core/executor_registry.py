@@ -13,6 +13,7 @@ Hooks into DeploymentRegistry to track instance status (running/stopped).
 import json
 import logging
 import threading
+import time
 from pathlib import Path
 from typing import Dict, Optional, Any
 
@@ -164,17 +165,24 @@ class ExecutorRegistry:
                 return
             self._restored = True
 
+        _restore_t0 = time.monotonic()
         # Connect all enabled global services (listeners, filesystem, etc.)
         try:
             from core.service_registry import ServiceRegistry
+            _t0 = time.monotonic()
             ServiceRegistry.get_instance().connect_all_enabled("global", "")
             logger.info("Global services connected at startup")
+            logger.info("[startup-timing] global services connect: %.1fms",
+                        (time.monotonic() - _t0) * 1000)
         except Exception as e:
             logger.warning("Failed to connect global services: %s", e)
 
         dr = _get_deployment_registry()
         if dr:
+            _t0 = time.monotonic()
             dr._ensure_loaded()
+            logger.info("[startup-timing] deployment registry load: %.1fms",
+                        (time.monotonic() - _t0) * 1000)
             # Do NOT sync before restore — sync would mark all "running" as
             # "stopped" because executors aren't in memory yet (fresh process).
             for iid, inst in dr.get_all().items():
@@ -182,6 +190,7 @@ class ExecutorRegistry:
                     continue
                 if self.get(iid) is not None:
                     continue
+                _inst_t0 = time.monotonic()
                 self._restore_instance(iid, inst.flow_path,
                                        inst.max_workers, inst.max_retries,
                                        flow_fqn=getattr(inst, 'flow_fqn', ''),
@@ -192,11 +201,15 @@ class ExecutorRegistry:
                                        owner=inst.owner or "",
                                        conversation_id=inst.conversation_id or "",
                                        agent_name=getattr(inst, 'agent_name', '') or "")
+                logger.info("[startup-timing] restore instance %s: %.1fms",
+                            iid, (time.monotonic() - _inst_t0) * 1000)
 
         # Clean up legacy state file if present
         legacy = Path(STATE_FILE)
         if legacy.exists():
             legacy.unlink(missing_ok=True)
+        logger.info("[startup-timing] executor registry restore total: %.1fms",
+                    (time.monotonic() - _restore_t0) * 1000)
 
 
     def _restore_instance(self, instance_id: str, flow_path: str,
@@ -211,13 +224,18 @@ class ExecutorRegistry:
                           agent_name: str = "") -> bool:
         """Restore a single executor from the repository or flow_path."""
         try:
+            _restore_t0 = time.monotonic()
             from tasks import register_all_tasks
+            _t0 = time.monotonic()
             register_all_tasks()
+            logger.info("[startup-timing] %s register_all_tasks: %.1fms",
+                        instance_id, (time.monotonic() - _t0) * 1000)
 
             raw = None
             # Try repository FQN first
             if flow_fqn:
                 try:
+                    _t0 = time.monotonic()
                     from core.repository import ScopedRepository
                     repo = ScopedRepository.instance()
                     scopes = []
@@ -242,21 +260,29 @@ class ExecutorRegistry:
                     if raw:
                         logger.info("Restored '%s' from repository (%s)",
                                     instance_id, flow_fqn)
+                    logger.info("[startup-timing] %s repository lookup: %.1fms",
+                                instance_id, (time.monotonic() - _t0) * 1000)
                 except Exception as e:
                     logger.debug("Repository lookup failed for '%s': %s",
                                  flow_fqn, e)
             # Fallback to flow_path
             if raw is None:
+                _t0 = time.monotonic()
                 if not flow_path or not Path(flow_path).exists():
                     logger.warning("Cannot restore '%s': not found (fqn=%s, path=%s)",
                                    instance_id, flow_fqn, flow_path)
                     return False
                 with open(flow_path, "r", encoding="utf-8") as ff:
                     raw = json.load(ff)
+                logger.info("[startup-timing] %s flow file load: %.1fms",
+                            instance_id, (time.monotonic() - _t0) * 1000)
             clean = {k: v for k, v in raw.items() if not k.startswith("_")}
             from engine.parser import FlowParser
+            _t0 = time.monotonic()
             flow = FlowParser.parse(clean)
             _apply_service_bindings(flow, service_overrides, service_configs)
+            logger.info("[startup-timing] %s parse/bind flow: %.1fms",
+                        instance_id, (time.monotonic() - _t0) * 1000)
 
             # Allow flow parameters to override max_workers
             _eff_workers = max_workers
@@ -282,6 +308,7 @@ class ExecutorRegistry:
 
             # Try to restore checkpoint
             if executor._checkpoint_mgr:
+                _t0 = time.monotonic()
                 cp = executor._checkpoint_mgr.load_latest_checkpoint()
                 if cp:
                     flowfiles = executor._checkpoint_mgr.restore_flowfiles(cp)
@@ -292,11 +319,18 @@ class ExecutorRegistry:
                             for ff_item in ffs:
                                 conn.enqueue(ff_item)
                     logger.info("Restored checkpoint for '%s'", instance_id)
+                logger.info("[startup-timing] %s checkpoint restore: %.1fms",
+                            instance_id, (time.monotonic() - _t0) * 1000)
 
+            _t0 = time.monotonic()
             executor.start()
+            logger.info("[startup-timing] %s executor.start: %.1fms",
+                        instance_id, (time.monotonic() - _t0) * 1000)
             with self._executor_lock:
                 self._executors[instance_id] = executor
             logger.info("Restored executor for '%s'", instance_id)
+            logger.info("[startup-timing] %s restore total: %.1fms",
+                        instance_id, (time.monotonic() - _restore_t0) * 1000)
             return True
         except Exception as e:
             logger.error("Failed to restore executor for '%s': %s", instance_id, e)

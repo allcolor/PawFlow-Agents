@@ -1235,7 +1235,7 @@ class ConversationStore:
                 logger.debug("exception suppressed", exc_info=True)
         return {}
 
-    def _write_extras(self, cid: str, data: dict):
+    def _write_extras(self, cid: str, data: dict, attempts: int = 8):
         """Atomically write extras JSON (tmp + rename).
 
         Callers mutating shared extras MUST hold `_get_extras_lock(cid)`.
@@ -1255,7 +1255,7 @@ class ConversationStore:
         tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
         _last_err: Optional[Exception] = None
         try:
-            for _attempt in range(8):
+            for _attempt in range(max(1, int(attempts))):
                 try:
                     tmp.replace(path)
                     return
@@ -1593,7 +1593,15 @@ class ConversationStore:
                     )
                 except (TypeError, ValueError):
                     pass
-            self._write_extras(cid, data)
+            try:
+                # Hot metadata is a startup/read cache derived from the
+                # transcript. Never let a transient Windows handle on
+                # extras.json reject the actual message append.
+                self._write_extras(cid, data, attempts=1)
+            except PermissionError as _pe:
+                logger.warning(
+                    "[convstore:%s] hot metadata extras write skipped: %s",
+                    cid[:8], _pe)
 
     def _ensure_loaded(self):
         if self._loaded:

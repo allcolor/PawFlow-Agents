@@ -52,6 +52,35 @@ _NO_PROXY_EVENT_TIMEOUT_SECONDS = _env_seconds(
 )
 
 
+def _event_tool_args(event: dict) -> dict:
+    """Return tool args from any observed CCI event shape."""
+    for key in ("arguments", "input", "tool_input"):
+        value = event.get(key)
+        if isinstance(value, dict):
+            return value
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+            except (TypeError, ValueError):
+                continue
+            if isinstance(parsed, dict):
+                return parsed
+    payload = event.get("payload") or {}
+    if isinstance(payload, dict):
+        block = payload.get("content_block") or {}
+        if isinstance(block, dict) and isinstance(block.get("input"), dict):
+            return block["input"]
+        delta = payload.get("delta") or {}
+        if isinstance(delta, dict) and isinstance(delta.get("partial_json"), str):
+            try:
+                parsed = json.loads(delta["partial_json"])
+            except (TypeError, ValueError):
+                return {}
+            if isinstance(parsed, dict):
+                return parsed
+    return {}
+
+
 class _CCITurnCoordinator:
     def __init__(self, event_service, session_token: str, callback=None,
                  thinking_callback=None, block_callback=None,
@@ -393,7 +422,7 @@ class _CCITurnCoordinator:
             return
         block = self.tool_by_id.get(tc_id)
         if block is None:
-            args = event.get("arguments") or {}
+            args = _event_tool_args(event)
             block = {
                 "id": tc_id,
                 "name": event.get("name", ""),

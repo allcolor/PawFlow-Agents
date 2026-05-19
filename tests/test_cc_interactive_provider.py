@@ -431,6 +431,27 @@ def test_turn_coordinator_publishes_proxy_tool_use_before_stop_hook():
     })]
 
 
+def test_turn_coordinator_accepts_observed_tool_input_alias():
+    events = [
+        {"type": "tool_use", "tool_use_id": "toolu_1", "name": "Bash",
+         "input": {"command": "git status --short"}},
+        {"type": "hook", "hook_event_name": "Stop", "input": {"hook_event_name": "Stop"}},
+    ]
+    blocks = []
+
+    _CCITurnCoordinator(
+        _Events(events), "sess",
+        block_callback=lambda event_type, payload: blocks.append((event_type, payload)),
+        turn_callback=lambda text, tool_calls, thinking="": None,
+    ).run()
+
+    assert blocks == [("tool_use", {
+        "id": "toolu_1",
+        "name": "Bash",
+        "arguments": {"command": "git status --short"},
+    })]
+
+
 def test_turn_coordinator_unwraps_pawflow_tool_wrapper_for_live_blocks():
     events = [
         _sse("content_block_start", {

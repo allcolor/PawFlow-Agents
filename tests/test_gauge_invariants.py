@@ -137,6 +137,14 @@ def test_transcript_tool_events_are_not_filtered_by_cancelled_ui_state():
     assert "cancel" not in tool_result.lower()
 
 
+def test_live_tool_call_passes_arguments_to_renderer():
+    tool_call = _SSE_JS[
+        _SSE_JS.index("eventSource.addEventListener('tool_call'"):
+        _SSE_JS.index("eventSource.addEventListener('tool_result'")]
+    assert "arguments: data.arguments || {}" in tool_call
+    assert "tool_args: data.arguments || {}" in tool_call
+
+
 def test_iteration_status_updates_state_without_polluting_chat_timeline():
     start = _SSE_JS.index("eventSource.addEventListener('iteration_status'")
     end = _SSE_JS.index("eventSource.addEventListener('flowfile_in'", start)

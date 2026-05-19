@@ -895,6 +895,7 @@ function connectSSE(cid, onReady, opts) {
     // Single rendering path: addMsg handles ALL tool_call rendering
     const tcExtra = {
       tool_name: data.tool,
+      arguments: data.arguments || {},
       tool_args: data.arguments || {},
       tc_id: data.tc_id || '',
       source: data.source || {type: 'agent', name: tcAgent, llm_service: data.llm_service || ''},

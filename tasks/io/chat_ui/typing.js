@@ -229,7 +229,7 @@ const TYPING_COLORS = [
   '#f97316','#c084fc','#22d3ee','#ef4444','#84cc16',
 ];
 let typingColorIdx = 0;
-const TYPING_SWEEP_MS = 500;
+const TYPING_SWEEP_MS = 250;
 const TYPING_VERB_MS = 8000;
 
 function randomVerb() {

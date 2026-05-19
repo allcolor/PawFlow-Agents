@@ -15,7 +15,7 @@ def test_typing_indicators_use_sweeping_block_animation():
     template = Path("tasks/io/chat_ui/template.html").read_text(encoding="utf-8")
 
     assert "function typingSweepText" in js
-    assert "const TYPING_SWEEP_MS = 500" in js
+    assert "const TYPING_SWEEP_MS = 250" in js
     assert "const TYPING_VERB_MS = 8000" in js
     assert "'█'" in js
     assert "raw.slice(0, idx) + '█' + raw.slice(idx + 1)" in js

@@ -82,6 +82,8 @@ If a client sends a message while an agent is running:
 
 Messages are differentiated for each agent. An agent sees its own messages normally, while other agents' messages are prefixed as context. This prevents one agent from accidentally treating another agent's instruction as a direct user command.
 
+Autonomous agent tasks run in isolated sub-conversations named `parent::task::task_id`; verifier turns use `parent::task_verify::task_id`. When a task reaches a terminal state, or is cancelled/deleted, PawFlow deletes those sub-conversations and invalidates any CLI provider sessions bound to them so completed task context does not leak into later runs.
+
 Examples:
 
 - `[Agent reviewer]: ...`

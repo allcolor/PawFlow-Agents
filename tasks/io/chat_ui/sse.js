@@ -170,8 +170,9 @@ function connectSSE(cid, onReady, opts) {
     return _taskBlocks[blockKey];
   }
 
-  function _taskBlockAppend(taskId, childEl) {
-    const block = _taskBlocks[taskId];
+  function _taskBlockAppend(taskId, iteration, childEl) {
+    const blockKey = taskId + '::iter' + (iteration || 0);
+    const block = _taskBlocks[blockKey];
     if (block && childEl) {
       block.content.appendChild(childEl);
       scrollBottom();
@@ -195,9 +196,14 @@ function connectSSE(cid, onReady, opts) {
     if (data.role && data.content) {
       // Dedup by msg_id — don't render if already in DOM
       if (data.msg_id && document.querySelector('[data-msgid="' + data.msg_id + '"]')) return;
-      addMsg(data.role, data.content, {
+      const el = addMsg(data.role, data.content, {
         source: data.source, msg_id: data.msg_id, ts: data.ts,
+        task_id: data.task_id || '', task_iteration: data.task_iteration,
       });
+      if (data.task_id && el) {
+        const tb = _getTaskBlock(data.task_id, data.task_iteration, data.agent_name || (data.source && data.source.name) || '');
+        if (tb) tb.content.appendChild(el);
+      }
       if (typeof _noteLiveHistoryAppend === 'function') {
         _noteLiveHistoryAppend(data.message_count, 1, data.msg_id || '');
       }
@@ -1051,13 +1057,13 @@ function connectSSE(cid, onReady, opts) {
     } else if (data.done) {
       addMsg('system', '\u2705 ' + t('taskCompleteFor', { agent: agent, result: data.result || data.progress || '' }));
       if (data.task_id) {
-        _finalizeTaskBlock(data.task_id, data.iterations, '\u2713 done', '#4ecdc4');
+        _finalizeTaskBlock(data.task_id, data.task_iteration || data.iterations, '\u2713 done', '#4ecdc4');
       }
     } else if (data.progress) {
       addMsg('system', '\u{1F4CA} Task progress (' + agent + ', iter ' + (data.iterations || '?') + '): ' + data.progress);
       // Finalize current iteration block (next event with new iteration will create a new one)
       if (data.task_id) {
-        _finalizeTaskBlock(data.task_id, data.iterations, '\u2713 done', '#4ecdc4');
+        _finalizeTaskBlock(data.task_id, data.task_iteration || data.iterations, '\u2713 done', '#4ecdc4');
       }
     }
     scrollBottom();

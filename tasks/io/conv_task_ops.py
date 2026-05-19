@@ -16,6 +16,7 @@ from typing import Dict, Any, List
 
 from core import FlowFile, TaskFactory
 from core.base_task import BaseTask
+from core.task_lifecycle import cleanup_agent_task_context
 
 logger = logging.getLogger(__name__)
 
@@ -160,7 +161,6 @@ class CancelAgentTaskTask(BaseTask):
             return [flowfile]
 
         from core.conversation_store import ConversationStore
-        from core.poll_scheduler import PollScheduler
 
         store = ConversationStore.instance()
         all_tasks = store.get_extra(conv_id, "agent_tasks") or {}
@@ -171,12 +171,13 @@ class CancelAgentTaskTask(BaseTask):
             }).encode())
             return [flowfile]
 
+        agent = all_tasks[task_id].get("agent", "")
         all_tasks[task_id]["status"] = "cancelled"
         store.set_extra(conv_id, "agent_tasks", all_tasks)
 
-        # Cancel scheduled recheck
-        sched_key = f"{conv_id}::task::{task_id}"
-        PollScheduler.instance().cancel(sched_key)
+        cleanup_agent_task_context(
+            conv_id, task_id, agent, store, clear_runtime=True,
+            reason="flow_cancel_task")
 
         logger.info(f"[cancelTask] {task_id} cancelled in {conv_id[:8]}")
         flowfile.set_content(json.dumps({

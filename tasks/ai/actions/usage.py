@@ -198,24 +198,6 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
                     }
                     active_by_key[_row_key(_k, _aname, _task_id)] = _row
             active.extend(active_by_key.values())
-        # Also include scheduled tasks (active but between turns)
-        try:
-            all_tasks = (
-                store.get_extra_snapshot(conv_id, "agent_tasks", {})
-                if hasattr(store, "get_extra_snapshot") else {}
-            ) or {}
-            _active_task_ids = {a["task_id"] for a in active if a.get("task_id")}
-            for tid, task in all_tasks.items():
-                if tid not in _active_task_ids and task.get("status") == "active":
-                    active.append({
-                        "agent_name": task.get("agent", ""),
-                        "task_id": tid,
-                        "status": "scheduled",
-                        "iteration": task.get("reschedule_count", 0),
-                    })
-        except Exception:
-            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-
         # Live CLI sessions (Claude Code, Codex, Gemini). Enrich rows that
         # are currently in the active stack. Warm idle sessions are exposed in
         # the side-channel lists below, but must not create Active Agents rows.

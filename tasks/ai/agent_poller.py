@@ -380,6 +380,13 @@ class AgentPollerMixin:
                         bus.publish_event(cid, "task_stopped", {
                             "task_id": _task_id, "agent_name": _thought_agent,
                             "reason": _cancel_reason, "force": True})
+                        try:
+                            from core.task_lifecycle import cleanup_agent_task_context
+                            cleanup_agent_task_context(
+                                cid, _task_id, _thought_agent, store,
+                                clear_runtime=True, reason="task_limit_cancel")
+                        except Exception:
+                            logger.debug("task limit cleanup failed", exc_info=True)
                         with self._active_lock:
                             self._active_thoughts.discard(entry_key)
                         continue

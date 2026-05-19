@@ -526,6 +526,82 @@ def test_list_active_does_not_transport_context_usage_or_count_tokens():
     assert "context_usage" not in row
 
 
+def test_list_active_does_not_surface_assigned_task_between_turns():
+    from core import FlowFile
+    from tasks.ai.actions.usage import _handle_usage
+
+    fake_exec = SimpleNamespace(
+        _active_turns={},
+        _active_contexts={},
+        _active_contexts_lock=threading.Lock())
+
+    class _Store:
+        def get_extra_snapshot(self, cid, key, default=None):
+            raise AssertionError("list_active must not read assigned/scheduled tasks")
+
+    ff = FlowFile()
+    with patch("tasks.ai.agent_loop.AgentLoopTask._live_instance", fake_exec), \
+            patch("core.cc_live_registry.LiveSessionRegistry.instance") as cc_reg, \
+            patch("core.codex_live_registry.CodexLiveRegistry.instance") as codex_reg, \
+            patch("core.gemini_live_registry.GeminiLiveRegistry.instance") as gemini_reg:
+        cc_reg.return_value.status.return_value = []
+        codex_reg.return_value.status.return_value = []
+        gemini_reg.return_value.status.return_value = []
+
+        out = _handle_usage(
+            SimpleNamespace(), "list_active", {"conversation_id": "conv-task"},
+            _Store(), "user", ff)
+
+    data = json.loads(out[0].get_content().decode("utf-8"))
+    assert data["active"] == []
+
+
+def test_list_active_surfaces_agent_currently_working_inside_task():
+    from core import FlowFile
+    from tasks.ai.actions.usage import _handle_usage
+
+    fake_exec = SimpleNamespace(
+        _active_turns={
+            "conv-task::task::t_running:PawFlowAgent": {
+                "agent_name": "PawFlowAgent",
+                "started_at": 0,
+                "status": "thinking",
+            }
+        },
+        _active_contexts={},
+        _active_contexts_lock=threading.Lock())
+
+    class _Store:
+        def get_extra_snapshot(self, *_args, **_kwargs):
+            raise AssertionError("active task-agent rows must come from live execution state")
+
+    ff = FlowFile()
+    with patch("tasks.ai.agent_loop.AgentLoopTask._live_instance", fake_exec), \
+            patch("core.cc_live_registry.LiveSessionRegistry.instance") as cc_reg, \
+            patch("core.codex_live_registry.CodexLiveRegistry.instance") as codex_reg, \
+            patch("core.gemini_live_registry.GeminiLiveRegistry.instance") as gemini_reg:
+        cc_reg.return_value.status.return_value = []
+        codex_reg.return_value.status.return_value = []
+        gemini_reg.return_value.status.return_value = []
+
+        out = _handle_usage(
+            SimpleNamespace(), "list_active", {"conversation_id": "conv-task"},
+            _Store(), "user", ff)
+
+    data = json.loads(out[0].get_content().decode("utf-8"))
+    assert data["active"] == [{
+        "agent_name": "PawFlowAgent",
+        "task_id": "t_running",
+        "iteration": 0,
+        "round": 0,
+        "max_rounds": 0,
+        "last_tool": "",
+        "duration_s": 0,
+        "status": "thinking",
+        "message_preview": "",
+    }]
+
+
 def test_initial_context_usage_has_dedicated_action():
     usage_src = Path("tasks/ai/actions/usage.py").read_text(encoding="utf-8")
     list_context_usage_block = _extract_action_block(

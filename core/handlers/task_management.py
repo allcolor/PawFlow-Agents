@@ -7,6 +7,7 @@ import threading
 import time
 from typing import Dict, Any, List, Optional
 
+from core.task_lifecycle import cleanup_agent_task_context
 from core.tool_handler import ToolHandler
 
 logger = logging.getLogger(__name__)
@@ -695,11 +696,13 @@ class CompleteTaskHandler(ToolHandler):
 
         try:
             from core.conversation_event_bus import ConversationEventBus
+            _task_iteration = task.get("reschedule_count", task["iterations_done"])
             ConversationEventBus.instance().publish_event(
                 _parent_cid, "task_progress", {
                     "task_id": task_id, "agent": agent, "done": done,
                     "progress": progress, "result": result,
                     "iterations": task["iterations_done"],
+                    "task_iteration": _task_iteration,
                 },
             )
         except Exception:
@@ -732,6 +735,9 @@ class CompleteTaskHandler(ToolHandler):
                     store.set_extra(_parent_cid, "agent_tasks", all_tasks)
                     from core.poll_scheduler import PollScheduler
                     PollScheduler.instance().cancel(f"{_parent_cid}::task::{task_id}")
+                    cleanup_agent_task_context(
+                        _parent_cid, task_id, task.get("agent", agent), store,
+                        clear_runtime=True, reason="task_limit_cancel")
                     return f"Task {task_id} cancelled: {_cancel_reason}"
                 task["status"] = "active"
                 all_tasks[task_id] = task
@@ -766,13 +772,9 @@ class CompleteTaskHandler(ToolHandler):
                 from core.poll_scheduler import PollScheduler
                 PollScheduler.instance().cancel(
                     f"{_parent_cid}::task::{task_id}")
-                # Cleanup sub-conv context + CC session
-                _sub_cid = f"{_parent_cid}::task::{task_id}"
-                try:
-                    store.invalidate_claude_sessions(_sub_cid)
-                    store.delete(_sub_cid)
-                except Exception:
-                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+                cleanup_agent_task_context(
+                    _parent_cid, task_id, task.get("agent", agent), store,
+                    reason="task_completed")
                 # Activate dependent tasks
                 _activated = _activate_dependents(
                     _parent_cid, task_id, result=result,
@@ -790,6 +792,9 @@ class CompleteTaskHandler(ToolHandler):
                 store.set_extra(_parent_cid, "agent_tasks", all_tasks)
                 from core.poll_scheduler import PollScheduler
                 PollScheduler.instance().cancel(f"{_parent_cid}::task::{task_id}")
+                cleanup_agent_task_context(
+                    _parent_cid, task_id, task.get("agent", agent), store,
+                    clear_runtime=True, reason="task_limit_cancel")
                 try:
                     from core.conversation_event_bus import ConversationEventBus
                     ConversationEventBus.instance().publish_event(
@@ -913,13 +918,9 @@ class VerifyTaskHandler(ToolHandler):
                 f"{_parent_cid}::task::{task_id}")
             PollScheduler.instance().cancel(
                 f"{_parent_cid}::task_verify::{task_id}")
-            # Cleanup sub-conv context + CC session
-            _sub_cid = f"{_parent_cid}::task::{task_id}"
-            try:
-                store.invalidate_claude_sessions(_sub_cid)
-                store.delete(_sub_cid)
-            except Exception:
-                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+            cleanup_agent_task_context(
+                _parent_cid, task_id, target_agent, store,
+                reason="task_verified")
             # Activate dependent tasks
             _activated = _activate_dependents(
                 _parent_cid, task_id, result=_result,

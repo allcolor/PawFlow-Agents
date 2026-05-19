@@ -1090,3 +1090,91 @@ class TestCleanupCliRuntimeSessions:
         assert store.get_extra(cid, "codex_app_server_thread:other") == "thread-other"
         assert store.get_extra(cid, "gemini_acp_session:assistant") == ""
         assert store.get_extra(cid, "gemini_acp_session:other") == "gemini-other"
+
+
+def test_task_lifecycle_cleanup_deletes_task_and_verify_contexts(store, monkeypatch):
+    from core.task_lifecycle import cleanup_agent_task_context
+
+    parent = store.generate_id()
+    task_id = "t_cleanup"
+    task_cid = f"{parent}::task::{task_id}"
+    verify_cid = f"{parent}::task_verify::{task_id}"
+    store.save(parent, [], user_id="alice")
+    store.save(task_cid, [_msg("user", "task context")], user_id="alice")
+    store.save(verify_cid, [_msg("user", "verify context")], user_id="alice")
+
+    invalidated = []
+    original_invalidate = store.invalidate_claude_sessions
+
+    def _invalidate(cid):
+        invalidated.append(cid)
+        original_invalidate(cid)
+
+    class _Scheduler:
+        def __init__(self):
+            self.cancelled = []
+
+        def cancel(self, key):
+            self.cancelled.append(key)
+            return True
+
+    scheduler = _Scheduler()
+    relay_cancelled = []
+    monkeypatch.setattr(store, "invalidate_claude_sessions", _invalidate)
+    monkeypatch.setattr("core.poll_scheduler.PollScheduler.instance",
+                        lambda: scheduler)
+    monkeypatch.setattr(
+        "services.tool_relay_service.ToolRelayService.cancel_agent",
+        lambda cid, agent: relay_cancelled.append((cid, agent)))
+
+    result = cleanup_agent_task_context(parent, task_id, "worker", store)
+
+    assert result["deleted"] == 2
+    assert not store.exists(task_cid)
+    assert not store.exists(verify_cid)
+    assert invalidated == [task_cid, verify_cid]
+    assert scheduler.cancelled == [task_cid, verify_cid]
+    assert relay_cancelled == [(task_cid, "worker"), (verify_cid, "worker")]
+
+
+def test_complete_task_final_cleanup_runs_for_terminal_task(store, monkeypatch):
+    from core.conversation_store import ConversationStore
+    from core.handlers.task_management import CompleteTaskHandler
+
+    ConversationStore._instance = store
+    parent = store.generate_id()
+    task_id = "t_done"
+    store.save(parent, [], user_id="alice")
+    store.set_extra(parent, "agent_tasks", {
+        task_id: {
+            "task_id": task_id,
+            "agent": "worker",
+            "status": "active",
+            "completion_criteria": "done",
+            "iterations_done": 0,
+            "reschedule_count": 3,
+        }
+    })
+
+    cleaned = []
+    monkeypatch.setattr(
+        "core.handlers.task_management.cleanup_agent_task_context",
+        lambda *args, **kwargs: cleaned.append((args, kwargs)) or {"deleted": 1})
+    monkeypatch.setattr("core.poll_scheduler.PollScheduler.instance",
+                        lambda: type("S", (), {"cancel": lambda self, key: True})())
+
+    handler = CompleteTaskHandler()
+    handler.set_conversation_id(f"{parent}::task::{task_id}")
+    handler.set_agent_name("worker")
+
+    result = handler.execute({
+        "task_id": task_id,
+        "done": True,
+        "progress": "done",
+        "result": "finished",
+    })
+
+    assert result == f"Task {task_id} completed."
+    assert store.get_extra(parent, "agent_tasks") == {}
+    assert cleaned[0][0][:4] == (parent, task_id, "worker", store)
+    assert cleaned[0][1]["reason"] == "task_completed"

@@ -343,24 +343,27 @@ function renderEmptyState() {
 // Shared across render + loadMore so task blocks persist
 let _histTaskBlocks = {};
 
-function _getHistTaskBlock(taskId, agentName) {
+function _getHistTaskBlock(taskId, iteration, agentName) {
   if (!window.PAWFLOW_GROUP_TASK_MESSAGES) return null;
-  if (_histTaskBlocks[taskId]) return _histTaskBlocks[taskId];
+  const iter = Number(iteration || 0) || 0;
+  const blockKey = taskId + '::iter' + iter;
+  if (_histTaskBlocks[blockKey]) return _histTaskBlocks[blockKey];
   const details = document.createElement('details');
   details.className = 'msg task-block';
   details.style.cssText = 'margin:6px 0;border:1px solid #333;border-radius:8px;padding:0;background:#1a1a2e;';
   const summary = document.createElement('summary');
   summary.style.cssText = 'cursor:pointer;padding:8px 12px;font-size:12px;color:#6c5ce7;user-select:none;font-weight:600;display:flex;align-items:center;gap:6px;';
+  const iterLabel = iter > 1 ? ' iter ' + iter : '';
   summary.innerHTML = '\u{1F4CB} Task <span style="color:#e0e0e0;font-weight:normal">' + escapeHtml(taskId) + '</span>'
-    + (agentName ? ' <span style="color:#888;font-weight:normal">(' + escapeHtml(displayAgentName(agentName)) + ')</span>' : '')
+    + (agentName ? ' <span style="color:#888;font-weight:normal">(' + escapeHtml(displayAgentName(agentName)) + iterLabel + ')</span>' : '')
     + ' <span style="margin-left:auto;font-size:11px;color:#888">\u2714 done</span>';
   details.appendChild(summary);
   const content = document.createElement('div');
   content.style.cssText = 'padding:4px 12px 8px;max-height:60vh;overflow-y:auto;';
   details.appendChild(content);
   document.getElementById('messages').appendChild(details);
-  _histTaskBlocks[taskId] = {el: details, content: content};
-  return _histTaskBlocks[taskId];
+  _histTaskBlocks[blockKey] = {el: details, content: content};
+  return _histTaskBlocks[blockKey];
 }
 
 function _renderHistory(data) {
@@ -406,9 +409,8 @@ function _renderHistory(data) {
       const _taskId = _isDelegateTrace ? '' : (m.task_id || (m.source && m.source.task_id) || '');
       if (_taskId && el) {
         const agentName = (m.source && m.source.name) || '';
-        const _iter = (m.source && m.source.task_iteration) || 1;
-        const _blockKey = _taskId + '::iter' + _iter;
-        const tb = _getHistTaskBlock(_blockKey, agentName);
+        const _iter = m.task_iteration || (m.source && m.source.task_iteration) || 0;
+        const tb = _getHistTaskBlock(_taskId, _iter, agentName);
         if (tb) tb.content.appendChild(el);
       }
     }

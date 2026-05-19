@@ -770,27 +770,48 @@ class AgentCoreMixin:
                         len(msg.tool_calls) if msg.tool_calls else 0,
                         [s["type"] for s in _sse] if _sse else [],
                     )
+                    _task_parent_cid = ""
+                    _task_id = ""
+                    _task_iteration = ctx.get("_task_iteration", 1)
+                    _parent_sse = None
+                    if "::task::" in conversation_id:
+                        _task_parent_cid = conversation_id.split("::task::", 1)[0]
+                        _task_id = conversation_id.split("::task::", 1)[1].split("::", 1)[0]
+                        if _sse:
+                            _parent_sse = []
+                            for _evt in _sse:
+                                _evt2 = dict(_evt)
+                                _data = dict(_evt2.get("data") or {})
+                                _src = dict(_data.get("source") or {})
+                                _src["task_id"] = _task_id
+                                _src["task_iteration"] = _task_iteration
+                                _data["source"] = _src
+                                _data["task_id"] = _task_id
+                                _data["task_iteration"] = _task_iteration
+                                _evt2["data"] = _data
+                                _evt2["cid"] = _task_parent_cid
+                                _parent_sse.append(_evt2)
                     _writer = ConversationWriter.for_conversation(conversation_id)
                     _enqueue_started = time.monotonic()
                     _writer.enqueue_message(
                         _store_msg, agent_name=_agent_for_route,
-                        user_id=user_id, sse_events=_sse if _sse else None)
+                        user_id=user_id,
+                        sse_events=None if _task_parent_cid else (_sse if _sse else None))
                     _enqueue_ms = (time.monotonic() - _enqueue_started) * 1000.0
                     # Task sub-conversation: mirror to parent conv so the
                     # user sees task progress in their main feed. Tag with
                     # task_id + task_iteration for UI grouping.
-                    if "::task::" in conversation_id:
-                        _parent_cid = conversation_id.split("::task::")[0]
-                        _tid = conversation_id.split("::task::")[1]
+                    if _task_parent_cid:
                         _mirror = dict(_store_msg)
                         _msrc = dict(_mirror.get("source") or {})
-                        _msrc["task_id"] = _tid
-                        _msrc["task_iteration"] = ctx.get("_task_iteration", 1)
+                        _msrc["task_id"] = _task_id
+                        _msrc["task_iteration"] = _task_iteration
                         _mirror["source"] = _msrc
                         _mirror_started = time.monotonic()
-                        ConversationWriter.for_conversation(_parent_cid).enqueue_message(
+                        ConversationWriter.for_conversation(_task_parent_cid).enqueue_message(
                             _mirror, agent_name=_agent_for_route,
-                            user_id=user_id)
+                            user_id=user_id,
+                            sse_events=_parent_sse if _parent_sse else None)
                         _mirror_enqueue_ms = ((time.monotonic() - _mirror_started)
                                               * 1000.0)
                 except Exception as _persist_err:

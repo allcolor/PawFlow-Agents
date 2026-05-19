@@ -7,6 +7,8 @@ MESSAGES_JS = Path("tasks/io/chat_ui/messages.js").read_text(encoding="utf-8")
 CONVERSATIONS_JS = Path("tasks/io/chat_ui/conversations.js").read_text(encoding="utf-8")
 SSE_JS = Path("tasks/io/chat_ui/sse.js").read_text(encoding="utf-8")
 TEMPLATE_HTML = Path("tasks/io/chat_ui/template.html").read_text(encoding="utf-8")
+AGENT_CORE = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
+TASK_MANAGEMENT = Path("core/handlers/task_management.py").read_text(encoding="utf-8")
 
 
 def test_add_msg_inserts_by_message_timestamp():
@@ -173,6 +175,34 @@ def test_live_tool_events_keep_chat_scrolled():
     tool_result_block = SSE_JS[SSE_JS.index("eventSource.addEventListener('tool_result'"):SSE_JS.index("eventSource.addEventListener('bg_task_update'")]
     assert "scrollBottom();" in tool_call_block
     assert "scrollBottom();" in tool_result_block
+
+
+def test_task_subconv_messages_publish_live_events_on_parent_conversation():
+    assert "_task_parent_cid = conversation_id.split(\"::task::\", 1)[0]" in AGENT_CORE
+    assert "_evt2[\"cid\"] = _task_parent_cid" in AGENT_CORE
+    assert "_data[\"task_id\"] = _task_id" in AGENT_CORE
+    assert "_data[\"task_iteration\"] = _task_iteration" in AGENT_CORE
+    assert "sse_events=None if _task_parent_cid else (_sse if _sse else None)" in AGENT_CORE
+    assert "sse_events=_parent_sse if _parent_sse else None" in AGENT_CORE
+
+
+def test_task_live_and_history_group_by_task_id_and_iteration():
+    new_message_block = SSE_JS[
+        SSE_JS.index("eventSource.addEventListener('new_message'"):
+        SSE_JS.index("// ── Proactive notifications", SSE_JS.index("eventSource.addEventListener('new_message'"))]
+    assert "task_id: data.task_id || '', task_iteration: data.task_iteration" in new_message_block
+    assert "_getTaskBlock(data.task_id, data.task_iteration" in new_message_block
+    assert "tb.content.appendChild(el)" in new_message_block
+    assert "function _getHistTaskBlock(taskId, iteration, agentName)" in CONVERSATIONS_JS
+    assert "const blockKey = taskId + '::iter' + iter" in CONVERSATIONS_JS
+    assert "const tb = _getHistTaskBlock(_taskId, _iter, agentName)" in CONVERSATIONS_JS
+    assert "_getHistTaskBlock(_blockKey" not in CONVERSATIONS_JS
+    task_progress_block = SSE_JS[
+        SSE_JS.index("eventSource.addEventListener('task_progress'"):
+        SSE_JS.index("eventSource.addEventListener('task_stopped'")]
+    assert "data.task_iteration || data.iterations" in task_progress_block
+    assert '_task_iteration = task.get("reschedule_count", task["iterations_done"])' in TASK_MANAGEMENT
+    assert '"task_iteration": _task_iteration' in TASK_MANAGEMENT
 
 
 def test_inline_audio_uses_stable_global_player():

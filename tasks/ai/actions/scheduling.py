@@ -8,6 +8,7 @@ from typing import Dict, Any, List, Optional
 
 from core import FlowFile
 from core.llm_client import LLMMessage, LLMClient
+from core.task_lifecycle import cleanup_agent_task_context
 from core.tool_registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -556,13 +557,9 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
                 scheduler.cancel(f"{conv_id}::task_verify::{tid}")
                 # Force-stop the running task agent immediately
                 _kill_running_task_agent(self, conv_id, tid, task.get("agent", ""), force=True)
-                # Cleanup sub-conv context + CC session
-                _sub_cid = f"{conv_id}::task::{tid}"
-                try:
-                    store.invalidate_claude_sessions(_sub_cid)
-                    store.delete(_sub_cid)
-                except Exception:
-                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+                cleanup_agent_task_context(
+                    conv_id, tid, task.get("agent", ""), store,
+                    clear_runtime=True, reason="task_cancelled")
                 # Remove instance from agent_tasks — only task_def + log remain
                 del all_tasks[tid]
                 continue  # skip all_tasks[tid] = task below
@@ -585,13 +582,9 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
                 scheduler.cancel(f"{conv_id}::task::{tid}")
                 scheduler.cancel(f"{conv_id}::task_verify::{tid}")
                 _kill_running_task_agent(self, conv_id, tid, task.get("agent", ""), force=True)
-                # Cleanup sub-conv context + CC session
-                _sub_cid = f"{conv_id}::task::{tid}"
-                try:
-                    store.invalidate_claude_sessions(_sub_cid)
-                    store.delete(_sub_cid)
-                except Exception:
-                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+                cleanup_agent_task_context(
+                    conv_id, tid, task.get("agent", ""), store,
+                    clear_runtime=True, reason="task_deleted")
                 # Remove from dict entirely
                 del all_tasks[tid]
                 # Also delete task log

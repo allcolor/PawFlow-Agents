@@ -8,6 +8,7 @@ from typing import Dict, Any, List, Optional
 
 from core import FlowFile
 from core.llm_client import LLMMessage, LLMClient
+from core.task_lifecycle import cleanup_agent_task_context
 from core.tool_registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -1116,12 +1117,13 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             except Exception as e:
                 flowfile.set_content(json.dumps({"error": str(e)}).encode())
             return [flowfile]
-        # Task sub-conversation: delete the sub-conversation
+        # Task sub-conversation: delete context and provider sessions.
         if agent_name.startswith("task:"):
             _tid = agent_name.split("(")[0].replace("task:", "").strip()
-            _sub_cid = f"{conv_id}::task::{_tid}"
             try:
-                store.delete(_sub_cid)
+                cleanup_agent_task_context(
+                    conv_id, _tid, "", store, clear_runtime=True,
+                    reason="manual_task_context_delete")
                 flowfile.set_content(json.dumps({"ok": True}).encode())
             except Exception as e:
                 flowfile.set_content(json.dumps({"error": str(e)}).encode())
@@ -1148,7 +1150,9 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
         _sub_tid = sub_name.split("(")[0].replace("task:", "").strip()
         _sub_cid = f"{conv_id}::task::{_sub_tid}"
         try:
-            store.delete(_sub_cid)
+            cleanup_agent_task_context(
+                conv_id, _sub_tid, "", store, clear_runtime=True,
+                reason="manual_task_context_delete")
             # Also clean up sync counter and task log
             store.set_extra(conv_id, f"_sub_sync:{_sub_cid}", None)
             store.set_extra(conv_id, f"task_log:{_sub_tid}", None)

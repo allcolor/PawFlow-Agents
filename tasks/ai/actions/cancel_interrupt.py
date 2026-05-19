@@ -8,6 +8,7 @@ from typing import Dict, Any, List, Optional
 
 from core import FlowFile
 from core.llm_client import LLMMessage, LLMClient
+from core.task_lifecycle import cleanup_agent_task_context
 from core.tool_registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -174,6 +175,10 @@ def _handle_cancel_interrupt(self, action, body, store, user_id, flowfile):
                 PollScheduler.instance().cancel(_task_cid)
             except Exception:
                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+
+            cleanup_agent_task_context(
+                conv_id, task_id, agent_name, store, clear_runtime=True,
+                reason="task_force_cancel")
 
             from core.conversation_event_bus import ConversationEventBus
             ConversationEventBus.instance().publish_event(

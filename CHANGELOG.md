@@ -71,7 +71,7 @@ First public release.
 - HTTP listener service with SSL/TLS
 - PawCode CLI (Claude Code-compatible terminal client)
 - VS Code extension connected to the same relay/runtime model
-- 2589 tests
+- 4105 tests
 
 ### Security
 - Secrets encrypted at rest with AEAD v2

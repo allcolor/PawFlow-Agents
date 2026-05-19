@@ -655,35 +655,37 @@ def cmd_re_embed(args):
 
 
 def main():
+    from core import __version__ as _pf_version
     parser = argparse.ArgumentParser(
         prog='pawflow',
-        description='PawFlow (Open Cuddle Edition) - Data workflow framework'
+        description='PawFlow - Self-hosted AI agent orchestration platform'
     )
-    subparsers = parser.add_subparsers(dest='command', help='Commande')
+    parser.add_argument('--version', action='version', version=f'pawflow {_pf_version}')
+    subparsers = parser.add_subparsers(dest='command', help='Command')
 
     # run
-    run_parser = subparsers.add_parser('run', help='Executer un flow')
-    run_parser.add_argument('flow', help='Fichier JSON du flow')
-    run_parser.add_argument('--input', '-i', nargs='+', help='Fichiers d\'entree')
-    run_parser.add_argument('--output-dir', '-o', help='Repertoire de sortie')
-    run_parser.add_argument('--verbose', '-v', action='store_true', help='Mode verbose')
-    run_parser.add_argument('--provenance', '-p', action='store_true', help='Activer la provenance')
-    run_parser.add_argument('--workers', '-w', type=int, default=4, help='Workers paralleles (defaut: 4)')
-    run_parser.add_argument('--retries', '-r', type=int, default=3, help='Max retries (defaut: 3)')
-    run_parser.add_argument('--timeout', '-t', type=int, default=300, help='Timeout en secondes (defaut: 300)')
+    run_parser = subparsers.add_parser('run', help='Run a flow')
+    run_parser.add_argument('flow', help='Flow JSON file')
+    run_parser.add_argument('--input', '-i', nargs='+', help='Input files')
+    run_parser.add_argument('--output-dir', '-o', help='Output directory')
+    run_parser.add_argument('--verbose', '-v', action='store_true', help='Verbose mode')
+    run_parser.add_argument('--provenance', '-p', action='store_true', help='Enable provenance tracking')
+    run_parser.add_argument('--workers', '-w', type=int, default=4, help='Parallel workers (default: 4)')
+    run_parser.add_argument('--retries', '-r', type=int, default=3, help='Max retries (default: 3)')
+    run_parser.add_argument('--timeout', '-t', type=int, default=300, help='Timeout in seconds (default: 300)')
     run_parser.add_argument('--param', action='append', metavar='KEY=VALUE',
-                            help='Override un parametre du flow (repeatable)')
+                            help='Override a flow parameter (repeatable)')
 
     # validate
-    val_parser = subparsers.add_parser('validate', help='Valider un flow')
-    val_parser.add_argument('flow', help='Fichier JSON du flow')
+    val_parser = subparsers.add_parser('validate', help='Validate a flow')
+    val_parser.add_argument('flow', help='Flow JSON file')
 
     # list-tasks
-    subparsers.add_parser('list-tasks', help='Lister les tasks disponibles')
+    subparsers.add_parser('list-tasks', help='List available tasks')
 
     # info
-    info_parser = subparsers.add_parser('info', help='Infos sur un flow')
-    info_parser.add_argument('flow', help='Fichier JSON du flow')
+    info_parser = subparsers.add_parser('info', help='Show flow info')
+    info_parser.add_argument('flow', help='Flow JSON file')
 
     # start
     start_parser = subparsers.add_parser('start', help='Start PawFlow server')

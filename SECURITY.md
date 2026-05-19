@@ -5,6 +5,18 @@ multi-user / public deployments. Every claim here is backed by code in
 `core/` and `services/` and by tests under `tests/test_*_security_*`.
 If you find a divergence, the code wins.
 
+## Reporting a vulnerability
+
+Please **do not** open a public GitHub issue for security vulnerabilities.
+Use either of the following private channels:
+
+- **GitHub Security Advisories** — preferred. Open a private advisory at
+  <https://github.com/allcolor/PawFlow-Agents/security/advisories/new>.
+- **Email** — <pawflow-support@allcolor.org>.
+
+Include reproduction steps, affected version (`pawflow --version`), and any
+proof-of-concept. We aim to acknowledge reports within 72 hours.
+
 ## Layered defences
 
 ```

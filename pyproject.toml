@@ -109,6 +109,7 @@ sdk = [
 [project.scripts]
 pawflow = "cli:main"
 pawflow-relay = "pawflow_relay.manager_cli:main"
+pawcode = "pawflow_cli.app:main"
 
 [project.urls]
 Homepage = "https://github.com/allcolor/PawFlow-Agents"
@@ -152,3 +153,7 @@ include = [
     "pawflow_sdk*", "pawflow_relay*", "pawflow_cli*",
 ]
 exclude = ["tests*"]
+
+[tool.setuptools.package-data]
+"tasks.io.chat_ui" = ["**/*.html", "**/*.js", "**/*.css", "**/*.json"]
+"tasks.io.admin_ui" = ["**/*.html", "**/*.js", "**/*.css", "**/*.json"]

@@ -1,191 +1,191 @@
-# Résumé du Projet PawFlow - État actuel
+# PawFlow Project Summary — Current State
 
-**Date de mise à jour** : 2026-04-27  
-**Version package** : `1.0.0a1`  
-**Statut** : alpha fonctionnelle, APIs encore susceptibles d'évoluer
+**Last updated**: 2026-04-27  
+**Package version**: `1.0.0a1`  
+**Status**: functional alpha, APIs may still evolve
 
-## Synthèse
+## Overview
 
-PawFlow n'est plus un simple MVP de moteur de workflow. Le dépôt contient maintenant une plateforme self-hosted d'orchestration d'agents IA et de pipelines, positionnée comme **"Apache NiFi meets Claude Code"** : un serveur PawFlow, un moteur de flows DAG, un système d'agents multi-providers, un relay local pour l'accès aux fichiers/outils, une interface web, un client terminal PawCode, une extension VS Code, de la documentation et une suite de tests conséquente.
+PawFlow is no longer a simple workflow-engine MVP. The repository now hosts a self-hosted AI agent and pipeline orchestration platform positioned as **"Apache NiFi meets Claude Code"**: a PawFlow server, a DAG flow engine, a multi-provider agent system, a local relay for filesystem/tool access, a web UI, a PawCode terminal client, a VS Code extension, documentation, and a substantial test suite.
 
-Le coeur de valeur actuel est double :
+The current core value is twofold:
 
-1. **Agents autonomes outillés** : conversations multi-agents, providers LLM, tool-use loop, mémoire persistante, knowledge graph, diary agent, project graph, plans, délégation, streaming.
-2. **Moteur de pipelines** : exécution DAG de FlowFiles, catalogue de tâches, triggers, backpressure, checkpoints, crash recovery, provenance et intégrations IO/data/control.
+1. **Tool-equipped autonomous agents**: multi-agent conversations, multiple LLM providers, tool-use loop, persistent memory, knowledge graph, agent diary, project graph, plans, delegation, streaming.
+2. **Pipeline engine**: DAG execution over FlowFiles, task catalog, triggers, backpressure, checkpoints, crash recovery, provenance, and IO/data/control integrations.
 
-## Ce qui existe dans le dépôt
+## What lives in the repository
 
-### Runtime et coeur Python
+### Python core and runtime
 
-- `core/` : runtime agent et primitives principales.
-  - exécution d'agents et boucles tool-use ;
-  - providers LLM (`Claude Code`, `Codex CLI`, `Gemini CLI`, Anthropic API, OpenAI API, endpoints compatibles OpenAI selon configuration) ;
-  - mémoire, knowledge graph, diary, project graph ;
-  - gestion des conversations, plans, tokens, fichiers, relay et handlers d'outils ;
-  - backends de stockage et helpers de sécurité/contexte.
+- `core/`: agent runtime and main primitives.
+  - agent execution and tool-use loops;
+  - LLM providers (`Claude Code`, `Codex CLI`, `Gemini CLI`, Anthropic API, OpenAI API, OpenAI-compatible endpoints);
+  - memory, knowledge graph, diary, project graph;
+  - conversation, plan, token, file, relay, and tool-handler management;
+  - storage backends and security/context helpers.
 
-- `engine/` : moteur de flows.
-  - parsing et validation de flows JSON ;
-  - exécution DAG ;
-  - checkpoints, crash recovery, triggers, provenance ;
-  - workers, scheduler, debugger, import NiFi et support cluster.
+- `engine/`: flow engine.
+  - JSON flow parsing and validation;
+  - DAG execution;
+  - checkpoints, crash recovery, triggers, provenance;
+  - workers, scheduler, debugger, NiFi import, cluster support.
 
-- `tasks/` : catalogue de tâches PawFlow.
-  - `system/` : log, wait, fail, replace text, hash, scripts, cron trigger, génération/listing de FlowFiles, reporting ;
-  - `io/` : HTTP, fichiers, SFTP/FTP, S3, GCS, Azure, Kafka, MQTT, email, Slack, Discord, Telegram, WhatsApp, web UI, relay, auth/session ;
-  - `data/` : JSON, XML, CSV, SQL, extraction texte, transformations, compression, Avro/Parquet, base64, cache, déduplication ;
-  - `control/` : routage, split/merge, rate limiting, ports, stop flow, execute flow, wait/notify ;
-  - `ai/` : agent loop et modules associés à l'exécution agent.
+- `tasks/`: PawFlow task catalog.
+  - `system/`: log, wait, fail, replace text, hash, scripts, cron trigger, FlowFile generation/listing, reporting;
+  - `io/`: HTTP, files, SFTP/FTP, S3, GCS, Azure, Kafka, MQTT, email, Slack, Discord, Telegram, WhatsApp, web UI, relay, auth/session;
+  - `data/`: JSON, XML, CSV, SQL, text extraction, transformations, compression, Avro/Parquet, base64, cache, deduplication;
+  - `control/`: routing, split/merge, rate limiting, ports, stop flow, execute flow, wait/notify;
+  - `ai/`: agent loop and agent-execution modules.
 
-- `services/` : services d'intégration et proxys.
-  - authentification et providers OAuth ;
-  - filesystem, terminal, browser, relay, gateway ;
-  - services média/image/audio/vidéo, voix, 3D, desktop/browser et Pixazo ;
-  - intégrations messaging et stockage.
+- `services/`: integration services and proxies.
+  - authentication and OAuth providers;
+  - filesystem, terminal, browser, relay, gateway;
+  - media/image/audio/video, voice, 3D, desktop/browser, and Pixazo services;
+  - messaging and storage integrations.
 
-### Interfaces et clients
+### Interfaces and clients
 
-- `cli.py` : CLI historique et point d'entrée `pawflow` déclaré dans `pyproject.toml`.
-  - commandes de run/validate/list/info ;
-  - démarrage API/UI ;
-  - import, triggers, cluster, réindex mémoire.
+- `cli.py`: historical CLI and `pawflow` entry point declared in `pyproject.toml`.
+  - run/validate/list/info commands;
+  - API/UI startup;
+  - import, triggers, cluster, memory re-embedding.
 
-- `pawflow_cli/` : **PawCode**, client terminal façon Claude Code.
-  - mode interactif ;
-  - compatibilité stream JSON ;
-  - relay automatique du répertoire de travail ;
-  - commandes terminal, contexte, fichiers et agent.
+- `pawflow_cli/`: **PawCode**, a Claude Code-style terminal client.
+  - interactive mode;
+  - stream-JSON compatibility;
+  - automatic working-directory relay;
+  - terminal, context, file, and agent commands.
 
-- `pawflow_relay/` : relay local/host.
-  - expose fichiers, commandes shell et outils au serveur via WebSocket ;
-  - permet au serveur d'agir sur la machine utilisateur sans accès direct au filesystem.
+- `pawflow_relay/`: local/host relay.
+  - exposes files, shell commands, and tools to the server via WebSocket;
+  - lets the server act on the user's machine without direct filesystem access.
 
-- `pawflow-vscode/` : extension VS Code TypeScript.
-  - chat PawFlow dans VS Code ;
-  - relay intégré ;
-  - commandes sur sélection et contexte projet.
+- `pawflow-vscode/`: TypeScript VS Code extension.
+  - PawFlow chat inside VS Code;
+  - embedded relay;
+  - selection-aware commands and project context.
 
-- `static/`, `pawflow-website/` et tâches `serve_*` : interface web, assets et site statique.
+- `static/`, `pawflow-website/`, and `serve_*` tasks: web UI, assets, and static presentation site.
 
 ### Documentation
 
-La documentation présente dans `docs/` couvre notamment :
+`docs/` covers:
 
-- architecture interne ;
-- système agent ;
-- outils cognitifs : mémoire, KG, diary, project graph ;
-- expression language ;
-- slash commands ;
-- catalogue de tâches ;
-- déploiement Docker/local ;
-- filesystem relay ;
-- HTTP listener, provenance, Pixazo, voice clone ;
-- développement de tâches/services.
+- internal architecture;
+- agent system;
+- cognitive tools: memory, KG, diary, project graph;
+- expression language;
+- slash commands;
+- task catalog;
+- Docker/local deployment;
+- relay filesystem;
+- HTTP listener, provenance, Pixazo, voice clone;
+- task/service development.
 
-Le `README.md` est aujourd'hui plus représentatif de la vision et de l'état courant que l'ancien résumé projet.
+The `README.md` is now a better reflection of the vision and current state than the previous project summary.
 
-## Chiffres observés dans le dépôt
+## Repository figures
 
-Ces chiffres décrivent l'état du dépôt au 2026-04-27, hors interprétation fonctionnelle fine :
+These numbers describe the repository state as of 2026-04-27 without deeper functional interpretation:
 
-| Zone | Volume observé |
+| Area | Observed volume |
 |---|---:|
-| Fichiers Python dans `core/` | 159 |
-| Fichiers Python dans `engine/` | 20 |
-| Fichiers Python dans `tasks/` | 131 |
-| Fichiers Python dans `services/` | 63 |
-| Fichiers de tests `tests/test_*.py` | 128 |
-| Documents dans `docs/` | 19 |
+| Python files in `core/` | 159 |
+| Python files in `engine/` | 20 |
+| Python files in `tasks/` | 131 |
+| Python files in `services/` | 63 |
+| Test files `tests/test_*.py` | 128 |
+| Documents in `docs/` | 19 |
 
-Le README annonce aussi :
+The README also advertises:
 
-- 100+ types de tâches dans le catalogue ;
-- 90+ outils intégrés ;
-- 60+ slash commands dans le web chat ;
-- 9 providers OAuth ;
-- 2500+ tests.
+- 100+ task types in the catalog;
+- 90+ built-in tools;
+- 60+ slash commands in the web chat;
+- 9 OAuth providers;
+- 4000+ tests.
 
-## Fonctionnalités clés implémentées ou présentes
+## Key implemented or present features
 
-### Agents IA
+### AI Agents
 
-- Conversations agent avec streaming.
-- Tool-use loop et exécution d'outils via relay.
-- Multi-agent et délégation.
-- Plans structurés avec étapes, assignation et vérification.
-- Mémoire persistante, semantic recall, knowledge graph, diary agent.
-- Project graph basé sur AST/tree-sitter.
-- Providers LLM multiples et endpoint compatible OpenAI.
-- Modes de permission et contrôle d'accès aux outils selon configuration.
+- Agent conversations with streaming.
+- Tool-use loop and tool execution via the relay.
+- Multi-agent and delegation.
+- Structured plans with steps, assignment, and verification.
+- Persistent memory, semantic recall, knowledge graph, agent diary.
+- AST/tree-sitter-based project graph.
+- Multiple LLM providers and an OpenAI-compatible endpoint.
+- Permission modes and tool-access control per configuration.
 
 ### Pipelines
 
-- Flows JSON exécutés comme DAGs.
-- FlowFiles, relations, paramètres et contexte runtime.
-- Backpressure, checkpoints, reprise après crash.
-- CRON, file watcher, webhook/polling/event triggers selon modules présents.
-- Subflows, mapping de paramètres et import NiFi.
-- Debugger de flow, provenance, versioning et mode cluster.
+- JSON flows executed as DAGs.
+- FlowFiles, relations, parameters, and runtime context.
+- Backpressure, checkpoints, crash recovery.
+- CRON, file watcher, webhook/polling/event triggers per available modules.
+- Subflows, parameter mapping, and NiFi import.
+- Flow debugger, provenance, versioning, and cluster mode.
 
-### Outils et relay
+### Tools and relay
 
-- Lecture/écriture/édition de fichiers.
+- File read/write/edit.
 - Bash/terminal via relay.
-- Recherche de fichiers/contenu.
+- File/content search.
 - Web fetch/scraping.
-- Génération image, vidéo, audio, voix, 3D, upscale, try-on et lipsync selon providers configurés.
-- Desktop/screen/browser automation via relay/VNC selon configuration.
-- Scan sécurité et exécution de scripts.
-- Gestion de secrets, ressources, mémoire, KG et plans.
+- Image, video, audio, voice, 3D, upscale, try-on, and lipsync generation per configured providers.
+- Desktop/screen/browser automation via relay/VNC per configuration.
+- Security scanning and script execution.
+- Secret, resource, memory, KG, and plan management.
 
-### Interfaces utilisateur
+### User interfaces
 
-- Web chat avec SSE, fichiers, contexte, slash commands, `/desktop` et gestion conversations.
-- PawCode CLI pour usage terminal.
-- Extension VS Code.
-- Conversations partagées entre web, CLI, VS Code, API/channels et flows.
-- Site statique de présentation.
+- Web chat with SSE, files, context, slash commands, `/desktop`, and conversation management.
+- PawCode CLI for terminal use.
+- VS Code extension.
+- Conversations shared across web, CLI, VS Code, API/channels, and flows.
+- Static presentation site.
 
-### Authentification et déploiement
+### Authentication and deployment
 
-- Auth username/password et OAuth.
-- JWT/API keys/RBAC selon modules présents.
-- Déploiement local et Docker.
-- Relay Docker ou natif.
+- Username/password and OAuth authentication.
+- JWT/API keys/RBAC per available modules.
+- Local and Docker deployment.
+- Docker or native relay.
 
-## Points forts
+## Strengths
 
-1. **Ambition produit cohérente** : PawFlow combine agents autonomes et moteur de pipelines au lieu de rester un simple wrapper LLM.
-2. **Architecture modulaire** : séparation nette entre core agent, engine, tasks, services, relay et clients.
-3. **Surface d'intégration large** : fichiers, shell, web, messaging, cloud storage, bases de données, médias, OAuth.
-4. **Approche self-hosted crédible** : le relay évite de donner au serveur un accès direct permanent au filesystem utilisateur.
-5. **Outillage de continuité agent** : mémoire, KG, diary, plans et project graph vont au-delà d'un chat stateless.
-6. **Couverture de tests significative** : le dépôt contient une vraie suite pytest, pas seulement un script de démonstration.
+1. **Coherent product ambition**: PawFlow combines autonomous agents and a pipeline engine instead of staying a thin LLM wrapper.
+2. **Modular architecture**: clear separation between agent core, engine, tasks, services, relay, and clients.
+3. **Broad integration surface**: files, shell, web, messaging, cloud storage, databases, media, OAuth.
+4. **Credible self-hosted approach**: the relay avoids granting the server permanent direct access to the user's filesystem.
+5. **Agent continuity tooling**: memory, KG, diary, plans, and project graph go beyond stateless chat.
+6. **Meaningful test coverage**: the repository ships a real pytest suite, not just a demo script.
 
-## Points de vigilance
+## Watch-outs
 
-- Le projet est explicitement en **alpha** : l'API publique, les formats JSON et les contrats internes peuvent encore bouger.
-- La documentation n'est pas uniformément au même niveau de fraîcheur. Certains anciens documents décrivent encore une phase MVP.
-- La surface fonctionnelle est très large : il faut distinguer les modules présents, les chemins testés et les intégrations réellement validées en production.
-- Certaines capacités dépendent de secrets, providers externes, relay actif ou environnement Docker/local correctement configuré.
-- Le README contient des chiffres de haut niveau utiles, mais ils doivent rester synchronisés avec le catalogue réel et les tests.
+- The project is explicitly in **alpha**: the public API, JSON formats, and internal contracts may still shift.
+- Documentation freshness is uneven. Some older documents still describe an MVP-era state.
+- The functional surface is very wide: distinguish between modules that are present, paths that are tested, and integrations actually validated in production.
+- Some capabilities depend on secrets, external providers, an active relay, or a properly configured Docker/local environment.
+- High-level README counts are useful but must stay in sync with the real catalog and tests.
 
-## Roadmap actuelle
+## Current roadmap
 
-D'après `ROADMAP.md`, les prochains axes importants sont :
+Per `ROADMAP.md`, the next major directions are:
 
-- input voix push-to-talk ;
-- isolation Git worktree pour agents parallèles ;
-- providers LLM additionnels : Ollama, Mistral, vLLM, LM Studio, Together.ai ;
-- MCP elicitation et exposition de PawFlow comme serveur MCP ;
-- client mobile PWA ;
-- éditeur visuel complet de flows ;
-- assistant d'installation ;
-- mode JSON headless ;
-- marketplace agents/skills/tools/MCP/tasks/flows.
+- push-to-talk voice input;
+- Git worktree isolation for parallel agents;
+- additional LLM providers: Ollama, Mistral, vLLM, LM Studio, Together.ai;
+- MCP elicitation and exposing PawFlow as an MCP server;
+- mobile PWA client;
+- full visual flow editor;
+- installation wizard;
+- headless JSON mode;
+- marketplace for agents/skills/tools/MCP/tasks/flows.
 
 ## Conclusion
 
-PawFlow est passé d'une architecture de base à une plateforme agentique complète en alpha. Le résumé projet doit donc le présenter comme un système intégré : **serveur + agents + moteur de flows + relay + clients + documentation + tests**.
+PawFlow has moved from a base architecture to a complete agentic platform in alpha. The project summary therefore must present it as an integrated system: **server + agents + flow engine + relay + clients + documentation + tests**.
 
-L'ancien message "4 tâches implémentées / 0 service / 1 script de test" est obsolète. La bonne lecture actuelle est : un produit déjà substantiel, avec une architecture riche et beaucoup de modules présents, mais qui doit encore stabiliser ses contrats, clarifier ce qui est production-ready et garder sa documentation synchronisée avec le code.
+The old "4 implemented tasks / 0 service / 1 test script" framing is obsolete. The current accurate reading is: an already substantial product with a rich architecture and many modules in place, but one that still has to stabilize its contracts, clarify what is production-ready, and keep its documentation in sync with the code.

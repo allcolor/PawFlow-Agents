@@ -223,8 +223,31 @@ class TestBrowserActionHandler:
         ctx, mock_svc = self._patch_service()
         with ctx:
             handler.set_conversation_id("c1")
+            handler.set_user_id("alice")
             handler.execute({"action": "screenshot"})
-            mock_svc.screenshot.assert_called_once()
+            mock_svc.screenshot.assert_called_once_with("c1", "alice")
+
+    def test_screenshot_stores_with_handler_user_id_when_session_has_none(self):
+        from services.browser_service import BrowserService, BrowserSession
+
+        svc = BrowserService({})
+        page = MagicMock()
+        page.screenshot.return_value = b"png-bytes"
+        svc._sessions["c1"] = BrowserSession(context=MagicMock(), page=page)
+        store = MagicMock()
+        store.store.return_value = "shot123"
+
+        with patch("core.file_store.FileStore.instance", return_value=store):
+            result = svc._screenshot("c1", "alice")
+
+        assert "file_id: shot123" in result
+        store.store.assert_called_once_with(
+            "screenshot.png",
+            b"png-bytes",
+            content_type="image/png",
+            user_id="alice",
+            conversation_id="c1",
+        )
 
     def test_execute_scroll_calls_service(self, handler):
         ctx, mock_svc = self._patch_service()

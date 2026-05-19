@@ -1793,6 +1793,21 @@ function setMessagesScrollTop(value) {
   if (m) m.scrollTop = value;
 }
 
+function refreshMessagesScrollMetrics(forceBottom) {
+  const m = document.getElementById('messages');
+  if (!m) return;
+  if (forceBottom) _autoScroll = true;
+  const settle = () => {
+    if (forceBottom || _autoScroll) setMessagesScrollTop(m.scrollHeight);
+    updateScrollNav();
+  };
+  settle();
+  window.requestAnimationFrame(() => {
+    settle();
+    window.requestAnimationFrame(settle);
+  });
+}
+
 function scrollMessagesTop() {
   _autoScroll = false;
   _suppressTopLoadUntil = Date.now() + 700;
@@ -1801,17 +1816,7 @@ function scrollMessagesTop() {
 }
 
 function scrollBottom(force) {
-  if (force) _autoScroll = true;
-  const m = document.getElementById('messages');
-  if (!m) return;
-  if (_autoScroll) {
-    setMessagesScrollTop(m.scrollHeight);
-    window.requestAnimationFrame(() => {
-      if (_autoScroll) setMessagesScrollTop(m.scrollHeight);
-      updateScrollNav();
-    });
-  }
-  updateScrollNav();
+  refreshMessagesScrollMetrics(!!force);
 }
 
 function updateScrollNav() {

@@ -109,6 +109,19 @@ def test_autoscroll_only_stops_on_user_scroll_intent():
     assert "container.scrollTop = container.scrollHeight - prevHeight" not in CONVERSATIONS_JS
 
 
+def test_chat_scroll_container_has_stable_flex_height_and_post_render_refresh():
+    assert ".main { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }" in TEMPLATE_HTML
+    assert ".messages-wrap { flex: 1; position: relative; overflow: hidden; display: flex; flex-direction: column; min-width: 0; min-height: 0; width: 100%; }" in TEMPLATE_HTML
+    assert ".messages { flex: 1 1 auto; width: 100%; min-width: 0; min-height: 0; overflow-y: auto;" in TEMPLATE_HTML
+    assert "overscroll-behavior: contain" in TEMPLATE_HTML
+    assert "function refreshMessagesScrollMetrics(forceBottom)" in MESSAGES_JS
+    assert "window.requestAnimationFrame(() =>" in MESSAGES_JS
+    assert "window.requestAnimationFrame(settle)" in MESSAGES_JS
+    assert "refreshMessagesScrollMetrics(!!force)" in MESSAGES_JS
+    assert "const themeLoad = typeof loadThemeSelector === 'function' ? loadThemeSelector() : null" in CONVERSATIONS_JS
+    assert "refreshMessagesScrollMetrics(true)" in CONVERSATIONS_JS
+
+
 def test_tool_results_carry_tc_id_for_reload_grouping():
     assert "if (tcId) el.dataset.tcId = tcId;" in MESSAGES_JS
     assert "if (tcId) _inner.dataset.tcId = tcId;" in MESSAGES_JS

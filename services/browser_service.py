@@ -33,6 +33,7 @@ class BrowserSession:
     """A browser session tied to a conversation."""
     context: Any = None  # playwright BrowserContext
     page: Any = None  # playwright Page
+    user_id: str = ""
     last_activity: float = field(default_factory=time.time)
 
 
@@ -237,27 +238,29 @@ class BrowserService(BaseService):
             raise result
         return result
 
-    def get_session(self, conversation_id: str) -> BrowserSession:
+    def get_session(self, conversation_id: str, user_id: str = "") -> BrowserSession:
         """Get or create a browser session for a conversation."""
         with self._session_lock:
             session = self._sessions.get(conversation_id)
             if session:
+                if user_id and not session.user_id:
+                    session.user_id = user_id
                 session.last_activity = time.time()
                 return session
 
         # Create new session on worker thread
-        self._run_on_worker("_create_session", conversation_id)
+        self._run_on_worker("_create_session", conversation_id, user_id)
 
         with self._session_lock:
             return self._sessions[conversation_id]
 
-    def _create_session(self, conversation_id: str):
+    def _create_session(self, conversation_id: str, user_id: str = ""):
         """Create a new browser session (runs on worker thread)."""
         context = self._browser.new_context(
             viewport={"width": 1280, "height": 720},
         )
         page = context.new_page()
-        session = BrowserSession(context=context, page=page)
+        session = BrowserSession(context=context, page=page, user_id=user_id or "")
 
         with self._session_lock:
             self._sessions[conversation_id] = session
@@ -306,13 +309,13 @@ class BrowserService(BaseService):
                 except Exception as e:
                     logger.warning(f"Cleanup error for {cid[:8]}: {e}")
 
-    def navigate(self, conversation_id: str, url: str) -> str:
+    def navigate(self, conversation_id: str, url: str, user_id: str = "") -> str:
         """Navigate to URL. Returns page title + URL."""
         self.validate_url(url)
-        return self._run_on_worker("_navigate", conversation_id, url)
+        return self._run_on_worker("_navigate", conversation_id, url, user_id)
 
-    def _navigate(self, conversation_id: str, url: str) -> str:
-        session = self._get_session_internal(conversation_id)
+    def _navigate(self, conversation_id: str, url: str, user_id: str = "") -> str:
+        session = self._get_session_internal(conversation_id, user_id)
         session.page.goto(url, wait_until="domcontentloaded", timeout=15000)
         session.last_activity = time.time()
         return f"Navigated to: {session.page.title()} ({session.page.url})"
@@ -350,18 +353,18 @@ class BrowserService(BaseService):
             text = text[:10000] + "\n... (truncated)"
         return text
 
-    def screenshot(self, conversation_id: str) -> str:
-        return self._run_on_worker("_screenshot", conversation_id)
+    def screenshot(self, conversation_id: str, user_id: str = "") -> str:
+        return self._run_on_worker("_screenshot", conversation_id, user_id)
 
-    def _screenshot(self, conversation_id: str) -> str:
+    def _screenshot(self, conversation_id: str, user_id: str = "") -> str:
         import base64
-        session = self._get_session_internal(conversation_id)
+        session = self._get_session_internal(conversation_id, user_id)
         png_bytes = session.page.screenshot(type="png")
         session.last_activity = time.time()
 
         # Store in FileStore
         from core.file_store import FileStore
-        _uid = getattr(session, "user_id", "") or ""
+        _uid = getattr(session, "user_id", "") or user_id or ""
         if not _uid:
             raise ValueError("browser screenshot: session has no user_id")
         file_id = FileStore.instance().store("screenshot.png", png_bytes,
@@ -390,14 +393,16 @@ class BrowserService(BaseService):
         session.last_activity = time.time()
         return f"Element found: {selector}"
 
-    def _get_session_internal(self, conversation_id: str) -> BrowserSession:
+    def _get_session_internal(self, conversation_id: str, user_id: str = "") -> BrowserSession:
         """Get session, must be called from worker thread."""
         with self._session_lock:
             session = self._sessions.get(conversation_id)
         if not session:
-            self._create_session(conversation_id)
+            self._create_session(conversation_id, user_id)
             with self._session_lock:
                 session = self._sessions[conversation_id]
+        elif user_id and not session.user_id:
+            session.user_id = user_id
         return session
 
     def shutdown(self):

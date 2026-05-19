@@ -20,6 +20,7 @@ class BrowserActionHandler(ToolHandler):
 
     def __init__(self):
         self._conversation_id = ""
+        self._user_id = ""
 
     @property
     def name(self) -> str:
@@ -76,6 +77,9 @@ class BrowserActionHandler(ToolHandler):
     def set_conversation_id(self, conversation_id: str):
         self._conversation_id = conversation_id
 
+    def set_user_id(self, user_id: str):
+        self._user_id = user_id
+
     def execute(self, arguments: Dict[str, Any]) -> str:
         action = arguments.get("action", "")
         if not action:
@@ -93,7 +97,7 @@ class BrowserActionHandler(ToolHandler):
                 url = arguments.get("url", "")
                 if not url:
                     return "Error: url is required for navigate"
-                return svc.navigate(conv_id, url)
+                return svc.navigate(conv_id, url, self._user_id)
 
             elif action == "click":
                 selector = arguments.get("selector", "")
@@ -115,7 +119,7 @@ class BrowserActionHandler(ToolHandler):
                 return svc.extract(conv_id, selector)
 
             elif action == "screenshot":
-                return svc.screenshot(conv_id)
+                return svc.screenshot(conv_id, self._user_id)
 
             elif action == "scroll":
                 direction = arguments.get("direction", "down")

@@ -424,12 +424,18 @@ function _renderHistory(data) {
     console.error('BUG: server returned empty active_agent — conversation must always have an agent');
   }
   selectedAgent = data.active_agent || selectedAgent;
-  if (typeof loadThemeSelector === 'function') loadThemeSelector();
+  const themeLoad = typeof loadThemeSelector === 'function' ? loadThemeSelector() : null;
   updateActiveAgentBadge();
   loadResources();
   loadPermissionMode();
   document.getElementById('status').textContent = t('ready');
   scrollBottom(true);
+  if (themeLoad && typeof themeLoad.then === 'function') {
+    themeLoad.then(
+      () => { if (typeof refreshMessagesScrollMetrics === 'function') refreshMessagesScrollMetrics(true); },
+      () => { if (typeof refreshMessagesScrollMetrics === 'function') refreshMessagesScrollMetrics(true); }
+    );
+  }
   document.getElementById('input').focus();
 }
 

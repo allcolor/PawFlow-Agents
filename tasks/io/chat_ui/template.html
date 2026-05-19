@@ -71,9 +71,9 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
                    background: #0f3460; color: #e0e0e0; border: 1px solid #e94560;
                    border-radius: 6px; padding: 6px 10px; cursor: pointer; font-size: 16px;
                    transition: left 0.2s; }
-.main { flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+.main { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
 .header { background: #16213e; padding: 12px 20px; border-bottom: 1px solid #0f3460;
-           display: flex; align-items: center; gap: 12px; }
+           display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
 .header h1 { font-size: 18px; color: #e94560; }
 .header .status { font-size: 12px; color: #6c6c8a; }
 .active-agent-badge { font-size: 11px; padding: 2px 10px; border-radius: 12px; cursor: pointer; margin-left: 8px; font-weight: 600; white-space: nowrap; }
@@ -104,8 +104,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .view-menu-item.active .vmi-switch::after { left: 16px; }
 .view-menu-item.disabled { opacity: 0.6; pointer-events: none; }
 .header .user-info { font-size: 12px; color: #8888aa; }
-.messages-wrap { flex: 1; position: relative; overflow: hidden; display: flex; flex-direction: column; min-width: 0; width: 100%; }
-.messages { flex: 1; width: 100%; min-width: 0; overflow-y: overlay; overflow-x: hidden; padding: 20px; display: flex; flex-direction: column; gap: 12px;
+.messages-wrap { flex: 1; position: relative; overflow: hidden; display: flex; flex-direction: column; min-width: 0; min-height: 0; width: 100%; }
+.messages { flex: 1 1 auto; width: 100%; min-width: 0; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 20px; display: flex; flex-direction: column; gap: 12px; overscroll-behavior: contain;
             scrollbar-width: thin; scrollbar-color: #333 transparent; }
 .msg { max-width: 80%; padding: 10px 14px; border-radius: 12px; line-height: 1.5; font-size: 14px;
        white-space: pre-wrap; word-wrap: break-word; overflow-wrap: anywhere; min-width: 0; }
@@ -277,7 +277,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
                      display: flex; align-items: center; justify-content: center;
                      box-shadow: 0 2px 8px rgba(0,0,0,0.4); transition: background 0.2s, color 0.2s; }
 .scroll-nav button:hover { background: #0f3460; color: #fff; }
-.input-area { background: #16213e; padding: 14px 20px; border-top: 1px solid #0f3460;
+.input-area { background: #16213e; padding: 14px 20px; border-top: 1px solid #0f3460; flex-shrink: 0;
                display: flex; gap: 10px; flex-direction: column; }
 .input-row { display: flex; gap: 10px; align-items: flex-end; }
 .input-row textarea { flex: 1; background: #1a1a2e; color: #e0e0e0; border: 1px solid #0f3460;

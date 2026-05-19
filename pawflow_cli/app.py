@@ -924,8 +924,10 @@ class PawCode:
 def main():
     """Entry point for the CLI."""
     import argparse
+    from core import __version__ as _pf_version
 
     parser = argparse.ArgumentParser(description="PawCode — Terminal chat frontend")
+    parser.add_argument("--version", action="version", version=f"pawcode {_pf_version}")
     parser.add_argument("command", nargs="?", default=None,
                         help="Subcommand: 'auth login' or 'auth status'")
     parser.add_argument("subcommand", nargs="?", default=None,

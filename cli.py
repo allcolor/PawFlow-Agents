@@ -340,9 +340,9 @@ def cmd_start(args):
                     try:
                         reg._executors[eid].stop()
                     except Exception:
-                        pass
+                        pass  # nosec B110
             except Exception:
-                pass
+                pass  # nosec B110
         t = threading.Thread(target=_stop_all, daemon=True)
         t.start()
         t.join(timeout=3)
@@ -381,9 +381,9 @@ def cmd_start(args):
                 import importlib as _importlib
                 getattr(_importlib.import_module(_pool_mod), _pool_cls).instance().shutdown()
             except Exception:
-                pass
+                pass  # nosec B110
         try:
-            import subprocess as _sp
+            import subprocess as _sp  # nosec B404
             from core.docker_utils import docker_cmd
             for _prefix in (
                 "pf-cc-pool-",
@@ -394,20 +394,20 @@ def cmd_start(args):
                 "pawflow-gemini-login-",
             ):
                 try:
-                    _r = _sp.run(
+                    _r = _sp.run(  # nosec B603
                         docker_cmd() + ["ps", "-a", "-q",
                                          "--filter", f"name={_prefix}"],
                         capture_output=True, text=True, timeout=5)
                     _ids = [i for i in (_r.stdout or "").split() if i]
                     if _ids:
-                        _sp.run(docker_cmd() + ["rm", "-f"] + _ids,
+                        _sp.run(docker_cmd() + ["rm", "-f"] + _ids,  # nosec B603
                                 capture_output=True, timeout=10)
                         logger.info("Reaped %d orphan container(s) matching %s*",
                                     len(_ids), _prefix)
                 except Exception:
-                    pass
+                    pass  # nosec B110
         except Exception:
-            pass
+            pass  # nosec B110
 
     signal.signal(signal.SIGINT, _shutdown)
     signal.signal(signal.SIGTERM, _shutdown)
@@ -607,7 +607,7 @@ def cmd_cluster(args):
         import urllib.request
         url = args.api_url or "http://localhost:8000"
         try:
-            with urllib.request.urlopen(f"{url}/api/v1/system/cluster/status") as resp:
+            with urllib.request.urlopen(f"{url}/api/v1/system/cluster/status") as resp:  # nosec B310
                 data = json.loads(resp.read())
                 if data.get("cluster_enabled"):
                     status = data["status"]

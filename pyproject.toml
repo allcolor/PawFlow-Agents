@@ -118,6 +118,9 @@ Documentation = "https://github.com/allcolor/PawFlow-Agents/tree/main/docs"
 Repository = "https://github.com/allcolor/PawFlow-Agents"
 Issues = "https://github.com/allcolor/PawFlow-Agents/issues"
 
+[tool.setuptools]
+py-modules = ["cli"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
@@ -150,8 +153,8 @@ ignore_missing_imports = true
 
 [tool.setuptools.packages.find]
 include = [
-    "core*", "engine*", "tasks*", "services*", "api*", "gui*",
-    "pawflow_sdk*", "pawflow_relay*", "pawflow_cli*",
+    "core*", "engine*", "tasks*", "services*", "tools*",
+    "pawflow_relay*", "pawflow_cli*",
 ]
 exclude = ["tests*"]
 

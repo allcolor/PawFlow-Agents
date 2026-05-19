@@ -202,6 +202,19 @@ def test_cli_bootstrap_failure_is_not_silently_ignored():
     assert "raise" in block
 
 
+def test_python_package_metadata_includes_cli_and_relay_tools():
+    pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
+
+    assert 'py-modules = ["cli"]' in pyproject
+    include_block = pyproject[pyproject.index("[tool.setuptools.packages.find]"):]
+    include_block = include_block[:include_block.index("exclude =")]
+    assert '"tools*"' in include_block
+    assert '"api*"' not in include_block
+    assert '"gui*"' not in include_block
+    assert '"pawflow_sdk*"' not in include_block
+    assert Path("tools/__init__.py").exists()
+
+
 def test_pawflow_installer_flow_template_exists():
     latest = Path("data/repository/flows/global/default/pawflow_installer/latest.json")
     template = Path("data/repository/flows/global/default/pawflow_installer/versions/1.0.0.json")

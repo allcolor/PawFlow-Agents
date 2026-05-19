@@ -37,6 +37,7 @@ dependencies = [
     "pandas>=2.0.0",
     "numpy>=1.24.0",
     "pyyaml>=6.0",
+    "defusedxml>=0.7.1",
     # Database
     "sqlalchemy>=2.0.0",
     # HTTP

@@ -690,7 +690,7 @@ function connectSSE(cid, onReady, opts) {
   eventSource.addEventListener('sub_agent_start', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
-    trackAgentStart(data.agent_name, data.message ? data.message.substring(0, 40) : '');
+    trackAgentStart(data.agent_name, data.message ? data.message.substring(0, 40) : '', data.task_id || '');
     if (data.delegate_tc_id && data.task_id) {
       // Ensure group exists (handles case where delegate_group_start wasn't received)
       const group = _getOrCreateGroup(data.delegate_tc_id, data.source_agent || '', 1, data.source_task_id || '');
@@ -742,7 +742,7 @@ function connectSSE(cid, onReady, opts) {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
     const agentName = data.agent_name || 'sub-agent';
-    trackAgentTool(agentName, data.tool);
+    trackAgentTool(agentName, data.tool, data.task_id || '');
     if (data.task_id && _delegateSubBlocks[data.task_id]) {
       const el = document.createElement('div');
       el.className = 'delegate-tool';
@@ -787,7 +787,7 @@ function connectSSE(cid, onReady, opts) {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
     const agent = data.agent_name || 'sub-agent';
-    trackAgentDone(agent);
+    trackAgentDone(agent, data.task_id || '');
     const taskId = data.task_id;
     const delegateTcId = data.delegate_tc_id;
     // Finalize sub-block — a delegate is not a task, no done/error
@@ -882,7 +882,7 @@ function connectSSE(cid, onReady, opts) {
       tcs.lastEl = tcs.el;  // preserve for done handler
       tcs.el = null; tcs.text = '';
     }
-    trackAgentTool(tcAgent, data.tool);
+    trackAgentTool(tcAgent, data.tool, data.task_id || '');
     // Hide delegate tool_call — the delegate block replaces it.
     // When delegate grouping is disabled, render the call normally so the
     // user still sees the live launch + result in the main timeline.
@@ -938,7 +938,7 @@ function connectSSE(cid, onReady, opts) {
   eventSource.addEventListener('tool_result', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
-    if (data.agent_name) trackAgentToolDone(data.agent_name, data.tool);
+    if (data.agent_name) trackAgentToolDone(data.agent_name, data.tool, data.task_id || '');
     if (typeof _noteLiveHistoryAppend === 'function') {
       _noteLiveHistoryAppend(data.message_count, 1, data.msg_id || '');
     }
@@ -1215,6 +1215,7 @@ function connectSSE(cid, onReady, opts) {
         if (msgEl && block) block.content.appendChild(msgEl);
       }
       _finalizeTaskBlock(data.task_id, data.task_iteration, '\u2713 done', '#4ecdc4');
+      trackAgentDone(doneAgent, data.task_id);
       clearStream(doneAgent);
       return;
     }

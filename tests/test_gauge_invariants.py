@@ -146,6 +146,33 @@ def test_iteration_status_updates_state_without_polluting_chat_timeline():
     assert "addMsg(" not in block
 
 
+def test_active_agent_tool_hints_use_task_scoped_keys():
+    """Task tool SSE hints must update the server-poll row, not create a ghost."""
+    key_body = _extract_function_body(_ACTIVE_AGENTS_JS, "activeAgentKey")
+    assert "agentName + '::' + taskId" in key_body
+
+    tool_body = _extract_function_body(_ACTIVE_AGENTS_JS, "trackAgentTool")
+    assert "activeAgentKey(agentName, taskId || '')" in tool_body
+    assert "trackAgentStart(agentName, '', taskId || '')" in tool_body
+
+    sync_body = _extract_function_body(_ACTIVE_AGENTS_JS, "syncActiveFromServer")
+    assert "activeAgentKey(a.agent_name, a.task_id || '')" in sync_body
+    assert "agentKey(a.agent_name + '::' + a.task_id)" not in sync_body
+
+    tool_call = _SSE_JS[
+        _SSE_JS.index("eventSource.addEventListener('tool_call'"):
+        _SSE_JS.index("eventSource.addEventListener('tool_result'")]
+    tool_result = _SSE_JS[
+        _SSE_JS.index("eventSource.addEventListener('tool_result'"):
+        _SSE_JS.index("eventSource.addEventListener('bg_task_update'")]
+    task_done = _SSE_JS[
+        _SSE_JS.index("eventSource.addEventListener('done'"):
+        _SSE_JS.index("// Single update path", _SSE_JS.index("eventSource.addEventListener('done'"))]
+    assert "trackAgentTool(tcAgent, data.tool, data.task_id || '')" in tool_call
+    assert "trackAgentToolDone(data.agent_name, data.tool, data.task_id || '')" in tool_result
+    assert "trackAgentDone(doneAgent, data.task_id)" in task_done
+
+
 def test_compact_progress_done_does_not_publish_gauge():
     """Gauge updates come from message_meta produced by compute_context_usage.
     compact_progress is progress UI only and must not carry a second formula."""

@@ -6,6 +6,9 @@ let activeInteractions = {};  // agentKey → { name, startedAt, ... }
 let activeTimer = null;
 
 function agentKey(name) { return (name || '').toLowerCase(); }
+function activeAgentKey(agentName, taskId) {
+  return taskId ? agentKey(agentName + '::' + taskId) : agentKey(agentName);
+}
 
 // ── Persistent context-window usage cache ──
 // Shared across the header badge + Resource Panel agents. Populated from
@@ -120,13 +123,13 @@ function _refreshGaugeSurfaces(key) {
 // several seconds preparing context before the next poll. SSE hints keep the
 // Active Agents panel visible immediately; syncActiveFromServer removes rows
 // that the server no longer reports.
-function trackAgentStart(agentName, msgPreview) {
-  const key = agentKey(agentName);
+function trackAgentStart(agentName, msgPreview, taskId) {
+  const key = activeAgentKey(agentName, taskId || '');
   if (!key) return;
   const existing = activeInteractions[key] || {};
   activeInteractions[key] = {
     name: agentName,
-    taskId: existing.taskId || '',
+    taskId: taskId || existing.taskId || '',
     startedAt: existing.startedAt || Date.now(),
     iteration: existing.iteration || 0,
     round: existing.round || 0,
@@ -158,10 +161,10 @@ function trackAgentStart(agentName, msgPreview) {
   }
   updateActivePanel();
 }
-function trackAgentTool(agentName, toolName) {
-  const key = agentKey(agentName);
+function trackAgentTool(agentName, toolName, taskId) {
+  const key = activeAgentKey(agentName, taskId || '');
   if (!key) return;
-  if (!activeInteractions[key]) trackAgentStart(agentName);
+  if (!activeInteractions[key]) trackAgentStart(agentName, '', taskId || '');
   const info = activeInteractions[key];
   info.lastTool = toolName || info.lastTool || '';
   info.status = toolName ? t('usingTool', { tool: toolName }) : t('usingTool', { tool: t('tool') });
@@ -170,8 +173,8 @@ function trackAgentTool(agentName, toolName) {
   info.updatedAt = Date.now();
   updateActivePanel();
 }
-function trackAgentToolDone(agentName, toolName) {
-  const key = agentKey(agentName);
+function trackAgentToolDone(agentName, toolName, taskId) {
+  const key = activeAgentKey(agentName, taskId || '');
   if (!key || !activeInteractions[key]) return;
   const info = activeInteractions[key];
   info.activeTools = [];
@@ -180,8 +183,8 @@ function trackAgentToolDone(agentName, toolName) {
   updateActivePanel();
 }
 
-function trackAgentDone(agentName) {
-  const key = agentKey(agentName);
+function trackAgentDone(agentName, taskId) {
+  const key = activeAgentKey(agentName, taskId || '');
   if (!key) return;
   delete activeInteractions[key];
   updateActivePanel();
@@ -351,7 +354,7 @@ function syncActiveFromServer() {
     if (typeof setConversationWorking === 'function') {
       setConversationWorking(conversationId, hasActiveForCurrentConv);
     }
-    const serverKeys = new Set(serverActive.map(a => a.task_id ? agentKey(a.agent_name + '::' + a.task_id) : agentKey(a.agent_name)));
+    const serverKeys = new Set(serverActive.map(a => activeAgentKey(a.agent_name, a.task_id || '')));
 
     // Server is the truth — remove anything server doesn't know about
     for (const key of Object.keys(activeInteractions)) {
@@ -361,7 +364,7 @@ function syncActiveFromServer() {
     }
     const now = Date.now();
     for (const a of serverActive) {
-      const key = a.task_id ? agentKey(a.agent_name + '::' + a.task_id) : agentKey(a.agent_name);
+      const key = activeAgentKey(a.agent_name, a.task_id || '');
       const existing = activeInteractions[key];
       activeInteractions[key] = {
         name: a.agent_name,
@@ -425,7 +428,7 @@ function stopSingle(agentName, taskId) {
   if (taskId) body.task_id = taskId;
   fireAction('cancel', body);
   // Optimistic removal — server will confirm on next poll
-  const key = taskId ? agentKey(agentName + '::' + taskId) : agentKey(agentName);
+  const key = activeAgentKey(agentName, taskId || '');
   delete activeInteractions[key];
   updateActivePanel();
 }

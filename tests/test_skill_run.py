@@ -41,6 +41,25 @@ def test_skill_add_update_slash_command_parses_force():
     assert update_body["force"] is True
 
 
+def test_skill_assignment_slash_commands_parse_agent_and_skill():
+    assign_body = _parse_command(
+        "/skill assign @assistant @review-pr", "conv1", "alice", "assistant")
+    unassign_body = _parse_command(
+        "/skill unassign assistant review-pr", "conv1", "alice", "assistant")
+    assigned_body = _parse_command(
+        "/skill assigned @assistant", "conv1", "alice", "assistant")
+
+    assert assign_body["action"] == "assign_skill"
+    assert assign_body["agent_name"] == "assistant"
+    assert assign_body["skill_name"] == "review-pr"
+    assert assign_body["conversation_id"] == "conv1"
+    assert unassign_body["action"] == "unassign_skill"
+    assert unassign_body["agent_name"] == "assistant"
+    assert unassign_body["skill_name"] == "review-pr"
+    assert assigned_body["action"] == "list_agent_skills"
+    assert assigned_body["agent_name"] == "assistant"
+
+
 def test_skill_run_slash_command_defaults_to_selected_agent():
     body = _parse_command(
         "/skill run review-pr 42", "conv1", "alice", "assistant")

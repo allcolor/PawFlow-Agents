@@ -318,15 +318,18 @@ HELP: Dict[str, Dict[str, str]] = {
         ),
     },
     "/skill": {
-        "usage": "/skill list | search [--source src] <query> | import [--source src] [--review-only] [--force] <ref> | add <name> <prompt> | update <name> <prompt> | del <name> | run [@agent] <name> [args...] | //<name> [@agent] [args...]",
+        "usage": "/skill list | search [--source src] <query> | import [--source src] [--review-only] [--force] [--scope user|conversation] [--name name] <ref> | add [--force] <name> <prompt> | update [--force] <name> <prompt> | del <name> | assign @agent @skill | unassign @agent @skill | assigned @agent | run [@agent] <name> [args...] | //<name> [@agent] [args...]",
         "short": "Manage skills",
         "detail": (
             "  /skill list                    — List all skills\n"
             "  /skill search [--source src] <query> — Search external skill marketplaces\n"
-            "  /skill import [--source src] [--review-only] [--force] <ref> — Review/import an external skill\n"
-            "  /skill add <name> <prompt>     — Create a skill\n"
-            "  /skill update <name> <prompt>  — Update a skill\n"
+            "  /skill import [--source src] [--review-only] [--force] [--scope user|conversation] [--name name] <ref> — Review/import an external skill\n"
+            "  /skill add [--force] <name> <prompt> — Create a skill\n"
+            "  /skill update [--force] <name> <prompt> — Update a skill\n"
             "  /skill del <name>              — Delete a skill\n"
+            "  /skill assign @agent @skill    — Assign a skill to an agent\n"
+            "  /skill unassign @agent @skill  — Remove a skill from an agent\n"
+            "  /skill assigned @agent         — List skills assigned to an agent\n"
             "  /skill run [@agent] <name> [args...] — Invoke a skill now\n"
             "  //<name> [@agent] [args...]    — Shortcut for /skill run"
         ),
@@ -1385,6 +1388,26 @@ def _parse_skill_command(arg: str, base: dict, agent_name: str = "") -> dict:
     if subcmd == "del":
         return {"action": "delete_skill", "name": p[1] if len(p) > 1 else "",
                 **base}
+    if subcmd == "assign":
+        return {
+            "action": "assign_skill",
+            "agent_name": p[1].lstrip("@") if len(p) > 1 else "",
+            "skill_name": p[2].split(None, 1)[0].lstrip("@") if len(p) > 2 else "",
+            **base,
+        }
+    if subcmd == "unassign":
+        return {
+            "action": "unassign_skill",
+            "agent_name": p[1].lstrip("@") if len(p) > 1 else "",
+            "skill_name": p[2].split(None, 1)[0].lstrip("@") if len(p) > 2 else "",
+            **base,
+        }
+    if subcmd == "assigned":
+        return {
+            "action": "list_agent_skills",
+            "agent_name": p[1].lstrip("@") if len(p) > 1 else "",
+            **base,
+        }
     if subcmd == "search":
         rest = arg[len(subcmd):].strip()
         try:

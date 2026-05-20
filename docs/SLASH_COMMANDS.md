@@ -473,7 +473,7 @@ Supported task options mirror `/task assign`: `--criteria`, `--interval`, `--ver
 |------------|-------------|
 | `list` | List all skills and their agent assignments |
 | `search [--source src] <query>` | Search supported external skill marketplaces |
-| `import [--source src] [--review-only] [--force] <ref>` | Review and import an external Agent Skill |
+| `import [--source src] [--review-only] [--force] [--scope user\|conversation] [--name name] <ref>` | Review and import an external Agent Skill |
 | `add [--force] @name <prompt>` | Create a skill |
 | `update [--force] @name <prompt>` | Update a skill |
 | `del @name` | Delete a skill |

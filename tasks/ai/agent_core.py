@@ -515,9 +515,16 @@ class AgentCoreMixin:
                 return
             trigger_fraction = _agent_compact_threshold_fraction()
             if trigger_fraction <= 0:
+                logger.info(
+                    "[compact-check] %s role=%s SKIP: trigger_fraction=%.3f "
+                    "(compact_threshold_pct not reaching the agent client config)",
+                    reason, msg.role, trigger_fraction)
                 return
             max_ctx = int(ctx.get("max_context_size", 0) or 0)
             if max_ctx <= 0:
+                logger.info(
+                    "[compact-check] %s role=%s SKIP: max_ctx=%d (ctx.max_context_size unset)",
+                    reason, msg.role, max_ctx)
                 return
             trigger_tokens = int(max_ctx * trigger_fraction)
             try:
@@ -527,6 +534,15 @@ class AgentCoreMixin:
             except Exception:
                 logger.debug("[compact] auto threshold estimate failed", exc_info=True)
                 return
+            _cache_src = (
+                "context_usage_cache" if ctx.get("_context_usage_cache")
+                else ("auto_compact_usage_cache" if ctx.get("_auto_compact_usage_cache")
+                      else "NONE"))
+            logger.info(
+                "[compact-check] %s role=%s provider=%s trigger_fraction=%.3f "
+                "max_ctx=%d trigger_tokens=%d used=%d cache_src=%s will_compact=%s",
+                reason, msg.role, _client_provider, trigger_fraction, max_ctx,
+                trigger_tokens, used, _cache_src, used >= trigger_tokens)
             if used < trigger_tokens:
                 return
             _auto_compact_state["running"] = True

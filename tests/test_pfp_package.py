@@ -5797,6 +5797,10 @@ def test_pfp_export_creates_source_package(tmp_path, monkeypatch):
     (skill_root / "scripts").mkdir(parents=True)
     (skill_root / "scripts" / "run.sh").write_text(
         "echo local\n", encoding="utf-8")
+    # A binary asset must survive export byte-for-byte — nothing dropped.
+    png_bytes = b"\x89PNG\r\n\x1a\n\x00\x01\x02\xff\xfe"
+    (skill_root / "assets").mkdir(parents=True)
+    (skill_root / "assets" / "logo.png").write_bytes(png_bytes)
 
     exported = pfp_package.export_pfpdir(
         "alice.local", "0.1.0", ["skill:local-skill"],
@@ -5815,6 +5819,13 @@ def test_pfp_export_creates_source_package(tmp_path, monkeypatch):
         / "local-skill" / "scripts" / "run.sh"
     )
     assert exported_script.read_text(encoding="utf-8") == "echo local\n"
+    exported_png = (
+        tmp_path / "exported.pfpdir" / "content" / "skills"
+        / "local-skill" / "assets" / "logo.png"
+    )
+    assert exported_png.read_bytes() == png_bytes
+    # Review-pipeline metadata must not leak into the portable SKILL.md.
+    assert "review:" not in skill_md.read_text(encoding="utf-8")
 
 
 def test_pfp_slash_parser_handles_install_flags():
@@ -5891,9 +5902,27 @@ def test_skill_bundled_files_reconstructed_on_install():
     rel = "content/skills/demo/SKILL.md"
     bundled = pfp_package._skill_bundled_files(package, rel)
     assert set(bundled) == {"scripts/go.sh", "references/api.md"}
-    assert bundled["scripts/go.sh"] == "echo hi\n"
+    # Assets travel verbatim as bytes so binary files survive the round-trip.
+    assert bundled["scripts/go.sh"] == b"echo hi\n"
     # Sibling skill 'other' must not leak in.
     data = pfp_package._load_resource_data(package, rel, "skill", "demo")
-    assert data["package_files"]["scripts/go.sh"] == "echo hi\n"
+    assert data["package_files"]["scripts/go.sh"] == b"echo hi\n"
     assert "references/api.md" in data["package_files"]
+
+
+def test_skill_install_writes_binary_assets_verbatim(tmp_path, monkeypatch):
+    # A binary asset bundled with an installed skill must land on disk
+    # byte-for-byte — nothing dropped or lossily decoded.
+    _reset_repo(tmp_path, monkeypatch)
+    from core.resource_store import ResourceStore
+
+    png_bytes = b"\x89PNG\r\n\x1a\n\x00\x01\x02\xff\xfe"
+    ResourceStore.instance().create("skill", "bin-skill", "alice", {
+        "description": "Bin",
+        "instructions": "Body.",
+        "package_files": {"assets/logo.png": png_bytes},
+    })
+    skill_root = Path(ResourceStore.instance().get(
+        "skill", "bin-skill", "alice")["skill_root"])
+    assert (skill_root / "assets" / "logo.png").read_bytes() == png_bytes
 

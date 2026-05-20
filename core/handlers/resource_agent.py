@@ -280,6 +280,13 @@ class ManageResourceHandler(ToolHandler):
                 if not (skill_data.get("instructions") or skill_data.get("prompt")):
                     return "Error: skill instructions are required for review"
                 package_files = skill_data.pop("package_files", {})
+                if not package_files and skill_data.get("skill_root"):
+                    # Bundled assets are read on demand for review, not kept
+                    # on every skill read (see ScopedRepository._read_skill).
+                    from pathlib import Path
+                    from core.repository import ScopedRepository
+                    package_files = ScopedRepository._read_skill_package_files(
+                        Path(skill_data["skill_root"]))
                 from core.review_bindings import review_now
                 result = review_now(
                     skill_data,

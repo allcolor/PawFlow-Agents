@@ -534,15 +534,22 @@ class ScopedRepository:
         }
 
     @staticmethod
-    def _read_skill_package_files(path: Path) -> Dict[str, str]:
-        """Return bundled text files next to SKILL.md, relative to the skill root."""
+    def _read_skill_package_files(path: Path) -> Dict[str, bytes]:
+        """Return every file bundled with a skill, excluding SKILL.md.
+
+        Content is returned verbatim as bytes so binary assets are preserved
+        — nothing is dropped or lossily decoded. This is read on demand by
+        skill export and review, not on every skill read (see _read_skill).
+        Entries that resolve outside the skill root (symlink escape) are
+        skipped.
+        """
         if not path.exists():
             return {}
         try:
             base = path.resolve()
         except OSError:
             return {}
-        files: Dict[str, str] = {}
+        files: Dict[str, bytes] = {}
         for child in sorted(path.rglob("*")):
             if not child.is_file():
                 continue
@@ -554,8 +561,8 @@ class ScopedRepository:
             if rel == "SKILL.md":
                 continue
             try:
-                files[rel] = real.read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError):
+                files[rel] = real.read_bytes()
+            except OSError:
                 continue
         return files
 
@@ -600,9 +607,6 @@ class ScopedRepository:
             # Internal compatibility while runtime code moves to instructions.
             entry["prompt"] = body
             entry["skill_root"] = str(path)
-            package_files = self._read_skill_package_files(path)
-            if package_files:
-                entry["package_files"] = package_files
             if "allowed-tools" in entry:
                 entry["declared_allowed_tools"] = entry.get("allowed-tools")
             return entry
@@ -644,9 +648,11 @@ class ScopedRepository:
         # `declared_allowed_tools` is a read-time alias of `allowed-tools`
         # synthesised by _read_skill; writing it back would duplicate the
         # field in the SKILL.md frontmatter.
+        # `review` is review-pipeline metadata, not part of the portable
+        # SKILL.md; persisting it would leak a verdict into shared skills.
         meta = {k: v for k, v in data.items() if k not in (
             "instructions", "prompt", "name", "_scope", "skill_root", "package_files",
-            "declared_allowed_tools",
+            "declared_allowed_tools", "review",
         ) and not str(k).startswith("_")}
         meta["name"] = path.name
         meta["description"] = description
@@ -672,7 +678,11 @@ class ScopedRepository:
                 continue
             target = path / clean
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(str(content or ""), encoding="utf-8")
+            # Binary assets are written verbatim; text content is encoded.
+            if isinstance(content, bytes):
+                target.write_bytes(content)
+            else:
+                target.write_text(str(content or ""), encoding="utf-8")
             _world_readable(target, 0o644)
             # Subdirectories must be traversable by the uid-1000 container.
             sub = path

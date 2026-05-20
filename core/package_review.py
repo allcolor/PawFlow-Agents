@@ -473,17 +473,29 @@ def _review_files(files: Dict[str, bytes], entrypoint: str) -> tuple[List[Dict[s
     return selected, findings
 
 
-def _iter_skill_texts(skill: Dict[str, Any], package_files: Dict[str, str]) -> Iterable[tuple[str, str]]:
+def _as_review_text(content: Any) -> str:
+    """Decode a bundled skill file for the text-review pipeline.
+
+    Skill assets may be binary (e.g. images). Binary content is decoded
+    leniently so it can still be scanned and listed for review — it is
+    never dropped from the package.
+    """
+    if isinstance(content, bytes):
+        return content.decode("utf-8", errors="replace")
+    return str(content or "")
+
+
+def _iter_skill_texts(skill: Dict[str, Any], package_files: Dict[str, Any]) -> Iterable[tuple[str, str]]:
     yield "instructions", str(skill.get("instructions", "") or skill.get("prompt", "") or "")
     yield "description", str(skill.get("description", "") or "")
     for path, content in package_files.items():
-        yield f"file:{path}", str(content or "")
+        yield f"file:{path}", _as_review_text(content)
 
 
-def _trim_text_mapping(values: Dict[str, str]) -> Dict[str, Dict[str, Any]]:
+def _trim_text_mapping(values: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     out: Dict[str, Dict[str, Any]] = {}
     for path, content in values.items():
-        text = str(content or "")
+        text = _as_review_text(content)
         if len(text) > 120_000:
             out[path] = {
                 "text": text[:60_000] + "\n\n[...content omitted from review prompt...]\n\n" + text[-60_000:],

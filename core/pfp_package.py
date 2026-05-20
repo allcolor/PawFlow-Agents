@@ -720,15 +720,16 @@ def export_pfpdir(package_id: str, version: str, include: Iterable[str], *,
             instructions = str(clean.pop("instructions", "") or clean.pop("prompt", "") or "").strip()
             if not instructions:
                 raise PfpError(f"skill:{name} has no instructions")
-            package_files = clean.pop("package_files", {}) or {}
+            skill_root = str(clean.pop("skill_root", "") or "")
+            clean.pop("package_files", None)
             clean.pop("prompt", None)
-            clean.pop("skill_root", None)
             clean.pop("name", None)
             # Internal/derived fields must not leak into the portable SKILL.md.
             clean.pop("declared_allowed_tools", None)
             clean.pop("installed_from", None)
             clean.pop("imported_from", None)
             clean.pop("package_hash", None)
+            clean.pop("review", None)
             meta = {"name": name}
             meta.update(clean)
             if not meta.get("description"):
@@ -741,16 +742,18 @@ def export_pfpdir(package_id: str, version: str, include: Iterable[str], *,
                 + "\n"
             )
             target.write_text(skill_text, encoding="utf-8")
-            for rel, content in package_files.items():
-                raw_rel = str(rel or "")
-                if not raw_rel.strip():
-                    continue
-                rel = _safe_relpath(raw_rel)
-                if rel == "SKILL.md":
-                    continue
-                asset_target = target.parent / rel
-                asset_target.parent.mkdir(parents=True, exist_ok=True)
-                asset_target.write_text(str(content or ""), encoding="utf-8")
+            # Copy every bundled asset verbatim, straight from the skill
+            # directory on disk — binary files included, nothing dropped.
+            if skill_root:
+                from core.repository import ScopedRepository
+                for rel, content in ScopedRepository._read_skill_package_files(
+                        Path(skill_root)).items():
+                    safe_rel = _safe_relpath(rel)
+                    if safe_rel == "SKILL.md":
+                        continue
+                    asset_target = target.parent / safe_rel
+                    asset_target.parent.mkdir(parents=True, exist_ok=True)
+                    asset_target.write_bytes(content)
         else:
             path = f"content/{rtype}s/{name}.json"
             target = out / path
@@ -1666,24 +1669,26 @@ def _inject_package_flow_task_relays(data: Dict[str, Any], package: Dict[str, An
             parameters.setdefault("relay", relay_id)
 
 
-def _skill_bundled_files(package: Dict[str, Any], rel: str) -> Dict[str, str]:
-    """Return {skill-relative path: text} for files bundled with a skill.
+def _skill_bundled_files(package: Dict[str, Any], rel: str) -> Dict[str, bytes]:
+    """Return {skill-relative path: bytes} for files bundled with a skill.
 
     A PFP skill object points at content/skills/<name>/SKILL.md; any sibling
     file under that directory is a bundled asset (scripts/, references/...).
+    Content is returned verbatim as bytes so binary assets are preserved —
+    nothing is dropped or lossily decoded.
     """
     if not rel.endswith("SKILL.md"):
         return {}
     skill_dir = rel[:-len("SKILL.md")]
     if not skill_dir:
         return {}
-    out: Dict[str, str] = {}
+    out: Dict[str, bytes] = {}
     for fpath, content in (package.get("files") or {}).items():
         if fpath == rel or not fpath.startswith(skill_dir):
             continue
         sub = fpath[len(skill_dir):]
         if sub:
-            out[sub] = content.decode("utf-8", errors="replace")
+            out[sub] = content
     return out
 
 

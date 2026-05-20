@@ -174,6 +174,14 @@ def test_relay_binding_changes_invalidate_cli_sessions_when_mount_enabled(monkey
     assert store.invalidated_agents == ["assistant"]
 
 
+def test_interactive_cc_pool_mounts_skill_dirs():
+    # The persistent interactive CC container must bind-mount skill scope
+    # dirs so SKILL.md assets resolve, like the batch claude-code pool.
+    src = Path("core/claude_code_interactive_pool.py").read_text(encoding="utf-8")
+    assert "build_skill_mount_args" in src
+    assert "_spawn_container(" in src
+
+
 def test_build_skill_mount_args_mounts_scope_dirs(tmp_path, monkeypatch):
     from core import docker_utils, paths
 

@@ -429,7 +429,9 @@ class InteractiveClaudeCodePool:
             agent_name=agent_name,
         )
 
-        name = self._spawn_container()
+        name = self._spawn_container(
+            user_id=user_id, conversation_id=conversation_id,
+            agent_name=agent_name)
         physical_container_workdir = self._physical_container_workdir(
             user_id, conversation_id, agent_name)
         container_workdir = self._container_workdir(user_id, conversation_id, agent_name)
@@ -473,7 +475,8 @@ class InteractiveClaudeCodePool:
             raise
         return state
 
-    def _spawn_container(self) -> str:
+    def _spawn_container(self, *, user_id: str = "", conversation_id: str = "",
+                         agent_name: str = "") -> str:
         _paths.CLAUDE_SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
         project_root = Path(__file__).resolve().parents[1]
         sessions_host = translate_path(to_host_path(str(_paths.CLAUDE_SESSIONS_DIR.resolve())))
@@ -491,6 +494,15 @@ class InteractiveClaudeCodePool:
         pkg_dir = project_root / "pawflow_relay"
         if pkg_dir.is_dir():
             mounts += ["-v", f"{translate_path(to_host_path(str(pkg_dir)))}:/opt/pawflow/pawflow_relay:ro"]
+        # Bind-mount the skill repository scope dirs read-only so SKILL.md
+        # asset references (${CLAUDE_SKILL_DIR}/...) resolve inside the
+        # persistent interactive container, like the batch claude-code pool.
+        try:
+            from core.cli_workspace_mounts import build_skill_mount_args
+            mounts += build_skill_mount_args(
+                conversation_id, agent_name, user_id=user_id)
+        except Exception:
+            logger.debug("[cci-live] skill mount args failed", exc_info=True)
         if not ca_private_key_is_host_only([m.split(":", 1)[0] for m in mounts if isinstance(m, str)]):
             raise RuntimeError("Refusing to mount CC interactive CA private key")
 

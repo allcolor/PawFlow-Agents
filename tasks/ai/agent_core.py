@@ -316,16 +316,6 @@ class AgentCoreMixin:
         _client_base_url = getattr(client, "base_url", "") or ""
         if not isinstance(_client_base_url, str):
             _client_base_url = ""
-        def _effective_context_window() -> int:
-            """Gauge denominator: min(configured max, provider runtime window)."""
-            _cw_map = getattr(client, '_cc_context_window_by_stream', None) or {}
-            _cw_key = (conversation_id or "",
-                       ctx.get("active_agent_name", "") or "")
-            from core.context_window import effective_context_window
-            return effective_context_window(
-                getattr(client, '_max_context_size', 0)
-                or ctx.get("max_context_size", 0) or 0,
-                _cw_map.get(_cw_key, 0), fallback=0)
 
         def _agent_source(tok_in=0, tok_out=0, model_override="",
                            tok_cache_creation=0, tok_cache_read=0,
@@ -362,78 +352,16 @@ class AgentCoreMixin:
                 src["context_cache"] = _ctx_usage
             return src
 
-        def _provider_context_usage_from_response(response, source: str) -> dict:
-            if _client_provider != "claude-code-interactive":
-                return {}
-            raw = getattr(response, "raw", None) or {}
-            usage = raw.get("usage") if isinstance(raw, dict) else None
-            if not isinstance(usage, dict):
-                usage = {}
-            used = 0
-            for key in (
-                    "input_tokens",
-                    "cache_creation_input_tokens",
-                    "cache_read_input_tokens"):
-                try:
-                    used += int(usage.get(key, 0) or 0)
-                except (TypeError, ValueError):
-                    pass
-            if used <= 0:
-                try:
-                    used = int(getattr(response, "tokens_in", 0) or 0)
-                except (TypeError, ValueError):
-                    used = 0
-            max_ctx = _effective_context_window()
-            if used <= 0 or max_ctx <= 0:
-                return {}
-            return {
-                "conversation_id": conversation_id,
-                "agent_name": ctx.get("active_agent_name", ""),
-                "used": used,
-                "max": max_ctx,
-                "pct": used / max_ctx,
-                "source": source,
-                "updated_at": time.time(),
-                "message_count": 0,
-                "cache_mode": "provider_usage",
-                "provider_usage": dict(usage),
-            }
-
-        def _apply_provider_context_usage(src: dict, response) -> dict:
-            usage = _provider_context_usage_from_response(
-                response, "claude_code_interactive_provider")
-            if not usage:
-                return src
-            used = int(usage.get("used", 0) or 0)
-            # Keep the denominator from compute_context_usage (already on src
-            # via _agent_source) so the web-chat gauge matches the context
-            # editor. Only the provider's API-reported `used` (real prompt
-            # size incl. cache tokens) is kept — more accurate than a PawFlow
-            # message recount for a CLI agent. Recomputing `max` independently
-            # diverged from the editor and pinned the gauge at 100%.
-            max_ctx = (int(src.get("context_max", 0) or 0)
-                       or int(usage.get("max", 0) or 0))
-            if used <= 0 or max_ctx <= 0:
-                return src
-            src["context_used"] = used
-            src["context_max"] = max_ctx
-            src["context_pct"] = used / max_ctx
-            src["context_source"] = usage.get("source", "")
-            src["context_message_count"] = usage.get("message_count", 0)
-            src["context_cache_mode"] = usage.get("cache_mode", "")
-            reconciled = dict(usage)
-            reconciled["max"] = max_ctx
-            reconciled["pct"] = used / max_ctx
-            src["context_cache"] = reconciled
-            return src
-
         def _patch_cc_turn_gauge(response, msg_id: str) -> None:
             """Patch a claude-code turn message with token + context-gauge data.
 
-            For claude-code(-interactive) the authoritative gauge is the
-            provider's reported usage (real prompt size incl. cache tokens),
-            not a PawFlow message recount. Used by both the normal final-turn
-            path and the CCI interrupt turn.
+            The context gauge is the PawFlow stored-context calculation
+            (via _agent_source -> compute_context_usage), which is stable
+            across CLI session/tmux restarts and only moves on compaction
+            or a context edit. The provider's per-session reported usage
+            is deliberately NOT used: it resets when the CLI session
+            cold-starts, which made the gauge jump. Used by both the
+            normal final-turn path and the CCI interrupt turn.
             """
             if not msg_id or not (response.tokens_in or response.tokens_out):
                 return
@@ -441,7 +369,6 @@ class AgentCoreMixin:
                 response.tokens_in, response.tokens_out, response.model,
                 tok_cache_creation=getattr(response, 'cache_creation_tokens', 0),
                 tok_cache_read=getattr(response, 'cache_read_tokens', 0))
-            _cc_src = _apply_provider_context_usage(_cc_src, response)
             # Update in-memory message
             for _m in reversed(messages):
                 if getattr(_m, 'msg_id', '') == msg_id:

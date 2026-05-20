@@ -742,6 +742,76 @@ def test_cli_resumed_context_usage_uses_stored_context_plus_live_delta():
     assert usage["used"] > 0
 
 
+def test_cli_gauge_uses_stored_context_after_session_restart():
+    """Regression: a tmux/container restart leaves active_ctx["messages"]
+    nearly empty (_cli_has_session is False). The gauge must still count
+    the stored PawFlow context — it changes only on compaction/edit, not
+    on a session restart.
+    """
+    from tasks.ai.context_usage import compute_context_usage
+
+    stored_messages = [
+        {"role": "user", "content": "stored content " * 30, "msg_id": f"s{i}"}
+        for i in range(40)
+    ]
+    fake_exec = SimpleNamespace(
+        _active_contexts={
+            "conv-live:assistant": {
+                "active_agent_name": "assistant",
+                "messages": [],  # session restarting -> transient delta empty
+                "_is_cli_provider": True,
+                "_cli_has_session": False,
+                "resolved_svc": SimpleNamespace(
+                    config={"max_context_size": 1000000}),
+            },
+        },
+        _active_contexts_lock=threading.Lock())
+
+    class _Store:
+        def load_agent_context(self, *_args, **_kwargs):
+            return stored_messages
+
+    with patch("tasks.ai.agent_loop.AgentLoopTask._live_instance", fake_exec):
+        usage = compute_context_usage(
+            "conv-live", "assistant", user_id="user", store=_Store(),
+            source="test")
+
+    assert usage["message_count"] == len(stored_messages)
+    assert usage["used"] > 0
+
+
+def test_cli_claude_gauge_adds_invisible_overhead():
+    """claude-code gauges add a fixed offset for the CLI's invisible
+    system-prompt/tooling tokens that PawFlow never sees."""
+    from tasks.ai.context_usage import (
+        compute_context_usage, _CLI_INVISIBLE_OVERHEAD_TOKENS)
+
+    stored = [{"role": "user", "content": "hello world", "msg_id": "s1"}]
+    fake_exec = SimpleNamespace(
+        _active_contexts={
+            "c:assistant": {
+                "active_agent_name": "assistant",
+                "messages": [],
+                "_is_cli_provider": True,
+                "active_llm_provider": "claude-code-interactive",
+                "resolved_svc": SimpleNamespace(
+                    config={"max_context_size": 1000000}),
+            },
+        },
+        _active_contexts_lock=threading.Lock())
+
+    class _Store:
+        def load_agent_context(self, *_args, **_kwargs):
+            return stored
+
+    with patch("tasks.ai.agent_loop.AgentLoopTask._live_instance", fake_exec):
+        usage = compute_context_usage(
+            "c", "assistant", user_id="user", store=_Store(), source="test")
+
+    assert usage["overhead_tokens"] == _CLI_INVISIBLE_OVERHEAD_TOKENS
+    assert usage["used"] >= _CLI_INVISIBLE_OVERHEAD_TOKENS
+
+
 def test_claude_final_patch_republishes_context_message_meta():
     block = _AGENT_CORE_PY[
         _AGENT_CORE_PY.index("def _patch_cc_turn_gauge"):
@@ -756,14 +826,21 @@ def test_claude_final_patch_republishes_context_message_meta():
     assert _AGENT_CORE_PY.count("_patch_cc_turn_gauge(") >= 3
 
 
-def test_cci_final_patch_uses_provider_usage_for_context_gauge():
+def test_cci_gauge_uses_pawflow_calculation_not_provider_usage():
+    """The CCI context gauge is the stable PawFlow stored-context
+    calculation (via _agent_source -> compute_context_usage), NOT the
+    provider's per-session reported usage. Provider usage resets when the
+    CLI/tmux session cold-starts, which made the gauge jump.
+    """
     src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
-    assert 'if _client_provider != "claude-code-interactive"' in src
-    assert '"cache_creation_input_tokens"' in src
-    assert '"cache_read_input_tokens"' in src
-    assert '"claude_code_interactive_provider"' in src
-    emitter_src = Path("tasks/ai/agent_emitter.py").read_text(encoding="utf-8")
-    assert 'self._provider == "claude-code-interactive"' in emitter_src
+    block = src[
+        src.index("def _patch_cc_turn_gauge"):
+        src.index("# SpawnAgentsHandler source tracking")]
+    assert "_agent_source(" in block
+    # The provider per-session usage path must be fully gone.
+    assert "_apply_provider_context_usage" not in src
+    assert "_provider_context_usage_from_response" not in src
+    assert "claude_code_interactive_provider" not in src
 
 
 def test_cci_gauge_refreshes_between_tool_rounds():
@@ -1395,7 +1472,10 @@ def test_force_stop_kills_cli_processes_and_blocks_late_appends():
     openai_src = Path("core/llm_providers/openai.py").read_text(encoding="utf-8")
     codex_app_src = Path("core/llm_providers/codex_app_server.py").read_text(encoding="utf-8")
     assert "def _kill_live_cli_sessions" in cancel_src
-    assert "InteractiveClaudeCodePool" in cancel_src
+    # The interactive CC pool is intentionally NOT force-killed: its
+    # container is a persistent tmux session holding OAuth credentials
+    # and is only soft-interrupted on force stop.
+    assert "InteractiveClaudeCodePool" not in cancel_src
     assert "CodexLiveRegistry" in cancel_src
     assert "GeminiLiveRegistry" in cancel_src
     assert "LiveSessionRegistry" in cancel_src

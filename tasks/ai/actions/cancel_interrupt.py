@@ -15,11 +15,19 @@ logger = logging.getLogger(__name__)
 
 
 def _kill_live_cli_sessions(conv_id: str, agent_name: str, reason: str) -> int:
-    """Force-kill live CLI provider containers for a conversation/agent."""
+    """Force-kill live CLI provider containers for a conversation/agent.
+
+    The Claude Code *interactive* pool is deliberately excluded. Its
+    container is a persistent tmux session that also holds the agent's
+    OAuth credentials and reloads the full PawFlow context on cold
+    start. A force stop must only soft-interrupt that session (key
+    injection via LLMClient.abort -> cancel_claude_code_interactive),
+    never destroy the container. Compaction and the idle sweeper still
+    evict it through the pool's own kill_and_evict / sweep paths.
+    """
     total = 0
     for module_name, class_name in (
         ("core.cc_live_registry", "LiveSessionRegistry"),
-        ("core.claude_code_interactive_pool", "InteractiveClaudeCodePool"),
         ("core.codex_live_registry", "CodexLiveRegistry"),
         ("core.gemini_live_registry", "GeminiLiveRegistry"),
     ):

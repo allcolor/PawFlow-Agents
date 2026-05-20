@@ -14,6 +14,20 @@ from core.docker_utils import docker_cmd as _docker_cmd, to_host_path, get_host_
 logger = logging.getLogger(__name__)
 
 
+class OAuthRejectedError(Exception):
+    """Anthropic explicitly rejected an OAuth refresh token.
+
+    Raised ONLY when the token endpoint reports the refresh_token itself
+    is invalid/revoked (HTTP 401/403, or 400 with an invalid_grant-class
+    error). This is the only failure that means the credential is truly
+    dead and may be dropped from the pool.
+
+    Transient failures (network errors, 5xx, 429, a container killed
+    mid-refresh) raise a plain RuntimeError instead and MUST NOT cost
+    the user their credential — the refresh_token is still valid.
+    """
+
+
 def _maybe_transform_relay_proxy_url(url: str, user_id: str = "") -> Optional[str]:
     """Detect the relay-proxy format and transform to a PawFlow proxy URL.
 
@@ -374,10 +388,17 @@ class ClaudeCodeSessionMixin:
             return False
         try:
             tokens = self._refresh_oauth_token(refresh_token)
-        except Exception as e:
-            logger.warning("[force-refresh] pool[%d] refresh call failed: %s",
+        except OAuthRejectedError as e:
+            logger.warning("[force-refresh] pool[%d] refresh rejected: %s",
                            pool_index, e)
-            _drop_dead_slot(f"refresh error: {e}")
+            _drop_dead_slot(f"refresh rejected: {e}")
+            return False
+        except Exception as e:
+            # Transient failure (network / server / container kill mid
+            # refresh). The refresh_token is still valid — keep the slot
+            # and just fail this attempt.
+            logger.warning("[force-refresh] pool[%d] transient refresh "
+                           "failure, credential kept: %s", pool_index, e)
             return False
         _new_at = tokens.get("access_token", "")
         _new_rt = tokens.get("refresh_token", refresh_token)
@@ -425,6 +446,20 @@ class ClaudeCodeSessionMixin:
             conn.close()
 
         if resp.status != 200:
+            # Distinguish a genuine grant rejection (credential is dead)
+            # from a transient failure (server/network — credential is
+            # still good). Only the former may drop the pool slot.
+            _err = ""
+            try:
+                _err = str(json.loads(resp_body).get("error", "") or "")
+            except Exception:
+                _err = ""
+            _rejected = resp.status in (401, 403) or (
+                resp.status == 400 and _err in (
+                    "invalid_grant", "unauthorized_client", "invalid_client"))
+            if _rejected:
+                raise OAuthRejectedError(
+                    f"OAuth refresh rejected ({resp.status}): {resp_body[:200]}")
             raise RuntimeError(f"OAuth refresh failed ({resp.status}): {resp_body[:200]}")
 
         data = json.loads(resp_body)
@@ -665,6 +700,7 @@ class ClaudeCodeSessionMixin:
                 "failed during this stream. Use /cls to re-authenticate.")
 
         dead_indices = []
+        had_transient = False
         for _pidx in indices:
             cred = pool[_pidx]
             access_token = cred.get("access_token", "")
@@ -695,11 +731,29 @@ class ClaudeCodeSessionMixin:
                             service_id=svc_id, pool_index=_pidx)
                         logger.info("OAuth token [pool:%d] refreshed — expires in %.1fh",
                                     _pidx, (int(expires_at)/1000 - _time.time()) / 3600)
-                    except Exception as e:
-                        logger.warning("OAuth token [pool:%d] refresh failed, removing: %s",
+                    except OAuthRejectedError as e:
+                        logger.warning("OAuth token [pool:%d] rejected, removing: %s",
                                        _pidx, e)
                         dead_indices.append(_pidx)
                         continue
+                    except Exception as e:
+                        # Transient refresh failure — the credential is
+                        # NOT dead and must stay in the pool.
+                        had_transient = True
+                        if _remaining < 0:
+                            # Already expired and we couldn't refresh
+                            # now: unusable this turn, but keep it.
+                            logger.warning(
+                                "OAuth token [pool:%d] expired; refresh "
+                                "temporarily failed, credential kept: %s",
+                                _pidx, e)
+                            continue
+                        # Not expired yet — keep using the current
+                        # access_token (still valid for a while).
+                        logger.warning(
+                            "OAuth token [pool:%d] proactive refresh "
+                            "temporarily failed, using current token: %s",
+                            _pidx, e)
                 elif _remaining < 0 and not refresh_token:
                     logger.warning("OAuth token [pool:%d] expired, no refresh token", _pidx)
                     dead_indices.append(_pidx)
@@ -716,9 +770,16 @@ class ClaudeCodeSessionMixin:
                             len(dead_indices), len(pool))
             break
         else:
-            # All credentials failed
-            pool = [c for i, c in enumerate(pool) if i not in dead_indices]
-            _save_credentials_pool(pool, service_id=svc_id)
+            # All credentials failed. Only genuinely-dead slots are
+            # dropped; slots that failed transiently stay in the pool.
+            if dead_indices:
+                pool = [c for i, c in enumerate(pool) if i not in dead_indices]
+                _save_credentials_pool(pool, service_id=svc_id)
+            if had_transient:
+                raise LLMClientError(
+                    "Claude Code OAuth refresh is temporarily unavailable "
+                    "(network/server error). Your saved credentials are "
+                    "intact — retry in a moment.")
             raise LLMClientError(
                 "All Claude Code credentials expired and refresh failed. "
                 "Use /cls to re-authenticate.")

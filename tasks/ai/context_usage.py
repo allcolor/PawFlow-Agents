@@ -7,6 +7,15 @@ import time
 from typing import Any, Dict, Optional, Tuple
 
 
+# Fixed token allowance for the invisible context a Claude Code CLI
+# session always carries on top of the PawFlow transcript: the CLI's
+# own system prompt, tool definitions and harness scaffolding. PawFlow
+# never sees these tokens but the provider counts them, so the gauge
+# adds them as a flat offset. Applied only to claude-code providers.
+_CLI_INVISIBLE_OVERHEAD_TOKENS = 30000
+_CLI_CLAUDE_PROVIDERS = ("claude-code", "claude-code-interactive")
+
+
 def _agent_key(agent_name: str) -> str:
     return (agent_name or "").lower()
 
@@ -44,24 +53,26 @@ def _active_context(conversation_id: str, agent_name: str) -> Optional[Dict[str,
 
 
 def _service_config(conversation_id: str, agent_name: str, user_id: str,
-                    active_ctx: Optional[Dict[str, Any]]) -> Tuple[Dict[str, Any], int]:
-    """Return llm service config plus runtime provider context window."""
+                    active_ctx: Optional[Dict[str, Any]]) -> Tuple[Dict[str, Any], int, str]:
+    """Return llm service config, runtime context window, and provider name."""
     if active_ctx:
         cfg = getattr(active_ctx.get("resolved_svc"), "config", None) or {}
         real = int(active_ctx.get("real_context_size") or 0)
+        client = active_ctx.get("client")
         if real <= 0:
-            client = active_ctx.get("client")
             cw_map = (getattr(client, "_cc_context_window_by_stream", None)
                       if client else None) or {}
             real = int(cw_map.get((conversation_id, agent_name), 0) or 0)
-        return dict(cfg), real
+        provider = str(active_ctx.get("active_llm_provider", "")
+                       or getattr(client, "provider", "") or "")
+        return dict(cfg), real, provider
     try:
         from core.conv_agent_config import get_agent_config
         from core.service_registry import ServiceRegistry
         svc_id = (get_agent_config(conversation_id, agent_name).get("llm_service")
                   or "")
         if not svc_id:
-            return {}, 0
+            return {}, 0, ""
         registry = ServiceRegistry.get_instance()
         svc = registry.resolve(svc_id, user_id=user_id, conv_id=conversation_id)
         if svc:
@@ -71,12 +82,15 @@ def _service_config(conversation_id: str, agent_name: str, user_id: str,
                 getattr(client, "_real_context_size", 0)
                 or getattr(client, "_context_window", 0)
                 or 0) if client else 0
-            return cfg, real
+            provider = str(getattr(client, "provider", "")
+                           or cfg.get("provider", "") or "")
+            return cfg, real, provider
         sdef = registry.resolve_definition(
             svc_id, user_id=user_id, conv_id=conversation_id)
-        return dict(getattr(sdef, "config", {}) or {}) if sdef else {}, 0
+        cfg = dict(getattr(sdef, "config", {}) or {}) if sdef else {}
+        return cfg, 0, str(cfg.get("provider", "") or "")
     except Exception:
-        return {}, 0
+        return {}, 0, ""
 
 
 def _message_identity(msg: Any) -> Tuple[str, str, str]:
@@ -106,7 +120,14 @@ def _context_messages(conversation_id: str, agent_name: str, user_id: str,
     """Return messages, cache, and whether messages are already LLMMessage objects."""
     if active_ctx:
         live_messages = active_ctx.get("messages") or []
-        if active_ctx.get("_is_cli_provider") and active_ctx.get("_cli_has_session"):
+        if active_ctx.get("_is_cli_provider"):
+            # CLI providers manage their own context; active_ctx["messages"]
+            # only holds the transient delta (catch-up + current prompt)
+            # and collapses to near-zero right after a tmux/container
+            # restart. The gauge must track the *stored* PawFlow agent
+            # context, which changes only on compaction or a context
+            # edit — never on a session restart. Unseen live messages are
+            # still merged in so an in-flight turn is reflected.
             stored = list(_stored_context_messages(
                 conversation_id, agent_name, store) or [])
             seen = {_message_identity(msg) for msg in stored}
@@ -139,8 +160,10 @@ def compute_context_usage(conversation_id: str, agent_name: str, *,
         store = ConversationStore.instance()
 
     active_ctx = _active_context(conversation_id, agent_name)
-    svc_cfg, real_window = _service_config(
+    svc_cfg, real_window, provider = _service_config(
         conversation_id, agent_name, user_id, active_ctx)
+    overhead = (_CLI_INVISIBLE_OVERHEAD_TOKENS
+                if str(provider) in _CLI_CLAUDE_PROVIDERS else 0)
     configured = int(svc_cfg.get("max_context_size", 0) or 0)
     if active_ctx and int(active_ctx.get("max_context_size") or 0) > 0:
         configured = int(active_ctx.get("max_context_size") or 0)
@@ -167,7 +190,8 @@ def compute_context_usage(conversation_id: str, agent_name: str, *,
     from tasks.ai.context_usage_cache import context_usage_from_cache
     usage = context_usage_from_cache(
         messages, max_ctx, cache, source=source,
-        token_multiplier=resolve_token_multiplier(svc_cfg))
+        token_multiplier=resolve_token_multiplier(svc_cfg),
+        overhead=overhead)
     usage.update({
         "conversation_id": conversation_id,
         "agent_name": agent_name,

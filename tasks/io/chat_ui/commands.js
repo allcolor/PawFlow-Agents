@@ -523,13 +523,6 @@ const HELP_DATA = {
       + '  /flow undeploy <id>            \u2014 Remove a flow\n'
       + '  /flow promote <id>             \u2014 Promote to user scope',
   },
-  '/prompt': {
-    usage: '/prompt list | use <name>',
-    short: t('commandShort.64'),
-    detail: 'List available prompts or view a specific prompt.\n\n'
-      + '  /prompt list       \u2014 List all prompts\n'
-      + '  /prompt use <name> \u2014 Show prompt content',
-  },
   '/run': {
     usage: '/run <command>',
     short: t('commandShort.65'),
@@ -703,7 +696,6 @@ const _CMD_HANDLERS = {
   '/clc':                 (text, parts, cmd) => cmdClaudeLoginCredentials(text, parts),
   '/relay':       (text, parts, cmd) => cmdRelay(text, parts),
   '/flow':        (text, parts, cmd) => cmdFlow(text, parts),
-  '/prompt':      (text, parts, cmd) => cmdPrompt(text, parts),
   '/install':     (text, parts, cmd) => cmdInstall(),
   '/uninstall':   (text, parts, cmd) => cmdUninstall(text, parts),
 

@@ -197,10 +197,10 @@ class ManageResourceHandler(ToolHandler):
             elif action == "update":
                 if not name:
                     return "Error: 'name' is required for update"
+                existing = store.get_any(
+                    rtype, name, user_id,
+                    conversation_id=self._conversation_id) or {}
                 if rtype == "skill":
-                    existing = store.get_any(
-                        rtype, name, user_id,
-                        conversation_id=self._conversation_id) or {}
                     merged = {k: v for k, v in existing.items()
                               if not str(k).startswith("_")}
                     merged.update(data if isinstance(data, dict) else {})
@@ -216,7 +216,15 @@ class ManageResourceHandler(ToolHandler):
                     )
                     if review_meta:
                         data = attach_review_metadata(data, review_meta)
-                store.update(rtype, name, user_id, data)
+                # Update in the scope the resource actually lives in:
+                # get_any cascades conversation → user → global, so without
+                # the conversation_id a conv-scoped resource would
+                # mis-target the user scope and the update would fail.
+                upd_kwargs = {}
+                if (existing.get("_scope") == "conversation"
+                        and self._conversation_id):
+                    upd_kwargs["conversation_id"] = self._conversation_id
+                store.update(rtype, name, user_id, data, **upd_kwargs)
                 return f"Updated {rtype} '{name}'."
 
             elif action == "delete":

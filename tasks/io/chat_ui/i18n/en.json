@@ -950,8 +950,6 @@
   "showHide": "Show/hide",
   "skillAssignTitle": "Assign skill “{skill}” to agent",
   "skillLoadFailed": "Failed to load skill: {error}",
-  "skillNotFound": "Skill '{name}' not found",
-  "skillPromptHeader": "Skill '{name}':",
   "skills": "Skills",
   "skillsAssignedTo": "Skills assigned to **{agent}**:",
   "skillsHeader": "Skills:",

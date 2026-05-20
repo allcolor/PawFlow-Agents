@@ -950,8 +950,6 @@
   "showHide": "Afficher/masquer",
   "skillAssignTitle": "Assigner le skill “{skill}” à un agent",
   "skillLoadFailed": "Échec du chargement du skill : {error}",
-  "skillNotFound": "Skill '{name}' introuvable",
-  "skillPromptHeader": "Skill '{name}' :",
   "skills": "Skills",
   "skillsAssignedTo": "Skills assignées à **{agent}** :",
   "skillsHeader": "Skills :",

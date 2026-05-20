@@ -2563,7 +2563,7 @@ function _renameVoiceClone(name) {
 // ── Resource editor overlay ───────────────────────────────────────
 const _RESOURCE_FIELDS = {
   agent:    [['prompt','textarea'],['description','text']],
-  skill:    [['description','text'],['instructions','textarea'],['allowed-tools','text']],
+  skill:    [['description','text'],['instructions','textarea'],['allowed-tools','text'],['license','text'],['metadata','json']],
   mcp:      [['transport','mcp_transport'],['via','mcp_via'],['relay_service','mcp_relay'],['local','checkbox'],['url','text'],['command','text'],['args','json'],['env','json'],['auth','json'],['description','text']],
   task_def: [['prompt','textarea'],['criteria','textarea'],['default_interval','text'],['verifier','text'],['interactive','checkbox'],['skills','skills_picker'],['description','text']],
   prompt:   [['prompt','textarea'],['parameters','params_editor'],['title','text'],['category','text'],['description','text']],
@@ -2587,6 +2587,9 @@ function _buildResourceForm(rtype, data, isNew, readonly) {
   let html = '';
   if (isNew) {
     html += '<div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">' + t('name') + '</label><input id="res-name" value="" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;"/></div>';
+    if (rtype === 'skill') {
+      html += '<div style="color:var(--pf-muted);font-size:10px;margin:-4px 0 8px;">Lowercase letters, digits and single hyphens; max 64 characters; must not contain "anthropic" or "claude".</div>';
+    }
     if (rtype !== '_tool') {
       html += '<div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">' + t('scope') + '</label><select id="res-scope" style="background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;">'
         + (_isAdmin() ? '<option value="global">' + t('global') + '</option>' : '')

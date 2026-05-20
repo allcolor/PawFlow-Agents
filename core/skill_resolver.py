@@ -160,19 +160,20 @@ def _skill_allowed_tools(skill_def: Dict[str, Any]) -> List[str]:
 
 
 def _allowed_tools_directive(skill_def: Dict[str, Any]) -> str:
-    """Return a tool-restriction directive for a skill, or '' if unrestricted.
+    """Return a tool-preference directive for a skill, or '' if none declared.
 
-    Agent Skills `allowed-tools` is enforced here as a binding instruction to
-    the agent: while working on the skill it must use only the listed tools.
+    Agent Skills `allowed-tools` is surfaced as advisory guidance, not an
+    enforced restriction: PawFlow does not filter the tool registry while a
+    skill is active (load_skill output persists in the main agent context).
     """
     tools = _skill_allowed_tools(skill_def)
     if not tools:
         return ""
     return (
-        "\n\nAllowed tools (binding): while acting on this skill you MUST use "
-        "only these tools: " + ", ".join(tools) + ". Do not call any other "
-        "tool for this skill's work; if the task needs a tool outside this "
-        "list, stop and report it instead."
+        "\n\nPreferred tools (advisory): this skill is designed to work with "
+        "these tools: " + ", ".join(tools) + ". Prefer them for the skill's "
+        "work and avoid unrelated tools unless the task genuinely requires "
+        "one; this is guidance, not an enforced restriction."
     )
 
 

@@ -173,6 +173,11 @@ def build_skill_mount_args(conversation_id: str, agent_name: str = "",
             # Create the mount point so a skill written into this scope later
             # in the session is visible without recreating the container.
             os.makedirs(server_dir, exist_ok=True)
+            # World-readable so the uid-1000 CLI container can read the mount.
+            try:
+                os.chmod(server_dir, 0o755)
+            except OSError:
+                pass
             rel = os.path.relpath(str(server_dir), str(skills_base))
         except Exception as exc:
             logger.info("[skill-mount] skip %s: %s", server_dir, exc)

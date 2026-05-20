@@ -606,6 +606,11 @@ class ScopedRepository:
                 "Skill description must be at most 1024 characters "
                 f"(got {len(description)})")
         path.mkdir(parents=True, exist_ok=True)
+        # World-readable so the uid-1000 CLI container can read mounted skills.
+        try:
+            path.chmod(0o755)
+        except OSError:
+            pass
         import yaml
         meta = {k: v for k, v in data.items() if k not in (
             "instructions", "prompt", "name", "_scope", "skill_root", "package_files",
@@ -620,7 +625,14 @@ class ScopedRepository:
             instructions,
             "",
         ]
-        (path / "SKILL.md").write_text("\n".join(parts), encoding="utf-8")
+        def _world_readable(p: Path, mode: int) -> None:
+            try:
+                p.chmod(mode)
+            except OSError:
+                pass
+        skill_md = path / "SKILL.md"
+        skill_md.write_text("\n".join(parts), encoding="utf-8")
+        _world_readable(skill_md, 0o644)
         for rel, content in (data.get("package_files") or {}).items():
             clean = str(rel or "").replace("\\", "/").strip("/")
             if not clean or clean == "SKILL.md" or any(p in (".", "..") for p in clean.split("/")):
@@ -628,6 +640,12 @@ class ScopedRepository:
             target = path / clean
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(str(content or ""), encoding="utf-8")
+            _world_readable(target, 0o644)
+            # Subdirectories must be traversable by the uid-1000 container.
+            sub = path
+            for part in clean.split("/")[:-1]:
+                sub = sub / part
+                _world_readable(sub, 0o755)
 
     def _read_directory_resource(self, rtype: str, path: Path) -> Optional[Dict[str, Any]]:
         if rtype == "skills":

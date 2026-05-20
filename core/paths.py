@@ -49,9 +49,10 @@ def repo_dir(rtype: str, scope: str = "global",
     raise ValueError(f"Invalid scope: {scope!r}")
 
 
-# Resource types stored as markdown files (frontmatter + body). Skills are
-# directory resources containing a standard Agent Skills SKILL.md file.
-_MARKDOWN_TYPES = frozenset({"agents", "prompts"})
+# Resource types whose single-file helper path uses markdown. Skills are stored
+# as directory resources by ScopedRepository, but repo_file("skills", ...) still
+# resolves to a markdown definition path for path-helper callers.
+_MARKDOWN_TYPES = frozenset({"agents", "prompts", "skills"})
 
 
 def repo_file(rtype: str, name: str, scope: str = "global",

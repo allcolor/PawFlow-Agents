@@ -23,6 +23,19 @@ the existing delta-only behavior because the provider session already carries th
 prior context. Direct API providers do not use this file bootstrap; they receive
 their message context directly in the API request.
 
+CLI session invalidation and live-container eviction are separate operations.
+Invalidating a session after compact/edit/branch changes clears the provider's
+resume pointer and kills any live Docker/tmux runtime tied to that logical
+session. Idle sliding-window cleanup only kills the live Docker runtime; it does
+not clear the logical provider session, so providers that can resume may do so on
+the next turn.
+
+For `claude-code-interactive`, the live context gauge uses provider-observed
+Anthropic `usage` from the MITM SSE stream, including cache creation/read input
+tokens. PawFlow does not recompute that gauge from its serialized context during
+CCI heartbeats, because Claude Code's actual prompt includes provider-managed
+state that can differ substantially from the stored PawFlow message list.
+
 ## Agent Configuration
 
 Agents reference a service id:

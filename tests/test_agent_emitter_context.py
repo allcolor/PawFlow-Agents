@@ -1,7 +1,7 @@
 """Tests for context-fill fields on StreamEmitter `done` event."""
 
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from tasks.ai.agent_emitter import AgentResult, StreamEmitter
 
@@ -26,6 +26,23 @@ class TestOnDoneContextFields(unittest.TestCase):
             conversation_id="cid1", bus=bus, ctx=ctx,
             agent=MagicMock(), gen_key="k", generation=1)
         return em, bus
+
+    def _make_cci_emitter(self):
+        bus = MagicMock()
+        client = MagicMock(
+            provider="claude-code-interactive", base_url="", default_model="x",
+            _cc_context_window_by_stream={})
+        ctx = {
+            "active_agent_name": "test",
+            "active_llm_service": "svc",
+            "user_id": "u",
+            "max_context_size": 1000000,
+            "_event_cid": "cid1",
+            "client": client,
+        }
+        return StreamEmitter(
+            conversation_id="cid1", bus=bus, ctx=ctx,
+            agent=MagicMock(), gen_key="k", generation=1), bus
 
     def test_on_done_does_not_publish_context_fields(self):
         em, bus = self._make_emitter(max_ctx=200000)
@@ -59,6 +76,12 @@ class TestOnDoneContextFields(unittest.TestCase):
         self.assertNotIn("context_used", data)
         self.assertNotIn("context_max", data)
         self.assertNotIn("context_pct", data)
+
+    def test_cci_heartbeat_skips_pawflow_context_recount(self):
+        em, _bus = self._make_cci_emitter()
+        with patch("tasks.ai.context_usage.compute_context_usage") as compute:
+            self.assertIsNone(em._context_usage_payload("heartbeat"))
+        compute.assert_not_called()
 
 
 if __name__ == "__main__":

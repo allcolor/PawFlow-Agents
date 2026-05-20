@@ -316,6 +316,33 @@ class InteractiveClaudeCodePool:
         self._kill_container(state.name)
         return True
 
+    def kill_and_evict_by_conv(self, conv_id: str, reason: str) -> int:
+        """Kill live containers for every interactive session in a conversation."""
+        with self._lock:
+            victims = [(key, state) for key, state in self._sessions.items()
+                       if key[1] == conv_id]
+            for key, _state in victims:
+                self._sessions.pop(key, None)
+        for key, state in victims:
+            logger.info("[cci-live] kill_by_conv %s (%s)",
+                        self._fmt_key(key), reason)
+            self._kill_container(state.name)
+        return len(victims)
+
+    def kill_and_evict_by_conv_agent(self, conv_id: str, agent_name: str,
+                                      reason: str) -> int:
+        """Kill live containers for one interactive (conversation, agent) pair."""
+        with self._lock:
+            victims = [(key, state) for key, state in self._sessions.items()
+                       if key[1] == conv_id and key[2] == agent_name]
+            for key, _state in victims:
+                self._sessions.pop(key, None)
+        for key, state in victims:
+            logger.info("[cci-live] kill_by_conv_agent %s (%s)",
+                        self._fmt_key(key), reason)
+            self._kill_container(state.name)
+        return len(victims)
+
     def ensure_sweeper(self, tick_seconds: int = 60,
                        idle_ttl_seconds: Optional[int] = None) -> None:
         if idle_ttl_seconds and idle_ttl_seconds > 0:
@@ -372,6 +399,14 @@ class InteractiveClaudeCodePool:
     @staticmethod
     def _kill_container(name: str) -> None:
         subprocess.run(docker_cmd() + ["rm", "-f", name], capture_output=True, timeout=15)  # nosec B603
+
+    @staticmethod
+    def _fmt_key(key: tuple[str, str, str, str]) -> str:
+        user_id, conv_id, agent_name, service_id = key
+        return (
+            f"{user_id[:6] or '?'}/{conv_id[:8] or '?'}/"
+            f"{agent_name or 'default'}@{service_id or 'default'}"
+        )
 
     def _start_new(self, client, model: str, user_id: str, conversation_id: str,
                    agent_name: str, key: tuple[str, str, str, str]) -> InteractiveContainer:

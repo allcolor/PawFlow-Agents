@@ -87,6 +87,7 @@ class StreamEmitter(AgentEmitter):
         self.generation = generation
         self._agent_name = ctx.get("active_agent_name", "")
         self._agent_svc = ctx.get("active_llm_service", "")
+        self._provider = getattr(ctx.get("client"), "provider", "") or ""
         self._user_id = ctx.get("user_id", "")
         self._use_conv_store = ctx.get("use_conv_store", False)
         self._current_msg_id = ""  # pre-generated per iteration for dedup
@@ -159,6 +160,8 @@ class StreamEmitter(AgentEmitter):
     def _context_usage_payload(self, reason: str = "") -> Optional[Dict[str, Any]]:
         """Publish the authoritative PawFlow context gauge."""
         if not self._agent_name or self.ctx.get("_context_usage_suspended"):
+            return None
+        if self._provider == "claude-code-interactive":
             return None
         try:
             from tasks.ai.context_usage import (

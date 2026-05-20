@@ -361,6 +361,57 @@ class AgentCoreMixin:
                 src["context_cache_mode"] = _ctx_usage.get("cache_mode", "")
                 src["context_cache"] = _ctx_usage
             return src
+
+        def _provider_context_usage_from_response(response, source: str) -> dict:
+            if _client_provider != "claude-code-interactive":
+                return {}
+            raw = getattr(response, "raw", None) or {}
+            usage = raw.get("usage") if isinstance(raw, dict) else None
+            if not isinstance(usage, dict):
+                usage = {}
+            used = 0
+            for key in (
+                    "input_tokens",
+                    "cache_creation_input_tokens",
+                    "cache_read_input_tokens"):
+                try:
+                    used += int(usage.get(key, 0) or 0)
+                except (TypeError, ValueError):
+                    pass
+            if used <= 0:
+                try:
+                    used = int(getattr(response, "tokens_in", 0) or 0)
+                except (TypeError, ValueError):
+                    used = 0
+            max_ctx = _effective_context_window()
+            if used <= 0 or max_ctx <= 0:
+                return {}
+            return {
+                "conversation_id": conversation_id,
+                "agent_name": ctx.get("active_agent_name", ""),
+                "used": used,
+                "max": max_ctx,
+                "pct": used / max_ctx,
+                "source": source,
+                "updated_at": time.time(),
+                "message_count": 0,
+                "cache_mode": "provider_usage",
+                "provider_usage": dict(usage),
+            }
+
+        def _apply_provider_context_usage(src: dict, response) -> dict:
+            usage = _provider_context_usage_from_response(
+                response, "claude_code_interactive_provider")
+            if not usage:
+                return src
+            src["context_used"] = int(usage.get("used", 0) or 0)
+            src["context_max"] = int(usage.get("max", 0) or 0)
+            src["context_pct"] = float(usage.get("pct", 0.0) or 0.0)
+            src["context_source"] = usage.get("source", "")
+            src["context_message_count"] = usage.get("message_count", 0)
+            src["context_cache_mode"] = usage.get("cache_mode", "")
+            src["context_cache"] = usage
+            return src
         # SpawnAgentsHandler source tracking
         from core.tool_registry import SpawnAgentsHandler as _SAH
         for _h in registry.list_tools():
@@ -2175,6 +2226,7 @@ class AgentCoreMixin:
                                 _cc_src = _agent_source(response.tokens_in, response.tokens_out, response.model,
                                                          tok_cache_creation=response.cache_creation_tokens,
                                                          tok_cache_read=response.cache_read_tokens)
+                                _cc_src = _apply_provider_context_usage(_cc_src, response)
                                 # Update in-memory message
                                 for _m in reversed(messages):
                                     if getattr(_m, 'msg_id', '') == _cc_last_mid:

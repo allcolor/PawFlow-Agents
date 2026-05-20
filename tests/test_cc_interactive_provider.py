@@ -1146,6 +1146,39 @@ def test_interactive_pool_lists_live_conversation_sessions(monkeypatch):
     assert ("u", "c", "dead-agent", "svc1") not in pool._sessions
 
 
+def test_interactive_pool_kills_live_containers_by_conv_and_agent(monkeypatch):
+    from core.claude_code_interactive_pool import InteractiveClaudeCodePool, InteractiveContainer
+
+    pool = InteractiveClaudeCodePool()
+    killed = []
+    monkeypatch.setattr(pool, "_kill_container", killed.append)
+
+    def add(key, name):
+        pool._sessions[key] = InteractiveContainer(
+            key=key,
+            name=name,
+            workdir=f"/host/{name}",
+            container_workdir=f"/cc_sessions/{key[1]}/{key[2]}",
+            session_token=f"sess-{name}",
+            event_service_id="events",
+            internal_token="internal",
+        )
+
+    add(("u", "c", "agent-a", "svc1"), "a1")
+    add(("u", "c", "agent-a", "svc2"), "a2")
+    add(("u", "c", "agent-b", "svc1"), "b1")
+    add(("u", "other", "agent-a", "svc1"), "other")
+
+    assert pool.kill_and_evict_by_conv_agent("c", "agent-a", "compact") == 2
+    assert killed == ["a1", "a2"]
+    assert ("u", "c", "agent-b", "svc1") in pool._sessions
+    assert ("u", "other", "agent-a", "svc1") in pool._sessions
+
+    assert pool.kill_and_evict_by_conv("c", "invalidate") == 1
+    assert killed == ["a1", "a2", "b1"]
+    assert list(pool._sessions) == [("u", "other", "agent-a", "svc1")]
+
+
 def test_interactive_pool_starts_tmux_in_normal_provider_namespace(monkeypatch):
     from core.claude_code_interactive_pool import InteractiveClaudeCodePool
 

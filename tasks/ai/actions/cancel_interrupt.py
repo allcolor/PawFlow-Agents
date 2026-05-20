@@ -19,6 +19,7 @@ def _kill_live_cli_sessions(conv_id: str, agent_name: str, reason: str) -> int:
     total = 0
     for module_name, class_name in (
         ("core.cc_live_registry", "LiveSessionRegistry"),
+        ("core.claude_code_interactive_pool", "InteractiveClaudeCodePool"),
         ("core.codex_live_registry", "CodexLiveRegistry"),
         ("core.gemini_live_registry", "GeminiLiveRegistry"),
     ):

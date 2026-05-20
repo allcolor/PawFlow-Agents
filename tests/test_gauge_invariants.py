@@ -755,6 +755,16 @@ def test_claude_final_patch_republishes_context_message_meta():
     assert '"context_cache_mode"' in block
 
 
+def test_cci_final_patch_uses_provider_usage_for_context_gauge():
+    src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
+    assert 'if _client_provider != "claude-code-interactive"' in src
+    assert '"cache_creation_input_tokens"' in src
+    assert '"cache_read_input_tokens"' in src
+    assert '"claude_code_interactive_provider"' in src
+    emitter_src = Path("tasks/ai/agent_emitter.py").read_text(encoding="utf-8")
+    assert 'self._provider == "claude-code-interactive"' in emitter_src
+
+
 def test_idle_polling_cannot_stack_unbounded_work():
     assert "_syncActiveSub" in _ACTIVE_AGENTS_JS
     assert "_SYNC_ACTIVE_STALE_MS" in _ACTIVE_AGENTS_JS
@@ -1359,6 +1369,7 @@ def test_force_stop_kills_cli_processes_and_blocks_late_appends():
     openai_src = Path("core/llm_providers/openai.py").read_text(encoding="utf-8")
     codex_app_src = Path("core/llm_providers/codex_app_server.py").read_text(encoding="utf-8")
     assert "def _kill_live_cli_sessions" in cancel_src
+    assert "InteractiveClaudeCodePool" in cancel_src
     assert "CodexLiveRegistry" in cancel_src
     assert "GeminiLiveRegistry" in cancel_src
     assert "LiveSessionRegistry" in cancel_src

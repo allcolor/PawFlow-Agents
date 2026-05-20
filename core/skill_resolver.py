@@ -7,7 +7,6 @@ agent_executor.py (delegate sub-agents).
 import logging
 import os
 import re
-import shlex
 from typing import Any, Dict, List, Tuple
 
 logger = logging.getLogger(__name__)
@@ -76,63 +75,8 @@ def skill_mount_dir(skill_name: str, skill_def: Dict[str, Any] = None) -> str:
     return "/skills/" + _safe_skill_path_part(skill_name, "skill")
 
 
-def _split_skill_arguments(arguments: str) -> List[str]:
-    if not arguments:
-        return []
-    try:
-        return [str(v) for v in shlex.split(arguments)]
-    except ValueError:
-        return [v for v in arguments.split() if v]
-
-
-def _run_params(arguments: str, args: List[str]) -> Dict[str, str]:
-    params = {str(idx): value for idx, value in enumerate(args)}
-    params["arguments"] = arguments or ""
-    return params
-
-
 def _skill_instructions(skill_def: Dict[str, Any]) -> str:
     return str(skill_def.get("instructions") or skill_def.get("prompt") or "").strip()
-
-
-def _substitute_run_placeholders(prompt: str, arguments: str,
-                                 args: List[str], params: Dict[str, str],
-                                 skill_dir: str) -> str:
-    """Render Agent Skills style placeholders used by imported skills."""
-    replacements = {
-        "ARGUMENTS": arguments or "",
-        "PAWFLOW_SKILL_DIR": skill_dir,
-        "CLAUDE_SKILL_DIR": skill_dir,
-        "CODEX_SKILL_DIR": skill_dir,
-    }
-    for key, value in params.items():
-        if re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', key):
-            replacements.setdefault(key, value)
-
-    def _replace_index(match):
-        idx = int(match.group(1))
-        return args[idx] if idx < len(args) else match.group(0)
-
-    def _replace_positional(match):
-        idx = int(match.group(1) or match.group(2))
-        if idx <= 0:
-            return args[0] if args else match.group(0)
-        pos = idx - 1
-        return args[pos] if pos < len(args) else match.group(0)
-
-    prompt = re.sub(r'\$ARGUMENTS\[(\d+)\]', _replace_index, prompt)
-    prompt = re.sub(r'\$\{([0-9]+)\}|\$([0-9]+)',
-                    lambda m: _replace_positional(m), prompt)
-
-    def _replace_name(match):
-        key = match.group(1) or match.group(2)
-        return replacements.get(key, match.group(0))
-
-    return re.sub(
-        r'\$\{([a-zA-Z_][a-zA-Z0-9_]*)\}|\$([a-zA-Z_][a-zA-Z0-9_]*)',
-        _replace_name,
-        prompt,
-    )
 
 
 def _get_skill_any(rs, skill_name: str, user_id: str,
@@ -217,9 +161,6 @@ def resolve_skill_prompts(
             name, rs, user_id, conversation_id=conversation_id)
         desc = skill_def.get("description", "")
         skill_dir = skill_mount_dir(name, skill_def)
-        # Render skill-directory placeholders so a loaded skill resolves
-        # ${CLAUDE_SKILL_DIR} consistently with /skill run (no run args here).
-        prompt = _substitute_run_placeholders(prompt, "", [], {}, skill_dir)
         blocks.append(
             f"## Skill: {name}\n"
             f"{desc}\n"
@@ -246,13 +187,11 @@ def resolve_runnable_skill_prompt(skill_name: str, user_id: str,
     skill_def = _get_skill_any(rs, skill_name, user_id, conversation_id)
     if not skill_def or not _skill_instructions(skill_def):
         return ""
-    args = _split_skill_arguments(arguments or "")
-    params = _run_params(arguments or "", args)
+    # SKILL.md content is delivered verbatim — no placeholder substitution.
+    # The skill directory and run arguments are passed as explicit lines below.
     prompt = _resolve_prompt_chain(
         skill_name, rs, user_id, conversation_id=conversation_id)
     skill_dir = skill_mount_dir(skill_name, skill_def)
-    prompt = _substitute_run_placeholders(
-        prompt, arguments or "", args, params, skill_dir)
     desc = skill_def.get("description", "")
     arg_line = arguments or ""
     return (

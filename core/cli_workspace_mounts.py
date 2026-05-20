@@ -175,7 +175,7 @@ def build_skill_mount_args(conversation_id: str, agent_name: str = "",
             os.makedirs(server_dir, exist_ok=True)
             # World-readable so the uid-1000 CLI container can read the mount.
             try:
-                os.chmod(server_dir, 0o755)
+                os.chmod(server_dir, 0o755)  # nosec B103 - bind-mount dir must be container-readable
             except OSError:
                 pass
             rel = os.path.relpath(str(server_dir), str(skills_base))

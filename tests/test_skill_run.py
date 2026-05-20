@@ -94,7 +94,7 @@ def test_skill_run_sugar_rejects_triple_slash_as_missing_skill():
     assert body["arguments"] == "42"
 
 
-def test_resolve_runnable_skill_prompt_renders_args_and_placeholders(monkeypatch):
+def test_resolve_runnable_skill_prompt_delivers_body_verbatim(monkeypatch):
     from core import skill_resolver
 
     class Store:
@@ -119,11 +119,13 @@ def test_resolve_runnable_skill_prompt_renders_args_and_placeholders(monkeypatch
         "review-pr", "alice", "conv1", "assistant", "42")
 
     assert "## Skill Invocation: review-pr" in rendered
-    assert "Review PR 42 / 42." in rendered
-    assert "Raw=42." in rendered
-    # Skill directory is the stable container mount path (B3 bind mount).
-    assert "Dir=/skills/review-pr." in rendered
-    assert "/skills/review-pr" in rendered
+    # Arguments and skill directory are explicit lines, not substituted tokens.
+    assert "Arguments: 42" in rendered
+    assert "Skill directory: /skills/review-pr" in rendered
+    # SKILL.md content is delivered verbatim — placeholders are NOT substituted.
+    assert "Review PR ${1} / ${1}." in rendered
+    assert "Raw=$ARGUMENTS." in rendered
+    assert "Dir=${PAWFLOW_SKILL_DIR}." in rendered
 
 
 def test_run_skill_action_queues_rendered_prompt_for_selected_agent(monkeypatch):
@@ -194,7 +196,9 @@ def test_run_skill_action_queues_rendered_prompt_for_selected_agent(monkeypatch)
     assert user_id == "alice"
     assert persisted["source"]["target_agent"] == "assistant"
     assert persisted["source"]["skill_run"]["skill"] == "review-pr"
-    assert "Review 42 now." in persisted["content"]
+    # SKILL.md content is verbatim; the argument is the explicit Arguments line.
+    assert "Review ${1} now." in persisted["content"]
+    assert "Arguments: 42" in persisted["content"]
     assert captured["queued"][0][1] == "skill_run"
     assert captured["wake"][:2] == ("conv1", "assistant")
 
@@ -333,8 +337,8 @@ def test_delete_skill_removes_agent_assignments(monkeypatch):
     assert len(appended) == 2
 
 
-def test_resolve_skill_prompts_substitutes_skill_dir(monkeypatch):
-    # load_skill must render ${CLAUDE_SKILL_DIR} like /skill run does.
+def test_resolve_skill_prompts_delivers_body_verbatim(monkeypatch):
+    # load_skill delivers SKILL.md verbatim; the directory is an explicit line.
     from core import skill_resolver
 
     class Store:
@@ -351,5 +355,6 @@ def test_resolve_skill_prompts_substitutes_skill_dir(monkeypatch):
 
     blocks = skill_resolver.resolve_skill_prompts(["deploy"], "alice", "conv1")
     assert blocks
-    assert "${CLAUDE_SKILL_DIR}" not in blocks[0]
-    assert "/skills/deploy/scripts/go.sh" in blocks[0]
+    # Placeholders are not substituted; the directory is given as a header line.
+    assert "${CLAUDE_SKILL_DIR}/scripts/go.sh" in blocks[0]
+    assert "Skill directory: /skills/deploy" in blocks[0]

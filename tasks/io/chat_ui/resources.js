@@ -2617,6 +2617,12 @@ function _buildResourceForm(rtype, data, isNew, readonly) {
         + '<option value="user">' + t('user') + '</option><option value="conversation">' + t('conversation') + '</option></select></div>';
     }
   }
+  if (rtype === 'skill' && !isNew && data && data._invalid) {
+    // B9: a malformed skill must surface its failure, not look editable-as-usual.
+    html += '<div style="background:color-mix(in srgb, var(--pf-danger,#e05260) 14%, var(--pf-panel));border:1px solid var(--pf-danger,#e05260);color:var(--pf-text);border-radius:4px;padding:8px;margin-bottom:8px;font-size:11px;">'
+      + escapeHtml('⚠ This skill is invalid: ' + data._invalid + ' — re-enter description and instructions below to repair it.')
+      + '</div>';
+  }
   for (const [key, type] of fields) {
     let val = (data && data[key] != null) ? data[key] : '';
     if (key === 'allowed-tools' && Array.isArray(val)) {
@@ -2876,6 +2882,13 @@ function _saveResourceCreate(rtype, assignAfterCreate) {
   const name = (nameEl && nameEl.value || '').trim();
   const scope = scopeEl ? scopeEl.value : 'user';
   if (!name) { alert(t('nameRequired')); return; }
+  if (rtype === 'skill' && (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(name)
+      || name.length > 64
+      || name.indexOf('anthropic') >= 0 || name.indexOf('claude') >= 0)) {
+    alert('Skill name must be lowercase letters, digits and single hyphens, '
+      + 'at most 64 characters, and must not contain "anthropic" or "claude".');
+    return;
+  }
   const fields = _RESOURCE_FIELDS[rtype] || [];
   const data = {};
   for (const [key, type] of fields) {

@@ -103,13 +103,15 @@ const HELP_DATA = {
       + 'The active agent shapes the AI\'s behavior for the conversation.',
   },
   '/skill': {
-    usage: '/skill list | add [--force] @name <description/instructions> | update [--force] @name <description/instructions> | del @name | assign @agent @skill | unassign @agent @skill | assigned @agent | run [@agent] <name> [args...] | //<name> [@agent] [args...]',
+    usage: '/skill list | add [--force] @name <description/instructions> | update [--force] @name <description/instructions> | del @name | search [--source src] <query> | import [--source src] [--review-only] [--force] [--scope user|conversation] [--name name] <ref> | assign @agent @skill | unassign @agent @skill | assigned @agent | run [@agent] <name> [args...] | //<name> [@agent] [args...]',
     short: t('commandShort.9'),
     detail: 'Create, list, assign, delete, or run skills.\n\n'
       + '  /skill list                     — List all skills and agent assignments\n'
       + '  /skill add [--force] @name <instructions> — Create a SKILL.md-backed skill\n'
       + '  /skill update [--force] @name <instructions> — Update a SKILL.md-backed skill\n'
       + '  /skill del @name                — Delete a skill\n'
+      + '  /skill search [--source src] <query> — Search external skill marketplaces\n'
+      + '  /skill import [--source src] [--review-only] [--force] <ref> — Review/import an external skill\n'
       + '  /skill assign @agent @skill     — Assign a skill to an agent\n'
       + '  /skill unassign @agent @skill   — Remove a skill from an agent\n'
       + '  /skill assigned @agent          — List skills assigned to an agent\n'

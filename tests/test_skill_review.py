@@ -171,6 +171,34 @@ def test_manage_resource_update_skill_blocks_when_review_blocks(monkeypatch):
     assert result.startswith("Error: Skill review blocked install")
 
 
+def test_manage_resource_create_skill_requires_force_for_human_review(monkeypatch):
+    from core.handlers.resource_agent import ManageResourceHandler
+    from core.resource_store import ResourceStore
+
+    resolved = {}
+    _patch_review_llm(
+        monkeypatch, resolved,
+        risk="medium", allowed=True, requires_human_review=True)
+
+    class Store:
+        def create(self, *args, **kwargs):
+            raise AssertionError("human-review skill create must not persist without force")
+
+    monkeypatch.setattr(ResourceStore, "instance", staticmethod(lambda: Store()))
+
+    handler = ManageResourceHandler()
+    handler.set_user_id("alice")
+    handler.set_conversation_id("conv1")
+    result = handler.execute({
+        "action": "create",
+        "resource_type": "skill",
+        "name": "needs-review",
+        "data": {"prompt": "Use subprocess carefully."},
+    })
+
+    assert result.startswith("Error: Skill review requires human review")
+
+
 def test_review_fails_closed_without_summarizer_llm(monkeypatch):
     from core import package_review
     from core.package_review import review_skill_content

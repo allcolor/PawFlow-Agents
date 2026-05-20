@@ -341,6 +341,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                 operation="update" if is_update else "create",
                 user_id=uid,
                 conversation_id=conv_id,
+                force=bool(body.get("force", False)),
             )
             if review_meta:
                 data = attach_review_metadata(data, review_meta)
@@ -1627,6 +1628,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                     operation="update",
                     user_id=target_uid,
                     conversation_id=_skill_conv,
+                    force=bool(body.get("force", False)),
                 )
                 if review_meta:
                     data = attach_review_metadata(data, review_meta)
@@ -1666,6 +1668,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                     operation="create",
                     user_id=target_uid,
                     conversation_id=conv_id if scope == "conversation" else "",
+                    force=bool(body.get("force", False)),
                 )
                 if review_meta:
                     data = attach_review_metadata(data, review_meta)

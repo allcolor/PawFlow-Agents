@@ -8,7 +8,8 @@ from typing import Any, Dict, Optional
 
 def review_for_write(subject: Dict[str, Any], *, operation: str,
                      user_id: str = "", conversation_id: str = "",
-                     package_files: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+                     package_files: Optional[Dict[str, str]] = None,
+                     force: bool = False) -> Dict[str, Any]:
     """Review skill-like content before create/update/import and return metadata."""
     from core.package_review import (
         assert_installable_review, review_hash, review_metadata,
@@ -21,7 +22,7 @@ def review_for_write(subject: Dict[str, Any], *, operation: str,
         conversation_id=conversation_id,
         package_files=package_files or {},
     )
-    assert_installable_review(review, force=True, label="Skill")
+    assert_installable_review(review, force=force, label="Skill")
     meta = review_metadata(
         review,
         service_id=review.get("service_id", ""),

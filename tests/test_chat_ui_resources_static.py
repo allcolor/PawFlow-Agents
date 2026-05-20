@@ -1,6 +1,15 @@
 from pathlib import Path
 
 
+def test_cmd_resource_action_returns_promise_for_then_callers():
+    js = Path("tasks/io/chat_ui/attachments.js").read_text(encoding="utf-8")
+    start = js.index("function cmdResourceAction(action, extra)")
+    block = js[start:js.index("\n}\n", start) + 3]
+
+    assert "return rxjs.firstValueFrom(action$(action, payload)).then" in block
+    assert "return data;" in block
+
+
 def test_resource_editor_sends_conversation_id_for_conversation_scope():
     js = Path("tasks/io/chat_ui/resources.js").read_text(encoding="utf-8")
 

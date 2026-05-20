@@ -568,8 +568,8 @@ function cmdResourceAction(action, extra) {
       && typeof conversationId !== 'undefined' && conversationId) {
     payload.conversation_id = conversationId;
   }
-  action$(action, payload).subscribe(data => {
-    if (data.error) { addMsg('error', data.error); return; }
+  return rxjs.firstValueFrom(action$(action, payload)).then(data => {
+    if (data.error) { addMsg('error', data.error); return data; }
     if (data.created) addMsg('system', `Created: ${extra.name || ''}`);
     else if (data.deleted) addMsg('system', `Deleted: ${extra.name || ''}`);
     else if (data.activated) addMsg('system', `Activated ${data.type} "${data.name}" in this conversation`);
@@ -577,5 +577,6 @@ function cmdResourceAction(action, extra) {
     else if (data.shared) addMsg('system', `Shared ${data.type} "${data.name}" to conversation ${data.target.substring(0,8)}...`);
     else if (data.message) addMsg('system', data.message);
     else addMsg('system', JSON.stringify(data, null, 2));
+    return data;
   });
 }

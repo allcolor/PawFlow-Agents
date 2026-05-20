@@ -98,7 +98,7 @@ class ManageResourceHandler(ToolHandler):
                 },
                 "force": {
                     "type": "boolean",
-                    "description": "Allow importing a reviewed skill that requires human review. Blocked reviews still fail.",
+                    "description": "Allow importing or writing a reviewed skill that requires human review. Blocked reviews still fail.",
                 },
             },
             "required": ["action", "resource_type"],
@@ -150,6 +150,7 @@ class ManageResourceHandler(ToolHandler):
                         operation="create",
                         user_id=user_id,
                         conversation_id=self._conversation_id,
+                        force=bool(arguments.get("force", False)),
                     )
                     if review_meta:
                         data = attach_review_metadata(data, review_meta)
@@ -211,6 +212,7 @@ class ManageResourceHandler(ToolHandler):
                         operation="update",
                         user_id=user_id,
                         conversation_id=self._conversation_id,
+                        force=bool(arguments.get("force", False)),
                     )
                     if review_meta:
                         data = attach_review_metadata(data, review_meta)

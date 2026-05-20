@@ -177,6 +177,38 @@ def test_live_tool_events_keep_chat_scrolled():
     assert "scrollBottom();" in tool_result_block
 
 
+def test_live_thinking_blocks_split_after_non_thinking_events():
+    thinking_block = SSE_JS[
+        SSE_JS.index("// ── Extended thinking"):
+        SSE_JS.index("eventSource.addEventListener('token'")]
+    tool_call_block = SSE_JS[
+        SSE_JS.index("eventSource.addEventListener('tool_call'"):
+        SSE_JS.index("eventSource.addEventListener('tool_result'")]
+    tool_result_block = SSE_JS[
+        SSE_JS.index("eventSource.addEventListener('tool_result'"):
+        SSE_JS.index("eventSource.addEventListener('bg_task_update'")]
+    new_message_block = SSE_JS[
+        SSE_JS.index("eventSource.addEventListener('new_message'"):
+        SSE_JS.index("// ── Proactive notifications", SSE_JS.index("eventSource.addEventListener('new_message'"))]
+
+    assert "softFinalized" not in SSE_JS
+    assert "delete thinkingElements[aKey];" in thinking_block
+    assert "delete te.el.dataset.live" in thinking_block
+    assert "finalizeThinkingFromEvent(data, 'message')" in new_message_block
+    assert "finalizeThinkingFromEvent(data, 'tool_call')" in tool_call_block
+    assert "finalizeThinkingFromEvent(data, 'tool_result')" in tool_result_block
+
+
+def test_delegate_thinking_chunks_split_after_delegate_non_thinking_events():
+    delegate_block = SSE_JS[
+        SSE_JS.index("eventSource.addEventListener('sub_agent_thinking'"):
+        SSE_JS.index("eventSource.addEventListener('sub_agent_done'")]
+    assert "const delegateThinkingElements = {};" in SSE_JS
+    assert "te.text += data.thinking || '';" in delegate_block
+    assert "finalizeDelegateThinking(data.task_id)" in delegate_block
+    assert "for (const k in delegateThinkingElements) delete delegateThinkingElements[k];" in SSE_JS
+
+
 def test_task_subconv_messages_publish_live_events_on_parent_conversation():
     assert "_task_parent_cid = conversation_id.split(\"::task::\", 1)[0]" in AGENT_CORE
     assert "_evt2[\"cid\"] = _task_parent_cid" in AGENT_CORE
@@ -228,10 +260,10 @@ def test_primary_chat_controls_are_i18n_bound():
     assert "Thought for " not in SSE_JS
 
 
-def test_thinking_merge_separator_only_after_tool_call_soft_finalize():
-    assert "te.softFinalized && te.text && textDelta" in SSE_JS
-    assert "te.softFinalized = false" in SSE_JS
-    assert "if (reason === 'tool_call') te.softFinalized = true;" in SSE_JS
+def test_thinking_does_not_merge_across_tool_call_boundaries():
+    assert "softFinalized" not in SSE_JS
+    assert "finalizeThinkingFromEvent(data, 'tool_call')" in SSE_JS
+    assert "delete thinkingElements[aKey];" in SSE_JS
     assert "if (te.text && textDelta)" not in SSE_JS
 
 

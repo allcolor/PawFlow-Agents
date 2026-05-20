@@ -139,6 +139,7 @@ function connectSSE(cid, onReady, opts) {
       if (_pendingToolResults[k] && _pendingToolResults[k].timer) clearTimeout(_pendingToolResults[k].timer);
       delete _pendingToolResults[k];
     }
+    for (const k in delegateThinkingElements) delete delegateThinkingElements[k];
   };
 
   function _getTaskBlock(taskId, iteration, agentName) {
@@ -194,6 +195,7 @@ function connectSSE(cid, onReady, opts) {
     lastSSEActivity = Date.now();
     const data = e.data ? JSON.parse(e.data) : {};
     if (data.role && data.content) {
+      finalizeThinkingFromEvent(data, 'message');
       // Dedup by msg_id — don't render if already in DOM
       if (data.msg_id && document.querySelector('[data-msgid="' + data.msg_id + '"]')) return;
       const el = addMsg(data.role, data.content, {
@@ -257,8 +259,9 @@ function connectSSE(cid, onReady, opts) {
     trackAgentStart(agentName);
   });
 
-  // ── Extended thinking (Anthropic) ──
+  // ── Extended thinking ──
   let thinkingElements = {};  // agentKey → {el, text, startTime}
+  const delegateThinkingElements = {};  // taskId → {el, content, summary, text, startTime}
   eventSource.addEventListener('thinking_content', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
@@ -315,24 +318,16 @@ function connectSSE(cid, onReady, opts) {
       scrollBottom();
     }
     const te = thinkingElements[aKey];
-    // Reusing a soft-finalized block (after tool_call): reopen the live
-    // summary label and add one blank line between merged phases.
-    if (te.softFinalized && te.text && textDelta) {
-      te.summary.textContent = t('thinking') + '...';
-      te.text += '\n\n';
-      te.softFinalized = false;
-    }
     te.text += textDelta;
     te.content.textContent = te.text;
     if (typeof applyTechnicalMessageGrouping === 'function') applyTechnicalMessageGrouping();
     scrollBottom();
   });
 
-  // Finalize thinking block when tokens start arriving (thinking is done).
-  // reason: 'token' | 'tool_call' | 'done'. On 'tool_call' we KEEP the entry so
-  // subsequent thinking_content events for the same agent append to the same
-  // block (matches main: one merged thinking bubble per logical turn even
-  // across multi-turn task iterations).
+  // Finalize a thinking block when any non-thinking event arrives for that
+  // agent. Consecutive thinking_content chunks append to the same block; once
+  // a tool call, message, token, result, or done event arrives, the next
+  // thinking_content must create a new block.
   function finalizeThinking(agentName, reason) {
     const aKey = agentKey(agentName || '');
     const te = thinkingElements[aKey];
@@ -346,10 +341,29 @@ function connectSSE(cid, onReady, opts) {
     } else {
       te.summary.textContent = t('thoughtFor', { sec: elapsed.toFixed(1) });
       te.el.setAttribute('open', '');
-      if (reason === 'tool_call') te.softFinalized = true;
-      else delete thinkingElements[aKey];
+      if (te.el.dataset) delete te.el.dataset.live;
+      delete thinkingElements[aKey];
     }
     if (typeof applyTechnicalMessageGrouping === 'function') applyTechnicalMessageGrouping();
+  }
+
+  function finalizeThinkingFromEvent(data, reason) {
+    const agent = (data && (data.agent_name || (data.source && data.source.name))) || '';
+    if (agent) finalizeThinking(agent, reason);
+  }
+
+  function finalizeDelegateThinking(taskId) {
+    const te = taskId ? delegateThinkingElements[taskId] : null;
+    if (!te) return;
+    if (!String(te.text || '').trim()) {
+      te.el.remove();
+    } else {
+      const elapsed = (Date.now() - te.startTime) / 1000;
+      te.summary.textContent = t('thoughtFor', { sec: elapsed.toFixed(1) });
+      te.el.setAttribute('open', '');
+      if (te.el.dataset) delete te.el.dataset.live;
+    }
+    delete delegateThinkingElements[taskId];
   }
 
   eventSource.addEventListener('token', (e) => {
@@ -719,17 +733,31 @@ function connectSSE(cid, onReady, opts) {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
     if (data.task_id && _delegateSubBlocks[data.task_id]) {
-      const el = document.createElement('details');
-      el.className = 'delegate-thinking';
-      el.innerHTML = '<summary>\u{1F4AD} ' + escapeHtml(t('thinking')) + '...</summary>'
-        + '<div class="delegate-thinking-content">' + escapeHtml(data.thinking || '') + '</div>';
-      _subBlockAppend(data.task_id, el);
+      let te = delegateThinkingElements[data.task_id];
+      if (!te) {
+        const el = document.createElement('details');
+        el.className = 'delegate-thinking';
+        el.dataset.messageRole = 'thinking';
+        el.dataset.live = '1';
+        el.setAttribute('open', '');
+        const summary = document.createElement('summary');
+        summary.textContent = '\u{1F4AD} ' + t('thinking') + '...';
+        el.appendChild(summary);
+        const content = document.createElement('div');
+        content.className = 'delegate-thinking-content';
+        el.appendChild(content);
+        _subBlockAppend(data.task_id, el);
+        te = delegateThinkingElements[data.task_id] = {el, content, summary, text: '', startTime: Date.now()};
+      }
+      te.text += data.thinking || '';
+      te.content.textContent = te.text;
     }
   });
 
   eventSource.addEventListener('sub_agent_text', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
+    if (data.task_id) finalizeDelegateThinking(data.task_id);
     if (data.task_id && _delegateSubBlocks[data.task_id]) {
       const el = document.createElement('div');
       el.className = 'delegate-text';
@@ -741,6 +769,7 @@ function connectSSE(cid, onReady, opts) {
   eventSource.addEventListener('sub_agent_tool', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
+    if (data.task_id) finalizeDelegateThinking(data.task_id);
     const agentName = data.agent_name || 'sub-agent';
     trackAgentTool(agentName, data.tool, data.task_id || '');
     if (data.task_id && _delegateSubBlocks[data.task_id]) {
@@ -765,6 +794,7 @@ function connectSSE(cid, onReady, opts) {
   eventSource.addEventListener('sub_agent_tool_result', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
+    if (data.task_id) finalizeDelegateThinking(data.task_id);
     if (data.task_id && data.tc_id && _delegateSubBlocks[data.task_id]) {
       const block = _delegateSubBlocks[data.task_id];
       const tcEl = block.content.querySelector('[data-tc-id="' + data.tc_id + '"]');
@@ -786,6 +816,7 @@ function connectSSE(cid, onReady, opts) {
   eventSource.addEventListener('sub_agent_done', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
+    if (data.task_id) finalizeDelegateThinking(data.task_id);
     const agent = data.agent_name || 'sub-agent';
     trackAgentDone(agent, data.task_id || '');
     const taskId = data.task_id;
@@ -865,9 +896,7 @@ function connectSSE(cid, onReady, opts) {
   eventSource.addEventListener('tool_call', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
-    // Soft-finalize thinking before tool call: keep the entry so the next
-    // thinking_content for this agent appends to the same block.
-    finalizeThinking(data.agent_name || '', 'tool_call');
+    finalizeThinkingFromEvent(data, 'tool_call');
     if (typeof _noteLiveHistoryAppend === 'function') {
       _noteLiveHistoryAppend(data.message_count, 1, data.msg_id || '');
     }
@@ -939,6 +968,7 @@ function connectSSE(cid, onReady, opts) {
   eventSource.addEventListener('tool_result', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
+    finalizeThinkingFromEvent(data, 'tool_result');
     if (data.agent_name) trackAgentToolDone(data.agent_name, data.tool, data.task_id || '');
     if (typeof _noteLiveHistoryAppend === 'function') {
       _noteLiveHistoryAppend(data.message_count, 1, data.msg_id || '');

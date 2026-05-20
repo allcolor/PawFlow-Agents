@@ -216,6 +216,9 @@ def resolve_skill_prompts(
             name, rs, user_id, conversation_id=conversation_id)
         desc = skill_def.get("description", "")
         skill_dir = skill_mount_dir(name, skill_def)
+        # Render skill-directory placeholders so a loaded skill resolves
+        # ${CLAUDE_SKILL_DIR} consistently with /skill run (no run args here).
+        prompt = _substitute_run_placeholders(prompt, "", [], {}, skill_dir)
         blocks.append(
             f"## Skill: {name}\n"
             f"{desc}\n"

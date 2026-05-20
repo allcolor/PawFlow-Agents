@@ -331,3 +331,25 @@ def test_delete_skill_removes_agent_assignments(monkeypatch):
     assert updated[1][3] == {"assigned_skills": []}
     assert [row[1] for row in enqueued] == ["skill_delete", "skill_delete"]
     assert len(appended) == 2
+
+
+def test_resolve_skill_prompts_substitutes_skill_dir(monkeypatch):
+    # load_skill must render ${CLAUDE_SKILL_DIR} like /skill run does.
+    from core import skill_resolver
+
+    class Store:
+        def get_any(self, rtype, name, user_id, conversation_id=""):
+            return {
+                "name": "deploy",
+                "_scope": "user",
+                "description": "Deploy things",
+                "instructions": "Run ${CLAUDE_SKILL_DIR}/scripts/go.sh now.",
+            }
+
+    from core.resource_store import ResourceStore
+    monkeypatch.setattr(ResourceStore, "instance", staticmethod(lambda: Store()))
+
+    blocks = skill_resolver.resolve_skill_prompts(["deploy"], "alice", "conv1")
+    assert blocks
+    assert "${CLAUDE_SKILL_DIR}" not in blocks[0]
+    assert "/skills/deploy/scripts/go.sh" in blocks[0]

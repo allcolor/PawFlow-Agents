@@ -184,6 +184,11 @@ def build_skill_mount_args(conversation_id: str, agent_name: str = "",
             return
         seen.add(target)
         source = translate_path(to_host_path(str(server_dir)))
+        if not os.path.exists(source):
+            logger.warning(
+                "[skill-mount] host source %s not visible from this process "
+                "(ok if the server is containerized with data on a volume; "
+                "otherwise skills will be missing in the container)", source)
         args.extend(["-v", f"{source}:{target}:ro"])
 
     _add(skills_base / "global")

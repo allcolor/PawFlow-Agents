@@ -17,6 +17,10 @@ _FLOW_TEMPLATES_CACHE: Dict[str, Dict[str, Any]] = {}
 _FLOW_TEMPLATES_REFRESHING: set[str] = set()
 _FLOW_TEMPLATES_LOCK = threading.Lock()
 
+# Serializes read-modify-write of agent.assigned_skills across concurrent
+# assign/unassign/delete so a concurrent update cannot drop an entry.
+_ASSIGNED_SKILLS_LOCK = threading.Lock()
+
 
 def _scan_flow_templates(user_id: str) -> List[Dict[str, Any]]:
     from core.paths import REPOSITORY_DIR
@@ -416,23 +420,27 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         cleaned_agents = []
         if deleted:
             for agent_def in rs.list_all("agent", uid, conversation_id=conv_id):
-                assigned = list(agent_def.get("assigned_skills", []) or [])
-                kept = []
-                changed = False
-                for entry in assigned:
-                    name, _params, _condition = normalize_skill_entry(entry)
-                    if name == skill_name:
-                        changed = True
-                        continue
-                    kept.append(entry)
-                if not changed:
-                    continue
                 agent_scope = agent_def.get("_scope", "user")
                 agent_name = agent_def.get("name", "")
                 update_kwargs = {"conversation_id": conv_id} if agent_scope == "conversation" and conv_id else {}
                 update_uid = uid if agent_scope in ("conversation", "user") else "__global__"
-                rs.update("agent", agent_name, update_uid,
-                          {"assigned_skills": kept}, **update_kwargs)
+                # Re-read under the lock so a concurrent assign can't be lost.
+                with _ASSIGNED_SKILLS_LOCK:
+                    fresh = rs.get_any("agent", agent_name, uid,
+                                       conversation_id=conv_id) or agent_def
+                    kept = []
+                    changed = False
+                    for entry in list(fresh.get("assigned_skills", []) or []):
+                        name, _params, _condition = normalize_skill_entry(entry)
+                        if name == skill_name:
+                            changed = True
+                            continue
+                        kept.append(entry)
+                    if changed:
+                        rs.update("agent", agent_name, update_uid,
+                                  {"assigned_skills": kept}, **update_kwargs)
+                if not changed:
+                    continue
                 cleaned_agents.append(agent_name)
                 if conv_id:
                     try:
@@ -489,15 +497,18 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                 "error": f"Skill '{skill_name}' is invalid: {skill_def.get('_invalid')}",
             }).encode())
             return [flowfile]
-        assigned = list(agent_def.get("assigned_skills", []) or [])
-        newly_assigned = skill_name not in assigned
-        if newly_assigned:
-            assigned.append(skill_name)
-        # Update agent in the correct scope
-        _scope = agent_def.get("_scope", "user")
-        _uid = uid if _scope in ("conversation", "user") else "__global__"
-        _scope_kwargs = {"conversation_id": conv_id} if _scope == "conversation" and conv_id else {}
-        rs.update("agent", _def_name, _uid, {"assigned_skills": assigned}, **_scope_kwargs)
+        # Re-read under the lock so a concurrent assign/unassign can't drop an entry.
+        with _ASSIGNED_SKILLS_LOCK:
+            fresh = rs.get_any("agent", _def_name, uid,
+                               conversation_id=conv_id) or agent_def
+            assigned = list(fresh.get("assigned_skills", []) or [])
+            newly_assigned = skill_name not in assigned
+            if newly_assigned:
+                assigned.append(skill_name)
+            _scope = fresh.get("_scope", "user")
+            _uid = uid if _scope in ("conversation", "user") else "__global__"
+            _scope_kwargs = {"conversation_id": conv_id} if _scope == "conversation" and conv_id else {}
+            rs.update("agent", _def_name, _uid, {"assigned_skills": assigned}, **_scope_kwargs)
         if conv_id and newly_assigned:
             try:
                 from core.llm_client import stamp_message
@@ -544,14 +555,18 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         if not agent_def:
             flowfile.set_content(json.dumps({"error": f"Agent '{agent_name}' not found"}).encode())
             return [flowfile]
-        assigned = list(agent_def.get("assigned_skills", []) or [])
-        was_assigned = skill_name in assigned
-        if was_assigned:
-            assigned.remove(skill_name)
-        _scope = agent_def.get("_scope", "user")
-        _uid = uid if _scope in ("conversation", "user") else "__global__"
-        _scope_kwargs = {"conversation_id": conv_id} if _scope == "conversation" and conv_id else {}
-        rs.update("agent", _def_name, _uid, {"assigned_skills": assigned}, **_scope_kwargs)
+        # Re-read under the lock so a concurrent assign/unassign can't drop an entry.
+        with _ASSIGNED_SKILLS_LOCK:
+            fresh = rs.get_any("agent", _def_name, uid,
+                               conversation_id=conv_id) or agent_def
+            assigned = list(fresh.get("assigned_skills", []) or [])
+            was_assigned = skill_name in assigned
+            if was_assigned:
+                assigned.remove(skill_name)
+            _scope = fresh.get("_scope", "user")
+            _uid = uid if _scope in ("conversation", "user") else "__global__"
+            _scope_kwargs = {"conversation_id": conv_id} if _scope == "conversation" and conv_id else {}
+            rs.update("agent", _def_name, _uid, {"assigned_skills": assigned}, **_scope_kwargs)
         if conv_id and was_assigned:
             try:
                 from core.llm_client import stamp_message
@@ -1585,7 +1600,9 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         target_uid = "__global__" if scope == "global" else uid
         try:
             if rtype == "skill":
-                existing = rs.get("skill", rname, target_uid) or {}
+                _skill_conv = body.get("conversation_id", "") if scope == "conversation" else ""
+                existing = rs.get("skill", rname, target_uid,
+                                  conversation_id=_skill_conv) or {}
                 merged = {k: v for k, v in existing.items()
                           if not str(k).startswith("_")}
                 merged.update(data if isinstance(data, dict) else {})

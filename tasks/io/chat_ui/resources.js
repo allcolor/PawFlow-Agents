@@ -2184,9 +2184,14 @@ function _showAgentSkillsDialog(agentName) {
     overlay.className = 'exec-overlay';
     var checkboxes = allSkills.map(s => {
       var checked = assigned.indexOf(s.name) >= 0 ? ' checked' : '';
-      return '<label style="display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer;font-size:13px;color:var(--pf-text);">'
-        + '<input type="checkbox" class="agent-sk-cb" value="' + escapeHtml(s.name) + '"' + checked + ' style="accent-color:var(--pf-accent);"/>'
-        + escapeHtml(s.name)
+      // Invalid skills cannot be (un)assigned - disable but keep an existing
+      // assignment so the diff on save does not silently unassign it.
+      var cbDis = s.invalid ? ' disabled' : '';
+      var color = s.invalid ? 'var(--pf-danger,#e05260)' : 'var(--pf-text)';
+      var invMark = s.invalid ? ' <span style="color:var(--pf-danger,#e05260);font-size:11px;" title="' + escapeHtml(s.invalid) + '">⚠</span>' : '';
+      return '<label style="display:flex;align-items:center;gap:8px;padding:4px 0;cursor:' + (s.invalid ? 'default' : 'pointer') + ';font-size:13px;color:' + color + ';">'
+        + '<input type="checkbox" class="agent-sk-cb" value="' + escapeHtml(s.name) + '"' + checked + cbDis + ' style="accent-color:var(--pf-accent);"/>'
+        + escapeHtml(s.name) + invMark
         + (s.description ? ' <span style="color:var(--pf-muted);font-size:11px;">\u2014 ' + escapeHtml(s.description) + '</span>' : '')
         + '</label>';
     }).join('');
@@ -2717,12 +2722,17 @@ function _loadSkillsPicker(container, selected, readonly) {
       container.innerHTML = '<div style="color:var(--pf-muted);font-size:11px;">' + t('noSkillsDefined') + '</div>';
       return;
     }
-    const dis = readonly ? ' disabled' : '';
     container.innerHTML = skills.map(s => {
       const checked = selected.indexOf(s.name) >= 0 ? ' checked' : '';
-      return '<label style="display:flex;align-items:center;gap:6px;padding:2px 0;cursor:' + (readonly ? 'default' : 'pointer') + ';font-size:12px;color:var(--pf-text);">'
-        + '<input type="checkbox" class="skill-cb" value="' + escapeHtml(s.name) + '"' + checked + dis + ' style="accent-color:var(--pf-accent);"/>'
-        + escapeHtml(s.name)
+      // Invalid skills cannot be (un)assigned - disable but keep an existing
+      // selection so saving the form does not silently drop it.
+      const locked = readonly || !!s.invalid;
+      const cbDis = locked ? ' disabled' : '';
+      const color = s.invalid ? 'var(--pf-danger,#e05260)' : 'var(--pf-text)';
+      const invMark = s.invalid ? ' <span style="color:var(--pf-danger,#e05260);font-size:10px;" title="' + escapeHtml(s.invalid) + '">⚠</span>' : '';
+      return '<label style="display:flex;align-items:center;gap:6px;padding:2px 0;cursor:' + (locked ? 'default' : 'pointer') + ';font-size:12px;color:' + color + ';">'
+        + '<input type="checkbox" class="skill-cb" value="' + escapeHtml(s.name) + '"' + checked + cbDis + ' style="accent-color:var(--pf-accent);"/>'
+        + escapeHtml(s.name) + invMark
         + (s.description ? ' <span style="color:var(--pf-muted);font-size:10px;">\u2014 ' + escapeHtml(s.description) + '</span>' : '')
         + '</label>';
     }).join('');

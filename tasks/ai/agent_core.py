@@ -426,6 +426,65 @@ class AgentCoreMixin:
             reconciled["pct"] = used / max_ctx
             src["context_cache"] = reconciled
             return src
+
+        def _patch_cc_turn_gauge(response, msg_id: str) -> None:
+            """Patch a claude-code turn message with token + context-gauge data.
+
+            For claude-code(-interactive) the authoritative gauge is the
+            provider's reported usage (real prompt size incl. cache tokens),
+            not a PawFlow message recount. Used by both the normal final-turn
+            path and the CCI interrupt turn.
+            """
+            if not msg_id or not (response.tokens_in or response.tokens_out):
+                return
+            _cc_src = _agent_source(
+                response.tokens_in, response.tokens_out, response.model,
+                tok_cache_creation=getattr(response, 'cache_creation_tokens', 0),
+                tok_cache_read=getattr(response, 'cache_read_tokens', 0))
+            _cc_src = _apply_provider_context_usage(_cc_src, response)
+            # Update in-memory message
+            for _m in reversed(messages):
+                if getattr(_m, 'msg_id', '') == msg_id:
+                    _m.source = _cc_src
+                    break
+            # Persist patch to transcript
+            if use_conv_store and conversation_id:
+                try:
+                    from core.conversation_store import ConversationStore
+                    ConversationStore.instance().patch_message(
+                        conversation_id, msg_id, source=_cc_src)
+                except Exception:
+                    logger.debug("exception suppressed", exc_info=True)
+            if "context_used" not in _cc_src:
+                return
+            try:
+                from core.conversation_event_bus import ConversationEventBus
+                _ctx_cache = _cc_src.get("context_cache") or {}
+                ConversationEventBus.instance().publish_event(
+                    ctx.get("_event_cid", conversation_id),
+                    "message_meta", {
+                        "conversation_id": ctx.get("_event_cid", conversation_id),
+                        "msg_id": msg_id,
+                        "agent_name": _cc_src.get("name", ""),
+                        "source": _cc_src,
+                        "model": _cc_src.get("model", ""),
+                        "provider": _cc_src.get("provider", ""),
+                        "tokens_in": _cc_src.get("tokens_in", 0),
+                        "tokens_out": _cc_src.get("tokens_out", 0),
+                        "context_used": _cc_src["context_used"],
+                        "context_max": _cc_src["context_max"],
+                        "context_pct": _cc_src["context_pct"],
+                        "context_source": _cc_src.get("context_source", ""),
+                        "context_message_count": _cc_src.get("context_message_count", 0),
+                        "context_cache_mode": _cc_src.get("context_cache_mode", ""),
+                        "updated_at": float(
+                            _ctx_cache.get("updated_at") or time.time()),
+                    })
+            except Exception as _meta_err:
+                logger.error(
+                    "[claude-code] context message_meta publish failed "
+                    "msg_id=%s: %s", msg_id, _meta_err, exc_info=True)
+
         # SpawnAgentsHandler source tracking
         from core.tool_registry import SpawnAgentsHandler as _SAH
         for _h in registry.list_tools():
@@ -1284,21 +1343,28 @@ class AgentCoreMixin:
                                 model=model or None,
                                 callback=emitter.get_token_callback(False) if emitter.is_streaming else None,
                                 thinking_callback=(
-                                    emitter.get_thinking_callback(False) if _tb > 0 else None),
+                                    emitter.get_thinking_callback(False)
+                                    if ctx.get("thinking_budget", 0) > 0 else None),
                                 turn_callback=_turn_cb,
                                 block_callback=_block_cb,
                             )
+                            _irpt_mid = getattr(client, '_last_turn_msg_id', '')
                             if _turn_cb is None and (_irpt_resp.content or "").strip():
-                                _append(LLMMessage(
+                                _irpt_msg = LLMMessage(
                                     role="assistant", content=_irpt_resp.content,
                                     source=_agent_source(),
-                                    conversation_id=conversation_id))
+                                    conversation_id=conversation_id)
+                                _append(_irpt_msg)
+                                _irpt_mid = getattr(_irpt_msg, 'msg_id', '')
                             response_content = _irpt_resp.content
                             total_tokens_in += _irpt_resp.tokens_in
                             total_tokens_out += _irpt_resp.tokens_out
                             total_cache_read += getattr(_irpt_resp, 'cache_read_tokens', 0)
                             total_cache_write += getattr(_irpt_resp, 'cache_creation_tokens', 0)
                             final_model = _irpt_resp.model
+                            # Refresh the context gauge from the provider's
+                            # reported usage for the interrupted CCI turn.
+                            _patch_cc_turn_gauge(_irpt_resp, _irpt_mid)
                             raise _InterruptComplete()
 
                         logger.info(f"[agent:{conversation_id[:8]}] interrupted — injecting user STOP command")
@@ -2233,56 +2299,11 @@ class AgentCoreMixin:
                         # response_content stays "" — done event uses last turn text.
                         if _is_claude_code:
                             response_content = _resp_text
-                            # Patch last assistant message with token data
-                            # (turn_callback persisted it without tokens)
-                            _cc_last_mid = getattr(client, '_last_turn_msg_id', '')
-                            if _cc_last_mid and (response.tokens_in or response.tokens_out):
-                                _cc_src = _agent_source(response.tokens_in, response.tokens_out, response.model,
-                                                         tok_cache_creation=response.cache_creation_tokens,
-                                                         tok_cache_read=response.cache_read_tokens)
-                                _cc_src = _apply_provider_context_usage(_cc_src, response)
-                                # Update in-memory message
-                                for _m in reversed(messages):
-                                    if getattr(_m, 'msg_id', '') == _cc_last_mid:
-                                        _m.source = _cc_src
-                                        break
-                                # Persist patch to transcript
-                                if use_conv_store and conversation_id:
-                                    try:
-                                        from core.conversation_store import ConversationStore
-                                        ConversationStore.instance().patch_message(
-                                            conversation_id, _cc_last_mid, source=_cc_src)
-                                    except Exception:
-                                        logger.debug("exception suppressed", exc_info=True)
-                                if "context_used" in _cc_src:
-                                    try:
-                                        from core.conversation_event_bus import ConversationEventBus
-                                        _ctx_cache = _cc_src.get("context_cache") or {}
-                                        ConversationEventBus.instance().publish_event(
-                                            ctx.get("_event_cid", conversation_id),
-                                            "message_meta", {
-                                                "conversation_id": ctx.get("_event_cid", conversation_id),
-                                                "msg_id": _cc_last_mid,
-                                                "agent_name": _cc_src.get("name", ""),
-                                                "source": _cc_src,
-                                                "model": _cc_src.get("model", ""),
-                                                "provider": _cc_src.get("provider", ""),
-                                                "tokens_in": _cc_src.get("tokens_in", 0),
-                                                "tokens_out": _cc_src.get("tokens_out", 0),
-                                                "context_used": _cc_src["context_used"],
-                                                "context_max": _cc_src["context_max"],
-                                                "context_pct": _cc_src["context_pct"],
-                                                "context_source": _cc_src.get("context_source", ""),
-                                                "context_message_count": _cc_src.get("context_message_count", 0),
-                                                "context_cache_mode": _cc_src.get("context_cache_mode", ""),
-                                                "updated_at": float(
-                                                    _ctx_cache.get("updated_at") or time.time()),
-                                            })
-                                    except Exception as _meta_err:
-                                        logger.error(
-                                            "[claude-code] context message_meta publish failed "
-                                            "msg_id=%s: %s", _cc_last_mid, _meta_err,
-                                            exc_info=True)
+                            # Patch the persisted turn message with token +
+                            # context-gauge data (turn_callback persisted it
+                            # without tokens).
+                            _patch_cc_turn_gauge(
+                                response, getattr(client, '_last_turn_msg_id', ''))
                             emitter.stop_heartbeat(_iter_hb)
                             break
                         _has_thinking = bool(getattr(response, 'thinking', ''))

@@ -744,15 +744,16 @@ def test_cli_resumed_context_usage_uses_stored_context_plus_live_delta():
 
 def test_claude_final_patch_republishes_context_message_meta():
     block = _AGENT_CORE_PY[
-        _AGENT_CORE_PY.index("# Patch last assistant message with token data"):
-        _AGENT_CORE_PY.index("emitter.stop_heartbeat(_iter_hb)",
-                             _AGENT_CORE_PY.index("# Patch last assistant message with token data"))]
+        _AGENT_CORE_PY.index("def _patch_cc_turn_gauge"):
+        _AGENT_CORE_PY.index("# SpawnAgentsHandler source tracking")]
     assert "patch_message(" in block
-    assert '"context_used" in _cc_src' in block
+    assert '"context_used" not in _cc_src' in block
     assert 'publish_event(' in block
     assert '"message_meta"' in block
     assert '"context_message_count"' in block
     assert '"context_cache_mode"' in block
+    # Helper is invoked by both the final-turn and the CCI interrupt path.
+    assert _AGENT_CORE_PY.count("_patch_cc_turn_gauge(") >= 3
 
 
 def test_cci_final_patch_uses_provider_usage_for_context_gauge():

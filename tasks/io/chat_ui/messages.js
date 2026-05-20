@@ -586,7 +586,7 @@ function addMsg(role, text, extra) {
   const _isDelegateMsg = extra && extra.source
       && (extra.source.type === 'agent_delegate')
       && window.PAWFLOW_GROUP_DELEGATE_MESSAGES !== false;
-  console.log('[delegate-render]', role, 'isDelegate=', _isDelegateMsg, 'source=', extra && extra.source);
+  pawflowDebugLog('[delegate-render]', role, 'isDelegate=', _isDelegateMsg, 'source=', extra && extra.source);
   if (_isDelegateMsg) {
     const _from = extra.source.from || '?';
     const _to = extra.source.to || '?';

@@ -6,6 +6,7 @@ from pathlib import Path
 MESSAGES_JS = Path("tasks/io/chat_ui/messages.js").read_text(encoding="utf-8")
 CONVERSATIONS_JS = Path("tasks/io/chat_ui/conversations.js").read_text(encoding="utf-8")
 SSE_JS = Path("tasks/io/chat_ui/sse.js").read_text(encoding="utf-8")
+STATE_JS = Path("tasks/io/chat_ui/state.js").read_text(encoding="utf-8")
 TEMPLATE_HTML = Path("tasks/io/chat_ui/template.html").read_text(encoding="utf-8")
 AGENT_CORE = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
 TASK_MANAGEMENT = Path("core/handlers/task_management.py").read_text(encoding="utf-8")
@@ -142,6 +143,28 @@ def test_live_tool_results_are_reconciled_when_sse_arrives_out_of_order():
     assert "_attachPendingToolResult(tcEl, data.tc_id)" in tool_call_block
     assert "_queueUnmatchedToolResult(tcId, data)" in tool_result_block
     assert "dataset.messageRole === 'tool_call'" in MESSAGES_JS
+
+
+def test_noisy_debug_console_messages_are_gated():
+    assert "function pawflowDebugEnabled(topic)" in STATE_JS
+    assert "function pawflowDebugLog()" in STATE_JS
+    assert "localStorage.getItem('pawflow.debug')" in STATE_JS
+
+    assert "console.log('[delegate-render]'" not in MESSAGES_JS
+    assert "pawflowDebugLog('[delegate-render]'" in MESSAGES_JS
+    assert "console.warn('[MSG REMOVED]'" not in STATE_JS
+    assert "console.debug('[MSG REMOVED]'" in STATE_JS
+    assert "if (pawflowDebugEnabled('messages'))" in STATE_JS
+
+    assert "console.log('[SSE] tool_call received:'" not in SSE_JS
+    assert "console.log('[SSE done]'" not in SSE_JS
+    assert "console.log('[SSE] connected for'" not in SSE_JS
+    assert "console.log('[SSE] server requested reconnect'" not in SSE_JS
+    assert "console.log('[SSE] reconnecting in'" not in SSE_JS
+    assert "pawflowDebugLog('[SSE] tool_call received:'" in SSE_JS
+    assert "pawflowDebugLog('[SSE done]'" in SSE_JS
+    assert "pawflowDebugLog('[SSE] connected for'" in SSE_JS
+    assert "pawflowDebugLog('[SSE] reconnecting in'" in SSE_JS
 
 
 def test_clear_keeps_conversation_and_load_more_entrypoint():

@@ -900,7 +900,7 @@ function connectSSE(cid, onReady, opts) {
     if (typeof _noteLiveHistoryAppend === 'function') {
       _noteLiveHistoryAppend(data.message_count, 1, data.msg_id || '');
     }
-    console.log('[SSE] tool_call received:', data.tool, data.agent_name, data.llm_service, JSON.stringify(data.arguments || {}).substring(0, 200));
+    pawflowDebugLog('[SSE] tool_call received:', data.tool, data.agent_name, data.llm_service, JSON.stringify(data.arguments || {}).substring(0, 200));
     // Finalize streaming for THIS agent before showing tool call
     const tcAgent = data.agent_name || '';
     const tcs = streams[tcAgent.toLowerCase()];
@@ -1301,7 +1301,7 @@ function connectSSE(cid, onReady, opts) {
       }
     });
     trackAgentDone(doneAgent);
-    console.log('[SSE done]', doneAgent, data.response ? data.response.substring(0, 100) : '(empty)');
+    pawflowDebugLog('[SSE done]', doneAgent, data.response ? data.response.substring(0, 100) : '(empty)');
     // Sync message count/offset to prevent load-more overlap.
     if (typeof _noteLiveHistoryAppend === 'function') {
       _noteLiveHistoryAppend(data.message_count, 0);
@@ -1627,7 +1627,7 @@ function connectSSE(cid, onReady, opts) {
   };
 
   eventSource.onopen = () => {
-    console.log('[SSE] connected for', cid, sseHadError ? '(reconnect)' : '(initial)');
+    pawflowDebugLog('[SSE] connected for', cid, sseHadError ? '(reconnect)' : '(initial)');
     if (_sseOnReadyCallback) { _sseOnReadyCallback(); _sseOnReadyCallback = null; }
     const wasDisconnected = sseEverConnected && sseHadError;
     sseEverConnected = true;
@@ -1638,7 +1638,7 @@ function connectSSE(cid, onReady, opts) {
     // without explicitly arming the watchdog (direct URL, refresh).
     startSSEHealthTimer();
     if (wasDisconnected) {
-      console.log('[SSE] reconnected; continuing with live SSE events');
+      pawflowDebugLog('[SSE] reconnected; continuing with live SSE events');
       syncActiveFromServer();
     }
   };
@@ -1653,7 +1653,7 @@ function connectSSE(cid, onReady, opts) {
 
   eventSource.addEventListener('sse_reconnect', (e) => {
     lastSSEActivity = Date.now();
-    console.log('[SSE] server requested reconnect', e.data || '');
+    pawflowDebugLog('[SSE] server requested reconnect', e.data || '');
     if (eventSource) { try { eventSource.close(); } catch (_) {} }
     eventSource = null;
     _scheduleSSEReconnect(cid);
@@ -1737,7 +1737,7 @@ function _scheduleSSEReconnect(cid) {
   // Exponential backoff: 1s, 2s, 4s, 8s, 16s, 30s, 60s
   const delay = Math.min(1000 * Math.pow(2, sseRetryCount), 60000);
   sseRetryCount++;
-  console.log('[SSE] reconnecting in', delay, 'ms (attempt', sseRetryCount, ')');
+  pawflowDebugLog('[SSE] reconnecting in', delay, 'ms (attempt', sseRetryCount, ')');
   sseReconnectTimer = setTimeout(() => {
     sseReconnectTimer = null;
     if (!cid || cid !== conversationId) return;  // conversation changed, skip

@@ -5,6 +5,23 @@ const _liveCountedMsgIds = new Set();  // msg_ids already counted into currentOf
 const _selectedMsgIds = new Set();  // multiselect for batch delete
 let conversationId = null;
 let sending = false;
+
+function pawflowDebugEnabled(topic) {
+  try {
+    if (window.PAWFLOW_DEBUG_UI === true) return true;
+    if (topic === 'technical' && window.DEBUG_TECHNICAL_GROUPING === true) return true;
+    const stored = window.localStorage && window.localStorage.getItem('pawflow.debug');
+    return stored === '1' || stored === 'true' || stored === 'ui';
+  } catch (_) {
+    return false;
+  }
+}
+
+function pawflowDebugLog() {
+  if (!pawflowDebugEnabled()) return;
+  console.debug.apply(console, arguments);
+}
+
 // contextOpInProgress removed — all ops are async, nothing blocks UI
 let eventSource = null;
 let pendingAgent = null;  // agent to select when first message creates a conversation
@@ -574,8 +591,10 @@ const _msgObserver = new MutationObserver((mutations) => {
       if (node.nodeType === 1 && node.classList && node.classList.contains('msg')) {
         const role = node.className.replace('msg ', '');
         const text = (node.dataset.rawText || node.textContent || '').substring(0, 80);
-        console.warn('[MSG REMOVED]', role, text);
-        console.trace('[MSG REMOVED STACK]');
+        if (pawflowDebugEnabled('messages')) {
+          console.debug('[MSG REMOVED]', role, text);
+          console.trace('[MSG REMOVED STACK]');
+        }
       }
     }
   }

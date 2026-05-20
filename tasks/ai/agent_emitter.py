@@ -158,10 +158,13 @@ class StreamEmitter(AgentEmitter):
         }
 
     def _context_usage_payload(self, reason: str = "") -> Optional[Dict[str, Any]]:
-        """Publish the authoritative PawFlow context gauge."""
+        """Publish the authoritative PawFlow context gauge.
+
+        The gauge is the size of the agent's PawFlow context — computed
+        identically for every provider (including claude-code-interactive)
+        via compute_context_usage. No provider is special-cased here.
+        """
         if not self._agent_name or self.ctx.get("_context_usage_suspended"):
-            return None
-        if self._provider == "claude-code-interactive":
             return None
         try:
             from tasks.ai.context_usage import (

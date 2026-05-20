@@ -293,21 +293,18 @@ def test_message_meta_context_used_comes_from_central_context_usage():
     assert 'src["tokens_in"] = tok_in' in agent_source
 
 
-def test_context_gauge_is_not_published_from_append_cache():
-    """Append callbacks must not publish cache-only gauge snapshots.
-
-    The context cache can only be known fresh after compute_context_usage runs;
-    append mutates the message list before that recalculation happens. Live
-    gauge updates therefore come from iteration/heartbeat/provider metadata,
-    never from the append hot path.
+def test_context_gauge_refreshes_on_every_append():
+    """Every message appended to the agent's PawFlow context refreshes the
+    gauge. The gauge is the size of that context, so it must move with each
+    message — not only at iteration/turn boundaries. _append is the single
+    point every provider routes through (the classic loop AND the
+    claude-code/CCI turn_callback), so the refresh lives there and is
+    identical for all providers. The recompute reuses the delta token cache.
     """
     src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
     append_body = src[src.index("def _append(msg: LLMMessage)") : src.index("# Repair orphan tool_calls")]
-    assert "def _publish_live_context_usage" not in src
-    assert "skip stale append gauge" not in src
     assert "messages.append(msg)" in append_body
-    assert "_publish_live_context_usage(" not in append_body
-    assert "append_{msg.role}" not in append_body
+    assert 'emitter._publish_context_usage("append")' in append_body
 
 
 def test_cli_tool_callbacks_do_not_compute_context_usage_on_hot_path():

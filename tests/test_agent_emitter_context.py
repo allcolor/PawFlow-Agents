@@ -77,11 +77,21 @@ class TestOnDoneContextFields(unittest.TestCase):
         self.assertNotIn("context_max", data)
         self.assertNotIn("context_pct", data)
 
-    def test_cci_heartbeat_skips_pawflow_context_recount(self):
+    def test_cci_gauge_recomputes_pawflow_context_like_other_providers(self):
+        # The gauge is the size of the agent's PawFlow context, computed
+        # identically for every provider. claude-code-interactive must NOT
+        # be special-cased: _context_usage_payload recomputes it too.
         em, _bus = self._make_cci_emitter()
         with patch("tasks.ai.context_usage.compute_context_usage") as compute:
-            self.assertIsNone(em._context_usage_payload("heartbeat"))
-        compute.assert_not_called()
+            compute.return_value = {
+                "used": 1234, "max": 1000000, "pct": 0.001234,
+                "source": "append", "message_count": 3, "cache_mode": "delta",
+                "updated_at": 0.0,
+            }
+            payload = em._context_usage_payload("append")
+        compute.assert_called_once()
+        self.assertIsNotNone(payload)
+        self.assertEqual(payload["context_used"], 1234)
 
 
 if __name__ == "__main__":

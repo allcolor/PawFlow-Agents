@@ -922,6 +922,22 @@ class AgentCoreMixin:
                             "msg_id=%s: %s",
                             getattr(msg, "msg_id", "?"), _meta_err,
                             exc_info=True)
+            # Context gauge: the gauge is the size of the agent's PawFlow
+            # context, so it must move with every message appended to that
+            # context — not only at iteration/turn boundaries. _append is
+            # the single point every provider routes through (the classic
+            # loop AND the claude-code/CCI block callback), so refreshing it
+            # here keeps the gauge live and identical for all providers.
+            # compute_context_usage reuses the delta token cache, so the
+            # per-append recount stays cheap. Run it BEFORE the compaction
+            # check so _maybe_auto_compact_after_append reads a gauge that
+            # already includes this message — otherwise a long CLI turn can
+            # blow past compact_threshold_pct on a stale (turn-start) value.
+            try:
+                emitter._publish_context_usage("append")
+            except Exception:
+                logger.debug("append context gauge refresh failed",
+                             exc_info=True)
             _before_compact_ms = (time.monotonic() - _append_started) * 1000.0
             _compact_started = time.monotonic()
             _maybe_auto_compact_after_append(msg, msg.role)

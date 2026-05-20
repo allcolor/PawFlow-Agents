@@ -5,6 +5,7 @@ agent_executor.py (delegate sub-agents).
 """
 
 import logging
+import os
 import re
 import shlex
 from typing import Any, Dict, List, Tuple
@@ -43,14 +44,35 @@ def _safe_skill_path_part(value: str, fallback: str) -> str:
     return safe or fallback
 
 
-def skill_mount_dir(skill_name: str, skill_def: Dict[str, Any] = None) -> str:
-    """Return the stable container path where a skill directory is mounted.
+def _skills_repo_base() -> str:
+    """Server-side root of the skills repository tree."""
+    from core.paths import REPOSITORY_DIR
+    return str((REPOSITORY_DIR / "skills"))
 
-    The skill directory is bind-mounted read-only into CLI provider
-    containers at /skills/<name> (see core.cli_workspace_mounts.
-    build_skill_mount_args). SKILL.md asset references such as
-    ${CLAUDE_SKILL_DIR}/scripts/foo.py resolve against this path.
+
+def skill_mount_dir(skill_name: str, skill_def: Dict[str, Any] = None) -> str:
+    """Return the container path where a skill directory is visible.
+
+    The skills repository scope directories are bind-mounted read-only into
+    CLI provider containers under /skills, mirroring the server layout (see
+    core.cli_workspace_mounts.build_skill_mount_args). The in-container path
+    therefore mirrors the skill's path under data/repository/skills, e.g.
+    /skills/global/<name> or /skills/users/<uid>/<name>. SKILL.md asset
+    references such as ${CLAUDE_SKILL_DIR}/scripts/foo.py resolve here.
+
+    Falls back to a flat /skills/<name> when the skill root is unknown.
     """
+    root = str((skill_def or {}).get("skill_root") or "")
+    if root:
+        try:
+            rel = os.path.relpath(root, _skills_repo_base())
+        except Exception:
+            rel = ""
+        if rel and not rel.startswith(".."):
+            parts = [_safe_skill_path_part(p, "skill")
+                     for p in rel.replace("\\", "/").split("/") if p]
+            if parts:
+                return "/skills/" + "/".join(parts)
     return "/skills/" + _safe_skill_path_part(skill_name, "skill")
 
 

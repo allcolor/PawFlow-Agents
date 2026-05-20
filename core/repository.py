@@ -593,6 +593,18 @@ class ScopedRepository:
             raise ValueError(
                 "Skill name must be lowercase letters, digits and single hyphens "
                 f"(got {path.name!r})")
+        # Agent Skills spec conformity: name <= 64 chars, no reserved words.
+        if len(path.name) > 64:
+            raise ValueError(
+                f"Skill name must be at most 64 characters (got {len(path.name)})")
+        if "anthropic" in path.name or "claude" in path.name:
+            raise ValueError(
+                "Skill name must not contain the reserved words "
+                "'anthropic' or 'claude'")
+        if len(description) > 1024:
+            raise ValueError(
+                "Skill description must be at most 1024 characters "
+                f"(got {len(description)})")
         path.mkdir(parents=True, exist_ok=True)
         import yaml
         meta = {k: v for k, v in data.items() if k not in (

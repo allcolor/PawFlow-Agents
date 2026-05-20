@@ -166,17 +166,9 @@ Skills are effective only when they are assigned to an agent definition through 
 
 Assigned skills are lazy-loaded. Assigning a skill writes a lightweight context message to the target agent and rebuilt system prompts include only an availability manifest with the skill name and description. The full skill prompt is returned only when the agent calls `load_skill(name="skill-name")`, and `load_skill` refuses skills that are not assigned to the current agent. Users can also invoke a visible skill immediately with `/skill run [@agent] <skill> [args...]` or the shortcut `//<skill> [@agent] [args...]`; this does not persist assignment, and queues the rendered skill prompt as a user message for the selected or explicit target agent.
 
-Skills may declare `template_engine: jinja` in their YAML frontmatter. These prompts are rendered when the full skill is loaded through `load_skill` or invoked through `/skill run`. The Jinja environment is sandboxed and receives a read-only `pawflow` object scoped to the current user/conversation/agent. Skill runs additionally expose `args`, `arguments`, and `skill_dir`; Agent Skills style placeholders such as `$ARGUMENTS`, `$0`, `${PAWFLOW_SKILL_DIR}`, `${CLAUDE_SKILL_DIR}`, and `${CODEX_SKILL_DIR}` are substituted for one-shot invocation compatibility.
+Skill directories are bind-mounted read-only into CLI provider containers under `/skills`, mirroring the server repository layout (`/skills/global/<name>`, `/skills/users/<uid>/<name>`, `/skills/users/<uid>/<conv>/<name>`). The scope parents are mounted once, so a skill assigned mid-session — or a skill run one-shot while unassigned — becomes visible without recreating the container. SKILL.md asset references such as `${CLAUDE_SKILL_DIR}/scripts/foo.py` resolve against this mounted directory. For one-shot `/skill run` invocations, Agent Skills style placeholders such as `$ARGUMENTS`, `$0`, `${PAWFLOW_SKILL_DIR}`, `${CLAUDE_SKILL_DIR}`, and `${CODEX_SKILL_DIR}` are substituted with the run arguments and the skill's mounted directory.
 
-Available dynamic context includes:
-
-- `pawflow.conversation`, `pawflow.relays`, and `pawflow.default_relay`;
-- `pawflow.agents` and `pawflow.current_agent`;
-- `pawflow.media_services(kind)` and `pawflow.default_media_service(kind)`;
-- `pawflow.tool_schema(name)`;
-- `pawflow.service(service_id)`.
-
-The exposed data is a sanitized snapshot: no secrets, relay tokens, mutable stores, arbitrary filesystem access, or network calls are available to templates.
+Skill names follow the Agent Skills spec: lowercase letters, digits and single hyphens, at most 64 characters, and must not contain the reserved words `anthropic` or `claude`; descriptions are capped at 1024 characters.
 
 Untrusted or imported skills are reviewed before create, update, and import through the configured `summarizer` service. The summarizer points to the selected `llmConnection`; PawFlow passes package content as data and calls the reviewer with `tools=None`. Without a configured summarizer, PawFlow still runs deterministic static checks and blocks obvious unsafe content, but does not persist LLM review metadata for clean low-risk writes. `manage_resource(action="review", resource_type="skill", data={...})` returns the same review report without writing the skill. Executable package content is reviewed through the same path and never becomes server-side Python code.
 

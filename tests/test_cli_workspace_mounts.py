@@ -3,6 +3,7 @@ from pathlib import Path
 
 from core.cli_workspace_mounts import (
     build_cli_workspace_mount_args,
+    build_skill_mount_args,
     normalize_workspace_mount_mode,
 )
 
@@ -171,3 +172,55 @@ def test_relay_binding_changes_invalidate_cli_sessions_when_mount_enabled(monkey
 
     assert relay_bindings.link_relay("conv1", "relay2", agent="assistant") is True
     assert store.invalidated_agents == ["assistant"]
+
+
+def test_build_skill_mount_args_mounts_scope_dirs(tmp_path, monkeypatch):
+    from core import docker_utils, paths
+
+    repo = tmp_path / "repository"
+    monkeypatch.setattr(paths, "REPOSITORY_DIR", repo)
+    monkeypatch.setattr(docker_utils, "to_host_path", lambda p: p)
+    monkeypatch.setattr(docker_utils, "translate_path", lambda p: p)
+
+    args = build_skill_mount_args("conv1", "assistant", user_id="u1")
+
+    skills = (repo / "skills").resolve()
+    assert args == [
+        "-v", f"{skills / 'global'}:/skills/global:ro",
+        "-v", f"{skills / 'users' / 'u1'}:/skills/users/u1:ro",
+    ]
+    # Mount points are created so a skill written mid-session is visible.
+    assert (skills / "global").is_dir()
+    assert (skills / "users" / "u1").is_dir()
+
+
+def test_build_skill_mount_args_global_only_without_user(tmp_path, monkeypatch):
+    from core import docker_utils, paths
+
+    repo = tmp_path / "repository"
+    monkeypatch.setattr(paths, "REPOSITORY_DIR", repo)
+    monkeypatch.setattr(docker_utils, "to_host_path", lambda p: p)
+    monkeypatch.setattr(docker_utils, "translate_path", lambda p: p)
+
+    args = build_skill_mount_args("conv1", "assistant")
+
+    skills = (repo / "skills").resolve()
+    assert args == ["-v", f"{skills / 'global'}:/skills/global:ro"]
+
+
+def test_skill_mount_dir_mirrors_repo_layout(tmp_path, monkeypatch):
+    from core import paths, skill_resolver
+
+    monkeypatch.setattr(paths, "REPOSITORY_DIR", tmp_path / "repository")
+    skills = tmp_path / "repository" / "skills"
+
+    global_def = {"skill_root": str(skills / "global" / "review-pr")}
+    assert skill_resolver.skill_mount_dir(
+        "review-pr", global_def) == "/skills/global/review-pr"
+
+    conv_def = {"skill_root": str(skills / "users" / "u1" / "c1" / "deploy")}
+    assert skill_resolver.skill_mount_dir(
+        "deploy", conv_def) == "/skills/users/u1/c1/deploy"
+
+    # Unknown skill root falls back to a flat path.
+    assert skill_resolver.skill_mount_dir("review-pr", {}) == "/skills/review-pr"

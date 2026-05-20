@@ -154,6 +154,22 @@ class TestSkillResourceType(unittest.TestCase):
             self.store.create("skill", "Bad_Name", "user1", {
                 "instructions": "body", "description": "desc"})
 
+    def test_create_skill_rejects_overlong_name(self):
+        with self.assertRaises(ValueError):
+            self.store.create("skill", "a" * 65, "user1", {
+                "instructions": "body", "description": "desc"})
+
+    def test_create_skill_rejects_reserved_words_in_name(self):
+        for bad in ("my-claude-skill", "anthropic-helper"):
+            with self.assertRaises(ValueError):
+                self.store.create("skill", bad, "user1", {
+                    "instructions": "body", "description": "desc"})
+
+    def test_create_skill_rejects_overlong_description(self):
+        with self.assertRaises(ValueError):
+            self.store.create("skill", "long-desc", "user1", {
+                "instructions": "body", "description": "d" * 1025})
+
     def test_list_skills(self):
         self.store.create("skill", "s1", "listuser",
                           {"instructions": "skill 1", "description": "d1"})

@@ -148,72 +148,48 @@ def build_cli_workspace_mount_args(conversation_id: str, agent_name: str = "",
     return args
 
 
-def _skill_roots_for_agent(conversation_id: str, agent_name: str,
-                           user_id: str) -> Dict[str, str]:
-    """Return {skill_name: server_disk_path} for an agent's assigned skills."""
-    try:
-        from core.conv_agent_config import get_agent_config
-        from core.resource_store import ResourceStore
-        from core.skill_resolver import normalize_skill_entry
-    except Exception:
-        return {}
-    rs = ResourceStore.instance()
-    def_name = agent_name
-    if conversation_id and agent_name:
-        try:
-            def_name = get_agent_config(
-                conversation_id, agent_name).get("definition") or agent_name
-        except Exception:
-            def_name = agent_name
-    agent_def = rs.get_any("agent", def_name, user_id,
-                           conversation_id=conversation_id) or {}
-    roots: Dict[str, str] = {}
-    for entry in agent_def.get("assigned_skills") or []:
-        name, _params, _condition = normalize_skill_entry(entry)
-        if not name:
-            continue
-        skill_def = rs.get_any("skill", name, user_id,
-                               conversation_id=conversation_id) or {}
-        root = skill_def.get("skill_root")
-        if root and not skill_def.get("_invalid"):
-            roots[name] = str(root)
-    return roots
-
-
 def build_skill_mount_args(conversation_id: str, agent_name: str = "",
                            user_id: str = "") -> List[str]:
-    """Build Docker -v args mounting assigned-skill directories read-only.
+    """Build Docker -v args exposing the skill repository read-only.
 
-    Each skill directory is exposed at /skills/<name> so SKILL.md asset
-    references (e.g. ${CLAUDE_SKILL_DIR}/scripts/foo.py) resolve inside the
-    CLI provider container. Skill names are validated kebab-case at write
-    time, so they are safe as a path segment; sanitized again defensively.
+    Rather than mounting each assigned skill individually, the skill
+    repository scope directories are mounted once: global skills and this
+    user's skill tree (which nests conversation-scoped skills). Mounting the
+    parents means a skill assigned mid-session — or a skill run one-shot
+    while unassigned — becomes visible inside the container without
+    recreating it. The in-container layout mirrors the server:
+    /skills/global/<name>, /skills/users/<uid>/<name>,
+    /skills/users/<uid>/<conv>/<name>.
     """
-    if not conversation_id:
-        return []
-    try:
-        roots = _skill_roots_for_agent(conversation_id, agent_name, user_id)
-    except Exception as exc:
-        logger.info("[skill-mount] cannot resolve assigned skills: %s", exc)
-        return []
-    if not roots:
-        return []
+    from core.paths import REPOSITORY_DIR
     from core.docker_utils import to_host_path, translate_path
+
+    skills_base = (REPOSITORY_DIR / "skills").resolve()
     args: List[str] = []
     seen: set[str] = set()
-    for name, root in roots.items():
-        if not os.path.isdir(root):
-            logger.info("[skill-mount] skill %s root not on this host: %s",
-                        name, root)
-            continue
-        source = translate_path(to_host_path(root))
-        safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", name).strip("._-") or "skill"
-        target = "/skills/" + safe
+
+    def _add(server_dir) -> None:
+        try:
+            # Create the mount point so a skill written into this scope later
+            # in the session is visible without recreating the container.
+            os.makedirs(server_dir, exist_ok=True)
+            rel = os.path.relpath(str(server_dir), str(skills_base))
+        except Exception as exc:
+            logger.info("[skill-mount] skip %s: %s", server_dir, exc)
+            return
+        if rel.startswith(".."):
+            return
+        target = "/skills/" + rel.replace(os.sep, "/")
         if target in seen:
-            continue
+            return
         seen.add(target)
+        source = translate_path(to_host_path(str(server_dir)))
         args.extend(["-v", f"{source}:{target}:ro"])
+
+    _add(skills_base / "global")
+    if user_id:
+        _add(skills_base / "users" / user_id)
     if args:
         logger.info("[skill-mount] mounts=%d conv=%s agent=%s",
-                    len(args) // 2, conversation_id[:8], agent_name)
+                    len(args) // 2, (conversation_id or "")[:8], agent_name)
     return args

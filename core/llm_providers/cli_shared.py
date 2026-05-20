@@ -74,18 +74,24 @@ def summarize_tool_call(name: str, args: Any) -> str:
     return f"{name}({', '.join(parts)})"
 
 
-def textualize_message(m: Any) -> Optional[str]:
+def textualize_message(
+    m: Any, *, tool_result_trunc: Optional[int] = _TOOL_RESULT_TRUNC,
+) -> Optional[str]:
     """Return a text-only representation of an arbitrary LLMMessage.
 
     - assistant with free text → the text (tool_calls appended as synopsis)
     - assistant tool-call-only → ``[ran: NAME(args); NAME(args)]``
-    - tool result → ``[tool_result: <snippet>]`` truncated to 400 chars
+    - tool result → ``[tool_result: <snippet>]``, truncated to
+      ``tool_result_trunc`` chars; pass ``None`` to keep the result intact
     - user / system → text content (multipart collapsed)
     - empty / unknown → None (caller may skip)
 
     This is used both when serializing history for a fresh CC session
     and when building the summarizer's input — both contexts need every
-    tool action to leave a readable trace.
+    tool action to leave a readable trace. The summarizer input may be
+    truncated (its job is to compress); the cold-start context injection
+    must NOT truncate — stripping tool results there is not compaction,
+    it just hides the real context size from the compaction trigger.
     """
     role = getattr(m, "role", "")
     content = getattr(m, "content", "")
@@ -113,8 +119,8 @@ def textualize_message(m: Any) -> Optional[str]:
         snippet = text.strip()
         if not snippet:
             return None
-        if len(snippet) > _TOOL_RESULT_TRUNC:
-            snippet = snippet[:_TOOL_RESULT_TRUNC] + f"...[+{len(text) - _TOOL_RESULT_TRUNC}c]"
+        if tool_result_trunc is not None and len(snippet) > tool_result_trunc:
+            snippet = snippet[:tool_result_trunc] + f"...[+{len(text) - tool_result_trunc}c]"
         return f"[tool_result: {snippet}]"
 
     if role in ("user", "system"):
@@ -155,7 +161,7 @@ class LLMCliSharedMixin:
             role = getattr(msg, "role", "") or "message"
             if role == "system":
                 continue
-            rendered = textualize_message(msg)
+            rendered = textualize_message(msg, tool_result_trunc=None)
             if rendered:
                 lines.append(self._cli_message_block(role, rendered))
         if not lines:
@@ -176,7 +182,7 @@ class LLMCliSharedMixin:
             role = getattr(msg, "role", "") or "message"
             if role == "system":
                 continue
-            rendered = textualize_message(msg)
+            rendered = textualize_message(msg, tool_result_trunc=None)
             if not rendered:
                 continue
             source = getattr(msg, "source", None) or {}

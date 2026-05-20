@@ -564,6 +564,17 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                         _context_diverged = True
                         logger.info(f"[context:{conversation_id[:8]}] loaded diverged context: "
                                     f"{len(messages)} messages")
+                        # Cold CLI start: the loaded agent context is the
+                        # full PawFlow transcript. Run the real compactor on
+                        # it so an oversized context.jsonl is rewritten
+                        # compacted. The CLI resume path only ever sends the
+                        # live delta, so without this the stored context
+                        # never crosses the in-loop compaction trigger and
+                        # grows unbounded.
+                        _uid_dv = flowfile.get_attribute("http.auth.principal") or ""
+                        messages = self._auto_compact_messages(
+                            messages, conversation_id, _context_agent, _uid_dv,
+                            max_context=_max_ctx)
                     except (KeyError, TypeError) as deser_err:
                         logger.error(f"[context:{conversation_id[:8]}] context load failed: {deser_err}")
                 else:

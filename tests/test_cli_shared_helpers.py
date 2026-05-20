@@ -164,6 +164,13 @@ class TestTextualizeMessage(unittest.TestCase):
         self.assertIn("...[+200c]", out)
         self.assertLess(len(out), _TOOL_RESULT_TRUNC + 80)
 
+    def test_tool_result_not_truncated_when_trunc_none(self):
+        big = "x" * (_TOOL_RESULT_TRUNC + 200)
+        m = LLMMessage(role="tool", content=big, tool_call_id="a", conversation_id="test_conv")
+        out = textualize_message(m, tool_result_trunc=None)
+        self.assertEqual(out, f"[tool_result: {big}]")
+        self.assertNotIn("...[+", out)
+
     def test_tool_result_empty(self):
         m = LLMMessage(role="tool", content="   ", tool_call_id="a", conversation_id="test_conv")
         self.assertIsNone(textualize_message(m))

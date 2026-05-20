@@ -392,7 +392,7 @@ function _skillAutocompleteToken(input) {
 async function _loadSkillAutocompleteItems() {
   if (_skillAutocomplete.items.length) return _skillAutocomplete.items;
   if (_skillAutocomplete.loading) return _skillAutocomplete.loading;
-  _skillAutocomplete.loading = rxjs.firstValueFrom(action$('list_skills', {}, { silent: true }))
+  _skillAutocomplete.loading = rxjs.firstValueFrom(action$('list_skills', _convScope(), { silent: true }))
     .then(data => {
       _skillAutocomplete.items = (data.skills || [])
         .filter(s => s && s.name)
@@ -561,7 +561,14 @@ function handleKey(e) {
 
 // ── Resources (agents, skills, mcp) ─────────────────────────────
 function cmdResourceAction(action, extra) {
-  action$(action, { ...extra }).subscribe(data => {
+  const payload = { ...extra };
+  // Carry conversation scope so conversation-scoped skills/agents resolve
+  // (assign/unassign/run) and listings include them.
+  if (payload.conversation_id === undefined
+      && typeof conversationId !== 'undefined' && conversationId) {
+    payload.conversation_id = conversationId;
+  }
+  action$(action, payload).subscribe(data => {
     if (data.error) { addMsg('error', data.error); return; }
     if (data.created) addMsg('system', `Created: ${extra.name || ''}`);
     else if (data.deleted) addMsg('system', `Deleted: ${extra.name || ''}`);

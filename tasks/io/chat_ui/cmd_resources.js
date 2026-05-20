@@ -319,6 +319,17 @@ function cmdImgservice(text, parts) {
 
 function _stripAt(s) { return s ? s.replace(/^@/, '') : ''; }
 
+// `/skill add` only takes one free-text argument for the body; derive the
+// manifest description from its first non-empty line instead of the whole body.
+function _skillShortDescription(body) {
+  const lines = String(body || '').split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim().replace(/^#+/, '').trim();
+    if (line) return line.slice(0, 200);
+  }
+  return '';
+}
+
 function cmdSkill(text, parts) {
   const sub = (parts[1] || 'list').toLowerCase();
   if (sub === 'list') {
@@ -327,7 +338,7 @@ function cmdSkill(text, parts) {
     const name = _stripAt(parts[2]);
     const instructions = parts.slice(3).join(' ');
     if (!name || !instructions) { addMsg('system', t('usageLine', { usage: '/skill add @name <description/instructions>' })); return true; }
-    cmdResourceAction('create_skill', {name, description: instructions, instructions});
+    cmdResourceAction('create_skill', {name, description: _skillShortDescription(instructions), instructions});
   } else if (sub === 'del' || sub === 'delete') {
     const name = _stripAt(parts[2]);
     if (!name) { addMsg('system', t('usageLine', { usage: '/skill del @name' })); return true; }
@@ -547,7 +558,7 @@ function cmdFlow(text, parts) {
 function cmdPrompt(text, parts) {
   const sub = (parts[1] || 'list').toLowerCase();
   if (sub === 'list') {
-    action$('list_skills', {}).subscribe(data => {
+    action$('list_skills', _convScope()).subscribe(data => {
       const skills = data.skills || [];
       if (!skills.length) { addMsg('system', t('noSkills')); }
       else {

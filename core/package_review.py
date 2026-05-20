@@ -476,9 +476,6 @@ def _review_files(files: Dict[str, bytes], entrypoint: str) -> tuple[List[Dict[s
 def _iter_skill_texts(skill: Dict[str, Any], package_files: Dict[str, str]) -> Iterable[tuple[str, str]]:
     yield "instructions", str(skill.get("instructions", "") or skill.get("prompt", "") or "")
     yield "description", str(skill.get("description", "") or "")
-    for key in ("usage", "notes"):
-        if key in skill:
-            yield key, str(skill.get(key) or "")
     for path, content in package_files.items():
         yield f"file:{path}", str(content or "")
 

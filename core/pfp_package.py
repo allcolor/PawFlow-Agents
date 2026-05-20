@@ -1932,7 +1932,10 @@ def _parse_skill_md(text: str, default_name: str = "") -> Dict[str, Any]:
         "instructions": body,
         "description": str(meta.get("description", "") or ""),
         "name": name,
-        **{k: v for k, v in meta.items() if k not in {"name", "description"}},
+        # template_engine is dropped: PawFlow-specific dynamic templating is
+        # not supported (portability — see agentskills.io conformance).
+        **{k: v for k, v in meta.items()
+           if k not in {"name", "description", "template_engine"}},
     }
 
 

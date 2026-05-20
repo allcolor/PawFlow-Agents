@@ -95,10 +95,15 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
         """Launch codex inside a pool container via docker exec."""
         _env = self._codex_env(workdir)
         from core.codex_pool import CodexPool
-        from core.cli_workspace_mounts import build_cli_workspace_mount_args
+        from core.cli_workspace_mounts import (
+            build_cli_workspace_mount_args, build_skill_mount_args,
+        )
         pool = CodexPool.instance()
-        workspace_mounts = [] if container_name else build_cli_workspace_mount_args(
-            conversation_id, agent_name, user_id=user_id)
+        workspace_mounts = [] if container_name else (
+            build_cli_workspace_mount_args(
+                conversation_id, agent_name, user_id=user_id)
+            + build_skill_mount_args(
+                conversation_id, agent_name, user_id=user_id))
         container = container_name or pool.acquire(workspace_mount_args=workspace_mounts)
         _rel = os.path.relpath(workdir, _get_sessions_base()).replace("\\", "/")
         _session_dir = f"/cc_sessions/{_rel}"

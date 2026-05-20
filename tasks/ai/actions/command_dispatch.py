@@ -1349,19 +1349,35 @@ def _parse_skill_sugar_command(text: str, base: dict, agent_name: str = "") -> d
     }
 
 
+def _skill_short_description(body: str) -> str:
+    """Derive a concise manifest description from a skill body.
+
+    `/skill add` only takes a single free-text argument for the body, so the
+    description (injected into the system prompt manifest) is taken from the
+    first non-empty line rather than the whole body.
+    """
+    for line in str(body or "").splitlines():
+        line = line.strip().lstrip("#").strip()
+        if line:
+            return line[:200]
+    return ""
+
+
 def _parse_skill_command(arg: str, base: dict, agent_name: str = "") -> dict:
     p = arg.split(None, 2)
     subcmd = p[0] if p else "list"
     if subcmd == "list":
         return {"action": "list_skills", **base}
     if subcmd == "add":
+        body = p[2] if len(p) > 2 else ""
         return {"action": "create_skill", "name": p[1] if len(p) > 1 else "",
-                "description": p[2] if len(p) > 2 else "",
-                "instructions": p[2] if len(p) > 2 else "", **base}
+                "description": _skill_short_description(body),
+                "instructions": body, **base}
     if subcmd in ("update", "modify", "edit"):
+        body = p[2] if len(p) > 2 else ""
         return {"action": "update_skill", "name": p[1] if len(p) > 1 else "",
-                "description": p[2] if len(p) > 2 else "",
-                "instructions": p[2] if len(p) > 2 else "", **base}
+                "description": _skill_short_description(body),
+                "instructions": body, **base}
     if subcmd == "del":
         return {"action": "delete_skill", "name": p[1] if len(p) > 1 else "",
                 **base}

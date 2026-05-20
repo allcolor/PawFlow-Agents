@@ -121,7 +121,9 @@ def test_resolve_runnable_skill_prompt_renders_args_and_placeholders(monkeypatch
     assert "## Skill Invocation: review-pr" in rendered
     assert "Review PR 42 / 42." in rendered
     assert "Raw=42." in rendered
-    assert "/pawflow/skills/user-review-pr/review-pr" in rendered
+    # Skill directory is the stable container mount path (B3 bind mount).
+    assert "Dir=/skills/review-pr." in rendered
+    assert "/skills/review-pr" in rendered
 
 
 def test_run_skill_action_queues_rendered_prompt_for_selected_agent(monkeypatch):

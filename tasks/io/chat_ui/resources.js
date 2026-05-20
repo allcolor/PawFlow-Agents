@@ -40,12 +40,23 @@ function cmdServiceAction(action, extra) {
   ));
 }
 
+// Conversation-scoped payload so conversation-scoped skills/agents are included.
+function _convScope(extra) {
+  const p = { ...(extra || {}) };
+  if (typeof conversationId !== 'undefined' && conversationId) p.conversation_id = conversationId;
+  return p;
+}
+
 function cmdSkillList() {
-  action$('list_skills', {}).subscribe(data => {
+  action$('list_skills', _convScope()).subscribe(data => {
     const skills = data.skills || [];
     if (!skills.length) { addMsg('system', t('noSkillsUsage')); return; }
     let lines = [t('yourSkillsHeader')];
     skills.forEach(s => {
+      if (s.invalid) {
+        lines.push(`\\u26A0 **${s.name}** — invalid: ${s.invalid}`);
+        return;
+      }
       const mark = s.active ? '\\u2705' : '\\u2B1C';
       lines.push(`${mark} **${s.name}** — ${s.description || s.preview || ''}`);
     });
@@ -1378,8 +1389,12 @@ async function _renderResourcesData(data) {
         allSkills.forEach(s => {
           const assignedTo = s.assigned_to || [];
           const assignedTag = assignedTo.length ? ' <span style="color:var(--pf-muted);font-size:9px;">\u2192 ' + assignedTo.map(escapeHtml).join(', ') + '</span>' : '';
+          const skillInvalid = s.invalid
+            ? ' <span style="font-size:9px;" title="' + escapeHtml(s.invalid) + '">⚠ ' + escapeHtml(s.invalid) + '</span>'
+            : '';
+          const skillColor = s.invalid ? 'var(--pf-danger,#e05260)' : 'var(--pf-text)';
           repoHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer;" oncontextmenu="showResourceMenu(event,'skill','${escapeHtml(s.name)}','${s.scope||''}');return false;">
-            ${_scopeBadge(s.scope)}<span style="color:var(--pf-text);font-size:12px;flex:1;">${escapeHtml(s.name)}${assignedTag}</span>
+            ${_scopeBadge(s.scope)}<span style="color:${skillColor};font-size:12px;flex:1;">${escapeHtml(s.name)}${skillInvalid || assignedTag}</span>
           </div>`;
         });
       } else {
@@ -2159,8 +2174,8 @@ function _showAgentConvConfigDialog(agentName) {
 function _showAgentSkillsDialog(agentName) {
   // Load all skills + agent's current assigned skills
   Promise.all([
-    rxjs.firstValueFrom(action$('list_skills', {})),
-    rxjs.firstValueFrom(action$('list_agent_skills', { agent_name: agentName })),
+    rxjs.firstValueFrom(action$('list_skills', _convScope())),
+    rxjs.firstValueFrom(action$('list_agent_skills', _convScope({ agent_name: agentName }))),
   ]).then(function(results) {
     var allSkills = results[0].skills || [];
     var assigned = (results[1].skills || []).map(s => s.name);
@@ -2543,7 +2558,7 @@ function _renameVoiceClone(name) {
 // ── Resource editor overlay ───────────────────────────────────────
 const _RESOURCE_FIELDS = {
   agent:    [['prompt','textarea'],['description','text']],
-  skill:    [['description','text'],['instructions','textarea']],
+  skill:    [['description','text'],['instructions','textarea'],['allowed-tools','text']],
   mcp:      [['transport','mcp_transport'],['via','mcp_via'],['relay_service','mcp_relay'],['local','checkbox'],['url','text'],['command','text'],['args','json'],['env','json'],['auth','json'],['description','text']],
   task_def: [['prompt','textarea'],['criteria','textarea'],['default_interval','text'],['verifier','text'],['interactive','checkbox'],['skills','skills_picker'],['description','text']],
   prompt:   [['prompt','textarea'],['parameters','params_editor'],['title','text'],['category','text'],['description','text']],
@@ -2575,7 +2590,13 @@ function _buildResourceForm(rtype, data, isNew, readonly) {
   }
   for (const [key, type] of fields) {
     let val = (data && data[key] != null) ? data[key] : '';
-    if (typeof val === 'object') val = JSON.stringify(val, null, 2);
+    if (key === 'allowed-tools' && Array.isArray(val)) {
+      // allowed-tools is a YAML list on disk but edited as a comma-separated
+      // text field — render it joined, never JSON-stringified.
+      val = val.join(', ');
+    } else if (typeof val === 'object') {
+      val = JSON.stringify(val, null, 2);
+    }
     const escaped = typeof val === 'string' ? val.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') : val;
     html += `<div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">${key}</label>`;
     if (type === 'textarea') {
@@ -2690,7 +2711,7 @@ function _collectParams(key) {
 }
 
 function _loadSkillsPicker(container, selected, readonly) {
-  action$('list_skills', {}).subscribe(data => {
+  action$('list_skills', _convScope()).subscribe(data => {
     const skills = data.skills || [];
     if (!skills.length) {
       container.innerHTML = '<div style="color:var(--pf-muted);font-size:11px;">' + t('noSkillsDefined') + '</div>';
@@ -2772,6 +2793,8 @@ function _saveResourceEdit(rtype, name, scope) {
       else if (type === 'json') {
         try { data[key] = el.value.trim() ? JSON.parse(el.value) : (key === 'args' ? [] : {}); }
         catch(e) { alert(t('fieldMustBeValidJson', { field: key })); return; }
+      } else if (key === 'allowed-tools') {
+        data[key] = el.value.split(/[,\s]+/).filter(Boolean);
       } else data[key] = el.value;
     }
   }
@@ -2831,6 +2854,8 @@ function _saveResourceCreate(rtype, assignAfterCreate) {
       else if (type === 'json') {
         try { data[key] = el.value.trim() ? JSON.parse(el.value) : (key === 'args' ? [] : {}); }
         catch(e) { alert(t('fieldMustBeValidJson', { field: key })); return; }
+      } else if (key === 'allowed-tools') {
+        data[key] = el.value.split(/[,\s]+/).filter(Boolean);
       } else data[key] = el.value;
     }
   }

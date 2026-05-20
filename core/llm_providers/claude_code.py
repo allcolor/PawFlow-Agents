@@ -528,9 +528,15 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         """
         _env = self._claude_code_env(workdir)
         from core.claude_code_pool import ClaudeCodePool
-        from core.cli_workspace_mounts import build_cli_workspace_mount_args
+        from core.cli_workspace_mounts import (
+            build_cli_workspace_mount_args, build_skill_mount_args,
+        )
         pool = ClaudeCodePool.instance()
         workspace_mounts = build_cli_workspace_mount_args(
+            conversation_id, agent_name, user_id=user_id)
+        # Bind-mount assigned-skill directories at /skills/<name> so SKILL.md
+        # asset references resolve inside the container.
+        workspace_mounts = workspace_mounts + build_skill_mount_args(
             conversation_id, agent_name, user_id=user_id)
         container = pool.acquire(workspace_mount_args=workspace_mounts)
         _rel = os.path.relpath(workdir, _get_sessions_base()).replace("\\", "/")

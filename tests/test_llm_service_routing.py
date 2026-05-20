@@ -136,28 +136,37 @@ class TestSkillResourceType(unittest.TestCase):
         self.assertIn("skill", VALID_TYPES)
 
     def test_create_skill(self):
-        entry = self.store.create("skill", "test_skill", "user1", {
-            "prompt": "Summarize the following text...",
+        entry = self.store.create("skill", "test-skill", "user1", {
+            "instructions": "Summarize the following text...",
             "description": "Summarizer skill",
         })
-        self.assertEqual(entry["name"], "test_skill")
-        self.assertEqual(entry["prompt"], "Summarize the following text...")
+        self.assertEqual(entry["name"], "test-skill")
+        self.assertEqual(entry["instructions"], "Summarize the following text...")
         self.assertEqual(entry["description"], "Summarizer skill")
 
-    def test_create_skill_requires_prompt(self):
+    def test_create_skill_requires_instructions(self):
         with self.assertRaises(ValueError):
-            self.store.create("skill", "bad", "user1", {"description": "No prompt"})
+            self.store.create("skill", "bad", "user1",
+                              {"description": "No instructions"})
+
+    def test_create_skill_rejects_invalid_name(self):
+        with self.assertRaises(ValueError):
+            self.store.create("skill", "Bad_Name", "user1", {
+                "instructions": "body", "description": "desc"})
 
     def test_list_skills(self):
-        self.store.create("skill", "s1", "listuser", {"prompt": "skill 1"})
-        self.store.create("skill", "s2", "listuser", {"prompt": "skill 2"})
+        self.store.create("skill", "s1", "listuser",
+                          {"instructions": "skill 1", "description": "d1"})
+        self.store.create("skill", "s2", "listuser",
+                          {"instructions": "skill 2", "description": "d2"})
         skills = self.store.list("skill", user_id="listuser")
         self.assertEqual(len(skills), 2)
 
     def test_delete_skill(self):
-        self.store.create("skill", "to_delete", "user1", {"prompt": "bye"})
-        self.assertTrue(self.store.delete("skill", "to_delete", "user1"))
-        self.assertIsNone(self.store.get("skill", "to_delete", "user1"))
+        self.store.create("skill", "to-delete", "user1",
+                          {"instructions": "bye", "description": "d"})
+        self.assertTrue(self.store.delete("skill", "to-delete", "user1"))
+        self.assertIsNone(self.store.get("skill", "to-delete", "user1"))
 
 
 # ── Feature 4: Agent Identity / Source ───────────────────────────────

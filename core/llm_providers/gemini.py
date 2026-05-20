@@ -572,10 +572,15 @@ class LLMGeminiMixin(GeminiSessionMixin):
         """Launch gemini inside a pool container via docker exec."""
         env = self._gemini_env(workdir)
         from core.gemini_pool import GeminiPool
-        from core.cli_workspace_mounts import build_cli_workspace_mount_args
+        from core.cli_workspace_mounts import (
+            build_cli_workspace_mount_args, build_skill_mount_args,
+        )
         pool = GeminiPool.instance()
-        workspace_mounts = [] if container_name else build_cli_workspace_mount_args(
-            conversation_id, agent_name, user_id=user_id)
+        workspace_mounts = [] if container_name else (
+            build_cli_workspace_mount_args(
+                conversation_id, agent_name, user_id=user_id)
+            + build_skill_mount_args(
+                conversation_id, agent_name, user_id=user_id))
         container = container_name or pool.acquire(workspace_mount_args=workspace_mounts)
         rel = os.path.relpath(workdir, _get_sessions_base()).replace("\\", "/")
         session_dir = f"/cc_sessions/{rel}"

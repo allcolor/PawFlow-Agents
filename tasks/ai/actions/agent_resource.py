@@ -327,6 +327,10 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                 data["instructions"] = skill_instructions
             if description:
                 data["description"] = description
+            # Optional Agent Skills frontmatter fields, when supplied.
+            for _opt in ("allowed-tools", "license", "metadata"):
+                if body.get(_opt) not in (None, "", [], {}):
+                    data[_opt] = body.get(_opt)
             from core.review_bindings import attach_review_metadata, review_for_write
             review_meta = review_for_write(
                 data,
@@ -480,6 +484,11 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         if not skill_def:
             flowfile.set_content(json.dumps({"error": f"Skill '{skill_name}' not found"}).encode())
             return [flowfile]
+        if skill_def.get("_invalid"):
+            flowfile.set_content(json.dumps({
+                "error": f"Skill '{skill_name}' is invalid: {skill_def.get('_invalid')}",
+            }).encode())
+            return [flowfile]
         assigned = list(agent_def.get("assigned_skills", []) or [])
         newly_assigned = skill_name not in assigned
         if newly_assigned:
@@ -610,6 +619,12 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             }).encode())
             flowfile.set_attribute("http.response.status", "404")
             return [flowfile]
+        if skill_def.get("_invalid"):
+            flowfile.set_content(json.dumps({
+                "error": f"Skill '{skill_name}' is invalid: {skill_def.get('_invalid')}",
+            }).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
 
         from core.skill_resolver import resolve_runnable_skill_prompt
         prompt = resolve_runnable_skill_prompt(
@@ -698,13 +713,16 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
     if action == "list_skills":
         from core.resource_store import ResourceStore
         uid = user_id
-        skills = ResourceStore.instance().list_all("skill", uid)
+        conv_id = body.get("conversation_id", "")
+        skills = ResourceStore.instance().list_all(
+            "skill", uid, conversation_id=conv_id)
         flowfile.set_content(json.dumps({
             "skills": [{
                 "name": s["name"],
                 "description": s.get("description", ""),
                 "scope": s.get("_scope", ""),
                 "preview": (s.get("instructions") or s.get("prompt", ""))[:80],
+                "invalid": s.get("_invalid", ""),
             } for s in skills],
         }, ensure_ascii=False).encode())
         return [flowfile]
@@ -1031,6 +1049,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                 "description": s.get("description", ""),
                 "scope": s.get("_scope", ""),
                 "assigned_to": assigned_to,
+                "invalid": s.get("_invalid", ""),
             })
 
         try:

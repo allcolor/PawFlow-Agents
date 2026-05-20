@@ -565,10 +565,10 @@ Sub-agents with their own system prompts and tool access.
 - Fields: prompt (required), model, tools (list), max_depth, timeout, description
 
 ### Skills
-Prompt modules injected into agents through agent.assigned_skills.
-- Create: `manage_resource(action="create", resource_type="skill", name="summarizer", data={"prompt": "Summarize concisely"})`
-- Review untrusted content first: `manage_resource(action="review", resource_type="skill", data={"prompt": "..."})`
-- Fields: prompt (required), description, parameters, extends, template_engine
+Agent Skills (directory + SKILL.md) injected into agents through agent.assigned_skills.
+- Create: `manage_resource(action="create", resource_type="skill", name="summarizer", data={"description": "Summarize text concisely", "instructions": "Summarize concisely"})`
+- Review untrusted content first: `manage_resource(action="review", resource_type="skill", data={"description": "...", "instructions": "..."})`
+- Fields: description (required), instructions (required), allowed-tools (list), license, metadata
 
 ### MCP Servers
 Model Context Protocol server connections.

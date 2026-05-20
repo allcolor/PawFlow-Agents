@@ -47,7 +47,8 @@ class ManageResourceHandler(ToolHandler):
             "Resource types: agent, skill, mcp, task_def, tool\n\n"
             "Agent fields: prompt (required), model, tools (list), "
             "max_depth, timeout, description, llm_service\n"
-            "Skill fields: prompt (required), description, parameters, extends, template_engine\n"
+            "Skill fields: description (required), instructions (required), "
+            "allowed-tools (list), license, metadata\n"
             "MCP fields: url (required), auth (dict)\n"
             "Task def fields: prompt (required), criteria, default_interval, description\n"
             "Tool fields: source (required — Python ToolHandler subclass), "
@@ -266,8 +267,8 @@ class ManageResourceHandler(ToolHandler):
                     if not item:
                         return f"skill '{name}' not found."
                     skill_data = item
-                if not skill_data.get("prompt"):
-                    return "Error: skill prompt is required for review"
+                if not (skill_data.get("instructions") or skill_data.get("prompt")):
+                    return "Error: skill instructions are required for review"
                 package_files = skill_data.pop("package_files", {})
                 from core.review_bindings import review_now
                 result = review_now(

@@ -517,8 +517,29 @@ class ScopedRepository:
         if template:
             (path / "template.html").write_text(template, encoding="utf-8")
 
+    @staticmethod
+    def _invalid_skill_stub(path: Path, reason: str) -> Dict[str, Any]:
+        """Return a placeholder for a malformed skill directory.
+
+        A skill that fails validation must not silently vanish from listings
+        and assignments. The stub carries `_invalid` so the UI can surface the
+        problem and resolvers can skip it explicitly (see skill_resolver).
+        """
+        logger.warning("Skill %s is invalid: %s", path, reason)
+        return {
+            "name": path.name,
+            "description": "",
+            "instructions": "",
+            "_invalid": reason,
+        }
+
     def _read_skill(self, path: Path) -> Optional[Dict[str, Any]]:
-        """Read a standard Agent Skills directory resource."""
+        """Read a standard Agent Skills directory resource.
+
+        Returns None only when the directory is not a skill at all (no
+        SKILL.md). A directory that has a SKILL.md but fails validation is
+        returned as an `_invalid` stub so the failure is visible.
+        """
         skill_md = path / "SKILL.md"
         if not skill_md.exists():
             return None
@@ -526,23 +547,27 @@ class ScopedRepository:
             text = skill_md.read_text(encoding="utf-8")
             m = self._FRONTMATTER_RE.match(text)
             if not m:
-                logger.warning("Skill %s is missing SKILL.md YAML frontmatter", path)
-                return None
+                return self._invalid_skill_stub(
+                    path, "SKILL.md is missing YAML frontmatter")
             import yaml
-            meta = yaml.safe_load(m.group(1)) or {}
+            try:
+                meta = yaml.safe_load(m.group(1)) or {}
+            except yaml.YAMLError as e:
+                return self._invalid_skill_stub(
+                    path, f"SKILL.md frontmatter is not valid YAML: {e}")
             if not isinstance(meta, dict):
-                logger.warning("Skill %s frontmatter is not a mapping", path)
-                return None
+                return self._invalid_skill_stub(
+                    path, "SKILL.md frontmatter is not a mapping")
             declared_name = str(meta.get("name") or "").strip()
             if declared_name != path.name:
-                logger.warning(
-                    "Skill %s name mismatch: frontmatter=%r directory=%r",
-                    path, declared_name, path.name)
-                return None
+                return self._invalid_skill_stub(
+                    path,
+                    f"name mismatch: frontmatter={declared_name!r} "
+                    f"directory={path.name!r}")
             body = m.group(2).strip()
             if not body:
-                logger.warning("Skill %s has an empty SKILL.md body", path)
-                return None
+                return self._invalid_skill_stub(
+                    path, "SKILL.md body is empty")
             entry = dict(meta)
             entry["name"] = path.name
             entry["instructions"] = body
@@ -553,8 +578,7 @@ class ScopedRepository:
                 entry["declared_allowed_tools"] = entry.get("allowed-tools")
             return entry
         except Exception as e:
-            logger.warning("Failed to read skill %s: %s", path, e)
-            return None
+            return self._invalid_skill_stub(path, f"failed to read SKILL.md: {e}")
 
     def _write_skill(self, path: Path, data: Dict[str, Any]):
         """Write a standard Agent Skills directory resource."""
@@ -564,6 +588,11 @@ class ScopedRepository:
         description = str(data.get("description") or "").strip()
         if not description:
             raise ValueError("Skill description is required")
+        import re
+        if not re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", path.name):
+            raise ValueError(
+                "Skill name must be lowercase letters, digits and single hyphens "
+                f"(got {path.name!r})")
         path.mkdir(parents=True, exist_ok=True)
         import yaml
         meta = {k: v for k, v in data.items() if k not in (

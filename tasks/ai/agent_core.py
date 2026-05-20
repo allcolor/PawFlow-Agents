@@ -404,13 +404,27 @@ class AgentCoreMixin:
                 response, "claude_code_interactive_provider")
             if not usage:
                 return src
-            src["context_used"] = int(usage.get("used", 0) or 0)
-            src["context_max"] = int(usage.get("max", 0) or 0)
-            src["context_pct"] = float(usage.get("pct", 0.0) or 0.0)
+            used = int(usage.get("used", 0) or 0)
+            # Keep the denominator from compute_context_usage (already on src
+            # via _agent_source) so the web-chat gauge matches the context
+            # editor. Only the provider's API-reported `used` (real prompt
+            # size incl. cache tokens) is kept — more accurate than a PawFlow
+            # message recount for a CLI agent. Recomputing `max` independently
+            # diverged from the editor and pinned the gauge at 100%.
+            max_ctx = (int(src.get("context_max", 0) or 0)
+                       or int(usage.get("max", 0) or 0))
+            if used <= 0 or max_ctx <= 0:
+                return src
+            src["context_used"] = used
+            src["context_max"] = max_ctx
+            src["context_pct"] = used / max_ctx
             src["context_source"] = usage.get("source", "")
             src["context_message_count"] = usage.get("message_count", 0)
             src["context_cache_mode"] = usage.get("cache_mode", "")
-            src["context_cache"] = usage
+            reconciled = dict(usage)
+            reconciled["max"] = max_ctx
+            reconciled["pct"] = used / max_ctx
+            src["context_cache"] = reconciled
             return src
         # SpawnAgentsHandler source tracking
         from core.tool_registry import SpawnAgentsHandler as _SAH

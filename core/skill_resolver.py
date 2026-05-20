@@ -121,6 +121,92 @@ def _allowed_tools_directive(skill_def: Dict[str, Any]) -> str:
     )
 
 
+# Skill asset inlining caps. The skill directory is normally reachable as a
+# read-only mount, but an agent with no connected relay cannot read it; the
+# bundled text files are then inlined into the loaded skill block instead.
+_ASSET_INLINE_MAX_BYTES = 12_000
+_ASSET_INLINE_TOTAL_BYTES = 48_000
+_ASSET_TEXT_EXTENSIONS = {
+    ".css", ".csv", ".html", ".js", ".json", ".md", ".mjs", ".ps1",
+    ".py", ".rb", ".sh", ".sql", ".toml", ".ts", ".txt", ".xml",
+    ".yaml", ".yml",
+}
+
+
+def _iter_skill_asset_files(skill_root: str) -> List[Tuple[str, str]]:
+    """Return sorted (relpath, abspath) for files bundled with a skill.
+
+    Excludes SKILL.md. Skips entries that resolve outside the skill root
+    (symlink-escape guard).
+    """
+    raw = str(skill_root or "").strip()
+    if not raw:
+        return []
+    base = os.path.realpath(raw)
+    if not os.path.isdir(base):
+        return []
+    found: List[Tuple[str, str]] = []
+    for dirpath, dirnames, filenames in os.walk(base):
+        dirnames.sort()
+        for fn in sorted(filenames):
+            abspath = os.path.join(dirpath, fn)
+            rel = os.path.relpath(abspath, base).replace(os.sep, "/")
+            if rel == "SKILL.md":
+                continue
+            real = os.path.realpath(abspath)
+            try:
+                if real != base and os.path.commonpath([base, real]) != base:
+                    continue
+            except ValueError:
+                continue
+            found.append((rel, abspath))
+    return found
+
+
+def _skill_assets_block(skill_def: Dict[str, Any]) -> str:
+    """Return a block listing a skill's bundled asset files.
+
+    The skill directory is normally reachable as a read-only mount (a Docker
+    bind mount for CLI providers, the relay /skills FUSE for others). When
+    that mount is unavailable — e.g. an agent with no connected relay — the
+    agent still needs the assets, so this block enumerates every bundled file
+    and inlines small text files as a context-only fallback.
+    """
+    files = _iter_skill_asset_files((skill_def or {}).get("skill_root") or "")
+    if not files:
+        return ""
+    listing: List[str] = []
+    inlined: List[str] = []
+    inlined_total = 0
+    for rel, abspath in files:
+        try:
+            size = os.path.getsize(abspath)
+        except OSError:
+            continue
+        listing.append(f"- {rel} ({size} bytes)")
+        ext = os.path.splitext(rel)[1].lower()
+        if (ext in _ASSET_TEXT_EXTENSIONS
+                and 0 < size <= _ASSET_INLINE_MAX_BYTES
+                and inlined_total + size <= _ASSET_INLINE_TOTAL_BYTES):
+            try:
+                with open(abspath, encoding="utf-8") as fh:
+                    text = fh.read()
+            except (OSError, UnicodeDecodeError):
+                continue
+            inlined_total += size
+            inlined.append(f"#### {rel}\n```\n{text}\n```")
+    block = (
+        "\n\n### Skill assets\n"
+        "These files are bundled with the skill and also live in the "
+        "read-only skill directory; the inlined copies below are a fallback "
+        "for when that directory is not mounted.\n"
+        + "\n".join(listing)
+    )
+    if inlined:
+        block += "\n\n" + "\n\n".join(inlined)
+    return block
+
+
 def resolve_skill_prompts(
     skill_entries: List,
     user_id: str,
@@ -168,6 +254,7 @@ def resolve_skill_prompts(
             f"(read-only; assets like scripts/ and references/ live here)\n\n"
             f"{prompt}"
             f"{_allowed_tools_directive(skill_def)}"
+            f"{_skill_assets_block(skill_def)}"
         )
     return blocks
 
@@ -201,7 +288,8 @@ def resolve_runnable_skill_prompt(skill_name: str, user_id: str,
         f"Skill directory: {skill_dir}\n\n"
         f"{desc}\n\n"
         f"{prompt}"
-        f"{_allowed_tools_directive(skill_def)}\n\n"
+        f"{_allowed_tools_directive(skill_def)}"
+        f"{_skill_assets_block(skill_def)}\n\n"
         "Run this skill now for the provided arguments. "
         "Use normal PawFlow tools if the skill requires files, commands, or scripts."
     )

@@ -519,3 +519,50 @@ def test_resolve_skill_prompts_delivers_body_verbatim(monkeypatch):
     # Placeholders are not substituted; the directory is given as a header line.
     assert "${CLAUDE_SKILL_DIR}/scripts/go.sh" in blocks[0]
     assert "Skill directory: /skills/deploy" in blocks[0]
+    # No skill_root on disk -> no asset block.
+    assert "### Skill assets" not in blocks[0]
+
+
+def test_resolve_skill_prompts_inlines_and_lists_bundled_assets(tmp_path, monkeypatch):
+    from core import skill_resolver
+
+    skill_dir = tmp_path / "deploy"
+    (skill_dir / "scripts").mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("---\nname: deploy\n---\nbody")
+    (skill_dir / "scripts" / "go.sh").write_text("echo deploying\n")
+    # A file too large to inline is still enumerated in the listing.
+    big = "x" * (skill_resolver._ASSET_INLINE_MAX_BYTES + 1)
+    (skill_dir / "scripts" / "big.txt").write_text(big)
+
+    class Store:
+        def get_any(self, rtype, name, user_id, conversation_id=""):
+            return {
+                "name": "deploy",
+                "_scope": "user",
+                "description": "Deploy things",
+                "instructions": "Run scripts/go.sh now.",
+                "skill_root": str(skill_dir),
+            }
+
+    from core.resource_store import ResourceStore
+    monkeypatch.setattr(ResourceStore, "instance", staticmethod(lambda: Store()))
+
+    blocks = skill_resolver.resolve_skill_prompts(["deploy"], "alice", "conv1")
+    assert blocks
+    block = blocks[0]
+    assert "### Skill assets" in block
+    # Both assets are enumerated; SKILL.md itself is excluded.
+    assert "- scripts/go.sh" in block
+    assert "- scripts/big.txt" in block
+    assert "- SKILL.md" not in block
+    # The small text asset is inlined; the oversized one is not.
+    assert "echo deploying" in block
+    assert big not in block
+
+
+def test_skill_assets_block_empty_without_skill_root():
+    from core import skill_resolver
+
+    assert skill_resolver._skill_assets_block({}) == ""
+    assert skill_resolver._skill_assets_block(
+        {"skill_root": "/nonexistent/path/xyz"}) == ""

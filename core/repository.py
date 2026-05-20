@@ -533,6 +533,32 @@ class ScopedRepository:
             "_invalid": reason,
         }
 
+    @staticmethod
+    def _read_skill_package_files(path: Path) -> Dict[str, str]:
+        """Return bundled text files next to SKILL.md, relative to the skill root."""
+        if not path.exists():
+            return {}
+        try:
+            base = path.resolve()
+        except OSError:
+            return {}
+        files: Dict[str, str] = {}
+        for child in sorted(path.rglob("*")):
+            if not child.is_file():
+                continue
+            try:
+                real = child.resolve()
+                rel = real.relative_to(base).as_posix()
+            except (OSError, ValueError):
+                continue
+            if rel == "SKILL.md":
+                continue
+            try:
+                files[rel] = real.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+        return files
+
     def _read_skill(self, path: Path) -> Optional[Dict[str, Any]]:
         """Read a standard Agent Skills directory resource.
 
@@ -574,6 +600,9 @@ class ScopedRepository:
             # Internal compatibility while runtime code moves to instructions.
             entry["prompt"] = body
             entry["skill_root"] = str(path)
+            package_files = self._read_skill_package_files(path)
+            if package_files:
+                entry["package_files"] = package_files
             if "allowed-tools" in entry:
                 entry["declared_allowed_tools"] = entry.get("allowed-tools")
             return entry

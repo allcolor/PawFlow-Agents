@@ -737,10 +737,30 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
 
     if action == "list_skills":
         from core.resource_store import ResourceStore
+        from core.skill_resolver import normalize_skill_entry
         uid = user_id
         conv_id = body.get("conversation_id", "")
-        skills = ResourceStore.instance().list_all(
-            "skill", uid, conversation_id=conv_id)
+        rs = ResourceStore.instance()
+        skills = rs.list_all("skill", uid, conversation_id=conv_id)
+        assigned_by_skill = {}
+        active_agent = ""
+        if conv_id:
+            active = store.get_extra(conv_id, "active_resources") or {}
+            active_agent = (active.get("agent") or "").strip()
+            try:
+                from core.conv_agent_config import get_all_agent_configs
+                conv_agent_cfgs = get_all_agent_configs(conv_id)
+            except Exception:
+                conv_agent_cfgs = {}
+            all_agent_defs = rs.list_all("agent", uid, conversation_id=conv_id)
+            agent_defs_by_name = {a.get("name"): a for a in all_agent_defs}
+            for agent_name, acfg in conv_agent_cfgs.items():
+                def_name = (acfg or {}).get("definition") or agent_name
+                agent_def = agent_defs_by_name.get(def_name) or agent_defs_by_name.get(agent_name) or {}
+                for raw_skill in agent_def.get("assigned_skills") or []:
+                    skill_name, _params, _condition = normalize_skill_entry(raw_skill)
+                    if skill_name:
+                        assigned_by_skill.setdefault(skill_name, []).append(agent_name)
         flowfile.set_content(json.dumps({
             "skills": [{
                 "name": s["name"],
@@ -748,6 +768,8 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                 "scope": s.get("_scope", ""),
                 "preview": (s.get("instructions") or s.get("prompt", ""))[:80],
                 "invalid": s.get("_invalid", ""),
+                "assigned_to": assigned_by_skill.get(s["name"], []),
+                "active": active_agent in assigned_by_skill.get(s["name"], []),
             } for s in skills],
         }, ensure_ascii=False).encode())
         return [flowfile]

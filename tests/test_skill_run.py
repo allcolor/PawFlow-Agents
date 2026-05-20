@@ -508,6 +508,53 @@ def test_list_resources_normalizes_object_assigned_skills(monkeypatch):
     assert skills["other"]["assigned_to"] == ["assistant"]
 
 
+def test_list_skills_marks_current_agent_assignments(monkeypatch):
+    class Task:
+        pass
+
+    class Store:
+        def get_extra(self, conv_id, key):
+            return {"agent": "assistant"} if key == "active_resources" else None
+
+    class ResourceStore:
+        def list_all(self, rtype, user_id, conversation_id=""):
+            if rtype == "skill":
+                return [
+                    {"name": "review-pr", "description": "Review PRs"},
+                    {"name": "deploy", "description": "Deploy"},
+                ]
+            if rtype == "agent":
+                return [{
+                    "name": "assistant",
+                    "assigned_skills": [
+                        {"name": "review-pr", "params": {"mode": "fast"}},
+                    ],
+                }]
+            return []
+
+    from core.resource_store import ResourceStore as RealResourceStore
+    import core.conv_agent_config as conv_agent_config
+    monkeypatch.setattr(RealResourceStore, "instance", staticmethod(lambda: ResourceStore()))
+    monkeypatch.setattr(
+        conv_agent_config,
+        "get_all_agent_configs",
+        lambda conv_id: {"assistant": {"definition": "assistant"}},
+    )
+
+    ff = FlowFile(content=b"")
+    result = _handle_agent_resource(Task(), "list_skills", {
+        "conversation_id": "conv1",
+    }, Store(), "alice", ff)
+
+    assert result == [ff]
+    body = json.loads(ff.get_content().decode("utf-8"))
+    skills = {row["name"]: row for row in body["skills"]}
+    assert skills["review-pr"]["assigned_to"] == ["assistant"]
+    assert skills["review-pr"]["active"] is True
+    assert skills["deploy"]["assigned_to"] == []
+    assert skills["deploy"]["active"] is False
+
+
 def test_resolve_skill_prompts_delivers_body_verbatim(monkeypatch):
     # load_skill delivers SKILL.md verbatim; the directory is an explicit line.
     from core import skill_resolver

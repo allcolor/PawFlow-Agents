@@ -5792,6 +5792,11 @@ def test_pfp_export_creates_source_package(tmp_path, monkeypatch):
         "description": "Local",
         "instructions": "Local skill prompt",
     })
+    skill_root = Path(ResourceStore.instance().get(
+        "skill", "local-skill", "alice")["skill_root"])
+    (skill_root / "scripts").mkdir(parents=True)
+    (skill_root / "scripts" / "run.sh").write_text(
+        "echo local\n", encoding="utf-8")
 
     exported = pfp_package.export_pfpdir(
         "alice.local", "0.1.0", ["skill:local-skill"],
@@ -5805,6 +5810,11 @@ def test_pfp_export_creates_source_package(tmp_path, monkeypatch):
     skill_md = tmp_path / "exported.pfpdir" / "content" / "skills" / "local-skill" / "SKILL.md"
     assert "name: local-skill" in skill_md.read_text(encoding="utf-8")
     assert "Local skill prompt" in skill_md.read_text(encoding="utf-8")
+    exported_script = (
+        tmp_path / "exported.pfpdir" / "content" / "skills"
+        / "local-skill" / "scripts" / "run.sh"
+    )
+    assert exported_script.read_text(encoding="utf-8") == "echo local\n"
 
 
 def test_pfp_slash_parser_handles_install_flags():

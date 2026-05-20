@@ -2857,7 +2857,7 @@ async function showResourceCreator(rtype) {
   overlay.style.cssText = 'position:fixed;inset:0;background:var(--pf-shadow);display:flex;align-items:center;justify-content:center;z-index:9999;';
   const panel = document.createElement('div');
   panel.style.cssText = 'background:var(--pf-panel);border-radius:8px;padding:20px;width:500px;max-height:80vh;overflow-y:auto;border:1px solid var(--pf-border);';
-  const createAssignBtn = rtype === 'task_def'
+  const createAssignBtn = (rtype === 'task_def' || rtype === 'skill')
     ? '<button onclick="_saveResourceCreate(\'' + rtype + '\', true)" style="background:color-mix(in srgb, var(--pf-accent) 16%, var(--pf-panel));color:var(--pf-accent);border:1px solid var(--pf-accent);padding:8px 16px;border-radius:4px;cursor:pointer;">' + escapeHtml(t('create')) + ' + ' + escapeHtml(t('assign')) + '</button>'
     : '';
   panel.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
@@ -2929,6 +2929,8 @@ function _saveResourceCreate(rtype, assignAfterCreate) {
       loadResources();
       if (assignAfterCreate && rtype === 'task_def') {
         setTimeout(function() { _showAssignDialog(name); }, 0);
+      } else if (assignAfterCreate && rtype === 'skill') {
+        setTimeout(function() { _showSkillAssignDialog(name); }, 0);
       }
     }
   });

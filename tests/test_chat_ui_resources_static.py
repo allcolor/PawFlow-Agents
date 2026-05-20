@@ -39,6 +39,14 @@ def test_skill_list_uses_real_newlines_and_symbols():
     assert "lines.join('\\n')" in js
 
 
+def test_skill_creator_can_assign_after_create():
+    js = Path("tasks/io/chat_ui/resources.js").read_text(encoding="utf-8")
+
+    assert "(rtype === 'task_def' || rtype === 'skill')" in js
+    assert "assignAfterCreate && rtype === 'skill'" in js
+    assert "_showSkillAssignDialog(name)" in js
+
+
 def test_typing_indicators_use_sweeping_block_animation():
     js = Path("tasks/io/chat_ui/typing.js").read_text(encoding="utf-8")
     template = Path("tasks/io/chat_ui/template.html").read_text(encoding="utf-8")

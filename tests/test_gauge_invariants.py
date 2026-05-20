@@ -766,6 +766,31 @@ def test_cci_final_patch_uses_provider_usage_for_context_gauge():
     assert 'self._provider == "claude-code-interactive"' in emitter_src
 
 
+def test_cci_gauge_refreshes_between_tool_rounds():
+    """CCI gauge must update mid-run, not freeze until the agent stops.
+
+    The emitter skips CCI (_context_usage_payload returns None) and the
+    final-turn patch only fires on a no-tool response. Without a per-round
+    patch, a long tool-looping run freezes the context gauge.
+    """
+    src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
+    round_block = src[
+        src.index("emitter.drain_pending(messages, _append, iteration)"):
+        src.index("# Max iterations reached")]
+    assert 'if _client_provider == "claude-code-interactive":' in round_block
+    assert "_patch_cc_turn_gauge(" in round_block
+
+
+def test_context_panel_token_estimate_uses_gauge_when_available():
+    """The panel header token count must match the authoritative gauge.
+
+    The per-page estimate only covers the loaded page; showing it next to
+    the full message_count contradicts the gauge line.
+    """
+    src = Path("tasks/ai/actions/context_ops.py").read_text(encoding="utf-8")
+    assert 'estimated = int(_context_usage.get("used", 0) or 0)' in src
+
+
 def test_idle_polling_cannot_stack_unbounded_work():
     assert "_syncActiveSub" in _ACTIVE_AGENTS_JS
     assert "_SYNC_ACTIVE_STALE_MS" in _ACTIVE_AGENTS_JS

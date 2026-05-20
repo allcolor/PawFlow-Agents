@@ -2437,6 +2437,15 @@ class AgentCoreMixin:
                         max_rounds, tools_called)
                     emitter.drain_pending(messages, _append, iteration)
                     emitter.check_cancelled()
+                    # CCI gauge refresh between tool rounds. For
+                    # claude-code-interactive the emitter skips the gauge
+                    # (_context_usage_payload returns None) and the
+                    # final-turn _patch_cc_turn_gauge only fires once the
+                    # agent stops. Without this, a long tool-looping run
+                    # freezes the context gauge at the last completed turn.
+                    if _client_provider == "claude-code-interactive":
+                        _patch_cc_turn_gauge(
+                            response, getattr(client, '_last_turn_msg_id', ''))
 
                 else:
                     # Max iterations reached

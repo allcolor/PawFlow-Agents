@@ -980,6 +980,13 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             deserialized = self._deserialize_messages(context_data, conversation_id=conv_id)
             estimated = self._estimate_tokens(deserialized)
         _context_usage = _ctx_cached_usage(conv_id, _ctx_agent)
+        # The token estimate above only covers the loaded page, not the
+        # whole context. When a gauge is available it is the authoritative
+        # whole-context size — use it so the panel header matches the gauge
+        # line instead of showing a much smaller page-only count.
+        if (isinstance(_context_usage, dict)
+                and int(_context_usage.get("used", 0) or 0) > 0):
+            estimated = int(_context_usage.get("used", 0) or 0)
         # Classify messages for display
         display_msgs = []
         _is_shared_view = (not _ctx_agent or _ctx_agent == "shared")

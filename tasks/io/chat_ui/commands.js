@@ -103,11 +103,12 @@ const HELP_DATA = {
       + 'The active agent shapes the AI\'s behavior for the conversation.',
   },
   '/skill': {
-    usage: '/skill list | add @name <description/instructions> | del @name | assign @agent @skill | unassign @agent @skill | assigned @agent | run [@agent] <name> [args...] | //<name> [@agent] [args...]',
+    usage: '/skill list | add [--force] @name <description/instructions> | update [--force] @name <description/instructions> | del @name | assign @agent @skill | unassign @agent @skill | assigned @agent | run [@agent] <name> [args...] | //<name> [@agent] [args...]',
     short: t('commandShort.9'),
     detail: 'Create, list, assign, delete, or run skills.\n\n'
       + '  /skill list                     — List all skills and agent assignments\n'
-      + '  /skill add @name <instructions> — Create a SKILL.md-backed skill\n'
+      + '  /skill add [--force] @name <instructions> — Create a SKILL.md-backed skill\n'
+      + '  /skill update [--force] @name <instructions> — Update a SKILL.md-backed skill\n'
       + '  /skill del @name                — Delete a skill\n'
       + '  /skill assign @agent @skill     — Assign a skill to an agent\n'
       + '  /skill unassign @agent @skill   — Remove a skill from an agent\n'
@@ -117,9 +118,9 @@ const HELP_DATA = {
       + 'Skills are Agent Skills directories loaded only when assigned or run explicitly.',
   },
   '/add-skill': {
-    usage: '/add-skill <name> <description/instructions>',
+    usage: '/add-skill [--force] <name> <description/instructions>',
     short: t('commandShort.10'),
-    detail: 'Same as /skill add <name> <description/instructions>.',
+    detail: 'Same as /skill add [--force] <name> <description/instructions>.',
   },
   '/resources': {
     usage: '/resources',

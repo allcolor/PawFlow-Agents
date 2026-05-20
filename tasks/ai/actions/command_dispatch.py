@@ -1369,15 +1369,19 @@ def _parse_skill_command(arg: str, base: dict, agent_name: str = "") -> dict:
     if subcmd == "list":
         return {"action": "list_skills", **base}
     if subcmd == "add":
-        body = p[2] if len(p) > 2 else ""
-        return {"action": "create_skill", "name": p[1] if len(p) > 1 else "",
+        force, rest = _parse_leading_force(arg[len(subcmd):].strip())
+        parts = rest.split(None, 1)
+        body = parts[1] if len(parts) > 1 else ""
+        return {"action": "create_skill", "name": parts[0] if parts else "",
                 "description": _skill_short_description(body),
-                "instructions": body, **base}
+                "instructions": body, "force": force, **base}
     if subcmd in ("update", "modify", "edit"):
-        body = p[2] if len(p) > 2 else ""
-        return {"action": "update_skill", "name": p[1] if len(p) > 1 else "",
+        force, rest = _parse_leading_force(arg[len(subcmd):].strip())
+        parts = rest.split(None, 1)
+        body = parts[1] if len(parts) > 1 else ""
+        return {"action": "update_skill", "name": parts[0] if parts else "",
                 "description": _skill_short_description(body),
-                "instructions": body, **base}
+                "instructions": body, "force": force, **base}
     if subcmd == "del":
         return {"action": "delete_skill", "name": p[1] if len(p) > 1 else "",
                 **base}
@@ -1465,6 +1469,15 @@ def _parse_skill_command(arg: str, base: dict, agent_name: str = "") -> dict:
             **base,
         }
     return {"action": "list_skills", **base}
+
+
+def _parse_leading_force(rest: str) -> tuple[bool, str]:
+    rest = (rest or "").strip()
+    if rest == "--force":
+        return True, ""
+    if rest.startswith("--force "):
+        return True, rest[len("--force "):].strip()
+    return False, rest
 
 
 def _parse_pfp_command(arg: str, base: dict) -> dict:

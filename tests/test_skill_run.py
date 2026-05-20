@@ -25,6 +25,22 @@ def test_skill_update_slash_command_parses_explicit_update():
     assert body["instructions"] == "new prompt"
 
 
+def test_skill_add_update_slash_command_parses_force():
+    add_body = _parse_command(
+        "/skill add --force review-pr new prompt", "conv1", "alice", "assistant")
+    update_body = _parse_command(
+        "/skill update --force review-pr changed prompt", "conv1", "alice", "assistant")
+
+    assert add_body["action"] == "create_skill"
+    assert add_body["name"] == "review-pr"
+    assert add_body["instructions"] == "new prompt"
+    assert add_body["force"] is True
+    assert update_body["action"] == "update_skill"
+    assert update_body["name"] == "review-pr"
+    assert update_body["instructions"] == "changed prompt"
+    assert update_body["force"] is True
+
+
 def test_skill_run_slash_command_defaults_to_selected_agent():
     body = _parse_command(
         "/skill run review-pr 42", "conv1", "alice", "assistant")

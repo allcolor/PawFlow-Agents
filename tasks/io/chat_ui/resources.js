@@ -2227,7 +2227,13 @@ function _showAgentSkillsDialog(agentName) {
       var calls = [];
       toAssign.forEach(sk => calls.push(rxjs.firstValueFrom(action$('assign_skill', { agent_name: agentName, skill_name: sk }))));
       toUnassign.forEach(sk => calls.push(rxjs.firstValueFrom(action$('unassign_skill', { agent_name: agentName, skill_name: sk }))));
-      Promise.all(calls).then(() => {
+      Promise.all(calls).then((results) => {
+        var errors = results.filter(r => r && r.error).map(r => r.error);
+        if (errors.length) {
+          addMsg('error', errors.join('\n'));
+          loadResources();
+          return;
+        }
         var msg = [];
         if (toAssign.length) msg.push(t('assignedList', { items: toAssign.join(', ') }));
         if (toUnassign.length) msg.push(t('removedList', { items: toUnassign.join(', ') }));
@@ -2902,7 +2908,7 @@ function _saveResourceCreate(rtype, assignAfterCreate) {
   }
   const payload = { resource_type: rtype, name, scope, data };
   if (scope === 'conversation' && typeof conversationId !== 'undefined' && conversationId) payload.conversation_id = conversationId;
-  action$('create_resource', payload).subscribe(d => {
+  action$('create_resource', payload, { skipConversationId: scope !== 'conversation' }).subscribe(d => {
     if (d.error) addMsg('error', d.error);
     else {
       addMsg('system', t('resourceCreated', { type: rtype, name: name }));

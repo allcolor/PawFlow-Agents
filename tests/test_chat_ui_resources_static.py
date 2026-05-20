@@ -12,11 +12,21 @@ def test_cmd_resource_action_returns_promise_for_then_callers():
 
 def test_resource_editor_sends_conversation_id_for_conversation_scope():
     js = Path("tasks/io/chat_ui/resources.js").read_text(encoding="utf-8")
+    rxbus = Path("tasks/io/chat_ui/rxbus.js").read_text(encoding="utf-8")
 
     assert "if (scope === 'conversation'" in js
     assert "payload.conversation_id = conversationId" in js
     assert "action$('update_resource', payload)" in js
-    assert "action$('create_resource', payload)" in js
+    assert "action$('create_resource', payload, { skipConversationId: scope !== 'conversation' })" in js
+    assert "skipConversationId: scope !== 'conversation'" in js
+    assert "!opts.skipConversationId" in rxbus
+
+
+def test_agent_skills_dialog_surfaces_assign_errors():
+    js = Path("tasks/io/chat_ui/resources.js").read_text(encoding="utf-8")
+
+    assert "results.filter(r => r && r.error).map(r => r.error)" in js
+    assert "addMsg('error', errors.join('\\n'))" in js
 
 
 def test_typing_indicators_use_sweeping_block_animation():

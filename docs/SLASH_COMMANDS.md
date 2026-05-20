@@ -466,7 +466,7 @@ Supported task options mirror `/task assign`: `--criteria`, `--interval`, `--ver
 ### /skill
 
 ```
-/skill list | search [--source codex|claude|hermes|openclaw|all] <query> | import [--source src] [--review-only] [--force] [--scope user|conversation] [--name name] <ref> | add @name <prompt> | del @name | assign @agent @skill | unassign @agent @skill | assigned @agent | run [@agent] <skill> [args...] | //<skill> [@agent] [args...]
+/skill list | search [--source codex|claude|hermes|openclaw|all] <query> | import [--source src] [--review-only] [--force] [--scope user|conversation] [--name name] <ref> | add [--force] @name <prompt> | update [--force] @name <prompt> | del @name | assign @agent @skill | unassign @agent @skill | assigned @agent | run [@agent] <skill> [args...] | //<skill> [@agent] [args...]
 ```
 
 | Subcommand | Description |
@@ -474,7 +474,8 @@ Supported task options mirror `/task assign`: `--criteria`, `--interval`, `--ver
 | `list` | List all skills and their agent assignments |
 | `search [--source src] <query>` | Search supported external skill marketplaces |
 | `import [--source src] [--review-only] [--force] <ref>` | Review and import an external Agent Skill |
-| `add @name <prompt>` | Create a skill |
+| `add [--force] @name <prompt>` | Create a skill |
+| `update [--force] @name <prompt>` | Update a skill |
 | `del @name` | Delete a skill |
 | `assign @agent @skill` | Assign a skill to an agent |
 | `unassign @agent @skill` | Remove a skill from an agent |
@@ -503,7 +504,7 @@ Decentralized registries are static JSON indexes. Add one with `/pfp registry ad
 ### /add-skill
 
 ```
-/add-skill <name> <prompt>
+/add-skill [--force] <name> <prompt>
 ```
 
 Shortcut for `/skill add`.

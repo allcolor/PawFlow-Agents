@@ -139,7 +139,7 @@ function action$(actionName, params = {}, opts = {}) {
   // per-tab UI SSE bus, not through the HTTP response body.
   _ensureUIActionSSE();
   const body = { action: actionName, ...params };
-  if (!body.conversation_id && typeof conversationId !== 'undefined' && conversationId) {
+  if (!opts.skipConversationId && !body.conversation_id && typeof conversationId !== 'undefined' && conversationId) {
     body.conversation_id = conversationId;
   }
   // Capture the conversation_id this call is scoped to. The filter

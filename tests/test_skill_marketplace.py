@@ -229,9 +229,13 @@ def test_import_marketplace_omits_binary_assets(monkeypatch):
 
 def test_import_marketplace_creates_low_risk_skill(monkeypatch):
     from core import skill_marketplace
+    import core.review_bindings as review_bindings
 
     created = []
     _patch_safe_review(monkeypatch)
+    monkeypatch.setattr(
+        review_bindings, "review_for_write",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("double review")))
 
     def fake_get(url, headers=None, **kwargs):
         if url.endswith("/contents/skills/.curated/review-pr?ref=main"):

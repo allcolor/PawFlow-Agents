@@ -555,7 +555,21 @@ function _showPfpInstallDialog(initialRef) {
     try {
       const scope = panel.querySelector('#pfp-scope').value;
       const sha = (panel.querySelector('#pfp-sha').value || '').trim();
-      const data = await rxjs.firstValueFrom(action$('pfp_inspect', { path: ref, scope, conversation_id: conversationId, sha256: sha }));
+      let data = await rxjs.firstValueFrom(action$('pfp_inspect', { path: ref, scope, conversation_id: conversationId, sha256: sha }));
+      if (data && data.requires_confirmation) {
+        const message = data.message || 'Confirm package download to continue.';
+        if (!confirm(message)) {
+          review.innerHTML = '<div style="color:var(--pf-warning);font-size:12px;">' + escapeHtml(message) + '</div>';
+          return;
+        }
+        data = await rxjs.firstValueFrom(action$('pfp_inspect', {
+          path: ref,
+          scope,
+          conversation_id: conversationId,
+          sha256: sha,
+          confirm_download: true,
+        }));
+      }
       if (data.error) { review.innerHTML = '<div style="color:var(--pf-danger);font-size:12px;">' + escapeHtml(data.error) + '</div>'; return; }
       plan = data;
       const riskColor = data.risk === 'high' ? 'var(--pf-danger)' : data.risk === 'medium' ? 'var(--pf-warning)' : 'var(--pf-muted)';
@@ -683,6 +697,7 @@ function _showPfpInstallDialog(initialRef) {
       include,
       force: panel.querySelector('#pfp-force').checked,
       replace: panel.querySelector('#pfp-replace').checked,
+      confirm_download: true,
       secret_bindings,
     };
     const action = plan.update_diff && plan.update_diff.installed ? 'pfp_update' : 'pfp_install';

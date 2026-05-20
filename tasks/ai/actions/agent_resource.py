@@ -502,7 +502,10 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             fresh = rs.get_any("agent", _def_name, uid,
                                conversation_id=conv_id) or agent_def
             assigned = list(fresh.get("assigned_skills", []) or [])
-            newly_assigned = skill_name not in assigned
+            from core.skill_resolver import normalize_skill_entry
+            newly_assigned = not any(
+                normalize_skill_entry(entry)[0] == skill_name
+                for entry in assigned)
             if newly_assigned:
                 assigned.append(skill_name)
             _scope = fresh.get("_scope", "user")
@@ -560,9 +563,15 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             fresh = rs.get_any("agent", _def_name, uid,
                                conversation_id=conv_id) or agent_def
             assigned = list(fresh.get("assigned_skills", []) or [])
-            was_assigned = skill_name in assigned
-            if was_assigned:
-                assigned.remove(skill_name)
+            from core.skill_resolver import normalize_skill_entry
+            kept = []
+            was_assigned = False
+            for entry in assigned:
+                if normalize_skill_entry(entry)[0] == skill_name:
+                    was_assigned = True
+                    continue
+                kept.append(entry)
+            assigned = kept
             _scope = fresh.get("_scope", "user")
             _uid = uid if _scope in ("conversation", "user") else "__global__"
             _scope_kwargs = {"conversation_id": conv_id} if _scope == "conversation" and conv_id else {}
@@ -1026,15 +1035,21 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             a = agent_defs_by_name.get(_def_name) or agent_defs_by_name.get(aname)
             if not a:
                 a = {"name": aname, "description": "", "_scope": ""}
+            from core.skill_resolver import normalize_skill_entry
+            assigned_names = []
+            for raw_skill in a.get("assigned_skills") or []:
+                skill_name, _params, _condition = normalize_skill_entry(raw_skill)
+                if skill_name:
+                    assigned_names.append(skill_name)
             entry = {
                 "name": aname,
                 "description": a.get("description", ""),
                 "scope": a.get("_scope", ""),
                 "active": active.get("agent") == aname,
                 "llm_service": acfg.get("llm_service", ""),
-                "assigned_skills": a.get("assigned_skills") or [],
+                "assigned_skills": assigned_names,
             }
-            for skill_name in entry["assigned_skills"]:
+            for skill_name in assigned_names:
                 assigned_by_skill.setdefault(skill_name, []).append(aname)
             if conv_id:
                 ac_cfg = store.get_extra(conv_id, f"random_thought::{aname.lower()}") or {}
@@ -1611,7 +1626,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                     merged,
                     operation="update",
                     user_id=target_uid,
-                    conversation_id="",
+                    conversation_id=_skill_conv,
                 )
                 if review_meta:
                     data = attach_review_metadata(data, review_meta)

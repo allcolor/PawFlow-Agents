@@ -231,6 +231,25 @@ def test_pfp_inspect_blocks_invalid_agent_skill_name(tmp_path, monkeypatch):
     assert skill_row["selected"] is False
 
 
+def test_pfp_inspect_blocks_skill_without_description(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    keypair = pfp_package.create_signing_key()
+    pkgdir = _write_package_dir(tmp_path, keypair)
+    skill_md = pkgdir / "content" / "skills" / "pkg-skill" / "SKILL.md"
+    skill_md.write_text(
+        "---\nname: pkg-skill\n---\nUse the package skill safely.\n",
+        encoding="utf-8",
+    )
+    built = pfp_package.build_pfp(str(pkgdir), private_key=keypair["private_key"])
+
+    plan = pfp_package.inspect_pfp(built["path"], user_id="alice")
+
+    skill_row = next(row for row in plan["objects"] if row["id"] == "skill:pkg-skill")
+    assert skill_row["status"] == "blocked"
+    assert skill_row["reason"] == "SKILL.md frontmatter.description is required"
+    assert skill_row["selected"] is False
+
+
 def test_pfp_installs_agent_hook_runtime_resource(tmp_path, monkeypatch):
     _reset_repo(tmp_path, monkeypatch)
     keypair = pfp_package.create_signing_key()

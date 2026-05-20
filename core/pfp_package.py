@@ -55,6 +55,7 @@ _RESOURCE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,127}$")
 _SKILL_NAME_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
 _FRONTMATTER_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*\n(.*)\Z", re.DOTALL)
 _VERSION_REF_RE = re.compile(r"^[A-Za-z0-9._+*<>=!~,^ -]{1,80}$")
+_RESERVED_SKILL_WORDS = ("anthropic", "claude")
 
 _RESOURCE_TYPES = {
     "agent": "agent",
@@ -932,7 +933,8 @@ def _object_plan(obj: Dict[str, Any], package: Dict[str, Any], user_id: str,
         status, reason, installable = "blocked", f"unsupported object type: {obj_type}", False
     elif not name or not _RESOURCE_NAME_RE.match(name):
         status, reason, installable = "blocked", "invalid object name", False
-    elif obj_type == "skill" and (not _SKILL_NAME_RE.match(name) or "--" in name):
+    elif obj_type == "skill" and (not _SKILL_NAME_RE.match(name) or "--" in name
+                                   or any(word in name for word in _RESERVED_SKILL_WORDS)):
         status, reason, installable = "blocked", "invalid Agent Skill name", False
     elif path and _safe_relpath(path) not in package["files"]:
         status, reason, installable = "blocked", f"missing package file: {path}", False
@@ -944,6 +946,16 @@ def _object_plan(obj: Dict[str, Any], package: Dict[str, Any], user_id: str,
         status = "missing_dependency"
         reason = "missing package dependency: " + ", ".join(
             _format_dependency(dep) for dep in missing_dependencies)
+    if installable and status == "new" and obj_type == "skill":
+        try:
+            parsed = _load_resource_data(package, _safe_relpath(path), "skill", name)
+            parsed_name = str(parsed.get("name") or "").strip()
+            if parsed_name != name:
+                status, reason, installable = "blocked", "SKILL.md name does not match package object name", False
+            elif not str(parsed.get("description") or "").strip():
+                status, reason, installable = "blocked", "SKILL.md frontmatter.description is required", False
+        except Exception as exc:
+            status, reason, installable = "blocked", str(exc), False
     if installable and status == "new":
         status = _existing_status(
             obj_type, _existing_status_name(obj_type, obj, package, path, name),
@@ -1962,7 +1974,8 @@ def _parse_skill_md(text: str, default_name: str = "") -> Dict[str, Any]:
     if not body:
         raise PfpError("SKILL.md body is required")
     name = str(meta.get("name") or default_name)
-    if not _SKILL_NAME_RE.match(name) or "--" in name:
+    if (not _SKILL_NAME_RE.match(name) or "--" in name
+            or any(word in name for word in _RESERVED_SKILL_WORDS)):
         raise PfpError("Skill name must follow Agent Skills spec: lowercase letters, numbers, single hyphens")
     return {
         "instructions": body,

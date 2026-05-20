@@ -337,6 +337,132 @@ def test_delete_skill_removes_agent_assignments(monkeypatch):
     assert len(appended) == 2
 
 
+def test_unassign_skill_matches_object_entries(monkeypatch):
+    updated = []
+
+    class Task:
+        pass
+
+    class Store:
+        pass
+
+    class ResourceStore:
+        def get_any(self, rtype, name, user_id, conversation_id=""):
+            if rtype == "agent" and name == "assistant":
+                return {
+                    "name": "assistant",
+                    "_scope": "user",
+                    "assigned_skills": [
+                        {"name": "review-pr", "params": {"mode": "fast"}},
+                        "other",
+                    ],
+                }
+            return None
+
+        def update(self, rtype, name, user_id, data, **kwargs):
+            updated.append((rtype, name, user_id, data, kwargs))
+
+    from core.resource_store import ResourceStore as RealResourceStore
+    monkeypatch.setattr(RealResourceStore, "instance", staticmethod(lambda: ResourceStore()))
+
+    ff = FlowFile(content=b"")
+    result = _handle_agent_resource(Task(), "unassign_skill", {
+        "agent_name": "assistant", "skill_name": "review-pr",
+    }, Store(), "alice", ff)
+
+    assert result == [ff]
+    body = json.loads(ff.get_content().decode("utf-8"))
+    assert body["unassigned"] is True
+    assert updated == [("agent", "assistant", "alice", {"assigned_skills": ["other"]}, {})]
+
+
+def test_assign_skill_does_not_duplicate_object_entries(monkeypatch):
+    updated = []
+
+    class Task:
+        pass
+
+    class Store:
+        pass
+
+    existing_assignment = {"name": "review-pr", "params": {"mode": "fast"}}
+
+    class ResourceStore:
+        def get_any(self, rtype, name, user_id, conversation_id=""):
+            if rtype == "agent" and name == "assistant":
+                return {
+                    "name": "assistant",
+                    "_scope": "user",
+                    "assigned_skills": [existing_assignment],
+                }
+            if rtype == "skill" and name == "review-pr":
+                return {"name": "review-pr", "description": "Review PRs"}
+            return None
+
+        def update(self, rtype, name, user_id, data, **kwargs):
+            updated.append((rtype, name, user_id, data, kwargs))
+
+    from core.resource_store import ResourceStore as RealResourceStore
+    monkeypatch.setattr(RealResourceStore, "instance", staticmethod(lambda: ResourceStore()))
+
+    ff = FlowFile(content=b"")
+    result = _handle_agent_resource(Task(), "assign_skill", {
+        "agent_name": "assistant", "skill_name": "review-pr",
+    }, Store(), "alice", ff)
+
+    assert result == [ff]
+    assert updated == [("agent", "assistant", "alice", {"assigned_skills": [existing_assignment]}, {})]
+
+
+def test_list_resources_normalizes_object_assigned_skills(monkeypatch):
+    class Task:
+        def _ensure_active_agent(self, conv_id, active, user_id):
+            return active
+
+    class Store:
+        def get_extra(self, conv_id, key):
+            return {"agent": "assistant"} if key == "active_resources" else None
+
+    class ResourceStore:
+        def list_all(self, rtype, user_id, conversation_id=""):
+            if rtype == "agent":
+                return [{
+                    "name": "assistant",
+                    "_scope": "conversation",
+                    "assigned_skills": [
+                        {"name": "review-pr", "params": {"mode": "fast"}},
+                        "other",
+                    ],
+                }]
+            if rtype == "skill":
+                return [
+                    {"name": "review-pr", "description": "Review PRs"},
+                    {"name": "other", "description": "Other skill"},
+                ]
+            return []
+
+    from core.resource_store import ResourceStore as RealResourceStore
+    import core.conv_agent_config as conv_agent_config
+    monkeypatch.setattr(RealResourceStore, "instance", staticmethod(lambda: ResourceStore()))
+    monkeypatch.setattr(
+        conv_agent_config,
+        "get_all_agent_configs",
+        lambda conv_id: {"assistant": {"definition": "assistant", "llm_service": "llm"}},
+    )
+
+    ff = FlowFile(content=b"")
+    result = _handle_agent_resource(Task(), "list_resources", {
+        "conversation_id": "conv1",
+    }, Store(), "alice", ff)
+
+    assert result == [ff]
+    body = json.loads(ff.get_content().decode("utf-8"))
+    assert body["agents"][0]["assigned_skills"] == ["review-pr", "other"]
+    skills = {row["name"]: row for row in body["skills"]}
+    assert skills["review-pr"]["assigned_to"] == ["assistant"]
+    assert skills["other"]["assigned_to"] == ["assistant"]
+
+
 def test_resolve_skill_prompts_delivers_body_verbatim(monkeypatch):
     # load_skill delivers SKILL.md verbatim; the directory is an explicit line.
     from core import skill_resolver

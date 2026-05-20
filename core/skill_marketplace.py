@@ -28,6 +28,7 @@ _FETCH_TIMEOUT_SECONDS = 15
 _GITHUB_REF_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 _SKILL_NAME_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
 _FRONTMATTER_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*\n(.*)\Z", re.DOTALL)
+_RESERVED_SKILL_WORDS = ("anthropic", "claude")
 _SAFE_TEXT_EXTENSIONS = {
     ".css", ".csv", ".html", ".js", ".json", ".md", ".mjs", ".ps1",
     ".py", ".sh", ".svg", ".toml", ".ts", ".txt", ".yaml", ".yml",
@@ -96,9 +97,7 @@ def import_marketplace_skill(source: str = "", ref: str = "", *,
         skill_data["name"] = name
     skill_name = skill_data["name"]
 
-    from core.review_bindings import (
-        attach_review_metadata, review_for_write, review_now,
-    )
+    from core.review_bindings import attach_review_metadata, review_now
     review = review_now(
         skill_data, operation="import", user_id=user_id, conversation_id=conversation_id,
         package_files=package_files)
@@ -117,9 +116,13 @@ def import_marketplace_skill(source: str = "", ref: str = "", *,
             "message": _review_message(skill_name, blocked, requires_human_review, force),
         }
 
-    review_meta = review_for_write(
-        skill_data, operation="import", user_id=user_id,
-        conversation_id=conversation_id, package_files=package_files)
+    from core.package_review import review_hash, review_metadata
+    review_meta = review_metadata(
+        review,
+        service_id=review.get("service_id", ""),
+        llm_service=review.get("llm_service", ""),
+        subject_hash=review_hash(skill_data, package_files),
+    )
     if review_meta:
         skill_data = attach_review_metadata(skill_data, review_meta)
 
@@ -451,7 +454,8 @@ def _parse_skill_md(text: str) -> Tuple[Dict[str, Any], str]:
 def _validate_skill_name(name: str) -> None:
     if not name:
         raise SkillMarketplaceError("SKILL.md frontmatter.name is required")
-    if not _SKILL_NAME_RE.match(name) or "--" in name:
+    if (not _SKILL_NAME_RE.match(name) or "--" in name
+            or any(word in name for word in _RESERVED_SKILL_WORDS)):
         raise SkillMarketplaceError(
             "Skill name must follow Agent Skills spec: lowercase letters, numbers, single hyphens")
 

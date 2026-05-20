@@ -21,6 +21,40 @@ _FLOW_TEMPLATES_LOCK = threading.Lock()
 # assign/unassign/delete so a concurrent update cannot drop an entry.
 _ASSIGNED_SKILLS_LOCK = threading.Lock()
 
+# Cap on UI-supplied skill bundle uploads (sum of decoded asset bytes).
+_SKILL_PACKAGE_FILES_MAX_BYTES = 2_000_000
+
+
+def _decode_skill_package_files(raw) -> Dict[str, bytes]:
+    """Decode UI-supplied skill bundle files to {relpath: bytes}.
+
+    The UI sends {relpath: base64} so binary assets (e.g. images under
+    assets/) survive the JSON transport. Unsafe paths and the reserved
+    SKILL.md name are dropped; the total decoded size is capped.
+    """
+    import base64
+    if not isinstance(raw, dict):
+        return {}
+    out: Dict[str, bytes] = {}
+    total = 0
+    for rel, b64 in raw.items():
+        clean = str(rel or "").replace("\\", "/").strip("/")
+        parts = clean.split("/") if clean else []
+        if not clean or clean == "SKILL.md" or any(
+                p in (".", "..", "") for p in parts):
+            continue
+        try:
+            content = base64.b64decode(str(b64 or ""), validate=True)
+        except Exception:
+            continue
+        total += len(content)
+        if total > _SKILL_PACKAGE_FILES_MAX_BYTES:
+            raise ValueError(
+                "Skill bundle exceeds the "
+                f"{_SKILL_PACKAGE_FILES_MAX_BYTES // 1000} KB upload cap")
+        out[clean] = content
+    return out
+
 
 def _scan_flow_templates(user_id: str) -> List[Dict[str, Any]]:
     from core.paths import REPOSITORY_DIR
@@ -335,14 +369,34 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             for _opt in ("allowed-tools", "license", "metadata"):
                 if body.get(_opt) not in (None, "", [], {}):
                     data[_opt] = body.get(_opt)
+            # Bundled assets (scripts/, references/, assets/...) arrive
+            # base64-encoded so binary files survive the JSON transport.
+            _pkg_files = _decode_skill_package_files(body.get("package_files"))
+            if _pkg_files:
+                data["package_files"] = _pkg_files
             from core.review_bindings import attach_review_metadata, review_for_write
-            review_meta = review_for_write(
-                data,
-                operation="update" if is_update else "create",
-                user_id=uid,
-                conversation_id=conv_id,
-                force=bool(body.get("force", False)),
-            )
+            from core.package_review import ReviewBlocked
+            _review_subject = {k: v for k, v in data.items()
+                               if k != "package_files"}
+            try:
+                review_meta = review_for_write(
+                    _review_subject,
+                    operation="update" if is_update else "create",
+                    user_id=uid,
+                    conversation_id=conv_id,
+                    package_files=_pkg_files,
+                    force=bool(body.get("force", False)),
+                )
+            except ReviewBlocked as _rb:
+                # The user has the final word: surface the findings and let
+                # the UI offer a rerun with force.
+                flowfile.set_content(json.dumps({
+                    "requires_confirmation": True,
+                    "name": skill_name,
+                    "review": _rb.review,
+                    "message": str(_rb),
+                }, ensure_ascii=False).encode())
+                return [flowfile]
             if review_meta:
                 data = attach_review_metadata(data, review_meta)
             scope_kwargs = {"conversation_id": conv_id} if scope == "conversation" and conv_id else {}
@@ -1645,13 +1699,33 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                           if not str(k).startswith("_")}
                 merged.update(data if isinstance(data, dict) else {})
                 from core.review_bindings import attach_review_metadata, review_for_write
-                review_meta = review_for_write(
-                    merged,
-                    operation="update",
-                    user_id=target_uid,
-                    conversation_id=_skill_conv,
-                    force=bool(body.get("force", False)),
-                )
+                from core.package_review import ReviewBlocked
+                # Decode bundled assets (only when re-uploaded); leaving
+                # them out keeps the skill's existing assets on disk.
+                _pkg_files = _decode_skill_package_files(
+                    merged.get("package_files"))
+                if _pkg_files:
+                    data["package_files"] = _pkg_files
+                else:
+                    data.pop("package_files", None)
+                merged.pop("package_files", None)
+                try:
+                    review_meta = review_for_write(
+                        merged,
+                        operation="update",
+                        user_id=target_uid,
+                        conversation_id=_skill_conv,
+                        package_files=_pkg_files,
+                        force=bool(body.get("force", False)),
+                    )
+                except ReviewBlocked as _rb:
+                    flowfile.set_content(json.dumps({
+                        "requires_confirmation": True,
+                        "name": rname,
+                        "review": _rb.review,
+                        "message": str(_rb),
+                    }, ensure_ascii=False).encode())
+                    return [flowfile]
                 if review_meta:
                     data = attach_review_metadata(data, review_meta)
             scope_kwargs = {"conversation_id": body.get("conversation_id", "")} if scope == "conversation" else {}
@@ -1685,13 +1759,32 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         try:
             if rtype == "skill":
                 from core.review_bindings import attach_review_metadata, review_for_write
-                review_meta = review_for_write(
-                    data,
-                    operation="create",
-                    user_id=target_uid,
-                    conversation_id=conv_id if scope == "conversation" else "",
-                    force=bool(body.get("force", False)),
-                )
+                from core.package_review import ReviewBlocked
+                _pkg_files = _decode_skill_package_files(
+                    data.get("package_files"))
+                if _pkg_files:
+                    data["package_files"] = _pkg_files
+                else:
+                    data.pop("package_files", None)
+                _review_subject = {k: v for k, v in data.items()
+                                   if k != "package_files"}
+                try:
+                    review_meta = review_for_write(
+                        _review_subject,
+                        operation="create",
+                        user_id=target_uid,
+                        conversation_id=conv_id if scope == "conversation" else "",
+                        package_files=_pkg_files,
+                        force=bool(body.get("force", False)),
+                    )
+                except ReviewBlocked as _rb:
+                    flowfile.set_content(json.dumps({
+                        "requires_confirmation": True,
+                        "name": rname,
+                        "review": _rb.review,
+                        "message": str(_rb),
+                    }, ensure_ascii=False).encode())
+                    return [flowfile]
                 if review_meta:
                     data = attach_review_metadata(data, review_meta)
             if rtype == "task_def" and scope == "conversation" and conv_id:

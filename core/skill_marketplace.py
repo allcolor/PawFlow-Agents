@@ -103,7 +103,10 @@ def import_marketplace_skill(source: str = "", ref: str = "", *,
         package_files=package_files)
     blocked = not bool(review.get("allowed", False)) or review.get("risk") == "block"
     requires_human_review = bool(review.get("requires_human_review", False))
-    if review_only or blocked or (requires_human_review and not force):
+    # The user has the final word: force clears both a hard block and a
+    # human-review request. Without force, return the findings so the
+    # user can decide and rerun with force=true.
+    if review_only or ((blocked or requires_human_review) and not force):
         return {
             "ok": not blocked,
             "imported": False,
@@ -634,12 +637,15 @@ def _public_skill_preview(skill: Dict[str, Any]) -> Dict[str, Any]:
 
 def _review_message(skill_name: str, blocked: bool,
                     requires_human_review: bool, force: bool) -> str:
-    if blocked:
-        return f"Import blocked by skill review for '{skill_name}'."
+    if blocked and not force:
+        return (
+            f"Skill review flagged '{skill_name}' as high risk. "
+            "Review the findings and rerun with force=true to import it anyway."
+        )
     if requires_human_review and not force:
         return (
-            f"Skill '{skill_name}' requires human review. "
-            "Re-run with force=true after reviewing the package to import it."
+            f"Skill '{skill_name}' needs human review. "
+            "Review the findings and rerun with force=true to import it."
         )
     return f"Reviewed skill '{skill_name}' without importing it."
 

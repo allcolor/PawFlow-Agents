@@ -98,7 +98,7 @@ class ManageResourceHandler(ToolHandler):
                 },
                 "force": {
                     "type": "boolean",
-                    "description": "Allow importing or writing a reviewed skill that requires human review. Blocked reviews still fail.",
+                    "description": "Override the review verdict and write/import the skill anyway, after inspecting the findings. Clears every verdict, including a hard block.",
                 },
             },
             "required": ["action", "resource_type"],

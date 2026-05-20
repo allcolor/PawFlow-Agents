@@ -264,12 +264,41 @@ def review_metadata(review: Dict[str, Any], *, service_id: str = "",
     return metadata
 
 
+class ReviewBlocked(ValueError):
+    """Raised when a review verdict would block a write/install.
+
+    The user always has the final word. This exception carries the full
+    review payload so the caller can surface the findings and let the
+    user decide whether to rerun with force.
+    """
+
+    def __init__(self, message: str, review: Dict[str, Any]):
+        super().__init__(message)
+        self.review = review or {}
+
+
 def assert_installable_review(review: Dict[str, Any], *, force: bool,
                               label: str) -> None:
+    """Raise ReviewBlocked unless the review passes or force overrides it.
+
+    force is the user's explicit override and it clears every verdict,
+    including a hard `block`: review findings inform the decision, they
+    never veto it. Callers without force should catch ReviewBlocked,
+    show `exc.review` to the user, and offer to rerun with force.
+    """
+    if force:
+        return
     if not bool(review.get("allowed", False)) or review.get("risk") == "block":
-        raise ValueError(f"{label} review blocked install")
-    if bool(review.get("requires_human_review", False)) and not force:
-        raise ValueError(f"{label} review requires human review; rerun with force after inspection")
+        raise ReviewBlocked(
+            f"{label} review flagged this content (risk="
+            f"{review.get('risk', 'unknown')}). Review the findings and "
+            "rerun with force to proceed anyway.",
+            review)
+    if bool(review.get("requires_human_review", False)):
+        raise ReviewBlocked(
+            f"{label} review requests human review. Review the findings "
+            "and rerun with force to proceed.",
+            review)
 
 
 def _llm_review(payload: Dict[str, Any], *, user_id: str,

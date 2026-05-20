@@ -319,8 +319,8 @@ function cmdImgservice(text, parts) {
 
 function _stripAt(s) { return s ? s.replace(/^@/, '') : ''; }
 
-// `/skill add` only takes one free-text argument for the body; derive the
-// manifest description from its first non-empty line instead of the whole body.
+// `/skill add` derives the manifest description from the first non-empty
+// line of the body — used only as a fallback when no `::` separator is given.
 function _skillShortDescription(body) {
   const lines = String(body || '').split('\n');
   for (let i = 0; i < lines.length; i++) {
@@ -328,6 +328,19 @@ function _skillShortDescription(body) {
     if (line) return line.slice(0, 200);
   }
   return '';
+}
+
+// Split a `/skill add|update` body into an explicit description and the
+// instructions. The `::` separator marks the boundary; without it, the
+// description falls back to the first non-empty line (legacy behaviour).
+function _skillBodyParts(body) {
+  const raw = String(body || '');
+  const idx = raw.indexOf('::');
+  if (idx >= 0) {
+    return { description: raw.slice(0, idx).trim(),
+             instructions: raw.slice(idx + 2).trim() };
+  }
+  return { description: _skillShortDescription(raw), instructions: raw.trim() };
 }
 
 function cmdSkill(text, parts) {
@@ -339,14 +352,14 @@ function cmdSkill(text, parts) {
     cmdSkillList();
   } else if (sub === 'add' || sub === 'create') {
     const name = _stripAt(parts[2]);
-    const instructions = parts.slice(3).join(' ');
-    if (!name || !instructions) { addMsg('system', t('usageLine', { usage: '/skill add [--force] @name <description/instructions>' })); return true; }
-    cmdResourceAction('create_skill', {name, description: _skillShortDescription(instructions), instructions, force});
+    const { description, instructions } = _skillBodyParts(parts.slice(3).join(' '));
+    if (!name || !instructions) { addMsg('system', t('usageLine', { usage: '/skill add [--force] @name <description> :: <instructions>' })); return true; }
+    cmdResourceAction('create_skill', {name, description, instructions, force});
   } else if (sub === 'update') {
     const name = _stripAt(parts[2]);
-    const instructions = parts.slice(3).join(' ');
-    if (!name || !instructions) { addMsg('system', t('usageLine', { usage: '/skill update [--force] @name <description/instructions>' })); return true; }
-    cmdResourceAction('update_skill', {name, description: _skillShortDescription(instructions), instructions, force});
+    const { description, instructions } = _skillBodyParts(parts.slice(3).join(' '));
+    if (!name || !instructions) { addMsg('system', t('usageLine', { usage: '/skill update [--force] @name <description> :: <instructions>' })); return true; }
+    cmdResourceAction('update_skill', {name, description, instructions, force});
   } else if (sub === 'del' || sub === 'delete') {
     const name = _stripAt(parts[2]);
     if (!name) { addMsg('system', t('usageLine', { usage: '/skill del @name' })); return true; }
@@ -372,7 +385,7 @@ function cmdSkill(text, parts) {
   } else if (sub === 'run' || sub === 'search' || sub === 'import') {
     return tryServerCommand(text);
   } else {
-    addMsg('system', t('usageLine', { usage: '/skill list | add [--force] @name <description/instructions> | update [--force] @name <description/instructions> | del @name | assign @agent @skill | unassign @agent @skill | assigned @agent | run [@agent] <name> [args...]' }));
+    addMsg('system', t('usageLine', { usage: '/skill list | add [--force] @name <description> :: <instructions> | update [--force] @name <description> :: <instructions> | del @name | assign @agent @skill | unassign @agent @skill | assigned @agent | run [@agent] <name> [args...]' }));
   }
   return true;
 }
@@ -381,9 +394,9 @@ function cmdAddSkill(text, parts) {
   const force = parts.includes('--force');
   if (force) parts = parts.filter(p => p !== '--force');
   const name = _stripAt(parts[1]);
-  const instructions = parts.slice(2).join(' ');
-  if (!name || !instructions) { addMsg('system', t('usageLine', { usage: '/add-skill [--force] @name <description/instructions>' })); return true; }
-  cmdResourceAction('create_skill', {name, description: _skillShortDescription(instructions), instructions, force});
+  const { description, instructions } = _skillBodyParts(parts.slice(2).join(' '));
+  if (!name || !instructions) { addMsg('system', t('usageLine', { usage: '/add-skill [--force] @name <description> :: <instructions>' })); return true; }
+  cmdResourceAction('create_skill', {name, description, instructions, force});
   return true;
 }
 

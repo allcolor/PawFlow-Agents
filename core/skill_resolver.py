@@ -163,14 +163,32 @@ def _iter_skill_asset_files(skill_root: str) -> List[Tuple[str, str]]:
     return found
 
 
-def _skill_assets_block(skill_def: Dict[str, Any]) -> str:
+def _relay_mount_available(conversation_id: str, agent_name: str = "") -> bool:
+    """True when the skill directory is reachable as a mount for this scope.
+
+    A relay linked to the conversation exposes the skills repository via
+    the read-only /skills FUSE mount, so bundled assets can be read there
+    and need not be inlined into context. With no relay linked the agent
+    has no mount, so the assets must be inlined as a fallback.
+    """
+    if not conversation_id:
+        return False
+    try:
+        from core.relay_bindings import get_linked
+        return bool(get_linked(conversation_id, agent_name or ""))
+    except Exception:
+        return False
+
+
+def _skill_assets_block(skill_def: Dict[str, Any],
+                        mount_available: bool = False) -> str:
     """Return a block listing a skill's bundled asset files.
 
     The skill directory is normally reachable as a read-only mount (a Docker
     bind mount for CLI providers, the relay /skills FUSE for others). When
-    that mount is unavailable — e.g. an agent with no connected relay — the
-    agent still needs the assets, so this block enumerates every bundled file
-    and inlines small text files as a context-only fallback.
+    that mount is available the block only enumerates the files; when it is
+    not (e.g. an agent with no connected relay) small text files are inlined
+    as a context-only fallback so the agent can still reach them.
     """
     files = _iter_skill_asset_files((skill_def or {}).get("skill_root") or "")
     if not files:
@@ -184,6 +202,9 @@ def _skill_assets_block(skill_def: Dict[str, Any]) -> str:
         except OSError:
             continue
         listing.append(f"- {rel} ({size} bytes)")
+        if mount_available:
+            # Mount reachable: inlining would only duplicate on-disk content.
+            continue
         ext = os.path.splitext(rel)[1].lower()
         if (ext in _ASSET_TEXT_EXTENSIONS
                 and 0 < size <= _ASSET_INLINE_MAX_BYTES
@@ -195,6 +216,13 @@ def _skill_assets_block(skill_def: Dict[str, Any]) -> str:
                 continue
             inlined_total += size
             inlined.append(f"#### {rel}\n```\n{text}\n```")
+    if mount_available:
+        return (
+            "\n\n### Skill assets\n"
+            "These files are bundled with the skill and live in the "
+            "read-only skill directory — read them there when needed.\n"
+            + "\n".join(listing)
+        )
     block = (
         "\n\n### Skill assets\n"
         "These files are bundled with the skill and also live in the "
@@ -226,6 +254,7 @@ def resolve_skill_prompts(
     """
     from core.resource_store import ResourceStore
     rs = ResourceStore.instance()
+    mount_available = _relay_mount_available(conversation_id, agent_name)
     blocks = []
     seen = set()
     for entry in skill_entries:
@@ -254,7 +283,7 @@ def resolve_skill_prompts(
             f"(read-only; assets like scripts/ and references/ live here)\n\n"
             f"{prompt}"
             f"{_allowed_tools_directive(skill_def)}"
-            f"{_skill_assets_block(skill_def)}"
+            f"{_skill_assets_block(skill_def, mount_available)}"
         )
     return blocks
 
@@ -289,7 +318,7 @@ def resolve_runnable_skill_prompt(skill_name: str, user_id: str,
         f"{desc}\n\n"
         f"{prompt}"
         f"{_allowed_tools_directive(skill_def)}"
-        f"{_skill_assets_block(skill_def)}\n\n"
+        f"{_skill_assets_block(skill_def, _relay_mount_available(conversation_id, agent_name))}\n\n"
         "Run this skill now for the provided arguments. "
         "Use normal PawFlow tools if the skill requires files, commands, or scripts."
     )

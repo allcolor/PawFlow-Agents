@@ -2584,7 +2584,7 @@ function _renameVoiceClone(name) {
 // ── Resource editor overlay ───────────────────────────────────────
 const _RESOURCE_FIELDS = {
   agent:    [['prompt','textarea'],['description','text']],
-  skill:    [['description','text'],['instructions','textarea'],['allowed-tools','text'],['license','text'],['metadata','json']],
+  skill:    [['description','text'],['instructions','textarea'],['allowed-tools','text'],['license','text'],['metadata','json'],['package_files','skill_assets']],
   mcp:      [['transport','mcp_transport'],['via','mcp_via'],['relay_service','mcp_relay'],['local','checkbox'],['url','text'],['command','text'],['args','json'],['env','json'],['auth','json'],['description','text']],
   task_def: [['prompt','textarea'],['criteria','textarea'],['default_interval','text'],['verifier','text'],['interactive','checkbox'],['skills','skills_picker'],['description','text']],
   prompt:   [['prompt','textarea'],['parameters','params_editor'],['title','text'],['category','text'],['description','text']],
@@ -2633,7 +2633,9 @@ function _buildResourceForm(rtype, data, isNew, readonly) {
       val = JSON.stringify(val, null, 2);
     }
     const escaped = typeof val === 'string' ? val.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') : val;
-    html += `<div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">${key}</label>`;
+    const _fieldLabel = (type === 'skill_assets')
+      ? 'bundled assets (scripts/, references/, assets/...)' : key;
+    html += `<div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">${escapeHtml(_fieldLabel)}</label>`;
     if (type === 'textarea') {
       html += `<textarea id="res-${key}"${dis} style="width:100%;min-height:120px;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;font-family:monospace;font-size:12px;resize:vertical;${roS}">${escaped}</textarea>`;
     } else if (type === 'json') {
@@ -2703,6 +2705,16 @@ function _buildResourceForm(rtype, data, isNew, readonly) {
     } else if (type === 'skills_picker') {
       html += `<div id="res-${key}" data-type="skills_picker" style="margin-top:2px;background:var(--pf-sidebar);border:1px solid var(--pf-border);border-radius:4px;padding:6px;max-height:120px;overflow-y:auto;${roS}">`;
       html += '<div style="color:var(--pf-muted);font-size:11px;">Loading skills...</div>';
+      html += '</div>';
+    } else if (type === 'skill_assets') {
+      // Upload bundled skill files (scripts/, references/, binary assets/).
+      // Each staged file carries an editable skill-relative path.
+      html += `<div id="res-${key}" data-type="skill_assets" style="margin-top:2px;background:var(--pf-sidebar);border:1px solid var(--pf-border);border-radius:4px;padding:6px;${roS}">`;
+      html += '<div class="skill-asset-list" style="font-size:11px;color:var(--pf-muted);"></div>';
+      if (!readonly) {
+        html += '<input type="file" multiple class="skill-asset-input" onchange="_onSkillAssetInput(this)" style="margin-top:6px;font-size:11px;color:var(--pf-text);"/>';
+        html += '<div style="color:var(--pf-muted);font-size:10px;margin-top:4px;">Set a skill-relative path per file (e.g. scripts/run.py). Editing a skill: existing assets are kept unless you upload replacements.</div>';
+      }
       html += '</div>';
     } else if (type === 'number') {
       html += `<input id="res-${key}" type="number" value="${escaped}"${dis} style="width:80px;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;${roS}"/>`;
@@ -2776,6 +2788,72 @@ function _collectSkillsPicker(key) {
   return Array.from(cbs).map(function(cb) { return cb.value; });
 }
 
+// ── Skill bundled-asset upload widget ─────────────────────────────
+// Staged files live on the widget element as widget._assets:
+//   [{ path: 'scripts/run.py', b64: '<base64>' }, ...]
+// Files are base64-encoded so binary assets (images under assets/)
+// survive the JSON transport to create_resource/update_resource.
+function _renderSkillAssets(widget) {
+  if (!widget) return;
+  var list = widget.querySelector('.skill-asset-list');
+  if (!list) return;
+  var assets = widget._assets || [];
+  if (!assets.length) {
+    list.innerHTML = '<span style="color:var(--pf-muted);">No files staged.</span>';
+    return;
+  }
+  list.innerHTML = assets.map(function(a, i) {
+    return '<div style="display:flex;gap:4px;align-items:center;margin-bottom:3px;">'
+      + '<input class="skill-asset-path" data-idx="' + i + '" value="' + escapeHtml(a.path) + '" '
+      + 'style="flex:1;background:var(--pf-code-bg);color:var(--pf-text);border:1px solid var(--pf-border);padding:3px;border-radius:3px;font-size:11px;"/>'
+      + '<span style="color:var(--pf-muted);font-size:10px;">' + a.size + ' B</span>'
+      + '<button data-idx="' + i + '" class="skill-asset-rm" '
+      + 'style="background:none;border:none;color:var(--pf-danger);cursor:pointer;font-size:14px;">×</button>'
+      + '</div>';
+  }).join('');
+  list.querySelectorAll('.skill-asset-rm').forEach(function(btn) {
+    btn.onclick = function() {
+      widget._assets.splice(parseInt(btn.dataset.idx, 10), 1);
+      _renderSkillAssets(widget);
+    };
+  });
+  list.querySelectorAll('.skill-asset-path').forEach(function(inp) {
+    inp.onchange = function() {
+      widget._assets[parseInt(inp.dataset.idx, 10)].path = inp.value.trim();
+    };
+  });
+}
+
+function _onSkillAssetInput(inputEl) {
+  var widget = inputEl.closest('[data-type="skill_assets"]');
+  if (!widget) return;
+  if (!widget._assets) widget._assets = [];
+  var files = Array.from(inputEl.files || []);
+  var pending = files.length;
+  if (!pending) return;
+  files.forEach(function(file) {
+    var reader = new FileReader();
+    reader.onload = function() {
+      var b64 = String(reader.result || '').split(',').pop();
+      widget._assets.push({ path: file.name, b64: b64, size: file.size });
+      if (--pending === 0) { inputEl.value = ''; _renderSkillAssets(widget); }
+    };
+    reader.onerror = function() {
+      if (--pending === 0) { inputEl.value = ''; _renderSkillAssets(widget); }
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function _collectSkillAssets(key) {
+  var widget = document.getElementById('res-' + key);
+  if (!widget || widget.getAttribute('data-type') !== 'skill_assets') return undefined;
+  var assets = widget._assets || [];
+  var out = {};
+  assets.forEach(function(a) { if (a.path) out[a.path] = a.b64; });
+  return Object.keys(out).length ? out : undefined;
+}
+
 async function showResourceEditor(rtype, name, readonly) {
   // Fetch current data
   let data = {};
@@ -2818,6 +2896,51 @@ async function showResourceEditor(rtype, name, readonly) {
     var selected = Array.isArray(data.assigned_skills) ? data.assigned_skills : [];
     _loadSkillsPicker(skPicker, selected, !!readonly);
   }
+  var saWidget = panel.querySelector('[data-type="skill_assets"]');
+  if (saWidget) _renderSkillAssets(saWidget);
+}
+
+// Confirmation dialog for a blocked/flagged skill review. The user always
+// has the final word: the findings are shown and `onForce` reruns the
+// write with force=true.
+function _showSkillReviewConfirm(review, message, onForce) {
+  review = review || {};
+  var findings = Array.isArray(review.findings) ? review.findings : [];
+  var existing = document.getElementById('reviewConfirmOverlay');
+  if (existing) existing.remove();
+  var overlay = document.createElement('div');
+  overlay.id = 'reviewConfirmOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:var(--pf-shadow);display:flex;align-items:center;justify-content:center;z-index:10001;';
+  var panel = document.createElement('div');
+  panel.style.cssText = 'background:var(--pf-panel);border-radius:8px;padding:20px;width:540px;max-height:80vh;overflow-y:auto;border:1px solid var(--pf-border);';
+  var html = '<h3 style="margin:0 0 10px;color:var(--pf-text);font-size:14px;">⚠ Skill review</h3>';
+  html += '<div style="color:var(--pf-muted);font-size:12px;margin-bottom:8px;">' + escapeHtml(String(message || '')) + '</div>';
+  html += '<div style="color:var(--pf-text);font-size:11px;margin-bottom:6px;">Risk: <strong>' + escapeHtml(String(review.risk || 'unknown')) + '</strong></div>';
+  if (findings.length) {
+    html += '<div style="background:var(--pf-sidebar);border:1px solid var(--pf-border);border-radius:4px;padding:8px;margin-bottom:10px;">';
+    findings.forEach(function(f) {
+      f = f || {};
+      html += '<div style="margin-bottom:6px;font-size:11px;">'
+        + '<span style="color:var(--pf-danger,#e05260);font-weight:600;">[' + escapeHtml(String(f.severity || '')) + '] ' + escapeHtml(String(f.category || '')) + '</span><br/>'
+        + '<span style="color:var(--pf-text);">' + escapeHtml(String(f.reason || '')) + '</span>'
+        + (f.evidence ? '<br/><code style="color:var(--pf-muted);font-size:10px;word-break:break-all;">' + escapeHtml(String(f.evidence)) + '</code>' : '')
+        + '</div>';
+    });
+    html += '</div>';
+  }
+  html += '<div style="color:var(--pf-muted);font-size:11px;margin-bottom:10px;">You have the final word. Review the findings above and decide.</div>';
+  html += '<div style="display:flex;gap:8px;justify-content:flex-end;">'
+    + '<button id="reviewCancelBtn" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">' + escapeHtml(t('contextCancel')) + '</button>'
+    + '<button id="reviewForceBtn" style="background:var(--pf-danger,#e05260);color:#fff;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Proceed anyway</button>'
+    + '</div>';
+  panel.innerHTML = html;
+  overlay.appendChild(panel);
+  document.body.appendChild(overlay);
+  panel.querySelector('#reviewCancelBtn').onclick = function() { overlay.remove(); };
+  panel.querySelector('#reviewForceBtn').onclick = function() {
+    overlay.remove();
+    if (typeof onForce === 'function') onForce();
+  };
 }
 
 function _saveResourceEdit(rtype, name, scope) {
@@ -2826,6 +2949,7 @@ function _saveResourceEdit(rtype, name, scope) {
   for (const [key, type] of fields) {
     if (type === 'skills_picker') { data[key] = _collectSkillsPicker(key) || []; continue; }
     if (type === 'params_editor') { const p = _collectParams(key); if (p) data[key] = p; continue; }
+    if (type === 'skill_assets') { const pf = _collectSkillAssets(key); if (pf) data[key] = pf; continue; }
     const el = document.getElementById('res-' + key);
     if (el) {
       if (type === 'number') data[key] = parseInt(el.value) || 0;
@@ -2840,10 +2964,21 @@ function _saveResourceEdit(rtype, name, scope) {
   }
   const payload = { resource_type: rtype, name, scope, data };
   if (scope === 'conversation' && typeof conversationId !== 'undefined' && conversationId) payload.conversation_id = conversationId;
-  action$('update_resource', payload).subscribe(d => {
-    if (d.error) addMsg('error', d.error);
-    else { addMsg('system', t('resourceUpdated', { type: rtype, name: name })); document.getElementById('resourceEditorOverlay').remove(); loadResources(); }
-  });
+  function _submit(force) {
+    const p = force ? Object.assign({}, payload, { force: true }) : payload;
+    action$('update_resource', p).subscribe(d => {
+      // The user has the final word: a blocked review comes back as
+      // requires_confirmation, not an error — show the findings and let
+      // the user rerun with force.
+      if (d && d.requires_confirmation) {
+        _showSkillReviewConfirm(d.review, d.message, function() { _submit(true); });
+        return;
+      }
+      if (d.error) addMsg('error', d.error);
+      else { addMsg('system', t('resourceUpdated', { type: rtype, name: name })); document.getElementById('resourceEditorOverlay').remove(); loadResources(); }
+    });
+  }
+  _submit(false);
 }
 
 async function showResourceCreator(rtype) {
@@ -2874,6 +3009,8 @@ async function showResourceCreator(rtype) {
   // Populate skills picker if present (empty selection for new)
   var skPicker = panel.querySelector('[data-type="skills_picker"]');
   if (skPicker) _loadSkillsPicker(skPicker, [], false);
+  var saWidget = panel.querySelector('[data-type="skill_assets"]');
+  if (saWidget) _renderSkillAssets(saWidget);
 }
 
 function _saveResourceCreate(rtype, assignAfterCreate) {
@@ -2894,6 +3031,7 @@ function _saveResourceCreate(rtype, assignAfterCreate) {
   for (const [key, type] of fields) {
     if (type === 'skills_picker') { data[key] = _collectSkillsPicker(key) || []; continue; }
     if (type === 'params_editor') { const p = _collectParams(key); if (p) data[key] = p; continue; }
+    if (type === 'skill_assets') { const pf = _collectSkillAssets(key); if (pf) data[key] = pf; continue; }
     const el = document.getElementById('res-' + key);
     if (el) {
       if (type === 'number') data[key] = parseInt(el.value) || 0;
@@ -2921,19 +3059,29 @@ function _saveResourceCreate(rtype, assignAfterCreate) {
   }
   const payload = { resource_type: rtype, name, scope, data };
   if (scope === 'conversation' && typeof conversationId !== 'undefined' && conversationId) payload.conversation_id = conversationId;
-  action$('create_resource', payload, { skipConversationId: scope !== 'conversation' }).subscribe(d => {
-    if (d.error) addMsg('error', d.error);
-    else {
-      addMsg('system', t('resourceCreated', { type: rtype, name: name }));
-      document.getElementById('resourceEditorOverlay').remove();
-      loadResources();
-      if (assignAfterCreate && rtype === 'task_def') {
-        setTimeout(function() { _showAssignDialog(name); }, 0);
-      } else if (assignAfterCreate && rtype === 'skill') {
-        setTimeout(function() { _showSkillAssignDialog(name); }, 0);
+  function _submit(force) {
+    const p = force ? Object.assign({}, payload, { force: true }) : payload;
+    action$('create_resource', p, { skipConversationId: scope !== 'conversation' }).subscribe(d => {
+      // The user has the final word: a blocked review comes back as
+      // requires_confirmation — show the findings and offer a forced rerun.
+      if (d && d.requires_confirmation) {
+        _showSkillReviewConfirm(d.review, d.message, function() { _submit(true); });
+        return;
       }
-    }
-  });
+      if (d.error) addMsg('error', d.error);
+      else {
+        addMsg('system', t('resourceCreated', { type: rtype, name: name }));
+        document.getElementById('resourceEditorOverlay').remove();
+        loadResources();
+        if (assignAfterCreate && rtype === 'task_def') {
+          setTimeout(function() { _showAssignDialog(name); }, 0);
+        } else if (assignAfterCreate && rtype === 'skill') {
+          setTimeout(function() { _showSkillAssignDialog(name); }, 0);
+        }
+      }
+    });
+  }
+  _submit(false);
 }
 
 function _removeAgentFromConv(name) {

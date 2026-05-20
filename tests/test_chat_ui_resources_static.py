@@ -16,8 +16,10 @@ def test_resource_editor_sends_conversation_id_for_conversation_scope():
 
     assert "if (scope === 'conversation'" in js
     assert "payload.conversation_id = conversationId" in js
-    assert "action$('update_resource', payload)" in js
-    assert "action$('create_resource', payload, { skipConversationId: scope !== 'conversation' })" in js
+    # The submit call is wrapped in a _submit(force) helper so a blocked
+    # review can be rerun with force; `p` is payload (optionally + force).
+    assert "action$('update_resource', p)" in js
+    assert "action$('create_resource', p, { skipConversationId: scope !== 'conversation' })" in js
     assert "skipConversationId: scope !== 'conversation'" in js
     assert "!opts.skipConversationId" in rxbus
 

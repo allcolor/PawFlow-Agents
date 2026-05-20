@@ -569,6 +569,18 @@ function cmdResourceAction(action, extra) {
     payload.conversation_id = conversationId;
   }
   return rxjs.firstValueFrom(action$(action, payload)).then(data => {
+    // The user has the final word: a blocked skill review comes back as
+    // requires_confirmation — show the findings and offer a forced rerun.
+    if (data && data.requires_confirmation) {
+      if (typeof _showSkillReviewConfirm === 'function') {
+        _showSkillReviewConfirm(data.review, data.message, function() {
+          cmdResourceAction(action, Object.assign({}, extra, { force: true }));
+        });
+      } else {
+        addMsg('error', data.message || 'Skill review requires confirmation.');
+      }
+      return data;
+    }
     if (data.error) { addMsg('error', data.error); return data; }
     if (data.created) addMsg('system', `Created: ${extra.name || ''}`);
     else if (data.deleted) addMsg('system', `Deleted: ${extra.name || ''}`);

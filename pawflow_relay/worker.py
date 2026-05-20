@@ -283,7 +283,7 @@ def _make_handler_class(root_dir: str, secret: str, readonly: bool,
 def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=False,  # nosec B107
                 allow_automation=False, allow_local_screen=False, allow_local=False,
                 gateway_cookie="", session_token="", server_mount="",
-                filestore_mount=""):
+                filestore_mount="", skills_mount=""):
     """Connect to the PawFlow server via WebSocket and process filesystem commands.
 
     server_mount: if set, mount a FUSE proxy at this local path that
@@ -296,6 +296,11 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
     path that exposes the server FileStore as a virtualized hierarchy
     (/<file_id>/<filename>). Read-only — writes go through the
     HTTP/MCP FileStore APIs, not the FUSE mount.
+
+    skills_mount: if set, mount a third FUSE proxy at this local path
+    that exposes the server Agent Skills repository (global + this
+    user's skill tree). Read-only — it lets non-CLI providers reach a
+    skill's asset files referenced from its instructions.
     """
     import ssl
     import base64 as b64
@@ -1481,7 +1486,8 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
     _server_fs_swap = None
     _server_fs_mount = None
     _filestore_fs_swap = None
-    if server_mount or filestore_mount:
+    _skills_fs_swap = None
+    if server_mount or filestore_mount or skills_mount:
         from pawflow_relay.server_fs_client import SwappableServerFsClient
         from pawflow_relay.server_fs_mount import CombinedServerFsMount
         # ONE pyfuse3 mount at /pawflow_fs serving both cc_sessions
@@ -1494,6 +1500,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
         # via `mount --bind` against the routed subtrees.
         _server_fs_swap = SwappableServerFsClient()
         _filestore_fs_swap = SwappableServerFsClient()
+        _skills_fs_swap = SwappableServerFsClient()
         # Mountpoint under /tmp because it's tmpfs (always writable
         # by the relay user, no Dockerfile change required to grant
         # ownership). The bind-mounts that follow expose the canonical
@@ -1502,7 +1509,8 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
         _combined_root = "/tmp/pf_combined_fs"  # nosec B108 - relay-local FUSE mount root.
         try:
             _server_fs_mount = CombinedServerFsMount(
-                _combined_root, _server_fs_swap, _filestore_fs_swap)
+                _combined_root, _server_fs_swap, _filestore_fs_swap,
+                _skills_fs_swap)
             _server_fs_mount.start()
             sys.stderr.write(
                 f"[FSRelay] combined-fs mounted at {_combined_root}\n")
@@ -1519,6 +1527,8 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 _aliases.append((f"{_combined_root}/cc_sessions", server_mount))
             if filestore_mount:
                 _aliases.append((f"{_combined_root}/filestore", filestore_mount))
+            if skills_mount:
+                _aliases.append((f"{_combined_root}/skills", skills_mount))
 
             def _sudo_run(argv: list, _what: str):
                 _rc = subprocess.run(  # nosec B603
@@ -1576,6 +1586,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             _server_fs_mount = None
             _server_fs_swap = None
             _filestore_fs_swap = None
+            _skills_fs_swap = None
 
     try:
         from pawflow_relay.remote_mounts import RemoteMountManager
@@ -1723,6 +1734,13 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                     send_lock=_send_lock)
                 _filestore_fs_swap.set_inner(_filestore_fs_client)
 
+            _skills_fs_client = None
+            if _skills_fs_swap is not None:
+                _skills_fs_client = ServerFsClient(
+                    send_callable=lambda b: _ws_frame_send(sock, b),
+                    send_lock=_send_lock)
+                _skills_fs_swap.set_inner(_skills_fs_client)
+
             def _open_terminal(cols=80, rows=24, shell=None):
                 import uuid as _uuid_term
                 import fcntl
@@ -1846,12 +1864,14 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                     # Try each client in turn — request_ids are uuids so
                     # only one will own a given response.
                     _delivered = False
-                    for _fsc in (_server_fs_client, _filestore_fs_client):
+                    for _fsc in (_server_fs_client, _filestore_fs_client,
+                                 _skills_fs_client):
                         if _fsc is not None and _fsc.dispatch_response(msg):
                             _delivered = True
                             break
                     if not _delivered and (_server_fs_client is not None
-                                            or _filestore_fs_client is not None):
+                                            or _filestore_fs_client is not None
+                                            or _skills_fs_client is not None):
                         sys.stderr.write(
                             f"[FSRelay] orphan relay_response: {msg.get('request_id', '?')}\n")
                     continue
@@ -2065,13 +2085,14 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             # cancel its pending requests with EIO so the kernel doesn't
             # hang on the dead socket. The FUSE mount itself stays up
             # across reconnects — see the one-shot setup before this loop.
-            for _swap in (_server_fs_swap, _filestore_fs_swap):
+            for _swap in (_server_fs_swap, _filestore_fs_swap, _skills_fs_swap):
                 if _swap is not None:
                     try:
                         _swap.clear_inner()
                     except Exception:
                         logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-            for _name in ('_server_fs_client', '_filestore_fs_client'):
+            for _name in ('_server_fs_client', '_filestore_fs_client',
+                          '_skills_fs_client'):
                 _c = locals().get(_name)
                 if _c is not None:
                     try:

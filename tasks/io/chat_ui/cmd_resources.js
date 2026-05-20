@@ -339,6 +339,11 @@ function cmdSkill(text, parts) {
     const instructions = parts.slice(3).join(' ');
     if (!name || !instructions) { addMsg('system', t('usageLine', { usage: '/skill add @name <description/instructions>' })); return true; }
     cmdResourceAction('create_skill', {name, description: _skillShortDescription(instructions), instructions});
+  } else if (sub === 'update') {
+    const name = _stripAt(parts[2]);
+    const instructions = parts.slice(3).join(' ');
+    if (!name || !instructions) { addMsg('system', t('usageLine', { usage: '/skill update @name <description/instructions>' })); return true; }
+    cmdResourceAction('update_skill', {name, description: _skillShortDescription(instructions), instructions});
   } else if (sub === 'del' || sub === 'delete') {
     const name = _stripAt(parts[2]);
     if (!name) { addMsg('system', t('usageLine', { usage: '/skill del @name' })); return true; }
@@ -364,7 +369,7 @@ function cmdSkill(text, parts) {
   } else if (sub === 'run' || sub === 'search' || sub === 'import') {
     return tryServerCommand(text);
   } else {
-    addMsg('system', t('usageLine', { usage: '/skill list | add @name <description/instructions> | del @name | assign @agent @skill | unassign @agent @skill | assigned @agent | run [@agent] <name> [args...]' }));
+    addMsg('system', t('usageLine', { usage: '/skill list | add @name <description/instructions> | update @name <description/instructions> | del @name | assign @agent @skill | unassign @agent @skill | assigned @agent | run [@agent] <name> [args...]' }));
   }
   return true;
 }
@@ -373,7 +378,7 @@ function cmdAddSkill(text, parts) {
   const name = _stripAt(parts[1]);
   const instructions = parts.slice(2).join(' ');
   if (!name || !instructions) { addMsg('system', t('usageLine', { usage: '/add-skill @name <description/instructions>' })); return true; }
-  cmdResourceAction('create_skill', {name, description: instructions, instructions});
+  cmdResourceAction('create_skill', {name, description: _skillShortDescription(instructions), instructions});
   return true;
 }
 

@@ -21,8 +21,8 @@
       },
       "post_install": [
         "ln -sf /usr/bin/python3 /usr/bin/python",
-        "mkdir -p /workspace /cc_sessions /filestore /opt/pawflow",
-        "chown pawflow:pawflow /workspace /cc_sessions /filestore /opt/pawflow",
+        "mkdir -p /workspace /cc_sessions /filestore /skills /opt/pawflow",
+        "chown pawflow:pawflow /workspace /cc_sessions /filestore /skills /opt/pawflow",
         "groupadd -f docker && usermod -aG docker pawflow || true",
         "printf '#!/bin/bash\\nsudo chronyd 2>/dev/null || true\\nexec \"$@\"\\n' > /usr/local/bin/init.sh",
         "chmod +x /usr/local/bin/init.sh"

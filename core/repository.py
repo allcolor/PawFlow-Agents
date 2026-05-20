@@ -612,8 +612,12 @@ class ScopedRepository:
         except OSError:
             pass
         import yaml
+        # `declared_allowed_tools` is a read-time alias of `allowed-tools`
+        # synthesised by _read_skill; writing it back would duplicate the
+        # field in the SKILL.md frontmatter.
         meta = {k: v for k, v in data.items() if k not in (
             "instructions", "prompt", "name", "_scope", "skill_root", "package_files",
+            "declared_allowed_tools",
         ) and not str(k).startswith("_")}
         meta["name"] = path.name
         meta["description"] = description

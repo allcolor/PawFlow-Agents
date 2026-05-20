@@ -578,6 +578,7 @@ class RelayThread:
                 *_relay_permission_args,
                 "--server-mount", "/cc_sessions",
                 "--filestore-mount", "/filestore",
+                "--skills-mount", "/skills",
             ] + (["--allow-local"] if self.allow_local else [])
             # One-shot diagnostic: dump the -v flags so we can confirm
             # the relay-script dev-mount lands on /opt/pawflow/*.py.

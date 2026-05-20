@@ -293,6 +293,11 @@ class RelayService(BaseService):
         # to RelayFileStoreFs instead of RelayServerFs.
         self._filestore_fs = None
         self._filestore_fs_lock = threading.Lock()
+        # Third inverse-direction handler: virtualized FUSE view of the
+        # Agent Skills repository. Methods come in with the `skfs.`
+        # prefix and dispatch to RelaySkillsFs.
+        self._skills_fs = None
+        self._skills_fs_lock = threading.Lock()
         self._ctx_sync_lock = threading.Lock()
         self._ctx_sync_active = False
 
@@ -377,6 +382,13 @@ class RelayService(BaseService):
                 except Exception as e:
                     logger.debug('filestore_fs.close failed: %s', e, exc_info=True)
                 self._filestore_fs = None
+        with self._skills_fs_lock:
+            if self._skills_fs is not None:
+                try:
+                    self._skills_fs.close()
+                except Exception as e:
+                    logger.debug('skills_fs.close failed: %s', e, exc_info=True)
+                self._skills_fs = None
 
     def _handle_ws(self, sock, path_params, meta):
         import asyncio
@@ -618,6 +630,16 @@ class RelayService(BaseService):
                 self._filestore_fs = RelayFileStoreFs(self._user_id)
             return self._filestore_fs
 
+    def _get_skills_fs(self):
+        """Lazy-instantiate the skills-repo FUSE handler (skfs.* methods)."""
+        if not self._user_id:
+            return None
+        with self._skills_fs_lock:
+            if self._skills_fs is None:
+                from services.relay_skills_fs import RelaySkillsFs
+                self._skills_fs = RelaySkillsFs(self._user_id)
+            return self._skills_fs
+
     async def _handle_relay_request(self, msg, writer, send_lock):
         """Service a relay→server FS op (the inverse direction).
 
@@ -626,6 +648,7 @@ class RelayService(BaseService):
         selects the handler:
           - `sfs.*` → cc-sessions slot (CLAUDE_SESSIONS_DIR/<user>/)
           - `ffs.*` → virtualized FileStore view
+          - `skfs.*` → virtualized Agent Skills repository view
         Anything else returns ENOSYS.
         """
         import asyncio
@@ -638,6 +661,8 @@ class RelayService(BaseService):
                      method, request_id[:8], _short_args(args))
         if method.startswith('ffs.'):
             fs = self._get_filestore_fs()
+        elif method.startswith('skfs.'):
+            fs = self._get_skills_fs()
         elif method.startswith('sfs.'):
             fs = self._get_server_fs()
         else:

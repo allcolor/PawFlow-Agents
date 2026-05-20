@@ -279,7 +279,8 @@ def _write_scripts(out_dir: Path, image_name: str, manifest: dict[str, Any]) -> 
         "  \"$IMAGE\" python3 /opt/pawflow/pawflow_relay_launcher.py \\\n"
         "  --server \"$PAWFLOW_SERVER\" --token \"$PAWFLOW_RELAY_TOKEN\" \\\n"
         "  --relay-id \"$PAWFLOW_RELAY_ID\" --dir /workspace --allow-exec \\\n"
-        "  --server-mount /cc_sessions --filestore-mount /filestore\n",
+        "  --server-mount /cc_sessions --filestore-mount /filestore "
+        "--skills-mount /skills\n",
         encoding="utf-8",
     )
     os.chmod(build, 0o755)

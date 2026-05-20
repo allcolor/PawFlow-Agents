@@ -253,6 +253,8 @@ class ServerRelayManager:
             #     conversation's CLAUDE_SESSIONS_DIR slot.
             #   /filestore — FileStore sister-protocol (ffs.*), the
             #     virtualized RO view of files visible to this user.
+            #   /skills — Agent Skills sister-protocol (skfs.*), the
+            #     virtualized RO view of the skills repository.
             # SYS_ADMIN lets pyfuse3 call mount() directly, /dev/fuse is
             # the kernel char device the FUSE lib opens, and apparmor:
             # unconfined stops Ubuntu's docker-default profile from
@@ -267,6 +269,7 @@ class ServerRelayManager:
             "--env", "PAWFLOW_RELAY_ALLOW_EXEC=1",
             "--env", "PAWFLOW_SERVER_MOUNT=/cc_sessions",
             "--env", "PAWFLOW_FILESTORE_MOUNT=/filestore",
+            "--env", "PAWFLOW_SKILLS_MOUNT=/skills",
             "--env", "HOME=/home/pawflow",
             "--env", "USER=pawflow",
             "--env", "PATH=/home/pawflow/.cargo/bin:/home/pawflow/go/bin:/usr/local/go/bin:/opt/kotlinc/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",

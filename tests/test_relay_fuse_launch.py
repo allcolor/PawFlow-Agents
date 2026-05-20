@@ -63,6 +63,15 @@ class RelayFuseLaunchTests(unittest.TestCase):
                       '/filestore to pawflow_relay_launcher.py so the FileStore '
                       'sister-protocol (ffs.*) FUSE comes up alongside /cc_sessions')
 
+    def test_thread_py_passes_skills_mount_to_launcher(self):
+        from pawflow_relay import thread
+        src = inspect.getsource(thread)
+        self.assertIn('"--skills-mount", "/skills"', src,
+                      'pawflow_relay/thread.py must pass --skills-mount '
+                      '/skills to pawflow_relay_launcher.py so the skills '
+                      'sister-protocol (skfs.*) FUSE comes up alongside '
+                      '/cc_sessions')
+
     # ── server-spawned relay (core/server_relay_manager.py) ───────────
 
     def test_server_relay_manager_has_fuse_flags(self):
@@ -88,6 +97,15 @@ class RelayFuseLaunchTests(unittest.TestCase):
                       'FileStore FUSE (ffs.*) is mounted alongside /cc_sessions '
                       'in the server-spawned per-conversation relay container')
 
+    def test_server_relay_manager_sets_skills_mount_env(self):
+        from core import server_relay_manager
+        src = inspect.getsource(server_relay_manager)
+        self.assertIn('PAWFLOW_SKILLS_MOUNT=/skills', src,
+                      'core/server_relay_manager.py must pass '
+                      'PAWFLOW_SKILLS_MOUNT=/skills env so the skills FUSE '
+                      '(skfs.*) is mounted alongside /cc_sessions in the '
+                      'server-spawned per-conversation relay container')
+
     # ── Dockerfile prep (mountpoints created at build time) ───────────
 
     def test_dockerfile_precreates_fuse_mountpoints(self):
@@ -101,8 +119,8 @@ class RelayFuseLaunchTests(unittest.TestCase):
             'docker', 'relay-dev', 'Dockerfile')
         with open(path, 'r') as f:
             src = f.read()
-        for needle in ('mkdir -p /workspace /cc_sessions /filestore',
-                       'chown pawflow:pawflow /workspace /cc_sessions /filestore'):
+        for needle in ('mkdir -p /workspace /cc_sessions /filestore /skills',
+                       'chown pawflow:pawflow /workspace /cc_sessions /filestore /skills'):
             self.assertIn(needle, src,
                           f'docker/relay-dev/Dockerfile must contain: {needle}')
 

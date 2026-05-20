@@ -253,14 +253,14 @@ RUN apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 RUN update-desktop-database /usr/share/applications 2>/dev/null || true
 
 # Give pawflow user ownership of workspace and docker group.
-# /cc_sessions and /filestore are the canonical mountpoints used by
-# CC and the file tools. The relay process FUSE-mounts a single
+# /cc_sessions, /filestore and /skills are the canonical mountpoints
+# used by CC and the file tools. The relay process FUSE-mounts a single
 # combined FS under /tmp (tmpfs, always writable) then `mount --bind`s
-# its subtrees onto these canonical paths. We pre-create both so the
-# unprivileged pawflow user can mount onto them — root-owned dirs
+# its subtrees onto these canonical paths. We pre-create all three so
+# the unprivileged pawflow user can mount onto them — root-owned dirs
 # would refuse the bind-mount.
-RUN mkdir -p /workspace /cc_sessions /filestore \
-    && chown pawflow:pawflow /workspace /cc_sessions /filestore \
+RUN mkdir -p /workspace /cc_sessions /filestore /skills \
+    && chown pawflow:pawflow /workspace /cc_sessions /filestore /skills \
     && (groupadd -f docker; usermod -aG docker pawflow) 2>/dev/null || true
 
 # ── PawFlow relay + SDK ────────────────────────────────────────────

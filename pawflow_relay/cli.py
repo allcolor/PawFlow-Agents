@@ -158,6 +158,12 @@ def worker_main():
                               "FileStore (/<file_id>/<filename>) at this local "
                               "path via FUSE-over-tunnel. "
                               "Requires pyfuse3 + libfuse3."))
+    parser.add_argument("--skills-mount",
+                        default=os.environ.get("PAWFLOW_SKILLS_MOUNT", ""),
+                        help=("Mount a virtualized read-only view of the server "
+                              "Agent Skills repository (global + this user's "
+                              "skill tree) at this local path via "
+                              "FUSE-over-tunnel. Requires pyfuse3 + libfuse3."))
     args = parser.parse_args()
     sys.stderr.write(
         f"[FSRelay] args parsed: server={bool(args.server)}, "
@@ -337,6 +343,7 @@ def worker_main():
                         gateway_cookie=gateway_cookie,
                         session_token=session_token,
                         server_mount=args.server_mount,
-                        filestore_mount=args.filestore_mount)
+                        filestore_mount=args.filestore_mount,
+                        skills_mount=args.skills_mount)
         finally:
             _cleanup()

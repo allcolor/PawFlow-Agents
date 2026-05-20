@@ -273,12 +273,49 @@ relay docker startup in `pawflow_relay/thread.py` already passes
 `--filestore-mount /filestore` so the mount is live alongside
 `/cc_sessions`.
 
+## Sister protocol: Skills FUSE (`skfs.*`)
+
+A third handler exposes the server Agent Skills repository as a
+virtualized read-only FUSE hierarchy. Methods arrive with the `skfs.`
+prefix and `services/filesystem_service.py:_handle_relay_request`
+dispatches them to `RelaySkillsFs`.
+
+Its purpose is to make a skill's asset files (e.g. the `scripts/` or
+`references/` referenced from `SKILL.md` instructions) reachable by
+**non-CLI providers**, whose tools execute inside the relay container.
+CLI providers (Claude Code) instead get the same files via per-skill
+docker bind mounts — see `core/cli_workspace_mounts.build_skill_mount_args`
+— and both surfaces expose the identical `/skills/...` paths produced
+by `core.skill_resolver.skill_mount_dir`.
+
+Layout (read-only, mirrors `data/repository/skills/`):
+
+```
+/                          → dir, lists 'global' and 'users'
+/global/<skill>/...        → global skill directories
+/users/<uid>/<skill>/...   → this relay user's skill tree
+                             (which nests conversation-scoped skills)
+```
+
+Only `global` and the relay user's own `users/<uid>` subtree are
+reachable; any other `users/<other>` path returns ENOENT. Writes
+(`skfs.create`, `skfs.write`, ...) all return EROFS — skills are
+managed via the resource APIs, not the FUSE mount.
+
+The relay-side mount is started by `pawflow_relay/worker.py` when
+`--skills-mount /skills` (or `PAWFLOW_SKILLS_MOUNT`) is set; it is the
+third routed subtree of the single `CombinedServerFsMount`. The
+default relay docker startup passes `--skills-mount /skills` so the
+mount is live alongside `/cc_sessions` and `/filestore`.
+
 ## See also
 
 - `services/relay_server_fs.py` — server handler (sfs.*)
 - `services/relay_filestore_fs.py` — server handler (ffs.*, RO virtualized)
+- `services/relay_skills_fs.py` — server handler (skfs.*, RO virtualized)
 - `tests/test_relay_server_fs.py` — 24 sandbox/op tests
 - `tests/test_relay_filestore_fs.py` — 35 path/op/access-scope tests (incl. per-conv isolation)
+- `tests/test_relay_skills_fs.py` — 20 path/op/access-scope tests
 - `services/filesystem_service.py:_handle_relay_request` — prefix dispatch
 - `pawflow_relay/server_fs_client.py` — relay-side request/response correlator
 - `pawflow_relay/server_fs_mount.py` — FUSE proxy (lazy pyfuse3 import,

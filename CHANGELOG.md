@@ -4,6 +4,23 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- Skills repository FUSE mount (`skfs.*`): relay containers now mount
+  the Agent Skills repository read-only at `/skills`, so non-CLI
+  providers can reach a skill's asset files referenced from its
+  instructions.
+
+### Fixed
+
+- `SKILL.md` frontmatter no longer accumulates the read-derived
+  `declared_allowed_tools` alias on update.
+- `/skill update` is now routed to the server from the chat UI, and
+  `/add-skill` derives a short manifest description instead of copying
+  the full instructions body.
+
 ## [1.0.0-alpha.1] — 2026-05-19
 
 First public release.

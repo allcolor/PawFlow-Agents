@@ -116,44 +116,59 @@ def _build_combined_operations_class():
 
     SFS_INO = pyfuse3.ROOT_INODE + 1   # /cc_sessions
     FFS_INO = pyfuse3.ROOT_INODE + 2   # /filestore
+    SKFS_INO = pyfuse3.ROOT_INODE + 3  # /skills
     SFS_NAME = 'cc_sessions'
     FFS_NAME = 'filestore'
-    NAMES = (SFS_NAME, FFS_NAME)
+    SKFS_NAME = 'skills'
+    # Mount-root subtrees, in fh-tag index order (0=sfs, 1=ffs, 2=skfs).
+    SUBTREES = ((SFS_NAME, SFS_INO, 'sfs'),
+                (FFS_NAME, FFS_INO, 'ffs'),
+                (SKFS_NAME, SKFS_INO, 'skfs'))
+    TAG_BY_INDEX = ('sfs', 'ffs', 'skfs')
 
     class CombinedRouterOperations(pyfuse3.Operations):
-        """Routes FUSE callbacks between two ServerFsClient backends.
+        """Routes FUSE callbacks between three ServerFsClient backends.
 
         Inode bookkeeping is namespaced by the backend tag so
-        cc_sessions and filestore can have entries with the same
-        relative path without colliding.
+        cc_sessions, filestore and skills can have entries with the
+        same relative path without colliding.
         """
 
         _ATTR_TIMEOUT = 1.0
         _ENTRY_TIMEOUT = 1.0
+        # fh tag occupies the top 2 bits (index 0=sfs, 1=ffs, 2=skfs);
+        # the backend fh sits in the low 30 bits. Backend handlers issue
+        # small sequential fhs, so 30 bits is ample headroom.
+        _FH_TAG_SHIFT = 30
+        _FH_MASK = (1 << _FH_TAG_SHIFT) - 1
 
         def __init__(self, sfs_client: ServerFsClient,
                      ffs_client: ServerFsClient,
+                     skfs_client: ServerFsClient,
                      request_timeout: float = 30.0):
             super().__init__()
             self._sfs = sfs_client
             self._ffs = ffs_client
+            self._skfs = skfs_client
             self._timeout = min(request_timeout, 5.0)
-            self._next_ino = FFS_INO + 1
+            self._next_ino = SKFS_INO + 1
             # inode → (tag, path-in-that-subtree). 'root' is the mount
-            # root itself (no real backend); 'sfs'/'ffs' route to the
-            # respective client. The two anchor inodes (SFS_INO/FFS_INO)
-            # are pre-registered so lookup of the mount root's children
-            # is in-memory (fast, no WS roundtrip).
+            # root itself (no real backend); 'sfs'/'ffs'/'skfs' route to
+            # the respective client. The three anchor inodes are
+            # pre-registered so lookup of the mount root's children is
+            # in-memory (fast, no WS roundtrip).
             self._ino_meta: dict = {
                 pyfuse3.ROOT_INODE: ('root', '/'),
                 SFS_INO: ('sfs', '/'),
                 FFS_INO: ('ffs', '/'),
+                SKFS_INO: ('skfs', '/'),
             }
             self._meta_ino: dict = {v: k for k, v in self._ino_meta.items()}
             self._lock = threading.Lock()
             _fuse_trace_emit(
                 f"[fuse-mount] CombinedOperations init "
-                f"timeout={self._timeout}s sfs_ino={SFS_INO} ffs_ino={FFS_INO}")
+                f"timeout={self._timeout}s sfs_ino={SFS_INO} "
+                f"ffs_ino={FFS_INO} skfs_ino={SKFS_INO}")
 
         def _ino_for(self, tag: str, path: str) -> int:
             with self._lock:
@@ -182,7 +197,15 @@ def _build_combined_operations_class():
                 return self._sfs, 'sfs.'
             if tag == 'ffs':
                 return self._ffs, 'ffs.'
+            if tag == 'skfs':
+                return self._skfs, 'skfs.'
             return None, ''
+
+        @classmethod
+        def _tag_fh(cls, tag: str, backend_fh: int) -> int:
+            """Pack the backend tag into the top bits of a FUSE fh."""
+            return ((backend_fh & cls._FH_MASK)
+                    | (TAG_BY_INDEX.index(tag) << cls._FH_TAG_SHIFT))
 
         async def _req(self, tag: str, op_short: str, args: dict) -> dict:
             cli, prefix = self._client_for(tag)
@@ -253,11 +276,10 @@ def _build_combined_operations_class():
                 raise pyfuse3.FUSEError(errno.ENOENT)
             ptag, ppath = pmeta
             if ptag == 'root':
-                # Only two virtual children at the mount root.
-                if name_s == SFS_NAME:
-                    return self._synthetic_dir_attrs(SFS_INO)
-                if name_s == FFS_NAME:
-                    return self._synthetic_dir_attrs(FFS_INO)
+                # Only the synthetic subtree directories at the mount root.
+                for _name, _ino, _tag in SUBTREES:
+                    if name_s == _name:
+                        return self._synthetic_dir_attrs(_ino)
                 raise pyfuse3.FUSEError(errno.ENOENT)
             child_path = os.path.normpath(os.path.join(ppath, name_s))
             r = await self._req(ptag, 'getattr', {'path': child_path})
@@ -291,8 +313,8 @@ def _build_combined_operations_class():
                 raise pyfuse3.FUSEError(errno.ENOTDIR)
             tag, path = meta
             if tag == 'root':
-                # Two synthetic children, no WS call.
-                fixed = [(SFS_NAME, SFS_INO), (FFS_NAME, FFS_INO)]
+                # Synthetic subtree children, no WS call.
+                fixed = [(n, i) for n, i, _t in SUBTREES]
                 i = int(start_id)
                 while i < len(fixed):
                     name, ino = fixed[i]
@@ -339,18 +361,13 @@ def _build_combined_operations_class():
                 raise pyfuse3.FUSEError(_to_fuse_error(r))
             # Pack tag into the FUSE fh so read/write/release can route
             # back to the right backend without re-looking up the inode.
-            # High bit identifies tag: 0 = sfs, 1 = ffs. We OR it into a
-            # 32-bit window above the server-supplied fh (servers never
-            # return fhs that big).
             backend_fh = int(r['data']['fh'])
-            tagged = backend_fh | (0 if tag == 'sfs' else (1 << 31))
-            return pyfuse3.FileInfo(fh=tagged)
+            return pyfuse3.FileInfo(fh=self._tag_fh(tag, backend_fh))
 
-        @staticmethod
-        def _untag_fh(fh: int):
-            if fh & (1 << 31):
-                return 'ffs', fh & ~(1 << 31)
-            return 'sfs', fh
+        @classmethod
+        def _untag_fh(cls, fh: int):
+            idx = (int(fh) >> cls._FH_TAG_SHIFT) & 0x3
+            return TAG_BY_INDEX[idx], int(fh) & cls._FH_MASK
 
         async def read(self, fh, offset, size):
             tag, real_fh = self._untag_fh(int(fh))
@@ -414,7 +431,7 @@ def _build_combined_operations_class():
             if 'error' in r:
                 raise pyfuse3.FUSEError(_to_fuse_error(r))
             backend_fh = int(r['data']['fh'])
-            tagged = backend_fh | (0 if tag == 'sfs' else (1 << 31))
+            tagged = self._tag_fh(tag, backend_fh)
             ar = await self._req(tag, 'getattr', {'path': path})
             if 'error' in ar:
                 raise pyfuse3.FUSEError(_to_fuse_error(ar))
@@ -531,13 +548,13 @@ def _build_combined_operations_class():
 
 
 class CombinedServerFsMount:
-    """Single pyfuse3 mount at `mountpoint`/ exposing two routed subtrees.
+    """Single pyfuse3 mount at `mountpoint`/ exposing three routed subtrees.
 
-    The mount's root contains exactly two synthetic directories,
-    `cc_sessions` and `filestore`, which forward all FS ops to
-    `sfs_client` and `ffs_client` respectively. Use a `mount --bind`
-    in the relay's outer setup to expose those subtrees on the
-    canonical /cc_sessions and /filestore paths.
+    The mount's root contains exactly three synthetic directories,
+    `cc_sessions`, `filestore` and `skills`, which forward all FS ops
+    to `sfs_client`, `ffs_client` and `skfs_client` respectively. Use a
+    `mount --bind` in the relay's outer setup to expose those subtrees
+    on the canonical /cc_sessions, /filestore and /skills paths.
 
     Why this exists: pyfuse3 keeps a single global session, so two
     separate `ServerFsMount` instances in the same process would race
@@ -548,12 +565,14 @@ class CombinedServerFsMount:
     def __init__(self, mountpoint: str,
                  sfs_client: ServerFsClient,
                  ffs_client: ServerFsClient,
+                 skfs_client: ServerFsClient,
                  allow_other: bool = False,
                  request_timeout: float = 30.0,
                  fsname: str = 'pawflow-combined-fs'):
         self._mountpoint = mountpoint
         self._sfs = sfs_client
         self._ffs = ffs_client
+        self._skfs = skfs_client
         self._allow_other = allow_other
         self._timeout = request_timeout
         self._fsname = fsname
@@ -578,7 +597,7 @@ class CombinedServerFsMount:
             import pyfuse3
             import trio
             _fuse_trace_emit("[fuse-mount] start step=instantiate_ops")
-            ops = Operations(self._sfs, self._ffs,
+            ops = Operations(self._sfs, self._ffs, self._skfs,
                              request_timeout=self._timeout)
         except BaseException as _se:
             _fuse_trace_emit(

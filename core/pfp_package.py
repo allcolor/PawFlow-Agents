@@ -723,6 +723,11 @@ def export_pfpdir(package_id: str, version: str, include: Iterable[str], *,
             clean.pop("prompt", None)
             clean.pop("skill_root", None)
             clean.pop("name", None)
+            # Internal/derived fields must not leak into the portable SKILL.md.
+            clean.pop("declared_allowed_tools", None)
+            clean.pop("installed_from", None)
+            clean.pop("imported_from", None)
+            clean.pop("package_hash", None)
             meta = {"name": name}
             meta.update(clean)
             if not meta.get("description"):
@@ -1295,7 +1300,13 @@ def _install_object(obj: Dict[str, Any], package: Dict[str, Any], user_id: str,
     # an empty top-level path here and let the install branch read the
     # asset list directly.
     rel = _safe_relpath(path_str) if path_str else ""
-    provenance = _provenance(package, obj_id, rel)
+    _extra_rels = None
+    if obj_type == "skill" and rel.endswith("SKILL.md"):
+        _skill_dir = rel[:-len("SKILL.md")]
+        if _skill_dir:
+            _extra_rels = [f for f in (package.get("files") or {})
+                           if f != rel and f.startswith(_skill_dir)]
+    provenance = _provenance(package, obj_id, rel, extra_rels=_extra_rels)
     dependencies = _declared_package_dependencies(package["manifest"], obj)
     if obj_type == "tool":
         data = _load_tool_proxy_data(obj, package, rel, provenance, secret_bindings)
@@ -1643,10 +1654,35 @@ def _inject_package_flow_task_relays(data: Dict[str, Any], package: Dict[str, An
             parameters.setdefault("relay", relay_id)
 
 
+def _skill_bundled_files(package: Dict[str, Any], rel: str) -> Dict[str, str]:
+    """Return {skill-relative path: text} for files bundled with a skill.
+
+    A PFP skill object points at content/skills/<name>/SKILL.md; any sibling
+    file under that directory is a bundled asset (scripts/, references/...).
+    """
+    if not rel.endswith("SKILL.md"):
+        return {}
+    skill_dir = rel[:-len("SKILL.md")]
+    if not skill_dir:
+        return {}
+    out: Dict[str, str] = {}
+    for fpath, content in (package.get("files") or {}).items():
+        if fpath == rel or not fpath.startswith(skill_dir):
+            continue
+        sub = fpath[len(skill_dir):]
+        if sub:
+            out[sub] = content.decode("utf-8", errors="replace")
+    return out
+
+
 def _load_resource_data(package: Dict[str, Any], rel: str, rtype: str, name: str) -> Dict[str, Any]:
     data = package["files"][rel]
     if rtype == "skill" and rel.endswith("SKILL.md"):
-        return _parse_skill_md(data.decode("utf-8"), default_name=name)
+        parsed = _parse_skill_md(data.decode("utf-8"), default_name=name)
+        bundled = _skill_bundled_files(package, rel)
+        if bundled:
+            parsed["package_files"] = bundled
+        return parsed
     loaded = _load_json_bytes(data)
     if not isinstance(loaded, dict):
         raise PfpError(f"{rel} must contain a JSON object")
@@ -1948,11 +1984,8 @@ def _review_object_for_install(row: Dict[str, Any], package: Dict[str, Any],
     if obj_type == "skill":
         rel = _safe_relpath(str(obj.get("path") or ""))
         data = _load_resource_data(package, rel, "skill", row.get("name", ""))
-        package_files = {
-            rel_path: content.decode("utf-8", errors="replace")
-            for rel_path, content in package["files"].items()
-            if rel_path not in {MANIFEST_FILE} and rel_path.startswith("content/")
-        }
+        # Only the skill's own bundled assets — not every object in the package.
+        package_files = _skill_bundled_files(package, rel)
         from core.package_review import (
             assert_installable_review, review_hash, review_metadata,
             review_skill_content,
@@ -2983,14 +3016,25 @@ def _normalize_scope(scope: str, conversation_id: str) -> str:
     raise PfpError("scope must be user or conversation")
 
 
-def _provenance(package: Dict[str, Any], obj_id: str, rel: str) -> Dict[str, Any]:
+def _provenance(package: Dict[str, Any], obj_id: str, rel: str,
+                extra_rels: Optional[List[str]] = None) -> Dict[str, Any]:
     manifest = package["manifest"]
+    lock_files = package["lock"]["files"]
+    file_hash = lock_files.get(rel, "")
+    if extra_rels:
+        # Fold bundled-asset hashes in so drift in a skill's scripts/ or
+        # references/ is reflected in the object hash (see _pfp update).
+        import hashlib
+        parts = [file_hash] + [
+            f"{r}:{lock_files.get(r, '')}" for r in sorted(extra_rels)]
+        file_hash = hashlib.sha256(
+            "\n".join(parts).encode("utf-8")).hexdigest()
     return {
         "package": manifest["package"],
         "version": manifest["version"],
         "object_id": obj_id,
         "file": rel,
-        "hash": package["lock"]["files"].get(rel, ""),
+        "hash": file_hash,
         "package_sha256": package.get("sha256", ""),
         "content_dir": package.get("content_dir", ""),
         "source_dir": package.get("path", "") if package.get("dev") else "",

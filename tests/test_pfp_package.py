@@ -5845,3 +5845,26 @@ def test_manage_package_tool_is_registered():
     registry = create_default_registry()
     assert registry.get("manage_package") is not None
 
+
+def test_skill_bundled_files_reconstructed_on_install():
+    # P1: a PFP skill object must carry its sibling assets through install,
+    # not just SKILL.md, so ${CLAUDE_SKILL_DIR}/scripts/... resolves.
+    package = {
+        "files": {
+            "content/skills/demo/SKILL.md":
+                b"---\nname: demo\ndescription: d\n---\nBody.",
+            "content/skills/demo/scripts/go.sh": b"echo hi\n",
+            "content/skills/demo/references/api.md": b"# API\n",
+            "content/skills/other/SKILL.md":
+                b"---\nname: other\ndescription: d\n---\nX.",
+        },
+    }
+    rel = "content/skills/demo/SKILL.md"
+    bundled = pfp_package._skill_bundled_files(package, rel)
+    assert set(bundled) == {"scripts/go.sh", "references/api.md"}
+    assert bundled["scripts/go.sh"] == "echo hi\n"
+    # Sibling skill 'other' must not leak in.
+    data = pfp_package._load_resource_data(package, rel, "skill", "demo")
+    assert data["package_files"]["scripts/go.sh"] == "echo hi\n"
+    assert "references/api.md" in data["package_files"]
+

@@ -309,10 +309,8 @@ def _normalize_package(package: Dict[str, Any]) -> Dict[str, Any]:
     package_files = {k: v for k, v in files.items() if k != "SKILL.md"}
     digest = _package_hash(files)
     skill = {
-        "prompt": body.strip(),
+        "instructions": body.strip(),
         "description": description,
-        "parameters": {},
-        "extends": "",
         "imported_from": package["provenance"],
         "package_hash": digest,
     }
@@ -320,7 +318,8 @@ def _normalize_package(package: Dict[str, Any]) -> Dict[str, Any]:
         if optional in frontmatter:
             skill[optional] = frontmatter[optional]
     if "allowed-tools" in frontmatter:
-        skill["declared_allowed_tools"] = str(frontmatter.get("allowed-tools") or "")
+        skill["allowed-tools"] = frontmatter.get("allowed-tools") or ""
+        skill["declared_allowed_tools"] = skill["allowed-tools"]
     if package_files:
         skill["package_files"] = package_files
     skill["name"] = skill_name

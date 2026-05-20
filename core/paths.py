@@ -49,8 +49,9 @@ def repo_dir(rtype: str, scope: str = "global",
     raise ValueError(f"Invalid scope: {scope!r}")
 
 
-# Resource types stored as markdown (frontmatter + body)
-_MARKDOWN_TYPES = frozenset({"agents", "skills", "prompts"})
+# Resource types stored as markdown files (frontmatter + body). Skills are
+# directory resources containing a standard Agent Skills SKILL.md file.
+_MARKDOWN_TYPES = frozenset({"agents", "prompts"})
 
 
 def repo_file(rtype: str, name: str, scope: str = "global",

@@ -47,7 +47,7 @@ function cmdSkillList() {
     let lines = [t('yourSkillsHeader')];
     skills.forEach(s => {
       const mark = s.active ? '\\u2705' : '\\u2B1C';
-      lines.push(`${mark} **${s.name}** — ${s.description || s.prompt}`);
+      lines.push(`${mark} **${s.name}** — ${s.description || s.preview || ''}`);
     });
     addMsg('system', lines.join('\\n'));
   });
@@ -2543,7 +2543,7 @@ function _renameVoiceClone(name) {
 // ── Resource editor overlay ───────────────────────────────────────
 const _RESOURCE_FIELDS = {
   agent:    [['prompt','textarea'],['description','text']],
-  skill:    [['prompt','textarea'],['description','text']],
+  skill:    [['description','text'],['instructions','textarea']],
   mcp:      [['transport','mcp_transport'],['via','mcp_via'],['relay_service','mcp_relay'],['local','checkbox'],['url','text'],['command','text'],['args','json'],['env','json'],['auth','json'],['description','text']],
   task_def: [['prompt','textarea'],['criteria','textarea'],['default_interval','text'],['verifier','text'],['interactive','checkbox'],['skills','skills_picker'],['description','text']],
   prompt:   [['prompt','textarea'],['parameters','params_editor'],['title','text'],['category','text'],['description','text']],

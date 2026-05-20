@@ -36,7 +36,7 @@ SCOPE_GLOBAL = "global"
 SCOPE_USER = "user"
 SCOPE_CONV = "conv"
 VALID_SCOPES = (SCOPE_GLOBAL, SCOPE_USER, SCOPE_CONV)
-_DIRECTORY_TYPES = frozenset({"theme", "private_gateway_skin"})
+_DIRECTORY_TYPES = frozenset({"theme", "private_gateway_skin", "skills"})
 
 # Promote direction: conv < user < global
 _SCOPE_ORDER = {SCOPE_CONV: 0, SCOPE_USER: 1, SCOPE_GLOBAL: 2}
@@ -517,7 +517,80 @@ class ScopedRepository:
         if template:
             (path / "template.html").write_text(template, encoding="utf-8")
 
+    def _read_skill(self, path: Path) -> Optional[Dict[str, Any]]:
+        """Read a standard Agent Skills directory resource."""
+        skill_md = path / "SKILL.md"
+        if not skill_md.exists():
+            return None
+        try:
+            text = skill_md.read_text(encoding="utf-8")
+            m = self._FRONTMATTER_RE.match(text)
+            if not m:
+                logger.warning("Skill %s is missing SKILL.md YAML frontmatter", path)
+                return None
+            import yaml
+            meta = yaml.safe_load(m.group(1)) or {}
+            if not isinstance(meta, dict):
+                logger.warning("Skill %s frontmatter is not a mapping", path)
+                return None
+            declared_name = str(meta.get("name") or "").strip()
+            if declared_name != path.name:
+                logger.warning(
+                    "Skill %s name mismatch: frontmatter=%r directory=%r",
+                    path, declared_name, path.name)
+                return None
+            body = m.group(2).strip()
+            if not body:
+                logger.warning("Skill %s has an empty SKILL.md body", path)
+                return None
+            entry = dict(meta)
+            entry["name"] = path.name
+            entry["instructions"] = body
+            # Internal compatibility while runtime code moves to instructions.
+            entry["prompt"] = body
+            entry["skill_root"] = str(path)
+            if "allowed-tools" in entry:
+                entry["declared_allowed_tools"] = entry.get("allowed-tools")
+            return entry
+        except Exception as e:
+            logger.warning("Failed to read skill %s: %s", path, e)
+            return None
+
+    def _write_skill(self, path: Path, data: Dict[str, Any]):
+        """Write a standard Agent Skills directory resource."""
+        instructions = str(data.get("instructions") or "").strip()
+        if not instructions:
+            raise ValueError("Skill instructions are required")
+        description = str(data.get("description") or "").strip()
+        if not description:
+            raise ValueError("Skill description is required")
+        path.mkdir(parents=True, exist_ok=True)
+        import yaml
+        meta = {k: v for k, v in data.items() if k not in (
+            "instructions", "prompt", "name", "_scope", "skill_root", "package_files",
+        ) and not str(k).startswith("_")}
+        meta["name"] = path.name
+        meta["description"] = description
+        parts = [
+            "---",
+            yaml.dump(meta, default_flow_style=False, allow_unicode=True, sort_keys=False).rstrip(),
+            "---",
+            "",
+            instructions,
+            "",
+        ]
+        (path / "SKILL.md").write_text("\n".join(parts), encoding="utf-8")
+        for rel, content in (data.get("package_files") or {}).items():
+            clean = str(rel or "").replace("\\", "/").strip("/")
+            if not clean or clean == "SKILL.md" or any(p in (".", "..") for p in clean.split("/")):
+                continue
+            target = path / clean
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(str(content or ""), encoding="utf-8")
+
     def _read_directory_resource(self, rtype: str, path: Path) -> Optional[Dict[str, Any]]:
+        if rtype == "skills":
+            return self._read_skill(path)
         if rtype == "theme":
             return self._read_theme(path)
         if rtype == "private_gateway_skin":
@@ -525,6 +598,9 @@ class ScopedRepository:
         raise ValueError(f"Invalid directory resource type: {rtype}")
 
     def _write_directory_resource(self, rtype: str, path: Path, data: Dict[str, Any]):
+        if rtype == "skills":
+            self._write_skill(path, data)
+            return
         if rtype == "theme":
             self._write_theme(path, data)
             return
@@ -572,7 +648,7 @@ class ScopedRepository:
             description: Short description
             ---
 
-            Body text (= prompt for agents, prompt for skills)
+            Body text (= prompt for markdown-backed resources)
         """
         if not path.exists():
             return None

@@ -1356,10 +1356,12 @@ def _parse_skill_command(arg: str, base: dict, agent_name: str = "") -> dict:
         return {"action": "list_skills", **base}
     if subcmd == "add":
         return {"action": "create_skill", "name": p[1] if len(p) > 1 else "",
-                "prompt": p[2] if len(p) > 2 else "", **base}
+                "description": p[2] if len(p) > 2 else "",
+                "instructions": p[2] if len(p) > 2 else "", **base}
     if subcmd in ("update", "modify", "edit"):
         return {"action": "update_skill", "name": p[1] if len(p) > 1 else "",
-                "prompt": p[2] if len(p) > 2 else "", **base}
+                "description": p[2] if len(p) > 2 else "",
+                "instructions": p[2] if len(p) > 2 else "", **base}
     if subcmd == "del":
         return {"action": "delete_skill", "name": p[1] if len(p) > 1 else "",
                 **base}

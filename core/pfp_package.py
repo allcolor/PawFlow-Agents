@@ -712,10 +712,44 @@ def export_pfpdir(package_id: str, version: str, include: Iterable[str], *,
         clean = {k: v for k, v in item.items() if not str(k).startswith("_")}
         clean.pop("created_at", None)
         clean.pop("updated_at", None)
-        path = f"content/{rtype}s/{name}.json"
-        target = out / path
-        target.parent.mkdir(parents=True, exist_ok=True)
-        _write_json_file(target, clean)
+        if rtype == "skill":
+            path = f"content/skills/{name}/SKILL.md"
+            target = out / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            instructions = str(clean.pop("instructions", "") or clean.pop("prompt", "") or "").strip()
+            if not instructions:
+                raise PfpError(f"skill:{name} has no instructions")
+            package_files = clean.pop("package_files", {}) or {}
+            clean.pop("prompt", None)
+            clean.pop("skill_root", None)
+            clean.pop("name", None)
+            meta = {"name": name}
+            meta.update(clean)
+            if not meta.get("description"):
+                raise PfpError(f"skill:{name} has no description")
+            skill_text = (
+                "---\n"
+                + yaml.dump(meta, default_flow_style=False, allow_unicode=True, sort_keys=False)
+                + "---\n\n"
+                + instructions
+                + "\n"
+            )
+            target.write_text(skill_text, encoding="utf-8")
+            for rel, content in package_files.items():
+                raw_rel = str(rel or "")
+                if not raw_rel.strip():
+                    continue
+                rel = _safe_relpath(raw_rel)
+                if rel == "SKILL.md":
+                    continue
+                asset_target = target.parent / rel
+                asset_target.parent.mkdir(parents=True, exist_ok=True)
+                asset_target.write_text(str(content or ""), encoding="utf-8")
+        else:
+            path = f"content/{rtype}s/{name}.json"
+            target = out / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            _write_json_file(target, clean)
         objects.append({
             "id": f"{rtype}:{name}",
             "type": rtype,
@@ -1895,14 +1929,10 @@ def _parse_skill_md(text: str, default_name: str = "") -> Dict[str, Any]:
     if not _SKILL_NAME_RE.match(name) or "--" in name:
         raise PfpError("Skill name must follow Agent Skills spec: lowercase letters, numbers, single hyphens")
     return {
-        "prompt": body,
+        "instructions": body,
         "description": str(meta.get("description", "") or ""),
-        "parameters": meta.get("parameters", {}) if isinstance(meta.get("parameters", {}), dict) else {},
-        "extends": str(meta.get("extends", "") or ""),
-        # PFP packages are reviewed/signed install artifacts, so they may opt
-        # into programmable skills. Marketplace imports strip template_engine.
-        "template_engine": str(meta.get("template_engine", "") or ""),
         "name": name,
+        **{k: v for k, v in meta.items() if k not in {"name", "description"}},
     }
 
 

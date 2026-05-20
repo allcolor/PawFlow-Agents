@@ -325,9 +325,9 @@ function cmdSkill(text, parts) {
     cmdSkillList();
   } else if (sub === 'add' || sub === 'create') {
     const name = _stripAt(parts[2]);
-    const prompt = parts.slice(3).join(' ');
-    if (!name || !prompt) { addMsg('system', t('usageLine', { usage: '/skill add @name <prompt>' })); return true; }
-    cmdResourceAction('create_skill', {name, prompt});
+    const instructions = parts.slice(3).join(' ');
+    if (!name || !instructions) { addMsg('system', t('usageLine', { usage: '/skill add @name <description/instructions>' })); return true; }
+    cmdResourceAction('create_skill', {name, description: instructions, instructions});
   } else if (sub === 'del' || sub === 'delete') {
     const name = _stripAt(parts[2]);
     if (!name) { addMsg('system', t('usageLine', { usage: '/skill del @name' })); return true; }
@@ -353,16 +353,16 @@ function cmdSkill(text, parts) {
   } else if (sub === 'run' || sub === 'search' || sub === 'import') {
     return tryServerCommand(text);
   } else {
-    addMsg('system', t('usageLine', { usage: '/skill list | add @name <prompt> | del @name | assign @agent @skill | unassign @agent @skill | assigned @agent | run [@agent] <name> [args...]' }));
+    addMsg('system', t('usageLine', { usage: '/skill list | add @name <description/instructions> | del @name | assign @agent @skill | unassign @agent @skill | assigned @agent | run [@agent] <name> [args...]' }));
   }
   return true;
 }
 
 function cmdAddSkill(text, parts) {
   const name = _stripAt(parts[1]);
-  const prompt = parts.slice(2).join(' ');
-  if (!name || !prompt) { addMsg('system', t('usageLine', { usage: '/add-skill @name <prompt>' })); return true; }
-  cmdResourceAction('create_skill', {name, prompt});
+  const instructions = parts.slice(2).join(' ');
+  if (!name || !instructions) { addMsg('system', t('usageLine', { usage: '/add-skill @name <description/instructions>' })); return true; }
+  cmdResourceAction('create_skill', {name, description: instructions, instructions});
   return true;
 }
 

@@ -359,28 +359,6 @@ def _evaluate_condition_for_scope(condition: str, user_id: str,
     return bool(resolved) and resolved not in ("false", "False", "0")
 
 
-def _substitute_params(prompt: str, params: Dict[str, str],
-                       defaults: Dict[str, Any]) -> str:
-    """Replace ${param_name} in prompt with values from params, falling back to defaults."""
-    if not params and not defaults:
-        return prompt
-    merged = {}
-    for k, v in defaults.items():
-        if isinstance(v, dict):
-            merged[k] = v.get("default", "")
-        else:
-            merged[k] = str(v)
-    merged.update({k: str(v) for k, v in params.items()})
-    if not merged:
-        return prompt
-
-    def _replace(m):
-        key = m.group(1)
-        return merged.get(key, m.group(0))
-
-    return re.sub(r'\$\{([a-zA-Z_][a-zA-Z0-9_]*)\}', _replace, prompt)
-
-
 def _safe_skill_path_part(value: str, fallback: str) -> str:
     safe = re.sub(r'[^a-zA-Z0-9_.-]+', '-', str(value or '')).strip('.-')
     return safe or fallback
@@ -388,6 +366,8 @@ def _safe_skill_path_part(value: str, fallback: str) -> str:
 
 def skill_mount_dir(skill_name: str, skill_def: Dict[str, Any]) -> str:
     """Return the stable relay-visible path advertised for a skill package."""
+    if skill_def.get("skill_root"):
+        return str(skill_def.get("skill_root"))
     resource_id = (
         skill_def.get("resource_id") or skill_def.get("_resource_id")
         or skill_def.get("id") or f"{skill_def.get('_scope', 'user')}:{skill_name}"
@@ -408,27 +388,14 @@ def _split_skill_arguments(arguments: str) -> List[str]:
         return [v for v in arguments.split() if v]
 
 
-def _declared_param_names(declared_params: Any) -> List[str]:
-    if isinstance(declared_params, dict):
-        return [str(k) for k in declared_params.keys()]
-    if isinstance(declared_params, list):
-        names = []
-        for item in declared_params:
-            if isinstance(item, str):
-                names.append(item)
-            elif isinstance(item, dict) and item.get("name"):
-                names.append(str(item["name"]))
-        return names
-    return []
-
-
-def _run_params(arguments: str, args: List[str],
-                declared_params: Any) -> Dict[str, str]:
+def _run_params(arguments: str, args: List[str]) -> Dict[str, str]:
     params = {str(idx): value for idx, value in enumerate(args)}
-    for name, value in zip(_declared_param_names(declared_params), args):
-        params[name] = value
     params["arguments"] = arguments or ""
     return params
+
+
+def _skill_instructions(skill_def: Dict[str, Any]) -> str:
+    return str(skill_def.get("instructions") or skill_def.get("prompt") or "").strip()
 
 
 def _substitute_run_placeholders(prompt: str, arguments: str,
@@ -449,8 +416,16 @@ def _substitute_run_placeholders(prompt: str, arguments: str,
         idx = int(match.group(1))
         return args[idx] if idx < len(args) else match.group(0)
 
+    def _replace_positional(match):
+        idx = int(match.group(1) or match.group(2))
+        if idx <= 0:
+            return args[0] if args else match.group(0)
+        pos = idx - 1
+        return args[pos] if pos < len(args) else match.group(0)
+
     prompt = re.sub(r'\$ARGUMENTS\[(\d+)\]', _replace_index, prompt)
-    prompt = re.sub(r'\$([0-9]+)', _replace_index, prompt)
+    prompt = re.sub(r'\$\{([0-9]+)\}|\$([0-9]+)',
+                    lambda m: _replace_positional(m), prompt)
 
     def _replace_name(match):
         key = match.group(1) or match.group(2)
@@ -473,26 +448,10 @@ def _get_skill_any(rs, skill_name: str, user_id: str,
 
 
 def _resolve_prompt_chain(skill_name: str, rs, user_id: str,
-                          conversation_id: str = "",
-                          depth: int = 0) -> str:
-    """Resolve a skill's prompt including its extends chain.
-
-    Returns the concatenated prompt: parent first, then child.
-    """
-    if depth >= _MAX_EXTENDS_DEPTH:
-        return ""
+                          conversation_id: str = "") -> str:
+    """Return the canonical SKILL.md instructions for a skill."""
     skill_def = _get_skill_any(rs, skill_name, user_id, conversation_id)
-    if not skill_def or not skill_def.get("prompt"):
-        return ""
-    parent_prompt = ""
-    extends = skill_def.get("extends", "")
-    if extends:
-        parent_prompt = _resolve_prompt_chain(
-            extends, rs, user_id, conversation_id, depth + 1)
-    prompt = skill_def["prompt"]
-    if parent_prompt:
-        return parent_prompt + "\n\n" + prompt
-    return prompt
+    return _skill_instructions(skill_def or {})
 
 
 def _render_dynamic_skill_prompt(prompt: str, skill_def: Dict[str, Any],
@@ -557,13 +516,10 @@ def resolve_skill_prompts(
                 condition, user_id, conversation_id):
             continue
         skill_def = _get_skill_any(rs, name, user_id, conversation_id)
-        if not skill_def or not skill_def.get("prompt"):
+        if not skill_def or not _skill_instructions(skill_def):
             continue
         prompt = _resolve_prompt_chain(
             name, rs, user_id, conversation_id=conversation_id)
-        declared_params = skill_def.get("parameters") or {}
-        if params or declared_params:
-            prompt = _substitute_params(prompt, params, declared_params)
         prompt = _render_dynamic_skill_prompt(
             prompt, skill_def, user_id, conversation_id, agent_name, params)
         desc = skill_def.get("description", "")
@@ -588,15 +544,12 @@ def resolve_runnable_skill_prompt(skill_name: str, user_id: str,
     from core.resource_store import ResourceStore
     rs = ResourceStore.instance()
     skill_def = _get_skill_any(rs, skill_name, user_id, conversation_id)
-    if not skill_def or not skill_def.get("prompt"):
+    if not skill_def or not _skill_instructions(skill_def):
         return ""
-    declared_params = skill_def.get("parameters") or {}
     args = _split_skill_arguments(arguments or "")
-    params = _run_params(arguments or "", args, declared_params)
+    params = _run_params(arguments or "", args)
     prompt = _resolve_prompt_chain(
         skill_name, rs, user_id, conversation_id=conversation_id)
-    if params or declared_params:
-        prompt = _substitute_params(prompt, params, declared_params)
     skill_dir = skill_mount_dir(skill_name, skill_def)
     prompt = _substitute_run_placeholders(
         prompt, arguments or "", args, params, skill_dir)

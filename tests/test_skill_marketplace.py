@@ -264,7 +264,7 @@ def test_import_marketplace_creates_low_risk_skill(monkeypatch):
     assert result["imported"] is True
     args, kwargs = created[0]
     assert args[:3] == ("skill", "review-pr", "alice")
-    assert args[3]["prompt"] == "Review the requested PR."
+    assert args[3]["instructions"] == "Review the requested PR."
     assert args[3]["imported_from"]["source"] == "codex"
 
 

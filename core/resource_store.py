@@ -5,7 +5,7 @@ all I/O to ScopedRepository (1 JSON file per resource under data/repository/).
 
 Resource types:
 - agent:    { name, prompt, model?, tools?, max_depth?, timeout?, description? }
-- skill:    { name, prompt, description?, parameters?, extends? }
+- skill:    Agent Skills directory with SKILL.md { name, description, instructions }
 - mcp:      { name, url, auth?, discovered_tools? }
 - task_def: { name, prompt, criteria?, default_interval?, description?, created_by? }
 - theme:    directory resource with theme.json, CSS files, and optional assets
@@ -41,7 +41,7 @@ VALID_TYPES = frozenset(_TYPE_MAP.keys())
 # Required fields per type
 _REQUIRED_FIELDS = {
     "agent": ("prompt",),
-    "skill": ("prompt",),
+    "skill": ("description", "instructions"),
     "mcp": (),  # url or command required (validated in create)
     "task_def": ("prompt",),
     "prompt": ("prompt",),
@@ -58,8 +58,7 @@ _DEFAULTS = {
     },
     "skill": {
         "description": "",
-        "parameters": {},
-        "extends": "",
+        "instructions": "",
     },
     "mcp": {
         "url": "",              # HTTP transport: server URL

@@ -301,11 +301,19 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
 
     if action in ("create_skill", "add_skill", "update_skill", "modify_skill"):
         skill_name = body.get("name", "").strip()
-        skill_prompt = body.get("prompt", "").strip()
+        skill_instructions = body.get("instructions", "").strip()
+        description = body.get("description", "").strip()
         conv_id = body.get("conversation_id", "")
-        if not skill_name or not skill_prompt:
+        is_update = action in ("update_skill", "modify_skill")
+        if not skill_name or (not is_update and (not skill_instructions or not description)):
             flowfile.set_content(json.dumps({
-                "error": "Missing name or prompt",
+                "error": "Missing name, description, or instructions",
+            }).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        if is_update and not skill_instructions and not description:
+            flowfile.set_content(json.dumps({
+                "error": "Missing description or instructions",
             }).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
@@ -314,9 +322,9 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         rs = ResourceStore.instance()
         uid = user_id
         try:
-            is_update = action in ("update_skill", "modify_skill")
-            data = {"prompt": skill_prompt}
-            description = body.get("description", "")
+            data = {}
+            if skill_instructions:
+                data["instructions"] = skill_instructions
             if description:
                 data["description"] = description
             from core.review_bindings import attach_review_metadata, review_for_write
@@ -695,7 +703,8 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             "skills": [{
                 "name": s["name"],
                 "description": s.get("description", ""),
-                "prompt": s.get("prompt", "")[:80],
+                "scope": s.get("_scope", ""),
+                "preview": (s.get("instructions") or s.get("prompt", ""))[:80],
             } for s in skills],
         }, ensure_ascii=False).encode())
         return [flowfile]

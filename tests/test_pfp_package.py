@@ -5407,7 +5407,7 @@ def test_pfp_registry_update_cycle_handles_add_update_remove_and_uninstall(tmp_p
 
     from core.resource_store import ResourceStore
     store = ResourceStore.instance()
-    assert store.get("skill", "pkg-skill", "alice")["prompt"] == "Updated registry skill."
+    assert store.get("skill", "pkg-skill", "alice")["instructions"] == "Updated registry skill."
     assert store.get("agent", "helper", "alice") is None
     assert store.get("prompt", "package-prompt", "alice") is None
 
@@ -5770,8 +5770,8 @@ def test_pfp_export_creates_source_package(tmp_path, monkeypatch):
     from core.resource_store import ResourceStore
 
     ResourceStore.instance().create("skill", "local-skill", "alice", {
-        "prompt": "Local skill prompt",
         "description": "Local",
+        "instructions": "Local skill prompt",
     })
 
     exported = pfp_package.export_pfpdir(
@@ -5782,6 +5782,10 @@ def test_pfp_export_creates_source_package(tmp_path, monkeypatch):
     manifest = json.loads((tmp_path / "exported.pfpdir" / "pfp.json").read_text(encoding="utf-8"))
     assert manifest["package"] == "alice.local"
     assert manifest["objects"][0]["id"] == "skill:local-skill"
+    assert manifest["objects"][0]["path"] == "content/skills/local-skill/SKILL.md"
+    skill_md = tmp_path / "exported.pfpdir" / "content" / "skills" / "local-skill" / "SKILL.md"
+    assert "name: local-skill" in skill_md.read_text(encoding="utf-8")
+    assert "Local skill prompt" in skill_md.read_text(encoding="utf-8")
 
 
 def test_pfp_slash_parser_handles_install_flags():

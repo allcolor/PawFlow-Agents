@@ -22,7 +22,7 @@ def test_skill_update_slash_command_parses_explicit_update():
 
     assert body["action"] == "update_skill"
     assert body["name"] == "review-pr"
-    assert body["prompt"] == "new prompt"
+    assert body["instructions"] == "new prompt"
 
 
 def test_skill_run_slash_command_defaults_to_selected_agent():
@@ -105,10 +105,8 @@ def test_resolve_runnable_skill_prompt_renders_args_and_placeholders(monkeypatch
                 "name": "review-pr",
                 "_scope": "user",
                 "description": "Review pull requests",
-                "template_engine": "jinja",
-                "parameters": {"pr_number": {}},
-                "prompt": (
-                    "Review PR {{ params.pr_number }} / {{ args[0] }}.\n"
+                "instructions": (
+                    "Review PR ${1} / ${1}.\n"
                     "Raw=$ARGUMENTS.\n"
                     "Dir=${PAWFLOW_SKILL_DIR}."
                 ),
@@ -145,8 +143,7 @@ def test_run_skill_action_queues_rendered_prompt_for_selected_agent(monkeypatch)
                 return {
                     "name": "review-pr",
                     "description": "Review pull requests",
-                    "parameters": {"pr_number": {}},
-                    "prompt": "Review ${pr_number} now.",
+                    "instructions": "Review ${1} now.",
                 }
             return None
 
@@ -215,7 +212,7 @@ def test_skill_add_rejects_existing_skill_and_update_requires_existing(monkeypat
             self.exists = exists
 
         def get(self, rtype, name, user_id, **kwargs):
-            return {"prompt": "old"} if self.exists else None
+            return {"instructions": "old"} if self.exists else None
 
         def create(self, *args, **kwargs):
             calls.append(("create", args, kwargs))
@@ -230,7 +227,8 @@ def test_skill_add_rejects_existing_skill_and_update_requires_existing(monkeypat
     monkeypatch.setattr(RealResourceStore, "instance", staticmethod(lambda: ResourceStore(True)))
     ff = FlowFile(content=b"")
     _handle_agent_resource(Task(), "create_skill", {
-        "conversation_id": "conv1", "name": "review-pr", "prompt": "new",
+        "conversation_id": "conv1", "name": "review-pr", "instructions": "new",
+        "description": "Review PRs",
     }, Store(), "alice", ff)
     assert ff.get_attribute("http.response.status") == "409"
     assert calls == []
@@ -238,7 +236,7 @@ def test_skill_add_rejects_existing_skill_and_update_requires_existing(monkeypat
     monkeypatch.setattr(RealResourceStore, "instance", staticmethod(lambda: ResourceStore(False)))
     ff = FlowFile(content=b"")
     _handle_agent_resource(Task(), "update_skill", {
-        "conversation_id": "conv1", "name": "review-pr", "prompt": "new",
+        "conversation_id": "conv1", "name": "review-pr", "instructions": "new",
     }, Store(), "alice", ff)
     assert ff.get_attribute("http.response.status") == "404"
     assert calls == []
@@ -246,7 +244,7 @@ def test_skill_add_rejects_existing_skill_and_update_requires_existing(monkeypat
     monkeypatch.setattr(RealResourceStore, "instance", staticmethod(lambda: ResourceStore(True)))
     ff = FlowFile(content=b"")
     _handle_agent_resource(Task(), "update_skill", {
-        "conversation_id": "conv1", "name": "review-pr", "prompt": "new",
+        "conversation_id": "conv1", "name": "review-pr", "instructions": "new",
     }, Store(), "alice", ff)
     body = json.loads(ff.get_content().decode("utf-8"))
     assert body["updated"] is True
@@ -264,22 +262,16 @@ def test_resource_store_skill_update_is_patch_not_replace(tmp_path, monkeypatch)
 
     store = ResourceStore.instance()
     store.create("skill", "review-pr", "alice", {
-        "prompt": "old",
         "description": "old desc",
-        "parameters": {"target": {"type": "string"}},
-        "extends": "base-skill",
-        "template_engine": "pawflow",
+        "instructions": "old",
         "imported_from": {"source": "test"},
     })
 
-    store.update("skill", "review-pr", "alice", {"prompt": "new"})
+    store.update("skill", "review-pr", "alice", {"instructions": "new"})
     updated = store.get("skill", "review-pr", "alice")
 
-    assert updated["prompt"] == "new"
+    assert updated["instructions"] == "new"
     assert updated["description"] == "old desc"
-    assert updated["parameters"] == {"target": {"type": "string"}}
-    assert updated["extends"] == "base-skill"
-    assert updated["template_engine"] == "pawflow"
     assert updated["imported_from"] == {"source": "test"}
 
 

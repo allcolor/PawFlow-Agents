@@ -379,9 +379,125 @@ async function send() {
 
 let _lastEscapeTime = 0;
 let _lastEscapeTarget = '';
+let _skillAutocomplete = { open: false, items: [], filtered: [], index: 0, query: '', loading: null };
+
+function _skillAutocompleteToken(input) {
+  const pos = input.selectionStart || 0;
+  const before = input.value.slice(0, pos);
+  if (!before.startsWith('//')) return null;
+  if (/\s/.test(before.slice(2))) return null;
+  return { query: before.slice(2), start: 0, end: pos };
+}
+
+async function _loadSkillAutocompleteItems() {
+  if (_skillAutocomplete.items.length) return _skillAutocomplete.items;
+  if (_skillAutocomplete.loading) return _skillAutocomplete.loading;
+  _skillAutocomplete.loading = rxjs.firstValueFrom(action$('list_skills', {}, { silent: true }))
+    .then(data => {
+      _skillAutocomplete.items = (data.skills || [])
+        .filter(s => s && s.name)
+        .sort((a, b) => String(a.name).localeCompare(String(b.name)));
+      return _skillAutocomplete.items;
+    })
+    .finally(() => { _skillAutocomplete.loading = null; });
+  return _skillAutocomplete.loading;
+}
+
+function _hideSkillAutocomplete() {
+  const el = document.getElementById('skillAutocomplete');
+  if (el) el.remove();
+  _skillAutocomplete.open = false;
+}
+
+function _renderSkillAutocomplete(input, query) {
+  const q = String(query || '').toLowerCase();
+  _skillAutocomplete.query = query || '';
+  _skillAutocomplete.filtered = _skillAutocomplete.items.filter(s => {
+    const hay = (String(s.name || '') + ' ' + String(s.description || '')).toLowerCase();
+    return !q || hay.includes(q);
+  }).slice(0, 12);
+  if (_skillAutocomplete.index >= _skillAutocomplete.filtered.length) _skillAutocomplete.index = 0;
+  let box = document.getElementById('skillAutocomplete');
+  if (!box) {
+    box = document.createElement('div');
+    box.id = 'skillAutocomplete';
+    box.style.cssText = 'position:fixed;z-index:10001;min-width:260px;max-width:520px;max-height:280px;overflow-y:auto;background:var(--pf-panel);border:1px solid var(--pf-border);border-radius:6px;box-shadow:0 8px 24px var(--pf-shadow);padding:4px;';
+    document.body.appendChild(box);
+  }
+  const rect = input.getBoundingClientRect();
+  box.style.left = rect.left + 'px';
+  box.style.bottom = (window.innerHeight - rect.top + 6) + 'px';
+  if (!_skillAutocomplete.filtered.length) {
+    box.innerHTML = '<div style="padding:8px 10px;color:var(--pf-muted);font-size:12px;">No skills</div>';
+    _skillAutocomplete.open = true;
+    return;
+  }
+  box.innerHTML = _skillAutocomplete.filtered.map((s, i) => {
+    const active = i === _skillAutocomplete.index;
+    return '<div class="skill-ac-item" data-index="' + i + '" style="padding:7px 9px;border-radius:4px;cursor:pointer;background:' + (active ? 'color-mix(in srgb, var(--pf-accent) 18%, transparent)' : 'transparent') + ';">'
+      + '<div style="font-size:12px;color:var(--pf-text);font-weight:600;">//' + escapeHtml(s.name) + '</div>'
+      + (s.description ? '<div style="font-size:11px;color:var(--pf-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + escapeHtml(s.description) + '</div>' : '')
+      + '</div>';
+  }).join('');
+  box.querySelectorAll('.skill-ac-item').forEach(item => {
+    item.addEventListener('mouseenter', () => {
+      _skillAutocomplete.index = parseInt(item.dataset.index || '0', 10) || 0;
+      _renderSkillAutocomplete(input, _skillAutocomplete.query);
+    });
+    item.addEventListener('mousedown', e => {
+      e.preventDefault();
+      _applySkillAutocomplete(input);
+    });
+  });
+  _skillAutocomplete.open = true;
+}
+
+function _applySkillAutocomplete(input) {
+  const token = _skillAutocompleteToken(input);
+  const item = _skillAutocomplete.filtered[_skillAutocomplete.index];
+  if (!token || !item) return false;
+  input.value = '//' + item.name + ' ' + input.value.slice(token.end);
+  const pos = item.name.length + 3;
+  input.setSelectionRange(pos, pos);
+  _hideSkillAutocomplete();
+  return true;
+}
+
+async function _openSkillAutocomplete(input) {
+  const token = _skillAutocompleteToken(input);
+  if (!token) return false;
+  await _loadSkillAutocompleteItems();
+  _renderSkillAutocomplete(input, token.query);
+  return true;
+}
 
 function handleKey(e) {
   const input = e.target;
+  if (_skillAutocomplete.open) {
+    if (e.key === 'Escape') { e.preventDefault(); _hideSkillAutocomplete(); return; }
+    if (e.key === 'Enter') {
+      if (_applySkillAutocomplete(input)) { e.preventDefault(); return; }
+    }
+    if (e.key === 'ArrowDown' || e.key === 'Tab') {
+      e.preventDefault();
+      const n = _skillAutocomplete.filtered.length || 1;
+      _skillAutocomplete.index = (_skillAutocomplete.index + 1) % n;
+      _renderSkillAutocomplete(input, _skillAutocomplete.query);
+      return;
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      const n = _skillAutocomplete.filtered.length || 1;
+      _skillAutocomplete.index = (_skillAutocomplete.index + n - 1) % n;
+      _renderSkillAutocomplete(input, _skillAutocomplete.query);
+      return;
+    }
+  }
+  if (e.key === 'Tab' && _skillAutocompleteToken(input)) {
+    e.preventDefault();
+    _openSkillAutocomplete(input);
+    return;
+  }
   // Escape: 1st = graceful interrupt, 2nd (within 5s) = force stop
   if (e.key === 'Escape') {
     e.preventDefault();
@@ -407,6 +523,7 @@ function handleKey(e) {
   }
   if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey) {
     e.preventDefault();
+    _hideSkillAutocomplete();
     send();
     return;
   }
@@ -434,6 +551,9 @@ function handleKey(e) {
     return;
   }
   setTimeout(() => {
+    const token = _skillAutocompleteToken(input);
+    if (_skillAutocomplete.open && token) _renderSkillAutocomplete(input, token.query);
+    else if (_skillAutocomplete.open) _hideSkillAutocomplete();
     input.style.height = 'auto';
     input.style.height = Math.min(input.scrollHeight, 120) + 'px';
   }, 0);

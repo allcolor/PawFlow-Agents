@@ -124,19 +124,20 @@ class TestSkillCRUD:
     def test_create_skill(self):
         store = ResourceStore.instance()
         result = store.create("skill", "summarizer", "user1", {
-            "prompt": "Summarize the following text concisely",
+            "description": "Summarize text",
+            "instructions": "Summarize the following text concisely",
         })
         assert result["name"] == "summarizer"
-        assert result["prompt"] == "Summarize the following text concisely"
-        assert result["description"] == ""  # default
+        assert result["instructions"] == "Summarize the following text concisely"
+        assert result["description"] == "Summarize text"
 
     def test_skill_full_lifecycle(self):
         store = ResourceStore.instance()
-        store.create("skill", "s1", "u1", {"prompt": "p1"})
-        store.create("skill", "s2", "u1", {"prompt": "p2"})
+        store.create("skill", "s1", "u1", {"description": "Skill one", "instructions": "p1"})
+        store.create("skill", "s2", "u1", {"description": "Skill two", "instructions": "p2"})
         assert len(store.list("skill", "u1")) == 2
-        store.update("skill", "s1", "u1", {"prompt": "updated"})
-        assert store.get("skill", "s1", "u1")["prompt"] == "updated"
+        store.update("skill", "s1", "u1", {"instructions": "updated"})
+        assert store.get("skill", "s1", "u1")["instructions"] == "updated"
         store.delete("skill", "s1", "u1")
         assert len(store.list("skill", "u1")) == 1
 
@@ -182,14 +183,17 @@ class TestPersistence:
     def test_save_and_reload(self, reset_singleton):
         store = ResourceStore.instance()
         store.create("agent", "a1", "u1", {"prompt": "hello"})
-        store.create("skill", "s1", "u1", {"prompt": "summarize"})
+        store.create("skill", "s1", "u1", {"description": "Summarize", "instructions": "summarize"})
 
         # Verify individual files exist on disk (.md for agents)
         from core.paths import REPOSITORY_DIR
         agent_file = REPOSITORY_DIR / "agents" / "users" / "u1" / "a1.md"
+        skill_file = REPOSITORY_DIR / "skills" / "users" / "u1" / "s1" / "SKILL.md"
         assert agent_file.exists()
+        assert skill_file.exists()
         content = agent_file.read_text(encoding="utf-8")
         assert "hello" in content  # prompt is in the body
+        assert "summarize" in skill_file.read_text(encoding="utf-8")
 
         # Reset and reload
         from core.repository import ScopedRepository
@@ -202,7 +206,7 @@ class TestPersistence:
 
         skill = store2.get("skill", "s1", "u1")
         assert skill is not None
-        assert skill["prompt"] == "summarize"
+        assert skill["instructions"] == "summarize"
 
     def test_delete_persists(self, reset_singleton):
         store = ResourceStore.instance()

@@ -11,7 +11,7 @@ def test_dynamic_skill_template_renders_pawflow_snapshot(monkeypatch):
             return {
                 "description": "Dynamic image skill",
                 "template_engine": "jinja",
-                "prompt": (
+                "instructions": (
                     "agent={{ pawflow.current_agent.name }}\n"
                     "relay={{ pawflow.default_relay.id }}\n"
                     "image={{ pawflow.media_services('image')[0].id }}\n"
@@ -54,15 +54,14 @@ def test_dynamic_skill_template_renders_pawflow_snapshot(monkeypatch):
     assert "tool=generate_image" in rendered
 
 
-def test_static_skill_prompt_still_uses_param_substitution(monkeypatch):
+def test_static_skill_prompt_is_loaded_without_param_substitution(monkeypatch):
     from core import skill_resolver
 
     class Store:
         def get_any(self, rtype, name, user_id, conversation_id=""):
             return {
                 "description": "Static skill",
-                "prompt": "Use ${tool_name} carefully.",
-                "parameters": {"tool_name": {"default": "read"}},
+                "instructions": "Use ${tool_name} carefully.",
             }
 
     from core.resource_store import ResourceStore
@@ -72,7 +71,7 @@ def test_static_skill_prompt_still_uses_param_substitution(monkeypatch):
         [{"name": "static", "params": {"tool_name": "generate_image"}}],
         "alice")
 
-    assert "Use generate_image carefully." in blocks[0]
+    assert "Use ${tool_name} carefully." in blocks[0]
 
 
 def test_skill_manifest_advertises_without_prompt_body(monkeypatch):
@@ -82,7 +81,7 @@ def test_skill_manifest_advertises_without_prompt_body(monkeypatch):
         def get_any(self, rtype, name, user_id, conversation_id=""):
             return {
                 "description": "Static skill",
-                "prompt": "SECRET FULL PROMPT BODY",
+                "instructions": "SECRET FULL PROMPT BODY",
             }
 
     from core.resource_store import ResourceStore
@@ -104,7 +103,7 @@ def test_skill_manifest_resolves_conversation_scoped_skill(monkeypatch):
         def get_any(self, rtype, name, user_id, conversation_id=""):
             calls.append((rtype, name, user_id, conversation_id))
             if conversation_id == "conv1":
-                return {"description": "Conversation skill", "prompt": "secret"}
+                return {"description": "Conversation skill", "instructions": "secret"}
             return None
 
     from core.resource_store import ResourceStore
@@ -125,14 +124,13 @@ def test_load_skill_only_returns_assigned_skill(monkeypatch):
             if rtype == "agent":
                 return {
                     "assigned_skills": [
-                        {"name": "static", "params": {"tool_name": "bash"}},
+                        "static",
                     ],
                 }
             if rtype == "skill" and name == "static":
                 return {
                     "description": "Static skill",
-                    "prompt": "Use ${tool_name} carefully.",
-                    "parameters": {"tool_name": {"default": "read"}},
+                    "instructions": "Use ${tool_name} carefully.",
                 }
             return None
 
@@ -147,7 +145,7 @@ def test_load_skill_only_returns_assigned_skill(monkeypatch):
     denied = handler.execute({"name": "other"})
 
     assert "## Skill: static" in loaded
-    assert "Use bash carefully." in loaded
+    assert "Use ${tool_name} carefully." in loaded
     assert "not assigned" in denied
 
 
@@ -177,13 +175,13 @@ def test_default_media_service_uses_agent_preference(monkeypatch):
     assert ctx.default_media_service("image")["id"] == "codex_image_service"
 
 
-def test_builtin_image_generation_specialist_declares_jinja_template():
+def test_builtin_image_generation_specialist_is_standard_skill_md():
     from core.resource_store import ResourceStore
 
     skill = ResourceStore.instance().get_any(
         "skill", "image-generation-specialist", "__global__")
 
     assert skill
-    assert skill.get("template_engine") == "jinja"
-    assert "pawflow.media_services('image')" in skill.get("prompt", "")
-    assert "service" in skill.get("prompt", "")
+    assert not skill.get("template_engine")
+    assert "generate_image" in skill.get("instructions", "")
+    assert "edit_image" in skill.get("instructions", "")

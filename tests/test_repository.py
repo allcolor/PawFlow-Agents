@@ -84,10 +84,15 @@ class TestScopedRepository(unittest.TestCase):
 
     def test_create_and_get_user(self):
         self.repo.create("skills", "my-skill", "user",
-                         {"prompt": "Summarize"}, user_id="u1")
+                         {
+                             "description": "Summarize text",
+                             "instructions": "Summarize",
+                         }, user_id="u1")
         result = self.repo.get("skills", "my-skill", "user", user_id="u1")
         self.assertIsNotNone(result)
         self.assertEqual(result["name"], "my-skill")
+        self.assertEqual(result["description"], "Summarize text")
+        self.assertEqual(result["instructions"], "Summarize")
 
     def test_create_and_get_conv(self):
         self.repo.create("agents", "draft", "conv",

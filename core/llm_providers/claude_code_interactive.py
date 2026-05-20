@@ -84,7 +84,8 @@ def _event_tool_args(event: dict) -> dict:
 class _CCITurnCoordinator:
     def __init__(self, event_service, session_token: str, callback=None,
                  thinking_callback=None, block_callback=None,
-                 turn_callback=None, touch_callback=None):
+                 turn_callback=None, touch_callback=None,
+                 emitted_tool_use_ids=None, emitted_tool_result_ids=None):
         self.event_service = event_service
         self.session_token = session_token
         self.touch_callback = touch_callback
@@ -98,8 +99,16 @@ class _CCITurnCoordinator:
         self.tool_blocks: dict[int, dict] = {}
         self.tool_by_id: dict[str, dict] = {}
         self.pending_tool_results: dict[str, list[dict]] = {}
-        self.emitted_tool_use_ids: set[str] = set()
-        self.emitted_tool_result_ids: set[str] = set()
+        # Dedup of observed tool_use/tool_result ids. Owned by the
+        # persistent session (InteractiveContainer) when provided, so an
+        # id observed on an earlier turn — a live Claude Code session
+        # replays its whole context on every API request — is not
+        # re-emitted and re-appended to the PawFlow agent context.
+        # Falls back to per-coordinator sets when no session set is given.
+        self.emitted_tool_use_ids: set[str] = (
+            emitted_tool_use_ids if emitted_tool_use_ids is not None else set())
+        self.emitted_tool_result_ids: set[str] = (
+            emitted_tool_result_ids if emitted_tool_result_ids is not None else set())
         self.usage = {}
         self.lifecycle_events: list[dict] = []
         self.current_block_type = None
@@ -546,7 +555,9 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
         coord = _CCITurnCoordinator(
             event_service, state.session_token, callback=callback,
             thinking_callback=thinking_callback, block_callback=block_callback,
-            turn_callback=turn_callback, touch_callback=lambda: pool.touch(state))
+            turn_callback=turn_callback, touch_callback=lambda: pool.touch(state),
+            emitted_tool_use_ids=state.emitted_tool_use_ids,
+            emitted_tool_result_ids=state.emitted_tool_result_ids)
         response = coord.run(getattr(self, "_abort", None))
         response.model = model or self.default_model
         return response
@@ -578,7 +589,9 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
         coord = _CCITurnCoordinator(
             event_service, state.session_token, callback=callback,
             thinking_callback=thinking_callback, block_callback=block_callback,
-            turn_callback=turn_callback, touch_callback=lambda: pool.touch(state))
+            turn_callback=turn_callback, touch_callback=lambda: pool.touch(state),
+            emitted_tool_use_ids=state.emitted_tool_use_ids,
+            emitted_tool_result_ids=state.emitted_tool_result_ids)
         response = coord.run(getattr(self, "_abort", None))
         response.model = model or self.default_model
         return response

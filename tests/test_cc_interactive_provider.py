@@ -1703,3 +1703,55 @@ def test_cc_interactive_event_service_ignores_next_prompt_after_server_injection
     event = svc.wait_event("sess", timeout=0)
     assert event["type"] == "hook"
     assert event["hook_event_name"] == "UserPromptSubmit"
+
+
+def test_cci_tool_results_not_re_emitted_across_turns():
+    """A live Claude Code session replays its whole context (every prior
+    tool_use/tool_result) on each API request. The session-scoped dedup
+    sets on InteractiveContainer must stop the per-turn coordinator from
+    re-emitting an already-seen tool result — otherwise every old result
+    is re-appended to the PawFlow agent context each turn (the 3x+ bloat).
+    """
+    from core.llm_providers.claude_code_interactive import _CCITurnCoordinator
+    from core.claude_code_interactive_pool import InteractiveContainer
+
+    state = InteractiveContainer(
+        key=("u", "c", "a", "s"), name="n", workdir="/w",
+        container_workdir="/cw", session_token="tok",
+        event_service_id="es", internal_token="it")
+
+    def _coord():
+        calls = []
+        c = _CCITurnCoordinator(
+            event_service=None, session_token="tok",
+            block_callback=lambda kind, payload: calls.append((kind, payload)),
+            emitted_tool_use_ids=state.emitted_tool_use_ids,
+            emitted_tool_result_ids=state.emitted_tool_result_ids)
+        return c, calls
+
+    tcid = "toolu_regression_xyz"
+
+    # Turn 1: tool result observed for the first time -> emitted once.
+    c1, calls1 = _coord()
+    c1.tool_by_id[tcid] = {"emitted": True, "hidden": False,
+                           "name": "Read", "display_name": "Read"}
+    c1._emit_tool_result({"tool_use_id": tcid, "content": "FILE BODY"})
+    assert [k for k, _ in calls1] == ["tool_result"]
+    assert tcid in state.emitted_tool_result_ids
+
+    # Turn 2: a fresh coordinator (new turn) observes the SAME replayed
+    # result -> the shared session set suppresses it, nothing re-emitted.
+    c2, calls2 = _coord()
+    c2.tool_by_id[tcid] = {"emitted": True, "hidden": False,
+                           "name": "Read", "display_name": "Read"}
+    c2._emit_tool_result({"tool_use_id": tcid, "content": "FILE BODY"})
+    assert calls2 == []
+
+
+def test_cci_coordinator_dedup_sets_default_to_per_instance():
+    """Without a session set the coordinator keeps its own sets — backward
+    compatible for callers/tests that do not pass them."""
+    from core.llm_providers.claude_code_interactive import _CCITurnCoordinator
+    c = _CCITurnCoordinator(event_service=None, session_token="tok")
+    assert c.emitted_tool_use_ids == set()
+    assert c.emitted_tool_result_ids == set()

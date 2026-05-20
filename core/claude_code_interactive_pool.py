@@ -50,6 +50,14 @@ class InteractiveContainer:
     proxy_started: bool = False
     claude_started: bool = False
     last_error: str = ""
+    # Session-scoped dedup of observed tool_use/tool_result ids. A live
+    # Claude Code session replays its full context (every prior tool_use
+    # and tool_result block) on each API request, so the proxy re-emits
+    # them every turn. These sets live on the session — not the per-turn
+    # _CCITurnCoordinator — so an id seen on an earlier turn is never
+    # re-emitted and re-appended to the PawFlow context.
+    emitted_tool_use_ids: set = field(default_factory=set)
+    emitted_tool_result_ids: set = field(default_factory=set)
 
 
 class InteractiveClaudeCodePool:

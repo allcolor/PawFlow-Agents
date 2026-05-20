@@ -30,6 +30,10 @@ def test_skill_add_update_slash_command_parses_force():
         "/skill add --force review-pr new prompt", "conv1", "alice", "assistant")
     update_body = _parse_command(
         "/skill update --force review-pr changed prompt", "conv1", "alice", "assistant")
+    add_alias_body = _parse_command(
+        "/add-skill --force @review-pr alias prompt", "conv1", "alice", "assistant")
+    del_body = _parse_command(
+        "/skill del @review-pr", "conv1", "alice", "assistant")
 
     assert add_body["action"] == "create_skill"
     assert add_body["name"] == "review-pr"
@@ -39,6 +43,12 @@ def test_skill_add_update_slash_command_parses_force():
     assert update_body["name"] == "review-pr"
     assert update_body["instructions"] == "changed prompt"
     assert update_body["force"] is True
+    assert add_alias_body["action"] == "create_skill"
+    assert add_alias_body["name"] == "review-pr"
+    assert add_alias_body["instructions"] == "alias prompt"
+    assert add_alias_body["force"] is True
+    assert del_body["action"] == "delete_skill"
+    assert del_body["name"] == "review-pr"
 
 
 def test_skill_assignment_slash_commands_parse_agent_and_skill():

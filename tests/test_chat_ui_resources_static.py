@@ -29,6 +29,16 @@ def test_agent_skills_dialog_surfaces_assign_errors():
     assert "addMsg('error', errors.join('\\n'))" in js
 
 
+def test_skill_list_uses_real_newlines_and_symbols():
+    js = Path("tasks/io/chat_ui/resources.js").read_text(encoding="utf-8")
+
+    assert "lines.join('\\\\n')" not in js
+    assert "\\\\u2705" not in js
+    assert "\\\\u2B1C" not in js
+    assert "\\\\u26A0" not in js
+    assert "lines.join('\\n')" in js
+
+
 def test_typing_indicators_use_sweeping_block_animation():
     js = Path("tasks/io/chat_ui/typing.js").read_text(encoding="utf-8")
     template = Path("tasks/io/chat_ui/template.html").read_text(encoding="utf-8")

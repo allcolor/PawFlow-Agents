@@ -991,6 +991,9 @@ def _parse_command(text: str, conversation_id: str, user_id: str,
     if cmd == "/skill":
         return _parse_skill_command(arg, base, agent_name)
 
+    if cmd == "/add-skill":
+        return _parse_skill_command("add " + arg, base, agent_name)
+
     if cmd == "/pfp":
         return _parse_pfp_command(arg, base)
 
@@ -1375,18 +1378,18 @@ def _parse_skill_command(arg: str, base: dict, agent_name: str = "") -> dict:
         force, rest = _parse_leading_force(arg[len(subcmd):].strip())
         parts = rest.split(None, 1)
         body = parts[1] if len(parts) > 1 else ""
-        return {"action": "create_skill", "name": parts[0] if parts else "",
+        return {"action": "create_skill", "name": parts[0].lstrip("@") if parts else "",
                 "description": _skill_short_description(body),
                 "instructions": body, "force": force, **base}
     if subcmd in ("update", "modify", "edit"):
         force, rest = _parse_leading_force(arg[len(subcmd):].strip())
         parts = rest.split(None, 1)
         body = parts[1] if len(parts) > 1 else ""
-        return {"action": "update_skill", "name": parts[0] if parts else "",
+        return {"action": "update_skill", "name": parts[0].lstrip("@") if parts else "",
                 "description": _skill_short_description(body),
                 "instructions": body, "force": force, **base}
     if subcmd == "del":
-        return {"action": "delete_skill", "name": p[1] if len(p) > 1 else "",
+        return {"action": "delete_skill", "name": p[1].lstrip("@") if len(p) > 1 else "",
                 **base}
     if subcmd == "assign":
         return {

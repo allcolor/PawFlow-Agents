@@ -54,13 +54,13 @@ function cmdSkillList() {
     let lines = [t('yourSkillsHeader')];
     skills.forEach(s => {
       if (s.invalid) {
-        lines.push(`\\u26A0 **${s.name}** — invalid: ${s.invalid}`);
+        lines.push(`⚠ **${s.name}** — invalid: ${s.invalid}`);
         return;
       }
-      const mark = s.active ? '\\u2705' : '\\u2B1C';
+      const mark = s.active ? '✅' : '⬜';
       lines.push(`${mark} **${s.name}** — ${s.description || s.preview || ''}`);
     });
-    addMsg('system', lines.join('\\n'));
+    addMsg('system', lines.join('\n'));
   });
 }
 
@@ -70,26 +70,26 @@ function cmdListResources() {
     if (data.agents && data.agents.length) {
       lines.push(t('agentsHeader'));
       data.agents.forEach(a => {
-        const mark = a.active ? '\\u2705' : '\\u2B1C';
+        const mark = a.active ? '✅' : '⬜';
         lines.push(`  ${mark} ${a.name} ${a.description ? '— ' + a.description : ''}`);
       });
     }
     if (data.skills && data.skills.length) {
       lines.push(t('skillsHeader'));
       data.skills.forEach(s => {
-        const mark = s.active ? '\\u2705' : '\\u2B1C';
+        const mark = s.active ? '✅' : '⬜';
         lines.push(`  ${mark} ${s.name} ${s.description ? '— ' + s.description : ''}`);
       });
     }
     if (data.mcp_servers && data.mcp_servers.length) {
       lines.push(t('mcpServersHeader'));
       data.mcp_servers.forEach(m => {
-        const mark = m.active ? '\\u2705' : '\\u2B1C';
+        const mark = m.active ? '✅' : '⬜';
         lines.push(`  ${mark} ${m.name} (${m.url})`);
       });
     }
     if (!lines.length) lines.push(t('noResourcesDefinedUsage'));
-    addMsg('system', lines.join('\\n'));
+    addMsg('system', lines.join('\n'));
   });
 }
 

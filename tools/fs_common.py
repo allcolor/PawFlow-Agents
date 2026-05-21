@@ -5,6 +5,7 @@ Extracted to break circular imports between fs_actions and fs_exec.
 import logging
 
 import os
+import signal
 import shutil as _shutil
 import subprocess  # nosec B404
 from pathlib import Path
@@ -126,6 +127,31 @@ def windows_shell_cwd(command: str, cwd: str,
     return f'pushd "{quoted}" >nul && {command} & popd', None
 
 
+def _start_new_process_group(popen_kwargs: dict) -> None:
+    if os.name == "posix" and "start_new_session" not in popen_kwargs and "preexec_fn" not in popen_kwargs:
+        popen_kwargs["start_new_session"] = True
+
+
+def _kill_process_tree(proc) -> None:
+    if proc.poll() is not None:
+        return
+    if os.name == "posix":
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+            try:
+                proc.wait(timeout=1)
+                return
+            except subprocess.TimeoutExpired:
+                os.killpg(proc.pid, signal.SIGKILL)
+                return
+        except Exception:
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+    try:
+        proc.kill()
+    except Exception:
+        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+
+
 def run_cancellable(request_id: str, cmd, *, timeout=None, **popen_kwargs):
     """Drop-in replacement for `subprocess.run(capture_output=True, ...)`
     that registers the spawned Popen so the server's cancel_request
@@ -146,13 +172,14 @@ def run_cancellable(request_id: str, cmd, *, timeout=None, **popen_kwargs):
     if capture:
         popen_kwargs["stdout"] = subprocess.PIPE
         popen_kwargs["stderr"] = subprocess.PIPE
+    _start_new_process_group(popen_kwargs)
     proc = subprocess.Popen(cmd, **popen_kwargs)  # nosec B603
     register_inflight_proc(request_id, proc)
     try:
         try:
             stdout, stderr = proc.communicate(timeout=timeout)
         except subprocess.TimeoutExpired:
-            proc.kill()
+            _kill_process_tree(proc)
             stdout, stderr = proc.communicate()
             raise
     finally:

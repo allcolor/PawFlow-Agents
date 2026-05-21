@@ -21,6 +21,8 @@ from pawflow_relay.proc_registry import (
     _inflight_procs,
 )
 
+from tools.fs_common import run_cancellable
+
 
 @pytest.fixture(autouse=True)
 def _clean_registry():
@@ -121,6 +123,30 @@ class TestKill:
         kill_inflight_proc("r1")
         t.join(timeout=5)
         assert result == ["unblocked"]
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX process group behavior")
+    def test_run_cancellable_timeout_kills_child_holding_pipe(self):
+        cmd = [
+            sys.executable,
+            "-c",
+            (
+                "import subprocess, sys, time; "
+                "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(3)']); "
+                "time.sleep(3)"
+            ),
+        ]
+
+        started = time.monotonic()
+        with pytest.raises(subprocess.TimeoutExpired):
+            run_cancellable(
+                "timeout-child-pipe",
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=0.2,
+            )
+
+        assert time.monotonic() - started < 2.0
 
 
 class TestIsolation:

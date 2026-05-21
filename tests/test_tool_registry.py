@@ -676,6 +676,26 @@ class TestMetaToolAliases(unittest.TestCase):
         assert list_call[2]["recursive"] is True
         assert list_call[2]["max_entries"] == 5
 
+    def test_relay_exec_timeout_bounds_rpc_wait(self):
+        from services.filesystem_service import RelayService
+
+        svc = RelayService({"_service_id": "fs1"})
+        calls = []
+
+        def fake_request(action, path=".", **kwargs):
+            calls.append((action, path, kwargs))
+            return {"stdout": "", "stderr": "", "returncode": 0}
+
+        svc._request = fake_request
+
+        svc.exec(".", "pytest", timeout=12)
+
+        assert calls == [("exec", ".", {
+            "command": "pytest",
+            "timeout": 12,
+            "_request_timeout": 17.0,
+        })]
+
     def test_remote_fs_manifest_push_does_not_wait_for_send_result(self):
         from services.filesystem_service import RelayService
 

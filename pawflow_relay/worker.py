@@ -1714,6 +1714,33 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             _child_relays = {}  # relay_id → thread (child relay instances)
             _terminal_sessions = {}  # session_id → {master_fd, pid, reader}
             _disconnect_reason = "unknown"
+            _close_info = ""
+            _inflight_cmds = {}
+            _inflight_lock = _threading.Lock()
+
+            def _active_cmd_summary():
+                with _inflight_lock:
+                    if not _inflight_cmds:
+                        return "none"
+                    now = time.time()
+                    parts = []
+                    for rid, item in list(_inflight_cmds.items())[:6]:
+                        parts.append(
+                            f"{item.get('action', '?')}:{rid[:8]}:{now - item.get('ts', now):.1f}s")
+                    extra = len(_inflight_cmds) - len(parts)
+                    return ",".join(parts) + (f",+{extra}" if extra > 0 else "")
+
+            def _close_frame_info(payload: bytes) -> str:
+                if not payload:
+                    return "code=none reason=''"
+                try:
+                    if len(payload) >= 2:
+                        code = struct.unpack("!H", payload[:2])[0]
+                        reason = payload[2:].decode("utf-8", errors="replace")
+                        return f"code={code} reason={reason!r}"
+                    return f"code=none reason={payload.decode('utf-8', errors='replace')!r}"
+                except Exception:
+                    return f"malformed={payload[:80]!r}"
 
             # ── Per-WS-connection FUSE clients ──────────────────────────
             # The FUSE mounts themselves were created once before the
@@ -1850,7 +1877,11 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                     continue
 
                 if opcode == 0x08:
-                    _disconnect_reason = "server close frame"
+                    _close_info = _close_frame_info(payload)
+                    _disconnect_reason = f"server close frame {_close_info}"
+                    sys.stderr.write(
+                        f"[FSRelay] Disconnected: {_disconnect_reason} "
+                        f"inflight={_active_cmd_summary()}\n")
                     break
                 elif opcode == 0x09:
                     # Same reasoning as the ping above: SSL writes must be
@@ -2031,6 +2062,11 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 elif msg.get("type") == "command":
                     request_id = msg.get("request_id", "")
                     sys.stderr.write(f"[FSRelay] Command: {msg.get('action', '?')}\n")
+                    with _inflight_lock:
+                        _inflight_cmds[request_id] = {
+                            "action": msg.get('action', '?'),
+                            "ts": time.time(),
+                        }
                     # Execute in thread pool for parallel command handling
                     def _run_cmd(_msg, _rid, _sock, _send_fn):
                         # Streaming callback for exec_stream
@@ -2058,8 +2094,12 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                                 "request_id": _rid,
                                 "data": {"ok": False, "error": str(_e)},
                             }).encode("utf-8")
-                        with _send_lock:
-                            _send_fn(_sock, _resp)
+                        try:
+                            with _send_lock:
+                                _send_fn(_sock, _resp)
+                        finally:
+                            with _inflight_lock:
+                                _inflight_cmds.pop(_rid, None)
                     _pool.submit(_run_cmd, msg, request_id, sock, _ws_frame_send)
 
         except KeyboardInterrupt:
@@ -2087,11 +2127,10 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                     "Failed to compute relay idle time", exc_info=True)
             sys.stderr.write(
                 f"[FSRelay] Connection error: {type(e).__name__}: {e} "
-                f"(last_activity={_idle:.1f}s reason={locals().get('_disconnect_reason', 'exception')})\n")
+                f"(last_activity={_idle:.1f}s "
+                f"reason={locals().get('_disconnect_reason', 'exception')} "
+                f"inflight={locals().get('_active_cmd_summary', lambda: 'unknown')()})\n")
         finally:
-            if locals().get('_disconnect_reason') not in (None, "unknown"):
-                sys.stderr.write(
-                    f"[FSRelay] Disconnect reason: {locals().get('_disconnect_reason')}\n")
             # Guard: on early connect errors, _close_all_terminals may not
             # be defined yet (its definition sits past the handshake).
             _ct = locals().get('_close_all_terminals')
@@ -2120,6 +2159,12 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 _watchdog_stop.set()
             except Exception:
                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+            _cmd_pool = locals().get('_pool')
+            if _cmd_pool is not None:
+                try:
+                    _cmd_pool.shutdown(wait=False, cancel_futures=True)
+                except Exception:
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             # Always close socket before reconnecting — prevents socket leak
             try:
                 sock.close()

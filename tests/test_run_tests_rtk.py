@@ -46,6 +46,17 @@ def test_run_tests_does_not_use_rtk_without_env(monkeypatch):
     assert relay.calls[0][2] == ()
 
 
+def test_run_tests_forwards_explicit_timeout(monkeypatch):
+    relay = RunTestsRelay()
+    monkeypatch.delenv("PAWFLOW_USE_RTK", raising=False)
+    monkeypatch.setattr("core.handlers._fs_base.find_fs_service", lambda user_id, service_name="": relay)
+
+    result = _handler().execute({"test_files": ["tests/test_example.py"], "timeout": 240})
+
+    assert "Tests PASSED" in result
+    assert relay.calls[0][2] == (240,)
+
+
 def test_run_tests_accepts_max_output_schema_and_truncates(monkeypatch):
     class LongRelay(RunTestsRelay):
         def exec(self, path, command, *args, **kwargs):

@@ -1308,8 +1308,11 @@ def test_visible_answer_releases_active_before_slow_done_bookkeeping():
         src.index("def _release_active_after_terminal_visible_answer"):
         src.index("def _claude_code_turn_callback", src.index("def _release_active_after_terminal_visible_answer"))]
     assert "_codex_app_turn_completed_for_callback" in callback_block
+    assert "force: bool = False" in callback_block
     assert "self._active_contexts.pop(_ctx_key_done, None)" in callback_block
     assert "self._decrement_active(conversation_id, ctx)" in callback_block
+    assert '"type": "active_released"' in callback_block
+    assert "enqueue_sse_events" in callback_block
 
     turn_callback = src[
         src.index("def _claude_code_turn_callback"):
@@ -1335,6 +1338,79 @@ def test_visible_answer_releases_active_before_slow_done_bookkeeping():
     assert "commit_turn(conversation_id, reason=_commit_reason)" in done_block
     foreground = done_block[:done_block.index("def _commit_turn_bg")]
     assert "commit_turn(conversation_id" not in foreground
+    assert "source=_agent_source()" not in done_block
+    make_result_block = src[
+        src.index("def _make_result(reason=\"\")"):
+        src.index("# Final drain", src.index("def _make_result(reason=\"\")"))]
+    assert "source=_agent_source_cached()" in make_result_block
+
+    final_response_block = src[
+        src.index("# No tools \u2192 final response"):
+        src.index("# Tool calls", src.index("# No tools \u2192 final response"))]
+    assert "_release_active_after_terminal_visible_answer(force=True)" in final_response_block
+    assert "_schedule_cc_turn_gauge_patch(" in final_response_block
+    assert "_patch_cc_turn_gauge(" not in final_response_block
+
+
+def test_provider_compact_blocks_late_callbacks_until_restart_finishes():
+    """Once compact starts, stale provider callbacks must not keep appending work."""
+    src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
+    barrier_block = src[
+        src.index("def _set_provider_compact_barrier"):
+        src.index("def _compact_threshold_fraction")]
+    assert 'ctx["_provider_compact_in_progress"] = True' in barrier_block
+    assert 'ctx.pop("_provider_compact_in_progress", None)' in barrier_block
+
+    append_block = src[
+        src.index("def _append(msg: LLMMessage):"):
+        src.index("# Sync msg_id", src.index("def _append(msg: LLMMessage):"))]
+    assert 'ctx.get("_provider_compact_in_progress")' in append_block
+    assert 'msg.role in ("assistant", "tool")' in append_block
+    assert "rejected late provider callback during compact" in append_block
+    assert "raise CCCompactDetected" in append_block
+
+    compact_check_block = src[
+        src.index("def _maybe_auto_compact_after_append"):
+        src.index("def _append(msg: LLMMessage):")]
+    assert '_set_provider_compact_barrier(f"post_append:{reason}")' in compact_check_block
+    assert '_auto_compact_state["handoff"] = True' in compact_check_block
+    assert 'if not _auto_compact_state.get("handoff")' in compact_check_block
+
+    restart_block = src[
+        src.index("except CCCompactDetected:"):
+        src.index("except Exception as llm_err:", src.index("except CCCompactDetected:"))]
+    assert '_set_provider_compact_barrier("provider_compact_detected")' in restart_block
+    assert "_clear_provider_compact_barrier()" in restart_block
+
+
+def test_done_hotpath_does_not_compute_context_usage():
+    src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
+    cached_source = src[
+        src.index("def _agent_source_cached"):
+        src.index("def _patch_cc_turn_gauge")]
+    assert "include_context=False" in cached_source
+    assert "compute_context_usage" not in cached_source
+
+    done_block = src[
+        src.index('result = _make_result()'):
+        src.index('return result', src.index('logger.info("[agent:%s] enqueueing done'))]
+    done_before_enqueue = done_block[:done_block.index('logger.info("[agent:%s] enqueueing done')]
+    assert "compute_context_usage" not in done_before_enqueue
+    assert "_agent_source(" not in done_before_enqueue
+
+
+def test_relay_reconnect_shuts_down_command_pool():
+    for path in (
+        "pawflow_relay/worker.py",
+        "pawflow-relay-desktop/runtime/pawflow_relay/worker.py",
+        "docker/relay-generated/server-minimal/runtime/pawflow_relay/worker.py",
+    ):
+        src = Path(path).read_text(encoding="utf-8")
+        cleanup = src[
+            src.index("# Stop watchdog"):
+            src.index("# Always close socket before reconnecting")]
+        assert "locals().get('_pool')" in cleanup
+        assert "shutdown(wait=False, cancel_futures=True)" in cleanup
 
 
 def test_codex_app_marks_terminal_turn_callback_after_turn_completed():

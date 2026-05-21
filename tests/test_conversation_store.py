@@ -996,6 +996,35 @@ class TestAppendMessage:
             assert not any(msg.get("role") == "tool"
                            for msg in shared)
 
+    def test_tool_result_parent_uses_hot_tool_call_cache(self, conv, monkeypatch):
+        store, cid, uid = conv
+        call = _msg(role="assistant", content="calling",
+                    source={"type": "agent", "name": "bot"},
+                    tool_calls=[{"id": "tc_hot", "name": "read",
+                                 "arguments": {}}])
+        store.append_message(cid, call, agent_name="bot", user_id=uid)
+
+        from core.segmented_jsonl import SegmentedJsonl
+
+        def _fail_scan(_path):
+            raise AssertionError("tool_result should not scan transcript")
+
+        monkeypatch.setattr(
+            SegmentedJsonl, "_iter_file_reverse", staticmethod(_fail_scan))
+        result = _msg(role="tool", content="[result]",
+                      source={"type": "agent", "name": "bot"},
+                      tool_call_id="tc_hot")
+        store.append_message(cid, result, agent_name="bot", user_id=uid)
+
+        bot_ctx = store.load_agent_context(cid, "bot")
+        tool_call_row = next(
+            row for row in bot_ctx
+            if row.get("role") == "tool_call" and row.get("tool_call_id") == "tc_hot")
+        tool_result_row = next(
+            row for row in bot_ctx
+            if row.get("role") == "tool" and row.get("tool_call_id") == "tc_hot")
+        assert tool_result_row["parent_message_id"] == tool_call_row["msg_id"]
+
     def test_display_only_transcript_only(self, conv):
         store, cid, uid = conv
         m = _msg(role="assistant", content="narrate",

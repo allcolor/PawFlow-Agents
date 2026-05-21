@@ -193,6 +193,46 @@ def test_writer_does_not_batch_sse_items(monkeypatch):
     assert store.single == [(cid, "live")]
 
 
+def test_writer_stops_prefetch_after_sse_item(monkeypatch):
+    class _BatchStore:
+        def __init__(self):
+            self.batches = []
+            self.single = []
+
+        def append_messages(self, cid, items):
+            self.batches.append([item["msg"]["content"] for item in items])
+
+        def append_message(self, cid, msg, agent_name="", user_id="", ttl=0):
+            self.single.append(msg["content"])
+
+    class _Bus:
+        def subscriber_count(self, _cid):
+            return 1
+
+        def publish_event(self, _cid, _event_type, _data=None):
+            return None
+
+    store = _BatchStore()
+    from core import conversation_store as _cs
+    monkeypatch.setattr(_cs.ConversationStore, "instance",
+                        classmethod(lambda _c: store))
+    monkeypatch.setattr(
+        "core.conversation_event_bus.ConversationEventBus.instance",
+        staticmethod(lambda: _Bus()))
+
+    cid = "conv-sse-prefetch-boundary"
+    w = ConversationWriter.for_conversation(cid)
+    w.enqueue_message(_msg(content="a"))
+    w.enqueue_message(_msg(content="live"),
+                      sse_events=[{"type": "tool_result", "data": {}}])
+    w.enqueue_message(_msg(content="b"))
+    w.enqueue_message(_msg(content="c"))
+
+    assert ConversationWriter.shutdown_all(wait_timeout=5.0)
+    assert store.batches == [["a"], ["b", "c"]]
+    assert store.single == ["live"]
+
+
 def test_enqueue_message_does_not_wait_for_slow_writer(fake_store, monkeypatch):
     entered = threading.Event()
     release = threading.Event()
@@ -315,10 +355,12 @@ def test_writer_publishes_each_sse_after_its_own_append(fake_store, monkeypatch)
     t.start()
     assert second_append_entered.wait(timeout=1.0)
     assert first_published.wait(timeout=1.0)
-    w._stop = True
     release_second_append.set()
     assert flush_done.wait(timeout=5.0)
+    w._stop = True
+    w._queue.put({"_flush": True})
     t.join(timeout=5.0)
+    assert not t.is_alive()
 
 
 def test_enqueue_message_requires_ts_and_seq(fake_store):

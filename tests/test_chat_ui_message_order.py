@@ -297,3 +297,13 @@ def test_active_agents_sse_hint_restores_panel_before_poll():
     assert "activeInteractions[key] = {" in active_agents_js
     assert "setConversationWorking(conversationId, true)" in active_agents_js
     assert "updateActivePanel();" in active_agents_js
+
+
+def test_active_released_sse_hint_clears_panel_before_done():
+    assert "eventSource.addEventListener('active_released'" in SSE_JS
+    active_released = SSE_JS[
+        SSE_JS.index("eventSource.addEventListener('active_released'"):
+        SSE_JS.index("eventSource.addEventListener('done'", SSE_JS.index("eventSource.addEventListener('active_released'"))]
+    assert "trackAgentDone(agentName)" in active_released
+    assert "document.getElementById('status').textContent = t('ready')" in active_released
+    assert "syncActiveFromServer(true)" in active_released

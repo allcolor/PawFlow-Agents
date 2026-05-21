@@ -216,6 +216,23 @@ async def _ws_recv_frame(reader):
     return opcode, payload
 
 
+def _ws_close_info(payload: bytes) -> str:
+    """Return a readable websocket close code/reason string."""
+    if not payload:
+        return "code=none reason=''"
+    code = 0
+    reason = ""
+    try:
+        if len(payload) >= 2:
+            code = struct.unpack('!H', payload[:2])[0]
+            reason = payload[2:].decode('utf-8', errors='replace')
+        else:
+            reason = payload.decode('utf-8', errors='replace')
+    except Exception:
+        reason = repr(payload[:120])
+    return f"code={code or 'none'} reason={reason!r}"
+
+
 async def _ws_send_frame(writer, data, opcode=0x01):
     frame = bytes([0x80 | opcode])
     length = len(data)
@@ -425,6 +442,14 @@ class RelayService(BaseService):
         # Windows) can have __slots__ and refuse new attributes.
         send_lock = asyncio.Lock()
         relay_tasks = set()
+        conn_state = {
+            'relay_id': '',
+            'connected_at': time.time(),
+            'last_msg_type': '',
+            'last_request_id': '',
+            'last_action': '',
+            'close_info': '',
+        }
         try:
             opcode, payload = await _ws_recv_frame(reader)
             if opcode != 0x01:
@@ -440,6 +465,7 @@ class RelayService(BaseService):
                 return
             relay_id = reg.get('relay_id', '')
             reg_info = reg.get('info', {})
+            conn_state['relay_id'] = relay_id
             logger.info('Relay connected: %s (addr=%s)', relay_id, remote)
             if reg_info.get('shells'):
                 service._relay_shells = reg_info['shells']
@@ -451,7 +477,17 @@ class RelayService(BaseService):
                     'type': 'registered', 'relay_id': relay_id}).encode())
             service._set_relay(reader, writer, loop, send_lock, relay_tasks)
             self._spawn_ctx_sync(reg_info, relay_id)
-            await self._relay_main_loop(reader, writer, service, send_lock, relay_tasks)
+            await self._relay_main_loop(
+                reader, writer, service, send_lock, relay_tasks, conn_state)
+            if conn_state.get('close_info'):
+                logger.info(
+                    'Relay disconnected: relay=%s addr=%s close_frame=%s '
+                    'inflight=%d last_type=%s last_rid=%s last_action=%s',
+                    conn_state.get('relay_id') or service._service_id, remote,
+                    conn_state.get('close_info'), len(relay_tasks),
+                    conn_state.get('last_msg_type', ''),
+                    conn_state.get('last_request_id', ''),
+                    conn_state.get('last_action', ''))
         except Exception as e:
             _err_str = str(e)
             # Peer-initiated close is the nominal end of a relay session:
@@ -465,9 +501,23 @@ class RelayService(BaseService):
                 or 'reset by peer' in _err_str.lower()
                 or isinstance(e, (ConnectionResetError, asyncio.IncompleteReadError)))
             if _peer_close:
-                logger.info('Relay disconnected: %s (closed by peer)', remote)
+                logger.info(
+                    'Relay disconnected: relay=%s addr=%s closed_by_peer err=%s '
+                    'inflight=%d last_type=%s last_rid=%s last_action=%s',
+                    conn_state.get('relay_id') or service._service_id, remote, e,
+                    len(relay_tasks),
+                    conn_state.get('last_msg_type', ''),
+                    conn_state.get('last_request_id', ''),
+                    conn_state.get('last_action', ''))
             else:
-                logger.error('Relay connection error (%s): %s', remote, e, exc_info=True)
+                logger.error(
+                    'Relay connection error: relay=%s addr=%s err=%s '
+                    'inflight=%d last_type=%s last_rid=%s last_action=%s',
+                    conn_state.get('relay_id') or service._service_id, remote, e,
+                    len(relay_tasks),
+                    conn_state.get('last_msg_type', ''),
+                    conn_state.get('last_request_id', ''),
+                    conn_state.get('last_action', ''), exc_info=True)
         finally:
             try:
                 service._clear_relay(reader=reader)
@@ -486,8 +536,6 @@ class RelayService(BaseService):
                 writer.close()
             except Exception as e:
                 logger.debug('writer.close failed: %s', e, exc_info=True)
-            logger.info('Relay disconnected: %s', remote)
-
     def _spawn_ctx_sync(self, reg_info, relay_id):
         service = self
         with self._ctx_sync_lock:
@@ -517,7 +565,8 @@ class RelayService(BaseService):
         threading.Thread(target=_fetch_ctx_and_sync, daemon=True,
                          name=f'relay-ctx-{relay_id}').start()
 
-    async def _relay_main_loop(self, reader, writer, service, send_lock, relay_tasks):
+    async def _relay_main_loop(self, reader, writer, service, send_lock,
+                               relay_tasks, conn_state):
         import asyncio
         KEEPALIVE = 120
         while True:
@@ -537,8 +586,7 @@ class RelayService(BaseService):
                         writer, json.dumps({'type': 'ping'}).encode())
                 continue
             if opcode == 0x08:
-                logger.info('Relay close frame received for %s',
-                            service._service_id)
+                conn_state['close_info'] = _ws_close_info(payload)
                 break
             if opcode == 0x09:
                 async with send_lock:
@@ -552,6 +600,10 @@ class RelayService(BaseService):
                 logger.warning('Ignoring malformed relay frame from %s: %s',
                                service._service_id, exc)
                 continue
+            conn_state['last_msg_type'] = str(msg.get('type') or '')
+            conn_state['last_request_id'] = str(msg.get('request_id') or '')[:12]
+            conn_state['last_action'] = str(
+                msg.get('action') or msg.get('method') or msg.get('tool') or '')[:80]
             try:
                 await self._dispatch_relay_msg(
                     msg, writer, service, send_lock, relay_tasks)
@@ -1334,14 +1386,21 @@ class RelayService(BaseService):
     def exec(self, path: str, command: str, timeout=None, shell: str = "", env: dict = None,
              local: bool = False):
         kwargs = {"command": command}
+        request_timeout = None
         if timeout is not None:
             kwargs["timeout"] = timeout
+            try:
+                request_timeout = max(1.0, float(timeout)) + 5.0
+            except (TypeError, ValueError):
+                request_timeout = None
         if shell:
             kwargs["shell"] = shell
         if env:
             kwargs["env"] = env
         if local:
             kwargs["local"] = True
+        if request_timeout is not None:
+            kwargs["_request_timeout"] = request_timeout
         return self._request("exec", path, **kwargs)
 
     def exec_stream(self, path: str, command: str, timeout=None,

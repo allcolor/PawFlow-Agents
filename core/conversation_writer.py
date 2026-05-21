@@ -262,7 +262,7 @@ class ConversationWriter:
             batch = [item]
             flush_events = []
             post_events = []
-            while len(batch) < _WRITER_BATCH_MAX:
+            while len(batch) < _WRITER_BATCH_MAX and not item.get("sse_events"):
                 try:
                     next_item = self._queue.get_nowait()
                 except queue.Empty:
@@ -276,6 +276,8 @@ class ConversationWriter:
                     post_events.append(next_item)
                     break
                 batch.append(next_item)
+                if next_item.get("sse_events"):
+                    break
 
             _batch_started = time.monotonic()
             written = []

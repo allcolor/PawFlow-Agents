@@ -137,7 +137,12 @@ class RunTestsHandler(ToolHandler):
         from core.handlers._arg_normalize import normalize_string_list
         test_files = normalize_string_list(arguments.get("test_files"))
         test_pattern = arguments.get("test_pattern", "")
-        timeout = arguments.get("timeout")  # None = uncapped (rely on real signals)
+        timeout = arguments.get("timeout")
+        if timeout is not None:
+            try:
+                timeout = max(1, int(timeout))
+            except (TypeError, ValueError):
+                timeout = None
         service_name = arguments.get("service", "")
         try:
             max_output = int(arguments.get("max_output", 3000) or 3000)

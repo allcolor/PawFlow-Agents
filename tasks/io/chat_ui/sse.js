@@ -1264,6 +1264,23 @@ function connectSSE(cid, onReady, opts) {
     }
   });
 
+  eventSource.addEventListener('active_released', (e) => {
+    lastSSEActivity = Date.now();
+    const data = e.data ? JSON.parse(e.data) : {};
+    const agentName = data.agent_name || '';
+    if (agentName) trackAgentDone(agentName);
+    if (Object.keys(activeInteractions).length === 0) {
+      sending = false;
+      document.getElementById('sendBtn').disabled = false;
+      document.getElementById('stopBtn').style.display = 'none';
+      document.getElementById('status').textContent = t('ready');
+      hideTyping();
+    }
+    if (typeof syncActiveFromServer === 'function') {
+      setTimeout(() => syncActiveFromServer(true), 250);
+    }
+  });
+
   eventSource.addEventListener('done', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);

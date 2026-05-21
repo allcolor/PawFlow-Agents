@@ -25,6 +25,8 @@ The worker's main loop calls `kill_inflight_proc(request_id)` when it
 receives a `cancel_request` envelope from the server.
 """
 import logging
+import os
+import signal
 
 import subprocess  # nosec B404
 import threading
@@ -66,12 +68,21 @@ def kill_inflight_proc(request_id: str) -> bool:
     if proc is None:
         return False
     try:
-        proc.terminate()
+        if os.name == "posix":
+            try:
+                os.killpg(proc.pid, signal.SIGTERM)
+            except Exception:
+                proc.terminate()
+        else:
+            proc.terminate()
         try:
             proc.wait(timeout=2)
         except subprocess.TimeoutExpired:
             try:
-                proc.kill()
+                if os.name == "posix":
+                    os.killpg(proc.pid, signal.SIGKILL)
+                else:
+                    proc.kill()
             except Exception:
                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
     except Exception:

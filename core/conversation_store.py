@@ -154,6 +154,7 @@ class ConversationStore:
         self._cache_lock = threading.Lock()
         self._ctx_cache: Dict[str, Dict[str, List[Dict]]] = {}  # cid -> {agent -> messages}
         self._ctx_cache_lock = threading.Lock()
+        self._tool_parent_cache: Dict[str, Dict[str, str]] = {}
         self._hot_metadata_flush: Dict[str, Dict[str, Any]] = {}
         self._context_usage_repair_mtime: Dict[str, float] = {}
         self._cid_user: Dict[str, str] = {}  # cid -> user_id (fast lookup, no scan)
@@ -231,15 +232,31 @@ class ConversationStore:
     def _find_tool_call_parent_id(self, cid: str, tool_call_id: str) -> str:
         if not tool_call_id:
             return ""
+        cached = self._tool_parent_cache.get(cid, {}).get(tool_call_id)
+        if cached:
+            return cached
         try:
             for row in self._transcript_log(cid).iter_rows_reverse():
                 if (row.get("role") == "tool_call"
                         and (row.get("tool_call_id") or row.get("tc_id")) == tool_call_id):
-                    return row.get("msg_id", "") or ""
+                    parent_id = row.get("msg_id", "") or ""
+                    if parent_id:
+                        self._tool_parent_cache.setdefault(cid, {})[tool_call_id] = parent_id
+                    return parent_id
         except Exception:
             logger.debug("tool_call parent lookup failed for %s/%s",
                          cid[:8], tool_call_id, exc_info=True)
         return ""
+
+    def _remember_tool_call_parents(self, cid: str, rows: List[Dict[str, Any]]) -> None:
+        cache = self._tool_parent_cache.setdefault(cid, {})
+        for row in rows:
+            if row.get("role") != "tool_call":
+                continue
+            tcid = str(row.get("tool_call_id") or row.get("tc_id") or "")
+            msg_id = row.get("msg_id", "") or ""
+            if tcid and msg_id:
+                cache[tcid] = msg_id
 
     def _canonical_message_rows(
         self, cid: str, msg: Dict[str, Any],
@@ -2067,7 +2084,9 @@ class ConversationStore:
                 self.save(cid, [], user_id=user_id, ttl=ttl)
             _mark_timing("create_or_exists", _t0)
 
+            _t0 = time.monotonic()
             canonical_rows = self._canonical_message_rows(cid, msg)
+            _mark_timing("canonical_rows", _t0)
 
             # 1. Transcript — everything except synthetic context injections.
             if src_type != "context":
@@ -2077,6 +2096,7 @@ class ConversationStore:
                 _mark_timing("transcript_prepare", _transcript_t0)
                 _t0 = time.monotonic()
                 self._transcript_log(cid).append_dicts(lines)
+                self._remember_tool_call_parents(cid, lines)
                 _mark_timing("transcript_write", _t0)
                 # Feed bg_bucket_builder's token-budget trigger so it
                 # can fire a partial bucket BEFORE the agent's hot-path
@@ -2154,6 +2174,7 @@ class ConversationStore:
             logger.warning(
                 "[convstore:%s] append slow role=%s msg_id=%s total_ms=%.1f "
                 "pre_lock=%.1f lock_wait=%.1f create_or_exists=%.1f "
+                "canonical_rows=%.1f "
                 "transcript=%.1f transcript_prepare=%.1f "
                 "transcript_write=%.1f bg_notify=%.1f own_ctx=%.1f "
                 "shared_filter=%.1f "
@@ -2165,6 +2186,7 @@ class ConversationStore:
                 _timings.get("pre_lock", 0.0),
                 _timings.get("lock_wait", 0.0),
                 _timings.get("create_or_exists", 0.0),
+                _timings.get("canonical_rows", 0.0),
                 _timings.get("transcript", 0.0),
                 _timings.get("transcript_prepare", 0.0),
                 _timings.get("transcript_write", 0.0),
@@ -2311,6 +2333,7 @@ class ConversationStore:
 
             if transcript_rows:
                 self._transcript_log(cid).append_dicts(transcript_rows)
+                self._remember_tool_call_parents(cid, transcript_rows)
                 if transcript_chars:
                     self._notify_bg_transcript_chars(cid, transcript_chars)
             for agent, rows in ctx_rows.items():

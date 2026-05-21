@@ -357,6 +357,29 @@ class AgentCoreMixin:
                 src["context_cache"] = _ctx_usage
             return src
 
+        def _agent_source_cached(tok_in=0, tok_out=0, model_override="",
+                                 tok_cache_creation=0, tok_cache_read=0):
+            """Build source metadata without doing any store/token work."""
+            src = _agent_source(
+                tok_in, tok_out, model_override,
+                tok_cache_creation=tok_cache_creation,
+                tok_cache_read=tok_cache_read,
+                include_context=False)
+            usage = (ctx.get("_context_usage_cache")
+                     or ctx.get("_auto_compact_usage_cache") or {})
+            try:
+                if int(usage.get("max", 0) or 0) > 0:
+                    src["context_used"] = int(usage.get("used", 0) or 0)
+                    src["context_max"] = int(usage.get("max", 0) or 0)
+                    src["context_pct"] = float(usage.get("pct", 0.0) or 0.0)
+                    src["context_source"] = usage.get("source", "")
+                    src["context_message_count"] = usage.get("message_count", 0)
+                    src["context_cache_mode"] = usage.get("cache_mode", "")
+                    src["context_cache"] = usage
+            except Exception:
+                logger.debug("cached agent source build failed", exc_info=True)
+            return src
+
         def _patch_cc_turn_gauge(response, msg_id: str) -> None:
             """Patch a claude-code turn message with token + context-gauge data.
 
@@ -435,6 +458,27 @@ class AgentCoreMixin:
                     "[claude-code] context message_meta publish failed "
                     "msg_id=%s: %s", msg_id, _meta_err, exc_info=True)
 
+        def _schedule_cc_turn_gauge_patch(response, msg_id: str, reason: str) -> None:
+            """Run slow final metadata/gauge refresh outside the done hotpath."""
+            if not msg_id or not (response.tokens_in or response.tokens_out):
+                return
+            import threading as _threading_gauge
+            def _run():
+                _t0 = time.monotonic()
+                try:
+                    _patch_cc_turn_gauge(response, msg_id)
+                    logger.info(
+                        "[agent:%s] async cc turn gauge patch finished reason=%s elapsed_ms=%.1f",
+                        conversation_id[:8], reason,
+                        (time.monotonic() - _t0) * 1000.0)
+                except Exception as _err:
+                    logger.error(
+                        "[agent:%s] async cc turn gauge patch failed reason=%s: %s",
+                        conversation_id[:8], reason, _err, exc_info=True)
+            _threading_gauge.Thread(
+                target=_run, daemon=True,
+                name=f"cc-gauge-{conversation_id[:8]}-{reason}").start()
+
         # SpawnAgentsHandler source tracking
         from core.tool_registry import SpawnAgentsHandler as _SAH
         for _h in registry.list_tools():
@@ -473,7 +517,18 @@ class AgentCoreMixin:
                     conversation_id[:8], ctx.get("active_agent_name", ""),
                     exc_info=True)
 
-        _auto_compact_state = {"running": False}
+        _auto_compact_state = {"running": False, "handoff": False}
+
+        def _set_provider_compact_barrier(reason: str) -> None:
+            _auto_compact_state["running"] = True
+            ctx["_provider_compact_in_progress"] = True
+            ctx["_provider_compact_reason"] = reason
+
+        def _clear_provider_compact_barrier() -> None:
+            _auto_compact_state["running"] = False
+            _auto_compact_state["handoff"] = False
+            ctx.pop("_provider_compact_in_progress", None)
+            ctx.pop("_provider_compact_reason", None)
 
         def _compact_threshold_fraction(raw_value) -> float:
             """Normalize compact_threshold_pct to a 0..1 fraction.
@@ -568,7 +623,7 @@ class AgentCoreMixin:
                 trigger_tokens, used, _cache_src, used >= trigger_tokens)
             if used < trigger_tokens:
                 return
-            _auto_compact_state["running"] = True
+            _set_provider_compact_barrier(f"post_append:{reason}")
             try:
                 logger.warning(
                     "[compact] auto threshold crossed after %s: %d >= %d (%.0f%%)",
@@ -582,6 +637,7 @@ class AgentCoreMixin:
                     # instance, compacts PawFlow, starts a fresh session with
                     # the compacted context, then lets the provider keep it
                     # live for the next user message.
+                    _auto_compact_state["handoff"] = True
                     raise CCCompactDetected(
                         "PawFlow post-append compact threshold crossed")
                 compact_owner = ctx.get("resolved_svc") or client or compact_client
@@ -617,7 +673,8 @@ class AgentCoreMixin:
                 except Exception:
                     logger.debug("auto compact error SSE failed", exc_info=True)
             finally:
-                _auto_compact_state["running"] = False
+                if not _auto_compact_state.get("handoff"):
+                    _clear_provider_compact_barrier()
 
         def _append(msg: LLMMessage):
             _append_started = time.monotonic()
@@ -627,6 +684,14 @@ class AgentCoreMixin:
             # arrive briefly after the live process has been asked to die; none
             # of those late messages may be persisted or published.
             emitter.check_cancelled()
+            if (ctx.get("_provider_compact_in_progress")
+                    and msg.role in ("assistant", "tool")):
+                logger.warning(
+                    "[compact] rejected late provider callback during compact "
+                    "role=%s msg_id=%s reason=%s",
+                    msg.role, getattr(msg, "msg_id", "?"),
+                    ctx.get("_provider_compact_reason", ""))
+                raise CCCompactDetected("PawFlow compact already in progress")
             # Sync msg_id: assistant messages use emitter's pre-generated ID
             # so SSE streaming tokens, done event, and persisted message all
             # share the SAME msg_id — enabling client-side dedup.
@@ -1372,7 +1437,8 @@ class AgentCoreMixin:
                             final_model = _irpt_resp.model
                             # Refresh the context gauge from the provider's
                             # reported usage for the interrupted CCI turn.
-                            _patch_cc_turn_gauge(_irpt_resp, _irpt_mid)
+                            _schedule_cc_turn_gauge_patch(
+                                _irpt_resp, _irpt_mid, "interrupt")
                             raise _InterruptComplete()
 
                         logger.info(f"[agent:{conversation_id[:8]}] interrupted — injecting user STOP command")
@@ -1528,10 +1594,10 @@ class AgentCoreMixin:
 
                     _cc_turn_count = [0]
 
-                    def _release_active_after_terminal_visible_answer() -> None:
-                        if _client_provider != "codex-app-server":
-                            return
-                        if not getattr(client, "_codex_app_turn_completed_for_callback", False):
+                    def _release_active_after_terminal_visible_answer(
+                            force: bool = False) -> None:
+                        if (not force and not getattr(
+                                client, "_codex_app_turn_completed_for_callback", False)):
                             return
                         if ctx.get("_active_cleanup_done"):
                             return
@@ -1541,6 +1607,19 @@ class AgentCoreMixin:
                                 self._active_contexts.pop(_ctx_key_done, None)
                         self._decrement_active(conversation_id, ctx)
                         client._codex_app_turn_completed_for_callback = False
+                        try:
+                            from core.conversation_writer import ConversationWriter
+                            ConversationWriter.for_conversation(
+                                conversation_id).enqueue_sse_events([{
+                                    "type": "active_released",
+                                    "cid": ctx.get("_event_cid", conversation_id),
+                                    "data": {
+                                        "conversation_id": conversation_id,
+                                        "agent_name": ctx.get("active_agent_name", ""),
+                                    },
+                                }])
+                        except Exception:
+                            logger.debug("active_released enqueue failed", exc_info=True)
                         logger.info(
                             "[agent:%s] active released after terminal visible answer agent=%s",
                             conversation_id[:8],
@@ -1905,6 +1984,7 @@ class AgentCoreMixin:
                         # compact PawFlow context, then start a new session with the
                         # compacted context.
                         _agent_name = ctx.get("active_agent_name", "")
+                        _set_provider_compact_barrier("provider_compact_detected")
                         _compact_restart_t0 = time.monotonic()
 
                         def _compact_restart_ms() -> float:
@@ -2142,7 +2222,9 @@ class AgentCoreMixin:
                                 "[compact-restart:%s/%s] post-compact foreground release elapsed_ms=%.1f",
                                 conversation_id[:8], _agent_name,
                                 _compact_restart_ms())
+                            _clear_provider_compact_barrier()
                         except Exception as compact_err:
+                            _clear_provider_compact_barrier()
                             logger.error("[agent:%s] PawFlow compact failed: %s",
                                          conversation_id[:8], compact_err)
                             try:
@@ -2398,8 +2480,10 @@ class AgentCoreMixin:
                             # Patch the persisted turn message with token +
                             # context-gauge data (turn_callback persisted it
                             # without tokens).
-                            _patch_cc_turn_gauge(
-                                response, getattr(client, '_last_turn_msg_id', ''))
+                            _schedule_cc_turn_gauge_patch(
+                                response, getattr(client, '_last_turn_msg_id', ''),
+                                "final")
+                            _release_active_after_terminal_visible_answer(force=True)
                             emitter.stop_heartbeat(_iter_hb)
                             break
                         _has_thinking = bool(getattr(response, 'thinking', ''))
@@ -2444,6 +2528,7 @@ class AgentCoreMixin:
                             _append(_m)
                         if action == "break":
                             response_content = final
+                            _release_active_after_terminal_visible_answer(force=True)
                             emitter.stop_heartbeat(_iter_hb)
                             break
                         continue
@@ -2672,7 +2757,8 @@ class AgentCoreMixin:
                     tokens_in=total_tokens_in, tokens_out=total_tokens_out,
                     tools_called=tools_called, iterations=iteration,
                     duration_ms=(time.time() - start_time) * 1000,
-                    finish_reason=reason or finish_reason, source=_agent_source(),
+                    finish_reason=reason or finish_reason,
+                    source=_agent_source_cached(),
                     messages=messages, new_messages=new_messages,
                     all_msg_ids=all_assistant_msg_ids,
                     cost_usd=_turn_cost_ref[0])
@@ -2918,7 +3004,7 @@ class AgentCoreMixin:
                     base_url=_client_base_url, tokens_in=total_tokens_in,
                     tokens_out=total_tokens_out, tools_called=tools_called,
                     iterations=iteration, duration_ms=(time.time() - start_time) * 1000,
-                    finish_reason=reason, source=_agent_source(),
+                    finish_reason=reason, source=_agent_source_cached(),
                     messages=messages, new_messages=new_messages)
             emitter.on_interrupted(_make_result("interrupted"))
             return _make_result("interrupted")
@@ -2933,7 +3019,7 @@ class AgentCoreMixin:
                     model=final_model or _client_model, tokens_in=total_tokens_in,
                     tokens_out=total_tokens_out, tools_called=tools_called,
                     iterations=iteration, duration_ms=(time.time() - start_time) * 1000,
-                    finish_reason=reason, source=_agent_source(),
+                    finish_reason=reason, source=_agent_source_cached(),
                     messages=messages, new_messages=new_messages)
             emitter.on_cancelled(_make_result("cancelled"), ctx)
             return _make_result("cancelled")

@@ -12,6 +12,18 @@ def test_stream_json_emits_live_thinking_delta():
 
 
 def test_stream_json_suppresses_persisted_cci_thinking_after_live_delta():
+    state = {}
+    translate_sse_event(
+        "thinking_delta",
+        {
+            "text": "plan",
+            "source": {"provider": "claude-code-interactive"},
+        },
+        "sess",
+        "",
+        state,
+    )
+
     events, acc = translate_sse_event(
         "thinking_content",
         {
@@ -21,7 +33,27 @@ def test_stream_json_suppresses_persisted_cci_thinking_after_live_delta():
         },
         "sess",
         "",
+        state,
     )
 
     assert events == []
     assert acc == ""
+
+
+def test_stream_json_emits_persisted_cci_thinking_without_live_delta():
+    events, acc = translate_sse_event(
+        "thinking_content",
+        {
+            "text": "plan",
+            "msg_id": "m1",
+            "source": {"provider": "claude-code-interactive"},
+        },
+        "sess",
+        "",
+        {},
+    )
+
+    assert acc == ""
+    assert events[0]["message"]["content"] == [
+        {"type": "thinking", "thinking": "plan"}
+    ]

@@ -868,10 +868,29 @@ def test_context_panel_token_estimate_uses_gauge_when_available():
 def test_idle_polling_cannot_stack_unbounded_work():
     assert "_syncActiveSub" in _ACTIVE_AGENTS_JS
     assert "_SYNC_ACTIVE_STALE_MS" in _ACTIVE_AGENTS_JS
-    assert "if (now - _syncActiveStartedAt < _SYNC_ACTIVE_STALE_MS) return" in _ACTIVE_AGENTS_JS
+    assert "if (!force && now - _syncActiveStartedAt < _SYNC_ACTIVE_STALE_MS) return" in _ACTIVE_AGENTS_JS
     assert "setInterval(syncActiveFromServer, 10000)" in _ACTIVE_AGENTS_JS
     assert "document.hidden) return" in _ACTIVE_AGENTS_JS
     assert "_MAX_BG_ACTIONS" in _AGENT_ACTIONS_PY
+
+
+def test_done_event_cannot_be_undone_by_stale_active_poll():
+    """A list_active request started before done must not resurrect the row.
+
+    Server cleanup runs immediately after publishing done, so an already
+    in-flight poll can return a stale _active_turns snapshot. The browser must
+    reject that response and force a fresh sync after cleanup has landed.
+    """
+    active_src = _ACTIVE_AGENTS_JS
+    sse_done = _SSE_JS[
+        _SSE_JS.index("eventSource.addEventListener('done'"):
+        _SSE_JS.index("// Refresh conversation list",
+                      _SSE_JS.index("eventSource.addEventListener('done'"))]
+    assert "let _activeDoneAt = {}" in active_src
+    assert "_activeDoneAt[key] = now" in active_src
+    assert "const requestStartedAt = now" in active_src
+    assert "if (doneAt && requestStartedAt <= doneAt) return false" in active_src
+    assert "syncActiveFromServer(true)" in sse_done
 def test_poller_watchdogs_are_throttled():
     assert "PAWFLOW_AGENT_WATCHDOG_INTERVAL_SECONDS" in _AGENT_POLLER_PY
     assert "_last_task_watchdog" in _AGENT_POLLER_PY
@@ -1162,6 +1181,8 @@ def test_live_agent_thread_without_context_is_not_killed_as_zombie():
     codex_src = Path("core/llm_providers/codex_app_server.py").read_text(encoding="utf-8")
     assert "zombie thread detected" not in streaming_src
     assert "active thread has no context yet" in streaming_src
+    assert "active turn not preemptable yet — queuing for next drain" in streaming_src
+    assert "preempted preparing provider turn — fast-restarting" not in streaming_src
     assert "t.name == f\"agent-stream-{conversation_id}\"" in loop_src
     assert "t.name.startswith(f\"agent-stream-{conversation_id}:\")" in loop_src
     assert "resurrects" in core_src

@@ -11,18 +11,26 @@ def _uuid():
     return uuid4().hex
 
 
-def translate_sse_event(event_type, data, session_id, accumulated_text=""):
+def translate_sse_event(event_type, data, session_id, accumulated_text="",
+                        stream_state=None):
     """Translate a PawFlow SSE event to Claude Code stream-json format.
 
     Returns a list of events to emit (may be empty), plus updated accumulated_text.
     """
     events = []
+    if stream_state is None:
+        stream_state = {}
 
     if event_type in ("thinking", "thinking_content", "thinking_delta"):
         source = data.get("source") or {}
         if (event_type == "thinking_content" and data.get("msg_id")
                 and source.get("provider") == "claude-code-interactive"):
-            return events, accumulated_text
+            if stream_state.get("cci_thinking_delta_seen"):
+                stream_state["cci_thinking_delta_seen"] = False
+                return events, accumulated_text
+        if (event_type == "thinking_delta"
+                and source.get("provider") == "claude-code-interactive"):
+            stream_state["cci_thinking_delta_seen"] = True
         text = data.get("text", "")
         if text:
             events.append({

@@ -303,19 +303,17 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
 
             if (not _active_client and _active_turn and _user_text
                     and _modes_match):
-                # The worker thread exists, but the provider client is not live
-                # yet (context preparation/compact before _run_agent_loop). A
-                # plain queue would make the user wait for the stale turn to
-                # finish. Bump the generation captured by that preparing worker
-                # and immediately start a fresh turn from the queued message.
-                _fast_restart_after_preempt = True
-                with self._conv_gen_lock:
-                    self._conv_generation[_agent_key] = (
-                        self._conv_generation.get(_agent_key, 0) + 1)
+                # The thread exists, but the provider client is not currently
+                # published to _active_claude_client. This can happen while the
+                # worker is between context prep and provider registration, or
+                # while a CLI provider live session is still settling. Bumping
+                # the generation here cancels the running worker and makes CLI
+                # providers tear down their live container. Queue instead: the
+                # active turn will drain the message or the poller will wake the
+                # agent after the turn completes.
                 logger.info(
-                    "[agent:%s] preempted preparing provider turn — fast-restarting %s",
-                    conversation_id[:8], _target or "default")
-                _already_active = False
+                    "[agent:%s] active turn not preemptable yet — queuing for next drain",
+                    conversation_id[:8])
 
             if _fast_restart_after_preempt:
                 # The stale/preempted worker has been generation-cancelled and

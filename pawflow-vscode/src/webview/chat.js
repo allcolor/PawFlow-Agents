@@ -392,6 +392,9 @@ function addMsg(type, content, meta) {
     }
   } else if (type === 'tool_result') {
     div.innerHTML = '&#10003; ' + renderToolResult(content);
+  } else if (type === 'thinking') {
+    div.className = 'msg thinking-block';
+    div.innerHTML = '<details><summary>Thought</summary><pre>' + esc(content) + '</pre></details>';
   } else if (type === 'error') {
     var errAgent = (meta && meta.agent_name) || (meta && meta.source && meta.source.name) || '';
     var errBadge = errAgent ? '<span class="agent-badge" style="background:#e94560">' + esc(errAgent) + '</span>' : '';

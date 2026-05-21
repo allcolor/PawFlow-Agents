@@ -7,26 +7,19 @@ Each conversation is a directory:
     {agent}/context.jsonl         — per-agent LLM context
     extras.json                   — atomic JSON metadata (no duplication)
 
-Transcript line invariants (EVERY record, no exception):
+Stored message invariants (EVERY record in transcript/context streams):
   - msg_id  : own UUID, unique per line (not shared across records)
   - ts      : wall-clock epoch seconds when the line was written
   - seq     : per-conversation strictly-increasing integer. If line B
               follows line A in the file, seq_B > seq_A — always.
 
-Records that reference another line (e.g. msg_patch → msg) carry the
-target via a dedicated field (target_msg_id), never by squatting msg_id.
+Transcript, shared context, and per-agent contexts use the same row shape:
+  {"role":"assistant", "msg_id":"A", "content":"" or "text", ...}
+  {"role":"thinking", "msg_id":"T", "parent_message_id":"A", ...}
+  {"role":"tool_call", "msg_id":"C", "parent_message_id":"A", "tool_call_id":"tc", ...}
+  {"role":"tool", "msg_id":"R", "parent_message_id":"C", "tool_call_id":"tc", ...}
 
-Line types:
-  {"t":"meta", "msg_id":..., "ts":..., "seq":..., "user_id":"...", "status":"idle", "created_at":N, "expires_at":N}
-  {"t":"msg", "msg_id":..., "ts":..., "seq":..., "role":"...", "content":"...", "source":{}, ...}
-  {"t":"msg", ..., "private":true}  (tool calls/results — agent context only)
-  {"t":"msg_patch", "msg_id":..., "ts":..., "seq":..., "target_msg_id":"...", ...fields}
-  {"t":"trace_update", "msg_id":..., "ts":..., "seq":..., "trace_id":"...", ...}
-  {"t":"status", "msg_id":..., "ts":..., "seq":..., "status":"active"}
-
-Context files ({agent}/context.jsonl, shared.jsonl):
-  One message dict per line (no "t" prefix — raw messages, same
-  (msg_id, ts, seq) invariants).
+Metadata lives in extras.json. Transcript/context streams are message rows only.
 
 Per-conversation locks ensure atomicity of logical operations.
 """
@@ -216,7 +209,7 @@ class ConversationStore:
                 "_stamp_line requires a non-empty conversation_id — "
                 "every persisted record lives inside a conversation")
         from core.llm_client import _next_persisted_seq
-        if not line.get("msg_id"):
+        if line.get("role") != "system" and not line.get("msg_id"):
             line["msg_id"] = uuid.uuid4().hex[:12]
         if "ts" not in line and "timestamp" not in line:
             line["ts"] = time.time()
@@ -226,6 +219,108 @@ class ConversationStore:
         if not line.get("user_id"):
             line["user_id"] = self._cid_user.get(cid, "")
         return line
+
+    @staticmethod
+    def _row_ts(row: Dict[str, Any]) -> Any:
+        return row.get("ts") or row.get("timestamp") or time.time()
+
+    @staticmethod
+    def _new_msg_id() -> str:
+        return uuid.uuid4().hex[:12]
+
+    def _find_tool_call_parent_id(self, cid: str, tool_call_id: str) -> str:
+        if not tool_call_id:
+            return ""
+        try:
+            for row in self._transcript_log(cid).iter_rows_reverse():
+                if (row.get("role") == "tool_call"
+                        and (row.get("tool_call_id") or row.get("tc_id")) == tool_call_id):
+                    return row.get("msg_id", "") or ""
+        except Exception:
+            logger.debug("tool_call parent lookup failed for %s/%s",
+                         cid[:8], tool_call_id, exc_info=True)
+        return ""
+
+    def _canonical_message_rows(
+        self, cid: str, msg: Dict[str, Any],
+        tool_call_parents: Optional[Dict[str, str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Expand one incoming logical message into canonical stored rows."""
+        tool_call_parents = tool_call_parents if tool_call_parents is not None else {}
+        role = msg.get("role", "")
+        if role != "assistant":
+            row = dict(msg)
+            if role != "system" and not row.get("msg_id"):
+                row["msg_id"] = self._new_msg_id()
+            if role == "tool_call":
+                tcid = str(row.get("tool_call_id") or row.get("tc_id") or "")
+                if tcid:
+                    row["tool_call_id"] = tcid
+                    tool_call_parents[tcid] = row.get("msg_id", "") or ""
+            elif role == "tool":
+                tcid = str(row.get("tool_call_id") or row.get("tc_id") or "")
+                if tcid:
+                    row["tool_call_id"] = tcid
+                    parent_id = row.get("parent_message_id") or tool_call_parents.get(tcid)
+                    if not parent_id:
+                        parent_id = self._find_tool_call_parent_id(cid, tcid)
+                    if parent_id:
+                        row["parent_message_id"] = parent_id
+            return [row]
+
+        anchor = dict(msg)
+        tool_calls = anchor.pop("tool_calls", None) or []
+        thinking = anchor.pop("thinking", "") or ""
+        thinking_signature = anchor.pop("thinking_signature", "") or ""
+        anchor.pop("tool_call_id", None)
+        if not anchor.get("msg_id"):
+            anchor["msg_id"] = self._new_msg_id()
+        anchor_id = anchor.get("msg_id", "")
+        ts = self._row_ts(anchor)
+        rows = [anchor]
+
+        if thinking or thinking_signature:
+            trow = {
+                "role": "thinking",
+                "content": thinking,
+                "msg_id": self._new_msg_id(),
+                "parent_message_id": anchor_id,
+                "ts": ts,
+            }
+            if thinking_signature:
+                trow["thinking_signature"] = thinking_signature
+            for key in ("source", "channel", "conversation_id", "user_id"):
+                if anchor.get(key) is not None:
+                    trow[key] = anchor[key]
+            rows.append(trow)
+
+        for call in tool_calls:
+            if not isinstance(call, dict):
+                continue
+            tcid = str(call.get("id") or call.get("tool_call_id") or call.get("tc_id") or "")
+            crow = {
+                "role": "tool_call",
+                "content": call.get("content", ""),
+                "msg_id": call.get("msg_id") or self._new_msg_id(),
+                "parent_message_id": anchor_id,
+                "tool_call_id": tcid,
+                "ts": call.get("ts") or call.get("timestamp") or ts,
+            }
+            name = call.get("name") or call.get("tool_name") or call.get("tool") or ""
+            if name:
+                crow["tool_name"] = name
+                crow["name"] = name
+            if "arguments" in call:
+                crow["arguments"] = call.get("arguments")
+            elif "input" in call:
+                crow["arguments"] = call.get("input")
+            for key in ("source", "channel", "conversation_id", "user_id"):
+                if anchor.get(key) is not None:
+                    crow[key] = anchor[key]
+            rows.append(crow)
+            if tcid:
+                tool_call_parents[tcid] = crow["msg_id"]
+        return rows
 
     @staticmethod
     def _safe_name(name: str) -> str:
@@ -874,8 +969,16 @@ class ConversationStore:
                 r = self._git(cid, "show", f"{branch}:transcript.jsonl", check=False)
                 if r.returncode != 0:
                     return 0
-                return sum(1 for l in r.stdout.strip().split("\n")
-                           if l.strip() and '"t":"msg"' in l)
+                count = 0
+                for l in r.stdout.strip().split("\n"):
+                    if not l.strip():
+                        continue
+                    try:
+                        if json.loads(l).get("role"):
+                            count += 1
+                    except json.JSONDecodeError:
+                        continue
+                return count
             return {
                 "branch_a": branch_a, "branch_b": branch_b,
                 "commits_ahead": ahead, "commits_behind": behind,
@@ -948,7 +1051,7 @@ class ConversationStore:
         estimate (raw chars, no tokenizer); /3.5 gives the bg-side
         token-budget metric. Counts:
           - row['content'] (str or list of {type,text} blocks)
-          - row['tool_calls'] (list of dicts → arguments json size)
+          - role=tool_call arguments payload size
           - row['trace'] (list of dicts → string repr)
           - row['content_update'] (str)
 
@@ -1187,28 +1290,19 @@ class ConversationStore:
     def filter_for_shared(messages: List[Dict]) -> List[Dict]:
         """Pick messages eligible for shared.jsonl.
 
-        Shared context = conversation only: no tool results, no context
-        injections. Assistant messages with tool_calls keep their text
-        (if any) but drop the tool_calls/tool_call_id fields. This is
-        the single source of truth for what goes into shared — used
-        both by append_message and by the CC import path so imported convs
-        render the same "Shared" view as native ones.
+        Shared context = conversation only: no tool rows, no thinking rows,
+        no context injections. Stored rows are already canonical; this filter
+        never unwraps assistant.tool_calls or assistant.thinking.
         """
         out = []
         for m in messages:
-            if m.get("role") == "tool":
+            if m.get("role") in ("tool", "tool_call", "thinking"):
                 continue
             if (m.get("source") or {}).get("type") == "context":
                 continue
-            if m.get("tool_calls"):
-                m_copy = dict(m)
-                m_copy.pop("tool_calls", None)
-                m_copy.pop("tool_call_id", None)
-                content = m_copy.get("content", "")
-                if content and str(content).strip():
-                    out.append(m_copy)
-            else:
-                out.append(m)
+            if m.get("role") == "assistant" and not str(m.get("content", "")).strip():
+                continue
+            out.append(m)
         return out
 
     def _append_shared_ctx(self, cid: str, messages: List[Dict],
@@ -1433,26 +1527,12 @@ class ConversationStore:
             seq = line.get("seq")
             if isinstance(seq, int) and seq > c["_max_seq"]:
                 c["_max_seq"] = seq
-            t = line.get("t", "")
-            if t == "meta":
-                c["user_id"] = line.get("user_id", "")
-                c["status"] = line.get("status", "idle")
-                c["created_at"] = line.get("created_at", 0)
-                c["expires_at"] = line.get("expires_at", 0)
-            elif t == "msg":
+            if line.get("role"):
                 c["msg_count"] += 1
                 if not c["preview"] and line.get("role") == "user":
                     content = line.get("content", "")
                     if isinstance(content, str) and content.strip():
                         c["preview"] = content[:80]
-            elif t == "extra":
-                _ekey = line.get("key", "")
-                c["extra_keys"].add(_ekey)
-                c["extras"][_ekey] = line.get("value")
-                if _ekey == "title":
-                    c["title"] = line.get("value", "")
-            elif t == "status":
-                c["status"] = line.get("status", c["status"])
             c["updated_at"] = max(c["updated_at"], line.get("ts", 0))
         return c
 
@@ -1485,6 +1565,7 @@ class ConversationStore:
                 c["title"] = extras_data["title"]
             # Use meta from extras for cache fields
             c["user_id"] = extras_data.get("_meta_user_id", c.get("user_id", ""))
+            c["status"] = extras_data.get("_meta_status", c.get("status", "idle"))
             if extras_data.get("_meta_created_at"):
                 c["created_at"] = max(c["created_at"], extras_data["_meta_created_at"])
                 c["updated_at"] = max(c["updated_at"], extras_data["_meta_created_at"])
@@ -1550,11 +1631,9 @@ class ConversationStore:
              "agents": set(), "extra_keys": set(extras_data.keys()),
              "extras": extras_data, "preview": extras_data.get("_meta_preview", "")}
         if not c["msg_count"] and log.exists():
-            c["msg_count"] = max(0, log.total_rows() - 1)
+            c["msg_count"] = max(0, log.total_rows())
         if latest:
             c["updated_at"] = max(float(c.get("updated_at") or 0), self._cache_ts(latest))
-            if latest.get("t") == "status":
-                c["status"] = latest.get("status", c["status"])
         if "title" in extras_data:
             c["title"] = extras_data["title"]
         max_seq = int(extras_data.get("_meta_max_seq") or 0)
@@ -1694,7 +1773,7 @@ class ConversationStore:
         """
         extras = cached.setdefault("extras", {})
         extra_keys = cached.setdefault("extra_keys", set())
-        if transcript_line.get("t") == "msg":
+        if transcript_line.get("role"):
             count = max(int(cached.get("msg_count") or 0),
                         int(extras.get("_meta_msg_count") or 0) + 1)
             extras["_meta_msg_count"] = count
@@ -1865,16 +1944,13 @@ class ConversationStore:
             raise ValueError("user_id is required to create a conversation")
         self._conv_dir(cid, user_id=user_id).mkdir(parents=True, exist_ok=True)
 
-        # Write transcript
-        meta_line = self._stamp_line(cid, {
-            "t": "meta", "user_id": user_id, "status": status or "idle",
-            "created_at": _now, "ts": _now,
-            "expires_at": _now + ttl if ttl > 0 else 0,
-        })
-        rows = [meta_line]
+        # Write transcript messages only. Metadata lives in extras.json.
+        rows = []
+        tool_call_parents: Dict[str, str] = {}
         for m in messages:
             self._validate_message(m)
-            rows.append(self._stamp_line(cid, {"t": "msg", **m}))
+            for row in self._canonical_message_rows(cid, m, tool_call_parents):
+                rows.append(self._stamp_line(cid, row))
         self._transcript_log(cid).replace_dicts(rows)
 
         # Write extras with metadata
@@ -1884,11 +1960,11 @@ class ConversationStore:
             "_meta_expires_at": _now + ttl if ttl > 0 else 0,
             "_meta_status": status or "idle",
             "_meta_updated_at": _now,
-            "_meta_msg_count": len(messages),
+            "_meta_msg_count": len(rows),
             "_meta_max_seq": max((int(r.get("seq") or 0) for r in rows), default=0),
         }
         for row in rows:
-            if row.get("t") == "msg" and row.get("role") == "user":
+            if row.get("role") == "user":
                 content = row.get("content", "")
                 if isinstance(content, str) and content.strip():
                     extras["_meta_preview"] = content[:80]
@@ -1959,9 +2035,8 @@ class ConversationStore:
             raise ValueError("user messages require source.target_agent")
         route_agent = agent_name or (target_agent if target_agent not in ("ALL", "all") else "")
         display_only = bool(msg.get("display_only"))
-        has_tool_calls = bool(msg.get("tool_calls"))
         now = time.time()
-        transcript_line = None
+        transcript_lines: List[Dict[str, Any]] = []
         touched_agents = set()
 
         try:
@@ -1986,24 +2061,23 @@ class ConversationStore:
                 self.save(cid, [], user_id=user_id, ttl=ttl)
             _mark_timing("create_or_exists", _t0)
 
+            canonical_rows = self._canonical_message_rows(cid, msg)
+
             # 1. Transcript — everything except synthetic context injections.
             if src_type != "context":
                 _transcript_t0 = time.monotonic()
-                is_private = has_tool_calls or role == "tool"
-                line = self._stamp_line(cid, {"t": "msg", **msg})
-                if is_private:
-                    line["private"] = True
-                transcript_line = line
+                lines = [self._stamp_line(cid, dict(row)) for row in canonical_rows]
+                transcript_lines = lines
                 _mark_timing("transcript_prepare", _transcript_t0)
                 _t0 = time.monotonic()
-                self._transcript_log(cid).append_dicts([line])
+                self._transcript_log(cid).append_dicts(lines)
                 _mark_timing("transcript_write", _t0)
                 # Feed bg_bucket_builder's token-budget trigger so it
                 # can fire a partial bucket BEFORE the agent's hot-path
                 # /compact has to digest-tail at runtime.
                 _t0 = time.monotonic()
                 self._notify_bg_transcript_chars(
-                    cid, self._row_payload_chars(line))
+                    cid, sum(self._row_payload_chars(line) for line in lines))
                 _mark_timing("bg_notify", _t0)
                 _mark_timing("transcript", _transcript_t0)
 
@@ -2024,7 +2098,7 @@ class ConversationStore:
                     if src_type != "context":
                         self._seed_agent_context_from_shared_if_missing(
                             cid, route_agent)
-                    self._append_ctx_file(cid, route_agent, [msg])
+                    self._append_ctx_file(cid, route_agent, canonical_rows)
                     touched_agents.add(route_agent)
                     _mark_timing("own_ctx", _t0)
 
@@ -2032,9 +2106,9 @@ class ConversationStore:
                 #    conversation messages (filter_for_shared drops
                 #    tool results and context injections; strips
                 #    tool_calls but keeps text).
-                if src_type != "context" and role != "tool":
+                if src_type != "context":
                     _t0 = time.monotonic()
-                    shared_candidates = self.filter_for_shared([msg])
+                    shared_candidates = self.filter_for_shared(canonical_rows)
                     _mark_timing("shared_filter", _t0)
                     if shared_candidates:
                         _t0 = time.monotonic()
@@ -2066,7 +2140,8 @@ class ConversationStore:
         self._invalidate_ctx_cache(cid)
         _mark_timing("ctx_cache_invalidate", _t0)
         _t0 = time.monotonic()
-        self._note_cache_append(cid, transcript_line, touched_agents)
+        for transcript_line in transcript_lines:
+            self._note_cache_append(cid, transcript_line, touched_agents)
         _mark_timing("cache_note", _t0)
         _total_ms = (time.monotonic() - _append_started) * 1000.0
         if _total_ms >= 100.0:
@@ -2152,7 +2227,6 @@ class ConversationStore:
                 "target_agent": target_agent,
                 "route_agent": agent or (target_agent if target_agent not in ("ALL", "all") else ""),
                 "display_only": bool(msg.get("display_only")),
-                "has_tool_calls": bool(msg.get("tool_calls")),
             })
 
         try:
@@ -2166,6 +2240,7 @@ class ConversationStore:
         transcript_rows: List[Dict[str, Any]] = []
         shared_rows: List[Dict[str, Any]] = []
         ctx_rows: Dict[str, List[Dict[str, Any]]] = {}
+        tool_call_parents: Dict[str, str] = {}
         touched_agents = set()
         seeded_agents = set()
         transcript_chars = 0
@@ -2184,13 +2259,14 @@ class ConversationStore:
                 role = entry["role"]
                 src_type = entry["src_type"]
                 route_agent = entry["route_agent"]
+                canonical_rows = self._canonical_message_rows(
+                    cid, msg, tool_call_parents)
 
                 if src_type != "context":
-                    line = self._stamp_line(cid, {"t": "msg", **msg})
-                    if entry["has_tool_calls"] or role == "tool":
-                        line["private"] = True
-                    transcript_rows.append(line)
-                    transcript_chars += self._row_payload_chars(line)
+                    for row in canonical_rows:
+                        line = self._stamp_line(cid, dict(row))
+                        transcript_rows.append(line)
+                        transcript_chars += self._row_payload_chars(line)
 
                 if entry["display_only"]:
                     continue
@@ -2200,12 +2276,13 @@ class ConversationStore:
                         self._seed_agent_context_from_shared_if_missing(
                             cid, route_agent)
                         seeded_agents.add(route_agent)
-                    ctx_rows.setdefault(route_agent, []).append(
-                        self._stamp_line(cid, dict(msg)))
+                    for row in canonical_rows:
+                        ctx_rows.setdefault(route_agent, []).append(
+                            self._stamp_line(cid, dict(row)))
                     touched_agents.add(route_agent)
 
-                if src_type != "context" and role != "tool":
-                    shared_candidates = self.filter_for_shared([msg])
+                if src_type != "context":
+                    shared_candidates = self.filter_for_shared(canonical_rows)
                     if shared_candidates:
                         for shared_msg in (
                                 self._transform_for_shared(m)
@@ -2337,9 +2414,8 @@ class ConversationStore:
                 total += len(content)
             elif content is not None:
                 total += len(str(content))
-            tool_calls = msg.get("tool_calls")
-            if tool_calls:
-                total += len(str(tool_calls))
+            if msg.get("role") == "tool_call" and msg.get("arguments"):
+                total += len(str(msg.get("arguments")))
         return total
 
     @staticmethod
@@ -2433,17 +2509,17 @@ class ConversationStore:
         """Return the full transcript personalized for one agent.
 
         This is the right source for compaction: it contains everything
-        (user messages, every agent's assistant turns, tool_calls,
+        (user messages, every agent's assistant turns, tool_call rows,
         tool_results) and — unlike agent context — never includes a
         previously-injected compaction summary. Compacting from here
         can never layer stale summaries on top of each other.
 
         Personalization:
-        - Own assistant messages: role=assistant, keep tool_calls, no prefix
+        - Own assistant/thinking/tool_call rows: kept as-is
         - Own tool messages: kept as-is (they belong to the agent's turn)
         - Other agents' messages: role=user, content prefixed "[Agent X]:"
         - User messages: role=user, prefixed "[User to agent X]:" when targeted
-        - Other agents' tool_calls/tool_results: dropped (private to them)
+        - Other agents' thinking/tool_call/tool results: dropped (private to them)
         """
         if not self.exists(cid):
             return None
@@ -2483,7 +2559,7 @@ class ConversationStore:
         # can keep matching tool results and drop everybody else's.
         own_tc_ids: set = set()
         for m in raw:
-            if m.get("role") != "assistant":
+            if m.get("role") != "tool_call":
                 continue
             src = m.get("source") or {}
             if src.get("type") != "agent":
@@ -2491,10 +2567,9 @@ class ConversationStore:
             sname = src.get("name", "")
             if not (canon and sname and sname.lower() == canon.lower()):
                 continue
-            for tc in (m.get("tool_calls") or []):
-                tid = tc.get("id") if isinstance(tc, dict) else None
-                if tid:
-                    own_tc_ids.add(tid)
+            tid = m.get("tool_call_id") or m.get("tc_id")
+            if tid:
+                own_tc_ids.add(tid)
 
         out: List[Dict] = []
         for m in raw:
@@ -2519,18 +2594,23 @@ class ConversationStore:
                     out.append(dict(m))
                 continue
 
+            if role in ("thinking", "tool_call"):
+                if src_type == "agent" and canon and src_name \
+                        and src_name.lower() == canon.lower():
+                    out.append(dict(m))
+                continue
+
             if role == "assistant" and src_type == "agent":
                 if canon and src_name and src_name.lower() == canon.lower():
-                    # Own turn — keep as assistant with tool_calls intact
+                    # Own turn anchor.
                     out.append(dict(m))
                 else:
-                    # Another agent's turn — demote to user with prefix,
-                    # strip tool_calls (private to them) and drop btw/task
+                    # Another agent's turn — demote to user with prefix
+                    # and drop btw/task
                     # side-channels entirely (these aren't addressed to us).
                     if src.get("task_id") or src.get("btw"):
                         continue
-                    # Tool-call-only turns have no text. Stripping the
-                    # tool_calls leaves nothing useful — don't emit empty
+                    # Tool-only turns have no text. Don't emit empty
                     # "[Agent X]:" stubs into the view. Handle both string
                     # and list (multimodal) content formats.
                     content = m.get("content", "")
@@ -2555,7 +2635,6 @@ class ConversationStore:
                     mm["role"] = "user"
                     prefix = f"[Agent {src_name}]: " if src_name else "[Agent]: "
                     mm["content"] = prefix + text
-                    mm.pop("tool_calls", None)
                     out.append(mm)
                 continue
 
@@ -2608,7 +2687,12 @@ class ConversationStore:
         if not self.exists(cid):
             return False
         agent_name = self._canon_agent(agent_name) if agent_name else ""
-        clean = [m for m in context_messages if not m.get("display_only")]
+        clean: List[Dict[str, Any]] = []
+        tool_call_parents: Dict[str, str] = {}
+        for m in context_messages:
+            if m.get("display_only"):
+                continue
+            clean.extend(self._canonical_message_rows(cid, m, tool_call_parents))
         # Cross-file UUID invariant: the same logical message must carry
         # the same msg_id here as in the transcript — preserved by
         # construction (msg_id is minted once in LLMMessage.__post_init__
@@ -2740,60 +2824,13 @@ class ConversationStore:
     # ── Transcript read ───────────────────────────────────────────────
 
     def _scan_transcript(self, lines) -> List[Dict]:
-        """Scan JSONL lines into transcript messages (with patches applied)."""
+        """Scan JSONL lines into canonical transcript messages."""
         msgs = []
-        patches = {}
-        trace_updates = {}  # trace_id -> list of (entry, content_update)
         for line in lines:
-            t = line.get("t", "")
-            if t == "msg_patch":
-                # New format uses target_msg_id for the link; legacy
-                # data-on-disk (pre-invariant-fix) still squats msg_id.
-                mid = line.get("target_msg_id") or line.get("msg_id", "")
-                if mid:
-                    # Drop the patch's own identity fields from the
-                    # payload we fold back into the target msg — they
-                    # describe the patch line, not the message.
-                    patches[mid] = {
-                        k: v for k, v in line.items()
-                        if k not in ("t", "msg_id", "target_msg_id",
-                                     "ts", "seq")
-                    }
+            if not line.get("role"):
                 continue
-            if t == "trace_update":
-                tid = line.get("trace_id", "")
-                if tid:
-                    trace_updates.setdefault(tid, []).append(
-                        (line.get("entry") or {}, line.get("content_update") or ""))
-                continue
-            if t != "msg":
-                continue
-            msg = {k: v for k, v in line.items() if k not in ("t", "ts", "private")}
-            if "ts" in line:
-                msg["timestamp"] = line["ts"]
+            msg = dict(line)
             msgs.append(msg)
-        if patches:
-            for msg in msgs:
-                mid = msg.get("msg_id", "")
-                if mid and mid in patches:
-                    msg.update(patches[mid])
-        if trace_updates:
-            for msg in msgs:
-                if msg.get("role") != "sub_agent_trace":
-                    continue
-                tid = msg.get("trace_id", "")
-                ups = trace_updates.get(tid)
-                if not ups:
-                    continue
-                trace = list(msg.get("trace") or [])
-                content = msg.get("content", "") or ""
-                for entry, cu in ups:
-                    if entry:
-                        trace.append(entry)
-                    if cu:
-                        content += cu
-                msg["trace"] = trace
-                msg["content"] = content
         # Sort by (creation ts, creation seq) — see _read_ctx_file for
         # rationale. Same invariant: order = creation, not file position.
         msgs.sort(key=lambda m: (
@@ -2879,70 +2916,23 @@ class ConversationStore:
 
     def _read_tail(self, log: SegmentedJsonl, total_msgs: int, limit: int, offset: int) -> Dict:
         """Read the last (offset + limit) display rows from a logical JSONL."""
-        need = offset + limit + 20  # extra margin for msg_patch records + tool alignment
+        need = offset + limit + 20  # extra margin for detail-row alignment
         raw_lines = []
         for line in log.iter_rows_reverse():
-            t = line.get("t", "")
-            if t in ("msg", "msg_patch", "trace_update"):
+            if line.get("role"):
                 raw_lines.append(line)
                 if len(raw_lines) >= need:
                     break
         raw_lines.reverse()
 
-        # Apply scan_transcript logic (separate msgs from patches)
-        msgs = []
-        patches = {}
-        trace_updates = {}
-        for line in raw_lines:
-            t = line.get("t", "")
-            if t == "msg_patch":
-                mid = line.get("target_msg_id") or line.get("msg_id", "")
-                if mid:
-                    patches[mid] = {k: v for k, v in line.items()
-                                    if k not in ("t", "msg_id", "target_msg_id", "ts", "seq")}
-                continue
-            if t == "trace_update":
-                tid = line.get("trace_id", "")
-                if tid:
-                    trace_updates.setdefault(tid, []).append(
-                        (line.get("entry") or {}, line.get("content_update") or ""))
-                continue
-            if t != "msg":
-                continue
-            msg = {k: v for k, v in line.items() if k not in ("t", "ts", "private")}
-            if "ts" in line:
-                msg["timestamp"] = line["ts"]
-            msgs.append(msg)
-
-        if patches:
-            for msg in msgs:
-                mid = msg.get("msg_id", "")
-                if mid and mid in patches:
-                    msg.update(patches[mid])
-        if trace_updates:
-            for msg in msgs:
-                if msg.get("role") != "sub_agent_trace":
-                    continue
-                tid = msg.get("trace_id", "")
-                ups = trace_updates.get(tid)
-                if not ups:
-                    continue
-                trace = list(msg.get("trace") or [])
-                content = msg.get("content", "") or ""
-                for entry, cu in ups:
-                    if entry:
-                        trace.append(entry)
-                    if cu:
-                        content += cu
-                msg["trace"] = trace
-                msg["content"] = content
+        msgs = [dict(line) for line in raw_lines if line.get("role")]
 
         # Slice: msgs is chronological, we want the last `limit` before `offset`
         total_tail = len(msgs)
         end = total_tail - offset
         start = max(0, end - limit)
-        # Don't split a tool_call from its tool results
-        while start > 0 and msgs[start].get("role") == "tool":
+        # Don't split technical child rows from their assistant anchor.
+        while start > 0 and msgs[start].get("role") in ("thinking", "tool_call", "tool"):
             start -= 1
         page = msgs[start:end] if end > 0 else []
         has_more = (total_msgs - offset - len(page)) > 0
@@ -2951,26 +2941,45 @@ class ConversationStore:
                 "offset": offset, "limit": limit, "has_more": has_more}
 
     def patch_message(self, cid: str, msg_id: str, **fields) -> None:
-        """Append a msg_patch record referencing an existing message.
-
-        The patch is itself a first-class line: it carries its OWN
-        msg_id / ts / seq (stamped by _stamp_line) and references the
-        target via ``target_msg_id``. Before, the patch squatted the
-        target's msg_id which broke the "every line has unique
-        msg_id + monotonic seq" invariant and tripped seq bootstrap.
-        """
+        """Update an existing message row in transcript and contexts."""
         if not msg_id or not fields:
             return
+        patched_line: Dict[str, Any] = {}
+
+        def _patch_stream(path: Path) -> int:
+            log = SegmentedJsonl(path)
+            if not log.exists():
+                return 0
+            count = 0
+
+            def _transform(line: Dict[str, Any]) -> Dict[str, Any]:
+                nonlocal count, patched_line
+                if line.get("msg_id") != msg_id:
+                    return line
+                updated = dict(line)
+                updated.update(fields)
+                count += 1
+                if not patched_line:
+                    patched_line = updated
+                return updated
+
+            log.rewrite(_transform)
+            return count
+
         lock = self._get_conv_lock(cid)
         with lock:
-            line = self._stamp_line(cid, {
-                "t": "msg_patch",
-                "target_msg_id": msg_id,
-                **fields,
-            })
-            self._transcript_log(cid).append_dicts([line])
-        self._notify_bg_transcript_chars(cid, self._row_payload_chars(line))
-        self._maybe_persist_context_usage_from_patch(cid, line)
+            _patch_stream(self._transcript_path(cid))
+            _patch_stream(self._shared_ctx_path(cid))
+            conv_dir = self._conv_dir(cid)
+            if conv_dir.is_dir():
+                for entry in conv_dir.iterdir():
+                    if entry.is_dir() and self._jsonl_exists(entry / "context.jsonl"):
+                        _patch_stream(entry / "context.jsonl")
+        self._invalidate_ctx_cache(cid)
+        if patched_line:
+            self._notify_bg_transcript_chars(
+                cid, self._row_payload_chars(patched_line))
+            self._maybe_persist_context_usage_from_patch(cid, patched_line)
 
     def _maybe_persist_context_usage_from_patch(self, cid: str, line: Dict[str, Any]) -> None:
         source = line.get("source")
@@ -3697,7 +3706,7 @@ class ConversationStore:
             def _find_id(lines):
                 count = 0
                 for line in lines:
-                    if line.get("t") == "msg" and not line.get("private"):
+                    if line.get("role"):
                         if count == index:
                             return line.get("msg_id", "")
                         count += 1
@@ -3724,24 +3733,13 @@ class ConversationStore:
         def _rewrite_jsonl(path: Path) -> int:
             """Rewrite a logical JSONL stream, removing rows with matching msg_id.
 
-            Also removes:
-              - sub_agent_trace messages whose trace_id matches an id in
-                `ids` (legacy traces persisted without msg_id used the
-                trace_id as the deletion key);
-              - their associated trace_update lines (orphan otherwise).
+            Also removes sub_agent_trace messages whose trace_id matches an id
+            in `ids`.
             """
             log = SegmentedJsonl(path)
             if not log.exists():
                 return 0
             count = 0
-            trace_ids_to_drop = set()
-            for line in log.iter_rows():
-                if line.get("role") != "sub_agent_trace":
-                    continue
-                _tid = line.get("trace_id", "")
-                if _tid and (line.get("msg_id") in ids or _tid in ids):
-                    trace_ids_to_drop.add(_tid)
-
             def _transform(line: Dict[str, Any]) -> Optional[Dict[str, Any]]:
                 nonlocal count
                 if line.get("msg_id") in ids:
@@ -3751,10 +3749,6 @@ class ConversationStore:
                 if (line.get("role") == "sub_agent_trace"
                         and line.get("trace_id") in ids):
                     count += 1
-                    return None
-                # Drop orphan trace_update lines for deleted traces
-                if (line.get("t") == "trace_update"
-                        and line.get("trace_id") in trace_ids_to_drop):
                     return None
                 return line
 
@@ -3819,13 +3813,12 @@ class ConversationStore:
 
     def create_display_trace(self, cid: str, trace_id: str,
                              source: Dict, user_id: str = "") -> bool:
-        import uuid as _uuid
         lock = self._get_conv_lock(cid)
         # msg_id is required for the context editor's delete path
         # (selection sends msg_ids; without one the row is not deletable).
         with lock:
             line = self._stamp_line(cid, {
-                "t": "msg", "role": "sub_agent_trace", "display_only": True,
+                "role": "sub_agent_trace", "display_only": True,
                 "trace_id": trace_id, "source": source, "content": "",
                 "trace": [],
             })
@@ -3837,18 +3830,31 @@ class ConversationStore:
     def append_display_trace(self, cid: str, trace_id: str,
                              entry_data: Dict, content_update: str = "") -> bool:
         entry_data.setdefault("ts", time.time())
+        updated = False
+        appended_chars = 0
         lock = self._get_conv_lock(cid)
         with lock:
-            line = self._stamp_line(cid, {
-                "t": "trace_update",
-                "trace_id": trace_id,
-                "entry": entry_data,
-                "content_update": content_update,
-            })
-            self._transcript_log(cid).append_dicts([line])
-            self._notify_bg_transcript_chars(
-                cid, self._row_payload_chars(line))
-        return True
+            log = self._transcript_log(cid)
+
+            def _transform(line: Dict[str, Any]) -> Dict[str, Any]:
+                nonlocal updated, appended_chars
+                if line.get("role") != "sub_agent_trace" or line.get("trace_id") != trace_id:
+                    return line
+                row = dict(line)
+                trace = list(row.get("trace") or [])
+                if entry_data:
+                    trace.append(entry_data)
+                row["trace"] = trace
+                if content_update:
+                    row["content"] = (row.get("content") or "") + content_update
+                updated = True
+                appended_chars = self._row_payload_chars(row)
+                return row
+
+            log.rewrite(_transform)
+            if updated and appended_chars:
+                self._notify_bg_transcript_chars(cid, appended_chars)
+        return updated
 
     # ── Cleanup ───────────────────────────────────────────────────────
 

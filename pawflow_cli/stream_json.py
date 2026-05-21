@@ -153,6 +153,7 @@ class StreamJsonMode:
     def _stream_response(self):
         """Read SSE events and translate to stream-json output."""
         accumulated_text = ""
+        stream_state = {}
 
         while True:
             try:
@@ -172,7 +173,8 @@ class StreamJsonMode:
 
             # Translate and emit
             events, accumulated_text = translate_sse_event(
-                ev_type, data, self.session_id, accumulated_text)
+                ev_type, data, self.session_id, accumulated_text,
+                stream_state)
 
             for ev in events:
                 self._emit(ev)

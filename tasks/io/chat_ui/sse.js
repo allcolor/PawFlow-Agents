@@ -1407,6 +1407,10 @@ function connectSSE(cid, onReady, opts) {
         activeInteractions = {};
         updateActivePanel();
       }
+      if (typeof syncActiveFromServer === 'function') {
+        setTimeout(() => syncActiveFromServer(true), 250);
+        setTimeout(() => syncActiveFromServer(true), 1500);
+      }
       if (Object.keys(activeInteractions).length === 0 && activeTimer) {
         clearInterval(activeTimer); activeTimer = null;
       }

@@ -4,6 +4,7 @@
 // between polls but never override the server state.
 let activeInteractions = {};  // agentKey → { name, startedAt, ... }
 let activeTimer = null;
+let _activeDoneAt = {};  // agentKey → Date.now() from local done/discard hint
 
 function agentKey(name) { return (name || '').toLowerCase(); }
 function activeAgentKey(agentName, taskId) {
@@ -186,6 +187,8 @@ function trackAgentToolDone(agentName, toolName, taskId) {
 function trackAgentDone(agentName, taskId) {
   const key = activeAgentKey(agentName, taskId || '');
   if (!key) return;
+  const now = Date.now();
+  _activeDoneAt[key] = now;
   delete activeInteractions[key];
   updateActivePanel();
   if (Object.keys(activeInteractions).length === 0
@@ -335,21 +338,28 @@ function stopActiveSync() {
   _syncActiveSub = null;
   _syncActiveStartedAt = 0;
 }
-function syncActiveFromServer() {
+function syncActiveFromServer(force) {
   if (!conversationId) return;
-  if (typeof document !== 'undefined' && document.hidden) return;
+  if (!force && typeof document !== 'undefined' && document.hidden) return;
   const now = Date.now();
   if (_syncActiveSub) {
-    if (now - _syncActiveStartedAt < _SYNC_ACTIVE_STALE_MS) return;
+    if (!force && now - _syncActiveStartedAt < _SYNC_ACTIVE_STALE_MS) return;
     try { _syncActiveSub.unsubscribe(); } catch (_) {}
     _syncActiveSub = null;
   }
   _syncActiveStartedAt = now;
+  const requestStartedAt = now;
   _syncActiveSub = action$('list_active', {}, { silent: true }).subscribe(data => {
     _syncActiveSub = null;
     _syncActiveStartedAt = 0;
     if (data.error) return;  // silent — network may be down
-    const serverActive = data.active || [];
+    const serverActive = (data.active || []).filter(a => {
+      const key = activeAgentKey(a.agent_name, a.task_id || '');
+      const doneAt = _activeDoneAt[key] || 0;
+      if (doneAt && requestStartedAt <= doneAt) return false;
+      if (doneAt) delete _activeDoneAt[key];
+      return true;
+    });
     const hasActiveForCurrentConv = serverActive.length > 0;
     if (typeof setConversationWorking === 'function') {
       setConversationWorking(conversationId, hasActiveForCurrentConv);

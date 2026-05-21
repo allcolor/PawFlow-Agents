@@ -657,7 +657,7 @@ class TestAgentLoopStreaming(unittest.TestCase):
         PendingQueue.drop_cache()
         PollScheduler.reset()
 
-    def test_user_message_preempts_preparing_turn_without_live_client(self):
+    def test_user_message_during_preparing_turn_queues_without_killing_live_client(self):
         from tasks.ai.agent_loop import AgentLoopTask
         from core.pending_queue import PendingQueue
 
@@ -726,31 +726,15 @@ class TestAgentLoopStreaming(unittest.TestCase):
 
                 assert len(results) == 1
                 body = json.loads(results[0].get_content().decode())
-                assert body["status"] == "accepted"
-                assert results[0].get_attribute("agent.streaming") == "true"
-                assert results[0].get_attribute("agent.fast_restart_after_preempt") == "true"
-                assert len(started_threads) == 1
-                assert task._conv_generation[agent_key] == 1
-                assert PendingQueue.for_agent(conversation_id, agent_name).peek_count() == 0
+                assert body["status"] == "queued"
+                assert results[0].get_attribute("agent.streaming") is None
+                assert results[0].get_attribute("agent.fast_restart_after_preempt") is None
+                assert len(started_threads) == 0
+                assert task._conv_generation[agent_key] == 0
+                assert PendingQueue.for_agent(conversation_id, agent_name).peek_count() == 1
 
                 with task._active_contexts_lock:
-                    assert task._active_turns[agent_key]["generation"] == 1
-
-                task._decrement_active(conversation_id, {
-                    "active_agent_name": agent_name,
-                    "_active_turn_key": agent_key,
-                    "_generation": 0,
-                })
-                with task._active_contexts_lock:
-                    assert agent_key in task._active_turns
-
-                task._decrement_active(conversation_id, {
-                    "active_agent_name": agent_name,
-                    "_active_turn_key": agent_key,
-                    "_generation": 1,
-                })
-                with task._active_contexts_lock:
-                    assert agent_key not in task._active_turns
+                    assert task._active_turns[agent_key]["generation"] == 0
 
         PendingQueue.drop_cache()
 

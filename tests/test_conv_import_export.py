@@ -82,7 +82,7 @@ def test_export_pawflow_creates_valid_zip(conv):
         names = zf.namelist()
         assert "transcript.jsonl" in names
         transcript = [json.loads(l) for l in zf.read("transcript.jsonl").decode().splitlines() if l.strip()]
-        assert [m.get("content") for m in transcript if m.get("t") == "msg"] == ["Hello", "Hi there"]
+        assert [m.get("content") for m in transcript if m.get("role") in ("user", "assistant")] == ["Hello", "Hi there"]
 
 
 def test_export_pawflow_excludes_git(conv):
@@ -131,8 +131,8 @@ def _make_pawflow_zip(messages, conv_agents=None):
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, 'w') as zf:
         transcript = "\n".join(
-            json.dumps({"t": "msg", "role": m["role"], "content": m["content"],
-                        "msg_id": uuid.uuid4().hex[:12], "timestamp": time.time()})
+            json.dumps({"role": m["role"], "content": m["content"],
+                        "msg_id": uuid.uuid4().hex[:12], "ts": time.time()})
             for m in messages
         ) + "\n"
         zf.writestr("transcript.jsonl", transcript)
@@ -232,14 +232,14 @@ def test_cc_to_pawflow_transcript_conversion():
         mid = uuid.uuid4().hex[:12]
         ts = time.time()
         if msg_type == "human":
-            transcript_lines.append(json.dumps({"t": "msg", "role": "user", "content": content, "msg_id": mid, "timestamp": ts}))
+            transcript_lines.append(json.dumps({"role": "user", "content": content, "msg_id": mid, "ts": ts}))
         elif msg_type == "assistant":
             if isinstance(content, list):
                 text_parts = [b.get("text", "") for b in content if b.get("type") == "text"]
                 content = "\n".join(text_parts)
-            transcript_lines.append(json.dumps({"t": "msg", "role": "assistant", "content": content, "msg_id": mid, "timestamp": ts}))
+            transcript_lines.append(json.dumps({"role": "assistant", "content": content, "msg_id": mid, "ts": ts}))
         elif msg_type == "tool_result":
-            transcript_lines.append(json.dumps({"t": "msg", "role": "tool", "content": str(content), "msg_id": mid, "timestamp": ts}))
+            transcript_lines.append(json.dumps({"role": "tool", "content": str(content), "msg_id": mid, "ts": ts}))
 
     assert len(transcript_lines) == 3
     parsed = [json.loads(l) for l in transcript_lines]
@@ -350,17 +350,18 @@ def test_cc_import_real_format_user_assistant(store):
     cid = _cc_execute(store, "\n".join(lines) + "\n")
     conv_dir = store._store_dir / store._safe_name("testuser") / store._safe_name(cid)
     transcript = _logical_rows(conv_dir / "transcript.jsonl")
-    msgs = [m for m in transcript if m.get("t") == "msg"]
+    msgs = [m for m in transcript if m.get("role")]
     roles = [m["role"] for m in msgs]
-    # user, assistant(with tool_calls), tool, assistant(text)
-    assert roles == ["user", "assistant", "tool", "assistant"]
+    assert roles == ["user", "assistant", "tool_call", "tool", "assistant"]
     assert msgs[0]["content"] == "Hello"
     assert msgs[1]["content"] == "Sure."
-    assert msgs[1]["tool_calls"][0]["name"] == "grep"
-    assert msgs[1]["tool_calls"][0]["id"] == "tu_1"
+    assert msgs[2]["tool_name"] == "grep"
     assert msgs[2]["tool_call_id"] == "tu_1"
-    assert msgs[2]["content"] == "match"
-    assert msgs[3]["content"] == "Done."
+    assert msgs[2]["parent_message_id"] == msgs[1]["msg_id"]
+    assert msgs[3]["tool_call_id"] == "tu_1"
+    assert msgs[3]["parent_message_id"] == msgs[2]["msg_id"]
+    assert msgs[3]["content"] == "match"
+    assert msgs[4]["content"] == "Done."
 
 
 def test_cc_import_drops_empty_assistant_stub(store):
@@ -373,7 +374,7 @@ def test_cc_import_drops_empty_assistant_stub(store):
     cid = _cc_execute(store, "\n".join(lines) + "\n")
     conv_dir = store._store_dir / store._safe_name("testuser") / store._safe_name(cid)
     transcript = _logical_rows(conv_dir / "transcript.jsonl")
-    msgs = [m for m in transcript if m.get("t") == "msg"]
+    msgs = [m for m in transcript if m.get("role")]
     assert len(msgs) == 2
     assert msgs[0]["content"] == "hi"
     assert msgs[1]["content"] == "real"
@@ -382,7 +383,7 @@ def test_cc_import_drops_empty_assistant_stub(store):
 def test_cc_import_creates_shared_context(store):
     """shared.jsonl must match what ConversationStore.filter_for_shared
     produces for a native conv: no tool rows, no context injections,
-    assistant tool_calls stripped (text-only), source/badges preserved.
+    tool/detail rows skipped, source/badges preserved.
     Regression: the UI "Shared" view reported "divergé / aucun contexte"
     on every imported conv because only transcript.jsonl was written.
     """
@@ -404,11 +405,10 @@ def test_cc_import_creates_shared_context(store):
     # Shared is agent-neutral: both entries become role=user after
     # _transform_for_shared. The second entry is the ex-assistant
     # (prefixed with [Agent claude]) — tool_result is dropped, and
-    # the tool_use block got stripped from its tool_calls field.
+    # the tool_use block was stored only as a private tool_call row.
     assert len(shared) == 2
     assert all(m["role"] == "user" for m in shared)
-    # tool_calls stripped
-    assert all("tool_calls" not in m for m in shared)
+    assert all(m["role"] not in ("tool", "tool_call", "thinking") for m in shared)
     # Agent turn keeps its source badge and text (prefixed)
     agent_turn = shared[1]
     assert "Hi there." in agent_turn["content"]

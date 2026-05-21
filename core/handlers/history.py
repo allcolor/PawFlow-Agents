@@ -96,7 +96,13 @@ def _msg_role(m) -> str:
 
 def _msg_thinking(m) -> str:
     if isinstance(m, dict):
+        if _msg_role(m) == "thinking":
+            content = m.get("content", "")
+            return content if isinstance(content, str) else str(content)
         return m.get("thinking", "") or ""
+    if _msg_role(m) == "thinking":
+        content = getattr(m, "content", "")
+        return content if isinstance(content, str) else str(content)
     return getattr(m, "thinking", "") or ""
 
 
@@ -150,8 +156,7 @@ def _apply_filters(msgs: List, role_filter: str, agent_filter: str) -> List:
     """Filter a message list by pseudo-role and/or agent name. AND-combined.
 
     role_filter ∈ {user, assistant, tool, thinking}. "thinking" selects
-    assistant messages that carry a non-empty thinking field — the
-    output renders the thinking text instead of content.
+    persisted reasoning rows and renders their content.
 
     agent_filter matches any agent involved in the message (speaker OR
     addressee, via _msg_agents_involved). Combining the two lets a
@@ -161,8 +166,7 @@ def _apply_filters(msgs: List, role_filter: str, agent_filter: str) -> List:
     """
     out = msgs
     if role_filter == "thinking":
-        out = [m for m in out
-               if _msg_role(m) == "assistant" and _msg_thinking(m)]
+        out = [m for m in out if _msg_role(m) == "thinking" and _msg_thinking(m)]
     elif role_filter:
         out = [m for m in out if _msg_role(m) == role_filter]
     if agent_filter:
@@ -211,8 +215,8 @@ class ReadHistoryHandler(ToolHandler):
             "Optional filters (AND-combined with each other AND with any "
             "action's range/scope):\n"
             "  role_filter    — user / assistant / tool / thinking. "
-            "'thinking' selects assistant turns whose reasoning field is "
-            "non-empty and renders the thinking text instead of content.\n"
+            "'thinking' selects persisted reasoning rows and renders their "
+            "content.\n"
             "  agent_filter   — matches any agent involved in the message "
             "(speaker via source.name, addressee via source.target_agent, "
             "or delegate endpoints source.from / source.to). "
@@ -322,8 +326,7 @@ class ReadHistoryHandler(ToolHandler):
                     "enum": ["user", "assistant", "tool", "thinking"],
                     "description": (
                         "Keep only messages of this kind. 'thinking' selects "
-                        "assistant turns with non-empty reasoning and renders "
-                        "the thinking field instead of content."
+                        "persisted reasoning rows and renders their content."
                     ),
                 },
                 "agent_filter": {
@@ -699,8 +702,8 @@ class ReadHistoryHandler(ToolHandler):
             agent = source.get("name", "")
 
         label = role
-        if role_filter == "thinking" and role == "assistant":
-            label = "assistant.thinking"
+        if role_filter == "thinking" and role == "thinking":
+            label = "thinking"
         header = f"[#{index}] {label}"
         if agent:
             header += f" ({agent})"

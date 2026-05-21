@@ -600,15 +600,44 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "Conversation empty"}).encode())
             return [flowfile]
         lines = []
-        for m in msgs:
+        i = 0
+        while i < len(msgs):
+            m = msgs[i]
             role = m.get("role", "") if isinstance(m, dict) else getattr(m, "role", "")
             content = m.get("content", "") if isinstance(m, dict) else getattr(m, "content", "")
             if role == "user":
                 lines.append(json.dumps({"type": "human", "message": {"role": "user", "content": content}}, ensure_ascii=False))
             elif role == "assistant":
-                lines.append(json.dumps({"type": "assistant", "message": {"role": "assistant", "content": content}}, ensure_ascii=False))
+                blocks = []
+                if content:
+                    blocks.append({"type": "text", "text": content})
+                parent = m.get("msg_id", "") if isinstance(m, dict) else getattr(m, "msg_id", "")
+                j = i + 1
+                while j < len(msgs):
+                    child = msgs[j]
+                    child_role = child.get("role", "") if isinstance(child, dict) else getattr(child, "role", "")
+                    if child_role not in ("thinking", "tool_call"):
+                        break
+                    child_parent = child.get("parent_message_id", "") if isinstance(child, dict) else getattr(child, "parent_message_id", "")
+                    if child_parent and parent and child_parent != parent:
+                        break
+                    if child_role == "thinking":
+                        blocks.append({"type": "thinking", "thinking": child.get("content", "")})
+                    else:
+                        blocks.append({
+                            "type": "tool_use",
+                            "id": child.get("tool_call_id", ""),
+                            "name": child.get("tool_name") or child.get("name") or "",
+                            "input": child.get("arguments", {}) or {},
+                        })
+                    j += 1
+                lines.append(json.dumps({"type": "assistant", "message": {"role": "assistant", "content": blocks or content}}, ensure_ascii=False))
+                i = j
+                continue
             elif role == "tool":
-                lines.append(json.dumps({"type": "tool_result", "message": {"role": "user", "content": content}}, ensure_ascii=False))
+                tcid = m.get("tool_call_id", "") if isinstance(m, dict) else getattr(m, "tool_call_id", "")
+                lines.append(json.dumps({"type": "tool_result", "tool_use_id": tcid, "message": {"role": "user", "content": content}}, ensure_ascii=False))
+            i += 1
         export = "\n".join(lines) + "\n"
         filename = f"conversation_{conv_id[:8]}.cc.jsonl"
         fid = FileStore.instance().store(filename, export.encode("utf-8"),
@@ -743,28 +772,7 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
             with zipfile.ZipFile(io.BytesIO(raw)) as zf:
                 zf.extractall(conv_dir)
             store._cid_user[cid] = user_id  # required for segmented log helpers
-            # Bump the transcript's meta line ts to now so the conv
-            # appears at the top of the sidebar with the import date
-            # (and not the original export date).
-            try:
-                tr_log = store._transcript_log(cid)
-                tr_rows = list(tr_log.iter_rows())
-                now_ts = time.time()
-                if tr_rows:
-                    first = tr_rows[0]
-                    if isinstance(first, dict) and first.get("t") == "meta":
-                        first["created_at"] = now_ts
-                        first["ts"] = now_ts
-                        tr_rows[0] = store._stamp_line(cid, first)
-                    else:
-                        meta = store._stamp_line(cid, {
-                            "t": "meta", "user_id": user_id, "status": "idle",
-                            "created_at": now_ts, "expires_at": 0, "ts": now_ts,
-                        })
-                        tr_rows.insert(0, meta)
-                    tr_log.replace_dicts(tr_rows)
-            except Exception:
-                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+            now_ts = time.time()
             # Update extras with new cid, user, and agent mapping
             extras_path = conv_dir / "extras.json"
             if extras_path.exists():
@@ -774,6 +782,10 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
             extras["conversation_id"] = cid
             extras["user_id"] = user_id
             extras["title"] = title or extras.get("title", "Imported")
+            extras["_meta_user_id"] = user_id
+            extras["_meta_created_at"] = now_ts
+            extras["_meta_updated_at"] = now_ts
+            extras["_meta_status"] = extras.get("_meta_status", "idle")
             # Remap agents
             if agent_mapping:
                 new_conv_agents = {}
@@ -823,7 +835,7 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
                     _seq_counter[0] += 1
                     obj["seq"] = _seq_counter[0]
                 transcript_lines.append(json.dumps(obj, ensure_ascii=False))
-                raw_msgs.append({k: v for k, v in obj.items() if k != "t"})
+                raw_msgs.append(dict(obj))
             # Claude CLI stuffs meta blocks into the user transcript:
             #   <local-command-caveat>...</local-command-caveat>
             #   <command-name>...</command-name><command-message>...</command-message><command-args>...</command-args>
@@ -884,10 +896,10 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
                         text_parts = [b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"]
                         user_text = "\n".join(p for p in text_parts if p)
                         if user_text and not _is_cc_meta(user_text):
-                            _emit({"t": "msg", "role": "user", "content": user_text, "msg_id": mid, "ts": ts})
+                            _emit({"role": "user", "content": user_text, "msg_id": mid, "ts": ts})
                         for tr in tool_results:
                             _emit({
-                                "t": "msg", "role": "tool",
+                                "role": "tool",
                                 "content": _stringify(tr.get("content", "")),
                                 "tool_call_id": tr.get("tool_use_id", ""),
                                 "msg_id": _u2.uuid4().hex[:12], "ts": ts,
@@ -899,7 +911,7 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
                             continue
                         if _is_cc_meta(content):
                             continue
-                        _emit({"t": "msg", "role": "user", "content": content, "msg_id": mid, "ts": ts})
+                        _emit({"role": "user", "content": content, "msg_id": mid, "ts": ts})
                 elif msg_type == "assistant":
                     # Split text blocks and tool_use blocks. Preserve
                     # tool calls so the chat UI renders them as proper
@@ -924,7 +936,7 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
                         assistant_text = content or ""
                     if not assistant_text and not tool_calls:
                         continue
-                    obj = {"t": "msg", "role": "assistant", "content": assistant_text,
+                    obj = {"role": "assistant", "content": assistant_text,
                            "source": dict(_cc_source),
                            "msg_id": mid, "ts": ts}
                     if tool_calls:
@@ -932,36 +944,29 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
                     _emit(obj)
                 elif msg_type == "tool_result":
                     _emit({
-                        "t": "msg", "role": "tool",
+                        "role": "tool",
                         "content": _stringify(content),
                         "source": dict(_cc_source),
                         "tool_call_id": message.get("tool_use_id", "") or entry.get("tool_use_id", ""),
                         "msg_id": mid, "ts": ts,
                     })
-            # Meta line: use import time (now) as created_at/ts so the
-            # conversation appears at the top of the sidebar with the
-            # correct date. An import is semantically a new conversation.
             now_ts = time.time()
             store._cid_user[cid] = user_id  # required for _conv_dir lookups
-            transcript_rows = [store._stamp_line(cid, {
-                "t": "meta", "user_id": user_id, "status": "idle",
-                "created_at": now_ts, "expires_at": 0, "ts": now_ts,
-            })]
-            for _line in transcript_lines:
-                try:
-                    transcript_rows.append(json.loads(_line))
-                except json.JSONDecodeError:
-                    pass
+            transcript_rows = []
+            _tool_call_parents = {}
+            for _msg in raw_msgs:
+                for _row in store._canonical_message_rows(cid, _msg, _tool_call_parents):
+                    transcript_rows.append(store._stamp_line(cid, _row))
             store._transcript_log(cid).replace_dicts(transcript_rows)
             # Shared context file: agents resuming the imported conv read
             # their LLM context from here (or from their own agent dir, which
             # falls back to shared). Without this file the "Shared" view
             # shows "diverged / no context" and the agent has no memory.
             # Use ConversationStore's filter + shared transform so imported
-            # convs match native appends exactly: no tool rows, tool_calls
-            # stripped, agent turns prefixed for the agent-neutral shared view.
+            # convs match native appends exactly: no tool/detail rows, agent
+            # turns prefixed for the agent-neutral shared view.
             store._cid_user[cid] = user_id  # required for _conv_dir lookups
-            shared_candidates = store.filter_for_shared(raw_msgs)
+            shared_candidates = store.filter_for_shared(transcript_rows)
             shared_msgs = [store._transform_for_shared(m) for m in shared_candidates]
             if shared_msgs:
                 store._append_shared_ctx(cid, shared_msgs)

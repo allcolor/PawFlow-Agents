@@ -621,7 +621,7 @@ class TerminalRenderer:
         svc = source.get("llm_service", "") if isinstance(source, dict) else ""
         channel = msg.get("channel", "")
 
-        if not content:
+        if not content and mtype not in ("tool_call", "thinking"):
             return
 
         if mtype == "user":
@@ -693,6 +693,14 @@ class TerminalRenderer:
                 self.console.print(f"  [dim]  ↳ {escape(display)}[/dim]")
             else:
                 print(f"    ↳ {display[:200]}")
+
+        elif mtype == "thinking":
+            display = content if len(content) <= 800 else content[:800] + "..."
+            if self.console:
+                from rich.markup import escape
+                self.console.print(f"  [dim italic]thinking: {escape(display)}[/dim italic]")
+            else:
+                print(f"  thinking: {display}")
 
         elif mtype == "sub_agent_trace":
             self._render_sub_agent_trace(msg)

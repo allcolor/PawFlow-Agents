@@ -29,14 +29,31 @@ Use `/git-prune` (`/prune-git`) to run that retention immediately for the curren
 
 Code that needs conversation rows must go through `ConversationStore` or `SegmentedJsonl` instead of opening those files directly. PawFlow exports still write flat `transcript.jsonl` and context JSONL files inside `.pfconv.zip` archives so archives remain portable and easy to inspect.
 
-Existing installations can migrate flat conversation logs offline:
+Existing installations can migrate stored conversations offline. First migrate
+the logical row format so transcript, shared context, and per-agent contexts all
+store the same provider-turn rows:
+
+```bash
+python scripts/migrate_transcript_context_format.py --dry-run
+python scripts/migrate_transcript_context_format.py --apply
+```
+
+The row-format migration rewrites legacy assistant `thinking` fields and
+assistant `tool_calls` arrays into linked rows: `assistant` anchor,
+`thinking` child, `tool_call` child, and `tool` result child linked by
+`parent_message_id` while preserving `tool_call_id`.
+
+Then migrate flat conversation logs to segmented storage if needed:
 
 ```bash
 python scripts/migrate_segmented_jsonl.py --dry-run
 python scripts/migrate_segmented_jsonl.py --apply
 ```
 
-The migration script backs up each flat file under `_jsonl_migration_backup/` inside the conversation directory before replacing it with segments.
+The row-format migration backs up changed streams under
+`_transcript_context_migration_backup/`. The segmented-storage migration backs
+up each flat file under `_jsonl_migration_backup/` before replacing it with
+segments.
 
 ## Supported Clients
 

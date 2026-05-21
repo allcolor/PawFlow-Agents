@@ -860,6 +860,27 @@ class TestAppendMessage:
     based on role + source + tool_calls + display_only.
     """
 
+    def test_canonical_rows_mint_anchor_before_child_parent_links(self, conv):
+        store, cid, _uid = conv
+        rows = store._canonical_message_rows(cid, {
+            "role": "assistant",
+            "content": "answer",
+            "thinking": "plan",
+            "tool_calls": [{"id": "tc1", "name": "read", "arguments": {}}],
+        })
+
+        assert [row["role"] for row in rows] == ["assistant", "thinking", "tool_call"]
+        anchor_id = rows[0]["msg_id"]
+        assert anchor_id
+        assert rows[1]["parent_message_id"] == anchor_id
+        assert rows[2]["parent_message_id"] == anchor_id
+
+    def test_system_context_rows_do_not_receive_msg_id(self, conv):
+        store, cid, _uid = conv
+        row = store._stamp_line(cid, {"role": "system", "content": "summary"})
+
+        assert "msg_id" not in row
+
     def test_user_message_goes_to_transcript_shared_and_target_ctx(
             self, conv):
         store, cid, uid = conv
@@ -949,15 +970,17 @@ class TestAppendMessage:
                  tool_calls=[{"id": "tc1", "name": "read",
                               "arguments": {}}])
         store.append_message(cid, m, agent_name="bot", user_id=uid)
-        # Own ctx keeps tool_calls intact
+        # Own ctx stores canonical assistant + tool_call rows.
         bot_ctx = store.load_agent_context(cid, "bot")
-        assert bot_ctx and any(msg.get("tool_calls")
+        assert bot_ctx and any(msg.get("role") == "tool_call"
+                               and msg.get("tool_call_id") == "tc1"
+                               and msg.get("parent_message_id") == m["msg_id"]
                                for msg in bot_ctx)
-        # Shared keeps text but strips tool_calls
+        # Shared keeps text but skips tool/detail rows.
         shared = store.load_agent_context(cid, "")
         assert shared
         for s in shared:
-            assert not s.get("tool_calls")
+            assert s.get("role") not in ("tool_call", "tool", "thinking")
 
     def test_tool_result_stays_private_to_own_ctx(self, conv):
         store, cid, uid = conv

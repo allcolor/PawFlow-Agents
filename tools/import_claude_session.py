@@ -70,13 +70,13 @@ def parse_claude_session(path: str):
 
             elif etype == "assistant" and role == "assistant":
                 content_blocks = msg.get("content", [])
+                tool_calls = []
                 if isinstance(content_blocks, str):
                     text = content_blocks
                     thinking = ""
                 elif isinstance(content_blocks, list):
                     text_parts = []
                     thinking_parts = []
-                    tool_calls = []
                     for block in content_blocks:
                         if not isinstance(block, dict):
                             continue
@@ -161,23 +161,47 @@ def convert(session_path: str, user_id: str = "imported",
     source = {"type": "agent", "name": agent_name, "provider": "claude-code"}
 
     with open(out_path, "w", encoding="utf-8") as f:
-        # Meta line
-        meta = {
-            "t": "meta",
-            "user_id": user_id,
-            "status": "idle",
-            "created_at": first_ts,
-            "expires_at": 0,
-            "title": f"Imported: {stem[:20]}",
-        }
-        f.write(json.dumps(meta, ensure_ascii=False) + "\n")
-
-        # Messages
+        # Messages in canonical provider-turn row format.
+        tool_call_parents = {}
         for msg in messages:
-            line = {"t": "msg", **msg}
             if msg["role"] == "assistant":
-                line["source"] = source
-            f.write(json.dumps(line, ensure_ascii=False) + "\n")
+                msg["source"] = source
+                parent_id = msg["msg_id"]
+                thinking = msg.pop("thinking", "")
+                tool_calls = msg.pop("tool_calls", [])
+                f.write(json.dumps(msg, ensure_ascii=False) + "\n")
+                if thinking:
+                    f.write(json.dumps({
+                        "role": "thinking",
+                        "content": thinking,
+                        "msg_id": uuid.uuid4().hex[:12],
+                        "ts": msg.get("ts") or first_ts,
+                        "parent_message_id": parent_id,
+                        "source": source,
+                    }, ensure_ascii=False) + "\n")
+                for tc in tool_calls:
+                    tcid = tc.get("id", "")
+                    crow = {
+                        "role": "tool_call",
+                        "content": "",
+                        "msg_id": uuid.uuid4().hex[:12],
+                        "ts": msg.get("ts") or first_ts,
+                        "parent_message_id": parent_id,
+                        "tool_call_id": tcid,
+                        "tool_name": tc.get("name", ""),
+                        "name": tc.get("name", ""),
+                        "arguments": tc.get("arguments", {}),
+                        "source": source,
+                    }
+                    f.write(json.dumps(crow, ensure_ascii=False) + "\n")
+                    if tcid:
+                        tool_call_parents[tcid] = crow["msg_id"]
+                continue
+            if msg["role"] == "tool" and msg.get("tool_call_id"):
+                parent = tool_call_parents.get(msg["tool_call_id"])
+                if parent:
+                    msg["parent_message_id"] = parent
+            f.write(json.dumps(msg, ensure_ascii=False) + "\n")
 
     count_user = sum(1 for m in messages if m["role"] == "user")
     count_assistant = sum(1 for m in messages if m["role"] == "assistant")

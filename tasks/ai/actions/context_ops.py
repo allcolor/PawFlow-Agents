@@ -1299,12 +1299,15 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
                 flowfile.set_content(json.dumps({"error": "Each message must have 'role' and 'content'"}).encode())
                 flowfile.set_attribute("http.response.status", "400")
                 return [flowfile]
+        from core.llm_client import stamp_message
+        new_context = [stamp_message(dict(msg), conv_id) for msg in new_context]
         _ctx_save(conv_id, new_context, _ctx_agent)
-        deserialized = self._deserialize_messages(new_context, conversation_id=conv_id)
+        saved_context = _ctx_load(conv_id, _ctx_agent) or new_context
+        deserialized = self._deserialize_messages(saved_context, conversation_id=conv_id)
         estimated = self._estimate_tokens(deserialized)
         flowfile.set_content(json.dumps({
             "ok": True,
-            "message_count": len(new_context),
+            "message_count": len(saved_context),
             "token_estimate": estimated,
         }).encode())
         return [flowfile]

@@ -7,6 +7,7 @@ import json
 import logging
 import threading
 import time
+import uuid
 from typing import Dict, Any, List, Optional
 
 
@@ -18,6 +19,10 @@ from core.llm_client import (
 from core.tool_registry import ToolRegistry, create_default_registry
 
 logger = logging.getLogger(__name__)
+
+
+def _uuid() -> str:
+    return uuid.uuid4().hex[:12]
 
 _LLM_ERROR_PATTERNS = (
     "LLM call failed:", "API Error:", "Failed to authenticate",
@@ -40,18 +45,13 @@ class AgentSerializationMixin:
                            channel: str = "") -> List[Dict[str, Any]]:
         """Serialize messages for storage (ephemeral messages are excluded)."""
         result = []
+        tool_call_parents: Dict[str, str] = {}
         for m in messages:
             if m.source and m.source.get("type") == "ephemeral":
                 continue
             entry: Dict[str, Any] = {"role": m.role, "content": m.content,
                                      "msg_id": m.msg_id, "ts": m.timestamp,
                                      "seq": m.seq}
-            if m.tool_calls:
-                entry["tool_calls"] = [
-                    {"id": tc.id, "name": tc.name, "arguments": tc.arguments,
-                     "ts": tc.timestamp}
-                    for tc in m.tool_calls
-                ]
             if m.tool_call_id:
                 entry["tool_call_id"] = m.tool_call_id
             if channel and m.role in ("user", "assistant"):
@@ -62,8 +62,45 @@ class AgentSerializationMixin:
                 entry["display_only"] = True
             if m.is_error:
                 entry["is_error"] = True
-            if m.thinking:
-                entry["thinking"] = m.thinking
+            if m.role == "assistant":
+                parent_id = entry.get("msg_id", "")
+                result.append(entry)
+                if m.thinking:
+                    trow = {
+                        "role": "thinking", "content": m.thinking,
+                        "msg_id": _uuid(), "ts": m.timestamp,
+                        "parent_message_id": parent_id,
+                    }
+                    if channel:
+                        trow["channel"] = channel
+                    if m.source:
+                        trow["source"] = m.source
+                    if m.thinking_signature:
+                        trow["thinking_signature"] = m.thinking_signature
+                    result.append(trow)
+                for tc in (m.tool_calls or []):
+                    tcid = tc.id
+                    crow = {
+                        "role": "tool_call", "content": "",
+                        "msg_id": _uuid(), "ts": tc.timestamp or m.timestamp,
+                        "parent_message_id": parent_id,
+                        "tool_call_id": tcid,
+                        "tool_name": tc.name,
+                        "name": tc.name,
+                        "arguments": tc.arguments,
+                    }
+                    if channel:
+                        crow["channel"] = channel
+                    if m.source:
+                        crow["source"] = m.source
+                    result.append(crow)
+                    if tcid:
+                        tool_call_parents[tcid] = crow["msg_id"]
+                continue
+            if m.role == "tool" and m.tool_call_id:
+                parent_id = tool_call_parents.get(m.tool_call_id)
+                if parent_id:
+                    entry["parent_message_id"] = parent_id
             result.append(entry)
         return result
 
@@ -78,20 +115,10 @@ class AgentSerializationMixin:
         Pass include_display_only=True for UI replay.
         """
         messages = []
+        by_msg_id: Dict[str, LLMMessage] = {}
         for entry in data:
             if not include_display_only and entry.get("display_only"):
                 continue
-            tool_calls = None
-            if "tool_calls" in entry:
-                tool_calls = [
-                    LLMToolCall(
-                        id=tc["id"],
-                        name=tc["name"],
-                        arguments=tc.get("arguments", {}),
-                        timestamp=tc.get("ts", 0),
-                    )
-                    for tc in (entry["tool_calls"] or [])
-                ]
             # ts is mandatory on disk for every non-system message — set
             # by the producer at creation. seq is the on-disk line index
             # (stamped by ConversationStore._stamp_line at write time) and
@@ -109,10 +136,33 @@ class AgentSerializationMixin:
                     f"(msg_id={entry.get('msg_id')}, role={_role}) — "
                     f"producer bug, creation timestamp must be set at "
                     f"message creation.")
-            messages.append(LLMMessage(
+            if _role == "thinking":
+                parent = by_msg_id.get(entry.get("parent_message_id", ""))
+                if parent is not None:
+                    parent.thinking = ((parent.thinking or "") +
+                                       ("\n" if parent.thinking and entry.get("content") else "") +
+                                       str(entry.get("content") or ""))
+                    if entry.get("thinking_signature"):
+                        parent.thinking_signature = entry.get("thinking_signature", "")
+                continue
+
+            if _role == "tool_call":
+                parent = by_msg_id.get(entry.get("parent_message_id", ""))
+                if parent is not None:
+                    tcid = entry.get("tool_call_id") or entry.get("tc_id") or ""
+                    parent.tool_calls = list(parent.tool_calls or [])
+                    parent.tool_calls.append(LLMToolCall(
+                        id=tcid,
+                        name=entry.get("tool_name") or entry.get("name") or entry.get("tool") or "",
+                        arguments=entry.get("arguments", {}) or {},
+                        timestamp=entry.get("ts", 0),
+                    ))
+                continue
+
+            msg = LLMMessage(
                 role=entry["role"],
                 content=self._content_with_attachment_refs(entry),
-                tool_calls=tool_calls,
+                tool_calls=None,
                 tool_call_id=entry.get("tool_call_id"),
                 source=entry.get("source"),
                 msg_id=entry.get("msg_id", ""),
@@ -123,7 +173,10 @@ class AgentSerializationMixin:
                 seq=_seq,
                 conversation_id=(entry.get("conversation_id")
                                   or conversation_id),
-            ))
+            )
+            messages.append(msg)
+            if msg.msg_id:
+                by_msg_id[msg.msg_id] = msg
         return messages
 
 
@@ -226,92 +279,8 @@ class AgentSerializationMixin:
             else:
                 content = str(raw_content) if raw_content else ""
 
-            tool_calls = m.get("tool_calls")
             tool_call_id = m.get("tool_call_id")
-
-            _src_for_display = m.get("source") or {}
-            if (role == "assistant"
-                    and not (isinstance(_src_for_display, dict)
-                             and _src_for_display.get("type") == "context")):
-                _thinking = str(m.get("thinking") or "")
-                if _thinking.strip():
-                    _think_entry = {
-                        "type": "thinking",
-                        "role": "thinking",
-                        "content": _thinking,
-                        "raw_index": raw_idx,
-                        "display_only": True,
-                    }
-                    if m.get("msg_id"):
-                        _think_entry["msg_id"] = m["msg_id"]
-                    if _display_ts:
-                        _think_entry["timestamp"] = _display_ts
-                    if m.get("source"):
-                        _think_entry["source"] = m["source"]
-                    result.append(_think_entry)
-
-            if role == "assistant" and tool_calls:
-                # Build tc_id → display name map for tool_result matching
-                from core.llm_client import unwrap_mcp_tool
-                for tc in tool_calls:
-                    _unwrapped_name, _ = unwrap_mcp_tool(tc.get("name", "?"), tc.get("arguments", {}))
-                    _tc_id_to_name[tc.get("id", "")] = _unwrapped_name
-                # Assistant message that contains tool calls
-                if content:
-                    _tc_entry = {
-                        "type": "assistant", "role": "assistant",
-                        "content": content,
-                    }
-                    if m.get("source"):
-                        _tc_entry["source"] = m["source"]
-                    if _display_ts:
-                        _tc_entry["timestamp"] = _display_ts
-                    result.append(_tc_entry)
-                _tc_source = m.get("source")
-                for tc in tool_calls:
-                    # Build rich display matching SSE tool_call format
-                    _tc_name = tc.get("name", "?")
-                    _tc_args = tc.get("arguments", {})
-                    _tc_name, _tc_args = unwrap_mcp_tool(_tc_name, _tc_args)
-                    if _tc_name in _META_TOOLS:
-                        continue
-                    # Hide delegate tool_calls — replaced by delegate blocks (sub_agent_trace)
-                    if _tc_name == "delegate":
-                        _delegate_tc_ids.add(tc.get("id", ""))
-                        continue
-                    _tc_args_str = json.dumps(_tc_args, ensure_ascii=False)[:500] if _tc_args else ""
-                    # Format source label
-                    _src_agent = (_tc_source or {}).get("name", "") if _tc_source else ""
-                    _src_svc = (_tc_source or {}).get("llm_service", "") if _tc_source else ""
-                    _src_label = _src_agent
-                    if _src_svc:
-                        _src_label += f" via {_src_svc}"
-                    # Format args preview
-                    _args_preview = ""
-                    if isinstance(_tc_args, dict) and _tc_args:
-                        _parts = []
-                        for k, v in _tc_args.items():
-                            vs = v[:60] if isinstance(v, str) else json.dumps(v, ensure_ascii=False)[:60]
-                            _parts.append(f"{k}={vs}")
-                        _args_preview = ", ".join(_parts)
-                        if len(_args_preview) > 120:
-                            _args_preview = _args_preview[:120] + "..."
-                    _display = f"🔧 [{_src_label}] {_tc_name}"
-                    if _args_preview:
-                        _display += f"({_args_preview})"
-                    _tc_entry2 = {
-                        "type": "tool_call", "role": "assistant",
-                        "content": _display,
-                        "tool_name": _tc_name,
-                        "tool_args": _tc_args_str,
-                        "tc_id": tc.get("id", ""),
-                        "arguments": _tc_args,
-                        "source": _tc_source,
-                    }
-                    if _display_ts:
-                        _tc_entry2["timestamp"] = _display_ts
-                    result.append(_tc_entry2)
-            elif role == "tool" and tool_call_id:
+            if role == "tool" and tool_call_id:
                 # Skip results for hidden meta tools
                 if _tc_id_to_name.get(tool_call_id) in _META_TOOLS:
                     continue
@@ -370,6 +339,57 @@ class AgentSerializationMixin:
                     entry["timestamp"] = _display_ts
                 result.append(entry)
             elif role in ("tool_call", "tool_result", "thinking"):
+                from core.llm_client import unwrap_mcp_tool
+                if role == "tool_call":
+                    raw_name = m.get("tool_name") or m.get("name") or m.get("tool") or "?"
+                    raw_args = m.get("arguments", {}) or {}
+                    tool_name, tool_args = unwrap_mcp_tool(raw_name, raw_args)
+                    tcid = m.get("tool_call_id") or m.get("tc_id") or ""
+                    if tcid:
+                        _tc_id_to_name[tcid] = tool_name
+                    if tool_name == "delegate":
+                        if tcid:
+                            _delegate_tc_ids.add(tcid)
+                        continue
+                    if tool_name in _META_TOOLS:
+                        continue
+                    tool_args_str = json.dumps(tool_args, ensure_ascii=False)[:500] if tool_args else ""
+                    args_preview = ""
+                    if isinstance(tool_args, dict) and tool_args:
+                        parts = []
+                        for k, v in tool_args.items():
+                            vs = v[:60] if isinstance(v, str) else json.dumps(v, ensure_ascii=False)[:60]
+                            parts.append(f"{k}={vs}")
+                        args_preview = ", ".join(parts)
+                        if len(args_preview) > 120:
+                            args_preview = args_preview[:120] + "..."
+                    src = m.get("source") or {}
+                    src_agent = src.get("name", "") if isinstance(src, dict) else ""
+                    src_svc = src.get("llm_service", "") if isinstance(src, dict) else ""
+                    src_label = src_agent + (f" via {src_svc}" if src_svc else "")
+                    display = f"🔧 [{src_label}] {tool_name}" if src_label else f"🔧 {tool_name}"
+                    if args_preview:
+                        display += f"({args_preview})"
+                    entry = {
+                        "type": "tool_call", "role": "tool_call",
+                        "content": content or display,
+                        "raw_index": raw_idx,
+                        "display_only": True,
+                        "tool_name": tool_name,
+                        "tool_args": tool_args_str,
+                        "arguments": tool_args,
+                    }
+                    if tcid:
+                        entry["tool_call_id"] = tcid
+                        entry["tc_id"] = tcid
+                    if m.get("msg_id"):
+                        entry["msg_id"] = m["msg_id"]
+                    if m.get("source"):
+                        entry["source"] = m["source"]
+                    if _display_ts:
+                        entry["timestamp"] = _display_ts
+                    result.append(entry)
+                    continue
                 # Skip meta tools from display
                 if role in ("tool_call", "tool_result") and m.get("tool_name") in _META_TOOLS:
                     continue
@@ -378,6 +398,8 @@ class AgentSerializationMixin:
                 # display_only messages from claude-code turns — pass through as-is
                 entry = {"type": role, "role": role, "content": content, "raw_index": raw_idx,
                          "display_only": True}
+                if m.get("msg_id"):
+                    entry["msg_id"] = m["msg_id"]
                 if m.get("source"):
                     entry["source"] = m["source"]
                 if m.get("tool_name"):

@@ -406,12 +406,10 @@ class StreamEmitter(AgentEmitter):
     # ── LLM interaction ───────────────────────────────────────────────
 
     # ── Token / thinking callbacks ────────────────────────────────────
-    # The HTTP providers (openai/anthropic) stream tokens/thinking from
-    # the wire, same as CC, but we deliberately DO NOT emit per-chunk
-    # `token` / `thinking_content` SSE events to the UI. CC's UX (which
-    # surfaces whole assistant blocks via turn_callback, never per-char
-    # tokens) is the single canonical experience; HTTP providers now
-    # behave identically.
+    # The HTTP providers (openai/anthropic) keep CC-style block parity for
+    # visible output. Claude Code interactive is different: the MITM observes
+    # Anthropic SSE deltas, so thinking can be shown immediately while the
+    # final block still controls durable tool/text ordering.
     #
     # The callbacks still exist — the provider hands them every
     # incoming chunk so we can:
@@ -439,10 +437,19 @@ class StreamEmitter(AgentEmitter):
         gen_key = self.gen_key
         generation = self.generation
         agent = self.agent
+        _emitter = self
 
         def on_thinking(text: str):
             if not agent._is_current_generation(gen_key, generation):
                 raise AgentCancelled()
+            _emitter._last_token_time = time.time()
+            if (not poll_silent and text and
+                    _emitter._provider == "claude-code-interactive"):
+                _emitter._emit("thinking_content", {
+                    "text": text,
+                    "agent_name": _emitter._agent_name or "",
+                    "source": _emitter._agent_source(),
+                })
         return on_thinking
 
     def start_heartbeat(self, poll_silent: bool) -> Any:

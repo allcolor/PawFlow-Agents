@@ -356,7 +356,7 @@ class _CCITurnCoordinator:
         self._thinking_end = 0.0
         if synthesized and thinking and self.thinking_callback:
             self.thinking_callback(thinking)
-        if self.block_callback and thinking:
+        if self.block_callback and thinking and not self.thinking_callback:
             self.block_callback("thinking_content", {"text": thinking})
 
 

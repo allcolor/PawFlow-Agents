@@ -104,7 +104,6 @@ def test_turn_coordinator_assembles_text_thinking_and_native_tool_use():
     assert resp.tool_calls == []
     assert blocks == [
         ("text", {"text": "Hi there"}),
-        ("thinking_content", {"text": "plan"}),
         ("tool_use", {
             "id": "toolu_1",
             "name": "read",
@@ -112,6 +111,34 @@ def test_turn_coordinator_assembles_text_thinking_and_native_tool_use():
         }),
     ]
     assert turns == []
+
+
+def test_turn_coordinator_emits_block_thinking_without_live_callback():
+    events = [
+        _sse("content_block_start", {
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {"type": "thinking"},
+        }),
+        _sse("content_block_delta", {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "thinking_delta", "thinking": "plan"},
+        }),
+        _sse("content_block_stop", {
+            "type": "content_block_stop", "index": 0,
+        }),
+        {"type": "hook", "hook_event_name": "Stop", "input": {"hook_event_name": "Stop"}},
+    ]
+    blocks = []
+
+    resp = _CCITurnCoordinator(
+        _Events(events), "sess",
+        block_callback=lambda event_type, payload: blocks.append((event_type, payload)),
+    ).run()
+
+    assert resp.thinking == "plan"
+    assert blocks == [("thinking_content", {"text": "plan"})]
 
 
 def test_turn_coordinator_flushes_unstopped_text_at_stop_hook():

@@ -93,6 +93,28 @@ class TestOnDoneContextFields(unittest.TestCase):
         self.assertIsNotNone(payload)
         self.assertEqual(payload["context_used"], 1234)
 
+    def test_cci_thinking_callback_publishes_live_delta(self):
+        em, bus = self._make_cci_emitter()
+        cb = em.get_thinking_callback(False)
+
+        cb("plan")
+
+        bus.publish_event.assert_called_once()
+        (cid, evt, data), _ = bus.publish_event.call_args
+        self.assertEqual(cid, "cid1")
+        self.assertEqual(evt, "thinking_content")
+        self.assertEqual(data["text"], "plan")
+        self.assertEqual(data["agent_name"], "test")
+        self.assertEqual(data["source"]["provider"], "claude-code-interactive")
+
+    def test_non_cci_thinking_callback_does_not_publish_live_delta(self):
+        em, bus = self._make_emitter()
+        cb = em.get_thinking_callback(False)
+
+        cb("plan")
+
+        bus.publish_event.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

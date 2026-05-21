@@ -1,6 +1,10 @@
 """Conversation and per-agent tool/MCP availability filters."""
 
+import logging
 from typing import Any, Dict, Iterable, Set
+
+
+logger = logging.getLogger(__name__)
 
 
 FILTERS_KEY = "tool_mcp_filters"
@@ -89,7 +93,7 @@ def set_filters(conversation_id: str, filters: Dict[str, Any]) -> Dict[str, Any]
         from services.tool_relay_service import ToolRelayService
         ToolRelayService.clear_registry_cache(conversation_id=conversation_id)
     except Exception:
-        pass
+        logger.debug("Failed to clear tool registry cache", exc_info=True)
     return data
 
 

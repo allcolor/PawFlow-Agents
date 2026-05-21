@@ -33,6 +33,7 @@ def _decode_skill_package_files(raw) -> Dict[str, bytes]:
     SKILL.md name are dropped; the total decoded size is capped.
     """
     import base64
+    import binascii
     if not isinstance(raw, dict):
         return {}
     out: Dict[str, bytes] = {}
@@ -45,7 +46,7 @@ def _decode_skill_package_files(raw) -> Dict[str, bytes]:
             continue
         try:
             content = base64.b64decode(str(b64 or ""), validate=True)
-        except Exception:
+        except (binascii.Error, ValueError):
             continue
         total += len(content)
         if total > _SKILL_PACKAGE_FILES_MAX_BYTES:

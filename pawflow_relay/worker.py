@@ -2083,7 +2083,8 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             try:
                 _idle = time.time() - _last_activity[0]
             except Exception:
-                pass
+                logging.getLogger(__name__).debug(
+                    "Failed to compute relay idle time", exc_info=True)
             sys.stderr.write(
                 f"[FSRelay] Connection error: {type(e).__name__}: {e} "
                 f"(last_activity={_idle:.1f}s reason={locals().get('_disconnect_reason', 'exception')})\n")

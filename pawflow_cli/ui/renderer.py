@@ -308,7 +308,11 @@ class TerminalRenderer:
         # No _set_status here — the poller will pick up this agent.
 
     def thinking_token(self, agent: str, text: str, replace: bool = False):
-        self._thinking[agent] = text if replace else self._thinking.get(agent, "") + text
+        current = self._thinking.get(agent, "")
+        if replace and text.startswith(current):
+            self._thinking[agent] = current + text[len(current):]
+        else:
+            self._thinking[agent] = current + text
         # Status bar driven by active-agents poller — no _set_status here.
 
     def end_thinking(self, agent: str):

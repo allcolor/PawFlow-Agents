@@ -262,7 +262,7 @@ function connectSSE(cid, onReady, opts) {
   // ── Extended thinking ──
   let thinkingElements = {};  // agentKey → {el, text, startTime}
   const delegateThinkingElements = {};  // taskId → {el, content, summary, text, startTime}
-  function renderThinkingContent(data, replaceCurrent) {
+  function renderThinkingContent(data, reconcileFinal) {
     const agent = data.agent_name || '';
     const aKey = agentKey(agent);
     const textDelta = data.text || '';
@@ -316,8 +316,11 @@ function connectSSE(cid, onReady, opts) {
       scrollBottom();
     }
     const te = thinkingElements[aKey];
-    if (replaceCurrent) te.text = textDelta;
-    else te.text += textDelta;
+    if (reconcileFinal && textDelta.startsWith(te.text)) {
+      te.text += textDelta.slice(te.text.length);
+    } else {
+      te.text += textDelta;
+    }
     te.content.textContent = te.text;
     if (typeof applyTechnicalMessageGrouping === 'function') applyTechnicalMessageGrouping();
     scrollBottom();

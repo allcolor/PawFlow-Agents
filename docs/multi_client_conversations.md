@@ -43,6 +43,11 @@ assistant `tool_calls` arrays into linked rows: `assistant` anchor,
 `thinking` child, `tool_call` child, and `tool` result child linked by
 `parent_message_id` while preserving `tool_call_id`.
 
+Display traces use the same append-only rule as the rest of the transcript:
+`sub_agent_trace` is the visible anchor row, and later `trace_update` rows carry
+incremental trace entries/content. Readers merge those updates into the anchor
+for display; producers must not rewrite the transcript for trace progress.
+
 Then migrate flat conversation logs to segmented storage if needed:
 
 ```bash

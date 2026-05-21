@@ -320,11 +320,21 @@ def test_conversation_store_mutates_segmented_transcript(tmp_path):
 
     trace_id = uuid.uuid4().hex[:12]
     assert store.create_display_trace(cid, trace_id, {"type": "agent", "name": "bot"})
-    assert store.append_display_trace(
-        cid, trace_id, {"kind": "step", "label": "run"}, "trace text")
+    with patch.object(SegmentedJsonl, "rewrite",
+                      side_effect=AssertionError("trace append must not rewrite")):
+        assert store.append_display_trace(
+            cid, trace_id, {"kind": "step", "label": "run"}, "trace text")
+    raw = list(store._transcript_log(cid).iter_rows())
+    assert [r.get("t") for r in raw if r.get("t")] == ["trace_update"]
     traces = [m for m in store.load(cid) if m.get("trace_id") == trace_id]
     assert traces[0]["trace"][0]["label"] == "run"
     assert traces[0]["content"] == "trace text"
+    page_traces = [
+        m for m in store.load_page(cid, limit=10)["messages"]
+        if m.get("trace_id") == trace_id
+    ]
+    assert page_traces[0]["trace"][0]["label"] == "run"
+    assert page_traces[0]["content"] == "trace text"
 
     assert store.delete_message(cid, msg["msg_id"])
     assert [m.get("msg_id") for m in store.load(cid)] == [traces[0]["msg_id"]]

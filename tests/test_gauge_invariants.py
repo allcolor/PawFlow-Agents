@@ -1304,6 +1304,20 @@ def test_provider_compact_discards_pending_messages_already_in_compacted_context
 def test_visible_answer_releases_active_before_slow_done_bookkeeping():
     """After the visible answer, slow done bookkeeping must not keep Active Agents."""
     src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
+    callback_block = src[
+        src.index("def _release_active_after_terminal_visible_answer"):
+        src.index("def _claude_code_turn_callback", src.index("def _release_active_after_terminal_visible_answer"))]
+    assert "_codex_app_turn_completed_for_callback" in callback_block
+    assert "self._active_contexts.pop(_ctx_key_done, None)" in callback_block
+    assert "self._decrement_active(conversation_id, ctx)" in callback_block
+
+    turn_callback = src[
+        src.index("def _claude_code_turn_callback"):
+        src.index("# Finalize streaming element", src.index("def _claude_code_turn_callback"))]
+    assert "_release_active_after_terminal_visible_answer()" in turn_callback
+    assert turn_callback.index("_append(msg)") < turn_callback.index(
+        "_release_active_after_terminal_visible_answer()")
+
     done_block = src[
         src.index('result = _make_result()'):
         src.index('return result', src.index('logger.info("[agent:%s] enqueueing done'))]
@@ -1321,6 +1335,15 @@ def test_visible_answer_releases_active_before_slow_done_bookkeeping():
     assert "commit_turn(conversation_id, reason=_commit_reason)" in done_block
     foreground = done_block[:done_block.index("def _commit_turn_bg")]
     assert "commit_turn(conversation_id" not in foreground
+
+
+def test_codex_app_marks_terminal_turn_callback_after_turn_completed():
+    src = Path("core/llm_providers/codex_app_server.py").read_text(encoding="utf-8")
+    assert "self._codex_app_turn_completed_for_callback = False" in src
+    turn_done = src[
+        src.index('if method == "turn/completed"'):
+        src.index("break", src.index('if method == "turn/completed"'))]
+    assert "self._codex_app_turn_completed_for_callback = True" in turn_done
 
 
 def test_pending_wake_is_not_lost_while_conversation_is_still_active():

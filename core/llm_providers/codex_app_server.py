@@ -510,6 +510,8 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
         if getattr(self, "_abort", None) and self._abort.is_set():
             raise AgentCancelled()
 
+        self._codex_app_turn_completed_for_callback = False
+
         user_id = call_user_id or getattr(self, "_user_id", "") or ""
         conv_id = call_conversation_id or getattr(self, "_conversation_id", "") or ""
         agent_name = call_agent_name or getattr(self, "_agent_name", "") or "default"
@@ -1126,6 +1128,7 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                                 len(sent), pstatus)
                         self._codex_app_preempt_pending = 0
                         self._codex_app_sent_preempt_texts = []
+                    self._codex_app_turn_completed_for_callback = True
                     break
 
                 if method == "error":

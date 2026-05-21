@@ -1528,6 +1528,24 @@ class AgentCoreMixin:
 
                     _cc_turn_count = [0]
 
+                    def _release_active_after_terminal_visible_answer() -> None:
+                        if _client_provider != "codex-app-server":
+                            return
+                        if not getattr(client, "_codex_app_turn_completed_for_callback", False):
+                            return
+                        if ctx.get("_active_cleanup_done"):
+                            return
+                        _ctx_key_done = ctx.get("_active_context_key")
+                        if _ctx_key_done:
+                            with self._active_contexts_lock:
+                                self._active_contexts.pop(_ctx_key_done, None)
+                        self._decrement_active(conversation_id, ctx)
+                        client._codex_app_turn_completed_for_callback = False
+                        logger.info(
+                            "[agent:%s] active released after terminal visible answer agent=%s",
+                            conversation_id[:8],
+                            ctx.get("active_agent_name", ""))
+
                     def _claude_code_turn_callback(text, tool_calls, turn_thinking=""):
                         logger.info(
                             "[cc-callback] IN text=%d tc=%d thinking=%d",
@@ -1604,6 +1622,8 @@ class AgentCoreMixin:
                             _append(msg)  # persists immediately + publishes new_message (+ thinking_content)
                             turn_msgs.append(msg)
                             client._last_turn_msg_id = getattr(msg, "msg_id", "")
+                            if not tool_calls:
+                                _release_active_after_terminal_visible_answer()
                         elif _text_thinking:
                             # Thinking without text and without tool_calls —
                             # rare but valid (CC emits a thinking block

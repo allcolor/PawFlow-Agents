@@ -1052,7 +1052,7 @@ class ConversationStore:
         token-budget metric. Counts:
           - row['content'] (str or list of {type,text} blocks)
           - role=tool_call arguments payload size
-          - row['trace'] (list of dicts → string repr)
+          - row['trace'] / row['entry'] (display trace payload)
           - row['content_update'] (str)
 
         Anything else (metadata, ids, timestamps) is constant overhead
@@ -1078,6 +1078,12 @@ class ConversationStore:
                         total += len(json.dumps(args, ensure_ascii=False))
                     except Exception:
                         logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+        trace = row.get("trace")
+        if isinstance(trace, list):
+            total += len(str(trace))
+        entry = row.get("entry")
+        if isinstance(entry, dict):
+            total += len(str(entry))
         cu = row.get("content_update")
         if isinstance(cu, str):
             total += len(cu)
@@ -2823,21 +2829,65 @@ class ConversationStore:
 
     # ── Transcript read ───────────────────────────────────────────────
 
+    @staticmethod
+    def _is_trace_update_row(row: Dict[str, Any]) -> bool:
+        return row.get("t") == "trace_update"
+
+    @staticmethod
+    def _apply_trace_update(anchor: Dict[str, Any],
+                            update: Dict[str, Any]) -> None:
+        entry = update.get("entry") or {}
+        content_update = update.get("content_update") or ""
+        if entry:
+            trace = list(anchor.get("trace") or [])
+            trace.append(entry)
+            anchor["trace"] = trace
+        if content_update:
+            anchor["content"] = (anchor.get("content") or "") + content_update
+
+    @classmethod
+    def _compose_display_traces(cls, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Merge append-only trace_update rows into their display trace anchor."""
+        out: List[Dict[str, Any]] = []
+        anchors: Dict[str, Dict[str, Any]] = {}
+        pending: Dict[str, List[Dict[str, Any]]] = {}
+        for row in rows:
+            if cls._is_trace_update_row(row):
+                trace_id = row.get("trace_id") or ""
+                if not trace_id:
+                    continue
+                anchor = anchors.get(trace_id)
+                if anchor is not None:
+                    cls._apply_trace_update(anchor, row)
+                else:
+                    pending.setdefault(trace_id, []).append(row)
+                continue
+            if not row.get("role"):
+                continue
+            msg = dict(row)
+            if msg.get("role") == "sub_agent_trace":
+                trace_id = msg.get("trace_id") or ""
+                if trace_id:
+                    anchors[trace_id] = msg
+                    for update in pending.pop(trace_id, []):
+                        cls._apply_trace_update(msg, update)
+            out.append(msg)
+        return out
+
     def _scan_transcript(self, lines) -> List[Dict]:
         """Scan JSONL lines into canonical transcript messages."""
-        msgs = []
+        rows = []
         for line in lines:
-            if not line.get("role"):
+            if not line.get("role") and not self._is_trace_update_row(line):
                 continue
-            msg = dict(line)
-            msgs.append(msg)
+            rows.append(dict(line))
         # Sort by (creation ts, creation seq) — see _read_ctx_file for
         # rationale. Same invariant: order = creation, not file position.
-        msgs.sort(key=lambda m: (
+        rows.sort(key=lambda m: (
             m.get("timestamp") or m.get("ts") or 0.0,
             m.get("seq") or 0,
         ))
-        return msgs
+        return self._compose_display_traces(rows)
 
     def load(self, cid: str, user_id: str = "") -> Optional[List[Dict]]:
         """Load entire transcript (all messages)."""
@@ -2918,14 +2968,25 @@ class ConversationStore:
         """Read the last (offset + limit) display rows from a logical JSONL."""
         need = offset + limit + 20  # extra margin for detail-row alignment
         raw_lines = []
+        display_seen = 0
+        pending_trace_ids = set()
         for line in log.iter_rows_reverse():
+            if self._is_trace_update_row(line):
+                raw_lines.append(line)
+                trace_id = line.get("trace_id") or ""
+                if trace_id:
+                    pending_trace_ids.add(trace_id)
+                continue
             if line.get("role"):
                 raw_lines.append(line)
-                if len(raw_lines) >= need:
+                display_seen += 1
+                if line.get("role") == "sub_agent_trace":
+                    pending_trace_ids.discard(line.get("trace_id") or "")
+                if display_seen >= need and not pending_trace_ids:
                     break
         raw_lines.reverse()
 
-        msgs = [dict(line) for line in raw_lines if line.get("role")]
+        msgs = self._compose_display_traces([dict(line) for line in raw_lines])
 
         # Slice: msgs is chronological, we want the last `limit` before `offset`
         total_tail = len(msgs)
@@ -3733,8 +3794,8 @@ class ConversationStore:
         def _rewrite_jsonl(path: Path) -> int:
             """Rewrite a logical JSONL stream, removing rows with matching msg_id.
 
-            Also removes sub_agent_trace messages whose trace_id matches an id
-            in `ids`.
+            Also removes sub_agent_trace messages and append-only trace_update
+            events whose trace_id matches an id in `ids`.
             """
             log = SegmentedJsonl(path)
             if not log.exists():
@@ -3749,6 +3810,9 @@ class ConversationStore:
                 if (line.get("role") == "sub_agent_trace"
                         and line.get("trace_id") in ids):
                     count += 1
+                    return None
+                if (line.get("t") == "trace_update"
+                        and line.get("trace_id") in ids):
                     return None
                 return line
 
@@ -3830,31 +3894,18 @@ class ConversationStore:
     def append_display_trace(self, cid: str, trace_id: str,
                              entry_data: Dict, content_update: str = "") -> bool:
         entry_data.setdefault("ts", time.time())
-        updated = False
-        appended_chars = 0
         lock = self._get_conv_lock(cid)
         with lock:
-            log = self._transcript_log(cid)
-
-            def _transform(line: Dict[str, Any]) -> Dict[str, Any]:
-                nonlocal updated, appended_chars
-                if line.get("role") != "sub_agent_trace" or line.get("trace_id") != trace_id:
-                    return line
-                row = dict(line)
-                trace = list(row.get("trace") or [])
-                if entry_data:
-                    trace.append(entry_data)
-                row["trace"] = trace
-                if content_update:
-                    row["content"] = (row.get("content") or "") + content_update
-                updated = True
-                appended_chars = self._row_payload_chars(row)
-                return row
-
-            log.rewrite(_transform)
-            if updated and appended_chars:
-                self._notify_bg_transcript_chars(cid, appended_chars)
-        return updated
+            line = self._stamp_line(cid, {
+                "t": "trace_update",
+                "trace_id": trace_id,
+                "entry": entry_data,
+                "content_update": content_update or "",
+            })
+            self._transcript_log(cid).append_dicts([line])
+            self._notify_bg_transcript_chars(
+                cid, self._row_payload_chars(line))
+        return True
 
     # ── Cleanup ───────────────────────────────────────────────────────
 

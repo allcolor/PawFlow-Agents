@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import mimetypes
 import os
 from pathlib import Path
@@ -19,6 +20,9 @@ from core.agent_prompt_policy import append_cli_mcp_system_prompt
 from core.claude_code_interactive_pool import InteractiveClaudeCodePool
 from core.llm_providers.claude_code_session import ClaudeCodeSessionMixin
 from tools.cc_interactive_filters import is_hidden_native_tool, normalize_observed_tool
+
+
+logger = logging.getLogger(__name__)
 
 
 def _env_seconds(names: tuple[str, ...], ms_names: tuple[str, ...] = (),
@@ -43,7 +47,7 @@ def _env_seconds(names: tuple[str, ...], ms_names: tuple[str, ...] = (),
 _POST_STOP_IDLE_DRAIN_SECONDS = _env_seconds(
     ("PAWFLOW_CCI_POST_STOP_IDLE_DRAIN_SECONDS", "PAWFLOW_CCI_DRAIN_SECONDS"),
     ("PAWFLOW_CCI_POST_STOP_IDLE_DRAIN_MS", "PAWFLOW_CCI_DRAIN_MS"),
-    default=2.5,
+    default=0.5,
 )
 _NO_PROXY_EVENT_TIMEOUT_SECONDS = _env_seconds(
     ("PAWFLOW_CCI_NO_PROXY_EVENT_TIMEOUT_SECONDS", "PAWFLOW_CCI_NOEVENT_TIMEOUT_SECONDS"),
@@ -125,6 +129,10 @@ class _CCITurnCoordinator:
         self._post_stop_last_event_at = 0.0
         self._turn_callback_sent = False
         self._saw_proxy_event = False
+        self._first_event_at = 0.0
+        self._first_model_content_at = 0.0
+        self._last_event_at = 0.0
+        self._max_event_gap = 0.0
 
     def run(self, abort_event=None):
         from core.llm_client import LLMResponse
@@ -152,8 +160,14 @@ class _CCITurnCoordinator:
                 continue
             if self.touch_callback:
                 self.touch_callback()
+            now = time.time()
+            if self._last_event_at and now - self._last_event_at >= 2.0:
+                self._max_event_gap = max(self._max_event_gap, now - self._last_event_at)
+            self._last_event_at = now
+            if not self._first_event_at:
+                self._first_event_at = now
             if self._stop_seen:
-                self._post_stop_last_event_at = time.time()
+                self._post_stop_last_event_at = now
             etype = event.get("type", "")
             if etype == "request_error":
                 self._saw_proxy_event = True
@@ -203,6 +217,8 @@ class _CCITurnCoordinator:
             request_id = event.get("request_id", "") or ""
             if ptype == "content_block_start":
                 self._saw_model_content = True
+                if not self._first_model_content_at:
+                    self._first_model_content_at = time.time()
                 if request_id:
                     self._request_saw_model_content[request_id] = True
                 block = payload.get("content_block") or {}
@@ -237,6 +253,8 @@ class _CCITurnCoordinator:
                     self._append_text(block.get("text", ""))
             elif ptype == "content_block_delta":
                 self._saw_model_content = True
+                if not self._first_model_content_at:
+                    self._first_model_content_at = time.time()
                 if request_id:
                     self._request_saw_model_content[request_id] = True
                 idx = int(payload.get("index", 0) or 0)
@@ -278,6 +296,25 @@ class _CCITurnCoordinator:
                 continue
 
         text = "".join(self.text_parts)
+        total_ms = (time.time() - started_at) * 1000.0
+        first_event_ms = ((self._first_event_at - started_at) * 1000.0
+                          if self._first_event_at else 0.0)
+        first_model_ms = ((self._first_model_content_at - started_at) * 1000.0
+                          if self._first_model_content_at else 0.0)
+        slow_turn = (
+            first_model_ms >= 2000
+            or self._max_event_gap >= 2.0
+            or total_ms >= 5000
+        )
+        log = logger.info if slow_turn else logger.debug
+        log(
+            "[cci-provider] timing session=%s total_ms=%.1f "
+            "first_event_ms=%.1f first_model_ms=%.1f "
+            "max_event_gap_ms=%.1f text_len=%d thinking_len=%d "
+            "tool_calls=%d",
+            self.session_token[:8], total_ms, first_event_ms, first_model_ms,
+            self._max_event_gap * 1000.0, len(text),
+            len("".join(self.thinking_parts)), len(self.turn_tool_calls))
         return LLMResponse(
             content=text,
             tool_calls=[],
@@ -356,7 +393,7 @@ class _CCITurnCoordinator:
         self._thinking_end = 0.0
         if synthesized and thinking and self.thinking_callback:
             self.thinking_callback(thinking)
-        if self.block_callback and thinking and not self.thinking_callback:
+        if self.block_callback and thinking:
             self.block_callback("thinking_content", {"text": thinking})
 
 

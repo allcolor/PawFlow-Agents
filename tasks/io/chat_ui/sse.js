@@ -262,9 +262,7 @@ function connectSSE(cid, onReady, opts) {
   // ── Extended thinking ──
   let thinkingElements = {};  // agentKey → {el, text, startTime}
   const delegateThinkingElements = {};  // taskId → {el, content, summary, text, startTime}
-  eventSource.addEventListener('thinking_content', (e) => {
-    lastSSEActivity = Date.now();
-    const data = JSON.parse(e.data);
+  function renderThinkingContent(data, replaceCurrent) {
     const agent = data.agent_name || '';
     const aKey = agentKey(agent);
     const textDelta = data.text || '';
@@ -318,10 +316,23 @@ function connectSSE(cid, onReady, opts) {
       scrollBottom();
     }
     const te = thinkingElements[aKey];
-    te.text += textDelta;
+    if (replaceCurrent) te.text = textDelta;
+    else te.text += textDelta;
     te.content.textContent = te.text;
     if (typeof applyTechnicalMessageGrouping === 'function') applyTechnicalMessageGrouping();
     scrollBottom();
+  }
+
+  eventSource.addEventListener('thinking_delta', (e) => {
+    lastSSEActivity = Date.now();
+    const data = JSON.parse(e.data);
+    renderThinkingContent(data, false);
+  });
+
+  eventSource.addEventListener('thinking_content', (e) => {
+    lastSSEActivity = Date.now();
+    const data = JSON.parse(e.data);
+    renderThinkingContent(data, !!data.msg_id);
   });
 
   // Finalize a thinking block when any non-thinking event arrives for that

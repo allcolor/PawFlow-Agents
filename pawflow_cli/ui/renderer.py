@@ -307,8 +307,8 @@ class TerminalRenderer:
         # Status bar is driven by active-agents poller (single source of truth).
         # No _set_status here — the poller will pick up this agent.
 
-    def thinking_token(self, agent: str, text: str):
-        self._thinking[agent] = self._thinking.get(agent, "") + text
+    def thinking_token(self, agent: str, text: str, replace: bool = False):
+        self._thinking[agent] = text if replace else self._thinking.get(agent, "") + text
         # Status bar driven by active-agents poller — no _set_status here.
 
     def end_thinking(self, agent: str):

@@ -8,13 +8,16 @@ def dispatch_event(app, event, streaming_agent, thinking_agent):
     ev_type = event.get("event", "")
     data = event.get("data", {})
 
-    if ev_type == "thinking" or ev_type == "thinking_content":
+    if ev_type in ("thinking", "thinking_content", "thinking_delta"):
         agent = data.get("agent_name", "")
         if ev_type == "thinking" and not thinking_agent:
             thinking_agent = agent
             app.renderer.start_thinking(agent)
-        elif ev_type == "thinking_content":
+        elif ev_type == "thinking_delta":
             app.renderer.thinking_token(agent, data.get("text", ""))
+        elif ev_type == "thinking_content":
+            app.renderer.thinking_token(
+                agent, data.get("text", ""), replace=bool(data.get("msg_id")))
 
     elif ev_type == "token":
         agent = data.get("agent_name", "")

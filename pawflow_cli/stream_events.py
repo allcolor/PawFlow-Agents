@@ -18,7 +18,11 @@ def translate_sse_event(event_type, data, session_id, accumulated_text=""):
     """
     events = []
 
-    if event_type == "thinking" or event_type == "thinking_content":
+    if event_type in ("thinking", "thinking_content", "thinking_delta"):
+        source = data.get("source") or {}
+        if (event_type == "thinking_content" and data.get("msg_id")
+                and source.get("provider") == "claude-code-interactive"):
+            return events, accumulated_text
         text = data.get("text", "")
         if text:
             events.append({

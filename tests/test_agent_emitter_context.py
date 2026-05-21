@@ -102,7 +102,7 @@ class TestOnDoneContextFields(unittest.TestCase):
         bus.publish_event.assert_called_once()
         (cid, evt, data), _ = bus.publish_event.call_args
         self.assertEqual(cid, "cid1")
-        self.assertEqual(evt, "thinking_content")
+        self.assertEqual(evt, "thinking_delta")
         self.assertEqual(data["text"], "plan")
         self.assertEqual(data["agent_name"], "test")
         self.assertEqual(data["source"]["provider"], "claude-code-interactive")

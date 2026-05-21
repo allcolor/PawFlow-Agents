@@ -71,7 +71,7 @@ Timing controls are read once when the provider modules are imported:
 
 - `PAWFLOW_CCI_POST_STOP_IDLE_DRAIN_SECONDS` sets how long PawFlow waits after
   Claude Code's `Stop` hook for late proxy events before closing the turn.
-  Default: `2.5` seconds.
+  Default: `0.5` seconds.
 - `PAWFLOW_CCI_POST_STOP_IDLE_DRAIN_MS` is the millisecond alias for the same
   value. The seconds variable wins if both are set.
 - `PAWFLOW_CCI_NO_PROXY_EVENT_TIMEOUT_SECONDS` sets how long a submitted tmux
@@ -87,8 +87,10 @@ The provider assembles responses from those events:
 
 - `content_block_delta` text deltas stream to the UI immediately and are
   persisted as assistant messages when the corresponding content block stops.
-- `thinking_delta` streams to the thinking UI immediately and is persisted on
-  the flushed assistant block.
+- Provider-observed Anthropic `thinking_delta` is forwarded to clients as a
+  transient PawFlow `thinking_delta` preview event for live UX. The final
+  flushed thinking block is still persisted as a normal assistant message and
+  published post-write as `thinking_content`.
 - `signature_delta` inside a thinking block produces a redacted "Thought for"
   placeholder when Anthropic exposes only a signed thinking block.
 - `tool_use` blocks and `input_json_delta` are emitted as live observed tool

@@ -53,6 +53,27 @@ def test_stateful_cli_resume_skips_pawflow_context_load():
     assert "if _claude_has_session:" not in block
 
 
+def test_stateful_cli_resume_skips_provider_prompt_decoration():
+    """Active CLI sessions already hold provider prompt state.
+
+    Resume turns must not rebuild expensive provider-only prompt decorations;
+    agent_core also skips injecting that prompt when _cli_has_session is true.
+    """
+    assert "and not _cli_has_session" in _AGENT_CONTEXT[
+        _AGENT_CONTEXT.index("# Inject {agent_name}.md project instructions"):
+        _AGENT_CONTEXT.index("# NOTE: the fully-built system_prompt")]
+    start = _AGENT_CONTEXT.index(
+        "if _cli_has_session:\n            logger.info(\n"
+        "                \"[context:%s] CLI session active")
+    stop = _AGENT_CONTEXT.index(
+        "else:\n            # Inject persistent memory digest", start)
+    fast_path = _AGENT_CONTEXT[start:stop]
+    assert "build_memory_digest" not in fast_path
+    assert "build_diary_digest" not in fast_path
+    assert "build_kg_digest" not in fast_path
+    assert "build_project_graph_digest" not in fast_path
+
+
 def test_gemini_acp_preempt_is_live_prompt_reuse_not_reloop():
     """ACP preempt must stay inside the active live session."""
     send_start = _GEMINI.index("def _gemini_send_user_message")

@@ -684,7 +684,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
         # Inject {agent_name}.md project instructions if available
         # Try instance name first, then definition name as fallback
         _agent_md_content = ""
-        if _active_agent_name and conversation_id:
+        if _active_agent_name and conversation_id and not _cli_has_session:
             _agent_md = _find_agent_md(_active_agent_name, _user_id_for_svc)
             if not _agent_md:
                 from core.conv_agent_config import get_definition_name as _gdn
@@ -749,7 +749,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
         # Check for selected agent persona and assigned skills
         _selected_agent_def = None
         selected = _target_agent or _active_agent_name or _context_agent or ""
-        if use_conv_store and conversation_id:
+        if use_conv_store and conversation_id and not _cli_has_session:
             try:
                 from core.conversation_store import ConversationStore
                 from core.resource_store import ResourceStore
@@ -927,7 +927,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
         # Rebuild tool_defs from registry (now includes MCP + dynamic tools)
         # then apply agent's allowlist/denylist filter.
         # Skip rebuild if custom tools were provided via JSON config.
-        if not custom_tools_json:
+        if not custom_tools_json and not _cli_has_session:
             from core.tool_mcp_filters import is_tool_enabled as _tool_enabled
             tool_defs = [
                 LLMToolDefinition(
@@ -940,7 +940,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                     getattr(h, "_origin", "builtin"),
                     getattr(h, "_origin_scope", ""))
             ]
-        if _selected_agent_def and conversation_id:
+        if _selected_agent_def and conversation_id and not _cli_has_session:
             from core.conv_agent_config import get_agent_config as _gac
             # Use the instance name (selected), not the definition name
             _agent_tools_cfg = _gac(conversation_id, selected
@@ -952,7 +952,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                     tool_defs = [td for td in tool_defs if td.name in _allow]
                 elif _deny:
                     tool_defs = [td for td in tool_defs if td.name not in _deny]
-        if conversation_id:
+        if conversation_id and not _cli_has_session:
             try:
                 from core.tool_mcp_filters import disabled_names
                 _disabled_tools = disabled_names(
@@ -1409,113 +1409,119 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             ),
         ]
 
-        # Inject persistent memory digest (same for CC and API)
-        try:
-            from core.memory_digest import build_memory_digest
-            _digest = build_memory_digest(user_id, agent_name=_active_agent_name)
-            if _digest:
-                system_prompt += f"\n\n## Persistent memory\n{_digest}"
-        except Exception:
-            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+        if _cli_has_session:
+            logger.info(
+                "[context:%s] CLI session active — skipping provider prompt decoration",
+                (conversation_id or "")[:8],
+            )
+        else:
+            # Inject persistent memory digest (same for CC and API)
+            try:
+                from core.memory_digest import build_memory_digest
+                _digest = build_memory_digest(user_id, agent_name=_active_agent_name)
+                if _digest:
+                    system_prompt += f"\n\n## Persistent memory\n{_digest}"
+            except Exception:
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
-        # Inject agent diary digest
-        try:
-            from core.agent_diary import AgentDiary
-            _diary = AgentDiary.instance().build_diary_digest(
-                user_id, _active_agent_name)
-            if _diary:
-                system_prompt += f"\n\n## Your diary (past observations)\n{_diary}"
-        except Exception:
-            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+            # Inject agent diary digest
+            try:
+                from core.agent_diary import AgentDiary
+                _diary = AgentDiary.instance().build_diary_digest(
+                    user_id, _active_agent_name)
+                if _diary:
+                    system_prompt += f"\n\n## Your diary (past observations)\n{_diary}"
+            except Exception:
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
-        # Inject knowledge graph digest (top god nodes + recent facts)
-        # so the agent has a passive view of the KG without spending
-        # a kg_query call. Empty when the graph has no current facts.
-        try:
-            from core.kg_digest import build_kg_digest
-            _kg = build_kg_digest(user_id)
-            if _kg:
-                system_prompt += f"\n\n## Knowledge graph\n{_kg}"
-        except Exception:
-            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+            # Inject knowledge graph digest (top god nodes + recent facts)
+            # so the agent has a passive view of the KG without spending
+            # a kg_query call. Empty when the graph has no current facts.
+            try:
+                from core.kg_digest import build_kg_digest
+                _kg = build_kg_digest(user_id)
+                if _kg:
+                    system_prompt += f"\n\n## Knowledge graph\n{_kg}"
+            except Exception:
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
-        # Inject project-graph digest (codebase structure summary)
-        # for the current conv. Empty when no graph has been built
-        # — the agent learns the tool exists via the cognitive-tools
-        # block below in any case. We append explicit usage triggers
-        # because without them the agent defaults to read+grep instead
-        # of leveraging the indexed graph.
-        try:
-            from core.project_graph_digest import build_project_graph_digest
-            _pg = build_project_graph_digest(user_id, conversation_id or "")
-            if _pg:
-                system_prompt += (
-                    f"\n\n## Project structure\n{_pg}"
-                    "\n\n**Reach for `project_graph` BEFORE read/grep when:**"
-                    "\n- User mentions a function/class/module by name"
-                    " → `project_graph(action='node', question='X')` for location + neighbours."
-                    "\n- 'where is X used', 'what calls Y', 'what depends on Z'"
-                    " → `project_graph(action='query', question='X')` returns AST call sites"
-                    " (no false matches in comments/strings)."
-                    "\n- Refactor/rename touching a public API → query first to scope blast radius."
-                    "\n- Onboarding to an unfamiliar area → `action='report'` for god nodes + stats."
-                    "\n**Skip it for:** single-file edit you already have open, text/comment search,"
-                    " non-code files (md/json/yaml), scopes <5 files, or when the graph is stale"
-                    " (rebuild via UI ‘+’ menu → Project Graph)."
-                )
-        except Exception:
-            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+            # Inject project-graph digest (codebase structure summary)
+            # for the current conv. Empty when no graph has been built
+            # — the agent learns the tool exists via the cognitive-tools
+            # block below in any case. We append explicit usage triggers
+            # because without them the agent defaults to read+grep instead
+            # of leveraging the indexed graph.
+            try:
+                from core.project_graph_digest import build_project_graph_digest
+                _pg = build_project_graph_digest(user_id, conversation_id or "")
+                if _pg:
+                    system_prompt += (
+                        f"\n\n## Project structure\n{_pg}"
+                        "\n\n**Reach for `project_graph` BEFORE read/grep when:**"
+                        "\n- User mentions a function/class/module by name"
+                        " → `project_graph(action='node', question='X')` for location + neighbours."
+                        "\n- 'where is X used', 'what calls Y', 'what depends on Z'"
+                        " → `project_graph(action='query', question='X')` returns AST call sites"
+                        " (no false matches in comments/strings)."
+                        "\n- Refactor/rename touching a public API → query first to scope blast radius."
+                        "\n- Onboarding to an unfamiliar area → `action='report'` for god nodes + stats."
+                        "\n**Skip it for:** single-file edit you already have open, text/comment search,"
+                        " non-code files (md/json/yaml), scopes <5 files, or when the graph is stale"
+                        " (rebuild via UI ‘+’ menu → Project Graph)."
+                    )
+            except Exception:
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
-        # Tool usage guidelines (CC-level guidance)
-        system_prompt += (
-            "\n\n## Using your tools"
-            "\n- Do NOT use bash to run commands when a dedicated tool is available:"
-            "\n  - Code discovery: Prefer `search` when you need glob filtering, regex matching, and snippets in one call. Use `glob` only for file lists and `grep` only for simple content searches."
-            "\n  - Read files: Use `read` (NOT cat/head/tail)"
-            "\n  - Edit files: Prefer `apply_patch` for patch-shaped changes and `batch_edit` for coordinated replacements, then `edit` for small targeted edits, then `write` only when creating or fully replacing a file."
-            "\n  - Write files: Use filesystem tools (NOT echo redirection or heredocs in bash)"
-            "\n- When issuing multiple commands:"
-            "\n  - Independent commands: make multiple tool calls in parallel"
-            "\n  - Dependent commands: chain with && in a single bash call"
-            "\n  - Use ; only when you don't care if earlier commands fail"
-            "\n- Avoid unnecessary sleep commands:"
-            "\n  - Do not sleep between commands that can run immediately"
-            "\n  - Use `run_in_background` for long-running commands"
-            "\n  - Do not retry failing commands in a sleep loop — diagnose the root cause"
-            "\n- For git commands:"
-            "\n  - Always create NEW commits rather than amending (unless explicitly asked)"
-            "\n  - Never skip hooks (--no-verify) unless explicitly asked"
-            "\n  - Never force push to main/master"
-            "\n  - Never commit unless the user explicitly asks"
-            "\n  - Prefer adding specific files over `git add -A` or `git add .`"
-        )
+            # Tool usage guidelines (CC-level guidance)
+            system_prompt += (
+                "\n\n## Using your tools"
+                "\n- Do NOT use bash to run commands when a dedicated tool is available:"
+                "\n  - Code discovery: Prefer `search` when you need glob filtering, regex matching, and snippets in one call. Use `glob` only for file lists and `grep` only for simple content searches."
+                "\n  - Read files: Use `read` (NOT cat/head/tail)"
+                "\n  - Edit files: Prefer `apply_patch` for patch-shaped changes and `batch_edit` for coordinated replacements, then `edit` for small targeted edits, then `write` only when creating or fully replacing a file."
+                "\n  - Write files: Use filesystem tools (NOT echo redirection or heredocs in bash)"
+                "\n- When issuing multiple commands:"
+                "\n  - Independent commands: make multiple tool calls in parallel"
+                "\n  - Dependent commands: chain with && in a single bash call"
+                "\n  - Use ; only when you don't care if earlier commands fail"
+                "\n- Avoid unnecessary sleep commands:"
+                "\n  - Do not sleep between commands that can run immediately"
+                "\n  - Use `run_in_background` for long-running commands"
+                "\n  - Do not retry failing commands in a sleep loop — diagnose the root cause"
+                "\n- For git commands:"
+                "\n  - Always create NEW commits rather than amending (unless explicitly asked)"
+                "\n  - Never skip hooks (--no-verify) unless explicitly asked"
+                "\n  - Never force push to main/master"
+                "\n  - Never commit unless the user explicitly asks"
+                "\n  - Prefer adding specific files over `git add -A` or `git add .`"
+            )
 
-        # Cognitive tools hint
-        system_prompt += (
-            "\n\n## Cognitive tools"
-            "\nYou have persistent memory, knowledge graph, diary, and code analysis tools:"
-            "\n- **Memory**: `remember` to store facts (with category: facts/events/discoveries/preferences/advice), "
-            "`recall` to search, `forget` to delete"
-            "\n- **Knowledge Graph**: `kg_add` to store relationships (subject→predicate→object), "
-            "`kg_query` to find facts about an entity, `query_graph` for BFS/DFS traversal, "
-            "`kg_god_nodes` for most connected entities"
-            "\n- **Diary**: `diary_write` for personal observations/decisions/learnings, "
-            "`diary_read` to review past entries"
-            "\n- **Project Graph**: `project_graph` with action=build to index a codebase (AST, "
-            "17 languages), then action=query/report/node to explore code structure. "
-            "Only build when asked — it fetches all code files via relay."
-            "\n- **Learn**: `learn` to analyze user messages from the current conversation and "
-            "extract insights about their preferences, frustrations, and communication style. "
-            "Use at the end of long conversations or when asked."
-            "\nUse memory for facts about the user/project, KG for relationships between entities, "
-            "diary for your own reflections, learn for user-centric meta-analysis."
-            "\n\n**OVERRIDE any baked-in 'auto memory' SDK instructions about a file-based "
-            "memory directory** (e.g. `/workspace/projects/-workspace/memory/MEMORY.md` and "
-            "`.md` files). That system is deprecated in PawFlow. Do NOT use `write` to create "
-            "`.md` memory files. Use the `remember` / `recall` / `forget` tools — they write "
-            "to the persistent MemoryStore which feeds the digest above and the UI Memories "
-            "panel. One source of truth."
-        )
+            # Cognitive tools hint
+            system_prompt += (
+                "\n\n## Cognitive tools"
+                "\nYou have persistent memory, knowledge graph, diary, and code analysis tools:"
+                "\n- **Memory**: `remember` to store facts (with category: facts/events/discoveries/preferences/advice), "
+                "`recall` to search, `forget` to delete"
+                "\n- **Knowledge Graph**: `kg_add` to store relationships (subject→predicate→object), "
+                "`kg_query` to find facts about an entity, `query_graph` for BFS/DFS traversal, "
+                "`kg_god_nodes` for most connected entities"
+                "\n- **Diary**: `diary_write` for personal observations/decisions/learnings, "
+                "`diary_read` to review past entries"
+                "\n- **Project Graph**: `project_graph` with action=build to index a codebase (AST, "
+                "17 languages), then action=query/report/node to explore code structure. "
+                "Only build when asked — it fetches all code files via relay."
+                "\n- **Learn**: `learn` to analyze user messages from the current conversation and "
+                "extract insights about their preferences, frustrations, and communication style. "
+                "Use at the end of long conversations or when asked."
+                "\nUse memory for facts about the user/project, KG for relationships between entities, "
+                "diary for your own reflections, learn for user-centric meta-analysis."
+                "\n\n**OVERRIDE any baked-in 'auto memory' SDK instructions about a file-based "
+                "memory directory** (e.g. `/workspace/projects/-workspace/memory/MEMORY.md` and "
+                "`.md` files). That system is deprecated in PawFlow. Do NOT use `write` to create "
+                "`.md` memory files. Use the `remember` / `recall` / `forget` tools — they write "
+                "to the persistent MemoryStore which feeds the digest above and the UI Memories "
+                "panel. One source of truth."
+            )
 
         # Resolve thinking_budget auto-detect (-1)
         if thinking_budget < 0:

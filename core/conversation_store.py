@@ -61,6 +61,10 @@ _HOT_METADATA_KEYS = (
     "_meta_msg_count", "_meta_preview", "_meta_updated_at", "_meta_max_seq")
 _HOT_METADATA_EXECUTOR = ThreadPoolExecutor(
     max_workers=1, thread_name_prefix="conv-meta-flush")
+_GIT_RETENTION_EXECUTOR = ThreadPoolExecutor(
+    max_workers=1, thread_name_prefix="conv-git-retention")
+_GIT_RETENTION_RUNNING: set[str] = set()
+_GIT_RETENTION_RUNNING_LOCK = threading.Lock()
 
 import core.paths as _paths
 
@@ -347,6 +351,40 @@ class ConversationStore:
         return self._maybe_prune_git_history(
             cid, force=True, progress=progress, raise_errors=True)
 
+    def _maybe_schedule_git_retention(self, cid: str) -> None:
+        """Schedule Git retention off the snapshot hot path when interval is due."""
+        if _GIT_RETENTION_DAYS <= 0 and _GIT_RETENTION_COMMITS <= 0:
+            return
+        if _GIT_RETENTION_INTERVAL_SEC <= 0:
+            return
+        try:
+            marker = self._conv_dir(cid) / ".git" / "pawflow-retention-last-run"
+            if marker.exists() and time.time() - marker.stat().st_mtime < _GIT_RETENTION_INTERVAL_SEC:
+                return
+        except Exception:
+            return
+        with _GIT_RETENTION_RUNNING_LOCK:
+            if cid in _GIT_RETENTION_RUNNING:
+                return
+            _GIT_RETENTION_RUNNING.add(cid)
+        try:
+            _GIT_RETENTION_EXECUTOR.submit(self._git_retention_worker, cid)
+        except Exception:
+            with _GIT_RETENTION_RUNNING_LOCK:
+                _GIT_RETENTION_RUNNING.discard(cid)
+            logger.debug("git retention scheduling failed for %s", cid[:8], exc_info=True)
+
+    def _git_retention_worker(self, cid: str) -> None:
+        try:
+            result = self._maybe_prune_git_history(cid, force=False)
+            status = result.get("status") if isinstance(result, dict) else ""
+            if status not in ("skipped", "missing"):
+                logger.info("[convstore] background git retention for %s: %s",
+                            cid[:8], status)
+        finally:
+            with _GIT_RETENTION_RUNNING_LOCK:
+                _GIT_RETENTION_RUNNING.discard(cid)
+
     def _maybe_prune_git_history(self, cid: str, force: bool = False,
                                  progress: Optional[Callable[[str, Dict[str, Any]], None]] = None,
                                  raise_errors: bool = False) -> dict:
@@ -589,6 +627,7 @@ class ConversationStore:
             msg = message or f"snapshot {time.strftime('%H:%M:%S')}"
             self._git(cid, "commit", "-m", msg, "-q", timeout=timeout)
             logger.debug("[convstore] git snapshot for %s: %s", cid[:8], msg)
+            self._maybe_schedule_git_retention(cid)
         except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as e:
             detail = getattr(e, "stderr", None) or getattr(e, "stdout", None) or ""
             logger.warning("[convstore] git snapshot failed for %s: %s | git stderr: %s",
@@ -1565,12 +1604,41 @@ class ConversationStore:
                     "[convstore] failed to prune invalid context dir %s/%s",
                     cid[:8], agent, exc_info=True)
 
+    def _agent_context_dirs(self, cid: str) -> set:
+        """Return agents with an existing context dir without transcript scan."""
+        try:
+            conv_dir = self._conv_dir(cid)
+        except ValueError:
+            return set()
+        if not conv_dir.is_dir():
+            return set()
+        skip = {".git", "transcript", "shared", "summaries",
+                "_jsonl_migration_backup"}
+        agents = set()
+        for entry in conv_dir.iterdir():
+            if not entry.is_dir() or entry.name in skip:
+                continue
+            if not (self._jsonl_exists(entry / "context.jsonl")
+                    or (entry / "context").is_dir()):
+                continue
+            agents.add(self._canon_agent(entry.name.replace("__", ":")))
+        return agents
+
     def _cache_agents_for_append(self, cid: str) -> set:
         """Return known agents without rescanning the transcript hot path."""
         with self._cache_lock:
             cached = self._cache.get(cid)
             if cached is not None:
-                return set(cached.get("agents", set()))
+                agents = set(cached.get("agents", set()))
+                if agents:
+                    return agents
+                extras = cached.get("extras") or {}
+                if "conv_agents" not in extras:
+                    agents = self._agent_context_dirs(cid)
+                    if agents:
+                        cached.setdefault("agents", set()).update(agents)
+                    return agents
+                return set()
 
         # This method runs under the per-conversation append lock.  A cache
         # miss must stay cheap: _reload_cache() scans transcript.jsonl, which
@@ -1582,6 +1650,11 @@ class ConversationStore:
         agents = set()
         if isinstance(conv_agents, dict) and conv_agents:
             agents.update(self._canon_agent(a) for a in conv_agents if a)
+        elif "conv_agents" not in extras_data:
+            # Legacy/imported conversations may have context dirs but no
+            # conv_agents sidecar yet. Directory listing is bounded by agent
+            # count and preserves old fan-out without scanning transcript rows.
+            agents.update(self._agent_context_dirs(cid))
         return agents
 
     def _note_cache_append(self, cid: str, transcript_line: Optional[Dict],

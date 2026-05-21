@@ -383,7 +383,7 @@ class ToolRelayService(BaseService):
             if request_id:
                 total_ms = ((time.perf_counter() - started_at) * 1000
                             if started_at else 0.0)
-                logger.info(
+                logger.debug(
                     "[tool-relay] timing ws_send request=%s method=%s "
                     "lock_wait_ms=%.1f write_ms=%.1f total_worker_to_wire_ms=%.1f bytes=%d",
                     request_id, method or "?", lock_wait_ms, send_ms,
@@ -450,7 +450,7 @@ class ToolRelayService(BaseService):
                             'request_id': req_id,
                             'error': 'failed to encode tool relay response',
                         }).encode('utf-8')
-                    logger.info(
+                    logger.debug(
                         "[tool-relay] timing handled request=%s method=%s "
                         "handle_ms=%.1f response_bytes=%d",
                         req_id, method, handle_ms, len(resp_payload))
@@ -888,7 +888,7 @@ class ToolRelayService(BaseService):
             cached = self._registry_cache.get(cache_key)
             if cached is not None:
                 tool_count = self._registry_cache_tool_counts.get(cache_key, 0)
-                logger.info(
+                logger.debug(
                     "[tool-relay] timing get_registry_cache user=%s conv=%s "
                     "agent=%s total_ms=%.1f tools=%d",
                     user_id, (conversation_id or "")[:8], agent_name,
@@ -907,7 +907,7 @@ class ToolRelayService(BaseService):
                 cached = self._registry_cache.get(cache_key)
                 tool_count = self._registry_cache_tool_counts.get(cache_key, 0)
             if cached is not None:
-                logger.info(
+                logger.debug(
                     "[tool-relay] timing get_registry_cache user=%s conv=%s "
                     "agent=%s total_ms=%.1f tools=%d waited_for_build=yes",
                     user_id, (conversation_id or "")[:8], agent_name,
@@ -1206,7 +1206,7 @@ class ToolRelayService(BaseService):
         tool_count = len(registry.list_tools())
         total_ms = (time.perf_counter() - registry_total_started) * 1000
         if total_ms >= 100.0:
-            logger.info(
+            logger.debug(
                 "[tool-relay] timing get_registry user=%s conv=%s agent=%s "
                 "total_ms=%.1f default_ms=%.1f dynamic_ms=%.1f "
                 "mcp_ms=%.1f filter_ms=%.1f fs_find_ms=%.1f "
@@ -1919,7 +1919,7 @@ class ToolRelayService(BaseService):
                     self._inflight.pop(request_id, None)
                 if auto_bg_timer:
                     auto_bg_timer.cancel()
-                logger.info(
+                logger.debug(
                     "[tool-relay] timing execute_background request=%s tool=%s "
                     "relay_queue_ms=%.1f total_ms=%.1f cc_tc=%s",
                     request_id, tool_name,
@@ -1941,7 +1941,7 @@ class ToolRelayService(BaseService):
                     self._inflight.pop(request_id, None)
                 if auto_bg_timer:
                     auto_bg_timer.cancel()
-                logger.info(
+                logger.debug(
                     "[tool-relay] timing execute_cancelled request=%s tool=%s "
                     "relay_queue_ms=%.1f total_ms=%.1f cc_tc=%s",
                     request_id, tool_name,
@@ -1982,7 +1982,7 @@ class ToolRelayService(BaseService):
             result_len = len(data) if isinstance(data, str) else len(json.dumps(data, default=str))
         except Exception:
             result_len = len(str(data))
-        logger.info(
+        logger.debug(
             "[tool-relay] timing execute_done request=%s tool=%s "
             "relay_queue_ms=%.1f total_ms=%.1f result_len=%d cc_tc=%s",
             request_id, tool_name,
@@ -2230,7 +2230,7 @@ class ToolRelayService(BaseService):
         except Exception as _he:
             logger.warning("post_tool_call hook failed: %s", _he, exc_info=True)
 
-        logger.info(
+        logger.debug(
             "[tool-relay] timing do_execute request=%s tool=%s "
             "total_ms=%.1f registry_ms=%.1f pre_hook_ms=%.1f "
             "approval_ms=%.1f secrets_ms=%.1f exec_ms=%.1f "

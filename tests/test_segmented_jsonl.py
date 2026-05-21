@@ -160,6 +160,36 @@ def test_segmented_jsonl_append_reuses_hot_segment_handle(tmp_path):
     assert segment_opens["count"] == 1
 
 
+def test_segmented_jsonl_hot_append_handles_are_bounded(monkeypatch, tmp_path):
+    from core import segmented_jsonl as sj_mod
+
+    SegmentedJsonl.close_all_append_handles()
+    monkeypatch.setattr(sj_mod, "_APPEND_HANDLE_MAX", 2)
+    paths = [tmp_path / f"c{i}" / "transcript.jsonl" for i in range(4)]
+
+    for i, path in enumerate(paths):
+        SegmentedJsonl(path, max_rows=10).append_dicts([{"seq": i}])
+
+    with sj_mod._APPEND_HANDLES_LOCK:
+        assert len(sj_mod._APPEND_HANDLES) <= 2
+    SegmentedJsonl.close_all_append_handles()
+
+
+def test_segmented_jsonl_index_cache_is_bounded(monkeypatch, tmp_path):
+    from core import segmented_jsonl as sj_mod
+
+    with sj_mod._INDEX_CACHE_LOCK:
+        sj_mod._INDEX_CACHE.clear()
+    monkeypatch.setattr(sj_mod, "_INDEX_CACHE_MAX", 2)
+
+    for i in range(4):
+        path = tmp_path / f"c{i}" / "transcript.jsonl"
+        SegmentedJsonl(path, max_rows=10).append_dicts([{"seq": i}])
+
+    with sj_mod._INDEX_CACHE_LOCK:
+        assert len(sj_mod._INDEX_CACHE) <= 2
+
+
 def test_segmented_jsonl_replace_opens_each_segment_once(tmp_path):
     path = tmp_path / "context.jsonl"
     log = SegmentedJsonl(path, max_rows=2)

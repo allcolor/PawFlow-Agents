@@ -301,11 +301,11 @@ class TestCreateConversation:
 
     def test_git_snapshot_does_not_run_retention_on_hot_path(self, conv, monkeypatch):
         store, cid, _uid = conv
-        called = {"prune": False, "untrack": False}
+        called = {"schedule": False, "untrack": False}
 
         monkeypatch.setattr(
-            store, "_maybe_prune_git_history",
-            lambda *_args, **_kwargs: called.__setitem__("prune", True))
+            store, "_maybe_schedule_git_retention",
+            lambda *_args, **_kwargs: called.__setitem__("schedule", True))
         monkeypatch.setattr(
             store, "_git_untrack_derived_state",
             lambda *_args, **_kwargs: called.__setitem__("untrack", True))
@@ -313,7 +313,28 @@ class TestCreateConversation:
         store.set_extra(cid, "title", "hot snapshot")
         store.git_snapshot(cid, "hot snapshot")
 
-        assert called == {"prune": False, "untrack": False}
+        assert called == {"schedule": True, "untrack": False}
+
+    def test_git_retention_is_scheduled_not_run_inline(self, conv, monkeypatch):
+        import core.conversation_store as cs_mod
+
+        store, cid, _uid = conv
+        submitted = []
+
+        class _Executor:
+            def submit(self, fn, *args):
+                submitted.append((fn, args))
+
+        monkeypatch.setattr(cs_mod, "_GIT_RETENTION_INTERVAL_SEC", 1)
+        monkeypatch.setattr(cs_mod, "_GIT_RETENTION_EXECUTOR", _Executor())
+        monkeypatch.setattr(store, "_maybe_prune_git_history", lambda *_a, **_k: None)
+
+        store.set_extra(cid, "title", "schedule retention")
+        store.git_snapshot(cid, "schedule retention")
+
+        assert submitted == [(store._git_retention_worker, (cid,))]
+        with cs_mod._GIT_RETENTION_RUNNING_LOCK:
+            cs_mod._GIT_RETENTION_RUNNING.discard(cid)
 
     def test_generate_id_is_string(self, store):
         cid = store.generate_id()
@@ -1081,6 +1102,27 @@ class TestAppendMessage:
         m = _msg(role="assistant", content="hello world",
                  source={"type": "agent", "name": "alice"})
         store.append_message(cid, m, agent_name="alice", user_id=uid)
+        bob_ctx = store.load_agent_context(cid, "bob")
+        assert bob_ctx and any(
+            "[Agent alice]" in str(msg.get("content", ""))
+            for msg in bob_ctx)
+
+    def test_append_legacy_agent_dirs_fanout_without_conv_agents(
+            self, conv, monkeypatch):
+        store, cid, uid = conv
+        store.save_agent_context(cid, "alice", [])
+        store.save_agent_context(cid, "bob", [])
+        with store._cache_lock:
+            store._cache.pop(cid, None)
+
+        def _forbidden_reload(_cid):
+            raise AssertionError("legacy fanout must not scan transcript")
+
+        monkeypatch.setattr(store, "_reload_cache", _forbidden_reload)
+        m = _msg(role="assistant", content="hello legacy",
+                 source={"type": "agent", "name": "alice"})
+        store.append_message(cid, m, agent_name="alice", user_id=uid)
+
         bob_ctx = store.load_agent_context(cid, "bob")
         assert bob_ctx and any(
             "[Agent alice]" in str(msg.get("content", ""))

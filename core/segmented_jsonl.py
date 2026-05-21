@@ -21,9 +21,9 @@ from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional
 DEFAULT_MAX_ROWS = int(os.getenv("PAWFLOW_JSONL_SEGMENT_ROWS", "5000") or "5000")
 DEFAULT_MAX_BYTES = int(os.getenv("PAWFLOW_JSONL_SEGMENT_BYTES", str(8 * 1024 * 1024)) or str(8 * 1024 * 1024))
 _INDEX_NAME = "index.json"
-_APPEND_FLUSH_INTERVAL_SEC = float(os.getenv("PAWFLOW_JSONL_APPEND_FLUSH_INTERVAL_SEC", "1.0") or "1.0")
-_APPEND_FLUSH_ROW_DELTA = int(os.getenv("PAWFLOW_JSONL_APPEND_FLUSH_ROW_DELTA", "100") or "100")
 _APPEND_DIAG_MS = float(os.getenv("PAWFLOW_JSONL_APPEND_DIAG_MS", "100") or "100")
+_INDEX_CACHE_MAX = int(os.getenv("PAWFLOW_JSONL_INDEX_CACHE_MAX", "256") or "256")
+_APPEND_HANDLE_MAX = int(os.getenv("PAWFLOW_JSONL_APPEND_HANDLE_MAX", "128") or "128")
 _INDEX_CACHE: Dict[str, Dict[str, Any]] = {}
 _INDEX_CACHE_LOCK = threading.RLock()
 _APPEND_HANDLES: Dict[str, Dict[str, Any]] = {}
@@ -83,6 +83,8 @@ class SegmentedJsonl:
         t0 = time.monotonic()
         with _INDEX_CACHE_LOCK:
             cached = _INDEX_CACHE.get(cache_key)
+            if cached is not None:
+                cached["last_used"] = time.monotonic()
         mark("cache", t0)
         index_missing = not self.index_path.exists()
         if cached is None and self.flat_path.exists() and not self.is_segmented():
@@ -353,23 +355,41 @@ class SegmentedJsonl:
                 state = {
                     "fh": open(path, "ab", buffering=0),
                     "lock": threading.RLock(),
-                    "last_flush": time.monotonic(),
-                    "pending_rows": 0,
+                    "last_used": time.monotonic(),
                 }
                 _APPEND_HANDLES[key] = state
+                SegmentedJsonl._trim_append_handles_locked()
+            else:
+                state["last_used"] = time.monotonic()
             fh = state["fh"]
             lock = state["lock"]
         with lock:
             fh.write("".join(lines).encode("utf-8"))
-            state["pending_rows"] = int(state.get("pending_rows") or 0) + len(lines)
-            now = time.monotonic()
-            due = ((now - float(state.get("last_flush") or 0.0))
-                   >= _APPEND_FLUSH_INTERVAL_SEC)
-            due = due or int(state.get("pending_rows") or 0) >= _APPEND_FLUSH_ROW_DELTA
-            if due:
-                fh.flush()
-                state["last_flush"] = now
-                state["pending_rows"] = 0
+
+    @staticmethod
+    def _trim_append_handles_locked() -> None:
+        """Close least-recently-used append handles while lock is held."""
+        limit = max(1, _APPEND_HANDLE_MAX)
+        overflow = len(_APPEND_HANDLES) - limit
+        if overflow <= 0:
+            return
+        victims = sorted(
+            _APPEND_HANDLES.items(),
+            key=lambda item: float(item[1].get("last_used") or 0.0),
+        )[:overflow]
+        for key, state in victims:
+            lock = state.get("lock")
+            if lock is not None and not lock.acquire(blocking=False):
+                continue
+            _APPEND_HANDLES.pop(key, None)
+            try:
+                state["fh"].flush()
+                state["fh"].close()
+            except Exception:
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+            finally:
+                if lock is not None:
+                    lock.release()
 
     @staticmethod
     def _close_append_handles(root: Path) -> None:
@@ -412,8 +432,7 @@ class SegmentedJsonl:
             try:
                 with lock:
                     fh.flush()
-                    state["last_flush"] = time.monotonic()
-                    state["pending_rows"] = 0
+                    state["last_used"] = time.monotonic()
             except Exception:
                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
@@ -423,11 +442,26 @@ class SegmentedJsonl:
         with _INDEX_CACHE_LOCK:
             state = _INDEX_CACHE.setdefault(self._cache_key(), {})
             state["index"] = index
+            state["last_used"] = now
             state.setdefault("last_flush", 0.0)
             state.setdefault("last_rows", 0)
             if flushed:
                 state["last_flush"] = now
                 state["last_rows"] = total
+            self._trim_index_cache_locked()
+
+    @staticmethod
+    def _trim_index_cache_locked() -> None:
+        limit = max(1, _INDEX_CACHE_MAX)
+        overflow = len(_INDEX_CACHE) - limit
+        if overflow <= 0:
+            return
+        victims = sorted(
+            _INDEX_CACHE.items(),
+            key=lambda item: float(item[1].get("last_used") or 0.0),
+        )[:overflow]
+        for key, _state in victims:
+            _INDEX_CACHE.pop(key, None)
 
     def _maybe_write_index_hot(self, index: Dict[str, Any], force: bool = False) -> None:
         total = int(index.get("total_rows") or 0)

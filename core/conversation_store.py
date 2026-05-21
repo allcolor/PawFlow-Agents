@@ -4012,6 +4012,37 @@ class ConversationStore:
                     is_one_shot = sess_dir.name.startswith("_")
                     if (not is_one_shot
                             and sess_dir.name in live_by_user.get(user_dir.name, set())):
+                        for agent_dir in list(sess_dir.iterdir()):
+                            if not agent_dir.is_dir():
+                                continue
+                            if agent_dir.name.startswith(".stale-"):
+                                shutil.rmtree(agent_dir, ignore_errors=True)
+                                if not agent_dir.exists():
+                                    removed += 1
+                                continue
+                            if not agent_dir.name.startswith("_"):
+                                continue
+                            try:
+                                stale = agent_dir.with_name(
+                                    f".stale-{provider}-{agent_dir.name}-{uuid.uuid4().hex[:8]}")
+                                try:
+                                    agent_dir.replace(stale)
+                                except OSError:
+                                    stale = agent_dir
+                                threading.Thread(
+                                    target=self._delete_cli_runtime_session_dir_worker,
+                                    args=(stale, provider, sess_dir.name, agent_dir.name),
+                                    daemon=True,
+                                    name=f"cli-one-shot-delete-{provider}",
+                                ).start()
+                                removed += 1
+                                logger.info(
+                                    "Removed nested one-shot %s CLI session dir: %s/%s/%s",
+                                    provider, user_dir.name, sess_dir.name, agent_dir.name)
+                            except Exception as exc:
+                                logger.debug(
+                                    "Failed to remove nested one-shot %s session %s: %s",
+                                    provider, agent_dir, exc)
                         if prune_live and provider == "claude":
                             recovered_cid = sess_dir.name.replace("__", ":")
                             try:

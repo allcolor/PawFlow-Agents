@@ -614,6 +614,8 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
         proc = None
         container = None
         stderr_lines: queue.Queue[str] = queue.Queue(maxsize=200)
+        _first_event_timer = None
+        _first_event_done = None
 
         if conv_id and not is_ephemeral:
             try:
@@ -857,6 +859,7 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
 
         try:
             thread_key = f"codex_app_server_thread:{agent_name or 'default'}"
+            _phase_t0 = time.monotonic()
             if not is_reuse:
                 proc, container = self._codex_pool_popen(
                     workdir,
@@ -874,13 +877,18 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                     bufsize=1,
                 )
                 self._codex_app_start_stderr_drain(proc, stderr_lines)
+                _spawn_ms = (time.monotonic() - _phase_t0) * 1000.0
                 logger.info("[codex-app] started app-server conv=%s agent=%s thread=%s",
                             conv_id[:8] or "?", agent_name, thread_id[:12] or "new")
 
+                _phase_t0 = time.monotonic()
                 self._codex_app_initialize(proc)
+                _init_ms = (time.monotonic() - _phase_t0) * 1000.0
                 if thread_id:
                     try:
+                        _phase_t0 = time.monotonic()
                         thread = self._codex_app_resume_thread(proc, thread_id, model)
+                        _thread_ms = (time.monotonic() - _phase_t0) * 1000.0
                     except Exception as exc:
                         if not self._codex_app_missing_rollout_error(exc):
                             raise
@@ -899,9 +907,19 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                         logger.info(
                             "[codex-app] gauge: prompt_tokens=%d mode=%s (msgs=%d, input=%d chars)",
                             prompt_tokens, prompt_mode, len(messages), len(initial_text))
+                        _phase_t0 = time.monotonic()
                         thread = self._codex_app_start_thread(proc, model, container_dir)
+                        _thread_ms = (time.monotonic() - _phase_t0) * 1000.0
                 else:
+                    _phase_t0 = time.monotonic()
                     thread = self._codex_app_start_thread(proc, model, container_dir)
+                    _thread_ms = (time.monotonic() - _phase_t0) * 1000.0
+                if max(_spawn_ms, _init_ms, _thread_ms) >= 500.0:
+                    logger.info(
+                        "[codex-app] startup timing conv=%s agent=%s spawn=%.1fms "
+                        "initialize=%.1fms thread=%.1fms mode=%s",
+                        conv_id[:8] or "?", agent_name, _spawn_ms, _init_ms,
+                        _thread_ms, prompt_mode)
                 thread_id = (thread or {}).get("id", "") or thread_id
                 if thread_id and conv_id and store is not None and not is_ephemeral:
                     try:
@@ -915,9 +933,18 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
 
             input_items = self._codex_app_input_items(
                 initial_text, image_blocks, workdir, container_dir)
+            _phase_t0 = time.monotonic()
             turn = self._codex_app_start_turn(
                 proc, thread_id, input_items, model, container_dir,
                 effort, reasoning_summary)
+            _turn_start_ms = (time.monotonic() - _phase_t0) * 1000.0
+            if _turn_start_ms >= 500.0:
+                logger.info(
+                    "[codex-app] turn/start timing conv=%s agent=%s mode=%s "
+                    "prompt_tokens=%d input_chars=%d ms=%.1f",
+                    conv_id[:8] or "?", agent_name, prompt_mode,
+                    int(prompt_tokens or 0), len(initial_text or ""),
+                    _turn_start_ms)
             turn_id = (turn or {}).get("id", "")
 
             lock = self._codex_app_ensure_lock()
@@ -959,6 +986,27 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                 except Exception:
                     logger.debug("[codex-app-live] active register failed", exc_info=True)
 
+            _turn_wait_started = time.monotonic()
+            _first_event_seen = False
+            _last_event_at = _turn_wait_started
+            _first_event_done = threading.Event()
+
+            def _warn_slow_first_event() -> None:
+                if _first_event_done.is_set():
+                    return
+                logger.warning(
+                    "[codex-app] waiting %.1fs for first event after turn/start "
+                    "conv=%s agent=%s mode=%s prompt_tokens=%d input_chars=%d "
+                    "thread=%s turn=%s",
+                    time.monotonic() - _turn_wait_started,
+                    conv_id[:8] or "?", agent_name, prompt_mode,
+                    int(prompt_tokens or 0), len(initial_text or ""),
+                    thread_id[:12], turn_id[:12])
+                self._codex_app_log_stderr(stderr_lines)
+
+            _first_event_timer = threading.Timer(10.0, _warn_slow_first_event)
+            _first_event_timer.daemon = True
+            _first_event_timer.start()
             while True:
                 if getattr(self, "_abort", None) and self._abort.is_set():
                     raise AgentCancelled()
@@ -967,6 +1015,7 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                     raise AgentCancelled()
                 if msg is None:
                     break
+                _now_evt = time.monotonic()
                 if "id" in msg:
                     # Late response to turn/steer or server request resolution.
                     if msg.get("error"):
@@ -974,6 +1023,30 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                     continue
                 method = msg.get("method", "")
                 params = msg.get("params", {}) or {}
+                is_useful_stream_event = (
+                    method.startswith("item/")
+                    or method in ("turn/completed", "turn/failed")
+                )
+                if is_useful_stream_event:
+                    if not _first_event_seen:
+                        _first_event_seen = True
+                        _first_event_done.set()
+                        _first_event_timer.cancel()
+                        _first_ms = (_now_evt - _turn_wait_started) * 1000.0
+                        if _first_ms >= 1000.0:
+                            logger.info(
+                                "[codex-app] first useful stream event after turn/start %.1fms "
+                                "method=%s conv=%s agent=%s mode=%s prompt_tokens=%d "
+                                "input_chars=%d thread=%s turn=%s",
+                                _first_ms, method, conv_id[:8] or "?", agent_name,
+                                prompt_mode, int(prompt_tokens or 0),
+                                len(initial_text or ""), thread_id[:12], turn_id[:12])
+                    elif (_now_evt - _last_event_at) >= 10.0:
+                        logger.info(
+                            "[codex-app] stream event gap %.1fms method=%s conv=%s agent=%s turn=%s",
+                            (_now_evt - _last_event_at) * 1000.0, method,
+                            conv_id[:8] or "?", agent_name, turn_id[:12])
+                    _last_event_at = _now_evt
 
                 if method == "item/agentMessage/delta":
                     delta = params.get("delta") or params.get("text") or ""
@@ -1160,6 +1233,8 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                     raise LLMClientError(f"codex app-server error: {params.get('error') or params}")
 
             _flush_text()
+            _first_event_done.set()
+            _first_event_timer.cancel()
             _flush_live_thinking(force=True)
             content = "".join(final_text_parts).strip() or "".join(text_parts).strip()
             return LLMResponse(
@@ -1179,6 +1254,13 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
             turn_failed = True
             raise
         finally:
+            if _first_event_done is not None:
+                _first_event_done.set()
+            if _first_event_timer is not None:
+                try:
+                    _first_event_timer.cancel()
+                except Exception:
+                    logger.debug("[codex-app] first-event timer cancel failed", exc_info=True)
             lock = self._codex_app_ensure_lock()
             with lock:
                 active = getattr(self, "_codex_app_active", None)

@@ -1308,7 +1308,7 @@ class TestCleanupOrphanClaudeSessions:
         assert not orphan.exists()
         assert deleted and deleted[0].name.startswith(".stale-codex-dead-codex-")
 
-    def test_cli_cleanup_keeps_live_provider_dirs_without_deep_scan(
+    def test_cli_cleanup_keeps_live_provider_dirs_but_removes_nested_one_shots(
             self, store, tmp_path, monkeypatch):
         roots = self._setup_all_providers(tmp_path, monkeypatch)
         cid = store.generate_id()
@@ -1318,11 +1318,21 @@ class TestCleanupOrphanClaudeSessions:
                      ".codex" / "sessions" / "rollout.jsonl")
         deep_file.parent.mkdir(parents=True)
         deep_file.write_text("{}\n")
+        nested_compact = roots["codex"] / "alice" / sanitized / "_compact"
+        nested_compact.mkdir()
+        (nested_compact / "state.txt").write_text("x")
+        deleted = []
+        monkeypatch.setattr(
+            store, "_delete_cli_runtime_session_dir_worker",
+            lambda target, provider, cid, agent_name="": deleted.append(
+                (target, provider, cid, agent_name)))
 
         removed = store.cleanup_orphan_cli_sessions()
 
-        assert removed == 0
+        assert removed == 1
         assert deep_file.exists()
+        assert not nested_compact.exists()
+        assert deleted and deleted[0][3] == "_compact"
 
     def test_preserves_live_conv_dir(self, store, tmp_path, monkeypatch):
         base = self._setup(tmp_path, monkeypatch)

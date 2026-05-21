@@ -412,6 +412,9 @@ class ConversationStore:
     def _agent_ctx_log(self, cid: str, agent: str) -> SegmentedJsonl:
         return SegmentedJsonl(self._agent_ctx_path(cid, agent))
 
+    def flush_append_handles(self, cid: str) -> None:
+        SegmentedJsonl.flush_append_handles(self._conv_dir(cid))
+
     @staticmethod
     def _jsonl_exists(path: Path) -> bool:
         return SegmentedJsonl(path).exists()
@@ -4002,12 +4005,9 @@ class ConversationStore:
                     if not sess_dir.is_dir():
                         continue
                     if sess_dir.name.startswith(".stale-"):
-                        threading.Thread(
-                            target=self._delete_cli_runtime_session_dir_worker,
-                            args=(sess_dir, provider, sess_dir.name),
-                            daemon=True,
-                            name=f"cli-orphan-delete-{provider}",
-                        ).start()
+                        shutil.rmtree(sess_dir, ignore_errors=True)
+                        if not sess_dir.exists():
+                            removed += 1
                         continue
                     is_one_shot = sess_dir.name.startswith("_")
                     if (not is_one_shot

@@ -84,6 +84,13 @@ def test_codex_app_server_ephemeral_streams_bypass_cold_bootstrap():
     assert "_codex_app_full_initial_text" not in prompt_block
 
 
+def test_codex_app_server_ephemeral_streams_delete_workdir():
+    src = inspect.getsource(LLMCodexAppServerMixin._stream_codex_app_server)
+    cleanup_block = src[src.index("if is_ephemeral and workdir:"):]
+    assert "shutil.rmtree(workdir" in cleanup_block
+    assert "os.replace(workdir, stale)" in cleanup_block
+
+
 
 def test_codex_app_server_effort_mapping():
     assert LLMCodexAppServerMixin._codex_app_effort(0, "") == "low"

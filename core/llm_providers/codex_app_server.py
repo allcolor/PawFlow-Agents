@@ -11,6 +11,7 @@ import logging
 import mimetypes
 import os
 import queue
+import shutil
 import subprocess  # nosec B404
 import threading
 import time
@@ -423,7 +424,14 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
         lock = getattr(self, "_codex_app_lock", None)
         if lock is None:
             return False
+        started = time.monotonic()
+        timings: Dict[str, float] = {}
+
+        def mark(name: str, t0: float) -> None:
+            timings[name] = timings.get(name, 0.0) + ((time.monotonic() - t0) * 1000.0)
+
         with lock:
+            t0 = time.monotonic()
             target_user = user_id or getattr(self, "_user_id", "") or ""
             target_conv = conversation_id or getattr(self, "_conversation_id", "") or ""
             target_agent = agent_name or getattr(self, "_agent_name", "") or ""
@@ -439,6 +447,7 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                 if target_agent and key_agent != target_agent:
                     continue
                 entries.append(candidate)
+            mark("find_active", t0)
             if not entries:
                 return False
             state = sorted(entries, key=lambda s: s.get("started_at", 0))[-1]
@@ -449,6 +458,7 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
             turn_id = state.get("turn_id") or ""
             if not thread_id or not turn_id:
                 return False
+            t0 = time.monotonic()
             input_items = self._codex_app_input_items(
                 text or "", [], state.get("workdir", ""), state.get("container_dir", ""),
             )
@@ -459,9 +469,13 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                 input_items.extend(self._codex_app_attachment_items(attachments))
             if not input_items:
                 return False
+            mark("input_items", t0)
             try:
+                t0 = time.monotonic()
                 rollout = self._codex_app_rollout_path(state.get("workdir", ""), thread_id)
                 after_line = self._codex_app_rollout_line_count(rollout)
+                mark("rollout_count", t0)
+                t0 = time.monotonic()
                 self._codex_app_send(proc, {
                     "method": "turn/steer",
                     "id": self._codex_app_next_id(),
@@ -471,6 +485,7 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                         "input": input_items,
                     },
                 })
+                mark("send", t0)
                 self._codex_app_preempt_pending = int(
                     getattr(self, "_codex_app_preempt_pending", 0) or 0) + 1
                 sent = list(getattr(self, "_codex_app_sent_preempt_texts", []) or [])
@@ -479,6 +494,16 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                 logger.info(
                     "[codex-app] steered active turn %s (pending=%d)",
                     turn_id[:12], self._codex_app_preempt_pending)
+                total_ms = (time.monotonic() - started) * 1000.0
+                if total_ms >= 100.0:
+                    logger.info(
+                        "[codex-app] steer timing total_ms=%.1f find_active=%.1f "
+                        "input_items=%.1f rollout_count=%.1f send=%.1f",
+                        total_ms,
+                        timings.get("find_active", 0.0),
+                        timings.get("input_items", 0.0),
+                        timings.get("rollout_count", 0.0),
+                        timings.get("send", 0.0))
                 return True
             except Exception as exc:
                 logger.warning("[codex-app] turn/steer failed: %s", exc)
@@ -1207,6 +1232,11 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                     try:
                         if proc.poll() is None:
                             proc.terminate()
+                            try:
+                                proc.wait(timeout=2.0)
+                            except subprocess.TimeoutExpired:
+                                proc.kill()
+                                proc.wait(timeout=2.0)
                     except Exception:
                         logger.debug("[codex-app] terminate failed", exc_info=True)
                 if internal_token:
@@ -1222,6 +1252,23 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                     live_session.turn_lock.release()
                 except Exception:
                     logger.debug("[codex-app-live] turn lock release failed", exc_info=True)
+            if is_ephemeral and workdir:
+                try:
+                    shutil.rmtree(workdir, ignore_errors=True)
+                    if os.path.isdir(workdir):
+                        stale = f"{workdir}.stale-{uuid.uuid4().hex[:8]}"
+                        try:
+                            os.replace(workdir, stale)
+                            shutil.rmtree(stale, ignore_errors=True)
+                        except OSError:
+                            logger.debug(
+                                "[codex-app] deferred ephemeral workdir cleanup: %s",
+                                workdir)
+                    else:
+                        logger.debug("[codex-app] deleted ephemeral workdir: %s", workdir)
+                except Exception:
+                    logger.debug("[codex-app] ephemeral workdir cleanup failed: %s",
+                                 workdir, exc_info=True)
 
     def _codex_app_ensure_lock(self):
         lock = getattr(self, "_codex_app_lock", None)

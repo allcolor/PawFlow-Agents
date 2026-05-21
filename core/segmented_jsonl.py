@@ -24,6 +24,7 @@ _INDEX_NAME = "index.json"
 _APPEND_DIAG_MS = float(os.getenv("PAWFLOW_JSONL_APPEND_DIAG_MS", "100") or "100")
 _INDEX_CACHE_MAX = int(os.getenv("PAWFLOW_JSONL_INDEX_CACHE_MAX", "256") or "256")
 _APPEND_HANDLE_MAX = int(os.getenv("PAWFLOW_JSONL_APPEND_HANDLE_MAX", "128") or "128")
+_APPEND_BUFFER_BYTES = int(os.getenv("PAWFLOW_JSONL_APPEND_BUFFER_BYTES", str(1024 * 1024)) or str(1024 * 1024))
 _INDEX_CACHE: Dict[str, Dict[str, Any]] = {}
 _INDEX_CACHE_LOCK = threading.RLock()
 _APPEND_HANDLES: Dict[str, Dict[str, Any]] = {}
@@ -48,6 +49,7 @@ class SegmentedJsonl:
         return self.is_segmented() or self.flat_path.exists()
 
     def iter_paths(self) -> List[Path]:
+        self._flush_own_append_handles()
         if self.is_segmented():
             return self._segment_paths()
         return [self.flat_path] if self.flat_path.exists() else []
@@ -57,6 +59,7 @@ class SegmentedJsonl:
             yield from self._iter_file(path)
 
     def iter_rows_reverse(self) -> Iterator[Dict[str, Any]]:
+        self._flush_own_append_handles()
         paths = self._segment_paths() if self.is_segmented() else ([self.flat_path] if self.flat_path.exists() else [])
         for path in reversed(paths):
             yield from self._iter_file_reverse(path)
@@ -115,10 +118,19 @@ class SegmentedJsonl:
             current["rows"] = int(current.get("rows") or 0) + 1
             current["bytes"] = int(current.get("bytes") or 0) + line_bytes
             index["total_rows"] = int(index.get("total_rows") or 0) + 1
+        append_detail = {
+            "handle_cache": 0.0,
+            "handle_open": 0.0,
+            "handle_lock_wait": 0.0,
+            "write_call": 0.0,
+            "buffer_flush": 0.0,
+        }
         for path, path_lines in pending_by_path.items():
             t0 = time.monotonic()
-            self._append_lines_to_path(path, path_lines)
+            self._append_lines_to_path(path, path_lines, append_detail)
             mark("write", t0)
+        for key, value in append_detail.items():
+            timings[key] = timings.get(key, 0.0) + value
         t0 = time.monotonic()
         self._remember_index(index)
         mark("remember_index", t0)
@@ -135,12 +147,19 @@ class SegmentedJsonl:
         logging.getLogger(__name__).warning(
             "[segjsonl] append slow path=%s rows=%d bytes=%d total_ms=%.1f "
             "cache=%.1f load_index=%.1f current_segment=%.1f "
-            "write=%.1f flat_write=%.1f remember_index=%.1f index_write=%.1f",
+            "write=%.1f handle_cache=%.1f handle_open=%.1f "
+            "handle_lock_wait=%.1f write_call=%.1f buffer_flush=%.1f "
+            "flat_write=%.1f remember_index=%.1f index_write=%.1f",
             str(self.flat_path), rows, total_bytes, total_ms,
             timings.get("cache", 0.0),
             timings.get("load_index", 0.0),
             timings.get("current_segment", 0.0),
             timings.get("write", 0.0),
+            timings.get("handle_cache", 0.0),
+            timings.get("handle_open", 0.0),
+            timings.get("handle_lock_wait", 0.0),
+            timings.get("write_call", 0.0),
+            timings.get("buffer_flush", 0.0),
             timings.get("flat_write", 0.0),
             timings.get("remember_index", 0.0),
             timings.get("index_write", 0.0),
@@ -210,15 +229,21 @@ class SegmentedJsonl:
         return changed
 
     def total_rows(self) -> int:
+        self._flush_own_append_handles()
         if self.is_segmented():
             return int(self._load_index().get("total_rows") or 0)
         return sum(1 for _ in self._iter_file(self.flat_path)) if self.flat_path.exists() else 0
 
     def latest_mtime(self) -> float:
+        self._flush_own_append_handles()
         mtimes = [p.stat().st_mtime for p in self.iter_paths() if p.exists()]
         if self.index_path.exists():
             mtimes.append(self.index_path.stat().st_mtime)
         return max(mtimes) if mtimes else 0.0
+
+    def _flush_own_append_handles(self) -> None:
+        self.flush_append_handles(self.segment_dir)
+        self.flush_append_handles(self.flat_path)
 
     def _load_index(self) -> Dict[str, Any]:
         cache_key = self._cache_key()
@@ -243,7 +268,8 @@ class SegmentedJsonl:
                     latest_segment_mtime = max(
                         (p.stat().st_mtime for p in segment_paths),
                         default=0.0)
-                    if latest_segment_mtime <= index_mtime:
+                    if (latest_segment_mtime <= index_mtime
+                            or self._index_matches_segment_files(data, segment_paths)):
                         self._remember_index(data, flushed=True)
                         return data
                     data = self._refresh_stale_index(data, index_mtime, segment_paths)
@@ -318,6 +344,30 @@ class SegmentedJsonl:
             item["bytes"] = path.stat().st_size if path and path.exists() else 0
 
     @staticmethod
+    def _index_matches_segment_files(index: Dict[str, Any],
+                                     segment_paths: List[Path]) -> bool:
+        segments = index.get("segments") or []
+        if len(segments) != len(segment_paths):
+            return False
+        by_name = {p.name: p for p in segment_paths}
+        total_rows = 0
+        for item in segments:
+            name = str(item.get("file") or "")
+            path = by_name.get(name)
+            if path is None:
+                return False
+            try:
+                if int(item.get("bytes") or 0) != path.stat().st_size:
+                    return False
+                total_rows += int(item.get("rows") or 0)
+            except (OSError, TypeError, ValueError):
+                return False
+        try:
+            return total_rows == int(index.get("total_rows") or 0)
+        except (TypeError, ValueError):
+            return False
+
+    @staticmethod
     def _count_rows_fast(path: Path) -> int:
         rows = 0
         last = b""
@@ -339,32 +389,59 @@ class SegmentedJsonl:
         return str(self.segment_dir)
 
     @staticmethod
-    def _append_lines_to_path(path: Path, lines: List[str]) -> None:
+    def _append_lines_to_path(path: Path, lines: List[str],
+                              timings: Optional[Dict[str, float]] = None) -> None:
         """Append with a hot file handle.
 
-        On Windows/WSL mounts, repeatedly opening and closing the same JSONL
-        segment dominates the cost of tiny append-only writes. Keep one
-        unbuffered append handle per segment path so each write is immediately
-        visible without forcing a Python text-buffer flush on every message.
+        On Windows/WSL mounts, repeated tiny writes through the host path can
+        stall. Keep one buffered append handle per segment path and flush only
+        when the buffer fills, when a reader needs current contents, or before
+        the writer publishes SSE events.
         """
         key = str(path)
+        started = time.monotonic()
         with _APPEND_HANDLES_LOCK:
             state = _APPEND_HANDLES.get(key)
             if state is None or getattr(state.get("fh"), "closed", True):
+                open_started = time.monotonic()
                 path.parent.mkdir(parents=True, exist_ok=True)
                 state = {
-                    "fh": open(path, "ab", buffering=0),
+                    "fh": open(path, "ab", buffering=max(0, _APPEND_BUFFER_BYTES)),
                     "lock": threading.RLock(),
                     "last_used": time.monotonic(),
+                    "buffered_bytes": 0,
                 }
                 _APPEND_HANDLES[key] = state
                 SegmentedJsonl._trim_append_handles_locked()
+                if timings is not None:
+                    timings["handle_open"] = timings.get("handle_open", 0.0) + (
+                        (time.monotonic() - open_started) * 1000.0)
             else:
                 state["last_used"] = time.monotonic()
             fh = state["fh"]
             lock = state["lock"]
+        if timings is not None:
+            timings["handle_cache"] = timings.get("handle_cache", 0.0) + (
+                (time.monotonic() - started) * 1000.0)
+        lock_started = time.monotonic()
         with lock:
-            fh.write("".join(lines).encode("utf-8"))
+            if timings is not None:
+                timings["handle_lock_wait"] = timings.get("handle_lock_wait", 0.0) + (
+                    (time.monotonic() - lock_started) * 1000.0)
+            write_started = time.monotonic()
+            payload = "".join(lines).encode("utf-8")
+            fh.write(payload)
+            state["buffered_bytes"] = int(state.get("buffered_bytes") or 0) + len(payload)
+            if timings is not None:
+                timings["write_call"] = timings.get("write_call", 0.0) + (
+                    (time.monotonic() - write_started) * 1000.0)
+            if int(state.get("buffered_bytes") or 0) >= max(1, _APPEND_BUFFER_BYTES):
+                flush_started = time.monotonic()
+                fh.flush()
+                state["buffered_bytes"] = 0
+                if timings is not None:
+                    timings["buffer_flush"] = timings.get("buffer_flush", 0.0) + (
+                        (time.monotonic() - flush_started) * 1000.0)
 
     @staticmethod
     def _trim_append_handles_locked() -> None:
@@ -421,6 +498,28 @@ class SegmentedJsonl:
                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     @staticmethod
+    def flush_append_handles(root: Path) -> None:
+        root_s = str(root)
+        prefix = root_s + os.sep
+        with _APPEND_HANDLES_LOCK:
+            states = [
+                state for key, state in _APPEND_HANDLES.items()
+                if key == root_s or key.startswith(prefix)
+            ]
+        for state in states:
+            lock = state.get("lock")
+            fh = state.get("fh")
+            if fh is None or getattr(fh, "closed", True):
+                continue
+            try:
+                with lock:
+                    fh.flush()
+                    state["buffered_bytes"] = 0
+                    state["last_used"] = time.monotonic()
+            except Exception:
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+
+    @staticmethod
     def flush_all_append_handles() -> None:
         with _APPEND_HANDLES_LOCK:
             states = list(_APPEND_HANDLES.values())
@@ -432,6 +531,7 @@ class SegmentedJsonl:
             try:
                 with lock:
                     fh.flush()
+                    state["buffered_bytes"] = 0
                     state["last_used"] = time.monotonic()
             except Exception:
                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
@@ -467,9 +567,6 @@ class SegmentedJsonl:
         total = int(index.get("total_rows") or 0)
         with _INDEX_CACHE_LOCK:
             state = _INDEX_CACHE.setdefault(self._cache_key(), {"index": index})
-            if not force:
-                state["dirty"] = True
-                return
             state["last_flush"] = time.monotonic()
             state["last_rows"] = total
             state["dirty"] = False
@@ -494,12 +591,10 @@ class SegmentedJsonl:
 
         The JSONL segment row is the durable source of truth. The index only
         records segment row counts for faster reads; `_load_index()` already
-        rebuilds it from segment files if it is missing or malformed. Avoiding
-        tmp+replace here removes one Windows/WSL rename from every append.
-        `_maybe_write_index_hot()` only calls this when a new segment is created
-        or an index is missing. Ordinary appends keep the in-memory index current
-        and let `_load_index()` rebuild from segments if a future process sees a
-        stale disk index.
+        rebuilds it from segment files if it is missing or malformed. This hot
+        path intentionally avoids tmp+replace/fsync, but keeps the disk index
+        current enough that restart does not make the first append count the
+        tail segment under the conversation lock.
         Full rewrites still use `_write_index()` through replace_lines().
         """
         self.segment_dir.mkdir(parents=True, exist_ok=True)

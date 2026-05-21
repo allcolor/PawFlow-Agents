@@ -1596,6 +1596,30 @@ class TestCleanupCliRuntimeSessions:
         assert '"codex"' in src
         assert '"gemini"' in src
 
+    def test_cleanup_removes_existing_stale_cli_dirs_without_worker_spam(
+            self, store, tmp_path, monkeypatch):
+        codex, _gemini = self._setup(tmp_path, monkeypatch)
+        stale = codex / "alice" / ".stale-codex-old-12345678"
+        stale.mkdir(parents=True)
+        (stale / "leftover.txt").write_text("x", encoding="utf-8")
+
+        started_threads = []
+
+        class _Thread:
+            def __init__(self, *args, **kwargs):
+                started_threads.append((args, kwargs))
+
+            def start(self):
+                raise AssertionError("existing .stale dirs must not spawn cleanup workers")
+
+        monkeypatch.setattr("core.conversation_store.threading.Thread", _Thread)
+
+        removed = store.cleanup_orphan_cli_sessions(providers=["codex"])
+
+        assert removed == 1
+        assert not stale.exists()
+        assert started_threads == []
+
     def test_invalidate_all_removes_codex_and_gemini_agent_dirs(self, store, tmp_path, monkeypatch):
         codex, gemini = self._setup(tmp_path, monkeypatch)
         cid = store.generate_id()

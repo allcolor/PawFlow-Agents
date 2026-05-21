@@ -220,6 +220,15 @@ class ConversationWriter:
         from core.conversation_store import ConversationStore
         store = ConversationStore.instance()
 
+        def flush_before_sse() -> None:
+            try:
+                flush_handles = getattr(store, "flush_append_handles", None)
+                if callable(flush_handles):
+                    flush_handles(self._cid)
+            except Exception:
+                logger.debug("[conv-writer:%s] append-handle flush failed before SSE",
+                             self._cid[:8], exc_info=True)
+
         while not self._stop:
             try:
                 item = self._queue.get(timeout=_IDLE_TIMEOUT)
@@ -234,8 +243,12 @@ class ConversationWriter:
 
             if item.get("_flush"):
                 try:
-                    from core.segmented_jsonl import SegmentedJsonl
-                    SegmentedJsonl.flush_all_append_handles()
+                    flush_handles = getattr(store, "flush_append_handles", None)
+                    if callable(flush_handles):
+                        flush_handles(self._cid)
+                    else:
+                        from core.segmented_jsonl import SegmentedJsonl
+                        SegmentedJsonl.flush_all_append_handles()
                 except Exception:
                     logger.debug("[conv-writer:%s] append-handle flush failed",
                                  self._cid[:8], exc_info=True)
@@ -245,6 +258,7 @@ class ConversationWriter:
                 continue
 
             if item.get("op") == "publish_events":
+                flush_before_sse()
                 _publish_started = time.monotonic()
                 self._publish_sse_events(item)
                 _publish_ms = ((time.monotonic() - _publish_started)
@@ -332,6 +346,7 @@ class ConversationWriter:
                     _write_ms += ((time.monotonic() - _write_started)
                                   * 1000.0)
                     written.append(write_item)
+                    flush_before_sse()
                     _publish_started = time.monotonic()
                     self._publish_sse_events(write_item)
                     _publish_ms += ((time.monotonic() - _publish_started)
@@ -343,6 +358,7 @@ class ConversationWriter:
                     i += 1
 
             for event_item in post_events:
+                flush_before_sse()
                 _publish_started = time.monotonic()
                 self._publish_sse_events(event_item)
                 _publish_ms += ((time.monotonic() - _publish_started)

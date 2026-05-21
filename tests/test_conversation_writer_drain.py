@@ -44,11 +44,17 @@ def _clear_instances():
 class _FakeStore:
     def __init__(self):
         self.routed = []
+        self.events = []
         self.lock = threading.Lock()
 
     def append_message(self, cid, msg, agent_name="", user_id="", ttl=0):
         with self.lock:
             self.routed.append((cid, agent_name, dict(msg)))
+            self.events.append(("append", cid, msg.get("content")))
+
+    def flush_append_handles(self, cid):
+        with self.lock:
+            self.events.append(("flush", cid, None))
 
     def instance(self):
         return self
@@ -407,6 +413,7 @@ def test_enqueue_message_sse_fires_after_persist(fake_store):
     class _FakeBus:
         def publish_event(self, cid, typ, data=None):
             # When SSE fires, the store must already have the message.
+            fake_store.events.append(("publish", cid, typ))
             published.append((cid, typ, len(fake_store.routed)))
 
         @classmethod
@@ -429,5 +436,7 @@ def test_enqueue_message_sse_fires_after_persist(fake_store):
         # At the moment of publish, the routed list already contained
         # the message (length >= 1).
         assert published[0][2] >= 1
+        event_names = [event[0] for event in fake_store.events]
+        assert event_names[:3] == ["append", "flush", "publish"]
     finally:
         _ceb.ConversationEventBus.instance = orig

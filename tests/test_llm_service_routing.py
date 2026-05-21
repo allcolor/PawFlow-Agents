@@ -1,8 +1,8 @@
-"""Tests for LLM service routing, capacity management, prompt library, and agent identity.
+"""Tests for LLM service routing, call isolation, prompt library, and agent identity.
 
 Covers:
 - Feature 1: LLM service routing per agent
-- Feature 2: Capacity management (max_concurrent, select_processable)
+- Feature 2: LLM call isolation (no service-level provider blocking)
 - Feature 3: Prompt library (ResourceStore "prompt" type)
 - Feature 4: Agent identity/source tracking
 """
@@ -35,6 +35,25 @@ class TestLLMConnectionServiceCapacity(unittest.TestCase):
         client = svc.get_client()
         self.assertIsInstance(client, LLMClient)
         self.assertEqual(client.api_key, "test")
+        self.assertIsNot(client, svc._client)
+
+    def test_get_client_does_not_share_mutable_call_state(self):
+        from services.llm_connection import LLMConnectionService
+        svc = LLMConnectionService.__new__(LLMConnectionService)
+        svc._client = LLMClient(provider="openai", config={"api_key": "test"})
+        svc._client._conversation_id = "parent"
+        svc._client._abort.set()
+        svc._semaphore = None
+        svc._max_concurrent = 0
+        svc.config = {"api_key": "test"}
+
+        first = svc.get_client()
+        second = svc.get_client()
+
+        self.assertIsNot(first, second)
+        self.assertIsNot(first, svc._client)
+        self.assertFalse(first._abort.is_set())
+        self.assertFalse(hasattr(first, "_conversation_id"))
 
     def test_has_capacity_unlimited(self):
         from services.llm_connection import LLMConnectionService
@@ -42,19 +61,19 @@ class TestLLMConnectionServiceCapacity(unittest.TestCase):
         svc._semaphore = None
         self.assertTrue(svc.has_capacity())
 
-    def test_has_capacity_with_limit(self):
+    def test_has_capacity_ignores_legacy_limit(self):
         from services.llm_connection import LLMConnectionService
         svc = LLMConnectionService.__new__(LLMConnectionService)
         svc._semaphore = threading.Semaphore(1)
         self.assertTrue(svc.has_capacity())
 
-    def test_try_acquire_and_release(self):
+    def test_try_acquire_and_release_are_noops(self):
         from services.llm_connection import LLMConnectionService
         svc = LLMConnectionService.__new__(LLMConnectionService)
         svc._semaphore = threading.Semaphore(1)
         self.assertTrue(svc.try_acquire())
-        self.assertFalse(svc.try_acquire())  # saturated
-        self.assertFalse(svc.has_capacity())
+        self.assertTrue(svc.try_acquire())
+        self.assertTrue(svc.has_capacity())
         svc.release()
         self.assertTrue(svc.has_capacity())
 

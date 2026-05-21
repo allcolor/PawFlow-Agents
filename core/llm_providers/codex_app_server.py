@@ -554,7 +554,10 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
         os.makedirs(workdir, exist_ok=True)
         container_dir = self._codex_app_container_dir(workdir)
 
-        if thread_id:
+        if is_ephemeral:
+            prompt_mode = "ephemeral"
+            initial_text = self._codex_app_resume_text(messages)
+        elif thread_id:
             prompt_mode = "resume"
             initial_text = self._codex_app_resume_text(messages)
         else:
@@ -681,6 +684,7 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
         last_thinking_emit = 0.0
         stream_uniq = f"codexapp-{uuid.uuid4().hex[:8]}"
         stream_tc_names: Dict[str, str] = {}
+        stream_tc_started: Dict[str, float] = {}
         completed_tool_ids = set()
         self._had_preempts_this_turn = False
         self._codex_app_preempt_pending = 0
@@ -716,20 +720,19 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
             if not live_thinking_parts:
                 return
             now = time.time()
-            text = "".join(live_thinking_parts).strip()
-            if not text:
+            text = "".join(live_thinking_parts)
+            if not text.strip():
                 live_thinking_parts.clear()
                 return
-            if not force and len(text) < 160 and now - last_thinking_emit < 1.0:
-                return
+            if not force:
+                if len(text) < 160:
+                    return
+                if now - last_thinking_emit < 4.0:
+                    return
             live_thinking_parts.clear()
-            thinking_parts.clear()
-            emitted_thinking_parts.append(text)
             last_thinking_emit = now
             if thinking_callback:
                 thinking_callback(text)
-            if block_callback:
-                block_callback("thinking", {"thinking": text})
 
         def _append_final_reasoning(text: str) -> None:
             text = (text or "").strip()
@@ -783,6 +786,20 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
             compact_hard_killed = True
             logger.warning(
                 "[codex-app] contextCompaction hard-kill — %s", reason)
+            if conv_id and store is not None and not is_ephemeral:
+                try:
+                    store.set_extra(
+                        conv_id,
+                        f"codex_app_server_thread:{agent_name or 'default'}",
+                        "")
+                    store.set_extra(
+                        conv_id,
+                        f"codex_app_pool_idx:{agent_name or 'default'}",
+                        "")
+                except Exception:
+                    logger.debug(
+                        "[codex-app] compact session invalidation failed",
+                        exc_info=True)
             try:
                 lock = self._codex_app_ensure_lock()
                 with lock:
@@ -1015,6 +1032,11 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                         raw_name = item.get("tool") or "use_tool"
                         raw_args = item.get("arguments") or {}
                         stream_tc_names[tc_id] = raw_name
+                        stream_tc_started[tc_id] = time.perf_counter()
+                        logger.info(
+                            "[codex-app] timing mcpToolCall started tc_id=%s raw_id=%s tool=%s conv=%s agent=%s",
+                            tc_id, item.get("id") or "", raw_name,
+                            conv_id[:8] or "?", agent_name or "")
                         try:
                             from core.llm_client import unwrap_mcp_tool
                             from core.background_tool import enqueue_cc_tc, _args_hash
@@ -1063,6 +1085,13 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                         raw_name = stream_tc_names.get(tc_id) or item.get("tool") or ""
                         result_str = self._codex_app_result_text(item)
                         completed_tool_ids.add(tc_id)
+                        started = stream_tc_started.pop(tc_id, 0.0)
+                        provider_ms = ((time.perf_counter() - started) * 1000
+                                       if started else 0.0)
+                        logger.info(
+                            "[codex-app] timing mcpToolCall completed tc_id=%s raw_id=%s tool=%s provider_ms=%.1f result_len=%d",
+                            tc_id, raw_id, raw_name, provider_ms,
+                            len(result_str))
                         if block_callback:
                             block_callback("tool_result", {
                                 "tc_id": tc_id,

@@ -25,6 +25,16 @@ from pawflow_relay.proc_registry import (
 )
 
 
+def _is_powershell_shell(shell_name: str, executable: str = "") -> bool:
+    name = (shell_name or "").lower()
+    exe = str(executable or "").replace("\\", "/").rsplit("/", 1)[-1].lower()
+    return name in ("powershell", "pwsh", "ps") or exe in ("powershell.exe", "pwsh.exe")
+
+
+def _powershell_command(executable: str, command: str):
+    return [executable, "-NoProfile", "-NonInteractive", "-Command", command]
+
+
 def action_exec(root_dir: str, path: str, req: Dict[str, Any], *,
                 allow_exec: bool = False) -> Any:
     """Execute a shell command in the sandbox directory."""
@@ -132,21 +142,36 @@ def action_exec(root_dir: str, path: str, req: Dict[str, Any], *,
             if not executable:
                 raise ValueError(f"Shell '{shell_name}' not found. "
                                  f"Available: {', '.join(detect_available_shells().keys())}")
-        if not executable and os.name == "nt":
-            # Default: cmd.exe with UTF-8 codepage
-            command = f"chcp 65001 >nul 2>&1 & {command}"
-        command, run_cwd = windows_shell_cwd(
-            command, root_dir, shell_name=shell_name, executable=executable or "")
-        result = _run_cancellable(
-            req.get("request_id", ""),
-            command, shell=True,  # nosec B604 - relay exec tool intentionally runs shell commands.
-            executable=executable,
-            capture_output=True, text=True,
-            encoding="utf-8", errors="replace",
-            timeout=timeout,
-            cwd=run_cwd,
-            env=env,
-        )
+        if executable and os.name == "nt" and _is_powershell_shell(shell_name, executable):
+            command, run_cwd = windows_shell_cwd(
+                command, root_dir, shell_name=shell_name,
+                executable=executable)
+            result = _run_cancellable(
+                req.get("request_id", ""),
+                _powershell_command(executable, command),
+                shell=False,
+                capture_output=True, text=True,
+                encoding="utf-8", errors="replace",
+                timeout=timeout,
+                cwd=run_cwd,
+                env=env,
+            )
+        else:
+            if not executable and os.name == "nt":
+                # Default: cmd.exe with UTF-8 codepage
+                command = f"chcp 65001 >nul 2>&1 & {command}"
+            command, run_cwd = windows_shell_cwd(
+                command, root_dir, shell_name=shell_name, executable=executable or "")
+            result = _run_cancellable(
+                req.get("request_id", ""),
+                command, shell=True,  # nosec B604 - relay exec tool intentionally runs shell commands.
+                executable=executable,
+                capture_output=True, text=True,
+                encoding="utf-8", errors="replace",
+                timeout=timeout,
+                cwd=run_cwd,
+                env=env,
+            )
     stdout = result.stdout or ""
     stderr = result.stderr or ""
     if len(stdout) > MAX_EXEC_OUTPUT:
@@ -221,16 +246,20 @@ def action_exec_stream(root_dir: str, path: str, req: Dict[str, Any], *,
             executable = _resolve_shell(shell_name)
             if not executable:
                 raise ValueError(f"Shell '{shell_name}' not found.")
-        if not executable and os.name == "nt":
-            command = f"chcp 65001 >nul 2>&1 & {command}"
         command, run_cwd = windows_shell_cwd(
             command, root_dir, shell_name=shell_name, executable=executable or "")
-        cmd = command
-        popen_kwargs["shell"] = True
+        if executable and os.name == "nt" and _is_powershell_shell(shell_name, executable):
+            cmd = _powershell_command(executable, command)
+            popen_kwargs["shell"] = False
+        else:
+            if not executable and os.name == "nt":
+                command = f"chcp 65001 >nul 2>&1 & {command}"
+            cmd = command
+            popen_kwargs["shell"] = True
+            if executable:
+                popen_kwargs["executable"] = executable
         popen_kwargs["cwd"] = run_cwd
         popen_kwargs["env"] = env
-        if executable:
-            popen_kwargs["executable"] = executable
 
     proc = subprocess.Popen(cmd if not popen_kwargs.get("shell") else cmd, **popen_kwargs)  # nosec B603
     _request_id = req.get("request_id", "")

@@ -537,6 +537,8 @@ class RelayService(BaseService):
                         writer, json.dumps({'type': 'ping'}).encode())
                 continue
             if opcode == 0x08:
+                logger.info('Relay close frame received for %s',
+                            service._service_id)
                 break
             if opcode == 0x09:
                 async with send_lock:
@@ -544,8 +546,18 @@ class RelayService(BaseService):
                 continue
             if opcode != 0x01:
                 continue
-            msg = json.loads(payload.decode('utf-8'))
-            await self._dispatch_relay_msg(msg, writer, service, send_lock, relay_tasks)
+            try:
+                msg = json.loads(payload.decode('utf-8'))
+            except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                logger.warning('Ignoring malformed relay frame from %s: %s',
+                               service._service_id, exc)
+                continue
+            try:
+                await self._dispatch_relay_msg(
+                    msg, writer, service, send_lock, relay_tasks)
+            except Exception as exc:
+                logger.warning('Relay message dispatch failed for %s: %s',
+                               service._service_id, exc, exc_info=True)
 
     async def _dispatch_relay_msg(self, msg, writer, service, send_lock, relay_tasks):
         import asyncio
@@ -692,6 +704,12 @@ class RelayService(BaseService):
                     method, request_id[:8])
                 reply = {'error': 'EIO', 'errno': 5,
                          'message': f'{method} timed out after 10s'}
+            except Exception as exc:
+                logger.warning(
+                    "[server-fs] %s ERROR rid=%s: %s",
+                    method, request_id[:8], exc, exc_info=True)
+                reply = {'error': 'EIO', 'errno': 5,
+                         'message': f'{method} failed: {exc}'}
         _dt = int((_time.monotonic() - _t0) * 1000)
         if 'error' in reply:
             logger.debug("[server-fs] %s EXIT rid=%s dt=%dms err=%s",
@@ -795,6 +813,7 @@ class RelayService(BaseService):
         for conn in removed:
             for task in list(conn.get("tasks") or ()):
                 task.cancel()
+        cancelled_pending = 0
         with self._pending_lock:
             pending_items = list(self._pending.items())
             for rid, (evt, holder) in pending_items:
@@ -803,6 +822,10 @@ class RelayService(BaseService):
                     self._pending.pop(rid, None)
                     holder["error"] = "Relay disconnected"
                     evt.set()
+                    cancelled_pending += 1
+        logger.info(
+            "Relay pool cleared for '%s': removed=%d alive=%d pending_cancelled=%d",
+            self._service_id, len(removed), alive, cancelled_pending)
         # Notify SSE clients
         try:
             from core.conversation_event_bus import ConversationEventBus

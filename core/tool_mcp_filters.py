@@ -85,6 +85,11 @@ def set_filters(conversation_id: str, filters: Dict[str, Any]) -> Dict[str, Any]
     data["agent_overrides"] = overrides
     from core.conversation_store import ConversationStore
     ConversationStore.instance().set_extra(conversation_id, FILTERS_KEY, data)
+    try:
+        from services.tool_relay_service import ToolRelayService
+        ToolRelayService.clear_registry_cache(conversation_id=conversation_id)
+    except Exception:
+        pass
     return data
 
 
@@ -114,9 +119,19 @@ def disabled_names(conversation_id: str, agent_name: str = "",
 
 def is_tool_enabled(conversation_id: str, name: str, agent_name: str = "",
                     origin: str = "builtin", origin_scope: str = "") -> bool:
+    filters = get_filters(conversation_id)
+    return is_tool_enabled_from_filters(
+        filters, name, agent_name, origin, origin_scope)
+
+
+def is_tool_enabled_from_filters(filters: Dict[str, Any], name: str,
+                                 agent_name: str = "",
+                                 origin: str = "builtin",
+                                 origin_scope: str = "") -> bool:
+    """Return tool availability using an already-loaded filter document."""
     if not name:
         return False
-    filters = get_filters(conversation_id)
+    filters = filters if isinstance(filters, dict) else _default_filters()
     if agent_name:
         scoped = _agent_cfg(filters, agent_name).get("tools")
         if isinstance(scoped, dict) and scoped.get("mode") == "custom":

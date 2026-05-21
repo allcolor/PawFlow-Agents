@@ -10,6 +10,38 @@ PawFlow supports three execution modes, auto-detected at startup:
 
 Override with `PAWFLOW_EXEC_MODE=local|docker|sidecar`.
 
+## Operational Logs
+
+Server startup keeps stdout/stderr logging for Docker and service managers, and
+also mirrors the same records to rotating files under `data/runtime/logs`:
+
+| File | Contents |
+|------|----------|
+| `server.log` | All server log records at INFO and above. |
+| `server.error.log` | ERROR and CRITICAL records only. |
+
+The files rotate by size to avoid unbounded terminal-copy-sized logs. Defaults
+are 25 MiB per segment with 10 retained backups (`server.log.1`,
+`server.log.2`, ...). Configure with:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PAWFLOW_SERVER_LOG_DIR` | `data/runtime/logs` | Directory for server log files. |
+| `PAWFLOW_SERVER_LOG_MAX_BYTES` | `26214400` | Maximum bytes per log segment before rollover. |
+| `PAWFLOW_SERVER_LOG_BACKUP_COUNT` | `10` | Retained rotated `server.log` segments. |
+| `PAWFLOW_SERVER_ERROR_LOG_BACKUP_COUNT` | same as main backup count | Retained rotated `server.error.log` segments. |
+
+## Runtime JSONL Segments
+
+Conversation transcripts and context files are stored as segmented JSONL under
+`data/runtime/conversations`. Segments rotate by row count and by byte size so a
+single hot append target does not grow into a large file on Windows/WSL mounts.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PAWFLOW_JSONL_SEGMENT_ROWS` | `5000` | Maximum rows per JSONL segment. |
+| `PAWFLOW_JSONL_SEGMENT_BYTES` | `8388608` | Maximum bytes per JSONL segment before rollover. |
+
 ## Auto-detection logic
 
 ```

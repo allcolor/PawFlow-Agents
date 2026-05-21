@@ -43,10 +43,13 @@ class LLMConnectionService(BaseService):
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
         self._client = LLMClient.from_config(self.config)
-        # Capacity management
-        max_conc = int(self.config.get("max_concurrent", 0))
-        self._semaphore = threading.Semaphore(max_conc) if max_conc > 0 else None
-        self._max_concurrent = max_conc
+        # LLM calls are isolated per invocation. `max_concurrent` is kept in
+        # the schema for stored service configs, but runtime service-level
+        # throttling is deliberately disabled: a foreground agent, compact,
+        # memory extraction, bucket build, or sub-agent must never wait behind
+        # another call merely because they use the same provider service.
+        self._semaphore = None
+        self._max_concurrent = 0
         # Token tracking (at service level — tracks ALL calls through this service)
         self._total_tokens_in = 0
         self._total_tokens_out = 0
@@ -162,10 +165,11 @@ class LLMConnectionService(BaseService):
         self.ensure_connected()
         temperature, max_tokens, model = self._apply_defaults(temperature, max_tokens, model)
         try:
-            resp = self._client.complete(messages, model, temperature, max_tokens,
-                                          response_format, tools,
-                                          thinking_budget=thinking_budget,
-                                          **call_kwargs)
+            client = self.get_client()
+            resp = client.complete(messages, model, temperature, max_tokens,
+                                   response_format, tools,
+                                   thinking_budget=thinking_budget,
+                                   **call_kwargs)
             self._track_tokens(resp, messages)
             return resp
         except LLMClientError as e:
@@ -193,7 +197,8 @@ class LLMConnectionService(BaseService):
         self.ensure_connected()
         temperature, max_tokens, model = self._apply_defaults(temperature, max_tokens, model)
         try:
-            resp = self._client.complete_stream(
+            client = self.get_client()
+            resp = client.complete_stream(
                 messages, model, temperature, max_tokens, tools, callback,
                 thinking_budget=thinking_budget,
                 thinking_callback=thinking_callback,
@@ -254,11 +259,12 @@ class LLMConnectionService(BaseService):
         }
 
     def get_client(self, pool_index: int = -1) -> LLMClient:
-        """Return the underlying LLMClient instance.
+        """Return an isolated LLMClient instance for one logical call.
 
         If this service has an api_keys_pool, set the active key based on
         pool_index (conversation affinity) or round-robin (new conv).
         """
+        client = self._client.clone_for_call()
         pool = self._get_api_key_pool()
         if pool:
             if 0 <= pool_index < len(pool):
@@ -267,9 +273,9 @@ class LLMConnectionService(BaseService):
                 with LLMConnectionService._api_key_lock:
                     idx = LLMConnectionService._api_key_counter % len(pool)
                     LLMConnectionService._api_key_counter += 1
-            self._client._active_api_key = pool[idx]
-            self._client._active_pool_index = idx
-        return self._client
+            client._active_api_key = pool[idx]
+            client._active_pool_index = idx
+        return client
 
     def _get_api_key_pool(self) -> list:
         """Get the API key pool from config. Returns list of key strings."""
@@ -315,25 +321,16 @@ class LLMConnectionService(BaseService):
         return idx
 
     def try_acquire(self) -> bool:
-        """Non-blocking acquire of a concurrency slot. Returns True if acquired."""
-        if self._semaphore is None:
-            return True
-        return self._semaphore.acquire(blocking=False)
+        """LLM service calls are never capacity-gated at service level."""
+        return True
 
     def release(self):
-        """Release a concurrency slot."""
-        if self._semaphore is not None:
-            self._semaphore.release()
+        """Compatibility no-op for older callers."""
+        return None
 
     def has_capacity(self) -> bool:
-        """Check if a concurrency slot is available (non-destructive peek)."""
-        if self._semaphore is None:
-            return True
-        # Acquire + immediate release to peek
-        if self._semaphore.acquire(blocking=False):
-            self._semaphore.release()
-            return True
-        return False
+        """LLM service calls are always independently instantiable."""
+        return True
 
     def get_parameter_schema(self) -> Dict[str, Any]:
         """Parameters — no conditional logic here (rules handle that)."""

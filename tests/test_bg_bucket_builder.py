@@ -478,6 +478,25 @@ def test_build_now_sync_no_partial_when_forbidden(fake_builder):
     assert calls == []
 
 
+def test_build_now_sync_ignores_foreground_state_and_builds_snapshot(
+        fake_builder, monkeypatch):
+    _write_shared(fake_builder._shared_path, L1_TRIGGER_MSGS + TAIL_RESERVE)
+    summarize_fn, calls = _make_summarize_fn()
+    fake_builder.set_summarizer_resolver(
+        lambda uid: (_fake_client(), 128000, "svc-test"))
+    fake_builder.set_summarize_fn(summarize_fn)
+    monkeypatch.setattr(
+        fake_builder, "_foreground_busy_reason", lambda cid: "agent active",
+        raising=False)
+
+    result = fake_builder.build_now_sync("cid_test", "user_test",
+                                         allow_partial=False)
+
+    assert result["buckets_built"] == 1
+    assert calls[0]["conversation_id"] == "cid_test"
+    assert calls[0]["agent_name"] == ""
+
+
 def test_build_now_sync_collapses_existing_over_budget_header(fake_builder, monkeypatch):
     _patch_summarizer_config(
         monkeypatch, header_budget_tokens=1000, header_char_multiplier=3.0)

@@ -8,6 +8,7 @@ proceed to os._exit, otherwise we lose messages. This is not a
 best-effort behavior; it is required for correctness.
 """
 
+import queue
 import threading
 import time
 
@@ -125,6 +126,73 @@ def test_enqueue_message_routes_through_append_message(fake_store):
     assert rmsg["content"] == "hi"
 
 
+def test_writer_batches_non_sse_runs(monkeypatch):
+    class _BatchStore:
+        def __init__(self):
+            self.batches = []
+            self.single = []
+
+        def append_messages(self, cid, items):
+            self.batches.append((cid, [item["msg"]["content"] for item in items]))
+
+        def append_message(self, cid, msg, agent_name="", user_id="", ttl=0):
+            self.single.append((cid, msg["content"]))
+
+    store = _BatchStore()
+    from core import conversation_store as _cs
+    monkeypatch.setattr(_cs.ConversationStore, "instance",
+                        classmethod(lambda _c: store))
+
+    cid = "conv-batch-writer"
+    w = ConversationWriter.for_conversation(cid)
+    w.enqueue_message(_msg(content="a"))
+    w.enqueue_message(_msg(content="b"))
+    w.enqueue_message(_msg(content="c"))
+
+    assert ConversationWriter.shutdown_all(wait_timeout=5.0)
+    assert store.batches == [(cid, ["a", "b", "c"])]
+    assert store.single == []
+
+
+def test_writer_does_not_batch_sse_items(monkeypatch):
+    class _BatchStore:
+        def __init__(self):
+            self.batches = []
+            self.single = []
+
+        def append_messages(self, cid, items):
+            self.batches.append((cid, [item["msg"]["content"] for item in items]))
+
+        def append_message(self, cid, msg, agent_name="", user_id="", ttl=0):
+            self.single.append((cid, msg["content"]))
+
+    class _Bus:
+        def subscriber_count(self, _cid):
+            return 1
+
+        def publish_event(self, _cid, _event_type, _data=None):
+            return None
+
+    store = _BatchStore()
+    from core import conversation_store as _cs
+    monkeypatch.setattr(_cs.ConversationStore, "instance",
+                        classmethod(lambda _c: store))
+    monkeypatch.setattr(
+        "core.conversation_event_bus.ConversationEventBus.instance",
+        staticmethod(lambda: _Bus()))
+
+    cid = "conv-batch-sse"
+    w = ConversationWriter.for_conversation(cid)
+    w.enqueue_message(_msg(content="a"))
+    w.enqueue_message(_msg(content="live"),
+                      sse_events=[{"type": "new_message", "data": {}}])
+    w.enqueue_message(_msg(content="b"))
+
+    assert ConversationWriter.shutdown_all(wait_timeout=5.0)
+    assert store.batches == [(cid, ["a"]), (cid, ["b"])]
+    assert store.single == [(cid, "live")]
+
+
 def test_enqueue_message_does_not_wait_for_slow_writer(fake_store, monkeypatch):
     entered = threading.Event()
     release = threading.Event()
@@ -153,6 +221,64 @@ def test_enqueue_message_does_not_wait_for_slow_writer(fake_store, monkeypatch):
     t.join(timeout=1.0)
     release.set()
     assert ConversationWriter.shutdown_all(wait_timeout=10.0)
+
+
+def test_writer_publishes_each_sse_after_its_own_append(fake_store, monkeypatch):
+    """A slow later append must not hide an earlier persisted tool event.
+
+    The web UI relies on tool_call/tool_result SSE arriving live. Batching is
+    allowed for write throughput, but publication must happen immediately after
+    each individual append succeeds, not after the whole batch drains.
+    """
+    first_published = threading.Event()
+    second_append_entered = threading.Event()
+    release_second_append = threading.Event()
+    flush_done = threading.Event()
+
+    def _append(cid, msg, agent_name="", user_id="", ttl=0):
+        fake_store.routed.append((cid, agent_name, dict(msg)))
+        if msg["content"] == "second":
+            second_append_entered.set()
+            release_second_append.wait(timeout=5.0)
+
+    class _Bus:
+        def subscriber_count(self, _cid):
+            return 1
+
+        def publish_event(self, _cid, event_type, data=None):
+            if event_type == "tool_call" and (data or {}).get("id") == "first":
+                first_published.set()
+
+    monkeypatch.setattr(fake_store, "append_message", _append)
+    monkeypatch.setattr(
+        "core.conversation_event_bus.ConversationEventBus.instance",
+        staticmethod(lambda: _Bus()))
+
+    w = ConversationWriter.__new__(ConversationWriter)
+    w._cid = "conv-live-publish"
+    w._queue = queue.Queue()
+    w._stop = False
+    w._alive = True
+    w._queue.put({
+        "op": "append_message",
+        "msg": _msg(content="first"),
+        "sse_events": [{"type": "tool_call", "data": {"id": "first"}}],
+    })
+    w._queue.put({
+        "op": "append_message",
+        "msg": _msg(content="second"),
+        "sse_events": [{"type": "tool_call", "data": {"id": "second"}}],
+    })
+    w._queue.put({"_flush": True, "_done_event": flush_done})
+
+    t = threading.Thread(target=w._writer_loop)
+    t.start()
+    assert second_append_entered.wait(timeout=1.0)
+    assert first_published.wait(timeout=1.0)
+    w._stop = True
+    release_second_append.set()
+    assert flush_done.wait(timeout=5.0)
+    t.join(timeout=5.0)
 
 
 def test_enqueue_message_requires_ts_and_seq(fake_store):

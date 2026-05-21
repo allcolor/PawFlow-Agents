@@ -189,7 +189,16 @@ def dispatch_event(app, event, streaming_agent, thinking_agent):
                 return False, streaming_agent, thinking_agent
             before = data.get("before", 0)
             after = data.get("after", 0)
-            app.renderer.print_system(f"Compacted: {before} \u2192 {after} messages")
+            tokens_after = data.get("tokens_after")
+            target_tokens = data.get("target_tokens")
+            suffix = ""
+            if tokens_after is not None:
+                suffix = f" (~{tokens_after} tokens"
+                if target_tokens is not None:
+                    suffix += f" / target {target_tokens}"
+                suffix += ")"
+            app.renderer.print_system(
+                f"Compacted: {before} \u2192 {after} messages{suffix}")
             # Only clear status if no active agents (poller is source of truth)
             if not app._active_agents:
                 app._update_status("")

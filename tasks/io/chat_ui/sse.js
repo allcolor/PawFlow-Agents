@@ -1073,11 +1073,13 @@ function connectSSE(cid, onReady, opts) {
         : (data.before !== undefined ? data.before : '?');
       const after = data.after !== undefined ? data.after : '?';
       const tokAfter = data.tokens_after !== undefined ? data.tokens_after : '?';
+      const tokTarget = data.target_tokens !== undefined ? data.target_tokens : null;
+      const tokenText = tokTarget !== null ? (tokAfter + '/' + tokTarget) : tokAfter;
       addMsg('system', t('contextCompactedStatus', {
         agent: agent,
         before: total,
         after: after,
-        tokens: tokAfter,
+        tokens: tokenText,
       }));
     } else if (data.stage === 'error') {
       hideContextOp();

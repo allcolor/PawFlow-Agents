@@ -323,26 +323,25 @@ class ContinuousFlowExecutor:
         logger.info("[startup-timing] executor scheduler/start phase: %.1fms",
                     (time.monotonic() - _t0) * 1000)
 
-        # Safety net: reclaim orphan / stale Claude Code session dirs
-        # accumulated across previous runs. It can scan thousands of files on
-        # Windows/WSL, so run after the scheduler is live and never block the
-        # server-ready path.
-        def _cleanup_cc_sessions_async():
+        # Safety net: reclaim orphan CLI session dirs accumulated across
+        # previous runs. This only checks sessions/<provider>/<user>/<conv>
+        # links against conversation dirs; it does not walk live session trees.
+        def _cleanup_cli_sessions_async():
             try:
                 _t0 = time.monotonic()
                 from core.conversation_store import ConversationStore as _CS
-                _removed = _CS.instance().cleanup_orphan_claude_sessions()
+                _removed = _CS.instance().cleanup_orphan_cli_sessions()
                 if _removed:
-                    logger.info("Reclaimed %d orphan/stale CC session entry(ies) on boot",
+                    logger.info("Reclaimed %d orphan CLI session dir(s) on boot",
                                 _removed)
-                logger.info("[startup-timing] executor CC session cleanup async: %.1fms",
+                logger.info("[startup-timing] executor CLI session cleanup async: %.1fms",
                             (time.monotonic() - _t0) * 1000)
             except Exception as _e:
-                logger.debug("CC session cleanup on boot failed: %s", _e)
+                logger.debug("CLI session cleanup on boot failed: %s", _e)
 
         threading.Thread(
-            target=_cleanup_cc_sessions_async,
-            name="cc-session-cleanup",
+            target=_cleanup_cli_sessions_async,
+            name="cli-session-cleanup",
             daemon=True,
         ).start()
         logger.info("[startup-timing] executor start total: %.1fms",

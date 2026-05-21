@@ -17,6 +17,8 @@ from pathlib import Path
 from unittest.mock import patch
 from typing import Dict, Any
 
+import pytest
+
 from core.tool_handler import ToolHandler
 from core.tool_registry import ToolRegistry, create_default_registry
 from core.handlers.edit_handler import EditHandler
@@ -821,6 +823,86 @@ class TestMetaToolAliases(unittest.TestCase):
             assert result["total_replacements"] == 2
             assert result["files_modified"] == ["a.txt", "b.txt"]
             assert [d["replacements"] for d in result["details"]] == [1, 1]
+
+    def test_batch_edit_local_allows_absolute_host_paths(self):
+        from tools.fs_actions import action_batch_edit
+
+        with tempfile.TemporaryDirectory() as root_tmp, tempfile.TemporaryDirectory() as host_tmp:
+            root = Path(root_tmp)
+            host_file = Path(host_tmp) / "host.txt"
+            host_file.write_text("alpha\n", encoding="utf-8")
+
+            result = action_batch_edit(str(root), str(root), {
+                "local": True,
+                "edits": [{
+                    "path": str(host_file),
+                    "old_string": "alpha",
+                    "new_string": "beta",
+                }],
+            })
+
+            assert result["edits_applied"] == 1
+            assert host_file.read_text(encoding="utf-8") == "beta\n"
+
+    def test_batch_edit_non_local_rejects_absolute_host_paths(self):
+        from tools.fs_actions import action_batch_edit
+
+        with tempfile.TemporaryDirectory() as root_tmp, tempfile.TemporaryDirectory() as host_tmp:
+            root = Path(root_tmp)
+            host_file = Path(host_tmp) / "host.txt"
+            host_file.write_text("alpha\n", encoding="utf-8")
+
+            with pytest.raises(ValueError, match="escapes workspace"):
+                action_batch_edit(str(root), str(root), {
+                    "edits": [{
+                        "path": str(host_file),
+                        "old_string": "alpha",
+                        "new_string": "beta",
+                    }],
+                })
+
+    def test_apply_patch_local_allows_absolute_host_paths(self):
+        from tools.fs_actions import action_apply_patch
+
+        with tempfile.TemporaryDirectory() as root_tmp, tempfile.TemporaryDirectory() as host_tmp:
+            root = Path(root_tmp)
+            host_file = Path(host_tmp) / "host.txt"
+            host_file.write_text("alpha\n", encoding="utf-8")
+            patch = (
+                "*** Begin Patch\n"
+                f"*** Update File: {host_file}\n"
+                "@@\n"
+                "-alpha\n"
+                "+beta\n"
+                "*** End Patch\n"
+            )
+
+            result = action_apply_patch(str(root), str(root), {
+                "local": True,
+                "patch": patch,
+            })
+
+            assert result["applied"] is True
+            assert host_file.read_text(encoding="utf-8") == "beta\n"
+
+    def test_apply_patch_non_local_rejects_absolute_host_paths(self):
+        from tools.fs_actions import action_apply_patch
+
+        with tempfile.TemporaryDirectory() as root_tmp, tempfile.TemporaryDirectory() as host_tmp:
+            root = Path(root_tmp)
+            host_file = Path(host_tmp) / "host.txt"
+            host_file.write_text("alpha\n", encoding="utf-8")
+            patch = (
+                "*** Begin Patch\n"
+                f"*** Update File: {host_file}\n"
+                "@@\n"
+                "-alpha\n"
+                "+beta\n"
+                "*** End Patch\n"
+            )
+
+            with pytest.raises(ValueError, match="escapes workspace"):
+                action_apply_patch(str(root), str(root), {"patch": patch})
 
     def test_apply_patch_schema_does_not_require_path(self):
         from core.handlers.apply_patch import ApplyPatchHandler

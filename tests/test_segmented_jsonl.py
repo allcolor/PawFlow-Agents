@@ -1,11 +1,13 @@
 """Tests for segmented JSONL storage compatibility."""
 
 import json
+import os
 import time
 import uuid
+from unittest.mock import patch
 
 from core.conversation_store import ConversationStore
-from core.segmented_jsonl import DEFAULT_MAX_ROWS, SegmentedJsonl
+from core.segmented_jsonl import DEFAULT_MAX_BYTES, DEFAULT_MAX_ROWS, SegmentedJsonl
 
 
 def _msg(role="user", content="hello", source=None, **kw):
@@ -23,6 +25,10 @@ def _msg(role="user", content="hello", source=None, **kw):
 
 def test_default_segment_size_is_five_thousand_rows():
     assert DEFAULT_MAX_ROWS == 5000
+
+
+def test_default_segment_size_has_byte_cap():
+    assert DEFAULT_MAX_BYTES == 8 * 1024 * 1024
 
 
 def test_segmented_jsonl_reads_legacy_and_rewrites_to_segments(tmp_path):
@@ -56,6 +62,183 @@ def test_segmented_jsonl_index_write_uses_unique_temp_path(tmp_path):
 
     assert (tmp_path / "transcript" / "index.json").exists()
     assert not (tmp_path / "transcript" / "index.tmp").exists()
+
+
+def test_segmented_jsonl_append_does_not_rename_hot_index(monkeypatch, tmp_path):
+    path = tmp_path / "transcript.jsonl"
+    log = SegmentedJsonl(path, max_rows=10)
+    calls = []
+
+    original_replace = type(path).replace
+
+    def track_replace(self, target):
+        calls.append((self, target))
+        return original_replace(self, target)
+
+    monkeypatch.setattr(type(path), "replace", track_replace)
+
+    log.append_dicts([{"seq": 1, "content": "one"}])
+    log.append_dicts([{"seq": 2, "content": "two"}])
+
+    assert calls == []
+    assert [row["seq"] for row in log.iter_rows()] == [1, 2]
+    assert log.total_rows() == 2
+
+
+def test_segmented_jsonl_append_coalesces_hot_index_writes(monkeypatch, tmp_path):
+    path = tmp_path / "transcript.jsonl"
+    log = SegmentedJsonl(path, max_rows=10)
+    writes = {"count": 0}
+    original_write = log._write_index_hot
+
+    def count_write(index):
+        writes["count"] += 1
+        return original_write(index)
+
+    monkeypatch.setattr(log, "_write_index_hot", count_write)
+
+    for i in range(5):
+        log.append_dicts([{"seq": i + 1, "content": str(i)}])
+
+    assert writes["count"] == 1
+    assert log.total_rows() == 5
+
+
+def test_segmented_jsonl_rotates_when_active_segment_exceeds_byte_cap(tmp_path):
+    path = tmp_path / "transcript.jsonl"
+    log = SegmentedJsonl(path, max_rows=100, max_bytes=90)
+
+    log.append_dicts([{"seq": 1, "content": "x" * 40}])
+    log.append_dicts([{"seq": 2, "content": "y" * 40}])
+
+    paths = log.iter_paths()
+    assert [p.name for p in paths] == ["000000.jsonl", "000001.jsonl"]
+    assert [row["seq"] for row in log.iter_rows()] == [1, 2]
+
+    index = json.loads((tmp_path / "transcript" / "index.json").read_text(encoding="utf-8"))
+    assert index["max_bytes"] == 90
+    assert [segment["rows"] for segment in index["segments"]] == [1, 1]
+    assert all(segment["bytes"] > 0 for segment in index["segments"])
+
+
+def test_segmented_jsonl_restart_cache_warmup_does_not_rewrite_index(monkeypatch, tmp_path):
+    path = tmp_path / "transcript.jsonl"
+    log = SegmentedJsonl(path, max_rows=10)
+    log.append_dicts([{"seq": 1, "content": "one"}])
+
+    from core import segmented_jsonl as sj_mod
+    with sj_mod._INDEX_CACHE_LOCK:
+        sj_mod._INDEX_CACHE.pop(str(tmp_path / "transcript"), None)
+
+    warmed = SegmentedJsonl(path, max_rows=10)
+
+    def fail_index_write(_index):
+        raise AssertionError("warm cache append must not rewrite index.json")
+
+    monkeypatch.setattr(warmed, "_write_index_hot", fail_index_write)
+    warmed.append_dicts([{"seq": 2, "content": "two"}])
+
+    assert [row["seq"] for row in warmed.iter_rows()] == [1, 2]
+
+
+def test_segmented_jsonl_append_reuses_hot_segment_handle(tmp_path):
+    path = tmp_path / "transcript.jsonl"
+    log = SegmentedJsonl(path, max_rows=10)
+    real_open = open
+    segment_opens = {"count": 0}
+
+    def counting_open(file, *args, **kwargs):
+        if str(file).endswith("000000.jsonl") and args and args[0] in ("a", "ab"):
+            segment_opens["count"] += 1
+        return real_open(file, *args, **kwargs)
+
+    with patch("core.segmented_jsonl.open", counting_open):
+        for i in range(5):
+            log.append_dicts([{"seq": i + 1, "content": str(i)}])
+            assert [row["seq"] for row in log.iter_rows()] == list(range(1, i + 2))
+
+    assert segment_opens["count"] == 1
+
+
+def test_segmented_jsonl_replace_opens_each_segment_once(tmp_path):
+    path = tmp_path / "context.jsonl"
+    log = SegmentedJsonl(path, max_rows=2)
+    real_open = open
+    segment_opens = {"count": 0}
+
+    def counting_open(file, *args, **kwargs):
+        if str(file).endswith(".jsonl") and args and args[0] in ("a", "w"):
+            segment_opens["count"] += 1
+        return real_open(file, *args, **kwargs)
+
+    with patch("core.segmented_jsonl.open", counting_open):
+        log.replace_dicts({"seq": i, "content": str(i)} for i in range(1, 6))
+
+    assert segment_opens["count"] == 3
+    assert [row["seq"] for row in log.iter_rows()] == [1, 2, 3, 4, 5]
+
+
+def test_segmented_jsonl_rebuilds_from_stale_hot_index(tmp_path):
+    path = tmp_path / "transcript.jsonl"
+    log = SegmentedJsonl(path, max_rows=10)
+    log.append_dicts([{"seq": 1, "content": "one"}])
+    index_path = tmp_path / "transcript" / "index.json"
+    stale = json.loads(index_path.read_text(encoding="utf-8"))
+    stale["segments"][0]["rows"] = 1
+    stale["total_rows"] = 1
+    index_path.write_text(json.dumps(stale), encoding="utf-8")
+
+    with open(tmp_path / "transcript" / "000000.jsonl", "a", encoding="utf-8") as fh:
+        fh.write(json.dumps({"seq": 2, "content": "two"}) + "\n")
+    old = time.time() - 10
+    os.utime(index_path, (old, old))
+
+    from core import segmented_jsonl as sj_mod
+    with sj_mod._INDEX_CACHE_LOCK:
+        sj_mod._INDEX_CACHE.pop(str(tmp_path / "transcript"), None)
+
+    assert SegmentedJsonl(path, max_rows=10).total_rows() == 2
+
+
+def test_segmented_jsonl_stale_index_refresh_counts_only_dirty_tail(monkeypatch, tmp_path):
+    path = tmp_path / "transcript.jsonl"
+    log = SegmentedJsonl(path, max_rows=2)
+    log.append_dicts({"seq": i, "content": str(i)} for i in range(1, 5))
+    index_path = tmp_path / "transcript" / "index.json"
+    stale = json.loads(index_path.read_text(encoding="utf-8"))
+    stale["segments"][0]["rows"] = 2
+    stale["segments"][1]["rows"] = 1
+    stale["total_rows"] = 3
+    index_path.write_text(json.dumps(stale), encoding="utf-8")
+    old = time.time() - 10
+    os.utime(index_path, (old, old))
+
+    from core import segmented_jsonl as sj_mod
+    with sj_mod._INDEX_CACHE_LOCK:
+        sj_mod._INDEX_CACHE.pop(str(tmp_path / "transcript"), None)
+
+    counted = []
+    original = SegmentedJsonl._count_rows_fast
+
+    def count_spy(p):
+        counted.append(p.name)
+        return original(p)
+
+    monkeypatch.setattr(SegmentedJsonl, "_count_rows_fast", staticmethod(count_spy))
+
+    assert SegmentedJsonl(path, max_rows=2).total_rows() == 4
+    assert counted == ["000001.jsonl"]
+
+
+def test_segmented_jsonl_rebuilds_from_segments_when_hot_index_is_corrupt(tmp_path):
+    path = tmp_path / "transcript.jsonl"
+    log = SegmentedJsonl(path, max_rows=10)
+    log.append_dicts([{"seq": 1, "content": "one"}, {"seq": 2, "content": "two"}])
+
+    (tmp_path / "transcript" / "index.json").write_text("{", encoding="utf-8")
+
+    assert [row["seq"] for row in log.iter_rows()] == [1, 2]
+    assert log.total_rows() == 2
 
 
 def test_segmented_jsonl_index_replace_retries_transient_windows_permission(monkeypatch, tmp_path):

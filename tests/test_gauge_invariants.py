@@ -935,7 +935,9 @@ def test_empty_assistant_no_tools_never_persists_blank_message():
     serialization_src = Path("tasks/ai/agent_serialization.py").read_text(encoding="utf-8")
     assert "if final.strip():" in tool_exec_src
     assert "forced-synthesis path" in tool_exec_src
-    assert "provider thinking block must still reach history/SSE" in agent_core_src
+    assert "thinking-only live delta" in agent_core_src
+    assert "publish_event" in agent_core_src
+    assert "and not msg.tool_calls" in agent_core_src
     assert "if not _resp_text and _has_thinking:" in agent_core_src
     assert "if not _need_more_retried:" in agent_core_src
     assert "role == \"assistant\" and not str(content).strip()" in serialization_src
@@ -1272,9 +1274,28 @@ def test_provider_compact_discards_pending_messages_already_in_compacted_context
     src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
     compact_block = src[
         src.index("PawFlow compact: %d"):
-        src.index("# 3. Save compacted context + invalidate CC")]
+        src.index("# 3. Invalidate CLI session")]
     assert "discard_msg_ids" in compact_block
     assert "_compacted_ids" in compact_block
+
+
+def test_post_done_git_commit_does_not_keep_agent_active():
+    """After `done`, slow git snapshots must not delay active-state cleanup."""
+    src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
+    done_block = src[
+        src.index('logger.info("[agent:%s] publishing done'):
+        src.index('return result', src.index('logger.info("[agent:%s] publishing done'))]
+    assert "emitter.on_done(result)" in done_block
+    assert "threading.Thread(" in done_block
+    assert "target=_commit_turn_bg" in done_block
+    assert "async commit_turn scheduled" in done_block
+    assert "async commit_turn finished" in done_block
+    assert "commit_turn(conversation_id, reason=_commit_reason)" in done_block
+    assert "active released after done" in done_block
+    assert done_block.index("active released after done") < done_block.index(
+        "def _commit_turn_bg")
+    foreground = done_block[:done_block.index("def _commit_turn_bg")]
+    assert "commit_turn(conversation_id" not in foreground
 
 
 def test_pending_wake_is_not_lost_while_conversation_is_still_active():
@@ -1383,17 +1404,33 @@ def test_relay_desktop_has_periodic_healthcheck():
     assert "healthcheck failed" in src
 
 
-def test_bg_bucket_runs_as_independent_background_work():
-    """Background pyramid jobs write buckets/memories, not the active agent
-    context, so they must not yield just because the foreground agent is
-    active or a user message is queued."""
+def test_bg_bucket_is_independent_from_foreground_agent_state():
+    """Background pyramid jobs must not touch foreground agent state.
+
+    The builder works from persisted shared/transcript snapshots. It must not
+    inspect PendingQueue/AgentLoopTask liveness and must not invalidate or
+    mutate foreground provider sessions.
+    """
     src = Path("core/bg_bucket_builder.py").read_text(encoding="utf-8")
     assert "ThreadPoolExecutor" in src
     assert "thread_name_prefix=\"bg-bucket\"" in src
     assert "seq cache cold — seeding asynchronously" in src
-    assert "foreground agent active/starting" not in src
-    assert "skip auto memory extract" not in src
-    assert "pausing bucket catch-up" not in src
+    forbidden = (
+        "PendingQueue",
+        "from tasks.ai.agent_loop",
+        "tasks.ai.agent_loop",
+        "foreground busy",
+        "_foreground_busy_reason",
+        "invalidate_claude_session",
+        "save_agent_context(",
+        "set_extra(",
+        "codex_app_server_thread:",
+    )
+    for term in forbidden:
+        assert term not in src
+
+    store_src = Path("core/conversation_store.py").read_text(encoding="utf-8")
+    assert "maybe_trigger_async" in store_src
 
 
 def test_bg_bucket_trace_does_not_load_full_transcript():
@@ -1412,6 +1449,7 @@ def test_provider_compact_uses_bounded_transcript_tail():
     end = _AGENT_CORE_PY.index("PawFlow compact done", start)
     body = _AGENT_CORE_PY[start:end]
 
+    assert "_PROVIDER_COMPACT_TAIL_MESSAGES = 250" in _AGENT_CORE_PY
     assert "load_transcript_tail_for_agent" in body
     assert "load_transcript_for_agent" in body  # legacy fallback only
     assert body.index("load_transcript_tail_for_agent") < body.index(
@@ -1496,7 +1534,9 @@ def test_force_stop_kills_cli_processes_and_blocks_late_appends():
     assert "raise AgentCancelled()" in openai_src
     assert "raise AgentCancelled()" in anthropic_src
     assert "raise AgentCancelled()" in codex_app_src
-    assert "emitter.check_cancelled()\n            # Sync msg_id" in core_src
+    assert "emitter.check_cancelled()" in core_src
+    assert core_src.index("emitter.check_cancelled()") < core_src.index("thinking-only live delta")
+    assert core_src.index("thinking-only live delta") < core_src.index("ConversationWriter.for_conversation(conversation_id)")
     assert "emitter.check_cancelled()\n                        _cc_turn_count" in core_src
 
 

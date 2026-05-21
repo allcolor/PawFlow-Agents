@@ -651,6 +651,27 @@ class AgentActionsMixin:
                     exc_info=True)
 
         def _bg():
+            _resume_after_compact = False
+            _resume_agent = agent_name or ""
+            _resume_user_id = flowfile.get_attribute("http.auth.principal") or ""
+            if op_name == "compact":
+                try:
+                    if agent_name:
+                        _resume_after_compact = self.is_agent_active(
+                            conv_id, agent_name)
+                    else:
+                        _resume_after_compact = self.is_conversation_active(conv_id)
+                        if not _resume_agent:
+                            from core.conversation_store import ConversationStore
+                            _ares = ConversationStore.instance().get_extra(
+                                conv_id, "active_resources") or {}
+                            _resume_agent = _ares.get("agent", "") or ""
+                    if not _resume_user_id:
+                        from core.conversation_store import ConversationStore
+                        _resume_user_id = ConversationStore.instance().get_user_id(
+                            conv_id) or ""
+                except Exception:
+                    logger.debug("compact resume detection failed", exc_info=True)
             self.cancel_agent(conv_id, agent_name=agent_name, silent=True)
             if not self._acquire_context_op(conv_id, agent_name,
                                              timeout=60.0):
@@ -668,6 +689,8 @@ class AgentActionsMixin:
                     _set_context_usage_suspended(agent_name, True)
                 result = fn()
                 _agent = result.get("agent", "") or agent_name
+                if op_name == "compact" and _agent and _agent != "shared":
+                    _resume_agent = _agent
                 if result.get("context_changed", True):
                     if _agent and _agent != "shared":
                         self._clear_claude_session(conv_id, _agent)
@@ -709,6 +732,19 @@ class AgentActionsMixin:
                 if op_name == "compact":
                     _set_context_usage_suspended(agent_name, False)
                 self._release_context_op(conv_id, agent_name)
+                if (op_name == "compact" and _resume_after_compact
+                        and _resume_agent and _resume_agent != "shared"):
+                    try:
+                        from tasks.ai.agent_loop import AgentLoopTask
+                        AgentLoopTask.wake_agent(
+                            conv_id, _resume_agent,
+                            reason=f"[compact_resume:{_resume_agent}] compact completed; resume immediately",
+                            user_id=_resume_user_id,
+                            delay=0.0,
+                            even_if_active=True,
+                        )
+                    except Exception:
+                        logger.debug("compact resume wake failed", exc_info=True)
 
         thread = threading.Thread(
             target=_bg, daemon=True,

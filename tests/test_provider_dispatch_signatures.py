@@ -296,6 +296,25 @@ def test_mcp_bridge_dispatches_tool_calls_concurrently():
     assert "_do_request_serial" not in src
 
 
+def test_mcp_bridge_and_tool_relay_emit_timing_breakdown():
+    bridge_src = Path("tools/mcp_bridge.py").read_text(encoding="utf-8")
+    relay_src = Path("services/tool_relay_service.py").read_text(encoding="utf-8")
+    codex_src = Path("core/llm_providers/codex_app_server.py").read_text(encoding="utf-8")
+
+    assert "TIMING tools/call" in bridge_src
+    assert "bridge_ms=" in bridge_src
+    assert "return_wait_ms=" in bridge_src
+    assert "timing do_execute" in relay_src
+    assert "timing get_registry" in relay_src
+    assert "mcp_ms=" in relay_src
+    assert "fs_find_ms=" in relay_src
+    assert "registry_ms=" in relay_src
+    assert "exec_ms=" in relay_src
+    assert "timing ws_send" in relay_src
+    assert "timing mcpToolCall started" in codex_src
+    assert "timing mcpToolCall completed" in codex_src
+
+
 def test_mcp_use_tool_preserves_registered_search_tool_name():
     name, args = unwrap_mcp_tool(
         "mcp__pawflow__use_tool",

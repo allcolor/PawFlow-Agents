@@ -440,7 +440,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             _host_helper = os.environ.get("PAWFLOW_HOST_HELPER", "")
             if not _host_helper:
                 return {"ok": False, "error": "Local execution requested but host helper is unavailable"}
-            _fwd = {k: v for k, v in msg.items() if k != "local"}
+            _fwd = dict(msg)
             return _forward_to_host_helper(_host_helper, _fwd, ws_sock_ref[0], _ws_frame_send)
 
         abs_path = _resolve(rel_path)
@@ -812,7 +812,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
         _screen_with_flag = action.startswith("screen_") and msg.get("local", False)
         _host_helper = os.environ.get("PAWFLOW_HOST_HELPER", "")
         if (_explicitly_local or _screen_with_flag) and _host_helper:
-            _fwd = {k: v for k, v in msg.items() if k != "local"}
+            _fwd = dict(msg)
             return _forward_to_host_helper(_host_helper, _fwd, ws_sock_ref[0], _ws_frame_send)
 
         # ── Desktop VNC (singleton) ──────────────────────────────────────
@@ -1444,7 +1444,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                         "server is not alive — cannot stream progress "
                         "back from the host helper."),
                 }
-            _fwd = {k: v for k, v in msg.items() if k != "local"}
+            _fwd = dict(msg)
             return _forward_to_host_helper(
                 _hh, _fwd, ws_sock_ref[0], _ws_frame_send)
 
@@ -1598,6 +1598,8 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
     reconnect_delay = 1
 
     while True:
+        _disconnect_reason = "connect setup"
+        _last_activity = [time.time()]
         try:
             sys.stderr.write(f"[FSRelay] Connecting to {url} ...\n")
             sock = socket.create_connection((host, port), timeout=10)
@@ -1711,6 +1713,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             _send_lock = _threading.Lock()
             _child_relays = {}  # relay_id → thread (child relay instances)
             _terminal_sessions = {}  # session_id → {master_fd, pid, reader}
+            _disconnect_reason = "unknown"
 
             # ── Per-WS-connection FUSE clients ──────────────────────────
             # The FUSE mounts themselves were created once before the
@@ -1841,11 +1844,13 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                         with _send_lock:
                             _ws_frame_send(sock, json.dumps({"type": "ping"}).encode("utf-8"))
                         _last_activity[0] = time.time()  # successful send = connection alive
-                    except Exception:
+                    except Exception as _ping_err:
+                        _disconnect_reason = f"ping send failed: {_ping_err}"
                         break  # send failed → connection dead
                     continue
 
                 if opcode == 0x08:
+                    _disconnect_reason = "server close frame"
                     break
                 elif opcode == 0x09:
                     # Same reasoning as the ping above: SSL writes must be
@@ -2074,8 +2079,18 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             return
         except Exception as e:
-            sys.stderr.write(f"[FSRelay] Connection error: {e}\n")
+            _idle = 0.0
+            try:
+                _idle = time.time() - _last_activity[0]
+            except Exception:
+                pass
+            sys.stderr.write(
+                f"[FSRelay] Connection error: {type(e).__name__}: {e} "
+                f"(last_activity={_idle:.1f}s reason={locals().get('_disconnect_reason', 'exception')})\n")
         finally:
+            if locals().get('_disconnect_reason') not in (None, "unknown"):
+                sys.stderr.write(
+                    f"[FSRelay] Disconnect reason: {locals().get('_disconnect_reason')}\n")
             # Guard: on early connect errors, _close_all_terminals may not
             # be defined yet (its definition sits past the handshake).
             _ct = locals().get('_close_all_terminals')

@@ -109,6 +109,61 @@ def test_relay_action_grep_accepts_brace_include(tmp_path):
     assert [row["path"] for row in results] == ["core/a.py", "services/b.py"]
 
 
+def test_relay_action_grep_honors_limit_and_streams_context(tmp_path):
+    f = tmp_path / "large.txt"
+    f.write_text(
+        "before one\nneedle one\nafter one\n"
+        "before two\nneedle two\nafter two\n"
+        "before three\nneedle three\nafter three\n",
+        encoding="utf-8",
+    )
+
+    results = action_grep(str(tmp_path), str(f), {
+        "regex": "needle",
+        "recursive": True,
+        "limit": 2,
+        "context_before": 1,
+        "context_after": 1,
+    })
+
+    assert [row["line"] for row in results] == ["needle one", "needle two"]
+    assert results[0]["before"] == [{"line_number": 1, "line": "before one"}]
+    assert results[0]["after"] == [{"line_number": 3, "line": "after one"}]
+    assert results[1]["before"] == [{"line_number": 4, "line": "before two"}]
+    assert results[1]["after"] == [{"line_number": 6, "line": "after two"}]
+
+
+def test_search_handler_uses_relay_context_without_reading_full_files():
+    class FakeRelay:
+        def grep(self, path, pattern, recursive, **kwargs):
+            assert kwargs["context_before"] == 1
+            assert kwargs["context_after"] == 1
+            return [{
+                "path": "huge.log",
+                "line_number": 2,
+                "line": "needle hit",
+                "before": [{"line_number": 1, "line": "before"}],
+                "after": [{"line_number": 3, "line": "after"}],
+            }]
+
+        def read_file(self, path, **kwargs):
+            raise AssertionError("search should not re-read files with relay context")
+
+    handler = SearchHandler()
+    handler.set_fs_service(FakeRelay())
+
+    result = handler.execute({
+        "pattern": "needle",
+        "path": "/workspace/data/runtime",
+        "context": 1,
+        "limit": 10,
+    })
+
+    assert "  1: before" in result
+    assert "> 2: needle hit" in result
+    assert "  3: after" in result
+
+
 def test_grep_handler_accepts_include_alias(tmp_path):
     pkg = tmp_path / "pkg"
     pkg.mkdir()

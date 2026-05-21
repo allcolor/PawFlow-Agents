@@ -14,7 +14,11 @@ from tasks.ai.agent_exceptions import AgentCancelled, _InterruptComplete
 
 logger = logging.getLogger(__name__)
 
-_PROVIDER_COMPACT_TAIL_MESSAGES = 1000
+# Provider-triggered compact only needs raw recent fidelity. Older history is
+# supplied by the shared bucket pyramid inside _compact(); keeping this row cap
+# modest avoids tokenizing hundreds of large tool_result payloads just to walk
+# most of them back out again.
+_PROVIDER_COMPACT_TAIL_MESSAGES = 250
 
 # Context-ack phrases injected as pre-filled assistant messages.
 # The LLM sometimes echoes them as its first output — strip them.
@@ -858,6 +862,21 @@ class AgentCoreMixin:
                                 _evt2["data"] = _data
                                 _evt2["cid"] = _task_parent_cid
                                 _parent_sse.append(_evt2)
+                    # thinking-only live delta: provider reasoning streams are
+                    # transient UI updates, not durable conversation messages.
+                    # Persisting each chunk causes cumulative JSONL writes and
+                    # compact-check work while adding no replay value.
+                    if (msg.role == "assistant" and _think_text
+                            and not (isinstance(msg.content, str)
+                                     and msg.content.strip())
+                            and not msg.tool_calls):
+                        from core.conversation_event_bus import ConversationEventBus
+                        _bus = ConversationEventBus.instance()
+                        for _evt in (_parent_sse if _task_parent_cid else _sse):
+                            _bus.publish_event(
+                                _evt.get("cid") or conversation_id,
+                                _evt["type"], _evt.get("data"))
+                        return
                     _writer = ConversationWriter.for_conversation(conversation_id)
                     _enqueue_started = time.monotonic()
                     _writer.enqueue_message(
@@ -949,8 +968,11 @@ class AgentCoreMixin:
             # check so _maybe_auto_compact_after_append reads a gauge that
             # already includes this message — otherwise a long CLI turn can
             # blow past compact_threshold_pct on a stale (turn-start) value.
+            _context_usage_ms = 0.0
             try:
+                _usage_started = time.monotonic()
                 emitter._publish_context_usage("append")
+                _context_usage_ms = (time.monotonic() - _usage_started) * 1000.0
             except Exception:
                 logger.debug("append context gauge refresh failed",
                              exc_info=True)
@@ -960,11 +982,13 @@ class AgentCoreMixin:
             _compact_ms = (time.monotonic() - _compact_started) * 1000.0
             logger.info(
                 "[_append-perf] role=%s msg_id=%s enqueue_ms=%s "
-                "mirror_enqueue_ms=%s pre_compact_ms=%.1f compact_ms=%.1f total_ms=%.1f",
+                "mirror_enqueue_ms=%s context_usage_ms=%.1f "
+                "pre_compact_ms=%.1f compact_ms=%.1f total_ms=%.1f",
                 msg.role,
                 getattr(msg, "msg_id", "?"),
                 "" if _enqueue_ms is None else f"{_enqueue_ms:.1f}",
                 "" if _mirror_enqueue_ms is None else f"{_mirror_enqueue_ms:.1f}",
+                _context_usage_ms,
                 _before_compact_ms,
                 _compact_ms,
                 (time.monotonic() - _append_started) * 1000.0,
@@ -1159,7 +1183,9 @@ class AgentCoreMixin:
                                     return True
                             return False
 
-                    def _adopt_compacted_context(compacted_messages, *, reason: str) -> None:
+                    def _adopt_compacted_context(compacted_messages, *, reason: str,
+                                                 async_cleanup: bool = False,
+                                                 already_persisted: bool = False) -> None:
                         """Replace the active PawFlow agent context after any compact."""
                         nonlocal base_count
                         compacted_list = list(compacted_messages or [])
@@ -1175,12 +1201,14 @@ class AgentCoreMixin:
                             try:
                                 from core.conversation_store import ConversationStore
                                 _adopt_store = ConversationStore.instance()
-                                _adopt_store.save_agent_context(
-                                    conversation_id, _adopt_agent,
-                                    self._serialize_messages(messages))
+                                if not already_persisted:
+                                    _adopt_store.save_agent_context(
+                                        conversation_id, _adopt_agent,
+                                        self._serialize_messages(messages))
                                 if ctx.get("_is_cli_provider"):
                                     _adopt_store.invalidate_claude_session_for_agent(
-                                        conversation_id, _adopt_agent)
+                                        conversation_id, _adopt_agent,
+                                        async_cleanup=async_cleanup)
                                     ctx["_cli_has_session"] = False
                                     ctx["_claude_has_session"] = False
                             except Exception as _adopt_err:
@@ -1222,7 +1250,8 @@ class AgentCoreMixin:
 
                             if _messages_changed(compacted_messages, messages):
                                 _adopt_compacted_context(
-                                    compacted_messages, reason="proactive_cli")
+                                    compacted_messages, reason="proactive_cli",
+                                    already_persisted=True)
                         llm_context = list(messages)
                     else:
                         _max_ctx = ctx.get("max_context_size", 64000)
@@ -1254,7 +1283,8 @@ class AgentCoreMixin:
                             )
                             if _messages_changed(compacted_messages, messages):
                                 _adopt_compacted_context(
-                                    compacted_messages, reason="proactive")
+                                    compacted_messages, reason="proactive",
+                                    already_persisted=True)
                             llm_context = list(messages)
                         else:
                             # threshold = 0: no proactive compact, send the
@@ -1836,6 +1866,11 @@ class AgentCoreMixin:
                         # compact PawFlow context, then start a new session with the
                         # compacted context.
                         _agent_name = ctx.get("active_agent_name", "")
+                        _compact_restart_t0 = time.monotonic()
+
+                        def _compact_restart_ms() -> float:
+                            return (time.monotonic() - _compact_restart_t0) * 1000.0
+
                         logger.warning("[agent:%s] provider compact detected — compacting PawFlow context for %s",
                                        conversation_id[:8], _agent_name)
                         # Tell the UI: auto-compact started (shows the
@@ -1877,6 +1912,10 @@ class AgentCoreMixin:
                                 from core.conversation_writer import ConversationWriter
                                 ConversationWriter.for_conversation(
                                     conversation_id).flush(timeout=15.0)
+                                logger.info(
+                                    "[compact-restart:%s/%s] writer flush done elapsed_ms=%.1f",
+                                    conversation_id[:8], _agent_name,
+                                    _compact_restart_ms())
                             except Exception as _fl_err:
                                 logger.warning(
                                     "[agent:%s] writer flush before compact "
@@ -1906,6 +1945,10 @@ class AgentCoreMixin:
                             _full_messages = self._deserialize_messages(_full_ctx, conversation_id=conversation_id)
                             logger.info("[agent:%s] Loaded %d recent transcript messages for provider compaction",
                                         conversation_id[:8], len(_full_messages))
+                            logger.info(
+                                "[compact-restart:%s/%s] context loaded messages=%d elapsed_ms=%.1f",
+                                conversation_id[:8], _agent_name,
+                                len(_full_messages), _compact_restart_ms())
 
                             # 2. FORCE compact — CC said it's saturating, so we compact
                             # unconditionally. PawFlow's token estimate may underestimate
@@ -1946,9 +1989,29 @@ class AgentCoreMixin:
                                 user_id=user_id,
                                 budget_config=getattr(ctx.get("resolved_svc"), "config", None),
                                 independent_context=bool(ctx.get("_independent_context")),
+                                post_hooks_async=True,
                             ))
+                            logger.info(
+                                "[compact-restart:%s/%s] compact returned messages=%d elapsed_ms=%.1f",
+                                conversation_id[:8], _agent_name,
+                                len(_compacted_messages), _compact_restart_ms())
+                            # The user may have sent a wake/restart message while
+                            # the summarizer provider was still finishing. In that
+                            # case a newer agent generation is already live; the
+                            # stale compacting loop must not adopt context or
+                            # invalidate/kill that fresh runtime.
+                            emitter.check_cancelled()
+                            logger.info(
+                                "[compact-restart:%s/%s] cancellation gate passed elapsed_ms=%.1f",
+                                conversation_id[:8], _agent_name,
+                                _compact_restart_ms())
                             _adopt_compacted_context(
-                                _compacted_messages, reason="provider_compact")
+                                _compacted_messages, reason="provider_compact",
+                                async_cleanup=True, already_persisted=True)
+                            logger.info(
+                                "[compact-restart:%s/%s] adopted compacted context elapsed_ms=%.1f",
+                                conversation_id[:8], _agent_name,
+                                _compact_restart_ms())
                             logger.info("[agent:%s] PawFlow compact: %d → %d messages",
                                         conversation_id[:8], len(_full_messages), len(messages))
                             try:
@@ -1964,9 +2027,15 @@ class AgentCoreMixin:
                                 logger.warning(
                                     "[agent:%s] pending compact dedupe failed: %s",
                                     conversation_id[:8], _pq_err)
+                            logger.info(
+                                "[compact-restart:%s/%s] pending dedupe done elapsed_ms=%.1f",
+                                conversation_id[:8], _agent_name,
+                                _compact_restart_ms())
 
-                            # 3. Save compacted context + invalidate CC
-                            # session: clear the extra AND purge the
+                            # 3. Invalidate CLI session: _compact() already
+                            # persisted the compacted PawFlow context, so
+                            # adoption must not re-save it on the foreground
+                            # restart path. Clear the extra AND purge the
                             # stale jsonl + companion dir on disk.
                             # Otherwise the killed session's jsonl
                             # keeps piling up (orphan workers also
@@ -1975,36 +2044,65 @@ class AgentCoreMixin:
                             # was just compacted and saved; CC receives the
                             # same compacted messages (no trimmed view).
                             llm_context = list(messages)
-                            logger.info("[agent:%s] PawFlow compact done, new CC session will start",
+                            logger.info("[agent:%s] PawFlow compact done, provider turn will restart immediately",
                                         conversation_id[:8])
                             # _compact() already emits its own compact_progress:done
                             # with accurate before/after counts (post bucket-filter).
                             # Do NOT duplicate here with _full_messages count which
                             # would confuse the UI (showing the raw transcript count
                             # as 'before' ignores that most msgs are already bucketed).
-                            # Also refresh the persisted context_usage gauge
-                            # baseline for this agent. Post-compact, the LLM
-                            # context isn't empty — it's summary + recent
-                            # (typically ~10-30k tokens). Computing the real
-                            # size via tiktoken gives the UI an accurate
-                            # starting point instead of a misleading 0%.
+                            # Refresh the context_usage baseline from the
+                            # compacted messages already in memory. Reloading
+                            # stored context here can spend seconds walking
+                            # segmented JSONL immediately after compaction.
+                            ctx.pop("_context_usage_cache", None)
+                            ctx.pop("_auto_compact_usage_cache", None)
                             try:
+                                _gauge_t0 = time.monotonic()
+                                from core.conversation_event_bus import ConversationEventBus
                                 from tasks.ai.context_usage import (
-                                    compute_context_usage, persist_context_usage,
-                                    usage_event_payload)
-                                ctx.pop("_context_usage_cache", None)
-                                ctx.pop("_auto_compact_usage_cache", None)
-                                _post_usage = compute_context_usage(
-                                    conversation_id, _agent_name, user_id=user_id,
+                                    context_usage_for_messages, usage_event_payload)
+                                _svc_cfg = dict(getattr(ctx.get("resolved_svc"), "config", None) or {})
+                                if int(ctx.get("max_context_size") or 0) > 0:
+                                    _svc_cfg["max_context_size"] = int(ctx.get("max_context_size") or 0)
+                                _post_usage = context_usage_for_messages(
+                                    conversation_id, _agent_name, _compacted_messages,
+                                    svc_cfg=_svc_cfg,
+                                    real_window=int(ctx.get("real_context_size") or 0),
+                                    provider=str(ctx.get("active_llm_provider", "") or getattr(client, "provider", "") or ""),
                                     source="compact_post")
-                                persist_context_usage(
-                                    conversation_id, _agent_name, _post_usage,
-                                    store=_store)
-                                _CEB.instance().publish_event(
+                                ctx["_context_usage_cache"] = _post_usage
+                                ConversationEventBus.instance().publish_event(
                                     conversation_id, "message_meta",
                                     usage_event_payload(_post_usage))
+
+                                def _persist_post_compact_usage() -> None:
+                                    try:
+                                        from core.conversation_store import ConversationStore
+                                        from tasks.ai.context_usage import persist_context_usage
+                                        persist_context_usage(
+                                            conversation_id, _agent_name, _post_usage,
+                                            store=ConversationStore.instance())
+                                    except Exception:
+                                        logger.debug("exception suppressed", exc_info=True)
+
+                                import threading
+                                threading.Thread(
+                                    target=_persist_post_compact_usage,
+                                    daemon=True,
+                                    name=f"post-compact-usage-persist-{conversation_id[:8]}",
+                                ).start()
+                                logger.info(
+                                    "[compact-restart:%s/%s] post-compact gauge refresh done elapsed_ms=%.1f refresh_ms=%.1f",
+                                    conversation_id[:8], _agent_name,
+                                    _compact_restart_ms(),
+                                    (time.monotonic() - _gauge_t0) * 1000.0)
                             except Exception:
                                 logger.debug("exception suppressed", exc_info=True)
+                            logger.info(
+                                "[compact-restart:%s/%s] post-compact foreground release elapsed_ms=%.1f",
+                                conversation_id[:8], _agent_name,
+                                _compact_restart_ms())
                         except Exception as compact_err:
                             logger.error("[agent:%s] PawFlow compact failed: %s",
                                          conversation_id[:8], compact_err)
@@ -2266,10 +2364,11 @@ class AgentCoreMixin:
                             emitter.stop_heartbeat(_iter_hb)
                             break
                         _has_thinking = bool(getattr(response, 'thinking', ''))
-                        # Empty response with thinking = preserve the thinking
-                        # first. The visible answer may be produced by the
-                        # nudge or the later forced-synthesis path, but every
-                        # provider thinking block must still reach history/SSE.
+                        # Empty response with thinking = surface the thinking
+                        # live, then nudge for an actual action/answer. Pure
+                        # thinking deltas are intentionally not persisted as
+                        # standalone conversation rows; doing so makes every
+                        # tiny reasoning chunk rewrite transcript + contexts.
                         if not _resp_text and _has_thinking:
                             logger.warning(f"[agent:{conversation_id[:8]}] thinking-only response (no text/tools)")
                             _append(LLMMessage(role="assistant", content="",
@@ -2717,6 +2816,21 @@ class AgentCoreMixin:
                             logger.error(
                                 "[delegate-reply] wake/preempt failed: %s", _dre,
                                 exc_info=True)
+                    # Release Active Agents immediately after the user-visible
+                    # done event. Everything below is best-effort bookkeeping
+                    # (git snapshot, title/task reschedule in the streaming
+                    # wrapper) and must never keep the agent logically active.
+                    try:
+                        self._decrement_active(conversation_id, ctx)
+                        logger.info(
+                            "[agent:%s] active released after done agent=%s",
+                            conversation_id[:8],
+                            ctx.get("active_agent_name", ""))
+                    except Exception as _active_release_err:
+                        logger.error(
+                            "[agent:%s] active release after done failed: %s",
+                            conversation_id[:8], _active_release_err,
+                            exc_info=True)
                 except Exception as _done_err:
                     logger.error("[agent:%s] CRITICAL: on_done failed: %s",
                                  conversation_id[:8], _done_err, exc_info=True)
@@ -2731,15 +2845,35 @@ class AgentCoreMixin:
                     except Exception:
                         logger.debug("exception suppressed", exc_info=True)
                 # Per-turn git commit: one snapshot per agent loop.
-                # Drains writer queue first so the commit sees every
-                # message produced during the turn.
+                # This must not block the foreground done/active cleanup path:
+                # the UI has already received `done`, and Active Agents must be
+                # released immediately even if git snapshotting is slow.
                 try:
+                    import threading
                     from core.conversation_git import commit_turn
                     _agent_tag = ctx.get("active_agent_name", "") or "?"
-                    commit_turn(conversation_id,
-                                reason=f"turn [{_agent_tag}]")
+                    _commit_reason = f"turn [{_agent_tag}]"
+
+                    def _commit_turn_bg() -> None:
+                        _commit_t0 = time.monotonic()
+                        try:
+                            commit_turn(conversation_id, reason=_commit_reason)
+                        finally:
+                            logger.info(
+                                "[agent:%s] async commit_turn finished agent=%s elapsed_ms=%.1f",
+                                conversation_id[:8], _agent_tag,
+                                (time.monotonic() - _commit_t0) * 1000.0)
+
+                    threading.Thread(
+                        target=_commit_turn_bg,
+                        daemon=True,
+                        name=f"commit-turn-{conversation_id[:8]}",
+                    ).start()
+                    logger.info(
+                        "[agent:%s] async commit_turn scheduled agent=%s",
+                        conversation_id[:8], _agent_tag)
                 except Exception as _gt_err:
-                    logger.error("[agent:%s] commit_turn failed: %s",
+                    logger.error("[agent:%s] commit_turn schedule failed: %s",
                                  conversation_id[:8], _gt_err, exc_info=True)
             return result
 

@@ -166,6 +166,35 @@ class StreamEmitter(AgentEmitter):
         """
         if not self._agent_name or self.ctx.get("_context_usage_suspended"):
             return None
+        if reason == "append":
+            messages = self.ctx.get("messages") or []
+            last = messages[-1] if messages else None
+            if last is not None:
+                content = getattr(last, "content", "") or ""
+                thinking = getattr(last, "thinking", "") or ""
+                tool_calls = getattr(last, "tool_calls", None) or []
+                if thinking and not content and not tool_calls:
+                    return None
+                try:
+                    from tasks.ai.context_usage import usage_event_payload
+                    from tasks.ai.context_usage_cache import context_usage_append_delta
+                    usage = context_usage_append_delta(
+                        self.ctx.get("_context_usage_cache") or {}, last,
+                        source=reason or "stream_context")
+                    if usage and int(usage.get("max", 0) or 0) > 0:
+                        usage.update({
+                            "conversation_id": self.conversation_id,
+                            "agent_name": self._agent_name,
+                        })
+                        self.ctx["_context_usage_cache"] = usage
+                        payload = usage_event_payload(usage)
+                        payload["source"] = self._agent_source()
+                        payload["context_cache"] = usage
+                        payload["live"] = True
+                        return payload
+                except Exception:
+                    logger.debug("stream context usage append delta failed",
+                                 exc_info=True)
         try:
             from tasks.ai.context_usage import (
                 compute_context_usage, usage_event_payload)

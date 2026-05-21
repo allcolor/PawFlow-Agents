@@ -7,6 +7,8 @@ _AGENT_CORE = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
 _AGENT_CONTEXT = Path("tasks/ai/agent_context.py").read_text(encoding="utf-8")
 _AGENT_EMITTER = Path("tasks/ai/agent_emitter.py").read_text(encoding="utf-8")
 _AGENT_ACTIONS = Path("tasks/ai/agent_actions.py").read_text(encoding="utf-8")
+_AGENT_POLLER = Path("tasks/ai/agent_poller.py").read_text(encoding="utf-8")
+_CODEX_APP = Path("core/llm_providers/codex_app_server.py").read_text(encoding="utf-8")
 _AGENT_COMPACTION = Path("tasks/ai/agent_compaction.py").read_text(
     encoding="utf-8")
 _CONTEXT_OPS = Path("tasks/ai/actions/context_ops.py").read_text(
@@ -220,6 +222,49 @@ def test_manual_compact_done_does_not_publish_context_gauge_event():
     assert 'set_extra(\n                                conversation_id, "context_usage"' not in _AGENT_COMPACTION
 
 
+def test_compact_done_event_exposes_target_tokens():
+    """Progress UI compares post-compact usage to the actual final cap,
+    not the summarizer's smaller per-bucket summary target.
+    """
+    done_block = _AGENT_COMPACTION[
+        _AGENT_COMPACTION.index('"stage": "done"'):
+        _AGENT_COMPACTION.index('"conv_total_messages"') + 400]
+    assert '"target_tokens": cap' in done_block
+
+
+def test_codex_context_session_skip_requires_live_session_or_rollout():
+    block = _AGENT_CONTEXT[
+        _AGENT_CONTEXT.index('elif _is_codex_app_server:'):
+        _AGENT_CONTEXT.index('# Resolve max_context early')]
+    assert "CodexLiveRegistry" in block
+    assert "_codex_app_rollout_path" in block
+    assert 'stale codex app-server thread' in block
+    assert '_cli_has_session = False' in block
+
+
+def test_codex_context_compaction_clears_thread_before_pawflow_compact():
+    block = _CODEX_APP[
+        _CODEX_APP.index('def _hard_kill_for_context_compaction'):
+        _CODEX_APP.index('try:', _CODEX_APP.index('lock = self._codex_app_ensure_lock'))]
+    assert 'codex_app_server_thread:' in block
+    assert 'codex_app_pool_idx:' in block
+    assert 'store.set_extra' in block
+
+
+def test_compact_resume_wake_is_provider_agnostic():
+    assert 'reason=f"[compact_resume:{_resume_agent}]' in _AGENT_ACTIONS
+    assert "AgentLoopTask.wake_agent" in _AGENT_ACTIONS
+    assert "even_if_active=True" in _AGENT_ACTIONS
+    assert "provider turn will restart immediately" in _AGENT_CORE
+
+
+def test_compact_resume_poll_prompt_continues_without_new_user_message():
+    assert "compact_resume" in _AGENT_POLLER
+    assert "Context compaction completed" in _AGENT_POLLER
+    assert "Do not wait for a " in _AGENT_POLLER
+    assert "new user message" in _AGENT_POLLER
+
+
 def test_compact_budget_uses_active_service_config_not_summarizer():
     """The summarizer writes the summary, but active LLM service config owns
     compact_target_tokens, token_multiplier, and the post-compact gauge.
@@ -245,14 +290,71 @@ def test_codex_forced_compact_adopts_persisted_agent_context_before_restart():
     marker = "provider compact detected"
     h_start = _AGENT_CORE.rindex("except CCCompactDetected:", 0,
                                  _AGENT_CORE.index(marker))
-    h_end = _AGENT_CORE.index("emitter.check_cancelled()", h_start)
+    h_end = _AGENT_CORE.index("PawFlow compact done", h_start)
     handler = _AGENT_CORE[h_start:h_end]
     assert "\n                            messages = list(self._compact(" not in handler
     assert "_compacted_messages = list(self._compact(" in handler
     assert "_adopt_compacted_context(" in handler
     assert "reason=\"provider_compact\"" in handler
+    assert "async_cleanup=True" in handler
+    assert "already_persisted=True" in handler
+    assert "post_hooks_async=True" in handler
     assert "llm_context = list(messages)" in handler
+    assert handler.index("emitter.check_cancelled()") < handler.index("_adopt_compacted_context(")
     assert handler.index("_adopt_compacted_context(") < handler.index("llm_context = list(messages)")
+
+
+def test_compact_adoption_skips_duplicate_save_when_already_persisted():
+    """_compact() already persisted its output; restart adoption must not
+    repeat that write on the foreground path.
+    """
+    helper = _AGENT_CORE[
+        _AGENT_CORE.index("def _adopt_compacted_context"):
+        _AGENT_CORE.index("# Claude-code: CC session")]
+    assert "already_persisted: bool = False" in helper
+    assert "if not already_persisted:" in helper
+    assert helper.index("if not already_persisted:") < helper.index(
+        "save_agent_context(")
+    assert "already_persisted=True" in _AGENT_CORE
+
+
+def test_provider_compact_post_hooks_do_not_block_restart():
+    """Provider compact publishes done before post hooks; restart must not wait
+    for memory/bucket hook side effects after the UI already says compact done.
+    """
+    assert "post_hooks_async: bool = False" in _AGENT_COMPACTION
+    assert "threading.Thread(" in _AGENT_COMPACTION
+    assert "_hook_runner.run(\"post_compact\", _post_ctx)" in _AGENT_COMPACTION
+    assert "post_hooks_async=True" in _AGENT_CORE
+
+
+def test_provider_compact_restart_path_has_correlated_timing_logs():
+    """The post-compact restart path must be diagnosable from server logs."""
+    for marker in (
+            "[compact-restart:%s/%s] writer flush done",
+            "[compact-restart:%s/%s] context loaded",
+            "[compact-restart:%s/%s] compact returned",
+            "[compact-restart:%s/%s] cancellation gate passed",
+            "[compact-restart:%s/%s] adopted compacted context",
+            "[compact-restart:%s/%s] pending dedupe done",
+            "[compact-restart:%s/%s] post-compact foreground release",
+            "[compact-restart:%s/%s] post-compact gauge refresh done"):
+        assert marker in _AGENT_CORE
+    assert "elapsed_ms=%.1f" in _AGENT_CORE
+    assert "[compact] post hooks scheduled async" in _AGENT_COMPACTION
+    assert "[compact] post hooks start" in _AGENT_COMPACTION
+    assert "[compact] post hooks done" in _AGENT_COMPACTION
+
+
+def test_provider_compact_gauge_refresh_uses_compacted_messages_in_memory():
+    """Post-compact gauge refresh must not reload the just-persisted context."""
+    start = _AGENT_CORE.index("PawFlow compact done, provider turn will restart immediately")
+    end = _AGENT_CORE.index("except Exception as compact_err", start)
+    block = _AGENT_CORE[start:end]
+    assert "context_usage_for_messages" in block
+    assert "_compacted_messages" in block
+    assert "compute_context_usage" not in block
+    assert "target=_persist_post_compact_usage" in block
 
 
 def test_manual_compact_uses_selected_agent_llm_service_budget():

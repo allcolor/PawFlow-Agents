@@ -119,8 +119,23 @@ class AgentHookRunner:
     def _resolve_hooks(self, event: str, payload: Dict[str, Any]) -> List[Dict[str, Any]]:
         try:
             from core.conversation_store import ConversationStore
-            raw = ConversationStore.instance().get_extra(
-                self.conversation_id, "conversation_hooks", user_id=self.user_id) or []
+            store = ConversationStore.instance()
+            sentinel = object()
+            snapshot = getattr(store, "get_extra_snapshot", None)
+            raw = sentinel
+            if callable(snapshot):
+                raw = snapshot(self.conversation_id, "conversation_hooks", sentinel)
+                if raw is sentinel:
+                    cache = getattr(store, "_cache", None)
+                    cache_lock = getattr(store, "_cache_lock", None)
+                    if isinstance(cache, dict) and cache_lock is not None:
+                        with cache_lock:
+                            if self.conversation_id in cache:
+                                raw = []
+            if raw is sentinel:
+                raw = store.get_extra(
+                    self.conversation_id, "conversation_hooks",
+                    user_id=self.user_id) or []
         except Exception:
             logger.debug("conversation_hooks load failed", exc_info=True)
             return []

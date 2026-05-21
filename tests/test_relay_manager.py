@@ -164,12 +164,20 @@ def test_relay_thread_full_reconnect_reinstalls_with_new_token(monkeypatch, tmp_
     assert relay._registered is True
 
 
-def test_relay_docker_loop_treats_400_as_full_reconnect():
+def test_relay_docker_loop_reregisters_service_without_killing_container():
     source = Path("pawflow_relay/thread.py").read_text(encoding="utf-8")
 
     assert 'if "HTTP/1.1 400 Bad Request" in msg:' in source
-    assert "_full_reconnect_requested.set()" in source
-    assert "self._restart_service_registration()" in source
+    bad_request_branch = source.split('if "HTTP/1.1 400 Bad Request" in msg:', 1)[1]
+    bad_request_branch = bad_request_branch.split("except Exception:", 1)[0]
+    assert "_service_reregister_requested.set()" in bad_request_branch
+    assert "_full_reconnect_requested.set()" not in bad_request_branch
+
+    health_branch = source.split("if _consecutive_fails >= 3:", 1)[1]
+    health_branch = health_branch.split("\n\n                if self._stop_event.is_set():", 1)[0]
+    assert "self._reregister_service()" in health_branch
+    assert "self._docker_proc.kill()" not in health_branch
+    assert "_full_reconnect_requested.set()" not in health_branch
 
 
 def test_relay_docker_launcher_passes_token_as_equals_arg():

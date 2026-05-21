@@ -685,6 +685,8 @@ class AgentUtilsMixin:
         Also refreshes the poll cooldown so that agent-generated messages
         don't trigger other agents to wake up (only user messages should).
         """
+        if ctx and ctx.get("_active_cleanup_done"):
+            return
         with self._active_lock:
             rc = self._active_conversations.get(conversation_id, 1) - 1
             if rc <= 0:
@@ -701,13 +703,17 @@ class AgentUtilsMixin:
         _agent_n = ctx.get("active_agent_name", "") if ctx else ""
         _cc_key = f"{conversation_id}:{_agent_n}" if _agent_n else conversation_id
         _turn_key = (ctx or {}).get("_active_turn_key") or _cc_key
+        _released_turn = False
         with self._active_contexts_lock:
             _turn = self._active_turns.get(_turn_key)
             _ctx_gen = (ctx or {}).get("_generation")
             _turn_gen = _turn.get("generation") if isinstance(_turn, dict) else None
             if _turn is None or _turn_gen is None or _ctx_gen is None or _turn_gen == _ctx_gen:
                 self._active_turns.pop(_turn_key, None)
+                _released_turn = True
             self._active_claude_client.pop(_cc_key, None)
+        if ctx and _released_turn:
+            ctx["_active_cleanup_done"] = True
 
     def _calibrate_cpt(self, service_id: str, total_chars: int,
                        actual_tokens: int):

@@ -61,8 +61,8 @@ def test_hot_metadata_write_is_best_effort():
     assert "hot metadata extras write skipped" in body
 
 
-def test_cc_session_cleanup_does_not_block_startup_ready_path():
-    assert "def _cleanup_cc_sessions_async" in _CONTINUOUS_EXECUTOR
-    assert "name=\"cc-session-cleanup\"" in _CONTINUOUS_EXECUTOR
+def test_cli_session_cleanup_does_not_block_startup_ready_path():
+    assert "def _cleanup_cli_sessions_async" in _CONTINUOUS_EXECUTOR
+    assert "name=\"cli-session-cleanup\"" in _CONTINUOUS_EXECUTOR
     assert "daemon=True" in _CONTINUOUS_EXECUTOR
-    assert "executor CC session cleanup async" in _CONTINUOUS_EXECUTOR
+    assert "executor CLI session cleanup async" in _CONTINUOUS_EXECUTOR

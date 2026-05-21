@@ -12,6 +12,7 @@ import os
 import re
 import subprocess  # nosec B404
 import sys as _sys
+from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List
@@ -43,6 +44,35 @@ WRITE_ACTIONS = frozenset({
 
 # All available actions — populated at bottom of file after imports
 # (referenced here for documentation; actual dict defined below)
+
+
+def _is_windows_drive_absolute_path(path: str) -> bool:
+    raw = str(path or "").replace("\\", "/")
+    return len(raw) >= 3 and raw[1] == ":" and raw[2] == "/"
+
+
+def _is_host_absolute_path(path: str) -> bool:
+    raw = str(path or "").replace("\\", "/")
+    return raw.startswith("/") or raw.startswith("//") or _is_windows_drive_absolute_path(raw)
+
+
+def _resolve_tool_path(root_dir: str, raw_path: str, *, allow_host_absolute: bool = False) -> Path:
+    root = Path(root_dir).resolve()
+    raw = str(raw_path or ".")
+    if raw.startswith("/workspace/"):
+        raw = raw[len("/workspace/"):]
+    elif raw == "/workspace":
+        return root
+    if _is_host_absolute_path(raw):
+        if allow_host_absolute:
+            return Path(raw).resolve()
+        raise ValueError(f"Path escapes workspace: {raw_path}")
+    target = (root / raw).resolve()
+    try:
+        target.relative_to(root)
+    except ValueError as exc:
+        raise ValueError(f"Path escapes workspace: {raw_path}") from exc
+    return target
 
 
 def _rel(abs_path: str, root: str) -> str:
@@ -535,6 +565,10 @@ def action_grep(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
     regex = req.get("regex", "")
     recursive = req.get("recursive", True)
     glob_pattern = req.get("glob", "") or req.get("include", "")
+    limit = int(req.get("limit") or req.get("head_limit") or 200)
+    context_both = int(req.get("context", 0) or 0)
+    context_before = int(req.get("context_before") or req.get("-B") or context_both or 0)
+    context_after = int(req.get("context_after") or req.get("-A") or context_both or 0)
     if not regex:
         raise ValueError("Missing 'regex' parameter")
     if not glob_pattern:
@@ -552,32 +586,57 @@ def action_grep(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
     multiple_roots = len(paths) > 1
     results = []
 
-    def _scan_file(fpath: Path, display_name: str):
+    def _scan_file(fpath: Path, display_name: str) -> bool:
         if fpath.suffix.lower() in _GREP_SKIP_EXT:
-            return
+            return False
         if _grep_is_binary(fpath):
-            return
+            return False
+        before = deque(maxlen=max(0, context_before))
+        pending_after: List[Dict[str, Any]] = []
         try:
-            text = fpath.read_text(encoding="utf-8", errors="replace")
+            handle = fpath.open("r", encoding="utf-8", errors="replace")
         except Exception:
-            return
-        for i, line in enumerate(text.splitlines(), 1):
-            if compiled.search(line):
-                results.append({
-                    "path": display_name,
-                    "line_number": i,
-                    "line": line[:500],
-                })
-                if len(results) >= 200:
-                    return
+            return False
+        with handle:
+            for i, raw_line in enumerate(handle, 1):
+                line = raw_line.rstrip("\r\n")
+                clipped = line[:500]
+                if pending_after:
+                    done = []
+                    for item in pending_after:
+                        item["after"].append({"line_number": i, "line": clipped})
+                        item["_remaining_after"] -= 1
+                        if item["_remaining_after"] <= 0:
+                            done.append(item)
+                    for item in done:
+                        pending_after.remove(item)
+                if len(results) < limit and compiled.search(line):
+                    row = {
+                        "path": display_name,
+                        "line_number": i,
+                        "line": clipped,
+                    }
+                    if context_before:
+                        row["before"] = list(before)
+                    if context_after:
+                        row["after"] = []
+                        row["_remaining_after"] = context_after
+                        pending_after.append(row)
+                    results.append(row)
+                if context_before:
+                    before.append({"line_number": i, "line": clipped})
+                if len(results) >= limit and not pending_after:
+                    break
+        for item in results:
+            item.pop("_remaining_after", None)
+        return len(results) >= limit
 
     scan_patterns = glob_patterns or ["**/*" if recursive else "*"]
     seen = set()
     for p in paths:
         if p.is_file():
             display = str(p).replace("\\", "/") if multiple_roots else p.name
-            _scan_file(p, display)
-            if len(results) >= 200:
+            if _scan_file(p, display):
                 break
             continue
         for scan_pattern in scan_patterns:
@@ -593,12 +652,11 @@ def action_grep(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
                 rel = str(fpath.relative_to(p)).replace("\\", "/")
                 root_label = str(p).replace("\\", "/")
                 display = f"{root_label}/{rel}" if multiple_roots else rel
-                _scan_file(fpath, display)
-                if len(results) >= 200:
+                if _scan_file(fpath, display):
                     break
-            if len(results) >= 200:
+            if len(results) >= limit:
                 break
-        if len(results) >= 200:
+        if len(results) >= limit:
             break
     return results
 
@@ -913,13 +971,19 @@ def action_batch_edit(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
     if not edits:
         raise ValueError("Missing 'edits' parameter (list of {path, old_string, new_string})")
 
+    allow_host_absolute = bool(req.get("local", False))
+    root = Path(root_dir).resolve()
+
     # Phase 1: Read files once.
     file_contents = {}
+    path_labels = {}
     for i, edit in enumerate(edits):
         fpath = edit.get("path", "")
         if not fpath:
             raise ValueError(f"Edit {i}: missing 'path'")
-        abs_path = str(Path(root_dir).resolve() / fpath)
+        abs_path = str(_resolve_tool_path(
+            root_dir, fpath, allow_host_absolute=allow_host_absolute))
+        path_labels[abs_path] = _rel(abs_path, str(root))
         old_string = edit.get("old_string", "")
         if not old_string:
             raise ValueError(f"Edit {i}: missing 'old_string'")
@@ -937,7 +1001,8 @@ def action_batch_edit(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
     total_replacements = 0
     for i, edit in enumerate(edits):
         fpath = edit.get("path", "")
-        abs_path = str(Path(root_dir).resolve() / fpath)
+        abs_path = str(_resolve_tool_path(
+            root_dir, fpath, allow_host_absolute=allow_host_absolute))
         text = working[abs_path]
         old_string = edit.get("old_string", "")
         replace_all = bool(edit.get("replace_all", req.get("replace_all", False)))
@@ -949,7 +1014,8 @@ def action_batch_edit(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
         count = len(matches)
         if count == 0:
             raise ValueError(
-                f"Edit {i}: " + _diagnose_edit_mismatch(old_string, text, fpath))
+                f"Edit {i}: " + _diagnose_edit_mismatch(
+                    old_string, text, path_labels.get(abs_path, fpath)))
         if count > 1 and not replace_all:
             kinds = ", ".join(sorted({m["kind"] for m in matches}))
             raise ValueError(
@@ -966,7 +1032,7 @@ def action_batch_edit(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
         total_replacements += replacements
         details.append({
             "index": i,
-            "path": fpath,
+            "path": path_labels.get(abs_path, fpath),
             "replacements": replacements,
             "match_type": first["kind"],
             "similarity": round(float(first.get("score", 1.0)), 4),
@@ -977,9 +1043,7 @@ def action_batch_edit(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
     for abs_path, content in working.items():
         Path(abs_path).write_text(content, encoding="utf-8")
 
-    modified = list(set(str(Path(ap).relative_to(Path(root_dir).resolve())).replace("\\", "/")
-                        for ap in working))
-    modified.sort()
+    modified = sorted(set(path_labels.get(ap, _rel(ap, str(root))) for ap in working))
     return {
         "edits_applied": len(edits),
         "total_replacements": total_replacements,
@@ -989,22 +1053,20 @@ def action_batch_edit(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
     }
 
 
-def _patch_target(root_dir: str, raw_path: str):
+def _patch_target(root_dir: str, raw_path: str, *, allow_host_absolute: bool = False):
     root = Path(root_dir).resolve()
     name = (raw_path or "").strip()
     if not name:
         raise ValueError("Patch target path is empty")
     if name.startswith("a/") or name.startswith("b/"):
         name = name[2:]
-    # LLMs often emit container paths while the relay root is the host path.
-    if name.startswith("/workspace/"):
-        name = name[len("/workspace/"):]
-    p = Path(name)
-    target = p if p.is_absolute() else root / p
-    target = target.resolve()
+    target = _resolve_tool_path(
+        root_dir, name, allow_host_absolute=allow_host_absolute).resolve()
     try:
         rel = target.relative_to(root).as_posix()
     except ValueError as exc:
+        if allow_host_absolute and _is_host_absolute_path(name):
+            return target, str(target)
         raise ValueError(f"Patch target escapes workspace: {raw_path}") from exc
     return target, rel
 
@@ -1113,14 +1175,16 @@ def _parse_openai_patch_sections(patch: str):
     raise ValueError("OpenAI patch missing '*** End Patch'")
 
 
-def _apply_openai_patch(root_dir: str, patch: str) -> Dict[str, Any]:
+def _apply_openai_patch(root_dir: str, patch: str, *,
+                        allow_host_absolute: bool = False) -> Dict[str, Any]:
     sections = _parse_openai_patch_sections(patch)
     if not sections:
         raise ValueError("Patch did not contain any applicable hunks")
     files_modified = []
     hunks_applied = 0
     for action, raw_path, payload, move_to in sections:
-        target, rel = _patch_target(root_dir, raw_path)
+        target, rel = _patch_target(
+            root_dir, raw_path, allow_host_absolute=allow_host_absolute)
         if action == "add":
             if target.exists():
                 raise ValueError(f"Add File target already exists: {rel}")
@@ -1144,7 +1208,8 @@ def _apply_openai_patch(root_dir: str, patch: str) -> Dict[str, Any]:
             dest = target
             dest_rel = rel
             if move_to:
-                dest, dest_rel = _patch_target(root_dir, move_to)
+                dest, dest_rel = _patch_target(
+                    root_dir, move_to, allow_host_absolute=allow_host_absolute)
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 if dest != target:
                     target.unlink()
@@ -1167,8 +1232,11 @@ def action_apply_patch(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
     if not patch:
         raise ValueError("Missing 'patch' parameter")
 
+    allow_host_absolute = bool(req.get("local", False))
+
     if patch.lstrip().startswith("*** Begin Patch"):
-        return _apply_openai_patch(root_dir, patch.lstrip())
+        return _apply_openai_patch(
+            root_dir, patch.lstrip(), allow_host_absolute=allow_host_absolute)
 
     # Try git apply first for real unified diffs.
     try:
@@ -1214,7 +1282,8 @@ def action_apply_patch(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
                 current_content = None
                 i += 1
                 continue
-            target, current_rel = _patch_target(root_dir, fname)
+            target, current_rel = _patch_target(
+                root_dir, fname, allow_host_absolute=allow_host_absolute)
             current_file = str(target)
             current_content = target.read_text(encoding="utf-8") if target.is_file() else ""
             files_modified.append(current_rel)

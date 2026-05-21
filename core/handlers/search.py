@@ -126,6 +126,8 @@ class SearchHandler(BaseFsHandler):
                     "path": str(item.get("path", "?")),
                     "line_number": int(item.get("line_number", 0) or 0),
                     "line": str(item.get("line", "")),
+                    "before": item.get("before") if isinstance(item.get("before"), list) else [],
+                    "after": item.get("after") if isinstance(item.get("after"), list) else [],
                 })
             return normalized
         if not isinstance(raw_results, str):
@@ -246,13 +248,30 @@ class SearchHandler(BaseFsHandler):
         for fpath, items in ranked:
             out.append(f"\n## {fpath} ({len(items)} match(es))")
             lines = []
-            try:
-                lines = reader(fpath).splitlines()
-            except Exception:
-                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+            needs_reader = (
+                context > 0
+                and any(
+                    "before" not in item and "after" not in item
+                    for item in items[:8])
+            )
+            if needs_reader:
+                try:
+                    lines = reader(fpath).splitlines()
+                except Exception:
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             for item in items[:8]:
                 line_no = item.get("line_number", "?")
-                if context > 0 and isinstance(line_no, int) and lines:
+                before = item.get("before") or []
+                after = item.get("after") or []
+                if context > 0 and ("before" in item or "after" in item):
+                    for ctx in before:
+                        out.append(
+                            f"  {ctx.get('line_number', '?')}: {str(ctx.get('line', ''))[:500]}")
+                    out.append(f"> {line_no}: {str(item.get('line', ''))[:500]}")
+                    for ctx in after:
+                        out.append(
+                            f"  {ctx.get('line_number', '?')}: {str(ctx.get('line', ''))[:500]}")
+                elif context > 0 and isinstance(line_no, int) and lines:
                     start = max(1, line_no - context)
                     end = min(len(lines), line_no + context)
                     for n in range(start, end + 1):

@@ -142,6 +142,46 @@ def _context_messages(conversation_id: str, agent_name: str, user_id: str,
     return _stored_context_messages(conversation_id, agent_name, store), None, False
 
 
+def context_usage_for_messages(conversation_id: str, agent_name: str,
+                               messages: Any, *, svc_cfg: Optional[Dict[str, Any]] = None,
+                               real_window: int = 0, provider: str = "",
+                               source: str = "context_usage",
+                               cache: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Build a context gauge from an already-loaded message list."""
+    svc_cfg = dict(svc_cfg or {})
+    overhead = (_CLI_INVISIBLE_OVERHEAD_TOKENS
+                if str(provider) in _CLI_CLAUDE_PROVIDERS else 0)
+    configured = int(svc_cfg.get("max_context_size", 0) or 0)
+    from core.context_window import effective_context_window
+    max_ctx = effective_context_window(configured, int(real_window or 0), fallback=0)
+    if max_ctx <= 0:
+        return {
+            "conversation_id": conversation_id,
+            "agent_name": agent_name,
+            "used": 0,
+            "max": 0,
+            "pct": 0.0,
+            "source": source,
+            "updated_at": time.time(),
+            "message_count": 0,
+            "cache_mode": "none",
+        }
+    from core.token_counter import resolve_token_multiplier
+    from tasks.ai.context_usage_cache import context_usage_from_cache
+    usage = context_usage_from_cache(
+        messages or [], max_ctx, cache, source=source,
+        token_multiplier=resolve_token_multiplier(svc_cfg),
+        overhead=overhead)
+    usage.update({
+        "conversation_id": conversation_id,
+        "agent_name": agent_name,
+        "used": int(usage.get("used", 0) or 0),
+        "max": int(usage.get("max", 0) or 0),
+        "pct": float(usage.get("pct", 0.0) or 0.0),
+    })
+    return usage
+
+
 def compute_context_usage(conversation_id: str, agent_name: str, *,
                           user_id: str = "", store: Any = None,
                           owner: Any = None, source: str = "context_usage") -> Dict[str, Any]:
@@ -162,43 +202,20 @@ def compute_context_usage(conversation_id: str, agent_name: str, *,
     active_ctx = _active_context(conversation_id, agent_name)
     svc_cfg, real_window, provider = _service_config(
         conversation_id, agent_name, user_id, active_ctx)
-    overhead = (_CLI_INVISIBLE_OVERHEAD_TOKENS
-                if str(provider) in _CLI_CLAUDE_PROVIDERS else 0)
     configured = int(svc_cfg.get("max_context_size", 0) or 0)
     if active_ctx and int(active_ctx.get("max_context_size") or 0) > 0:
         configured = int(active_ctx.get("max_context_size") or 0)
-    from core.context_window import effective_context_window
-    max_ctx = effective_context_window(configured, real_window, fallback=0)
-    if max_ctx <= 0:
-        return {
-            "conversation_id": conversation_id,
-            "agent_name": agent_name,
-            "used": 0,
-            "max": 0,
-            "pct": 0.0,
-            "source": source,
-            "updated_at": time.time(),
-            "message_count": 0,
-            "cache_mode": "none",
-        }
 
     raw_messages, cache, _already_deserialized = _context_messages(
         conversation_id, agent_name, user_id, store, active_ctx)
     messages = raw_messages or []
-
-    from core.token_counter import resolve_token_multiplier
-    from tasks.ai.context_usage_cache import context_usage_from_cache
-    usage = context_usage_from_cache(
-        messages, max_ctx, cache, source=source,
-        token_multiplier=resolve_token_multiplier(svc_cfg),
-        overhead=overhead)
-    usage.update({
-        "conversation_id": conversation_id,
-        "agent_name": agent_name,
-        "used": int(usage.get("used", 0) or 0),
-        "max": int(usage.get("max", 0) or 0),
-        "pct": float(usage.get("pct", 0.0) or 0.0),
-    })
+    cfg_for_count = dict(svc_cfg)
+    if configured > 0:
+        cfg_for_count["max_context_size"] = configured
+    usage = context_usage_for_messages(
+        conversation_id, agent_name, messages, svc_cfg=cfg_for_count,
+        real_window=real_window, provider=provider, source=source,
+        cache=cache)
     if active_ctx is not None:
         try:
             from tasks.ai.agent_loop import AgentLoopTask

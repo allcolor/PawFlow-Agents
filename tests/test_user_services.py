@@ -845,6 +845,90 @@ class TestResourceConflict:
         listener.unregister_routes.assert_called_once_with("_tool_relay")
         assert not svc.is_connected()
 
+    def test_tool_relay_ws_session_serializes_response_writes(self, monkeypatch):
+        """Concurrent tool results must not write interleaved WS frames."""
+        import asyncio
+        import threading
+
+        from services.tool_relay_service import ToolRelayService
+        import services.filesystem_service as fs_mod
+
+        svc = ToolRelayService({"_service_id": "_tool_relay", "token": "tok"})
+        frames = [
+            (0x01, json.dumps({
+                "type": "register",
+                "token": "tok",
+                "relay_id": "relay1",
+                "user_id": "user1",
+                "conversation_id": "conv1",
+                "agent_name": "agent1",
+            }).encode("utf-8")),
+            (0x01, json.dumps({
+                "type": "request",
+                "request_id": "rid1",
+                "method": "read",
+            }).encode("utf-8")),
+            (0x01, json.dumps({
+                "type": "request",
+                "request_id": "rid2",
+                "method": "read",
+            }).encode("utf-8")),
+        ]
+        barrier = threading.Barrier(2)
+        sent = []
+        active_sends = 0
+        max_active_sends = 0
+
+        class Writer:
+            def close(self):
+                pass
+
+        def handle_tool_request(msg, user_id, conversation_id, agent_name):
+            barrier.wait(timeout=2)
+            return {"type": "result", "request_id": msg["request_id"], "data": {}}
+
+        async def run_session():
+            done = asyncio.Event()
+
+            async def fake_recv(reader):
+                if frames:
+                    return frames.pop(0)
+                await done.wait()
+                return 0x08, b""
+
+            async def fake_send(writer, payload, opcode=0x01):
+                nonlocal active_sends, max_active_sends
+                active_sends += 1
+                max_active_sends = max(max_active_sends, active_sends)
+                try:
+                    await asyncio.sleep(0.02)
+                    msg = json.loads(payload.decode("utf-8"))
+                    sent.append(msg)
+                    result_ids = {
+                        m.get("request_id")
+                        for m in sent
+                        if m.get("type") == "result"
+                    }
+                    if result_ids == {"rid1", "rid2"}:
+                        done.set()
+                finally:
+                    active_sends -= 1
+
+            monkeypatch.setattr(fs_mod, "_ws_recv_frame", fake_recv)
+            monkeypatch.setattr(fs_mod, "_ws_send_frame", fake_send)
+            monkeypatch.setattr(svc, "handle_tool_request", handle_tool_request)
+            await svc._serve_tool_session(
+                object(), Writer(), asyncio.get_running_loop(), "test")
+
+        asyncio.run(run_session())
+
+        assert max_active_sends == 1
+        assert {
+            m.get("request_id")
+            for m in sent
+            if m.get("type") == "result"
+        } == {"rid1", "rid2"}
+
     def test_update_config_conflict(self):
         """Changing port to conflict with existing = blocked."""
         from core.service_registry import ResourceConflictError

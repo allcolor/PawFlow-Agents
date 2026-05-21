@@ -593,6 +593,70 @@ class TestAgentLoopStreaming(unittest.TestCase):
         PendingQueue.drop_cache()
         PollScheduler.reset()
 
+    def test_interrupted_cleanup_still_wakes_queued_pending_message(self):
+        from tasks.ai.agent_loop import AgentLoopTask
+        from core.pending_queue import PendingQueue
+        from core.poll_scheduler import PollScheduler
+
+        conversation_id = "test-conv-interrupted-pending-wake"
+        agent_name = "assistant"
+        agent_key = f"{conversation_id}:{agent_name}"
+
+        class _FakeStore:
+            def __init__(self, root):
+                self._store_dir = root / "convs"
+
+            def _conv_dir(self, cid, user_id=""):
+                path = self._store_dir / "u" / cid
+                path.mkdir(parents=True, exist_ok=True)
+                return path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_store = _FakeStore(root)
+            with patch("core.conversation_store.ConversationStore.instance",
+                       return_value=fake_store), \
+                    patch.object(_paths, "POLL_SCHEDULE_FILE",
+                                 root / "poll_schedule.json"):
+                PendingQueue.drop_cache()
+                PollScheduler.reset()
+                task = AgentLoopTask({"api_key": "k", "streaming": True})
+                task._conv_generation[agent_key] = 1
+                with task._active_lock:
+                    task._active_conversations[conversation_id] = 1
+                    task._user_active_conversations.add(conversation_id)
+                with task._active_contexts_lock:
+                    task._active_turns[agent_key] = {
+                        "conversation_id": conversation_id,
+                        "agent_name": agent_name,
+                    }
+
+                def _enqueue_during_interrupted_cleanup(ctx, cid, bus):
+                    PendingQueue.for_agent(cid, agent_name).enqueue({
+                        "role": "user",
+                        "content": "arrived while old generation exits",
+                        "msg_id": "m-interrupted",
+                        "ts": 1234.5,
+                    }, source="http")
+
+                task._streaming_agent_loop_inner = _enqueue_during_interrupted_cleanup
+                task._streaming_agent_loop({
+                    "active_agent_name": agent_name,
+                    "user_id": "u1",
+                    "_gen_key": agent_key,
+                    "_generation": 0,
+                    "_active_turn_key": agent_key,
+                }, conversation_id, ConversationEventBus.instance())
+
+                wake = PollScheduler.instance().get(
+                    f"{conversation_id}::pending::{agent_name}")
+                assert wake is not None
+                assert wake["reason"] == "[pending] 1 queued msg(s) after interrupted turn"
+                assert wake["recheck_at"] <= time.time() + 1
+
+        PendingQueue.drop_cache()
+        PollScheduler.reset()
+
     def test_user_message_preempts_preparing_turn_without_live_client(self):
         from tasks.ai.agent_loop import AgentLoopTask
         from core.pending_queue import PendingQueue

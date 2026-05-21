@@ -49,6 +49,34 @@ must not rely on omitting a timeout field to disable a provider default. PawFlow
 generated Codex MCP config pins `tool_timeout_sec` to `3600` seconds to avoid
 Codex's short default while keeping an explicit provider-required value.
 
+### Tool Relay Timing Logs
+
+For CLI-provider latency debugging, the MCP bridge and tool relay emit correlated
+timing lines. The bridge logs `TIMING tools/call` for MCP stdio handling and
+`<- RELAY execute_tool ... bridge_ms=... send_ms=... return_wait_ms=...` for the
+round trip to PawFlow. `ToolRelayService` logs `timing do_execute` for server-side
+breakdown (`registry_ms`, hooks, approvals, secrets, `exec_ms`), `timing
+get_registry` when registry setup is slow enough to matter (default registry,
+dynamic tools, MCP discovery, filters, filesystem lookup, handler context,
+delegate wiring, media wiring, filesystem list), `timing execute_done` for relay
+request lifetime, and `timing ws_send` for response-frame serialization/write
+time. Codex app-server also logs `timing mcpToolCall started/completed` with
+provider-visible `tc_id`. Use `request_id` to correlate bridge and relay lines,
+and `tc_id` to correlate provider/UI events.
+
+Tool registries are cached per `(toolRelay service, user, conversation, agent,
+file_base_url)` so a provider turn does not rebuild and refilter every handler on
+each tool call. Filter updates and resource/link/package mutation tools clear the
+matching cache entries before subsequent calls.
+
+The dispatch hot path keeps read-only tools cheap: if no conversation hooks are
+bound, `pre_tool_call`/`post_tool_call` execution is skipped; permission checks
+read the in-memory conversation snapshot before falling back to disk; and secret
+environment resolution only runs for shell/script tools or arguments that
+actually reference `$VARS`. Secret environments and redaction values are kept in stable in-memory caches
+after the first resolution and invalidated when secret/resource mutation tools
+run, so read/search-style calls do not restat or decrypt secrets repeatedly.
+
 ## Media Services
 
 | Type | Purpose |

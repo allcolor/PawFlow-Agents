@@ -58,7 +58,7 @@ class TestLLMConnectionService:
         })
         svc.connect()
 
-        with patch.object(svc._client, "_http_post", return_value=OPENAI_RESPONSE):
+        with patch.object(LLMClient, "_http_post", return_value=OPENAI_RESPONSE):
             response = svc.complete(
                 messages=[LLMMessage("user", "Hello", conversation_id="test_conv")],
                 temperature=0.5,
@@ -80,7 +80,7 @@ class TestLLMConnectionService:
         })
         svc.connect()
 
-        with patch.object(svc._client, "_http_post", return_value=ANTHROPIC_RESPONSE):
+        with patch.object(LLMClient, "_http_post", return_value=ANTHROPIC_RESPONSE):
             response = svc.complete(
                 messages=[
                     LLMMessage("system", "You are helpful", conversation_id="test_conv"),
@@ -107,7 +107,7 @@ class TestLLMConnectionService:
             captured.update(body)
             return ANTHROPIC_RESPONSE
 
-        with patch.object(svc._client, "_http_post", side_effect=mock_post):
+        with patch.object(LLMClient, "_http_post", side_effect=mock_post):
             svc.complete(messages=[
                 LLMMessage("system", "Be concise", conversation_id="test_conv"),
                 LLMMessage("user", "Hi", conversation_id="test_conv"),
@@ -134,7 +134,7 @@ class TestLLMConnectionService:
             captured.update(body)
             return OPENAI_RESPONSE
 
-        with patch.object(svc._client, "_http_post", side_effect=mock_post):
+        with patch.object(LLMClient, "_http_post", side_effect=mock_post):
             svc.complete(
                 messages=[LLMMessage("user", "Give JSON", conversation_id="test_conv")],
                 response_format="json",
@@ -167,7 +167,7 @@ class TestLLMConnectionService:
             captured.update(body)
             return OPENAI_RESPONSE
 
-        with patch.object(svc._client, "_http_post", side_effect=mock_post):
+        with patch.object(LLMClient, "_http_post", side_effect=mock_post):
             svc.complete(messages=[LLMMessage("user", "Hi", conversation_id="test_conv")])
 
         assert captured["path"] == "/chat/completions"

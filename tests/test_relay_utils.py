@@ -83,3 +83,12 @@ def test_windows_shell_cwd_leaves_powershell_unc_cwd_alone():
 
     assert command == "Get-Location"
     assert cwd == r"\\wsl$\Ubuntu-24.04\home\qan\Projets\PawFlow"
+
+
+def test_exec_stream_uses_direct_argv_for_powershell():
+    import inspect
+    from tools.fs_exec import action_exec_stream
+
+    src = inspect.getsource(action_exec_stream)
+    assert "_powershell_command(executable, command)" in src
+    assert 'popen_kwargs["shell"] = False' in src

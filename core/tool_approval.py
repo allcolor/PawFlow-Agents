@@ -32,7 +32,7 @@ class ToolApprovalGate:
         # Info / help
         "pawflow_help", "list_secrets",
         # File read
-        "read", "list_dir", "stat", "exists", "glob", "grep",
+        "read", "list_dir", "stat", "exists", "glob", "grep", "search",
         # Display / media info
         "show_file", "get_image_model_info",
         # Web / search
@@ -78,7 +78,7 @@ class ToolApprovalGate:
     # filesystem.<action> dispatch reuses _FS_EXEMPT.
     READ_ONLY_ALLOWED = frozenset({
         # File / dir read
-        "read", "list_dir", "stat", "exists", "glob", "grep",
+        "read", "list_dir", "stat", "exists", "glob", "grep", "search",
         "show_file",
         # Memory / history (read)
         "recall", "semantic_recall",

@@ -74,6 +74,16 @@ def test_codex_app_server_reasoning_is_wired():
     assert "text in existing or existing in text" in provider_src
 
 
+def test_codex_app_server_ephemeral_streams_bypass_cold_bootstrap():
+    src = inspect.getsource(LLMCodexAppServerMixin._stream_codex_app_server)
+    prompt_block = src[
+        src.index("if is_ephemeral:"):
+        src.index("elif thread_id:")]
+    assert 'prompt_mode = "ephemeral"' in prompt_block
+    assert "initial_text = self._codex_app_resume_text(messages)" in prompt_block
+    assert "_codex_app_full_initial_text" not in prompt_block
+
+
 
 def test_codex_app_server_effort_mapping():
     assert LLMCodexAppServerMixin._codex_app_effort(0, "") == "low"
@@ -163,14 +173,31 @@ def test_codex_app_server_steers_mcp_hint_after_native_tool():
     assert "_send_native_tool_hint(native_name)" in src
 
 
-def test_codex_app_server_streams_live_thinking_before_turn_end():
+def test_codex_app_server_routes_live_thinking_through_neutral_callback():
     src = inspect.getsource(LLMCodexAppServerMixin._stream_codex_app_server)
     client_src = inspect.getsource(LLMClient.complete_stream)
     assert "thinking_callback=None" in src
     assert "def _flush_live_thinking" in src
-    assert 'block_callback("thinking"' in src
+    assert "thinking_callback(text)" in src
+    assert 'block_callback("thinking"' not in src
     assert 'method in ("item/reasoning/summaryTextDelta", "item/reasoning/textDelta")' in src
     assert "thinking_callback=thinking_callback" in client_src
+
+
+def test_codex_app_server_live_thinking_preserves_chunk_boundary_spaces():
+    src = inspect.getsource(LLMCodexAppServerMixin._stream_codex_app_server)
+    block = src[src.index("def _flush_live_thinking"):src.index("def _append_final_reasoning")]
+    assert 'text = "".join(live_thinking_parts)' in block
+    assert 'if not text.strip():' in block
+    assert '"".join(live_thinking_parts).strip()' not in block
+
+
+def test_codex_app_server_live_thinking_coalesces_tiny_chunks():
+    src = inspect.getsource(LLMCodexAppServerMixin._stream_codex_app_server)
+    block = src[src.index("def _flush_live_thinking"):src.index("def _append_final_reasoning")]
+    assert "if len(text) < 160:" in block
+    assert "if now - last_thinking_emit < 4.0:" in block
+    assert "now - last_thinking_emit < 1.0" not in block
 
 
 def test_codex_app_server_container_dir_matches_pool_namespace():

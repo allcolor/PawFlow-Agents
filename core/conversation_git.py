@@ -8,8 +8,8 @@ Usage (end of agent loop, in finally):
     from core.conversation_git import commit_turn
     commit_turn(conversation_id, reason="turn complete")
 
-Blocking: waits for writer drain (bounded timeout), then performs the
-git commit under the per-conversation lock.
+Blocking: waits for writer drain, then performs a best-effort git snapshot
+outside the hot conversation lock.
 """
 import logging
 

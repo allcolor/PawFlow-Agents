@@ -395,7 +395,8 @@ class AgentSummarizeMixin:
                 f"summarizer_service '{_svc_id}' has no max_context_size "
                 f"configured. Set it explicitly — chunk sizing has no default.")
         logger.info(f"[compact] summarize via summarizer_service='{_svc_id}', "
-                     f"target={target_tokens} tokens, input={len(text)} chars, "
+                     f"summary_target={target_tokens} tokens, "
+                     f"input={len(text)} chars, "
                      f"svc max_context={_svc_ctx_max} tokens")
         if not target_tokens:
             target_tokens = 2000
@@ -428,7 +429,7 @@ class AgentSummarizeMixin:
         compact_key = "CK_" + uuid.uuid4().hex[:8]
         file_id = FileStore.instance().store(
             "compact_input.txt", text.encode("utf-8"), "text/plain",
-            user_id=user_id, conversation_id=conversation_id,
+            user_id=user_id, conversation_id="_compact",
             category="compact")
         logger.info("[compact] wrote %d chars as %s, key=%s", len(text), file_id, compact_key)
 
@@ -621,7 +622,7 @@ class AgentSummarizeMixin:
                     cur_fid = FileStore.instance().store(
                         "compact_input.txt", cur_text.encode("utf-8"),
                         "text/plain",
-                        user_id=user_id, conversation_id=conversation_id,
+                        user_id=user_id, conversation_id="_compact",
                         category="compact")
                     issued_fids.append(cur_fid)
                     set_compact_key(cur_key)
@@ -803,13 +804,13 @@ class AgentSummarizeMixin:
         if hasattr(read_handler, "set_user_id"):
             read_handler.set_user_id(user_id)
         if hasattr(read_handler, "set_conversation_id"):
-            read_handler.set_conversation_id(conversation_id)
+            read_handler.set_conversation_id("_compact")
         tools = [_READ_TOOL, _COMPACT_RESULT_TOOL]
         max_loop = 15  # max tool-loop iterations (read pages + compact)
         call_scope = {
             "call_user_id": user_id,
-            "call_conversation_id": conversation_id,
-            "call_agent_name": "_compact",
+            "call_conversation_id": "_compact",
+            "call_agent_name": "compact",
             "call_event_cid": "",
             "call_ephemeral_stream": True,
         }
@@ -880,7 +881,7 @@ class AgentSummarizeMixin:
                         if hasattr(handler, "set_user_id"):
                             handler.set_user_id(user_id)
                         if hasattr(handler, "set_conversation_id"):
-                            handler.set_conversation_id(conversation_id)
+                            handler.set_conversation_id("_compact")
                         handler.execute(args)
                         # Retrieve result
                         try:

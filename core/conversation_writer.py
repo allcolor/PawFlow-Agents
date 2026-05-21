@@ -214,6 +214,12 @@ class ConversationWriter:
                 continue
 
             if item.get("_flush"):
+                try:
+                    from core.segmented_jsonl import SegmentedJsonl
+                    SegmentedJsonl.flush_all_append_handles()
+                except Exception:
+                    logger.debug("[conv-writer:%s] append-handle flush failed",
+                                 self._cid[:8], exc_info=True)
                 evt = item.get("_done_event")
                 if evt:
                     evt.set()
@@ -235,27 +241,66 @@ class ConversationWriter:
 
             _batch_started = time.monotonic()
             written = []
-            for write_item in batch:
+            _write_ms = 0.0
+            _publish_ms = 0.0
+            i = 0
+            while i < len(batch):
+                write_item = batch[i]
                 try:
                     op = write_item.get("op", "append_message")
                     if op != "append_message":
                         raise ValueError(
                             f"[conv-writer] unknown op: {op!r} (only 'append_message' supported)")
+
+                    can_batch = (
+                        not write_item.get("sse_events")
+                        and hasattr(store, "append_messages"))
+                    if can_batch:
+                        run = [write_item]
+                        batch_agent = write_item.get("agent_name", "")
+                        batch_user = write_item.get("user_id", "")
+                        batch_ttl = write_item.get("ttl", 0)
+                        j = i + 1
+                        while j < len(batch):
+                            next_item = batch[j]
+                            next_op = next_item.get("op", "append_message")
+                            if next_op != "append_message":
+                                raise ValueError(
+                                    f"[conv-writer] unknown op: {next_op!r} (only 'append_message' supported)")
+                            if next_item.get("sse_events"):
+                                break
+                            if (next_item.get("agent_name", "") != batch_agent
+                                    or next_item.get("user_id", "") != batch_user
+                                    or next_item.get("ttl", 0) != batch_ttl):
+                                break
+                            run.append(next_item)
+                            j += 1
+                        _write_started = time.monotonic()
+                        store.append_messages(self._cid, run)
+                        _write_ms += ((time.monotonic() - _write_started)
+                                      * 1000.0)
+                        written.extend(run)
+                        i = j
+                        continue
+
+                    _write_started = time.monotonic()
                     store.append_message(
                         self._cid, write_item["msg"],
                         agent_name=write_item.get("agent_name", ""),
                         user_id=write_item.get("user_id", ""),
                         ttl=write_item.get("ttl", 0))
+                    _write_ms += ((time.monotonic() - _write_started)
+                                  * 1000.0)
                     written.append(write_item)
+                    _publish_started = time.monotonic()
+                    self._publish_sse_events(write_item)
+                    _publish_ms += ((time.monotonic() - _publish_started)
+                                    * 1000.0)
+                    i += 1
                 except Exception as e:
                     logger.error("[conv-writer:%s] write failed: %s",
                                  self._cid[:8], e, exc_info=True)
-
-            _write_ms = (time.monotonic() - _batch_started) * 1000.0
-            _publish_started = time.monotonic()
-            for write_item in written:
-                self._publish_sse_events(write_item)
-            _publish_ms = (time.monotonic() - _publish_started) * 1000.0
+                    i += 1
 
             logger.info(
                 "[conv-writer:%s] batch size=%d written=%d queued=%d "

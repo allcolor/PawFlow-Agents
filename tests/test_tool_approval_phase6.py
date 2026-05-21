@@ -20,7 +20,7 @@ from core.tool_approval import ToolApprovalGate
 
 def test_read_only_allows_listed_read_tools():
     for t in ("read", "list_dir", "stat", "exists", "glob", "grep",
-              "recall", "semantic_recall", "read_history",
+              "search", "recall", "semantic_recall", "read_history",
               "pawflow_help", "get_tool_schema", "web_search",
               "notify_user", "ask_user"):
         assert ToolApprovalGate.is_read_only_allowed(t), (

@@ -47,6 +47,17 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
             _dt = (_t_stream.monotonic() - _stream_t0) * 1000
             if _dt > 200:
                 logger.info("[stream-timing] %s: +%.0fms", label, _dt)
+
+        def _stream_step(label, started, **extra):
+            _step_ms = (_t_stream.monotonic() - started) * 1000
+            _total_ms = (_t_stream.monotonic() - _stream_t0) * 1000
+            if _step_ms > 50 or _total_ms > 200:
+                _suffix = "".join(
+                    f" {k}={v}" for k, v in extra.items()
+                    if v is not None)
+                logger.info(
+                    "[stream-timing] %s step_ms=%.1f total_ms=%.1f%s",
+                    label, _step_ms, _total_ms, _suffix)
         from core.conversation_event_bus import ConversationEventBus
         from core.conversation_store import ConversationStore
         _stream_mark("imports")
@@ -124,6 +135,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                 _stamped_user["attachments"] = _attachments_body
             try:
                 from core.agent_hooks import AgentHookRunner
+                _hook_started = _t_stream.monotonic()
                 _pre_user = AgentHookRunner(
                     user_id=_uid,
                     conversation_id=conversation_id,
@@ -135,6 +147,10 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                     "target_agent": _target or "",
                     "channel": "web",
                 }, fail_policy="closed")
+                _stream_step(
+                    "pre_user_hook",
+                    _hook_started,
+                    decision=_pre_user.get("decision"))
                 if _pre_user.get("decision") == "block":
                     reason = _pre_user.get("reason") or "blocked by hook"
                     flowfile.set_content(json.dumps({"error": reason}).encode())
@@ -161,12 +177,14 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                 return [flowfile]
             if not _skip_pre_persist:
                 try:
+                    _writer_started = _t_stream.monotonic()
                     _cw = ConversationWriter.for_conversation(conversation_id)
-                    _stream_mark("writer_obtained")
+                    _stream_step("writer_obtained", _writer_started)
+                    _enqueue_started = _t_stream.monotonic()
                     _cw.enqueue_message(
                         dict(_stamped_user), agent_name=_target or "",
                         user_id=_uid)
-                    _stream_mark("pre_persist")
+                    _stream_step("pre_persist_enqueue", _enqueue_started)
                 except Exception as _pe:
                     logger.warning(
                         "[agent:%s] pre-persist user message failed: %s",
@@ -432,8 +450,9 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
         thread = threading.Thread(
             target=_bg_streaming, daemon=True,
             name=_thread_name)
+        _thread_started = _t_stream.monotonic()
         thread.start()
-        _stream_mark("thread_started")
+        _stream_step("thread_started", _thread_started)
         logger.info("[agent:%s] bg thread started: %s", conversation_id[:8], _thread_name)
 
         # Start poller if configured
@@ -445,9 +464,11 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                 daemon=True, name="agent-poller").start()
             logger.info(f"Agent poller started (interval={poll_interval}s)")
 
+        _ack_started = _t_stream.monotonic()
         ack = json.dumps({"status": "accepted", "conversation_id": conversation_id,
                           "message_count": ConversationStore.instance().message_count(conversation_id),
                           "server_start_time": SERVER_START_TIME})
+        _stream_step("ack_message_count", _ack_started)
         _stream_mark("ack_built")
         flowfile.set_content(ack.encode("utf-8"))
         flowfile.set_attribute("agent.conversation_id", conversation_id)
@@ -491,22 +512,25 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
             _generation2 = ctx.get("_generation", 0)
             _was_interrupted2 = not self._is_current_generation(_gen_key2, _generation2)
             self._decrement_active(conversation_id, ctx)
-            if not _was_interrupted2:
-                try:
-                    from core.pending_queue import PendingQueue
-                    _pending_count2 = PendingQueue.for_agent(
-                        conversation_id, _agent_n2).peek_count()
-                    if _pending_count2:
-                        from tasks.ai.agent_loop import AgentLoopTask
-                        AgentLoopTask.wake_agent(
-                            conversation_id, _agent_n2,
-                            reason=f"[pending] {_pending_count2} queued msg(s) after idle",
-                            user_id=ctx.get("user_id", ""),
-                            delay=0.0,
-                            even_if_active=True,
-                        )
-                except Exception:
-                    logger.debug("exception suppressed", exc_info=True)
+            try:
+                from core.pending_queue import PendingQueue
+                _pending_count2 = PendingQueue.for_agent(
+                    conversation_id, _agent_n2).peek_count()
+                if _pending_count2:
+                    from tasks.ai.agent_loop import AgentLoopTask
+                    _wake_reason = (
+                        f"[pending] {_pending_count2} queued msg(s) after interrupted turn"
+                        if _was_interrupted2 else
+                        f"[pending] {_pending_count2} queued msg(s) after idle")
+                    AgentLoopTask.wake_agent(
+                        conversation_id, _agent_n2,
+                        reason=_wake_reason,
+                        user_id=ctx.get("user_id", ""),
+                        delay=0.0,
+                        even_if_active=True,
+                    )
+            except Exception:
+                logger.debug("exception suppressed", exc_info=True)
 
     def _streaming_agent_loop_inner(self, ctx: Dict, conversation_id: str, bus) -> None:
         """Create StreamEmitter, delegate to _run_agent_loop, handle finally cleanup."""

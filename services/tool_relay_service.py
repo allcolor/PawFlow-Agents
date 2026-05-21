@@ -21,6 +21,7 @@ Protocol:
     Server → Bridge: {"type": "result", "request_id": "ghi", "data": "...result..."}
 """
 
+import hashlib
 import json
 import logging
 import threading
@@ -89,6 +90,197 @@ class ToolRelayService(BaseService):
     VERSION = "1.0.0"
     NAME = "Tool Relay"
     DESCRIPTION = "Exposes PawFlow tools to Claude Code via WebSocket relay"
+    _registry_cache: Dict[tuple, Any] = {}
+    _registry_cache_tool_counts: Dict[tuple, int] = {}
+    _registry_building: Dict[tuple, threading.Event] = {}
+    _registry_cache_lock = threading.RLock()
+    _runtime_cache_lock = threading.RLock()
+    _secret_env_cache: Dict[tuple, tuple[tuple, dict]] = {}
+    _secret_values_cache: Dict[tuple, tuple[tuple, set, dict]] = {}
+    _ENV_SECRET_TOOLS = frozenset({"bash", "execute_script"})
+    _SECRET_MUTATION_TOOLS = frozenset({
+        "store_secret", "manage_package", "manage_resource", "delete_tool",
+        "create_tool",
+    })
+
+    @staticmethod
+    def _root_conversation_id(conversation_id: str) -> str:
+        if conversation_id and '::task::' in conversation_id:
+            return conversation_id.split('::task::')[0]
+        return conversation_id or ""
+
+    @staticmethod
+    def _args_reference_env(arguments: Any) -> bool:
+        if isinstance(arguments, str):
+            return "$" in arguments
+        if isinstance(arguments, dict):
+            return any(not str(k).startswith("_")
+                       and ToolRelayService._args_reference_env(v)
+                       for k, v in arguments.items())
+        if isinstance(arguments, list):
+            return any(ToolRelayService._args_reference_env(v)
+                       for v in arguments)
+        return False
+
+    @staticmethod
+    def _conversation_extra_fast(conversation_id: str, key: str,
+                                 default: Any = None) -> Any:
+        if not conversation_id:
+            return default
+        from core.conversation_store import ConversationStore
+        store = ConversationStore.instance()
+        sentinel = object()
+        try:
+            value = store.get_extra_snapshot(conversation_id, key, sentinel)
+            if value is not sentinel:
+                return value
+            # A warm conversation cache knows the key is absent. Avoid falling
+            # back to extras.json on hot tool paths for normal missing keys
+            # such as conversation_hooks/tool_permissions.
+            try:
+                with store._cache_lock:
+                    if conversation_id in store._cache:
+                        return default
+            except Exception:
+                logging.getLogger(__name__).debug(
+                    "extra cache warm check failed", exc_info=True)
+        except Exception:
+            logging.getLogger(__name__).debug("extra snapshot failed", exc_info=True)
+        return store.get_extra(conversation_id, key, default)
+
+    @staticmethod
+    def _stable_config_fingerprint(value: Any) -> tuple:
+        try:
+            payload = json.dumps(value or {}, sort_keys=True, default=str,
+                                 separators=(",", ":"))
+        except Exception:
+            payload = str(value or {})
+        digest = hashlib.sha1(
+            payload.encode("utf-8", "ignore"), usedforsecurity=False,
+        ).hexdigest()
+        return (len(payload), digest)
+
+    @classmethod
+    def _conversation_has_hooks(cls, conversation_id: str, user_id: str) -> bool:
+        raw = cls._conversation_extra_fast(
+            conversation_id, "conversation_hooks", [],)
+        if isinstance(raw, dict):
+            raw = raw.get("hooks") if isinstance(raw.get("hooks"), list) else list(raw.values())
+        return bool(raw)
+
+    @classmethod
+    def clear_runtime_caches(cls, conversation_id: str = "", user_id: str = ""):
+        conv = cls._root_conversation_id(conversation_id)
+        uid = user_id or ""
+        with cls._runtime_cache_lock:
+            if not conv and not uid:
+                cls._secret_env_cache.clear()
+                cls._secret_values_cache.clear()
+                return
+            keys = (set(cls._secret_env_cache.keys()) |
+                    set(cls._secret_values_cache.keys()))
+            for key in list(keys):
+                _uid, _conv = key
+                if uid and _uid != uid:
+                    continue
+                if conv and _conv != conv:
+                    continue
+                cls._secret_env_cache.pop(key, None)
+                cls._secret_values_cache.pop(key, None)
+
+    @staticmethod
+    def _path_fingerprint(path) -> tuple:
+        try:
+            st = path.stat()
+            return (str(path), st.st_size, st.st_mtime_ns)
+        except OSError:
+            return (str(path), -1, -1)
+
+    @classmethod
+    def _secret_config_fingerprint(cls, user_id: str, conversation_id: str) -> tuple:
+        from core.paths import GLOBAL_PARAMS_FILE, GLOBAL_SECRETS_FILE, USER_CONFIG_DIR
+        conv = cls._root_conversation_id(conversation_id)
+        parts = [
+            cls._path_fingerprint(GLOBAL_PARAMS_FILE),
+            cls._path_fingerprint(GLOBAL_SECRETS_FILE),
+        ]
+        if user_id:
+            user_dir = USER_CONFIG_DIR / user_id
+            parts.extend((
+                cls._path_fingerprint(user_dir / "params.json"),
+                cls._path_fingerprint(user_dir / "secrets.json"),
+            ))
+        if conv:
+            parts.extend((
+                ("conv_params", cls._stable_config_fingerprint(
+                    cls._conversation_extra_fast(conv, "conv_params", {}) or {})),
+                ("conv_secrets", cls._stable_config_fingerprint(
+                    cls._conversation_extra_fast(conv, "conv_secrets", {}) or {})),
+            ))
+        return tuple(parts)
+
+    @classmethod
+    def _cached_secrets_env(cls, user_id: str, conversation_id: str) -> dict:
+        if not user_id:
+            return {}
+        conv = cls._root_conversation_id(conversation_id)
+        key = (user_id or "", conv)
+        with cls._runtime_cache_lock:
+            cached = cls._secret_env_cache.get(key)
+            if cached:
+                return dict(cached[1])
+        fingerprint = cls._secret_config_fingerprint(user_id, conv)
+        env = resolve_secrets_env(user_id, conv)
+        with cls._runtime_cache_lock:
+            cls._secret_env_cache[key] = (fingerprint, dict(env))
+        return env
+
+    @classmethod
+    def _cached_secret_values(cls, user_id: str, conversation_id: str) -> tuple:
+        if not user_id:
+            return set(), {}
+        conv = cls._root_conversation_id(conversation_id)
+        key = (user_id or "", conv)
+        with cls._runtime_cache_lock:
+            cached = cls._secret_values_cache.get(key)
+            if cached:
+                return set(cached[1]), dict(cached[2])
+        fingerprint = cls._secret_config_fingerprint(user_id, conv)
+        values, names = resolve_secret_values(user_id, conv)
+        with cls._runtime_cache_lock:
+            cls._secret_values_cache[key] = (fingerprint, set(values), dict(names))
+        return values, names
+
+    @classmethod
+    def clear_registry_cache(cls, conversation_id: str = "",
+                             user_id: str = "", agent_name: str = ""):
+        """Invalidate cached per-agent tool registries."""
+        cls.clear_runtime_caches(conversation_id=conversation_id, user_id=user_id)
+        conv = conversation_id or ""
+        uid = user_id or ""
+        agent = agent_name or ""
+        with cls._registry_cache_lock:
+            if not any((conv, uid, agent)):
+                cls._registry_cache.clear()
+                cls._registry_cache_tool_counts.clear()
+                for evt in cls._registry_building.values():
+                    evt.set()
+                cls._registry_building.clear()
+                return
+            keys = set(cls._registry_cache.keys()) | set(cls._registry_building.keys())
+            for key in list(keys):
+                _service_id, _uid, _conv, _agent, _file_base = key
+                if conv and _conv != conv:
+                    continue
+                if uid and _uid != uid:
+                    continue
+                if agent and _agent != agent:
+                    continue
+                cls._registry_cache.pop(key, None)
+                cls._registry_cache_tool_counts.pop(key, None)
+                evt = cls._registry_building.pop(key, None)
+                if evt:
+                    evt.set()
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
@@ -137,6 +329,7 @@ class ToolRelayService(BaseService):
         logger.info('ToolRelayService %s registered on main listener path %s', self._service_id, route)
 
     def disconnect(self):
+        self.clear_registry_cache()
         if self._connection and getattr(self, '_route_path', ''):
             try:
                 self._connection.unregister_routes(self._service_id)
@@ -172,6 +365,30 @@ class ToolRelayService(BaseService):
         _conv_id = ""
         _agent_name = ""
         _already_logged_disconnect = False
+        # One writer lock per tool-relay WS connection. Tool execution runs in
+        # worker threads and schedules response writes back onto this loop;
+        # without serialization, concurrent writer.write()/drain() calls can
+        # interleave frames on the MCP bridge connection under tool bursts.
+        send_lock = asyncio.Lock()
+
+        async def _send_tool_frame(payload: bytes, opcode: int = 0x01,
+                                   request_id: str = "", method: str = "",
+                                   started_at: float = 0.0):
+            wait_started = time.perf_counter()
+            async with send_lock:
+                lock_wait_ms = (time.perf_counter() - wait_started) * 1000
+                send_started = time.perf_counter()
+                await _ws_send_frame(writer, payload, opcode=opcode)
+                send_ms = (time.perf_counter() - send_started) * 1000
+            if request_id:
+                total_ms = ((time.perf_counter() - started_at) * 1000
+                            if started_at else 0.0)
+                logger.info(
+                    "[tool-relay] timing ws_send request=%s method=%s "
+                    "lock_wait_ms=%.1f write_ms=%.1f total_worker_to_wire_ms=%.1f bytes=%d",
+                    request_id, method or "?", lock_wait_ms, send_ms,
+                    total_ms, len(payload))
+
         try:
             opcode, payload = await _ws_recv_frame(reader)
             if opcode != 0x01:
@@ -181,7 +398,7 @@ class ToolRelayService(BaseService):
                 return
             relay_token = reg.get('token', '')
             if not relay_token or relay_token != service.config.get('token', ''):
-                await _ws_send_frame(writer, json.dumps(
+                await _send_tool_frame(json.dumps(
                     {'type': 'error', 'message': 'Token mismatch'}).encode())
                 return
             relay_id = reg.get('relay_id', '')
@@ -190,7 +407,7 @@ class ToolRelayService(BaseService):
             _agent_name = reg.get('agent_name', '')
             logger.info('Tool relay connected: user=%s conv=%s agent=%s addr=%s',
                          _user_id, _conv_id, _agent_name, remote)
-            await _ws_send_frame(writer, json.dumps({
+            await _send_tool_frame(json.dumps({
                 'type': 'registered', 'relay_id': relay_id}).encode())
             KEEPALIVE = 120
             while True:
@@ -198,28 +415,45 @@ class ToolRelayService(BaseService):
                     opcode, payload = await asyncio.wait_for(
                         _ws_recv_frame(reader), timeout=KEEPALIVE)
                 except asyncio.TimeoutError:
-                    await _ws_send_frame(writer, json.dumps({'type': 'ping'}).encode())
+                    await _send_tool_frame(json.dumps({'type': 'ping'}).encode())
                     continue
                 if opcode == 0x08:
                     break
                 if opcode == 0x09:
-                    await _ws_send_frame(writer, payload, opcode=0x0A)
+                    await _send_tool_frame(payload, opcode=0x0A)
                     continue
                 if opcode != 0x01:
                     continue
                 msg = json.loads(payload.decode('utf-8'))
                 if msg.get('type') == 'ping':
-                    await _ws_send_frame(writer, json.dumps({'type': 'pong'}).encode())
+                    await _send_tool_frame(json.dumps({'type': 'pong'}).encode())
                     continue
                 if msg.get('type') != 'request':
                     continue
+                msg['_relay_received_perf'] = time.perf_counter()
                 def _exec(m=msg, _ui=_user_id, _ci=_conv_id, _an=_agent_name):
+                    worker_started = time.perf_counter()
                     try:
                         resp = service.handle_tool_request(m, _ui, _ci, _an)
                     except Exception as e:
                         resp = {'type': 'error',
                                 'request_id': m.get('request_id', ''),
                                 'error': str(e)}
+                    handle_ms = (time.perf_counter() - worker_started) * 1000
+                    req_id = m.get('request_id', '')
+                    method = m.get('method', '?')
+                    try:
+                        resp_payload = json.dumps(resp).encode('utf-8')
+                    except Exception:
+                        resp_payload = json.dumps({
+                            'type': 'error',
+                            'request_id': req_id,
+                            'error': 'failed to encode tool relay response',
+                        }).encode('utf-8')
+                    logger.info(
+                        "[tool-relay] timing handled request=%s method=%s "
+                        "handle_ms=%.1f response_bytes=%d",
+                        req_id, method, handle_ms, len(resp_payload))
                     # Shutdown race: the worker thread may still be
                     # running handle_tool_request when the server tears
                     # down and closes `loop`. Build the coroutine only
@@ -231,8 +465,9 @@ class ToolRelayService(BaseService):
                             "loop closed (server shutdown)",
                             m.get('method', '?'))
                         return
-                    _coro = _ws_send_frame(
-                        writer, json.dumps(resp).encode('utf-8'))
+                    _coro = _send_tool_frame(
+                        resp_payload, request_id=req_id, method=method,
+                        started_at=worker_started)
                     try:
                         asyncio.run_coroutine_threadsafe(_coro, loop)
                     except RuntimeError as _re:
@@ -519,6 +754,8 @@ class ToolRelayService(BaseService):
         """Handle a tool request from the MCP bridge."""
         method = msg.get("method", "")
         request_id = msg.get("request_id", "")
+        relay_received_at = float(msg.get("_relay_received_perf") or 0.0)
+        dispatch_started_at = time.perf_counter()
 
         if method == "list_tools":
             return self._handle_list_tools(request_id, user_id, conversation_id)
@@ -571,6 +808,8 @@ class ToolRelayService(BaseService):
             return self._handle_execute(
                 request_id, _tool, _raw_args,
                 user_id, conversation_id, agent_name,
+                relay_received_at=relay_received_at,
+                dispatch_started_at=dispatch_started_at,
             )
         elif method == "execute_pfp_host_call":
             return self._handle_pfp_host_call(
@@ -640,11 +879,60 @@ class ToolRelayService(BaseService):
         Also loads dynamic tools (per-conversation) and MCP server tools
         (per-agent) so they are available via the MCP bridge.
         """
+        cache_key = (
+            self._service_id, user_id or "", conversation_id or "",
+            agent_name or "", self.config.get("file_base_url", "") or "")
+        cache_started = time.perf_counter()
+        build_owner = False
+        with self._registry_cache_lock:
+            cached = self._registry_cache.get(cache_key)
+            if cached is not None:
+                tool_count = self._registry_cache_tool_counts.get(cache_key, 0)
+                logger.info(
+                    "[tool-relay] timing get_registry_cache user=%s conv=%s "
+                    "agent=%s total_ms=%.1f tools=%d",
+                    user_id, (conversation_id or "")[:8], agent_name,
+                    (time.perf_counter() - cache_started) * 1000,
+                    tool_count)
+                return cached
+            build_evt = self._registry_building.get(cache_key)
+            if build_evt is None:
+                build_evt = threading.Event()
+                self._registry_building[cache_key] = build_evt
+                build_owner = True
+
+        if not build_owner:
+            build_evt.wait()
+            with self._registry_cache_lock:
+                cached = self._registry_cache.get(cache_key)
+                tool_count = self._registry_cache_tool_counts.get(cache_key, 0)
+            if cached is not None:
+                logger.info(
+                    "[tool-relay] timing get_registry_cache user=%s conv=%s "
+                    "agent=%s total_ms=%.1f tools=%d waited_for_build=yes",
+                    user_id, (conversation_id or "")[:8], agent_name,
+                    (time.perf_counter() - cache_started) * 1000,
+                    tool_count)
+                return cached
+            return self._get_registry(user_id, conversation_id, agent_name)
+
+        registry_total_started = time.perf_counter()
+        dynamic_ms = 0.0
+        mcp_ms = 0.0
+        filter_ms = 0.0
+        fs_find_ms = 0.0
+        context_ms = 0.0
+        spawn_ms = 0.0
+        media_ms = 0.0
+        fs_available_ms = 0.0
         from core.tool_registry import create_default_registry
+        default_started = time.perf_counter()
         registry = create_default_registry()
+        default_ms = (time.perf_counter() - default_started) * 1000
 
         # Load dynamic tools (global + user + conv) for this user/conv.
         if user_id:
+            dynamic_started = time.perf_counter()
             try:
                 from core.tool_loader import load_tools_into_registry
                 _parent_cid = conversation_id or ""
@@ -656,29 +944,46 @@ class ToolRelayService(BaseService):
                     registry, user_id, _parent_cid)
             except Exception as e:
                 logger.warning("[tool-relay] Failed to load dynamic tools: %s", e)
+            dynamic_ms = (time.perf_counter() - dynamic_started) * 1000
 
         # Load MCP server tools for the active agent
         if conversation_id and user_id:
+            mcp_started = time.perf_counter()
             self._load_mcp_tools(registry, user_id, conversation_id, agent_name)
+            mcp_ms = (time.perf_counter() - mcp_started) * 1000
 
         if conversation_id:
+            filter_started = time.perf_counter()
             try:
-                from core.tool_mcp_filters import is_tool_enabled
+                from core.tool_mcp_filters import get_filters, is_tool_enabled_from_filters
+                _filters = get_filters(conversation_id)
                 for _handler in list(registry.list_tools()):
-                    if not is_tool_enabled(
-                            conversation_id, _handler.name, agent_name,
+                    if not is_tool_enabled_from_filters(
+                            _filters, _handler.name, agent_name,
                             getattr(_handler, "_origin", "builtin"),
                             getattr(_handler, "_origin_scope", "")):
                         registry.unregister(_handler.name)
             except Exception as e:
                 logger.debug("[tool-relay] tool availability filter failed: %s", e)
+            filter_ms = (time.perf_counter() - filter_started) * 1000
 
+        available_fs = None
         # Find the default linked filesystem service for this conversation.
-        fs_svc = self._find_filesystem_service(user_id, conversation_id, agent_name)
+        fs_find_started = time.perf_counter()
+        if conversation_id:
+            available_fs = self._list_available_filesystem_services(
+                user_id, conversation_id, agent_name)
+            fs_svc = self._filesystem_service_from_available(
+                available_fs, user_id, conversation_id, agent_name)
+        else:
+            fs_svc = self._find_filesystem_service(
+                user_id, conversation_id, agent_name)
         fs_resolver = self._make_filesystem_resolver(
             user_id, conversation_id, agent_name, default_service=fs_svc)
+        fs_find_ms = (time.perf_counter() - fs_find_started) * 1000
 
         # Configure ALL handlers that need user/filesystem context
+        context_started = time.perf_counter()
         for h in registry.list_tools():
             # Set user_id on any handler that supports it
             if hasattr(h, 'set_user_id') and user_id:
@@ -704,10 +1009,12 @@ class ToolRelayService(BaseService):
                         h.set_service(fs_svc)
                     except Exception:
                         logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+        context_ms = (time.perf_counter() - context_started) * 1000
 
         # Configure SpawnAgentsHandler (delegate) — needs a client_resolver
         # to look up per-agent LLM services. Without this, delegate fails
         # with "Agent executor not configured (missing client_resolver)".
+        spawn_started = time.perf_counter()
         try:
             from core.handlers.resource_agent import SpawnAgentsHandler
             from core.llm_client import LLMClient
@@ -765,8 +1072,10 @@ class ToolRelayService(BaseService):
                                       on_event=_sub_on_event, registry=registry)
         except Exception as _e:
             logger.warning("[tool-relay] SpawnAgents wiring failed: %s", _e)
+        spawn_ms = (time.perf_counter() - spawn_started) * 1000
 
         # Configure media service resolvers (image/video/audio/capabilities)
+        media_started = time.perf_counter()
         from core.handlers.media import EditImageHandler, ImageGenerationHandler, ImageModelInfoHandler
         from core.handlers.media import VideoGenerationHandler, AudioGenerationHandler
         file_base_url = self.config.get("file_base_url", "") or ""
@@ -874,21 +1183,46 @@ class ToolRelayService(BaseService):
                 h.set_service_resolver(
                     self._make_media_resolver(
                         user_id, conversation_id, "upscale", upscale_methods))
+        media_ms = (time.perf_counter() - media_started) * 1000
 
         # Populate conversation-linked filesystems on all BaseFsHandler instances.
         from core.handlers._fs_base import BaseFsHandler, _FS_TYPES
         _fs_handlers = [h for h in registry.list_tools() if isinstance(h, BaseFsHandler)]
         if _fs_handlers:
+            fs_available_started = time.perf_counter()
             try:
-                available = self._list_available_filesystem_services(
-                    user_id, conversation_id, agent_name, fs_types=_FS_TYPES)
+                available = available_fs
+                if available is None:
+                    available = self._list_available_filesystem_services(
+                        user_id, conversation_id, agent_name, fs_types=_FS_TYPES)
                 for h in _fs_handlers:
                     h.set_available_services(available)
                 logger.debug("Filesystem services for user '%s': %s",
                              user_id, [s["id"] for s in available])
             except Exception as e:
                 logger.error("Failed to enumerate filesystem services: %s", e)
+            fs_available_ms = (time.perf_counter() - fs_available_started) * 1000
 
+        tool_count = len(registry.list_tools())
+        total_ms = (time.perf_counter() - registry_total_started) * 1000
+        if total_ms >= 100.0:
+            logger.info(
+                "[tool-relay] timing get_registry user=%s conv=%s agent=%s "
+                "total_ms=%.1f default_ms=%.1f dynamic_ms=%.1f "
+                "mcp_ms=%.1f filter_ms=%.1f fs_find_ms=%.1f "
+                "context_ms=%.1f spawn_ms=%.1f media_ms=%.1f "
+                "fs_available_ms=%.1f tools=%d",
+                user_id, (conversation_id or "")[:8], agent_name,
+                total_ms, default_ms, dynamic_ms, mcp_ms, filter_ms,
+                fs_find_ms, context_ms, spawn_ms, media_ms,
+                fs_available_ms, tool_count)
+
+        with self._registry_cache_lock:
+            self._registry_cache[cache_key] = registry
+            self._registry_cache_tool_counts[cache_key] = tool_count
+            evt = self._registry_building.pop(cache_key, None)
+            if evt:
+                evt.set()
         return registry
 
     @staticmethod
@@ -1216,6 +1550,35 @@ class ToolRelayService(BaseService):
         return available
 
     @staticmethod
+    def _filesystem_service_from_available(available, user_id: str = "",
+                                           conversation_id: str = "",
+                                           agent_name: str = ""):
+        try:
+            from core.service_registry import ServiceRegistry
+            reg = ServiceRegistry.get_instance()
+            if conversation_id and available:
+                try:
+                    from core.relay_bindings import get_default
+                    default_id = get_default(conversation_id, agent_name) or ""
+                except Exception:
+                    default_id = ""
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+                if default_id and any(item.get("id") == default_id for item in available):
+                    svc = reg.resolve(default_id, user_id=user_id,
+                                      conv_id=conversation_id)
+                    if svc:
+                        return svc
+            for item in available or []:
+                svc = reg.resolve(
+                    item.get("id", ""), user_id=user_id,
+                    conv_id=conversation_id)
+                if svc:
+                    return svc
+        except Exception:
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+        return None
+
+    @staticmethod
     def _make_filesystem_resolver(user_id: str = "", conversation_id: str = "",
                                   agent_name: str = "", default_service=None):
         def resolver(service_id: str = "", *_args):
@@ -1324,7 +1687,11 @@ class ToolRelayService(BaseService):
 
     def _handle_execute(self, request_id: str, tool_name: str,
                         arguments, user_id: str,
-                        conversation_id: str, agent_name: str) -> dict:
+                        conversation_id: str, agent_name: str,
+                        relay_received_at: float = 0.0,
+                        dispatch_started_at: float = 0.0) -> dict:
+        handle_started = dispatch_started_at or time.perf_counter()
+        relay_received_at = relay_received_at or handle_started
         # Defensive: arguments may arrive as JSON string (double-encoded by LLM)
         for _ in range(3):
             if isinstance(arguments, str):
@@ -1552,6 +1919,13 @@ class ToolRelayService(BaseService):
                     self._inflight.pop(request_id, None)
                 if auto_bg_timer:
                     auto_bg_timer.cancel()
+                logger.info(
+                    "[tool-relay] timing execute_background request=%s tool=%s "
+                    "relay_queue_ms=%.1f total_ms=%.1f cc_tc=%s",
+                    request_id, tool_name,
+                    (handle_started - relay_received_at) * 1000,
+                    (time.perf_counter() - handle_started) * 1000,
+                    cc_tc_id or "")
                 return result
 
             if cancel_event.is_set():
@@ -1567,6 +1941,13 @@ class ToolRelayService(BaseService):
                     self._inflight.pop(request_id, None)
                 if auto_bg_timer:
                     auto_bg_timer.cancel()
+                logger.info(
+                    "[tool-relay] timing execute_cancelled request=%s tool=%s "
+                    "relay_queue_ms=%.1f total_ms=%.1f cc_tc=%s",
+                    request_id, tool_name,
+                    (handle_started - relay_received_at) * 1000,
+                    (time.perf_counter() - handle_started) * 1000,
+                    cc_tc_id or "")
                 return result
 
             wake_event.wait()
@@ -1596,33 +1977,66 @@ class ToolRelayService(BaseService):
                     for k in oldest:
                         self._result_cache.pop(k, None)
 
+        data = result.get("data") if isinstance(result, dict) else result
+        try:
+            result_len = len(data) if isinstance(data, str) else len(json.dumps(data, default=str))
+        except Exception:
+            result_len = len(str(data))
+        logger.info(
+            "[tool-relay] timing execute_done request=%s tool=%s "
+            "relay_queue_ms=%.1f total_ms=%.1f result_len=%d cc_tc=%s",
+            request_id, tool_name,
+            (handle_started - relay_received_at) * 1000,
+            (time.perf_counter() - handle_started) * 1000,
+            result_len, cc_tc_id or "")
         return result
 
     def _do_execute(self, request_id, tool_name, arguments,
                     user_id, conversation_id, agent_name):
+        total_started = time.perf_counter()
+        registry_started = time.perf_counter()
         registry = self._get_registry(user_id, conversation_id, agent_name)
+        registry_ms = (time.perf_counter() - registry_started) * 1000
+        pre_hook_ms = 0.0
+        approval_ms = 0.0
+        secrets_ms = 0.0
+        tool_exec_ms = 0.0
+        post_hook_ms = 0.0
+        _hook_runner = None
+        _hook_enabled = False
+        _perm_cid = self._root_conversation_id(conversation_id)
 
         try:
-            from core.agent_hooks import AgentHookRunner
-            _hook_runner = AgentHookRunner(
-                user_id=user_id,
-                conversation_id=conversation_id,
-                agent_name=agent_name,
-            )
-            _pre = _hook_runner.run("pre_tool_call", {
-                "tool_call_id": request_id,
-                "tool_name": tool_name,
-                "arguments": arguments if isinstance(arguments, dict) else {},
-            }, fail_policy="closed")
-            if _pre.get("decision") == "block":
-                reason = _pre.get("reason") or "blocked by hook"
-                return {"type": "result", "request_id": request_id,
-                        "data": f"Blocked by hook: {reason}"}
-            if _pre.get("decision") == "replace":
-                _payload = _pre.get("payload") or {}
-                tool_name = str(_payload.get("tool_name") or tool_name)
-                _new_args = _payload.get("arguments")
-                arguments = _new_args if isinstance(_new_args, dict) else {}
+            hook_started = time.perf_counter()
+            try:
+                _hook_enabled = self._conversation_has_hooks(_perm_cid, user_id)
+            except Exception as _detect_error:
+                logger.warning(
+                    "pre_tool_call hook detection failed; approval gate will decide: %s",
+                    _detect_error)
+                _hook_enabled = False
+            if _hook_enabled:
+                from core.agent_hooks import AgentHookRunner
+                _hook_runner = AgentHookRunner(
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    agent_name=agent_name,
+                )
+                _pre = _hook_runner.run("pre_tool_call", {
+                    "tool_call_id": request_id,
+                    "tool_name": tool_name,
+                    "arguments": arguments if isinstance(arguments, dict) else {},
+                }, fail_policy="closed")
+                if _pre.get("decision") == "block":
+                    reason = _pre.get("reason") or "blocked by hook"
+                    return {"type": "result", "request_id": request_id,
+                            "data": f"Blocked by hook: {reason}"}
+                if _pre.get("decision") == "replace":
+                    _payload = _pre.get("payload") or {}
+                    tool_name = str(_payload.get("tool_name") or tool_name)
+                    _new_args = _payload.get("arguments")
+                    arguments = _new_args if isinstance(_new_args, dict) else {}
+            pre_hook_ms = (time.perf_counter() - hook_started) * 1000
         except Exception as _he:
             logger.error("pre_tool_call hook failed; denying relay tool: %s", _he,
                          exc_info=True)
@@ -1631,17 +2045,15 @@ class ToolRelayService(BaseService):
 
         # Tool Approval Gate — reads permission_mode from conversation
         # For task sub-conversations (conv::task::tid), inherit parent's permissions
-        _perm_cid = conversation_id
-        if conversation_id and '::task::' in conversation_id:
-            _perm_cid = conversation_id.split('::task::')[0]
         try:
+            approval_started = time.perf_counter()
             _perm_mode = "default"
             _tool_perm = ""
             if _perm_cid:
-                from core.conversation_store import ConversationStore
-                _cs = ConversationStore.instance()
-                _perm_mode = _cs.get_extra(_perm_cid, "permission_mode") or "default"
-                _tperms = _cs.get_extra(_perm_cid, "tool_permissions") or {}
+                _perm_mode = self._conversation_extra_fast(
+                    _perm_cid, "permission_mode", "default") or "default"
+                _tperms = self._conversation_extra_fast(
+                    _perm_cid, "tool_permissions", {}) or {}
                 _tool_perm = _tperms.get(tool_name, "")
 
             # read_only mode takes precedence over EVERY per-tool
@@ -1699,6 +2111,7 @@ class ToolRelayService(BaseService):
                 if approval != "approved":
                     return {"type": "result", "request_id": request_id,
                             "data": f"Error: Tool '{tool_name}' was {approval} by the user."}
+            approval_ms = (time.perf_counter() - approval_started) * 1000
         except Exception as e:
             logger.error("Tool approval check failed; denying tool for safety: %s", e,
                          exc_info=True)
@@ -1709,11 +2122,15 @@ class ToolRelayService(BaseService):
         _secret_values = set()
         _secret_names = {}
         _all_env = {}
-        _secret_cid = conversation_id.split('::task::')[0] if conversation_id and '::task::' in conversation_id else conversation_id
+        _secret_cid = _perm_cid
         if user_id and isinstance(arguments, dict):
             try:
-                _all_env = resolve_secrets_env(user_id, _secret_cid)
-                if _all_env:
+                secrets_started = time.perf_counter()
+                _needs_env = (tool_name in self._ENV_SECRET_TOOLS
+                              or self._args_reference_env(arguments))
+                if _needs_env:
+                    _all_env = self._cached_secrets_env(user_id, _secret_cid)
+                if _needs_env and _all_env:
                     # Inject as process env vars for shell tools
                     if tool_name in {"bash", "execute_script"}:
                         arguments["_secret_env"] = _all_env
@@ -1727,7 +2144,9 @@ class ToolRelayService(BaseService):
                         _skip = {"code"}
                     _resolve_vars_in_args(arguments, _all_env, skip_keys=_skip)
                 # Only secrets → redaction
-                _secret_values, _secret_names = resolve_secret_values(user_id, _secret_cid)
+                _secret_values, _secret_names = self._cached_secret_values(
+                    user_id, _secret_cid)
+                secrets_ms = (time.perf_counter() - secrets_started) * 1000
             except Exception as _se:
                 logger.warning("[tool-relay] failed to resolve env/secrets: %s", _se)
 
@@ -1764,9 +2183,21 @@ class ToolRelayService(BaseService):
                     arguments = _normalize_tool_args(tool_name, arguments)
             except Exception:
                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+            tool_exec_started = time.perf_counter()
             result = registry.execute(tool_name, arguments)
+            tool_exec_ms = (time.perf_counter() - tool_exec_started) * 1000
+            if tool_name in {
+                    "create_tool", "delete_tool", "manage_resource",
+                    "link_resource", "manage_package"}:
+                self.clear_registry_cache(
+                    conversation_id=conversation_id, user_id=user_id,
+                    agent_name=agent_name)
             result_str = str(result) if result is not None else "(no output)"
+            if tool_name in self._SECRET_MUTATION_TOOLS:
+                self.clear_runtime_caches(
+                    conversation_id=conversation_id, user_id=user_id)
         except Exception as e:
+            tool_exec_ms = (time.perf_counter() - tool_exec_started) * 1000 if 'tool_exec_started' in locals() else 0.0
             result_str = f"Error: {e}"
             logger.error("Tool relay execute '%s' failed: %s", tool_name, e)
 
@@ -1780,21 +2211,34 @@ class ToolRelayService(BaseService):
                                          secret_names=_secret_names)
 
         try:
-            _post = _hook_runner.run("post_tool_call", {
-                "tool_call_id": request_id,
-                "tool_name": tool_name,
-                "arguments": arguments if isinstance(arguments, dict) else {},
-                "result": result_str,
-            })
-            if _post.get("decision") == "replace":
-                _payload = _post.get("payload") or {}
-                if "result" in _payload:
-                    result_str = str(_payload.get("result") or "")
-            elif _post.get("decision") == "block":
-                reason = _post.get("reason") or "blocked by hook"
-                result_str = f"Blocked by hook: {reason}"
+            post_hook_started = time.perf_counter()
+            if _hook_enabled and _hook_runner is not None:
+                _post = _hook_runner.run("post_tool_call", {
+                    "tool_call_id": request_id,
+                    "tool_name": tool_name,
+                    "arguments": arguments if isinstance(arguments, dict) else {},
+                    "result": result_str,
+                })
+                if _post.get("decision") == "replace":
+                    _payload = _post.get("payload") or {}
+                    if "result" in _payload:
+                        result_str = str(_payload.get("result") or "")
+                elif _post.get("decision") == "block":
+                    reason = _post.get("reason") or "blocked by hook"
+                    result_str = f"Blocked by hook: {reason}"
+            post_hook_ms = (time.perf_counter() - post_hook_started) * 1000
         except Exception as _he:
             logger.warning("post_tool_call hook failed: %s", _he, exc_info=True)
+
+        logger.info(
+            "[tool-relay] timing do_execute request=%s tool=%s "
+            "total_ms=%.1f registry_ms=%.1f pre_hook_ms=%.1f "
+            "approval_ms=%.1f secrets_ms=%.1f exec_ms=%.1f "
+            "post_hook_ms=%.1f result_len=%d",
+            request_id, tool_name,
+            (time.perf_counter() - total_started) * 1000,
+            registry_ms, pre_hook_ms, approval_ms, secrets_ms,
+            tool_exec_ms, post_hook_ms, len(result_str))
 
         # Convert __image_data__: markers into MCP content blocks server-side,
         # gated on the handler's _returns_images flag. Without this gate, a

@@ -437,6 +437,7 @@ class AgentCompactionMixin(AgentSummarizeMixin):
         user_id: str = "",
         budget_config: dict | None = None,
         independent_context: bool = False,
+        post_hooks_async: bool = False,
     ) -> List[LLMMessage]:
         """Iterative reduce-to-cap compaction. Output ≤ target_fraction × max.
 
@@ -1055,14 +1056,36 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                     "after_messages": len(compacted),
                     "tokens_before": _original_tokens,
                     "tokens_after": new_estimate,
+                    "target_tokens": cap,
                     "compacted_messages": _compacted_payload,
                     "compacted": _compacted_payload,
                     "independent_context": True,
                 }
-                try:
-                    _hook_runner.run("post_compact", _post_ctx)
-                except Exception:
-                    logger.debug("post_compact hooks raised", exc_info=True)
+                def _run_independent_post_hooks() -> None:
+                    _hooks_t0 = time.monotonic()
+                    logger.info(
+                        "[compact] post hooks start cid=%s agent=%s async=%s independent=True",
+                        conversation_id[:8], agent_name, post_hooks_async)
+                    try:
+                        _hook_runner.run("post_compact", _post_ctx)
+                    except Exception:
+                        logger.debug("post_compact hooks raised", exc_info=True)
+                    finally:
+                        logger.info(
+                            "[compact] post hooks done cid=%s agent=%s async=%s independent=True elapsed_ms=%.1f",
+                            conversation_id[:8], agent_name, post_hooks_async,
+                            (time.monotonic() - _hooks_t0) * 1000.0)
+                if post_hooks_async:
+                    logger.info(
+                        "[compact] post hooks scheduled async cid=%s agent=%s independent=True",
+                        conversation_id[:8], agent_name)
+                    threading.Thread(
+                        target=_run_independent_post_hooks,
+                        daemon=True,
+                        name=f"post-compact-hooks-{conversation_id[:8]}",
+                    ).start()
+                else:
+                    _run_independent_post_hooks()
                 self._compact_breaker_record(
                     conversation_id, agent_name, succeeded=True)
                 return compacted
@@ -1172,15 +1195,35 @@ class AgentCompactionMixin(AgentSummarizeMixin):
             # fits inside the target budget after deterministic truncation.
             _accum = 0
             _take_from = len(_tail_msgs)
+            _boundary_msg = None
+            _boundary_original_cost = 0
             for _i in range(len(_tail_msgs) - 1, -1, -1):
                 _cost = _estimate_tail_selection_cost(_tail_msgs[_i])
                 if _accum + _cost > _tail_budget and _i < len(_tail_msgs) - 1:
-                    # Include at LEAST one msg even if oversized — a
-                    # single oversized recent msg beats an empty tail.
+                    # Include at LEAST one msg even if oversized — a single
+                    # oversized recent msg beats an empty tail. If we already
+                    # have newer messages, use the remaining budget for a
+                    # truncated boundary text message instead of stopping at a
+                    # tiny tail and wasting most of compact_target_tokens.
+                    _remaining = _tail_budget - _accum
+                    if _remaining > 0 and _tail_msgs[_i].role != "tool":
+                        _candidate = _truncate_message_to_budget(
+                            _tail_msgs[_i], _remaining)
+                        _candidate_cost = _estimate([_candidate])
+                        if _candidate_cost <= _remaining:
+                            _boundary_msg = _candidate
+                            _boundary_original_cost = _cost
+                            _accum += _candidate_cost
                     break
                 _accum += _cost
                 _take_from = _i
             saved_recent = _tail_msgs[_take_from:]
+            if _boundary_msg is not None:
+                saved_recent = [_boundary_msg] + saved_recent
+                logger.info(
+                    "[compact] tail boundary message truncated: %d > "
+                    "remaining budget -> %d tokens",
+                    _boundary_original_cost, _estimate([_boundary_msg]))
 
             # Orphan tool_result fix: if the first kept msg is a tool
             # role whose tool_call_id has no preceding assistant
@@ -1296,6 +1339,7 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                             "after": len(compacted),
                             "tokens_before": _original_tokens,
                             "tokens_after": new_estimate,
+                            "target_tokens": cap,
                             "conv_total_messages": _conv_total,
                         })
                 except Exception:
@@ -1311,13 +1355,35 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                 "after_messages": len(compacted),
                 "tokens_before": _original_tokens,
                 "tokens_after": new_estimate,
+                "target_tokens": cap,
                 "compacted_messages": _compacted_payload,
                 "compacted": _compacted_payload,
             }
-            try:
-                _hook_runner.run("post_compact", _post_ctx)
-            except Exception:
-                logger.debug("post_compact hooks raised", exc_info=True)
+            def _run_post_hooks() -> None:
+                _hooks_t0 = time.monotonic()
+                logger.info(
+                    "[compact] post hooks start cid=%s agent=%s async=%s",
+                    conversation_id[:8], agent_name, post_hooks_async)
+                try:
+                    _hook_runner.run("post_compact", _post_ctx)
+                except Exception:
+                    logger.debug("post_compact hooks raised", exc_info=True)
+                finally:
+                    logger.info(
+                        "[compact] post hooks done cid=%s agent=%s async=%s elapsed_ms=%.1f",
+                        conversation_id[:8], agent_name, post_hooks_async,
+                        (time.monotonic() - _hooks_t0) * 1000.0)
+            if post_hooks_async:
+                logger.info(
+                    "[compact] post hooks scheduled async cid=%s agent=%s",
+                    conversation_id[:8], agent_name)
+                threading.Thread(
+                    target=_run_post_hooks,
+                    daemon=True,
+                    name=f"post-compact-hooks-{conversation_id[:8]}",
+                ).start()
+            else:
+                _run_post_hooks()
             self._compact_breaker_record(
                 conversation_id, agent_name, succeeded=True)
             return compacted

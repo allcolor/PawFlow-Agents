@@ -28,6 +28,7 @@ import socket
 import ssl
 import sys
 import threading
+import time
 import uuid
 
 
@@ -201,6 +202,8 @@ class ToolRelayClient:
                 raise ConnectionError(f"Tool relay unavailable: {e}") from e
 
     def _do_request(self, method: str, request_id: str, **kwargs) -> any:
+        request_started = time.perf_counter()
+        send_ms = 0.0
         payload = {"type": "request", "request_id": request_id,
                    "method": method, **kwargs}
         if method == "execute_tool":
@@ -212,11 +215,31 @@ class ToolRelayClient:
             self._pending[request_id] = waiter
         try:
             with self._send_lock:
+                send_started = time.perf_counter()
                 self._ws_send(json.dumps(payload))
+                send_ms = (time.perf_counter() - send_started) * 1000
             waiter["event"].wait()
+            done_at = time.perf_counter()
             if waiter.get("error"):
+                if method == "execute_tool":
+                    _log(f"← RELAY {method} {kwargs.get('tool_name','?')} "
+                         f"failed [req={request_id}] "
+                         f"bridge_ms={(done_at - request_started) * 1000:.1f} "
+                         f"send_ms={send_ms:.1f} err={waiter['error']}")
                 raise ConnectionError(str(waiter["error"]))
             msg = waiter.get("msg") or {}
+            if method == "execute_tool":
+                data = msg.get("data")
+                try:
+                    result_len = len(data) if isinstance(data, str) else len(json.dumps(data, default=str))
+                except Exception:
+                    result_len = len(str(data))
+                _log(f"← RELAY {method} {kwargs.get('tool_name','?')} "
+                     f"[req={request_id}] "
+                     f"bridge_ms={(done_at - request_started) * 1000:.1f} "
+                     f"send_ms={send_ms:.1f} "
+                     f"return_wait_ms={(done_at - request_started) * 1000 - send_ms:.1f} "
+                     f"result_len={result_len} msg_type={msg.get('type', '?')}")
             if msg.get("type") == "error":
                 return f"Error: {msg.get('error', 'unknown')}"
             return msg.get("data")
@@ -445,6 +468,7 @@ def main():
          f"relay={'connected' if client else 'unavailable'}")
 
     def _handle_tool_call(req_id, params, raw_line):
+        call_started = time.perf_counter()
         name = params.get("name", "")
         args = params.get("arguments", {})
         if name == "use_tool" and isinstance(args, dict):
@@ -617,6 +641,13 @@ def main():
         else:
             result = f"Error: unknown tool '{name}'"
 
+        try:
+            result_len = len(result) if isinstance(result, str) else len(json.dumps(result, default=str))
+        except Exception:
+            result_len = len(str(result))
+        _log(f"TIMING tools/call name={name} req={req_id} "
+             f"total_ms={(time.perf_counter() - call_started) * 1000:.1f} "
+             f"result_len={result_len}")
         _log(f"RESULT {name}: {str(result)[:100]}")
         if isinstance(result, list):
             content = result

@@ -11,6 +11,7 @@ from core.tool_mcp_filters import (
     enabled_mcp_names,
     is_enabled,
     is_tool_enabled,
+    is_tool_enabled_from_filters,
     set_filters,
 )
 from tasks.ai.actions.agent_resource import _handle_agent_resource
@@ -58,6 +59,70 @@ def test_tool_mcp_filters_inherit_and_agent_override(tmp_path):
     assert is_tool_enabled(cid, "conv_tool", origin="dynamic", origin_scope="conversation")
     assert not is_tool_enabled(cid, "user_tool", origin="dynamic", origin_scope="user")
     assert is_tool_enabled(cid, "shared_tool", origin="dynamic", origin_scope="user")
+    filters = {
+        "disabled_tools": ["bash"],
+        "enabled_dynamic_tools": ["shared_tool"],
+        "agent_overrides": {
+            "assistant": {"tools": {"mode": "custom", "selected": ["read"]}}
+        },
+    }
+    assert is_tool_enabled_from_filters(filters, "read", "assistant")
+    assert not is_tool_enabled_from_filters(filters, "bash", "assistant")
+    assert is_tool_enabled_from_filters(
+        filters, "shared_tool", origin="dynamic", origin_scope="user")
+
+
+def test_tool_relay_registry_filter_is_loaded_once_and_cached(monkeypatch, tmp_path):
+    from core.tool_registry import ToolRegistry
+    from services.tool_relay_service import ToolRelayService
+
+    ConversationStore.reset()
+    store = ConversationStore.instance()
+    store._store_dir = tmp_path
+    store.save("conv1", [], user_id="u1")
+
+    class Handler:
+        def __init__(self, name):
+            self.name = name
+            self.display_name = name
+            self.description = ""
+
+    def make_registry():
+        registry = ToolRegistry()
+        registry.register(Handler("read"))
+        registry.register(Handler("bash"))
+        registry.register(Handler("search"))
+        return registry
+
+    calls = []
+    disabled = ["bash"]
+
+    def fake_get_filters(conversation_id):
+        calls.append(conversation_id)
+        return {"disabled_tools": list(disabled), "agent_overrides": {}}
+
+    ToolRelayService.clear_registry_cache()
+    svc = ToolRelayService({})
+    monkeypatch.setattr("core.tool_registry.create_default_registry", make_registry)
+    monkeypatch.setattr("core.tool_mcp_filters.get_filters", fake_get_filters)
+    monkeypatch.setattr(svc, "_load_mcp_tools", lambda *args, **kwargs: None)
+    monkeypatch.setattr(svc, "_find_filesystem_service", lambda *args, **kwargs: None)
+
+    first = svc._get_registry("u1", "conv1", "assistant")
+    second = svc._get_registry("u1", "conv1", "assistant")
+
+    assert first is second
+    assert calls == ["conv1"]
+    assert first.get("read") is not None
+    assert first.get("search") is not None
+    assert first.get("bash") is None
+
+    disabled.clear()
+    set_filters("conv1", {"disabled_tools": []})
+    third = svc._get_registry("u1", "conv1", "assistant")
+
+    assert third is not first
+    assert third.get("bash") is not None
 
 
 def test_tool_mcp_filters_subconversations_inherit_parent_until_overridden(tmp_path):

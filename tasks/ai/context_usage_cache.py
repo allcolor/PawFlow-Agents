@@ -158,3 +158,43 @@ def context_usage_from_cache(messages: Iterable[Any], max_context_size: int,
         msg_list, _count(msg_list, token_multiplier) + overhead_i, max_ctx,
         source=source, token_multiplier=token_multiplier,
         cache_mode="full", overhead=overhead_i)
+
+
+def context_usage_append_delta(cache: Dict[str, Any], message: Any, *,
+                               source: str) -> Optional[Dict[str, Any]]:
+    """Advance a valid context-usage cache by one appended message.
+
+    Streaming callbacks need a cheap live gauge update. For CLI providers the
+    full authoritative calculation may reload stored context on every append;
+    this helper keeps the hot path O(size of appended message) once a valid
+    cache exists.
+    """
+    if not isinstance(cache, dict):
+        return None
+    try:
+        params = cache.get("cache_params") or {}
+        max_ctx = int(cache.get("max", 0) or params.get("max", 0) or 0)
+        if max_ctx <= 0:
+            return None
+        token_multiplier = float(params.get("token_multiplier", 1.0) or 1.0)
+        used = int(cache.get("used", 0) or 0)
+        message_count = int(cache.get("message_count", 0) or 0)
+        overhead = int(cache.get("overhead_tokens", 0) or 0)
+        delta = _count([message], token_multiplier)
+        out = dict(cache)
+        out.update({
+            "used": max(0, used + delta),
+            "max": max_ctx,
+            "pct": ((used + delta) / max_ctx) if max_ctx > 0 else 0.0,
+            "source": source,
+            "updated_at": time.time(),
+            "message_count": message_count + 1,
+            "overhead_tokens": overhead,
+            "last_marker": _marker(message),
+            "cache_mode": "append_delta",
+        })
+        return out
+    except Exception:
+        logging.getLogger(__name__).debug("append delta context usage failed",
+                                          exc_info=True)
+        return None

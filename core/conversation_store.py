@@ -40,6 +40,7 @@ import sys
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -54,6 +55,12 @@ _CONV_LOCK_DIAG_MS = float(os.getenv("PAWFLOW_CONV_LOCK_DIAG_MS", "100") or "100
 _GIT_RETENTION_DAYS = int(os.getenv("PAWFLOW_CONV_GIT_RETENTION_DAYS", "7") or "7")
 _GIT_RETENTION_COMMITS = int(os.getenv("PAWFLOW_CONV_GIT_RETENTION_COMMITS", "250") or "250")
 _GIT_RETENTION_INTERVAL_SEC = int(os.getenv("PAWFLOW_CONV_GIT_RETENTION_INTERVAL_SEC", "86400") or "86400")
+_HOT_METADATA_FLUSH_INTERVAL_SEC = float(os.getenv("PAWFLOW_HOT_METADATA_FLUSH_INTERVAL_SEC", "2.0") or "2.0")
+_HOT_METADATA_FLUSH_MSG_DELTA = int(os.getenv("PAWFLOW_HOT_METADATA_FLUSH_MSG_DELTA", "20") or "20")
+_HOT_METADATA_KEYS = (
+    "_meta_msg_count", "_meta_preview", "_meta_updated_at", "_meta_max_seq")
+_HOT_METADATA_EXECUTOR = ThreadPoolExecutor(
+    max_workers=1, thread_name_prefix="conv-meta-flush")
 
 import core.paths as _paths
 
@@ -150,9 +157,14 @@ class ConversationStore:
         self._cache_lock = threading.Lock()
         self._ctx_cache: Dict[str, Dict[str, List[Dict]]] = {}  # cid -> {agent -> messages}
         self._ctx_cache_lock = threading.Lock()
+        self._hot_metadata_flush: Dict[str, Dict[str, Any]] = {}
         self._context_usage_repair_mtime: Dict[str, float] = {}
         self._cid_user: Dict[str, str] = {}  # cid -> user_id (fast lookup, no scan)
         self._loaded = False
+        try:
+            _HOT_METADATA_EXECUTOR.submit(lambda: None)
+        except Exception:
+            logger.debug("hot metadata executor prestart failed", exc_info=True)
 
     @classmethod
     def instance(cls) -> "ConversationStore":
@@ -165,6 +177,10 @@ class ConversationStore:
     @classmethod
     def reset(cls):
         with cls._lock:
+            try:
+                SegmentedJsonl.close_all_append_handles()
+            except Exception:
+                logger.debug("exception suppressed", exc_info=True)
             cls._instance = None
 
     def _get_conv_lock(self, cid: str) -> _ConversationTimedRLock:
@@ -195,14 +211,12 @@ class ConversationStore:
             raise ValueError(
                 "_stamp_line requires a non-empty conversation_id — "
                 "every persisted record lives inside a conversation")
-        from core.llm_client import (
-            _peek_persisted_seq, _record_persisted_seq)
+        from core.llm_client import _next_persisted_seq
         if not line.get("msg_id"):
             line["msg_id"] = uuid.uuid4().hex[:12]
         if "ts" not in line and "timestamp" not in line:
             line["ts"] = time.time()
-        line["seq"] = _peek_persisted_seq(cid) + 1
-        _record_persisted_seq(cid, line["seq"])
+        line["seq"] = _next_persisted_seq(cid)
         if not line.get("conversation_id"):
             line["conversation_id"] = cid
         if not line.get("user_id"):
@@ -292,7 +306,7 @@ class ConversationStore:
     # ── Git per conversation ──────────────────────────────────────────
 
     def _git(self, cid: str, *args: str, check: bool = True,
-             timeout: int = 10) -> subprocess.CompletedProcess:
+             timeout: Optional[float] = None) -> subprocess.CompletedProcess:
         """Run a git command in the conversation directory.
 
         Passes `-c safe.directory=*` so git doesn't reject repos that live on
@@ -540,7 +554,8 @@ class ConversationStore:
         self._invalidate_ctx_cache(cid)
         self._invalidate_pyramid_cache(cid)
 
-    def git_snapshot(self, cid: str, message: str = ""):
+    def git_snapshot(self, cid: str, message: str = "",
+                     command_timeout: Optional[float] = None):
         """Commit current state as a snapshot (called after agent turn end).
 
         Uses selective git add (known files only) instead of git add -A
@@ -555,21 +570,25 @@ class ConversationStore:
             return
         try:
             # Selective add: durable transcript/shared/extras only. Agent
-            # contexts and summaries are derived; untrack any legacy entries
-            # so the next snapshot frees them from future history.
-            self._git_untrack_derived_state(cid)
+            # contexts and summaries are derived and intentionally omitted.
+            # Do not run retention or derived-state cleanup here: this method
+            # is called after every turn, and those maintenance paths can take
+            # tens of seconds on Windows/WSL. Rollback still works from the
+            # durable files; cleanup belongs to explicit retention/init paths.
             existing = self._git_snapshot_files(cid)
             if not existing:
                 return
-            self._git(cid, "add", "--", *existing, check=False)
+            timeout = None if command_timeout is None else max(0.25, float(command_timeout))
+            self._git(cid, "add", "--", *existing, check=False,
+                      timeout=timeout)
             # Commit only if something staged
-            diff = self._git(cid, "diff", "--cached", "--quiet", check=False)
+            diff = self._git(cid, "diff", "--cached", "--quiet",
+                             check=False, timeout=timeout)
             if diff.returncode == 0:
                 return  # nothing staged
             msg = message or f"snapshot {time.strftime('%H:%M:%S')}"
-            self._git(cid, "commit", "-m", msg, "-q")
+            self._git(cid, "commit", "-m", msg, "-q", timeout=timeout)
             logger.debug("[convstore] git snapshot for %s: %s", cid[:8], msg)
-            self._maybe_prune_git_history(cid)
         except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as e:
             detail = getattr(e, "stderr", None) or getattr(e, "stdout", None) or ""
             logger.warning("[convstore] git snapshot failed for %s: %s | git stderr: %s",
@@ -1233,12 +1252,14 @@ class ConversationStore:
 
     def _read_extras(self, cid: str) -> dict:
         """Read extras from the atomic JSON file."""
-        path = self._extras_path(cid)
-        if path.exists():
-            try:
-                return json.loads(path.read_text(encoding="utf-8"))
-            except Exception:
-                logger.debug("exception suppressed", exc_info=True)
+        lock = self._get_extras_lock(cid)
+        with lock:
+            path = self._extras_path(cid)
+            if path.exists():
+                try:
+                    return json.loads(path.read_text(encoding="utf-8"))
+                except Exception:
+                    logger.debug("exception suppressed", exc_info=True)
         return {}
 
     def _write_extras(self, cid: str, data: dict, attempts: int = 8):
@@ -1400,7 +1421,7 @@ class ConversationStore:
         with self._cache_lock:
             if cid in self._cache:
                 return self._cache[cid]
-        return self._reload_cache(cid)
+        return self._load_cache_metadata(cid)
 
     def _reload_cache(self, cid: str) -> dict:
         """Read file from disk and atomically swap cache entry.
@@ -1451,11 +1472,30 @@ class ConversationStore:
 
     def _latest_transcript_line(self, cid: str) -> Dict[str, Any]:
         try:
-            for line in self._transcript_log(cid).iter_rows_reverse():
-                return line
+            log = self._transcript_log(cid)
+            if log.segment_dir.is_dir():
+                for path in sorted(log.segment_dir.glob("*.jsonl"), reverse=True):
+                    for line in SegmentedJsonl._iter_file_reverse(path):
+                        return line
+            if log.flat_path.exists():
+                for line in SegmentedJsonl._iter_file_reverse(log.flat_path):
+                    return line
         except Exception:
             logger.debug("latest transcript row read failed for %s", cid[:8], exc_info=True)
         return {}
+
+    def peek_persisted_max_seq(self, cid: str) -> int:
+        """Return the latest persisted seq without scanning the transcript body."""
+        max_seq = 0
+        try:
+            max_seq = int((self._read_extras(cid) or {}).get("_meta_max_seq") or 0)
+        except Exception:
+            logger.debug("metadata max seq read failed for %s", cid[:8], exc_info=True)
+        try:
+            max_seq = max(max_seq, int(self._latest_transcript_line(cid).get("seq") or 0))
+        except (TypeError, ValueError):
+            pass
+        return max_seq
 
     def _load_cache_metadata(self, cid: str, user_id: str = "") -> dict:
         """Warm list/ownership cache without scanning the transcript body."""
@@ -1531,7 +1571,18 @@ class ConversationStore:
             cached = self._cache.get(cid)
             if cached is not None:
                 return set(cached.get("agents", set()))
-        return set(self._reload_cache(cid).get("agents", set()))
+
+        # This method runs under the per-conversation append lock.  A cache
+        # miss must stay cheap: _reload_cache() scans transcript.jsonl, which
+        # can be tens of thousands of rows and will block every queued user
+        # message while the append lock is held.  Routable agents are declared
+        # in extras.conv_agents, so read that small sidecar directly instead.
+        extras_data = self._read_extras(cid)
+        conv_agents = extras_data.get("conv_agents") or {}
+        agents = set()
+        if isinstance(conv_agents, dict) and conv_agents:
+            agents.update(self._canon_agent(a) for a in conv_agents if a)
+        return agents
 
     def _note_cache_append(self, cid: str, transcript_line: Optional[Dict],
                            agents: set) -> None:
@@ -1557,57 +1608,109 @@ class ConversationStore:
             if agents:
                 cached.setdefault("agents", set()).update(
                     self._canon_agent(a) for a in agents if a)
+            if transcript_line is not None:
+                self._update_cached_hot_metadata_locked(cached, transcript_line)
         if transcript_line is not None:
             self._persist_hot_metadata(cid, transcript_line)
 
+    def _update_cached_hot_metadata_locked(self, cached: Dict[str, Any],
+                                           transcript_line: Dict[str, Any]) -> None:
+        """Update restart metadata in the warm cache without disk I/O.
+
+        Caller must hold `_cache_lock`.
+        """
+        extras = cached.setdefault("extras", {})
+        extra_keys = cached.setdefault("extra_keys", set())
+        if transcript_line.get("t") == "msg":
+            count = max(int(cached.get("msg_count") or 0),
+                        int(extras.get("_meta_msg_count") or 0) + 1)
+            extras["_meta_msg_count"] = count
+            extra_keys.add("_meta_msg_count")
+            if not extras.get("_meta_preview") and transcript_line.get("role") == "user":
+                content = transcript_line.get("content", "")
+                if isinstance(content, str) and content.strip():
+                    extras["_meta_preview"] = content[:80]
+                    extra_keys.add("_meta_preview")
+        ts = self._cache_ts(transcript_line)
+        if ts:
+            extras["_meta_updated_at"] = max(
+                float(extras.get("_meta_updated_at") or 0), ts)
+            extra_keys.add("_meta_updated_at")
+        try:
+            seq = int(transcript_line.get("seq") or 0)
+            if seq:
+                extras["_meta_max_seq"] = max(
+                    int(extras.get("_meta_max_seq") or 0), seq)
+                extra_keys.add("_meta_max_seq")
+        except (TypeError, ValueError):
+            pass
+
+    def _hot_metadata_snapshot(self, cid: str) -> Dict[str, Any]:
+        with self._cache_lock:
+            extras = (self._cache.get(cid) or {}).get("extras") or {}
+            return {k: extras[k] for k in _HOT_METADATA_KEYS if k in extras}
+
+    def _merge_hot_metadata_snapshot(self, cid: str,
+                                     data: Dict[str, Any]) -> Dict[str, Any]:
+        snapshot = self._hot_metadata_snapshot(cid)
+        if snapshot:
+            data.update(snapshot)
+        return data
+
     def _persist_hot_metadata(self, cid: str, transcript_line: Dict[str, Any]) -> None:
-        lock = self._get_extras_lock(cid)
-        with lock:
-            data = self._read_extras(cid)
-            if transcript_line.get("t") == "msg":
-                if "_meta_msg_count" in data:
-                    base_count = int(data.get("_meta_msg_count") or 0)
-                else:
-                    with self._cache_lock:
-                        cached_count = int((self._cache.get(cid) or {}).get("msg_count") or 0)
-                    base_count = max(0, cached_count - 1)
-                    if not base_count:
-                        try:
-                            base_count = max(0, self._transcript_log(cid).total_rows() - 2)
-                        except Exception:
-                            base_count = 0
-                data["_meta_msg_count"] = base_count + 1
-                if not data.get("_meta_preview") and transcript_line.get("role") == "user":
-                    content = transcript_line.get("content", "")
-                    if isinstance(content, str) and content.strip():
-                        data["_meta_preview"] = content[:80]
-            ts = self._cache_ts(transcript_line)
-            if ts:
-                data["_meta_updated_at"] = max(float(data.get("_meta_updated_at") or 0), ts)
+        snapshot = self._hot_metadata_snapshot(cid)
+        if not snapshot:
+            return
+        try:
+            count = int(snapshot.get("_meta_msg_count") or 0)
+        except (TypeError, ValueError):
+            count = 0
+        now = time.monotonic()
+        with self._cache_lock:
+            state = self._hot_metadata_flush.setdefault(cid, {})
+            last_attempt = float(state.get("last_attempt") or 0.0)
+            last_count = int(state.get("last_count") or 0)
+            due_by_time = (now - last_attempt) >= _HOT_METADATA_FLUSH_INTERVAL_SEC
+            due_by_count = (count - last_count) >= _HOT_METADATA_FLUSH_MSG_DELTA
+            if last_attempt and not (due_by_time or due_by_count):
+                return
+            if state.get("running"):
+                return
+            state["last_attempt"] = now
+            state["running"] = True
+
+        _HOT_METADATA_EXECUTOR.submit(
+            self._persist_hot_metadata_worker, cid, snapshot, count, now)
+
+    def _persist_hot_metadata_worker(self, cid: str, snapshot: Dict[str, Any],
+                                     count: int, started_at: float) -> None:
+        try:
+            lock = self._get_extras_lock(cid)
+            if not lock.acquire(blocking=False):
+                return
             try:
-                from core.llm_client import _peek_persisted_seq
-                data["_meta_max_seq"] = max(
-                    int(data.get("_meta_max_seq") or 0),
-                    int(_peek_persisted_seq(cid) or 0),
-                    int(transcript_line.get("seq") or 0),
-                )
-            except Exception:
+                data = self._read_extras(cid)
+                data.update(snapshot)
                 try:
-                    data["_meta_max_seq"] = max(
-                        int(data.get("_meta_max_seq") or 0),
-                        int(transcript_line.get("seq") or 0),
-                    )
-                except (TypeError, ValueError):
-                    pass
-            try:
-                # Hot metadata is a startup/read cache derived from the
-                # transcript. Never let a transient Windows handle on
-                # extras.json reject the actual message append.
-                self._write_extras(cid, data, attempts=1)
-            except PermissionError as _pe:
-                logger.warning(
-                    "[convstore:%s] hot metadata extras write skipped: %s",
-                    cid[:8], _pe)
+                    # Hot metadata is a startup/read cache derived from the
+                    # transcript. Never let a transient Windows handle on
+                    # extras.json reject the actual message append.
+                    self._write_extras(cid, data, attempts=1)
+                except PermissionError as _pe:
+                    logger.warning(
+                        "[convstore:%s] hot metadata extras write skipped: %s",
+                        cid[:8], _pe)
+                    return
+            finally:
+                lock.release()
+            with self._cache_lock:
+                state = self._hot_metadata_flush.setdefault(cid, {})
+                state["last_count"] = count
+                state["last_success"] = started_at
+        finally:
+            with self._cache_lock:
+                state = self._hot_metadata_flush.setdefault(cid, {})
+                state["running"] = False
 
     def _ensure_loaded(self):
         if self._loaded:
@@ -1670,6 +1773,11 @@ class ConversationStore:
         return uuid.uuid4().hex[:16]
 
     def exists(self, cid: str) -> bool:
+        if cid in self._cid_user:
+            return True
+        with self._cache_lock:
+            if cid in self._cache:
+                return True
         try:
             return self._conv_dir(cid).is_dir()
         except ValueError:
@@ -1782,6 +1890,14 @@ class ConversationStore:
         now = time.time()
         transcript_line = None
         touched_agents = set()
+
+        try:
+            from core.llm_client import _has_persisted_seq, _seed_persisted_seq
+            if not _has_persisted_seq(cid):
+                _seed_persisted_seq(cid, self.peek_persisted_max_seq(cid))
+        except Exception:
+            logger.debug("persisted seq cheap seed failed for %s",
+                         cid[:8], exc_info=True)
 
         _mark_timing("pre_lock", _append_started)
         lock = self._get_conv_lock(cid)
@@ -1913,6 +2029,167 @@ class ConversationStore:
                 len(touched_agents),
             )
 
+    def append_messages(self, cid: str, items: List[Dict[str, Any]]) -> None:
+        """Append a FIFO burst with one conversation lock and one write per file.
+
+        The writer often drains several queued messages at once. Calling
+        append_message repeatedly preserves correctness, but it repeats the
+        same lock, transcript, context, shared, and cache work for every row.
+        This method keeps the append_message routing rules while coalescing
+        physical JSONL appends by target file.
+        """
+        if not items:
+            return
+        if len(items) == 1:
+            item = items[0]
+            self.append_message(
+                cid, item["msg"],
+                agent_name=item.get("agent_name", ""),
+                user_id=item.get("user_id", ""),
+                ttl=item.get("ttl", 0))
+            return
+
+        batch_started = time.monotonic()
+        normalized = []
+        for item in items:
+            msg = item["msg"]
+            self._validate_message(msg)
+            agent = self._canon_agent(item.get("agent_name", "")) if item.get("agent_name") else ""
+            role = msg.get("role", "")
+            source = msg.get("source") or {}
+            src_type = source.get("type", "")
+            target_agent = self._canon_agent(source.get("target_agent", "")) if source.get("target_agent") else ""
+            if role == "user" and src_type != "context" and not target_agent:
+                raise ValueError("user messages require source.target_agent")
+            if src_type == "agent_delegate":
+                for single in items:
+                    self.append_message(
+                        cid, single["msg"],
+                        agent_name=single.get("agent_name", ""),
+                        user_id=single.get("user_id", ""),
+                        ttl=single.get("ttl", 0))
+                return
+            normalized.append({
+                "item": item,
+                "msg": msg,
+                "agent_name": agent,
+                "role": role,
+                "source": source,
+                "src_type": src_type,
+                "target_agent": target_agent,
+                "route_agent": agent or (target_agent if target_agent not in ("ALL", "all") else ""),
+                "display_only": bool(msg.get("display_only")),
+                "has_tool_calls": bool(msg.get("tool_calls")),
+            })
+
+        try:
+            from core.llm_client import _has_persisted_seq, _seed_persisted_seq
+            if not _has_persisted_seq(cid):
+                _seed_persisted_seq(cid, self.peek_persisted_max_seq(cid))
+        except Exception:
+            logger.debug("persisted seq cheap seed failed for %s",
+                         cid[:8], exc_info=True)
+
+        transcript_rows: List[Dict[str, Any]] = []
+        shared_rows: List[Dict[str, Any]] = []
+        ctx_rows: Dict[str, List[Dict[str, Any]]] = {}
+        touched_agents = set()
+        seeded_agents = set()
+        transcript_chars = 0
+
+        lock = self._get_conv_lock(cid)
+        with lock:
+            if not self.exists(cid):
+                first = normalized[0]["item"]
+                if not first.get("user_id"):
+                    raise ValueError("user_id required for new conversation")
+                self.save(cid, [], user_id=first.get("user_id", ""),
+                          ttl=first.get("ttl", 0))
+
+            for entry in normalized:
+                msg = entry["msg"]
+                role = entry["role"]
+                src_type = entry["src_type"]
+                route_agent = entry["route_agent"]
+
+                if src_type != "context":
+                    line = self._stamp_line(cid, {"t": "msg", **msg})
+                    if entry["has_tool_calls"] or role == "tool":
+                        line["private"] = True
+                    transcript_rows.append(line)
+                    transcript_chars += self._row_payload_chars(line)
+
+                if entry["display_only"]:
+                    continue
+
+                if route_agent:
+                    if src_type != "context" and route_agent not in seeded_agents:
+                        self._seed_agent_context_from_shared_if_missing(
+                            cid, route_agent)
+                        seeded_agents.add(route_agent)
+                    ctx_rows.setdefault(route_agent, []).append(
+                        self._stamp_line(cid, dict(msg)))
+                    touched_agents.add(route_agent)
+
+                if src_type != "context" and role != "tool":
+                    shared_candidates = self.filter_for_shared([msg])
+                    if shared_candidates:
+                        for shared_msg in (
+                                self._transform_for_shared(m)
+                                for m in shared_candidates):
+                            shared_rows.append(
+                                self._stamp_line(cid, shared_msg))
+                        known_agents = self._cache_agents_for_append(cid)
+                        if route_agent:
+                            known_agents.add(route_agent)
+                        for other in known_agents:
+                            if not other or other == entry["agent_name"]:
+                                continue
+                            transformed = [
+                                self._transform_for_other_agent(m, other)
+                                for m in shared_candidates]
+                            for m in transformed:
+                                ctx_rows.setdefault(other, []).append(
+                                    self._stamp_line(cid, m))
+                            touched_agents.add(other)
+
+            if transcript_rows:
+                self._transcript_log(cid).append_dicts(transcript_rows)
+                if transcript_chars:
+                    self._notify_bg_transcript_chars(cid, transcript_chars)
+            for agent, rows in ctx_rows.items():
+                self._agent_ctx_log(cid, agent).append_dicts(rows)
+            if shared_rows:
+                self._shared_ctx_log(cid).append_dicts(shared_rows)
+                try:
+                    from core.bg_bucket_builder import BgBucketBuilder
+                    _bb = BgBucketBuilder.instance()
+                    _max_seq = max(int(row.get("seq") or 0) for row in shared_rows)
+                    _shared_chars = sum(self._row_payload_chars(row) for row in shared_rows)
+                    if _max_seq:
+                        _bb.note_shared_seq(cid, _max_seq)
+                    _bb.note_shared_rows_appended(cid, len(shared_rows))
+                    if _shared_chars:
+                        _bb.note_shared_chars_appended(cid, _shared_chars)
+                    _uid = self._cid_user.get(cid, "") or ""
+                    if _uid:
+                        trigger = getattr(_bb, "maybe_trigger_async",
+                                          _bb.maybe_trigger)
+                        trigger(cid, _uid)
+                except Exception:
+                    logger.debug("bg bucket trigger failed", exc_info=True)
+
+        self._invalidate_ctx_cache(cid)
+        for line in transcript_rows:
+            self._note_cache_append(cid, line, touched_agents)
+        total_ms = (time.monotonic() - batch_started) * 1000.0
+        if total_ms >= 100.0:
+            logger.warning(
+                "[convstore:%s] append batch slow rows=%d transcript=%d "
+                "shared=%d ctx_targets=%d total_ms=%.1f touched_agents=%d",
+                cid[:8], len(items), len(transcript_rows), len(shared_rows),
+                len(ctx_rows), total_ms, len(touched_agents))
+
     def _route_delegate_message(self, cid: str, msg: Dict,
                                 agent_name: str) -> set:
         """Route an agent_delegate message to from's ctx, to's ctx, and
@@ -2023,12 +2300,12 @@ class ConversationStore:
             path = self._agent_ctx_path(cid, agent_name)
         else:
             path = self._shared_ctx_path(cid)
-        # Hold the per-conv lock so reads serialize with any writer
-        # atomically replacing this file (save_agent_context etc.) —
-        # otherwise an open read handle can block MoveFileEx on Windows.
-        lock = self._get_conv_lock(cid)
-        with lock:
-            result = self._read_ctx_file(path) or None
+        # This read is on the agent hot path before every provider send.
+        # Do not take the conversation write lock: context files are append-only
+        # during normal turns, and full rewrites are rare/manual. A concurrent
+        # rewrite may return the old or new complete file, which is acceptable
+        # for prompt construction and avoids blocking append_message batches.
+        result = self._read_ctx_file(path) or None
         with self._ctx_cache_lock:
             if self._should_cache_context(result):
                 self._ctx_cache.setdefault(cid, {})[agent_name] = result
@@ -2308,8 +2585,9 @@ class ConversationStore:
         # wouldn't see the newly created agent until a server restart.
         if agent_name:
             with self._cache_lock:
-                self._cache.pop(cid, None)
-            self._reload_cache(cid)
+                cached = self._cache.get(cid)
+                if cached is not None:
+                    cached.setdefault("agents", set()).add(agent_name)
         return True
 
     @staticmethod
@@ -2709,7 +2987,8 @@ class ConversationStore:
         if usage != data.get("context_usage"):
             lock = self._get_extras_lock(cid)
             with lock:
-                latest = self._read_extras(cid)
+                latest = self._merge_hot_metadata_snapshot(
+                    cid, self._read_extras(cid))
                 latest_usage = dict(latest.get("context_usage") or {})
                 for name, usage_entry in usage.items():
                     prev = latest_usage.get(name)
@@ -2746,6 +3025,7 @@ class ConversationStore:
         """Get extra from extras.json file."""
         key = self._canon_extra_key(key)
         data = self._read_extras(cid)
+        self._merge_hot_metadata_snapshot(cid, data)
         if key == "context_usage":
             return self._repair_context_usage_from_transcript(cid, data) or default
         return data.get(key, default)
@@ -2774,6 +3054,7 @@ class ConversationStore:
             return default
         key = self._canon_extra_key(key)
         data = self._read_extras(cid)
+        self._merge_hot_metadata_snapshot(cid, data)
         if key == "context_usage":
             return self._repair_context_usage_from_transcript(cid, data) or default
         return data.get(key, default)
@@ -2782,6 +3063,7 @@ class ConversationStore:
         if not self.exists(cid):
             return None
         data = self._read_extras(cid)
+        self._merge_hot_metadata_snapshot(cid, data)
         if "context_usage" in data:
             data["context_usage"] = self._repair_context_usage_from_transcript(
                 cid, data)
@@ -2799,6 +3081,7 @@ class ConversationStore:
         with lock:
             data = self._read_extras(cid)
             data[key] = value
+            self._merge_hot_metadata_snapshot(cid, data)
             self._write_extras(cid, data)
         # Update in-memory cache for list_conversations (title, updated_at)
         with self._cache_lock:
@@ -2811,14 +3094,14 @@ class ConversationStore:
         return True
 
     def _delete_cli_runtime_session_dirs(self, cid: str, provider: str,
-                                         agent_name: str = "") -> int:
+                                         agent_name: str = "",
+                                         async_cleanup: bool = False) -> int:
         """Delete runtime session dirs for one CLI provider/conv.
 
         Used when a PawFlow context edit invalidates the provider's session.
         The live process is evicted separately; once extras are cleared, every
         file under the targeted provider dir is stale history.
         """
-        import shutil
         try:
             owner = self._cid_user.get(cid, "") or self.get_user_id(cid) or ""
         except Exception:
@@ -2845,7 +3128,32 @@ class ConversationStore:
         removed = 0
         for target in targets:
             try:
-                if target.is_dir():
+                if not target.is_dir():
+                    continue
+                if async_cleanup:
+                    stale = target.with_name(
+                        f".stale-{target.name}-{uuid.uuid4().hex[:8]}")
+                    try:
+                        target.replace(stale)
+                        cleanup_target = stale
+                    except OSError:
+                        # If the directory is locked, do not block the caller.
+                        # The cleared session pointer is the correctness barrier;
+                        # a later cleanup/orphan sweep can remove the stale files.
+                        logger.warning(
+                            "Deferred %s runtime session cleanup for %s%s; "
+                            "directory is still locked: %s",
+                            provider, cid[:8],
+                            f"/{agent_name}" if agent_name else "", target)
+                        continue
+                    threading.Thread(
+                        target=self._delete_cli_runtime_session_dir_worker,
+                        args=(cleanup_target, provider, cid, agent_name),
+                        daemon=True,
+                        name=f"cli-runtime-cleanup-{cid[:8]}-{provider}",
+                    ).start()
+                    removed += 1
+                else:
                     shutil.rmtree(target, ignore_errors=True)
                     removed += 1
             except Exception:
@@ -2854,6 +3162,17 @@ class ConversationStore:
             logger.info("Deleted %d %s runtime session dir(s) for %s%s",
                         removed, provider, cid[:8], f"/{agent_name}" if agent_name else "")
         return removed
+
+    @staticmethod
+    def _delete_cli_runtime_session_dir_worker(target: Path, provider: str,
+                                               cid: str,
+                                               agent_name: str = "") -> None:
+        try:
+            shutil.rmtree(target, ignore_errors=True)
+            logger.info("Deleted stale %s runtime session dir for %s%s",
+                        provider, cid[:8], f"/{agent_name}" if agent_name else "")
+        except Exception:
+            logger.debug("async cli runtime cleanup failed", exc_info=True)
 
     def invalidate_claude_sessions(self, cid: str) -> None:
         """Clear all claude-code session IDs for this conversation.
@@ -2957,7 +3276,8 @@ class ConversationStore:
                 cid[:8], _e)
 
     def invalidate_claude_session_for_agent(self, cid: str,
-                                             agent_name: str) -> None:
+                                             agent_name: str,
+                                             async_cleanup: bool = False) -> None:
         """Clear the claude-code session for ONE agent, purging its
         jsonl + companion dir on disk.
 
@@ -2979,25 +3299,55 @@ class ConversationStore:
         # so the next turn for this (conv, agent) starts a fresh session
         # regardless of which CLI is configured. Symmetric with the all-agent
         # variant `invalidate_claude_sessions`.
-        extras = self.get_extras(cid) or {}
-        cleared_any = False
-        for _k in (
+        session_keys = (
                 f"claude_session:{agent_name}",
                 f"codex_session:{agent_name}",
                 f"codex_app_server_thread:{agent_name}",
                 f"codex_app_pool_idx:{agent_name}",
                 f"gemini_acp_session:{agent_name}",
                 f"gemini_acp_pool_idx:{agent_name}",
-                f"gemini_acp_session_version:{agent_name}"):
-            if extras.get(_k):
-                self.set_extra(cid, _k, "")
-                logger.info("Invalidated %s for conv %s", _k, cid[:8])
-                cleared_any = True
+                f"gemini_acp_session_version:{agent_name}")
+        original_extras = {}
+        cleared_keys = []
+        if self.exists(cid):
+            lock = self._get_extras_lock(cid)
+            _wait_t0 = time.monotonic()
+            with lock:
+                _wait_ms = (time.monotonic() - _wait_t0) * 1000.0
+                extras = self._read_extras(cid)
+                original_extras = dict(extras)
+                for _k in session_keys:
+                    if extras.get(_k):
+                        extras[_k] = ""
+                        cleared_keys.append(_k)
+                if cleared_keys:
+                    _write_t0 = time.monotonic()
+                    self._write_extras(cid, extras)
+                    _write_ms = (time.monotonic() - _write_t0) * 1000.0
+                    if _wait_ms >= _CONV_LOCK_DIAG_MS or _write_ms >= _CONV_LOCK_DIAG_MS:
+                        logger.warning(
+                            "[convstore:%s] agent session extras clear slow agent=%s "
+                            "keys=%d wait_ms=%.1f write_ms=%.1f",
+                            cid[:8], agent_name, len(cleared_keys), _wait_ms, _write_ms)
+        for _k in cleared_keys:
+            logger.info("Invalidated %s for conv %s", _k, cid[:8])
+        if cleared_keys and self._cache_lock.acquire(blocking=False):
+            try:
+                cached = self._cache.get(cid)
+                if cached is not None:
+                    cached_extra_keys = cached.setdefault("extra_keys", set())
+                    cached_extras = cached.setdefault("extras", {})
+                    for _k in cleared_keys:
+                        cached_extra_keys.add(_k)
+                        cached_extras[_k] = ""
+                    cached["updated_at"] = time.time()
+            finally:
+                self._cache_lock.release()
         # CC-specific disk prune happens below by sid; codex/gemini runtime
         # dirs are removed by exact (conv, agent) because their resume pointers
         # have just been cleared.
         key = f"claude_session:{agent_name}"
-        sid = str(extras.get(key) or "")
+        sid = str(original_extras.get(key) or "")
         if sid:
             try:
                 owner = self._cid_user.get(cid, "")
@@ -3022,8 +3372,10 @@ class ConversationStore:
                     "invalidate_claude_session_for_agent disk prune failed "
                     "for %s/%s: %s", cid[:8], agent_name, _e)
         try:
-            self._delete_cli_runtime_session_dirs(cid, "codex", agent_name)
-            self._delete_cli_runtime_session_dirs(cid, "gemini", agent_name)
+            self._delete_cli_runtime_session_dirs(
+                cid, "codex", agent_name, async_cleanup=async_cleanup)
+            self._delete_cli_runtime_session_dirs(
+                cid, "gemini", agent_name, async_cleanup=async_cleanup)
         except Exception as _e:
             logger.debug(
                 "invalidate_claude_session_for_agent cli disk prune failed "
@@ -3196,20 +3548,19 @@ class ConversationStore:
                 _eg_clear(_owner, cid)
         except Exception:
             logger.debug("exception suppressed", exc_info=True)
-        # Clean up Claude Code session workdir (sessions/claude/<user>/<cid>/).
-        # Without this, per-task session dirs accumulate forever since
-        # task sub-convs are deleted on completion but their CC session
-        # state (credentials, project jsonl, mcp_bridge logs) is never
-        # reclaimed.
+        # Clean up CLI provider session workdirs
+        # (sessions/<provider>/<user>/<cid>/). Without this, per-task session
+        # dirs accumulate forever since task sub-convs are deleted on
+        # completion but their provider runtime state is never reclaimed.
         if _owner:
             try:
-                from core import paths as _paths
                 _sanitized_cid = cid.replace(":", "_")
-                _sess_dir = _paths.CLAUDE_SESSIONS_DIR / _owner / _sanitized_cid
-                if _sess_dir.is_dir():
-                    shutil.rmtree(_sess_dir, onerror=_force_remove)
+                for _provider, _root in self._cli_session_roots().items():
+                    _sess_dir = _root / _owner / _sanitized_cid
+                    if _sess_dir.is_dir():
+                        shutil.rmtree(_sess_dir, onerror=_force_remove)
             except Exception as _se:
-                logger.debug("Failed to remove CC session workdir for %s: %s",
+                logger.debug("Failed to remove CLI session workdir for %s: %s",
                              cid, _se)
         self._invalidate_ctx_cache(cid)
         return True
@@ -3428,92 +3779,6 @@ class ConversationStore:
 
     # ── Cleanup ───────────────────────────────────────────────────────
 
-    def _prune_cli_agent_runtime(self, provider: str, agent_dir: Path,
-                                 session_id: str) -> int:
-        """Prune old provider JSONL sessions inside a live agent runtime dir."""
-        if not session_id or not agent_dir.is_dir():
-            return 0
-        removed = 0
-        if provider == "codex-app-server":
-            for path in agent_dir.glob(".codex/sessions/**/*.jsonl"):
-                try:
-                    if session_id not in path.name:
-                        path.unlink()
-                        removed += 1
-                except Exception:
-                    logger.debug("exception suppressed", exc_info=True)
-        elif provider == "gemini":
-            for path in agent_dir.glob(".gemini/tmp/gemini/chats/*.jsonl"):
-                try:
-                    current = False
-                    with open(path, "r", encoding="utf-8", errors="replace") as fh:
-                        for line in fh:
-                            if "sessionId" not in line:
-                                continue
-                            try:
-                                rec = json.loads(line)
-                            except json.JSONDecodeError:
-                                continue
-                            if str(rec.get("sessionId") or "") == session_id:
-                                current = True
-                            break
-                    if not current:
-                        path.unlink()
-                        removed += 1
-                except Exception:
-                    logger.debug("exception suppressed", exc_info=True)
-        return removed
-
-    def cleanup_orphan_cli_sessions(self) -> int:
-        """Remove stale Codex/Gemini runtime dirs and old non-current JSONLs."""
-        import shutil
-        try:
-            from core import paths as _paths
-        except Exception:
-            return 0
-        self._ensure_loaded()
-        with self._cache_lock:
-            live_sanitized = {cid.replace(":", "_"): cid
-                              for cid in self._cache.keys()}
-        removed = 0
-        conv_base = _paths.CONVERSATIONS_DIR
-        providers = (
-            ("codex-app-server", _paths.CODEX_SESSIONS_DIR, "codex_app_server_thread:"),
-            ("gemini", _paths.GEMINI_SESSIONS_DIR, "gemini_acp_session:"),
-        )
-        for provider, base, key_prefix in providers:
-            if not base.is_dir():
-                continue
-            for user_dir in base.iterdir():
-                if not user_dir.is_dir():
-                    continue
-                for conv_dir in user_dir.iterdir():
-                    if not conv_dir.is_dir():
-                        continue
-                    live_cid = live_sanitized.get(conv_dir.name)
-                    if not live_cid:
-                        if (conv_base / user_dir.name / conv_dir.name).is_dir():
-                            live_cid = conv_dir.name.replace("__", ":")
-                        else:
-                            shutil.rmtree(conv_dir, ignore_errors=True)
-                            removed += 1
-                            logger.info("Removed orphan %s session dir: %s/%s",
-                                        provider, user_dir.name, conv_dir.name)
-                            continue
-                    extras = self.get_extras(live_cid) or {}
-                    for agent_dir in list(conv_dir.iterdir()):
-                        if not agent_dir.is_dir():
-                            continue
-                        sid = str(extras.get(f"{key_prefix}{agent_dir.name}") or "")
-                        if not sid:
-                            shutil.rmtree(agent_dir, ignore_errors=True)
-                            removed += 1
-                            logger.info("Removed stale %s agent session dir: %s/%s/%s",
-                                        provider, user_dir.name, conv_dir.name, agent_dir.name)
-                            continue
-                        removed += self._prune_cli_agent_runtime(provider, agent_dir, sid)
-        return removed
-
     def vacuum(self, cid: str) -> dict:
         """Manual vacuum — no-op (extras are now atomic JSON, contexts are separate files)."""
         return {"status": "ok"}
@@ -3532,7 +3797,99 @@ class ConversationStore:
         removed += self.cleanup_orphan_cli_sessions()
         return removed
 
-    def cleanup_orphan_claude_sessions(self) -> int:
+    def _cli_session_roots(self) -> Dict[str, Path]:
+        """Return provider -> runtime CLI session root."""
+        from core import paths as _paths
+        return {
+            "claude": _paths.CLAUDE_SESSIONS_DIR,
+            "codex": _paths.CODEX_SESSIONS_DIR,
+            "gemini": _paths.GEMINI_SESSIONS_DIR,
+        }
+
+    def cleanup_orphan_cli_sessions(self, providers: Optional[List[str]] = None,
+                                    prune_live: bool = False) -> int:
+        """Remove CLI provider session dirs whose conversation no longer exists.
+
+        Runtime session roots all use the same top-level shape:
+          sessions/<provider>/<user>/<conversation>/...
+
+        The startup cleanup intentionally only inspects those first two
+        directory levels. If the matching conversation directory exists, the
+        provider session is still linked and the whole tree is kept. If it does
+        not exist, the provider session directory is removed. No session files
+        are read.
+
+        prune_live=True keeps the legacy Claude-only stale-jsonl pruning path
+        for explicit maintenance/invalidation callers; startup uses False.
+        """
+        roots = self._cli_session_roots()
+        if providers:
+            requested = {str(p) for p in providers}
+            roots = {name: root for name, root in roots.items()
+                     if name in requested}
+        self._ensure_loaded()
+        live_by_user: Dict[str, set[str]] = {}
+        with self._cache_lock:
+            for cid in self._cache.keys():
+                user = self._cid_user.get(cid, "")
+                if not user:
+                    continue
+                names = live_by_user.setdefault(self._safe_name(user), set())
+                names.add(self._safe_name(cid))
+                names.add(cid.replace(":", "_"))
+                names.add(cid.replace(":", "__"))
+        removed = 0
+        for provider, base in roots.items():
+            if not base.is_dir():
+                continue
+            for user_dir in base.iterdir():
+                if not user_dir.is_dir():
+                    continue
+                for sess_dir in user_dir.iterdir():
+                    if not sess_dir.is_dir():
+                        continue
+                    if sess_dir.name.startswith(".stale-"):
+                        threading.Thread(
+                            target=self._delete_cli_runtime_session_dir_worker,
+                            args=(sess_dir, provider, sess_dir.name),
+                            daemon=True,
+                            name=f"cli-orphan-delete-{provider}",
+                        ).start()
+                        continue
+                    is_one_shot = sess_dir.name.startswith("_")
+                    if (not is_one_shot
+                            and sess_dir.name in live_by_user.get(user_dir.name, set())):
+                        if prune_live and provider == "claude":
+                            recovered_cid = sess_dir.name.replace("__", ":")
+                            try:
+                                removed += self._prune_stale_cc_sessions(
+                                    sess_dir, recovered_cid)
+                            except Exception:
+                                logger.debug("exception suppressed", exc_info=True)
+                        continue
+                    try:
+                        stale = sess_dir.with_name(
+                            f".stale-{provider}-{sess_dir.name}-{uuid.uuid4().hex[:8]}")
+                        try:
+                            sess_dir.replace(stale)
+                        except OSError:
+                            stale = sess_dir
+                        threading.Thread(
+                            target=self._delete_cli_runtime_session_dir_worker,
+                            args=(stale, provider, sess_dir.name),
+                            daemon=True,
+                            name=f"cli-orphan-delete-{provider}",
+                        ).start()
+                        removed += 1
+                        logger.info("Removed %s %s CLI session dir: %s/%s",
+                                    "one-shot" if is_one_shot else "orphan",
+                                    provider, user_dir.name, sess_dir.name)
+                    except Exception as exc:
+                        logger.debug("Failed to remove orphan %s session %s: %s",
+                                     provider, sess_dir, exc)
+        return removed
+
+    def cleanup_orphan_claude_sessions(self, prune_live: bool = True) -> int:
         """Remove Claude Code session workdirs whose conversation no
         longer exists.
 
@@ -3542,88 +3899,14 @@ class ConversationStore:
         log). We now clean up on delete(), but existing installs may
         still have piles of orphans — this method reclaims them.
 
-        Returns the number of orphan session dirs removed.
+        When prune_live is False, live conversation dirs are not scanned with
+        rglob; this is the startup mode, where reclaiming true orphans matters
+        but a deep prune of live sessions can take seconds on Windows/WSL.
+
+        Returns the number of orphan session dirs or stale jsonls removed.
         """
-        import shutil
-        try:
-            from core import paths as _paths
-        except Exception:
-            return 0
-        base = _paths.CLAUDE_SESSIONS_DIR
-        if not base.is_dir():
-            return 0
-        conv_base = _paths.CONVERSATIONS_DIR
-        self._ensure_loaded()
-        # Map sanitized-name -> real cid so we can both filter live
-        # convs AND look up their extras (for stale-session pruning).
-        with self._cache_lock:
-            live_sanitized = {cid.replace(":", "_"): cid
-                              for cid in self._cache.keys()}
-        removed = 0
-        for user_dir in base.iterdir():
-            if not user_dir.is_dir():
-                continue
-            for sess_dir in user_dir.iterdir():
-                if not sess_dir.is_dir():
-                    continue
-                # _compact / _memory_extract are one-shot helpers — never
-                # tied to a live conv, always safe to wipe as a safety net
-                # in case the immediate post-use cleanup was skipped.
-                _is_one_shot = sess_dir.name.startswith("_")
-                live_cid = (None if _is_one_shot
-                            else live_sanitized.get(sess_dir.name))
-                if live_cid:
-                    # Conv is alive — don't nuke the dir, but prune stale
-                    # CC session jsonls inside. Every CC turn creates a
-                    # new <uuid>.jsonl under claude/projects/-workspace/
-                    # and only the one referenced by extras'
-                    # claude_session:<agent> is current. The rest pile
-                    # up indefinitely (user reported 90+ per live conv).
-                    removed += self._prune_stale_cc_sessions(
-                        sess_dir, live_cid)
-                    continue
-                # SAFETY NET: before rmtree'ing, double-check that no
-                # conversation directory with this sanitized cid exists
-                # on disk. The in-memory cache can be incomplete at boot
-                # (observed: cleanup fires via the ContinuousFlowExecutor
-                # boot hook before/while conversations are being scanned,
-                # cache empty → every live session dir classified as
-                # orphan → wiped. Main conv's extras['claude_session']
-                # then pointed at a jsonl that no longer existed, CC
-                # --resume failed with "No conversation found", fallback
-                # to a new session blew away the agent's working memory).
-                # Trusting the disk here is authoritative — if the conv
-                # dir exists, the CC session is NOT an orphan regardless
-                # of cache state.
-                if not _is_one_shot:
-                    _conv_dir = conv_base / user_dir.name / sess_dir.name
-                    if _conv_dir.is_dir():
-                        logger.warning(
-                            "[cc-cleanup] refusing to delete %s/%s: "
-                            "conv dir exists on disk but wasn't in "
-                            "_cache at cleanup time (cache race with "
-                            "boot-time _ensure_loaded). Pruning stale "
-                            "jsonls inside instead.",
-                            user_dir.name, sess_dir.name)
-                        # Best-effort: prune old jsonls using the real
-                        # cid (conv_dir.name with __ → : reverse).
-                        _recovered_cid = sess_dir.name.replace("__", ":")
-                        try:
-                            removed += self._prune_stale_cc_sessions(
-                                sess_dir, _recovered_cid)
-                        except Exception:
-                            logger.debug("exception suppressed", exc_info=True)
-                        continue
-                try:
-                    shutil.rmtree(sess_dir, ignore_errors=True)
-                    removed += 1
-                    logger.info("Removed %s CC session dir: %s/%s",
-                                "one-shot" if _is_one_shot else "orphan",
-                                user_dir.name, sess_dir.name)
-                except Exception as _e:
-                    logger.debug("Failed to remove orphan session %s: %s",
-                                 sess_dir, _e)
-        return removed
+        return self.cleanup_orphan_cli_sessions(
+            providers=["claude"], prune_live=prune_live)
 
     def _prune_stale_cc_sessions(self, sess_dir: Path, cid: str,
                                   wipe_all: bool = False) -> int:

@@ -482,6 +482,63 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                     _session_key = f"codex_app_server_thread:{_agent_key}"
                     _session_val = _store_session.get_extra(conversation_id, _session_key)
                     _cli_has_session = bool(_session_val)
+                    if _cli_has_session:
+                        _session_valid = False
+                        _svc_id = getattr(resolved_svc, "service_id", "") or ""
+                        try:
+                            from core.codex_live_registry import CodexLiveRegistry
+                            _pool_key = f"codex_app_pool_idx:{_agent_key}"
+                            try:
+                                _pool_idx = int(_store_session.get_extra(
+                                    conversation_id, _pool_key) or -1)
+                            except Exception:
+                                _pool_idx = -1
+                            _live_reg = CodexLiveRegistry.instance()
+                            _live = _live_reg.get((
+                                _user_id_for_svc, conversation_id, _agent_key,
+                                _svc_id, _pool_idx))
+                            if _live is None:
+                                _compat = _live_reg.get_compatible(
+                                    _user_id_for_svc, conversation_id,
+                                    _agent_key, _svc_id)
+                                _live = _compat[1] if _compat else None
+                            # A live app-server process already owns the thread
+                            # state. A merely-alive container does not: the new
+                            # app-server must resume from a rollout jsonl, so we
+                            # still validate that path below before skipping the
+                            # PawFlow context load.
+                            _session_valid = bool(
+                                _live and _live.is_process_alive())
+                        except Exception:
+                            logging.getLogger(__name__).debug(
+                                "Ignored codex live-session validation exception",
+                                exc_info=True)
+                        if not _session_valid:
+                            try:
+                                import os as _os
+                                from core.llm_providers.codex_session import _get_sessions_base
+                                from core.llm_providers.codex_app_server import LLMCodexAppServerMixin
+                                _uid = _user_id_for_svc or _store_session.get_user_id(conversation_id) or "default"
+                                _workdir = _os.path.join(
+                                    _get_sessions_base(), _uid,
+                                    conversation_id.replace(":", "_"), _agent_key)
+                                _session_valid = bool(
+                                    LLMCodexAppServerMixin._codex_app_rollout_path(
+                                        _workdir, str(_session_val)))
+                            except Exception:
+                                logging.getLogger(__name__).debug(
+                                    "Ignored codex rollout validation exception",
+                                    exc_info=True)
+                        if not _session_valid:
+                            _store_session.set_extra(conversation_id, _session_key, "")
+                            _store_session.set_extra(
+                                conversation_id,
+                                f"codex_app_pool_idx:{_agent_key}", "")
+                            _cli_has_session = False
+                            logger.warning(
+                                "[context:%s] stale codex app-server thread %s for %s — loading PawFlow context",
+                                conversation_id[:8], str(_session_val)[:12],
+                                _agent_key)
             except Exception:
                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 

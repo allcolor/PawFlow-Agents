@@ -589,6 +589,7 @@ class RelayThread:
                 f"{' | '.join(_v_args)}")
             _start_time = time.time()
             _full_reconnect_requested = threading.Event()
+            _service_reregister_requested = threading.Event()
             try:
                 # Merge stdout into stderr so we capture *everything* the
                 # container emits in a single reader. Python's print()
@@ -616,8 +617,8 @@ class RelayThread:
                                 if "HTTP/1.1 400 Bad Request" in msg:
                                     self._log(
                                         "[Relay] Relay handshake got 400; "
-                                        "requesting full stop/start reconnect")
-                                    _full_reconnect_requested.set()
+                                        "re-registering service without stopping Docker relay")
+                                    _service_reregister_requested.set()
                     except Exception:
                         logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 threading.Thread(target=_read_relay_logs, daemon=True,
@@ -639,6 +640,13 @@ class RelayThread:
                         except Exception:
                             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                         break
+                    if _service_reregister_requested.is_set():
+                        _service_reregister_requested.clear()
+                        try:
+                            self._reregister_service()
+                            _consecutive_fails = 0
+                        except Exception as _rr_err:
+                            self._log(f"[Relay] Service re-register failed: {_rr_err}")
                     # Periodic health check: is the relay still connected to the server?
                     if time.time() - _last_health > _health_interval:
                         _last_health = time.time()
@@ -651,14 +659,13 @@ class RelayThread:
                                 f"({_consecutive_fails} consecutive)")
                             if _consecutive_fails >= 3:
                                 self._log(
-                                    "[Relay] Relay disconnected; requesting "
-                                    "full stop/start reconnect")
-                                _full_reconnect_requested.set()
+                                    "[Relay] Relay health still false; "
+                                    "re-registering service without stopping Docker relay")
                                 try:
-                                    self._docker_proc.kill()
-                                except Exception:
-                                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-                                break
+                                    self._reregister_service()
+                                    _consecutive_fails = 0
+                                except Exception as _rr_err:
+                                    self._log(f"[Relay] Service re-register failed: {_rr_err}")
 
                 if self._stop_event.is_set():
                     break

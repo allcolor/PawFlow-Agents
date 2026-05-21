@@ -1,4 +1,5 @@
 import asyncio
+import json
 import threading
 
 import pytest
@@ -95,3 +96,71 @@ async def test_relay_main_loop_exits_when_reader_stores_socket_timeout():
         await svc._relay_main_loop(reader, writer, svc, asyncio.Lock(), set())
 
     assert writer.writes == 0
+
+
+@pytest.mark.asyncio
+async def test_relay_main_loop_ignores_bad_json_frame(monkeypatch):
+    import services.filesystem_service as fs_mod
+
+    svc = RelayService({"_service_id": "fs1", "token": "tok"})
+    frames = iter([(0x01, b"{bad-json"), (0x08, b"")])
+
+    async def _fake_recv(_reader):
+        return next(frames)
+
+    monkeypatch.setattr(fs_mod, "_ws_recv_frame", _fake_recv)
+
+    await svc._relay_main_loop(object(), _Writer(), svc, asyncio.Lock(), set())
+
+
+@pytest.mark.asyncio
+async def test_relay_main_loop_keeps_session_after_dispatch_error(monkeypatch):
+    import services.filesystem_service as fs_mod
+
+    svc = RelayService({"_service_id": "fs1", "token": "tok"})
+    frames = iter([
+        (0x01, json.dumps({"type": "result", "request_id": "rid"}).encode()),
+        (0x08, b""),
+    ])
+
+    async def _fake_recv(_reader):
+        return next(frames)
+
+    async def _boom(*_args, **_kwargs):
+        raise RuntimeError("dispatch broke")
+
+    monkeypatch.setattr(fs_mod, "_ws_recv_frame", _fake_recv)
+    monkeypatch.setattr(svc, "_dispatch_relay_msg", _boom)
+
+    await svc._relay_main_loop(object(), _Writer(), svc, asyncio.Lock(), set())
+
+
+@pytest.mark.asyncio
+async def test_relay_request_handler_returns_eio_on_fs_exception(monkeypatch):
+    import services.filesystem_service as fs_mod
+
+    class _BoomFs:
+        def handle(self, _method, _args):
+            raise RuntimeError("disk vanished")
+
+    sent = []
+
+    async def _capture_send(_writer, data, opcode=0x01):
+        sent.append((opcode, json.loads(data.decode("utf-8"))))
+
+    svc = RelayService({"_service_id": "fs1", "token": "tok"})
+    monkeypatch.setattr(svc, "_get_server_fs", lambda: _BoomFs())
+    monkeypatch.setattr(fs_mod, "_ws_send_frame", _capture_send)
+
+    await svc._handle_relay_request(
+        {"type": "relay_request", "request_id": "rid1",
+         "method": "sfs.read", "args": {"path": "x"}},
+        object(), asyncio.Lock())
+
+    assert sent == [(0x01, {
+        "type": "relay_response",
+        "request_id": "rid1",
+        "error": "EIO",
+        "errno": 5,
+        "message": "sfs.read failed: disk vanished",
+    })]

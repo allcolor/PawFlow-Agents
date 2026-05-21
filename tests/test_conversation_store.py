@@ -14,12 +14,65 @@ Tests cover:
 import json
 import inspect
 import subprocess
+import threading
 import time
 import uuid
 import pytest
 from unittest.mock import patch
 
 from core.conversation_store import ConversationStore
+
+
+def test_seed_persisted_seq_zero_initializes_cache(monkeypatch):
+    import core.llm_client as lc_mod
+
+    cid = f"cid_zero_seed_{uuid.uuid4().hex[:8]}"
+    with lc_mod._msg_seq_lock:
+        lc_mod._msg_seq_persisted.pop(cid, None)
+
+    lc_mod._seed_persisted_seq(cid, 0)
+    monkeypatch.setattr(
+        lc_mod, "_bootstrap_seq_for",
+        lambda _cid: (_ for _ in ()).throw(
+            AssertionError("zero seed must avoid bootstrap")),
+    )
+
+    assert lc_mod._has_persisted_seq(cid) is True
+    assert lc_mod._peek_persisted_seq(cid) == 0
+
+
+def test_seq_bootstrap_does_not_hold_global_seq_lock(monkeypatch):
+    import core.llm_client as lc_mod
+
+    slow_cid = f"cid_slow_boot_{uuid.uuid4().hex[:8]}"
+    fast_cid = f"cid_fast_boot_{uuid.uuid4().hex[:8]}"
+    entered_bootstrap = threading.Event()
+    release_bootstrap = threading.Event()
+
+    with lc_mod._msg_seq_lock:
+        lc_mod._msg_seq_persisted.pop(slow_cid, None)
+        lc_mod._msg_seq_persisted[fast_cid] = 10
+
+    def _bootstrap(cid):
+        if cid == slow_cid:
+            entered_bootstrap.set()
+            release_bootstrap.wait(timeout=5.0)
+            return 40
+        return 0
+
+    monkeypatch.setattr(lc_mod, "_bootstrap_seq_for", _bootstrap)
+
+    result = {}
+    t = threading.Thread(
+        target=lambda: result.setdefault("slow", lc_mod._peek_persisted_seq(slow_cid)))
+    t.start()
+    assert entered_bootstrap.wait(timeout=1.0)
+
+    assert lc_mod._next_persisted_seq(fast_cid) == 11
+
+    release_bootstrap.set()
+    t.join(timeout=5.0)
+    assert result["slow"] == 40
 
 
 def _msg(role="user", content="hello", source=None, **kw):
@@ -87,6 +140,35 @@ class TestCreateConversation:
         assert meta["user_id"] == user_id
         assert meta["message_count"] == 1
 
+    def test_first_append_after_restart_seeds_seq_without_full_bootstrap_scan(
+            self, store, monkeypatch):
+        cid = store.generate_id()
+        user_id = "alice"
+        store.save(cid, [_msg(source={"type": "user", "target_agent": "bot"})],
+                   user_id=user_id)
+
+        import core.llm_client as lc_mod
+        with lc_mod._msg_seq_lock:
+            lc_mod._msg_seq_persisted.pop(cid, None)
+
+        def fail_bootstrap(_cid):
+            raise AssertionError("append must seed seq from store metadata/tail")
+
+        monkeypatch.setattr(lc_mod, "_bootstrap_seq_for", fail_bootstrap)
+        ConversationStore.reset()
+        warmed = ConversationStore(store_dir=str(store._store_dir))
+
+        warmed.append_message(
+            cid,
+            _msg(content="after restart", source={"type": "user", "target_agent": "bot"}),
+            agent_name="bot",
+            user_id=user_id,
+        )
+
+        rows = warmed.load(cid)
+        assert rows[-1]["content"] == "after restart"
+        assert rows[-1]["seq"] > rows[-2]["seq"]
+
     def test_append_persists_hot_metadata_for_fast_restart(self, conv):
         store, cid, uid = conv
         store.append_message(
@@ -100,6 +182,99 @@ class TestCreateConversation:
         assert extras["_meta_msg_count"] == 1
         assert extras["_meta_preview"] == "first"
         assert extras["_meta_max_seq"] >= 1
+
+    def test_append_messages_batches_transcript_and_context(self, conv):
+        store, cid, uid = conv
+        messages = [
+            _msg(role="assistant", content="one",
+                 source={"type": "agent", "name": "bot"}),
+            _msg(role="assistant", content="two",
+                 source={"type": "agent", "name": "bot"}),
+        ]
+
+        store.append_messages(cid, [
+            {"msg": messages[0], "agent_name": "bot", "user_id": uid},
+            {"msg": messages[1], "agent_name": "bot", "user_id": uid},
+        ])
+
+        transcript = store.load(cid)
+        assert [m["content"] for m in transcript] == ["one", "two"]
+        ctx = store.load_agent_context(cid, "bot")
+        assert [m["content"] for m in ctx] == ["one", "two"]
+        shared = store.load_context(cid)
+        assert [m["content"] for m in shared] == [
+            "[Agent bot]:\none", "[Agent bot]:\ntwo"]
+
+    def test_append_coalesces_hot_metadata_writes(self, conv, monkeypatch):
+        store, cid, uid = conv
+        import core.conversation_store as cs_mod
+
+        monkeypatch.setattr(cs_mod, "_HOT_METADATA_FLUSH_INTERVAL_SEC", 3600.0)
+        monkeypatch.setattr(cs_mod, "_HOT_METADATA_FLUSH_MSG_DELTA", 1000)
+        original_write = store._write_extras
+        writes = {"count": 0}
+        first_write = threading.Event()
+
+        def count_write(*args, **kwargs):
+            writes["count"] += 1
+            first_write.set()
+            return original_write(*args, **kwargs)
+
+        monkeypatch.setattr(store, "_write_extras", count_write)
+
+        for i in range(3):
+            store.append_message(
+                cid,
+                _msg(content=f"m{i}", source={"type": "user", "target_agent": "bot"}),
+                agent_name="bot",
+                user_id=uid,
+            )
+
+        assert first_write.wait(timeout=2)
+        assert writes["count"] == 1
+        assert store.get_metadata(cid)["message_count"] == 3
+
+        assert store.set_extra(cid, "title", "Updated") is True
+        extras = store.get_extras(cid)
+        assert writes["count"] == 2
+        assert extras["_meta_msg_count"] == 3
+        assert extras["title"] == "Updated"
+
+    def test_append_schedules_hot_metadata_write_off_hot_path(self, conv, monkeypatch):
+        store, cid, uid = conv
+        import core.conversation_store as cs_mod
+
+        scheduled = []
+
+        class FakeExecutor:
+            def submit(self, target, *args):
+                scheduled.append({"target": target, "args": args})
+
+        def fail_write_extras(*_args, **_kwargs):
+            raise AssertionError("append hot path must not write extras.json")
+
+        monkeypatch.setattr(cs_mod, "_HOT_METADATA_EXECUTOR", FakeExecutor())
+        monkeypatch.setattr(store, "_write_extras", fail_write_extras)
+
+        store.append_message(
+            cid,
+            _msg(content="first", source={"type": "user", "target_agent": "bot"}),
+            agent_name="bot",
+            user_id=uid,
+        )
+
+        assert len(scheduled) == 1
+        assert scheduled[0]["target"] == store._persist_hot_metadata_worker
+
+    def test_exists_uses_loaded_conversation_cache_without_disk_stat(self, conv, monkeypatch):
+        store, cid, _uid = conv
+
+        def fail_is_dir(_self):
+            raise AssertionError("hot exists() must not stat known conversations")
+
+        monkeypatch.setattr("pathlib.Path.is_dir", fail_is_dir)
+
+        assert store.exists(cid) is True
 
     def test_git_history_retention_rewrites_to_sliding_window(self, store, monkeypatch):
         try:
@@ -119,8 +294,26 @@ class TestCreateConversation:
             assert store.set_extra(cid, "title", f"title {i}")
             store.git_snapshot(cid, f"snapshot {i}")
 
+        store.prune_git_history_now(cid)
+
         commits = store._git(cid, "rev-list", "--count", "live").stdout.strip()
         assert int(commits) <= 2
+
+    def test_git_snapshot_does_not_run_retention_on_hot_path(self, conv, monkeypatch):
+        store, cid, _uid = conv
+        called = {"prune": False, "untrack": False}
+
+        monkeypatch.setattr(
+            store, "_maybe_prune_git_history",
+            lambda *_args, **_kwargs: called.__setitem__("prune", True))
+        monkeypatch.setattr(
+            store, "_git_untrack_derived_state",
+            lambda *_args, **_kwargs: called.__setitem__("untrack", True))
+
+        store.set_extra(cid, "title", "hot snapshot")
+        store.git_snapshot(cid, "hot snapshot")
+
+        assert called == {"prune": False, "untrack": False}
 
     def test_generate_id_is_string(self, store):
         cid = store.generate_id()
@@ -210,6 +403,84 @@ class TestCreateConversation:
 
         assert store.set_extra(cid, "title", "Updated") is True
         assert store.get_extra(cid, "title") == "Updated"
+
+    def test_get_extra_serializes_with_extras_writer_lock(self, conv):
+        store, cid, _uid = conv
+        assert store.set_extra(cid, "title", "Initial") is True
+        lock = store._get_extras_lock(cid)
+        started = threading.Event()
+        finished = threading.Event()
+        seen = {}
+
+        def reader():
+            started.set()
+            seen["value"] = store.get_extra(cid, "title")
+            finished.set()
+
+        lock.acquire()
+        try:
+            t = threading.Thread(target=reader)
+            t.start()
+            assert started.wait(1)
+            assert not finished.wait(0.05)
+        finally:
+            lock.release()
+
+        assert finished.wait(1)
+        t.join(1)
+        assert seen["value"] == "Initial"
+
+    def test_agent_session_invalidation_does_not_wait_for_cache_lock(
+            self, conv, monkeypatch):
+        store, cid, _uid = conv
+        agent = "assistant"
+        session_keys = (
+            f"claude_session:{agent}",
+            f"codex_session:{agent}",
+            f"codex_app_server_thread:{agent}",
+            f"codex_app_pool_idx:{agent}",
+            f"gemini_acp_session:{agent}",
+            f"gemini_acp_pool_idx:{agent}",
+            f"gemini_acp_session_version:{agent}",
+        )
+        for key in session_keys:
+            assert store.set_extra(cid, key, "stale") is True
+
+        monkeypatch.setattr(
+            store, "_delete_cli_runtime_session_dirs", lambda *a, **k: 0)
+        monkeypatch.setattr(
+            store, "set_extra",
+            lambda *a, **k: (_ for _ in ()).throw(
+                AssertionError("session invalidation must batch extras writes")))
+
+        store._cache_lock.acquire()
+        try:
+            store.invalidate_claude_session_for_agent(cid, agent)
+        finally:
+            store._cache_lock.release()
+
+        extras = store.get_extras(cid)
+        for key in session_keys:
+            assert extras[key] == ""
+
+    def test_load_agent_context_does_not_take_conversation_lock(self, conv, monkeypatch):
+        store, cid, uid = conv
+        store.append_message(
+            cid,
+            _msg(content="hello", source={"type": "user", "target_agent": "bot"}),
+            agent_name="bot",
+            user_id=uid,
+        )
+        store._invalidate_ctx_cache(cid)
+
+        def _fail_conv_lock(_cid):
+            raise AssertionError("load_agent_context must not block append_message")
+
+        monkeypatch.setattr(store, "_get_conv_lock", _fail_conv_lock)
+
+        ctx = store.load_agent_context(cid, "bot")
+        assert ctx
+        assert ctx[-1]["content"] == "hello"
 
     def test_patch_context_usage_does_not_take_conversation_lock(
             self, conv, monkeypatch):
@@ -794,6 +1065,42 @@ class TestAppendMessage:
             "[Agent alice]" in str(msg.get("content", ""))
             for msg in bob_ctx)
 
+    def test_append_agent_cache_miss_does_not_reload_transcript(self, conv, monkeypatch):
+        store, cid, uid = conv
+        store.set_extra(cid, "conv_agents", {
+            "alice": {"definition": "alice", "llm_service": "llm"},
+            "bob": {"definition": "bob", "llm_service": "llm"},
+        }, user_id=uid)
+        with store._cache_lock:
+            store._cache.pop(cid, None)
+
+        def _forbidden_reload(_cid):
+            raise AssertionError("append hot path must not scan transcript")
+
+        monkeypatch.setattr(store, "_reload_cache", _forbidden_reload)
+        m = _msg(role="assistant", content="hello world",
+                 source={"type": "agent", "name": "alice"})
+        store.append_message(cid, m, agent_name="alice", user_id=uid)
+        bob_ctx = store.load_agent_context(cid, "bob")
+        assert bob_ctx and any(
+            "[Agent alice]" in str(msg.get("content", ""))
+            for msg in bob_ctx)
+
+    def test_save_agent_context_updates_agent_cache_without_reload(self, conv, monkeypatch):
+        store, cid, uid = conv
+        store.set_extra(cid, "conv_agents", {
+            "alice": {"definition": "alice", "llm_service": "llm"},
+        }, user_id=uid)
+        store._reload_cache(cid)
+
+        def _forbidden_reload(_cid):
+            raise AssertionError("save_agent_context must not scan transcript")
+
+        monkeypatch.setattr(store, "_reload_cache", _forbidden_reload)
+        assert store.save_agent_context(cid, "alice", []) is True
+        with store._cache_lock:
+            assert "alice" in store._cache[cid]["agents"]
+
     def test_creates_conv_if_needed(self, store):
         cid = store.generate_id()
         m = _msg(role="assistant", content="hi",
@@ -832,6 +1139,19 @@ class TestCleanupOrphanClaudeSessions:
         monkeypatch.setattr(_paths, "CLAUDE_SESSIONS_DIR", base)
         return base
 
+    def _setup_all_providers(self, tmp_path, monkeypatch):
+        from core import paths as _paths
+        roots = {}
+        for provider, attr in (
+                ("claude", "CLAUDE_SESSIONS_DIR"),
+                ("codex", "CODEX_SESSIONS_DIR"),
+                ("gemini", "GEMINI_SESSIONS_DIR")):
+            root = tmp_path / "sessions" / provider
+            root.mkdir(parents=True)
+            monkeypatch.setattr(_paths, attr, root)
+            roots[provider] = root
+        return roots
+
     def _mk_jsonl(self, sess_dir, session_id, agent="claude",
                   mtime=None):
         proj = sess_dir / agent / "projects" / "-workspace"
@@ -862,6 +1182,54 @@ class TestCleanupOrphanClaudeSessions:
         assert removed >= 1
         assert not one_shot.exists()
 
+    def test_cli_cleanup_removes_orphans_for_all_providers(
+            self, store, tmp_path, monkeypatch):
+        roots = self._setup_all_providers(tmp_path, monkeypatch)
+        for provider, root in roots.items():
+            orphan = root / "alice" / f"dead-{provider}"
+            orphan.mkdir(parents=True)
+            (orphan / "state.txt").write_text("x")
+
+        removed = store.cleanup_orphan_cli_sessions()
+
+        assert removed == 3
+        for provider, root in roots.items():
+            assert not (root / "alice" / f"dead-{provider}").exists()
+
+    def test_cli_cleanup_renames_orphan_before_recursive_delete(
+            self, store, tmp_path, monkeypatch):
+        roots = self._setup_all_providers(tmp_path, monkeypatch)
+        orphan = roots["codex"] / "alice" / "dead-codex"
+        deep = orphan / "assistant" / ".codex" / "sessions" / "2026" / "05"
+        deep.mkdir(parents=True)
+        (deep / "rollout.jsonl").write_text("{}\n")
+        deleted = []
+        monkeypatch.setattr(
+            store, "_delete_cli_runtime_session_dir_worker",
+            lambda target, provider, cid, agent_name="": deleted.append(target))
+
+        removed = store.cleanup_orphan_cli_sessions()
+
+        assert removed == 1
+        assert not orphan.exists()
+        assert deleted and deleted[0].name.startswith(".stale-codex-dead-codex-")
+
+    def test_cli_cleanup_keeps_live_provider_dirs_without_deep_scan(
+            self, store, tmp_path, monkeypatch):
+        roots = self._setup_all_providers(tmp_path, monkeypatch)
+        cid = store.generate_id()
+        store.save(cid, [], user_id="alice")
+        sanitized = cid.replace(":", "_")
+        deep_file = (roots["codex"] / "alice" / sanitized / "assistant" /
+                     ".codex" / "sessions" / "rollout.jsonl")
+        deep_file.parent.mkdir(parents=True)
+        deep_file.write_text("{}\n")
+
+        removed = store.cleanup_orphan_cli_sessions()
+
+        assert removed == 0
+        assert deep_file.exists()
+
     def test_preserves_live_conv_dir(self, store, tmp_path, monkeypatch):
         base = self._setup(tmp_path, monkeypatch)
         cid = store.generate_id()
@@ -888,6 +1256,23 @@ class TestCleanupOrphanClaudeSessions:
         store.cleanup_orphan_claude_sessions()
         assert current.exists(), "current session jsonl must survive"
         assert not stale.exists(), "stale session jsonl must be pruned"
+
+    def test_boot_mode_skips_deep_prune_for_live_conv(self, store, tmp_path,
+                                                       monkeypatch):
+        base = self._setup(tmp_path, monkeypatch)
+        cid = store.generate_id()
+        store.save(cid, [], user_id="alice")
+        sanitized = cid.replace(":", "_")
+        sess_dir = base / "alice" / sanitized
+        current_sid = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+        store.set_extra(cid, "claude_session:claude", current_sid)
+        stale = self._mk_jsonl(sess_dir, "bbbbbbbb-bbbb-bbbb-bbbb-"
+                                        "bbbbbbbbbbbb")
+
+        removed = store.cleanup_orphan_claude_sessions(prune_live=False)
+
+        assert removed == 0
+        assert stale.exists(), "boot cleanup must not rglob live session trees"
 
     def test_prunes_unregistered_jsonl_regardless_of_mtime(
             self, store, tmp_path, monkeypatch):
@@ -1089,7 +1474,8 @@ class TestCleanupCliRuntimeSessions:
         p.write_text(json.dumps({"sessionId": session_id}) + "\n", encoding="utf-8")
         return p
 
-    def test_cleanup_prunes_non_current_codex_and_gemini_jsonls(self, store, tmp_path, monkeypatch):
+    def test_cleanup_keeps_live_codex_and_gemini_dirs_without_jsonl_prune(
+            self, store, tmp_path, monkeypatch):
         codex, gemini = self._setup(tmp_path, monkeypatch)
         cid = store.generate_id()
         store.save(cid, [], user_id="alice")
@@ -1103,18 +1489,18 @@ class TestCleanupCliRuntimeSessions:
 
         removed = store.cleanup_orphan_cli_sessions()
 
-        assert removed >= 2
+        assert removed == 0
         assert codex_live.exists()
-        assert not codex_old.exists()
+        assert codex_old.exists()
         assert gemini_live.exists()
-        assert not gemini_old.exists()
+        assert gemini_old.exists()
 
     def test_cleanup_uses_codex_app_server_provider_name(self):
         from core.conversation_store import ConversationStore
 
-        src = inspect.getsource(ConversationStore.cleanup_orphan_cli_sessions)
-        assert '"codex-app-server"' in src
-        assert '("codex",' not in src
+        src = inspect.getsource(ConversationStore._cli_session_roots)
+        assert '"codex"' in src
+        assert '"gemini"' in src
 
     def test_invalidate_all_removes_codex_and_gemini_agent_dirs(self, store, tmp_path, monkeypatch):
         codex, gemini = self._setup(tmp_path, monkeypatch)

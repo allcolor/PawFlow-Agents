@@ -220,7 +220,8 @@ class LLMMessage:
 # seq is the on-disk line index — assigned at WRITE time by
 # ConversationStore._stamp_line, which reads+advances this counter
 # under the per-conv lock. One counter per cid, bootstrapped from the
-# transcript on first access so monotony survives process restarts.
+# store's hot metadata + transcript tail so monotony survives process
+# restarts without scanning a long transcript in the append lock.
 import threading as _threading
 _msg_seq_persisted: Dict[str, int] = {}   # cid -> last seq written to disk
 _msg_seq_lock = _threading.Lock()
@@ -229,40 +230,17 @@ _msg_seq_lock = _threading.Lock()
 def _bootstrap_seq_for(conversation_id: str) -> int:
     """Return the max seq already persisted for ``conversation_id``.
 
-    Full-scan of the transcript on first access — one-time cost per
-    conv per process. Correctness over milliseconds: side records
-    (msg_patch, trace_update, meta) mix into the same file, and we
-    must pick the true historical peak so the next write lands strictly
-    above everything already on disk.
+    The conversation store keeps `_meta_max_seq` in extras.json and can read
+    the latest transcript row from the tail. That is enough for the next
+    append because seq is monotonically increasing in disk order; scanning the
+    entire transcript here would run under ConversationStore's append lock on
+    the first post-restart write.
     """
     if not conversation_id:
         return 0
     try:
-        import core.paths as _p
-        import json as _json
-        transcript = None
-        root = _p.CONVERSATIONS_DIR
-        if root.exists():
-            for candidate in root.rglob(f"{conversation_id}/transcript.jsonl"):
-                transcript = candidate
-                break
-        if transcript is None or not transcript.exists():
-            return 0
-        max_seq = 0
-        with open(transcript, "rb") as fh:
-            for raw in fh:
-                raw = raw.strip()
-                if not raw:
-                    continue
-                try:
-                    m = _json.loads(raw.decode("utf-8", errors="replace"))
-                except Exception:
-                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-                    continue
-                s = m.get("seq")
-                if isinstance(s, int) and s > max_seq:
-                    max_seq = s
-        return max_seq
+        from core.conversation_store import ConversationStore
+        return ConversationStore.instance().peek_persisted_max_seq(conversation_id)
     except Exception:
         return 0
 
@@ -278,8 +256,13 @@ def _peek_persisted_seq(conversation_id: str) -> int:
         return 0
     with _msg_seq_lock:
         cur = _msg_seq_persisted.get(conversation_id)
-        if cur is None:
-            cur = _bootstrap_seq_for(conversation_id)
+        if cur is not None:
+            return cur
+    bootstrapped = _bootstrap_seq_for(conversation_id)
+    with _msg_seq_lock:
+        cur = _msg_seq_persisted.get(conversation_id)
+        if cur is None or bootstrapped > cur:
+            cur = bootstrapped
             _msg_seq_persisted[conversation_id] = cur
         return cur
 
@@ -290,10 +273,41 @@ def _record_persisted_seq(conversation_id: str, seq: int) -> None:
         return
     with _msg_seq_lock:
         cur = _msg_seq_persisted.get(conversation_id)
-        if cur is None:
-            cur = _bootstrap_seq_for(conversation_id)
-        if seq > cur:
+        if cur is None or seq > cur:
             _msg_seq_persisted[conversation_id] = seq
+
+
+def _next_persisted_seq(conversation_id: str) -> int:
+    """Reserve and return the next on-disk seq for a conversation.
+
+    Disk bootstrap can be slow on large conversations, so it must never run
+    while the process-wide seq lock is held. The caller still serializes this
+    per conversation with ConversationStore's append lock.
+    """
+    if not conversation_id:
+        return 1
+    with _msg_seq_lock:
+        cur = _msg_seq_persisted.get(conversation_id)
+        if cur is not None:
+            nxt = cur + 1
+            _msg_seq_persisted[conversation_id] = nxt
+            return nxt
+    bootstrapped = _bootstrap_seq_for(conversation_id)
+    with _msg_seq_lock:
+        cur = _msg_seq_persisted.get(conversation_id)
+        if cur is None or bootstrapped > cur:
+            cur = bootstrapped
+        nxt = cur + 1
+        _msg_seq_persisted[conversation_id] = nxt
+        return nxt
+
+
+def _has_persisted_seq(conversation_id: str) -> bool:
+    """True when this process already bootstrapped the persisted seq."""
+    if not conversation_id:
+        return False
+    with _msg_seq_lock:
+        return conversation_id in _msg_seq_persisted
 
 
 def _seed_persisted_seq(conversation_id: str, seq: int) -> None:
@@ -301,8 +315,8 @@ def _seed_persisted_seq(conversation_id: str, seq: int) -> None:
     if not conversation_id or not isinstance(seq, int):
         return
     with _msg_seq_lock:
-        cur = _msg_seq_persisted.get(conversation_id, 0)
-        if seq > cur:
+        cur = _msg_seq_persisted.get(conversation_id)
+        if cur is None or seq > cur:
             _msg_seq_persisted[conversation_id] = seq
 
 

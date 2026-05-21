@@ -78,6 +78,41 @@ class AgentPollerMixin:
                 logger.error(f"Agent poller error: {e}", exc_info=True)
 
 
+    def _maybe_cleanup_checkpoints_async(self) -> None:
+        now = time.time()
+        last_cleanup = getattr(self, '_last_checkpoint_cleanup', 0)
+        if now - last_cleanup <= 86400:  # 24h
+            return
+        if getattr(self, '_checkpoint_cleanup_running', False):
+            return
+        self._last_checkpoint_cleanup = now
+        self._checkpoint_cleanup_running = True
+
+        def _worker() -> None:
+            try:
+                from core.checkpoint import CheckpointManager
+                started = time.monotonic()
+                cleaned = CheckpointManager.cleanup_old(30)
+                elapsed_ms = (time.monotonic() - started) * 1000.0
+                if cleaned:
+                    logger.info(
+                        "[checkpoint] cleaned %d old checkpoint(s) in %.1fms",
+                        cleaned, elapsed_ms)
+                elif elapsed_ms >= 50.0:
+                    logger.info(
+                        "[checkpoint] cleanup checked old checkpoints in %.1fms",
+                        elapsed_ms)
+            except Exception as exc:
+                logger.debug(f"[checkpoint] cleanup failed: {exc}")
+            finally:
+                self._checkpoint_cleanup_running = False
+
+        threading.Thread(
+            target=_worker,
+            daemon=True,
+            name="agent-poller-checkpoint-cleanup",
+        ).start()
+
     def _poll_once(self) -> None:
         """Single poll iteration: check scheduled rechecks and active conversations."""
         from core.conversation_event_bus import ConversationEventBus
@@ -89,18 +124,13 @@ class AgentPollerMixin:
         scheduler = PollScheduler.instance()
         _pt0 = time.time()
 
-        # Checkpoint cleanup (once per day, tracked by class var)
+        # Checkpoint cleanup scans FileStore metadata and can be slow on a warm
+        # workspace. Schedule it from the poller, but never run it inline with
+        # user wake-up decisions.
         try:
-            _now = time.time()
-            _last_cleanup = getattr(self, '_last_checkpoint_cleanup', 0)
-            if _now - _last_cleanup > 86400:  # 24h
-                from core.checkpoint import CheckpointManager
-                _cleaned = CheckpointManager.cleanup_old(30)
-                if _cleaned:
-                    logger.info(f"[checkpoint] cleaned {_cleaned} old checkpoint(s)")
-                self._last_checkpoint_cleanup = _now
+            self._maybe_cleanup_checkpoints_async()
         except Exception as _cp_err:
-            logger.debug(f"[checkpoint] cleanup failed: {_cp_err}")
+            logger.debug(f"[checkpoint] cleanup schedule failed: {_cp_err}")
 
         _dt_ckpt = time.time() - _pt0
         if _dt_ckpt > 0.05: logger.warning(f"[poller-timing] checkpoint: {_dt_ckpt*1000:.0f}ms")
@@ -630,6 +660,9 @@ class AgentPollerMixin:
                 return sr.rsplit("(", 1)[-1].rstrip(")")
             if "[agent_task:" in sr and "(" in sr:
                 return sr.rsplit("(", 1)[-1].rstrip(")")
+            compact_match = re.match(r'\[compact_resume:([\w.-]+)\]', sr)
+            if compact_match:
+                return compact_match.group(1)
             tv_match = re.search(r'\[task_verify:[^\]]+\].*by ([\w.-]+)', sr)
             if tv_match:
                 return tv_match.group(1)
@@ -762,6 +795,13 @@ class AgentPollerMixin:
                 "Just say what you have to say, naturally.\n"
                 "You can also engage other agents via delegate if you want their perspective.\n"
                 "Do NOT respond with [NO_PENDING_WORK] — always contribute something."
+            )
+
+        if any(r.startswith("[compact_resume:") for r in scheduled_reasons):
+            return (
+                "[System: Context compaction completed. Continue the interrupted "
+                "work immediately from the compacted context. Do not wait for a "
+                "new user message, and do not respond with [NO_PENDING_WORK].]"
             )
 
         if scheduled_reasons:

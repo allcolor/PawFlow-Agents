@@ -1,11 +1,24 @@
+import threading
+
 from core.agent_hooks import AgentHookRunner, _invoke_source_hook, _parse_hook_stdout
 
 
 class _ConversationStore:
     def __init__(self, bindings):
         self.bindings = bindings
+        self.get_extra_calls = 0
+        self._cache_lock = threading.Lock()
+        self._cache = {"conv1": {"extras": {}}} if bindings is None else {}
+
+    def get_extra_snapshot(self, conversation_id, key, default=None):
+        assert conversation_id == "conv1"
+        assert key == "conversation_hooks"
+        if self.bindings is None:
+            return default
+        return self.bindings
 
     def get_extra(self, conversation_id, key, user_id=""):
+        self.get_extra_calls += 1
         assert conversation_id == "conv1"
         assert key == "conversation_hooks"
         return self.bindings
@@ -33,6 +46,7 @@ def _patch_stores(monkeypatch, bindings, hooks):
         "core.resource_store.ResourceStore.instance",
         staticmethod(lambda: resource_store),
     )
+    return conv_store, resource_store
 
 
 def _runner():
@@ -73,6 +87,24 @@ def test_agent_hooks_apply_replacements_in_priority_order(monkeypatch):
     assert calls == [("first", "start-"), ("second", "start-first")]
     assert result["decision"] == "replace"
     assert result["payload"]["content"] == "start-firstsecond"
+
+
+def test_agent_hooks_use_cache_snapshot_for_empty_bindings(monkeypatch):
+    conv_store, _resource_store = _patch_stores(monkeypatch, [], {})
+
+    result = _runner().run("pre_user_message", {"content": "hello"})
+
+    assert result["decision"] == "allow"
+    assert conv_store.get_extra_calls == 0
+
+
+def test_agent_hooks_treat_warm_cache_missing_key_as_no_hooks(monkeypatch):
+    conv_store, _resource_store = _patch_stores(monkeypatch, None, {})
+
+    result = _runner().run("pre_user_message", {"content": "hello"})
+
+    assert result["decision"] == "allow"
+    assert conv_store.get_extra_calls == 0
 
 
 def test_agent_hook_block_short_circuits(monkeypatch):

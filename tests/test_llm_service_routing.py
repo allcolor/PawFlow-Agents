@@ -413,10 +413,12 @@ class TestClassifyMessagesSource(unittest.TestCase):
 
         classified = AgentLoopTask._classify_messages_for_display(raw)
 
-        self.assertEqual(len(classified), 1)
-        self.assertEqual(classified[0]["type"], "assistant")
-        self.assertEqual(classified[0]["timestamp"], 1234.5)
-        self.assertEqual(classified[0]["msg_id"], "m1")
+        self.assertEqual(len(classified), 2)
+        self.assertEqual(classified[0]["type"], "thinking")
+        self.assertEqual(classified[0]["content"], "old reasoning")
+        self.assertEqual(classified[1]["type"], "assistant")
+        self.assertEqual(classified[1]["timestamp"], 1234.5)
+        self.assertEqual(classified[1]["msg_id"], "m1")
 
     def test_assistant_thinking_only_message_rehydrates_as_thinking_row(self):
         from tasks.ai.agent_loop import AgentLoopTask
@@ -437,6 +439,25 @@ class TestClassifyMessagesSource(unittest.TestCase):
         self.assertEqual(classified[0]["timestamp"], 1234.5)
         self.assertEqual(classified[0]["msg_id"], "m1")
         self.assertEqual(classified[0]["source"]["name"], "bot")
+
+    def test_assistant_tool_call_thinking_rehydrates_before_tool_call(self):
+        from tasks.ai.agent_loop import AgentLoopTask
+        raw = [{
+            "role": "assistant",
+            "content": "",
+            "thinking": "check files first",
+            "tool_calls": [{"id": "tc1", "name": "read", "arguments": {"path": "a.py"}}],
+            "msg_id": "m1",
+            "ts": 1234.5,
+            "source": {"type": "agent", "name": "bot"},
+        }]
+
+        classified = AgentLoopTask._classify_messages_for_display(raw)
+
+        self.assertEqual([m["type"] for m in classified], ["thinking", "tool_call"])
+        self.assertEqual(classified[0]["content"], "check files first")
+        self.assertEqual(classified[0]["msg_id"], "m1")
+        self.assertEqual(classified[0]["timestamp"], 1234.5)
 
     def test_empty_display_thinking_is_not_replayed_as_technical_row(self):
         from tasks.ai.agent_loop import AgentLoopTask

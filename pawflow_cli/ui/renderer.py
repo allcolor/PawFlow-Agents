@@ -309,8 +309,10 @@ class TerminalRenderer:
 
     def thinking_token(self, agent: str, text: str, replace: bool = False):
         current = self._thinking.get(agent, "")
-        if replace and text.startswith(current):
-            self._thinking[agent] = current + text[len(current):]
+        if replace:
+            self._thinking[agent] = (
+                current + text[len(current):]
+                if text.startswith(current) else text)
         else:
             self._thinking[agent] = current + text
         # Status bar driven by active-agents poller — no _set_status here.

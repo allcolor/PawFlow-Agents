@@ -71,7 +71,7 @@ Timing controls are read once when the provider modules are imported:
 
 - `PAWFLOW_CCI_POST_STOP_IDLE_DRAIN_SECONDS` sets how long PawFlow waits after
   Claude Code's `Stop` hook for late proxy events before closing the turn.
-  Default: `0.5` seconds.
+  Default: `2.5` seconds.
 - `PAWFLOW_CCI_POST_STOP_IDLE_DRAIN_MS` is the millisecond alias for the same
   value. The seconds variable wins if both are set.
 - `PAWFLOW_CCI_NO_PROXY_EVENT_TIMEOUT_SECONDS` sets how long a submitted tmux

@@ -47,7 +47,7 @@ def _env_seconds(names: tuple[str, ...], ms_names: tuple[str, ...] = (),
 _POST_STOP_IDLE_DRAIN_SECONDS = _env_seconds(
     ("PAWFLOW_CCI_POST_STOP_IDLE_DRAIN_SECONDS", "PAWFLOW_CCI_DRAIN_SECONDS"),
     ("PAWFLOW_CCI_POST_STOP_IDLE_DRAIN_MS", "PAWFLOW_CCI_DRAIN_MS"),
-    default=0.5,
+    default=2.5,
 )
 _NO_PROXY_EVENT_TIMEOUT_SECONDS = _env_seconds(
     ("PAWFLOW_CCI_NO_PROXY_EVENT_TIMEOUT_SECONDS", "PAWFLOW_CCI_NOEVENT_TIMEOUT_SECONDS"),

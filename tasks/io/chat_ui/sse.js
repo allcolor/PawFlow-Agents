@@ -266,7 +266,12 @@ function connectSSE(cid, onReady, opts) {
     const agent = data.agent_name || '';
     const aKey = agentKey(agent);
     const textDelta = data.text || '';
+    const msgId = data.msg_id || '';
     if (!textDelta && !thinkingElements[aKey]) return;
+    const current = thinkingElements[aKey];
+    if (current && msgId && current.msgId && current.msgId !== msgId) {
+      finalizeThinking(agent, 'thinking-message');
+    }
     if (!thinkingElements[aKey]) {
       // Create collapsible details element
       const details = document.createElement('details');
@@ -312,12 +317,15 @@ function connectSSE(cid, onReady, opts) {
         }
       }
       if (typeof applyTechnicalMessageGrouping === 'function') applyTechnicalMessageGrouping();
-      thinkingElements[aKey] = {el: details, content: content, summary: summary, text: '', startTime: Date.now()};
+      thinkingElements[aKey] = {el: details, content: content, summary: summary, text: '', msgId: msgId, startTime: Date.now()};
       scrollBottom();
     }
     const te = thinkingElements[aKey];
-    if (reconcileFinal && textDelta.startsWith(te.text)) {
-      te.text += textDelta.slice(te.text.length);
+    if (msgId && !te.msgId) te.msgId = msgId;
+    if (reconcileFinal) {
+      te.text = textDelta.startsWith(te.text)
+        ? te.text + textDelta.slice(te.text.length)
+        : textDelta;
     } else {
       te.text += textDelta;
     }

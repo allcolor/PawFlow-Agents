@@ -229,6 +229,27 @@ class AgentSerializationMixin:
             tool_calls = m.get("tool_calls")
             tool_call_id = m.get("tool_call_id")
 
+            _src_for_display = m.get("source") or {}
+            if (role == "assistant"
+                    and not (isinstance(_src_for_display, dict)
+                             and _src_for_display.get("type") == "context")):
+                _thinking = str(m.get("thinking") or "")
+                if _thinking.strip():
+                    _think_entry = {
+                        "type": "thinking",
+                        "role": "thinking",
+                        "content": _thinking,
+                        "raw_index": raw_idx,
+                        "display_only": True,
+                    }
+                    if m.get("msg_id"):
+                        _think_entry["msg_id"] = m["msg_id"]
+                    if _display_ts:
+                        _think_entry["timestamp"] = _display_ts
+                    if m.get("source"):
+                        _think_entry["source"] = m["source"]
+                    result.append(_think_entry)
+
             if role == "assistant" and tool_calls:
                 # Build tc_id → display name map for tool_result matching
                 from core.llm_client import unwrap_mcp_tool
@@ -383,23 +404,6 @@ class AgentSerializationMixin:
                 if isinstance(_src, dict) and _src.get("type") == "context":
                     continue
                 if role == "assistant" and not str(content).strip():
-                    _thinking = str(m.get("thinking") or "")
-                    if not _thinking.strip():
-                        continue
-                    entry = {
-                        "type": "thinking",
-                        "role": "thinking",
-                        "content": _thinking,
-                        "raw_index": raw_idx,
-                        "display_only": True,
-                    }
-                    if m.get("msg_id"):
-                        entry["msg_id"] = m["msg_id"]
-                    if _display_ts:
-                        entry["timestamp"] = _display_ts
-                    if m.get("source"):
-                        entry["source"] = m["source"]
-                    result.append(entry)
                     continue
                 _type = role
                 if role == "assistant" and (

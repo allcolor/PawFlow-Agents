@@ -302,14 +302,13 @@ class StreamEmitter(AgentEmitter):
             "total_tools": len(tools_called),
         })
 
-    def on_done(self, result: AgentResult) -> None:
-        self._stop_all_heartbeats()
+    def _done_payload(self, result: AgentResult) -> Dict[str, Any]:
         # Use all_msg_ids from the full turn (survives flush)
         _all_ids = result.all_msg_ids or []
         _last_id = _all_ids[-1] if _all_ids else self._current_msg_id
         # The context gauge is emitted once through message_meta above. Done
         # closes the turn only; it must not be a second gauge publisher.
-        self._emit("done", {
+        data = {
             "response": result.response_content,
             "msg_id": _last_id,
             "all_msg_ids": _all_ids,
@@ -322,7 +321,35 @@ class StreamEmitter(AgentEmitter):
             "cost_usd": result.cost_usd,
             "source": result.source,
             "agent_name": self._agent_name or "",
-        })
+        }
+        if self._task_id:
+            data['task_id'] = self._task_id
+            data['task_iteration'] = self.ctx.get("_task_iteration", 0)
+        if 'ts' not in data:
+            data['ts'] = time.time()
+        return data
+
+    def enqueue_done_after_writes(self, result: AgentResult) -> None:
+        """Queue `done` behind pending writer items without blocking."""
+        self._stop_all_heartbeats()
+        if self._use_conv_store and self.conversation_id:
+            try:
+                from core.conversation_writer import ConversationWriter
+                ConversationWriter.for_conversation(
+                    self.conversation_id).enqueue_sse_events([{
+                        "type": "done",
+                        "cid": self.event_cid,
+                        "data": self._done_payload(result),
+                    }])
+                return
+            except Exception:
+                logger.warning("[agent:%s] queue done failed; publishing directly",
+                               self.conversation_id[:8], exc_info=True)
+        self._emit("done", self._done_payload(result))
+
+    def on_done(self, result: AgentResult) -> None:
+        self._stop_all_heartbeats()
+        self._emit("done", self._done_payload(result))
 
     def on_error(self, error: Exception) -> None:
         self._stop_all_heartbeats()

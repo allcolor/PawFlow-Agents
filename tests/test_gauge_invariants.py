@@ -809,11 +809,12 @@ def test_cli_claude_gauge_adds_invisible_overhead():
     assert usage["used"] >= _CLI_INVISIBLE_OVERHEAD_TOKENS
 
 
-def test_claude_final_patch_republishes_context_message_meta():
+def test_claude_final_metadata_does_not_rewrite_conversation_rows():
     block = _AGENT_CORE_PY[
         _AGENT_CORE_PY.index("def _patch_cc_turn_gauge"):
         _AGENT_CORE_PY.index("# SpawnAgentsHandler source tracking")]
-    assert "patch_message(" in block
+    assert "patch_message(" not in block
+    assert "persist_context_usage(" in block
     assert '"context_used" not in _cc_src' in block
     assert 'publish_event(' in block
     assert '"message_meta"' in block
@@ -1300,21 +1301,24 @@ def test_provider_compact_discards_pending_messages_already_in_compacted_context
     assert "_compacted_ids" in compact_block
 
 
-def test_post_done_git_commit_does_not_keep_agent_active():
-    """After `done`, slow git snapshots must not delay active-state cleanup."""
+def test_visible_answer_releases_active_before_slow_done_bookkeeping():
+    """After the visible answer, slow done bookkeeping must not keep Active Agents."""
     src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
     done_block = src[
-        src.index('logger.info("[agent:%s] publishing done'):
-        src.index('return result', src.index('logger.info("[agent:%s] publishing done'))]
-    assert "emitter.on_done(result)" in done_block
+        src.index('result = _make_result()'):
+        src.index('return result', src.index('logger.info("[agent:%s] enqueueing done'))]
+    assert "active released before done enqueue" in done_block
+    assert "self._active_contexts.pop(_ctx_key_done, None)" in done_block
+    assert "flush(timeout=30.0)" not in done_block
+    assert "ConversationWriter.for_conversation" not in done_block
+    assert "enqueue_done_after_writes" in done_block
+    assert done_block.index("active released before done enqueue") < done_block.index(
+        "enqueue_done_after_writes")
     assert "threading.Thread(" in done_block
     assert "target=_commit_turn_bg" in done_block
     assert "async commit_turn scheduled" in done_block
     assert "async commit_turn finished" in done_block
     assert "commit_turn(conversation_id, reason=_commit_reason)" in done_block
-    assert "active released after done" in done_block
-    assert done_block.index("active released after done") < done_block.index(
-        "def _commit_turn_bg")
     foreground = done_block[:done_block.index("def _commit_turn_bg")]
     assert "commit_turn(conversation_id" not in foreground
 

@@ -223,6 +223,46 @@ def test_enqueue_message_does_not_wait_for_slow_writer(fake_store, monkeypatch):
     assert ConversationWriter.shutdown_all(wait_timeout=10.0)
 
 
+def test_enqueue_sse_events_is_non_blocking_fifo_barrier(fake_store, monkeypatch):
+    entered = threading.Event()
+    release = threading.Event()
+    published = []
+
+    def _slow_append(cid, msg, agent_name="", user_id="", ttl=0):
+        entered.set()
+        release.wait(timeout=5.0)
+        fake_store.routed.append((cid, agent_name, dict(msg)))
+
+    class _Bus:
+        def subscriber_count(self, _cid):
+            return 1
+
+        def publish_event(self, cid, event_type, data=None):
+            published.append((cid, event_type, data or {}))
+
+    monkeypatch.setattr(fake_store, "append_message", _slow_append)
+    monkeypatch.setattr(
+        "core.conversation_event_bus.ConversationEventBus.instance",
+        staticmethod(lambda: _Bus()))
+
+    cid = "conv-done-barrier"
+    w = ConversationWriter.for_conversation(cid)
+    w.enqueue_message(_msg(content="visible"))
+    assert entered.wait(timeout=1.0)
+
+    done = w.enqueue_sse_events([{
+        "type": "done",
+        "data": {"agent_name": "assistant"},
+    }], wait=False)
+    assert done is None
+    assert published == []
+
+    release.set()
+    assert ConversationWriter.shutdown_all(wait_timeout=5.0)
+    assert fake_store.routed[0][2]["content"] == "visible"
+    assert published == [(cid, "done", {"agent_name": "assistant"})]
+
+
 def test_writer_publishes_each_sse_after_its_own_append(fake_store, monkeypatch):
     """A slow later append must not hide an earlier persisted tool event.
 

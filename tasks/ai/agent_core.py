@@ -212,6 +212,7 @@ class AgentCoreMixin:
         # Push context into active stack — pop in finally (guarantees no ghost)
         _agent_name = ctx.get("active_agent_name", "")
         _ctx_key = f"{conversation_id}:{_agent_name}" if _agent_name else conversation_id
+        ctx["_active_context_key"] = _ctx_key
         with self._active_contexts_lock:
             self._active_contexts[_ctx_key] = ctx
         try:
@@ -378,12 +379,30 @@ class AgentCoreMixin:
                 if getattr(_m, 'msg_id', '') == msg_id:
                     _m.source = _cc_src
                     break
-            # Persist patch to transcript
+            # Persist durable gauge state without rewriting conversation rows.
+            # The live UI gets per-message metadata from message_meta below;
+            # context_usage in extras is the durable restart baseline. Rewriting
+            # transcript/context JSONL here is disproportionate and can block
+            # the post-answer hotpath on large conversations.
             if use_conv_store and conversation_id:
                 try:
-                    from core.conversation_store import ConversationStore
-                    ConversationStore.instance().patch_message(
-                        conversation_id, msg_id, source=_cc_src)
+                    from tasks.ai.context_usage import persist_context_usage
+                    _agent_for_usage = _cc_src.get("name", "")
+                    _usage = dict(_cc_src.get("context_cache") or {})
+                    if not _usage and "context_used" in _cc_src:
+                        _usage = {
+                            "conversation_id": conversation_id,
+                            "agent_name": _agent_for_usage,
+                            "used": int(_cc_src.get("context_used", 0) or 0),
+                            "max": int(_cc_src.get("context_max", 0) or 0),
+                            "pct": float(_cc_src.get("context_pct", 0.0) or 0.0),
+                            "source": _cc_src.get("context_source", "pawflow_context"),
+                            "message_count": _cc_src.get("context_message_count", 0),
+                            "cache_mode": _cc_src.get("context_cache_mode", ""),
+                            "updated_at": time.time(),
+                        }
+                    persist_context_usage(
+                        conversation_id, _agent_for_usage, _usage)
                 except Exception:
                     logger.debug("exception suppressed", exc_info=True)
             if "context_used" not in _cc_src:
@@ -2730,29 +2749,38 @@ class AgentCoreMixin:
             finally:
                 try:
                     result = _make_result()
-                    # IMMUTABLE RULE: SSE post-write. Flush the
-                    # ConversationWriter queue first so every message
-                    # produced during this turn (new_message, tool_call,
-                    # tool_result, thinking_content) lands on disk AND
-                    # fires its SSE BEFORE `done`. Without this flush
-                    # done arrives at the UI before the final assistant
-                    # text (writer queue is serial, each write ~2s), and
-                    # the UI's done handler treats the turn as finished
-                    # with an empty response (CC populates
-                    # response_content="" intentionally).
-                    if use_conv_store and conversation_id:
-                        try:
-                            from core.conversation_writer import ConversationWriter
-                            ConversationWriter.for_conversation(
-                                conversation_id).flush(timeout=30.0)
-                        except Exception as _fw_err:
-                            logger.error(
-                                "[agent:%s] writer flush before done "
-                                "failed: %s",
-                                conversation_id[:8], _fw_err, exc_info=True)
-                    logger.info("[agent:%s] publishing done (agent=%s)",
+                    # The user-visible answer has already been enqueued before
+                    # this point. Do not keep Active Agents visible while done
+                    # emission, delegate wake, title generation, or git
+                    # snapshot cleanup runs; those are bookkeeping steps and
+                    # can be slow.
+                    try:
+                        _ctx_key_done = ctx.get("_active_context_key")
+                        if _ctx_key_done:
+                            with self._active_contexts_lock:
+                                self._active_contexts.pop(_ctx_key_done, None)
+                        self._decrement_active(conversation_id, ctx)
+                        logger.info(
+                            "[agent:%s] active released before done enqueue agent=%s",
+                            conversation_id[:8],
+                            ctx.get("active_agent_name", ""))
+                    except Exception as _active_release_err:
+                        logger.error(
+                            "[agent:%s] active release before done enqueue failed: %s",
+                            conversation_id[:8], _active_release_err,
+                            exc_info=True)
+                    # IMMUTABLE RULE: SSE post-write, without blocking this
+                    # agent thread. Queue `done` behind prior writer items so
+                    # every message produced during the turn lands on disk and
+                    # fires its SSE before `done`, but slow writer/store work no
+                    # longer sits in the agent hotpath.
+                    logger.info("[agent:%s] enqueueing done (agent=%s)",
                                 conversation_id[:8], ctx.get("active_agent_name", ""))
-                    emitter.on_done(result)
+                    _queue_done = getattr(emitter, "enqueue_done_after_writes", None)
+                    if callable(_queue_done):
+                        _queue_done(result)
+                    else:
+                        emitter.on_done(result)
                     # If this was a delegate-reply turn, wake/preempt the
                     # caller so they can read the result. Without this, the
                     # reply is persisted privately but the caller never
@@ -2816,21 +2844,6 @@ class AgentCoreMixin:
                             logger.error(
                                 "[delegate-reply] wake/preempt failed: %s", _dre,
                                 exc_info=True)
-                    # Release Active Agents immediately after the user-visible
-                    # done event. Everything below is best-effort bookkeeping
-                    # (git snapshot, title/task reschedule in the streaming
-                    # wrapper) and must never keep the agent logically active.
-                    try:
-                        self._decrement_active(conversation_id, ctx)
-                        logger.info(
-                            "[agent:%s] active released after done agent=%s",
-                            conversation_id[:8],
-                            ctx.get("active_agent_name", ""))
-                    except Exception as _active_release_err:
-                        logger.error(
-                            "[agent:%s] active release after done failed: %s",
-                            conversation_id[:8], _active_release_err,
-                            exc_info=True)
                 except Exception as _done_err:
                     logger.error("[agent:%s] CRITICAL: on_done failed: %s",
                                  conversation_id[:8], _done_err, exc_info=True)

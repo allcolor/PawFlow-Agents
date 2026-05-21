@@ -171,6 +171,25 @@ class ConversationWriter:
         self._queue.put({"_flush": True, "_done_event": evt})
         evt.wait(timeout=timeout)
 
+    def enqueue_sse_events(self, sse_events: List[Dict],
+                           wait: bool = False) -> Optional[threading.Event]:
+        """Publish SSE events after all previously queued writes drain.
+
+        This is a FIFO barrier without blocking the caller. It preserves the
+        visible => persisted ordering for turn-final events such as `done`,
+        while keeping slow writer/store cleanup out of the agent hotpath.
+        """
+        self._ensure_can_accept_writes()
+        evt = threading.Event() if wait else None
+        self._queue.put({
+            "op": "publish_events",
+            "sse_events": sse_events or [],
+            "_done_event": evt,
+        })
+        if wait and evt:
+            evt.wait(timeout=30)
+        return evt
+
     def _publish_sse_events(self, item: Dict[str, Any]) -> None:
         sse_events = item.get("sse_events")
         if not sse_events:
@@ -225,8 +244,24 @@ class ConversationWriter:
                     evt.set()
                 continue
 
+            if item.get("op") == "publish_events":
+                _publish_started = time.monotonic()
+                self._publish_sse_events(item)
+                _publish_ms = ((time.monotonic() - _publish_started)
+                               * 1000.0)
+                logger.info(
+                    "[conv-writer:%s] publish-events queued=%d "
+                    "publish_ms=%.1f total_ms=%.1f",
+                    self._cid[:8], self._queue.qsize(), _publish_ms,
+                    _publish_ms)
+                evt = item.get("_done_event")
+                if evt:
+                    evt.set()
+                continue
+
             batch = [item]
             flush_events = []
+            post_events = []
             while len(batch) < _WRITER_BATCH_MAX:
                 try:
                     next_item = self._queue.get_nowait()
@@ -236,6 +271,9 @@ class ConversationWriter:
                     evt = next_item.get("_done_event")
                     if evt:
                         flush_events.append(evt)
+                    break
+                if next_item.get("op") == "publish_events":
+                    post_events.append(next_item)
                     break
                 batch.append(next_item)
 
@@ -302,6 +340,12 @@ class ConversationWriter:
                                  self._cid[:8], e, exc_info=True)
                     i += 1
 
+            for event_item in post_events:
+                _publish_started = time.monotonic()
+                self._publish_sse_events(event_item)
+                _publish_ms += ((time.monotonic() - _publish_started)
+                                * 1000.0)
+
             logger.info(
                 "[conv-writer:%s] batch size=%d written=%d queued=%d "
                 "write_ms=%.1f publish_ms=%.1f total_ms=%.1f",
@@ -315,5 +359,9 @@ class ConversationWriter:
                     evt.set()
             for evt in flush_events:
                 evt.set()
+            for event_item in post_events:
+                evt = event_item.get("_done_event")
+                if evt:
+                    evt.set()
 
         self._alive = False

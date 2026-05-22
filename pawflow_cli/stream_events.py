@@ -21,15 +21,23 @@ def translate_sse_event(event_type, data, session_id, accumulated_text="",
     if stream_state is None:
         stream_state = {}
 
+    source = data.get("source") or {}
+    is_cci = source.get("provider") == "claude-code-interactive"
+    is_cci_thinking_delta = event_type == "thinking_delta" and is_cci
+    is_cci_persisted_thinking = (
+        event_type == "thinking_content" and data.get("msg_id") and is_cci
+    )
+    if (stream_state.get("cci_thinking_delta_seen")
+            and not is_cci_thinking_delta
+            and not is_cci_persisted_thinking):
+        stream_state["cci_thinking_delta_seen"] = False
+
     if event_type in ("thinking", "thinking_content", "thinking_delta"):
-        source = data.get("source") or {}
-        if (event_type == "thinking_content" and data.get("msg_id")
-                and source.get("provider") == "claude-code-interactive"):
+        if is_cci_persisted_thinking:
             if stream_state.get("cci_thinking_delta_seen"):
                 stream_state["cci_thinking_delta_seen"] = False
                 return events, accumulated_text
-        if (event_type == "thinking_delta"
-                and source.get("provider") == "claude-code-interactive"):
+        if is_cci_thinking_delta:
             stream_state["cci_thinking_delta_seen"] = True
         text = data.get("text", "")
         if text:

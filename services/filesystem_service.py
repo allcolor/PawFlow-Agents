@@ -566,8 +566,10 @@ class RelayService(BaseService):
                          name=f'relay-ctx-{relay_id}').start()
 
     async def _relay_main_loop(self, reader, writer, service, send_lock,
-                               relay_tasks, conn_state):
+                               relay_tasks, conn_state=None):
         import asyncio
+        if conn_state is None:
+            conn_state = {}
         KEEPALIVE = 120
         while True:
             try:

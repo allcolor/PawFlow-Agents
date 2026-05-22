@@ -127,6 +127,35 @@ function connectSSE(cid, onReady, opts) {
     return true;
   }
 
+  function _finalizeLiveToolCalls(agentName, resultText) {
+    const targetAgent = (agentName || '').toLowerCase();
+    let changed = false;
+    document.querySelectorAll('#messages .tc-bullet.pending').forEach(bullet => {
+      const tcEl = bullet.closest('[data-message-role="tool_call"]')
+        || bullet.closest('[data-tc-id]')
+        || bullet.closest('.msg');
+      if (!tcEl) return;
+      const rowAgent = tcEl.dataset ? (tcEl.dataset.agent || '').toLowerCase() : '';
+      if (targetAgent && rowAgent && rowAgent !== targetAgent) return;
+      if (!tcEl.querySelector('.tc-result')) {
+        try { _attachToolResult(tcEl, resultText || '[Interrupted]'); }
+        catch (_err) {
+          bullet.classList.remove('pending');
+          bullet.classList.add('done');
+          tcEl.querySelectorAll('.tc-bg-btn, .tc-kl-btn').forEach(btn => btn.remove());
+        }
+      } else {
+        bullet.classList.remove('pending');
+        bullet.classList.add('done');
+        tcEl.querySelectorAll('.tc-bg-btn, .tc-kl-btn').forEach(btn => btn.remove());
+      }
+      if (tcEl.dataset) delete tcEl.dataset.live;
+      changed = true;
+    });
+    if (changed && typeof applyTechnicalMessageGrouping === 'function') applyTechnicalMessageGrouping();
+    return changed;
+  }
+
   // Expose a reset hook so resumeConv (which clears #messages but
   // keeps the SSE socket open) can drop stale DOM references — without
   // it, subsequent live events keep targeting detached nodes and the
@@ -1055,6 +1084,7 @@ function connectSSE(cid, onReady, opts) {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
     if (data.stage === 'start') {
+      _finalizeLiveToolCalls(data.agent || '', '[Interrupted by compact]');
       var opLabel = data.detail || 'compact';
       opLabel = String(opLabel).replace(/_/g, ' ');
       showContextOp(opLabel.charAt(0).toUpperCase() + opLabel.slice(1) + ' ' + (data.agent || '') + '...');
@@ -1268,6 +1298,7 @@ function connectSSE(cid, onReady, opts) {
     lastSSEActivity = Date.now();
     const data = e.data ? JSON.parse(e.data) : {};
     const agentName = data.agent_name || '';
+    if (agentName) _finalizeLiveToolCalls(agentName, '[Stopped]');
     if (agentName) trackAgentDone(agentName);
     if (Object.keys(activeInteractions).length === 0) {
       sending = false;
@@ -1458,6 +1489,7 @@ function connectSSE(cid, onReady, opts) {
     lastSSEActivity = Date.now();
     const cancelData = e.data ? JSON.parse(e.data) : {};
     const cancelAgent = cancelData.agent_name || 'all';
+    _finalizeLiveToolCalls(cancelAgent === 'all' ? '' : cancelAgent, '[Cancelled]');
     if (cancelAgent === 'all') {
       // Don't clear activeInteractions — server is source of truth via syncActive
       syncActiveFromServer();
@@ -1592,6 +1624,7 @@ function connectSSE(cid, onReady, opts) {
     addMsg('error', data.message || t('unknownError'));
     // Error could be from any agent — clear the agent's stream + active interaction
     const errAgent = data.agent_name || '';
+    _finalizeLiveToolCalls(errAgent, '[Error]');
     clearStream(errAgent);
     if (errAgent) {
       trackAgentDone(errAgent);

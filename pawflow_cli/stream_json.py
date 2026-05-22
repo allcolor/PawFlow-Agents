@@ -97,9 +97,6 @@ class StreamJsonMode:
         sid = msg.get("session_id", "")
         if sid:
             self.session_id = sid
-            # If we have a session_id, use it as conversation_id
-            if not self.conversation_id:
-                self.conversation_id = sid
 
         # Extract message content
         message_obj = msg.get("message", {})
@@ -124,10 +121,23 @@ class StreamJsonMode:
             self._log("Empty message content, skipping")
             return
 
+        # Resolve or create the backing PawFlow conversation. A Claude-Code
+        # session_id is only a protocol identifier; it is not guaranteed to be
+        # an existing PawFlow conversation id.
+        from pawflow_cli.conversation_bootstrap import ensure_conversation_and_agent
+        candidate_cid = self.conversation_id or sid or ""
+        try:
+            cid, target_agent = ensure_conversation_and_agent(
+                self._api, candidate_cid)
+        except ValueError:
+            cid, target_agent = ensure_conversation_and_agent(self._api, "")
+        self.conversation_id = cid
+
         # Send to PawFlow API
         resp = self._api.send_message(
             message=content,
             conversation_id=self.conversation_id or None,
+            target_agent=target_agent,
         )
 
         if resp.get("error"):

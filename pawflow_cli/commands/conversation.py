@@ -41,13 +41,7 @@ def handle_conversation_commands(app, cmd, arg, text):
             if data.get("error"):
                 app.renderer.print_error(data["error"])
             else:
-                app.conversation_id = full_cid
-                app._last_history = data.get("messages", [])
-                save_config({"last_conversation_id": full_cid})
-                if app.sse:
-                    app.sse.disconnect()
-                app.sse = SSEClient(app.server_url, app.session_token)
-                app.sse.connect(full_cid)
+                _activate_loaded_conversation(app, full_cid, data)
                 total = data.get("message_count", 0)
                 has_more = data.get("has_more", False)
                 shown = len(app._last_history)
@@ -172,6 +166,19 @@ def handle_conversation_commands(app, cmd, arg, text):
     return False
 
 
+def _activate_loaded_conversation(app, conv_id: str, data: dict):
+    app.conversation_id = conv_id
+    app.selected_agent = data.get("active_agent", "") or app.selected_agent
+    app._last_history = data.get("messages", [])
+    save_config({"last_conversation_id": conv_id})
+    if app.sse:
+        app.sse.disconnect()
+    app.sse = SSEClient(
+        app.server_url, app.session_token,
+        getattr(app, "gateway_cookie", ""))
+    app.sse.connect(conv_id)
+
+
 def _switch_conversation(app, cid_partial: str):
     """Switch to a conversation by partial ID."""
     full_cid = app._resolve_conversation_id(cid_partial)
@@ -185,13 +192,7 @@ def _switch_conversation(app, cid_partial: str):
         if data.get("error"):
             app.renderer.print_error(data["error"])
             return
-        app.conversation_id = full_cid
-        app._last_history = data.get("messages", [])
-        save_config({"last_conversation_id": full_cid})
-        if app.sse:
-            app.sse.disconnect()
-        app.sse = SSEClient(app.server_url, app.session_token)
-        app.sse.connect(full_cid)
+        _activate_loaded_conversation(app, full_cid, data)
         total = data.get("message_count", 0)
         app.renderer.print_system(f"Switched to {full_cid[:8]} ({total} messages)")
         app._display_history(app._last_history, len(app._last_history))

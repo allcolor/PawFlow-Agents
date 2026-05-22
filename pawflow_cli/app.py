@@ -5,6 +5,7 @@ import atexit
 import os
 import queue
 import signal
+import shlex
 import subprocess  # nosec B404
 import sys
 import threading
@@ -144,6 +145,7 @@ class PawCode:
                 data = self.api.send_action("load_history",
                                              conversation_id=last_cid, limit=50, offset=0)
                 if not data.get("error"):
+                    self.selected_agent = data.get("active_agent", "") or self.selected_agent
                     total = data.get("message_count", 0)
                     has_more = data.get("has_more", False)
                     messages = data.get("messages", [])
@@ -362,35 +364,66 @@ class PawCode:
 
     def _send_message(self, text: str):
         """Send a message to the agent (non-blocking — events rendered by background thread)."""
+        if not self.selected_agent:
+            self.renderer.print_error("No active agent selected. Use /new [agent] or /conv <id> first.")
+            return
         # Erase the raw prompt line, replace with styled Panel
         sys.stdout.write("\033[A\033[2K")
         sys.stdout.flush()
         # Show attachment count in user message if any
         attach_info = f" [📎 {len(self._pending_attachments)} file(s)]" if self._pending_attachments else ""
-        self.renderer.print_user_message(text + attach_info)
+        self.renderer.print_user_message(text + attach_info, self.selected_agent)
         try:
             attachments = self._pending_attachments if self._pending_attachments else None
+            self._ensure_sse()
             resp = self.api.send_message(
                 message=text,
                 conversation_id=self.conversation_id,
                 target_agent=self.selected_agent,
                 attachments=attachments,
             )
-            self._pending_attachments = []  # clear after send
             if resp.get("error"):
                 self.renderer.print_error(resp["error"])
                 return
+            self._pending_attachments = []  # clear after successful send
 
             cid = resp.get("conversation_id")
             if cid:
                 self.conversation_id = cid
                 save_config({"last_conversation_id": cid})
 
-            # Connect SSE if not connected
-            self._ensure_sse()
-
         except PermissionError:
             self.renderer.print_error("Session expired. Run /login to re-authenticate.")
+        except Exception as e:
+            self.renderer.print_error(f"Send error: {e}")
+
+    def _send_targeted_message(self, text: str, target_agent: str = ""):
+        """Send a message to a specific agent without blocking the prompt."""
+        target = target_agent or self.selected_agent
+        if not target:
+            self.renderer.print_error("No target agent selected")
+            return
+        sys.stdout.write("\033[A\033[2K")
+        sys.stdout.flush()
+        attach_info = f" [📎 {len(self._pending_attachments)} file(s)]" if self._pending_attachments else ""
+        self.renderer.print_user_message(text + attach_info, target)
+        try:
+            attachments = self._pending_attachments if self._pending_attachments else None
+            self._ensure_sse()
+            resp = self.api.send_message(
+                message=text,
+                conversation_id=self.conversation_id,
+                target_agent=target,
+                attachments=attachments,
+            )
+            if resp.get("error"):
+                self.renderer.print_error(resp["error"])
+                return
+            self._pending_attachments = []
+            cid = resp.get("conversation_id")
+            if cid:
+                self.conversation_id = cid
+                save_config({"last_conversation_id": cid})
         except Exception as e:
             self.renderer.print_error(f"Send error: {e}")
 
@@ -702,6 +735,9 @@ class PawCode:
             if handler(self, cmd, arg, text):
                 return
 
+        if self._handle_agent_stream_command(cmd, arg, text):
+            return
+
         # Everything else → server (single source of truth)
         try:
             data = self.api.send_action("command", text=text,
@@ -741,6 +777,126 @@ class PawCode:
         except Exception as e:
             self.renderer.print_error(f"Command failed: {e}")
         return
+
+    @staticmethod
+    def _parse_command_args(text: str) -> list:
+        try:
+            return shlex.split(text)
+        except ValueError:
+            return text.split()
+
+    @staticmethod
+    def _strip_agent_target(value: str) -> str:
+        return (value or "").strip().lstrip("@")
+
+    def _handle_agent_stream_command(self, cmd: str, arg: str, text: str) -> bool:
+        """Handle commands whose useful result is the agent stream itself."""
+        if cmd == "/resume":
+            target = self._strip_agent_target(arg.split()[0]) if arg else self.selected_agent
+            if target.upper() == "ALL":
+                self.api.send_action_fire("broadcast_agents",
+                                          conversation_id=self.conversation_id or "",
+                                          message="Continue from where you stopped")
+                self.renderer.print_system("Resume requested for all agents.")
+                return True
+            self._send_targeted_message("Continue from where you stopped", target)
+            return True
+
+        if cmd in ("/msg", "/message"):
+            parts = self._parse_command_args(text)
+            if len(parts) < 2:
+                self.renderer.print_error("Usage: /msg [@agent|@ALL] <message>")
+                return True
+            if parts[1].startswith("@"):
+                target = self._strip_agent_target(parts[1])
+                message = " ".join(parts[2:])
+            else:
+                target = self.selected_agent
+                message = " ".join(parts[1:])
+            if not target or not message:
+                self.renderer.print_error("Usage: /msg [@agent|@ALL] <message>")
+                return True
+            if target.upper() == "ALL":
+                self.api.send_action_fire("broadcast_agents",
+                                          conversation_id=self.conversation_id or "",
+                                          message=message)
+                self.renderer.print_system("Broadcast requested.")
+                return True
+            self._send_targeted_message(message, target)
+            return True
+
+        if cmd == "/btw":
+            parts = self._parse_command_args(text)
+            if len(parts) < 2:
+                self.renderer.print_error("Usage: /btw [@agent|@ALL] <question>")
+                return True
+            if parts[1].startswith("@"):
+                target = self._strip_agent_target(parts[1])
+                question = " ".join(parts[2:])
+            else:
+                target = self.selected_agent
+                question = " ".join(parts[1:])
+            if not question:
+                self.renderer.print_error("Usage: /btw [@agent|@ALL] <question>")
+                return True
+            self.api.send_action_fire("btw", conversation_id=self.conversation_id or "",
+                                      agent_name=target or "", message=question)
+            self.renderer.print_system("Side question requested.")
+            return True
+
+        if cmd in ("/stop", "/interrupt"):
+            target = self._strip_agent_target(arg.replace("-f", "").strip())
+            if target.upper() == "ALL":
+                target = ""
+            action = "interrupt" if cmd == "/interrupt" else "cancel"
+            self.api.send_action_fire(action, conversation_id=self.conversation_id or "",
+                                      agent_name=target or self.selected_agent or "")
+            self.renderer.print_system("Interrupt requested." if action == "interrupt" else "Stop requested.")
+            return True
+
+        if cmd == "/agent":
+            parts = self._parse_command_args(text)
+            sub = parts[1].lower() if len(parts) > 1 else ""
+            if sub in ("resume", "msg", "message", "btw", "interrupt"):
+                target = self._strip_agent_target(parts[2]) if len(parts) > 2 else ""
+                rest = " ".join(parts[3:])
+                if sub == "resume":
+                    resume_text = rest or "Continue from where you stopped"
+                    if target.upper() == "ALL":
+                        self.api.send_action_fire("broadcast_agents",
+                                                  conversation_id=self.conversation_id or "",
+                                                  message=resume_text)
+                        self.renderer.print_system("Resume requested for all agents.")
+                    else:
+                        self._send_targeted_message(resume_text, target or self.selected_agent)
+                    return True
+                if sub in ("msg", "message"):
+                    if not target or not rest:
+                        self.renderer.print_error("Usage: /agent msg <agent|ALL> <message>")
+                        return True
+                    if target.upper() == "ALL":
+                        self.api.send_action_fire("broadcast_agents",
+                                                  conversation_id=self.conversation_id or "",
+                                                  message=rest)
+                        self.renderer.print_system("Broadcast requested.")
+                    else:
+                        self._send_targeted_message(rest, target)
+                    return True
+                if sub == "btw":
+                    if not rest:
+                        self.renderer.print_error("Usage: /agent btw <agent|ALL> <question>")
+                        return True
+                    self.api.send_action_fire("btw", conversation_id=self.conversation_id or "",
+                                              agent_name=target or "", message=rest)
+                    self.renderer.print_system("Side question requested.")
+                    return True
+                if sub == "interrupt":
+                    self.api.send_action_fire("interrupt", conversation_id=self.conversation_id or "",
+                                              agent_name="" if target.upper() == "ALL" else target)
+                    self.renderer.print_system("Interrupt requested.")
+                    return True
+
+        return False
 
     def _display_history(self, messages: list, show_n: int = 10):
         """Display the last N messages from conversation history."""
@@ -809,15 +965,19 @@ class PawCode:
         # PawCode no longer owns relay lifecycle. Filesystem relays are managed
         # by webchat server resources or the standalone pawflow-relay client.
 
-        # Resolve conversation
+        # Resolve or create a conversation, then target its active agent.
         if not conversation_id:
             config = load_config()
             conversation_id = config.get("last_conversation_id")
+        from pawflow_cli.conversation_bootstrap import ensure_conversation_and_agent
+        conversation_id, target_agent = ensure_conversation_and_agent(
+            self.api, conversation_id or "")
 
         # Send message
         resp = self.api.send_message(
             message=prompt,
             conversation_id=conversation_id,
+            target_agent=target_agent,
         )
         if resp.get("error"):
             print(resp["error"], file=sys.stderr)

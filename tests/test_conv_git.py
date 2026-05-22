@@ -110,6 +110,24 @@ def test_git_snapshot_tracks_only_durable_conversation_state(conv):
     assert not any(p.startswith("summaries/") for p in tracked)
 
 
+def test_git_snapshot_stages_deleted_legacy_flat_files(conv):
+    store, cid = conv
+    conv_dir = store._conv_dir(cid)
+    legacy = conv_dir / "transcript.jsonl"
+    legacy.write_text(json.dumps(_msg(content="legacy")) + "\n", encoding="utf-8")
+    store._git(cid, "add", "--", "transcript.jsonl")
+    store._git(cid, "commit", "-m", "legacy flat", "-q")
+
+    legacy.unlink()
+
+    store.git_snapshot(cid, "drop legacy flat")
+
+    tracked = store._git(cid, "ls-tree", "-r", "--name-only", "HEAD").stdout.splitlines()
+    status = store._git(cid, "status", "--short").stdout
+    assert "transcript.jsonl" not in tracked
+    assert "transcript.jsonl" not in status
+
+
 def test_rollback_purges_agent_contexts_and_buckets(conv):
     store, cid = conv
     conv_dir = store._conv_dir(cid)

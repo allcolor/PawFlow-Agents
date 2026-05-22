@@ -100,6 +100,11 @@ def _clear_force_stop_relaunch_state(conv_id: str, agent_name: str,
 
 def _handle_cancel_interrupt(self, action, body, store, user_id, flowfile):
     """Handle cancel interrupt actions. Returns [flowfile] or None."""
+    if action in ("cancel_agent", "force_stop"):
+        action = "cancel"
+    elif action == "broadcast":
+        action = "broadcast_agents"
+
     # Resolve to the execution instance — self may be the actions-only
     # dispatcher (AgentActionsTask) which has its own empty state dicts.
     from tasks.ai.agent_loop import AgentLoopTask

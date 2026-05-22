@@ -70,6 +70,25 @@ def test_compact_progress_done_marks_compact_pending():
         "compact_progress 'done' must call markCompactJustHappened")
 
 
+def test_compact_progress_start_finalizes_live_tool_calls():
+    """Provider compact can arrive after tool_call but before tool_result.
+
+    The UI must close pending technical rows immediately so BG/Kill controls
+    are not left open for a generation that has already been interrupted.
+    """
+    assert "function _finalizeLiveToolCalls" in _SSE_JS
+    start_block = _SSE_JS[
+        _SSE_JS.index("if (data.stage === 'start')"):
+        _SSE_JS.index("} else if (data.stage === 'chunking'", _SSE_JS.index("if (data.stage === 'start')"))]
+    assert "_finalizeLiveToolCalls(data.agent || '', '[Interrupted by compact]')" in start_block
+    helper = _SSE_JS[
+        _SSE_JS.index("function _finalizeLiveToolCalls"):
+        _SSE_JS.index("// Expose a reset hook", _SSE_JS.index("function _finalizeLiveToolCalls"))]
+    assert "querySelectorAll('#messages .tc-bullet.pending')" in helper
+    assert "tc-bg-btn, .tc-kl-btn" in helper
+    assert "delete tcEl.dataset.live" in helper
+
+
 def test_message_meta_syncs_error_class_on_existing_message():
     """message_meta patches must repaint existing DOM bubbles both ways."""
     block = _SSE_JS[

@@ -9,6 +9,7 @@ import threading
 import time
 from typing import Any, Callable, Dict, Optional
 from urllib.parse import urlparse, urlencode
+from uuid import uuid4
 
 
 def acquire_gateway_cookie(server_url: str, gateway_key: str) -> str:
@@ -69,28 +70,47 @@ def acquire_gateway_cookie(server_url: str, gateway_key: str) -> str:
 
 
 class SSEResultQueue:
-    """Thread-safe queue for SSE command_result events, keyed by action name."""
+    """Thread-safe queue for SSE command_result events."""
 
     def __init__(self):
         self._waiters: Dict[str, threading.Event] = {}
         self._results: Dict[str, dict] = {}
         self._lock = threading.Lock()
 
-    def get(self, action: str, timeout: float = 120) -> dict:
-        """Wait for a command_result with matching action. Returns parsed result."""
+    def _pop_result_locked(self, key: str) -> dict:
+        result = self._results.pop(key)
+        for alias, alias_result in list(self._results.items()):
+            if alias_result is result:
+                self._results.pop(alias, None)
+        return result
+
+    def get(self, action: str, timeout: float = 120,
+            call_id: str = "") -> dict:
+        """Wait for a matching command_result and return the parsed result."""
+        keys = [k for k in (call_id, action) if k]
         event = threading.Event()
         with self._lock:
-            self._waiters[action] = event
+            for key in keys:
+                if key in self._results:
+                    return self._pop_result_locked(key)
+            for key in keys:
+                self._waiters[key] = event
         if not event.wait(timeout=timeout):
             with self._lock:
-                self._waiters.pop(action, None)
+                for key in keys:
+                    self._waiters.pop(key, None)
             return {"error": f"Timeout waiting for {action} result"}
         with self._lock:
-            self._waiters.pop(action, None)
-            return self._results.pop(action, {})
+            for key in keys:
+                self._waiters.pop(key, None)
+            for key in keys:
+                if key in self._results:
+                    return self._pop_result_locked(key)
+            return {}
 
-    def push(self, action: str, data: dict):
-        """Push a command_result. Wakes up any waiting get()."""
+    def push(self, action: str, data: dict, call_id: str = ""):
+        """Push a command_result and wake any matching waiter."""
+        keys = [k for k in (call_id or data.get("_callId") or data.get("call_id"), action) if k]
         with self._lock:
             result = data
             if isinstance(data.get("result"), str):
@@ -98,9 +118,13 @@ class SSEResultQueue:
                     result = json.loads(data["result"])
                 except (json.JSONDecodeError, TypeError):
                     result = data
-            self._results[action] = result
-            waiter = self._waiters.get(action)
-        if waiter:
+            waiters = []
+            for key in keys:
+                self._results[key] = result
+                waiter = self._waiters.get(key)
+                if waiter and waiter not in waiters:
+                    waiters.append(waiter)
+        for waiter in waiters:
             waiter.set()
 
 
@@ -142,7 +166,8 @@ class AgentAPIClient:
 
         If no SSE client is connected, falls back to immediate response.
         """
-        body = {"action": action}
+        call_id = kwargs.pop("_call_id", "") or uuid4().hex
+        body = {"action": action, "_call_id": call_id}
         body.update(kwargs)
         resp = self._post("/api/ui", body)
 
@@ -155,7 +180,7 @@ class AgentAPIClient:
             return resp  # no SSE client — can't wait
 
         try:
-            result = self._sse_result_queue.get(action, timeout=120)
+            result = self._sse_result_queue.get(action, timeout=120, call_id=call_id)
             return result
         except Exception:
             return resp

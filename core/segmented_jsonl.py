@@ -25,6 +25,8 @@ _APPEND_DIAG_MS = float(os.getenv("PAWFLOW_JSONL_APPEND_DIAG_MS", "100") or "100
 _INDEX_CACHE_MAX = int(os.getenv("PAWFLOW_JSONL_INDEX_CACHE_MAX", "256") or "256")
 _APPEND_HANDLE_MAX = int(os.getenv("PAWFLOW_JSONL_APPEND_HANDLE_MAX", "128") or "128")
 _APPEND_BUFFER_BYTES = int(os.getenv("PAWFLOW_JSONL_APPEND_BUFFER_BYTES", str(1024 * 1024)) or str(1024 * 1024))
+_INDEX_FLUSH_ROWS = int(os.getenv("PAWFLOW_JSONL_INDEX_FLUSH_ROWS", "64") or "64")
+_INDEX_FLUSH_SECONDS = float(os.getenv("PAWFLOW_JSONL_INDEX_FLUSH_SECONDS", "2.0") or "2.0")
 _INDEX_CACHE: Dict[str, Dict[str, Any]] = {}
 _INDEX_CACHE_LOCK = threading.RLock()
 _APPEND_HANDLES: Dict[str, Dict[str, Any]] = {}
@@ -227,6 +229,34 @@ class SegmentedJsonl:
         if changed:
             self.replace_dicts(out)
         return changed
+
+    def patch_first_by_msg_id(self, msg_id: str,
+                              fields: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Patch one message row without rewriting every segment."""
+        if not msg_id or not fields or not self.exists():
+            return None
+        self._flush_own_append_handles()
+        paths = self._segment_paths() if self.is_segmented() else (
+            [self.flat_path] if self.flat_path.exists() else [])
+        for path in reversed(paths):
+            rows = list(self._iter_file(path))
+            patched: Optional[Dict[str, Any]] = None
+            changed = False
+            for idx, row in enumerate(rows):
+                if row.get("msg_id") != msg_id:
+                    continue
+                updated = dict(row)
+                updated.update(fields)
+                rows[idx] = updated
+                patched = updated
+                changed = updated != row
+                break
+            if patched is None:
+                continue
+            if changed:
+                self._replace_rows_in_path(path, rows)
+            return patched
+        return None
 
     def total_rows(self) -> int:
         self._flush_own_append_handles()
@@ -534,6 +564,36 @@ class SegmentedJsonl:
                     state["last_used"] = time.monotonic()
             except Exception:
                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+        SegmentedJsonl.flush_dirty_indexes(root)
+
+    @staticmethod
+    def flush_dirty_indexes(root: Path, force: bool = False) -> None:
+        root_s = str(root)
+        prefix = root_s + os.sep
+        now = time.monotonic()
+        pending: List[Dict[str, Any]] = []
+        with _INDEX_CACHE_LOCK:
+            for key, state in _INDEX_CACHE.items():
+                if key != root_s and not key.startswith(prefix):
+                    continue
+                if not state.get("dirty"):
+                    continue
+                index = state.get("index")
+                if not isinstance(index, dict):
+                    continue
+                total = int(index.get("total_rows") or 0)
+                last_flush = float(state.get("last_flush") or 0.0)
+                last_rows = int(state.get("last_rows") or 0)
+                if (not force
+                        and total - last_rows < max(1, _INDEX_FLUSH_ROWS)
+                        and now - last_flush < max(0.0, _INDEX_FLUSH_SECONDS)):
+                    continue
+                state["last_flush"] = now
+                state["last_rows"] = total
+                state["dirty"] = False
+                pending.append({"key": key, "index": index})
+        for item in pending:
+            SegmentedJsonl(Path(item["key"] + ".jsonl"))._write_index_hot(item["index"])
 
     @staticmethod
     def flush_all_append_handles() -> None:
@@ -581,11 +641,25 @@ class SegmentedJsonl:
 
     def _maybe_write_index_hot(self, index: Dict[str, Any], force: bool = False) -> None:
         total = int(index.get("total_rows") or 0)
+        now = time.monotonic()
+        should_write = force
         with _INDEX_CACHE_LOCK:
             state = _INDEX_CACHE.setdefault(self._cache_key(), {"index": index})
-            state["last_flush"] = time.monotonic()
-            state["last_rows"] = total
-            state["dirty"] = False
+            state["index"] = index
+            last_flush = float(state.get("last_flush") or 0.0)
+            last_rows = int(state.get("last_rows") or 0)
+            rows_due = total - last_rows >= max(1, _INDEX_FLUSH_ROWS)
+            time_due = (now - last_flush) >= max(0.0, _INDEX_FLUSH_SECONDS)
+            should_write = should_write or rows_due or time_due
+            state["dirty"] = not should_write
+            if should_write:
+                state["last_flush"] = now
+                state["last_rows"] = total
+                state["dirty"] = False
+            else:
+                state["last_used"] = now
+        if not should_write:
+            return
         self._write_index_hot(index)
 
     def _write_index(self, index: Dict[str, Any]) -> None:
@@ -621,6 +695,35 @@ class SegmentedJsonl:
             logging.getLogger(__name__).warning(
                 "SegmentedJsonl hot index write failed for %s",
                 self.index_path, exc_info=True)
+
+    def _replace_rows_in_path(self, path: Path,
+                              rows: List[Dict[str, Any]]) -> None:
+        self._close_append_handles(path)
+        lines = [json.dumps(row, ensure_ascii=False) + "\n" for row in rows]
+        tmp = path.with_name(
+            f"{path.name}.{os.getpid()}.{threading.get_ident()}.{uuid.uuid4().hex}.tmp")
+        try:
+            with open(tmp, "w", encoding="utf-8") as fh:
+                fh.writelines(lines)
+            self._replace_path(tmp, path)
+        finally:
+            if tmp.exists():
+                try:
+                    tmp.unlink()
+                except OSError:
+                    pass
+        if self.is_segmented():
+            index = self._load_index()
+            for item in index.get("segments") or []:
+                if str(item.get("file") or "") == path.name:
+                    item["rows"] = len(rows)
+                    item["bytes"] = path.stat().st_size if path.exists() else 0
+                    break
+            index["total_rows"] = sum(
+                int(item.get("rows") or 0)
+                for item in index.get("segments") or [])
+            self._remember_index(index, flushed=True)
+            self._write_index(index)
 
     @staticmethod
     def _replace_path(src: Path, dst: Path) -> None:

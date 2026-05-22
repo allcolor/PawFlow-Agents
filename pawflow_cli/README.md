@@ -15,6 +15,15 @@ python -m pawflow_cli --dir .
 PAWFLOW_SERVER=http://myserver:9090 python -m pawflow_cli
 ```
 
+## Standalone Installer
+
+```bash
+python -m pip install pyinstaller
+python scripts/build-pawcode-installer.py
+```
+
+Artifacts are written to `dist/pawcode-installers/`. The builder always creates portable archives with install scripts, and creates native packages when the host toolchain is available (`dpkg-deb`, `pkgbuild`, or `makensis`). The packaged CLI remains chat-only; use `pawflow-relay` separately for filesystem and desktop access.
+
 ## Features
 
 - **Streaming chat** with Rich markdown rendering
@@ -34,18 +43,21 @@ PAWFLOW_SERVER=http://myserver:9090 python -m pawflow_cli
 ## Key Commands
 
 ### Conversation
-- `/new` — New conversation
+- `/new [agent] [--llm svc] [--relay rid] [--title text]` — Create a conversation with an agent, LLM service, optional relay binding, and optional title
 - `/conv` — List conversations
 - `/resume <id> [N]` — Resume (show last N messages)
 - `/history [N] [offset]` — Browse message history
 - `/rename <title>` — Rename conversation
 - `/export [json|md]` — Export conversation
+- `/interrupt [agent]` — Interrupt an agent without force-stopping it
+- `/stop [agent]` — Force-stop an agent immediately
 
 ### Agents
 - `/agent list|create|delete|select` — Agent management
 - `/msg <agent|ALL> <text>` — Send to specific agent
 - `/btw <agent> <question>` — Side question
-- `/stop <agent> [-f]` — Interrupt/cancel
+- `/interrupt [agent]` — Interrupt without force-stopping
+- `/stop [agent]` — Force-stop immediately
 
 ### Development
 - `/run <command>` — Shell command through a linked relay

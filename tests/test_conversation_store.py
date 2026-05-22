@@ -414,6 +414,24 @@ class TestCreateConversation:
         assert state["notify_locked"] is False
         assert state["usage_locked"] is False
 
+    def test_patch_message_does_not_rewrite_entire_segmented_stream(self, conv):
+        from core.segmented_jsonl import SegmentedJsonl
+
+        store, cid, uid = conv
+        store.append_message(
+            cid,
+            _msg(content="original", source={"type": "user", "target_agent": "bot"}),
+            agent_name="bot",
+            user_id=uid,
+        )
+        msg_id = store.load(cid)[-1]["msg_id"]
+
+        with patch.object(SegmentedJsonl, "rewrite",
+                          side_effect=AssertionError("patch_message must target one segment")):
+            store.patch_message(cid, msg_id, content="patched")
+
+        assert store.load(cid)[-1]["content"] == "patched"
+
     def test_set_extra_does_not_take_conversation_lock(self, conv, monkeypatch):
         store, cid, _uid = conv
 

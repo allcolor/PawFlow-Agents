@@ -173,22 +173,23 @@ class TerminalRenderer:
         if self._status_callback:
             self._status_callback(text)
 
-    def print_user_message(self, text: str):
+    def print_user_message(self, text: str, target_agent: str = ""):
         """Echo the user's message as a visible Panel."""
+        target = f" → {target_agent}" if target_agent else ""
         if self.console:
             from rich.markup import escape
             display = text if len(text) <= 500 else text[:500] + "..."
             self.console.print()
             self.console.print(Panel(
                 f"[bold white]{escape(display)}[/bold white]",
-                title="[bold green]❯ You[/bold green]",
+                title=f"[bold green]❯ You{escape(target)}[/bold green]",
                 title_align="left",
                 border_style="bright_green",
                 padding=(0, 2),
                 style="on #0a2a0a",
             ))
         else:
-            print(f"\n❯ {text}")
+            print(f"\n❯ You{target}: {text}")
 
     def print_banner(self, directory: str):
         if self.console:
@@ -626,20 +627,22 @@ class TerminalRenderer:
 
         if mtype == "user":
             channel_info = f" ({channel})" if channel and channel != "chat" else ""
+            target = source.get("target_agent", "") if isinstance(source, dict) else ""
+            target_info = f" → {target}" if target else ""
             display = content if len(content) <= 500 else content[:500] + "..."
             if self.console:
                 from rich.markup import escape
                 self.console.print()  # spacing
                 self.console.print(Panel(
                     f"[bold white]{escape(display)}[/bold white]",
-                    title=f"[bold green]❯ You{channel_info}[/bold green]",
+                    title=f"[bold green]❯ You{escape(channel_info + target_info)}[/bold green]",
                     title_align="left",
                     border_style="bright_green",
                     padding=(0, 2),
                     style="on #0a2a0a",
                 ))
             else:
-                print(f"\n── You{channel_info} ──")
+                print(f"\n── You{channel_info}{target_info} ──")
                 print(display)
 
         elif mtype in ("assistant", "agent_response"):
@@ -801,7 +804,7 @@ class TerminalRenderer:
             table.add_column("Age", style="dim", width=12)
             for c in conversations:
                 cid = c.get("conversation_id", "?")[:8]
-                title = c.get("title", "") or c.get("last_message", "")[:60] or "(empty)"
+                title = c.get("title", "") or c.get("preview", "")[:60] or "(empty)"
                 count = str(c.get("message_count", ""))
                 age = c.get("age", "")
                 table.add_row(cid, title, count, age)
@@ -809,5 +812,5 @@ class TerminalRenderer:
         else:
             for c in conversations:
                 cid = c.get("conversation_id", "?")[:8]
-                title = c.get("title", "") or c.get("last_message", "")[:60] or "(empty)"
+                title = c.get("title", "") or c.get("preview", "")[:60] or "(empty)"
                 print(f"  {cid}  {title}")

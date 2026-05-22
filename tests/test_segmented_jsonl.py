@@ -86,7 +86,7 @@ def test_segmented_jsonl_append_does_not_rename_hot_index(monkeypatch, tmp_path)
     assert log.total_rows() == 2
 
 
-def test_segmented_jsonl_append_refreshes_hot_index_each_time(monkeypatch, tmp_path):
+def test_segmented_jsonl_append_defers_hot_index_until_flush_due(monkeypatch, tmp_path):
     path = tmp_path / "transcript.jsonl"
     log = SegmentedJsonl(path, max_rows=10)
     writes = {"count": 0}
@@ -101,7 +101,13 @@ def test_segmented_jsonl_append_refreshes_hot_index_each_time(monkeypatch, tmp_p
     for i in range(5):
         log.append_dicts([{"seq": i + 1, "content": str(i)}])
 
-    assert writes["count"] == 5
+    assert writes["count"] == 1
+    index = json.loads((tmp_path / "transcript" / "index.json").read_text(encoding="utf-8"))
+    assert index["total_rows"] == 1
+
+    SegmentedJsonl.flush_dirty_indexes(tmp_path, force=True)
+
+    assert writes["count"] == 1
     index = json.loads((tmp_path / "transcript" / "index.json").read_text(encoding="utf-8"))
     assert index["total_rows"] == 5
     assert [segment["rows"] for segment in index["segments"]] == [5]
@@ -136,6 +142,9 @@ def test_segmented_jsonl_restart_cache_warmup_refreshes_disk_index(tmp_path):
 
     warmed = SegmentedJsonl(path, max_rows=10)
     warmed.append_dicts([{"seq": 2, "content": "two"}])
+
+    assert warmed.total_rows() == 2
+    SegmentedJsonl.flush_dirty_indexes(tmp_path, force=True)
 
     index = json.loads((tmp_path / "transcript" / "index.json").read_text(encoding="utf-8"))
     assert index["total_rows"] == 2
@@ -290,6 +299,25 @@ def test_segmented_jsonl_replace_opens_each_segment_once(tmp_path):
 
     assert segment_opens["count"] == 3
     assert [row["seq"] for row in log.iter_rows()] == [1, 2, 3, 4, 5]
+
+
+def test_segmented_jsonl_patch_first_by_msg_id_rewrites_only_matching_segment(tmp_path):
+    path = tmp_path / "context.jsonl"
+    log = SegmentedJsonl(path, max_rows=2)
+    log.append_dicts([
+        {"msg_id": "m1", "content": "one"},
+        {"msg_id": "m2", "content": "two"},
+        {"msg_id": "m3", "content": "three"},
+    ])
+    SegmentedJsonl.flush_dirty_indexes(tmp_path, force=True)
+    first_segment = tmp_path / "context" / "000000.jsonl"
+    first_mtime = first_segment.stat().st_mtime_ns
+
+    patched = log.patch_first_by_msg_id("m3", {"content": "patched"})
+
+    assert patched["content"] == "patched"
+    assert first_segment.stat().st_mtime_ns == first_mtime
+    assert [row["content"] for row in log.iter_rows()] == ["one", "two", "patched"]
 
 
 def test_segmented_jsonl_rebuilds_from_stale_hot_index(tmp_path):

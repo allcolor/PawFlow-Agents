@@ -29,6 +29,20 @@ def test_ccd_handler_propagates_trigger_fraction():
         "agent client config")
 
 
+def test_cancelled_tool_results_are_published_before_cancel_check():
+    """Compact/cancel can interrupt while tools are running.
+
+    The tool executor returns placeholder results for interrupted calls; the
+    agent loop must publish those tool_result events before it lets the stale
+    generation raise, otherwise live technical-details rows stay open forever.
+    """
+    block = _AGENT_CORE[
+        _AGENT_CORE.index("for tc, result_text in results:"):
+        _AGENT_CORE.index("# Per-turn aggregate cap", _AGENT_CORE.index("for tc, result_text in results:"))]
+    assert block.rindex("emitter.on_tool_result") < block.index("emitter.check_cancelled()")
+    assert "after publishing the whole result batch" in block
+
+
 def test_gemini_acp_gauge_counts_actual_prompt_payload():
     """Gemini ACP resume must count/send the resume delta, not full history."""
     assert "count_messages_tokens" in _GEMINI

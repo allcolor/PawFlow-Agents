@@ -642,7 +642,22 @@ class ConversationStore:
             "shared.jsonl", "shared",
             "extras.json", "bindings.json",
         ]
-        return [f for f in files if (conv_dir / f).exists()]
+        existing = {f for f in files if (conv_dir / f).exists()}
+        tracked: set[str] = set()
+        if (conv_dir / ".git").exists():
+            try:
+                out = self._git(cid, "ls-files", "-z", check=False,
+                                timeout=30).stdout
+                for rel in out.split("\0"):
+                    if not rel:
+                        continue
+                    top = rel.split("/", 1)[0]
+                    if rel in files or top in files:
+                        tracked.add(rel if rel in files else top)
+            except Exception:
+                logger.debug("git tracked snapshot scan failed for %s",
+                             cid[:8], exc_info=True)
+        return [f for f in files if f in existing or f in tracked]
 
     def _derived_state_paths(self, cid: str) -> List[str]:
         """Return replaceable per-agent context and bucket paths."""
@@ -3044,24 +3059,16 @@ class ConversationStore:
         patched_line: Dict[str, Any] = {}
 
         def _patch_stream(path: Path) -> int:
+            nonlocal patched_line
             log = SegmentedJsonl(path)
             if not log.exists():
                 return 0
-            count = 0
-
-            def _transform(line: Dict[str, Any]) -> Dict[str, Any]:
-                nonlocal count, patched_line
-                if line.get("msg_id") != msg_id:
-                    return line
-                updated = dict(line)
-                updated.update(fields)
-                count += 1
-                if not patched_line:
-                    patched_line = updated
-                return updated
-
-            log.rewrite(_transform)
-            return count
+            patched = log.patch_first_by_msg_id(msg_id, fields)
+            if not patched:
+                return 0
+            if not patched_line:
+                patched_line = patched
+            return 1
 
         lock = self._get_conv_lock(cid)
         with lock:

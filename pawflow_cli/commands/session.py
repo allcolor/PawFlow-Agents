@@ -1,6 +1,7 @@
 """Session commands: /quit, /login, /clear, /new, /link, /connect, /disconnect."""
 
 import os
+import shlex
 import subprocess  # nosec B404
 
 
@@ -29,12 +30,7 @@ def handle_session_commands(app, cmd, arg, text):
         return True
 
     if cmd == "/new":
-        app.conversation_id = None
-        app.selected_agent = ""
-        if app.sse:
-            app.sse.disconnect()
-            app.sse = None
-        app.renderer.print_system("New conversation started.")
+        _create_new_conversation(app, arg or "")
         return True
 
     if cmd == "/login":
@@ -105,6 +101,70 @@ def handle_session_commands(app, cmd, arg, text):
         return True
 
     return False
+
+
+def _parse_new_args(arg: str):
+    """Parse /new [agent] [--llm svc] [--relay rid] [--title text]."""
+    try:
+        parts = shlex.split(arg or "")
+    except ValueError:
+        parts = (arg or "").split()
+    opts = {"agent": "", "llm": "", "relays": [], "title": ""}
+    title_parts = []
+    i = 0
+    while i < len(parts):
+        p = parts[i]
+        if p in ("--agent", "-a") and i + 1 < len(parts):
+            opts["agent"] = parts[i + 1].lstrip("@")
+            i += 2
+            continue
+        if p in ("--llm", "--service") and i + 1 < len(parts):
+            opts["llm"] = parts[i + 1]
+            i += 2
+            continue
+        if p == "--relay" and i + 1 < len(parts):
+            opts["relays"].append(parts[i + 1])
+            i += 2
+            continue
+        if p == "--title" and i + 1 < len(parts):
+            opts["title"] = " ".join(parts[i + 1:]).strip()
+            break
+        if not opts["agent"] and not p.startswith("-"):
+            opts["agent"] = p.lstrip("@")
+        else:
+            title_parts.append(p)
+        i += 1
+    if not opts["title"] and title_parts:
+        opts["title"] = " ".join(title_parts).strip()
+    return opts
+
+
+def _create_new_conversation(app, arg: str):
+    opts = _parse_new_args(arg)
+    try:
+        from pawflow_cli.conversation_bootstrap import create_conversation
+        cid, agent_name, llm_service, _payload = create_conversation(
+            app.api,
+            requested_agent=opts["agent"],
+            llm_service=opts["llm"],
+            relays=opts["relays"],
+            title=opts["title"],
+        )
+
+        app.conversation_id = cid
+        app.selected_agent = agent_name
+        if app.sse:
+            app.sse.disconnect()
+        app.sse = None
+        from pawflow_cli.config import save_config
+        save_config({"last_conversation_id": cid})
+        app._ensure_sse()
+        title = f" — {opts['title']}" if opts["title"] else ""
+        relay_info = f"; relay {opts['relays'][0]}" if opts["relays"] else ""
+        app.renderer.print_system(
+            f"Created {cid[:8]} with agent {agent_name} via {llm_service}{relay_info}{title}")
+    except Exception as e:
+        app.renderer.print_error(str(e))
 
 
 def _connect_relay(app, path: str):

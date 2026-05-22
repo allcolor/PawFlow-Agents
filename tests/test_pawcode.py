@@ -51,6 +51,305 @@ class TestPawCodeImports:
         assert mode.run() == 0
         assert not hasattr(sj, "RelayThread")
 
+    def test_sse_result_queue_returns_result_that_arrived_before_waiter(self):
+        """Fast slash commands like /help must not block if SSE wins the race."""
+        from pawflow_cli.api import SSEResultQueue
+
+        q = SSEResultQueue()
+        q.push("command", {"action": "command", "result": '{"help":"ok"}'}, call_id="c1")
+
+        assert q.get("command", timeout=0.01, call_id="c1") == {"help": "ok"}
+
+    def test_sse_result_queue_matches_call_id_before_action_name(self):
+        """Concurrent command actions must be routed by call id, not only action."""
+        from pawflow_cli.api import SSEResultQueue
+
+        q = SSEResultQueue()
+        q.push("command", {"action": "command", "result": '{"help":"first"}'}, call_id="c1")
+        q.push("command", {"action": "command", "result": '{"help":"second"}'}, call_id="c2")
+
+        assert q.get("command", timeout=0.01, call_id="c2") == {"help": "second"}
+        assert q.get("command", timeout=0.01, call_id="c1") == {"help": "first"}
+
+    def test_sse_result_queue_clears_action_alias_after_call_id_match(self):
+        from pawflow_cli.api import SSEResultQueue
+
+        q = SSEResultQueue()
+        q.push("command", {"action": "command", "result": '{"help":"ok"}'}, call_id="c1")
+
+        assert q.get("command", timeout=0.01, call_id="c1") == {"help": "ok"}
+        assert q.get("command", timeout=0.01) == {"error": "Timeout waiting for command result"}
+
+    def test_send_action_does_not_block_when_result_arrives_during_post(self):
+        """Immediate /help-style command_result events may arrive before get()."""
+        from pawflow_cli.api import AgentAPIClient
+
+        client = AgentAPIClient("http://server", "tok")
+
+        def fake_post(path, body):
+            assert path == "/api/ui"
+            call_id = body["_call_id"]
+            client._sse_result_queue.push(
+                "command",
+                {"action": "command", "_callId": call_id, "result": '{"help":"ok"}'},
+                call_id=call_id,
+            )
+            return {"status": "accepted"}
+
+        client._post = fake_post
+
+        assert client.send_action("command", text="/help") == {"help": "ok"}
+
+    def test_resume_command_sends_agent_message_without_waiting_for_command_result(self):
+        from pawflow_cli.app import PawCode
+
+        app, api = _fake_pawcode()
+
+        assert app._handle_agent_stream_command("/resume", "", "/resume") is True
+        assert api.messages == [{
+            "message": "Continue from where you stopped",
+            "conversation_id": "conv1",
+            "target_agent": "claude",
+            "attachments": None,
+        }]
+        assert api.actions == []
+
+    def test_msg_all_command_uses_broadcast_fire_and_forget(self):
+        app, api = _fake_pawcode()
+
+        assert app._handle_agent_stream_command("/msg", "@ALL hello", "/msg @ALL hello") is True
+        assert api.actions == [(
+            "broadcast_agents",
+            {"conversation_id": "conv1", "message": "hello"},
+        )]
+        assert api.messages == []
+
+    def test_btw_command_uses_fire_and_forget(self):
+        app, api = _fake_pawcode()
+
+        assert app._handle_agent_stream_command("/btw", "@grok question", "/btw @grok question") is True
+        assert api.actions == [(
+            "btw",
+            {"conversation_id": "conv1", "agent_name": "grok", "message": "question"},
+        )]
+
+    def test_command_dispatch_maps_agent_commands_to_existing_actions(self):
+        from tasks.ai.actions.command_dispatch import _parse_command
+
+        assert _parse_command("/msg @ALL hello", "conv1", "u", "claude")["action"] == "broadcast_agents"
+        assert _parse_command("/stop @grok", "conv1", "u", "claude")["action"] == "cancel"
+        assert _parse_command("/stop -f @grok", "conv1", "u", "claude")["action"] == "cancel"
+        assert _parse_command("/agent interrupt @grok", "conv1", "u", "claude")["action"] == "interrupt"
+
+    def test_new_command_creates_conversation_with_agent_llm_title_and_relay(self, monkeypatch):
+        from pawflow_cli.commands.session import handle_session_commands
+
+        app, api = _fake_pawcode()
+        app.conversation_id = None
+        app.selected_agent = ""
+        ensured = []
+        saved = []
+        app._ensure_sse = lambda: ensured.append(app.conversation_id)
+        monkeypatch.setattr("pawflow_cli.config.save_config", lambda data: saved.append(data))
+
+        handled = handle_session_commands(
+            app, "/new", "assistant --llm custom_llm --relay fs1 --title My title", "/new")
+
+        assert handled is True
+        assert app.conversation_id == "newconv"
+        assert app.selected_agent == "assistant"
+        assert ensured == ["newconv"]
+        assert saved == [{"last_conversation_id": "newconv"}]
+        assert api.sent_actions[-1] == (
+            "create_conversation",
+            {
+                "agents": [{
+                    "instance_name": "assistant",
+                    "definition": "assistant",
+                    "llm_service": "custom_llm",
+                    "params": {"name": "assistant"},
+                }],
+                "title": "My title",
+                "relays": ["fs1"],
+                "default_relay": "fs1",
+            },
+        )
+
+    def test_switch_conversation_hydrates_active_agent_and_gateway_cookie(self, monkeypatch):
+        from pawflow_cli.commands import conversation as conv_cmd
+
+        app, api = _fake_pawcode()
+        app.gateway_cookie = "gw"
+        app.server_url = "http://server"
+        app.session_token = "tok"
+        saved = []
+        sse_args = []
+
+        class FakeSSE:
+            def __init__(self, *args):
+                sse_args.append(args)
+            def connect(self, cid):
+                sse_args.append(("connect", cid))
+
+        monkeypatch.setattr(conv_cmd, "SSEClient", FakeSSE)
+        monkeypatch.setattr(conv_cmd, "save_config", lambda data: saved.append(data))
+
+        conv_cmd._switch_conversation(app, "target")
+
+        assert app.conversation_id == "targetconv"
+        assert app.selected_agent == "grok"
+        assert saved == [{"last_conversation_id": "targetconv"}]
+        assert sse_args[0] == ("http://server", "tok", "gw")
+        assert sse_args[1] == ("connect", "targetconv")
+
+    def test_resume_with_id_switches_conversation_not_agent_message(self, monkeypatch):
+        from pawflow_cli.commands import conversation as conv_cmd
+
+        app, api = _fake_pawcode()
+        monkeypatch.setattr(conv_cmd, "SSEClient", lambda *a: type("S", (), {"connect": lambda self, cid: None})())
+        monkeypatch.setattr(conv_cmd, "save_config", lambda data: None)
+
+        app._handle_command("/resume target")
+
+        assert app.conversation_id == "targetconv"
+        assert app.selected_agent == "grok"
+        assert api.messages == []
+
+    def test_targeted_message_sends_pending_attachments(self):
+        app, api = _fake_pawcode()
+        app._pending_attachments = [{
+            "filename": "note.txt",
+            "mime_type": "text/plain",
+            "data": "aGVsbG8=",
+        }]
+
+        app._send_targeted_message("read this", "grok")
+
+        assert api.messages == [{
+            "message": "read this",
+            "conversation_id": "conv1",
+            "target_agent": "grok",
+            "attachments": [{
+                "filename": "note.txt",
+                "mime_type": "text/plain",
+                "data": "aGVsbG8=",
+            }],
+        }]
+        assert app._pending_attachments == []
+
+    def test_stream_json_creates_conversation_and_sends_target_agent(self):
+        from pawflow_cli.stream_json import StreamJsonMode
+
+        class API(_FakeAPI):
+            def send_action(self, action, **kwargs):
+                if action == "load_history":
+                    return {"error": "Conversation not found"}
+                return super().send_action(action, **kwargs)
+
+        mode = StreamJsonMode("http://server", ".")
+        api = API()
+        mode._api = api
+        mode._stream_response = lambda: None
+
+        mode._handle_user_message({
+            "type": "user",
+            "session_id": "external-session",
+            "message": {"content": "hello"},
+        })
+
+        assert mode.conversation_id == "newconv"
+        assert api.messages == [{
+            "message": "hello",
+            "conversation_id": "newconv",
+            "target_agent": "assistant",
+        }]
+
+    def test_create_conversation_rejects_unknown_relay(self):
+        from pawflow_cli.conversation_bootstrap import create_conversation
+
+        class API(_FakeAPI):
+            def send_action(self, action, **kwargs):
+                if action == "relay_list_available":
+                    return {"relays": [{"relay_id": "fs1", "connected": True}]}
+                return super().send_action(action, **kwargs)
+
+        with pytest.raises(ValueError, match="Relay not found"):
+            create_conversation(API(), requested_agent="assistant",
+                                llm_service="custom_llm", relays=["missing"])
+
+
+class _FakeRenderer:
+    def __init__(self):
+        self.system = []
+        self.errors = []
+        self.users = []
+
+    def print_system(self, text):
+        self.system.append(text)
+
+    def print_error(self, text):
+        self.errors.append(text)
+
+    def print_user_message(self, text, target_agent=""):
+        self.users.append((text, target_agent))
+
+
+class _FakeAPI:
+    def __init__(self):
+        self.actions = []
+        self.messages = []
+        self.sent_actions = []
+
+    def send_action(self, action, **kwargs):
+        self.sent_actions.append((action, kwargs))
+        if action == "list_repo_agents":
+            return {"agents": [{"name": "assistant"}, {"name": "grok"}]}
+        if action == "list_services":
+            return {"services": [
+                {"service_id": "assistant_llm_service", "enabled": True},
+                {"service_id": "custom_llm", "enabled": True},
+            ]}
+        if action == "create_conversation":
+            return {"conversation_id": "newconv", "agents": ["assistant"]}
+        if action == "relay_list_available":
+            return {"relays": [{"relay_id": "fs1", "connected": True}]}
+        if action == "list_conversations":
+            return {"conversations": [{"conversation_id": "targetconv"}]}
+        if action == "load_history":
+            return {
+                "conversation_id": kwargs.get("conversation_id", ""),
+                "messages": [],
+                "message_count": 0,
+                "active_agent": "grok",
+            }
+        return {}
+
+    def send_action_fire(self, action, **kwargs):
+        self.actions.append((action, kwargs))
+        return {"status": "accepted"}
+
+    def send_message(self, **kwargs):
+        self.messages.append(kwargs)
+        return {"conversation_id": kwargs.get("conversation_id") or "conv1"}
+
+
+def _fake_pawcode():
+    from pawflow_cli.app import PawCode
+
+    app = PawCode.__new__(PawCode)
+    api = _FakeAPI()
+    app.api = api
+    app.renderer = _FakeRenderer()
+    app.server_url = "http://server"
+    app.session_token = "tok"
+    app.gateway_cookie = ""
+    app.conversation_id = "conv1"
+    app.selected_agent = "claude"
+    app._ensure_sse = lambda: None
+    app.sse = None
+    app._pending_attachments = []
+    return app, api
+
 
 class TestRelayId:
     """Test relay ID generation consistency."""

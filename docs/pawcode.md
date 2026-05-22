@@ -13,6 +13,19 @@ PAWFLOW_SERVER=http://localhost:9090 python -m pawflow_cli --dir .
 
 PawCode opens the browser for OAuth login when needed, then connects as a conversation client. Start filesystem access separately with `pawflow-relay` or from the webchat resource panel.
 
+## Standalone Installer Builds
+
+PawCode can be packaged as a standalone terminal binary with PyInstaller:
+
+```bash
+python -m pip install pyinstaller
+python scripts/build-pawcode-installer.py
+```
+
+The build writes artifacts under `dist/pawcode-installers/`. Every platform gets a portable archive with the `pawcode` binary and install scripts. On Linux, the builder also creates a `.deb` when `dpkg-deb` is available. On macOS, it creates a `.pkg` when `pkgbuild` is available. On Windows, it creates an NSIS setup executable when `makensis` is available; otherwise the generated zip still contains `install.ps1`.
+
+The standalone binary keeps PawCode's existing behavior: it stores sessions under `~/.pawflow`, honors `PAWFLOW_SERVER`, supports `pawcode auth login`, and can run stream-JSON mode. It does not bundle or manage `pawflow-relay`.
+
 ## What PawCode Adds
 
 - streaming chat with Rich markdown rendering;
@@ -28,13 +41,14 @@ PawCode opens the browser for OAuth login when needed, then connects as a conver
 
 | Command | Purpose |
 |---|---|
-| `/new` | Start a new conversation. |
+| `/new [agent] [--llm svc] [--relay rid] [--title text]` | Create a new conversation with an agent, LLM service, optional relay binding, and optional title. |
 | `/conv` | List conversations. |
 | `/resume <id>` | Resume an existing conversation. |
 | `/agent list|create|delete|select` | Manage agents. |
 | `/msg <agent|ALL> <text>` | Send to a specific agent or all agents. |
 | `/btw <agent> <question>` | Ask a side question without interrupting main work. |
-| `/stop <agent> [-f]` | Interrupt or force-stop an agent. |
+| `/interrupt [agent]` | Interrupt an agent without force-stopping it. |
+| `/stop [agent]` | Force-stop an agent immediately. |
 | `/run <command>` | Execute through the conversation's linked relay, if one exists. |
 | `/terminal` | Run terminal commands through a linked relay, if available. |
 | `/diff` | Show git diff through a linked relay, if available. |
@@ -48,6 +62,8 @@ PawCode opens the browser for OAuth login when needed, then connects as a conver
 ## Shared Conversations
 
 PawCode does not create a separate silo. A conversation can be opened in the web UI, continued in PawCode, and then inspected in VS Code. Events are streamed through the same backend and persisted through the conversation store.
+
+`/new` uses the same server-side `create_conversation` action as webchat. If no agent is provided, PawCode uses the first available agent definition and picks a matching `{agent}_llm_service` when present, otherwise the first enabled `llmConnection` service. Use `--relay` to link a relay at creation time; the first relay passed becomes the default relay for the conversation.
 
 ## Stream JSON Mode
 

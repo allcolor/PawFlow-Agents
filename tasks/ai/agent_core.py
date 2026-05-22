@@ -2567,7 +2567,6 @@ class AgentCoreMixin:
                         display_tc = self._tool_result_display_call(tc)
                         tools_called.append(display_tc.name)
                         ctx["_last_tool"] = display_tc.name
-                        emitter.check_cancelled()  # check after each tool
                         # schedule_continuation persists its wake-up in the
                         # handler itself. Do not also sleep/re-enter inline here;
                         # that would duplicate the continuation and would not
@@ -2585,6 +2584,14 @@ class AgentCoreMixin:
                         # result_text), so no strip is needed.
                         _prev = result_text[:2000] if isinstance(result_text, str) else str(result_text)[:2000]
                         emitter.on_tool_result(display_tc, result_text, _prev)
+
+                    # Check only after publishing the whole result batch.
+                    # Compact, cancel, and preempt paths can interrupt while
+                    # tools are in-flight; _execute_tool_calls returns
+                    # placeholder results for the cancelled calls so the UI
+                    # can close every live technical-details row before this
+                    # generation exits.
+                    emitter.check_cancelled()
 
                     # Per-turn aggregate cap: if total tool results > 200K chars,
                     # persist the largest to FileStore to avoid context bloat

@@ -938,7 +938,7 @@ def _parse_command(text: str, conversation_id: str, user_id: str,
     if cmd in ("/msg", "/message"):
         target, message = _extract_at_agent(arg, agent_name)
         if target.upper() == "ALL":
-            return {"action": "broadcast", "message": message, **base}
+            return {"action": "broadcast_agents", "message": message, **base}
         return {"action": "agent_msg", "target_agent": target,
                 "message": message, **base}
 
@@ -948,12 +948,9 @@ def _parse_command(text: str, conversation_id: str, user_id: str,
                 **base}
 
     if cmd == "/stop":
-        force = "-f" in arg
         _stop_arg = arg.replace("-f", "").strip()
         agt, _ = _extract_at_agent(_stop_arg, agent_name)
-        if force:
-            return {"action": "force_stop", "agent_name": agt, **base}
-        return {"action": "cancel_agent", "agent_name": agt, **base}
+        return {"action": "cancel", "agent_name": agt, **base}
 
     if cmd == "/resume":
         agt, _ = _extract_at_agent(arg, agent_name)
@@ -1309,11 +1306,11 @@ def _parse_agent_command(arg: str, base: dict, agent_name: str) -> dict:
     if subcmd == "msg":
         target, msg = _extract_at_agent(rest, agent_name)
         if target.upper() == "ALL":
-            return {"action": "broadcast", "message": msg, **base}
+            return {"action": "broadcast_agents", "message": msg, **base}
         return {"action": "agent_msg", "target_agent": target, "message": msg, **base}
     if subcmd == "interrupt":
         agt, _ = _extract_at_agent(rest, agent_name)
-        return {"action": "cancel_agent", "agent_name": agt, **base}
+        return {"action": "interrupt", "agent_name": agt, **base}
     if subcmd == "btw":
         target, question = _extract_at_agent(rest, agent_name)
         return {"action": "btw", "agent_name": target, "question": question, **base}

@@ -486,6 +486,22 @@ class SegmentedJsonl:
                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     @staticmethod
+    def close_append_handles(root: Path) -> None:
+        SegmentedJsonl._close_append_handles(root)
+
+    @staticmethod
+    def invalidate_index_cache(root: Path) -> None:
+        root_s = str(root)
+        prefix = root_s + os.sep
+        with _INDEX_CACHE_LOCK:
+            keys = [
+                key for key in _INDEX_CACHE
+                if key == root_s or key.startswith(prefix)
+            ]
+            for key in keys:
+                _INDEX_CACHE.pop(key, None)
+
+    @staticmethod
     def close_all_append_handles() -> None:
         with _APPEND_HANDLES_LOCK:
             states = list(_APPEND_HANDLES.values())

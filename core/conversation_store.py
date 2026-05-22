@@ -707,6 +707,11 @@ class ConversationStore:
         self._invalidate_ctx_cache(cid)
         self._invalidate_pyramid_cache(cid)
 
+    def _reset_jsonl_runtime_after_history_change(self, cid: str) -> None:
+        conv_dir = self._conv_dir(cid)
+        SegmentedJsonl.close_append_handles(conv_dir)
+        SegmentedJsonl.invalidate_index_cache(conv_dir)
+
     def git_snapshot(self, cid: str, message: str = "",
                      command_timeout: Optional[float] = None):
         """Commit current state as a snapshot (called after agent turn end).
@@ -722,6 +727,7 @@ class ConversationStore:
         if not (conv_dir / ".git").exists():
             return
         try:
+            self.flush_append_handles(cid)
             # Selective add: durable transcript/shared/extras only. Agent
             # contexts and summaries are derived and intentionally omitted.
             # Do not run retention or derived-state cleanup here: this method
@@ -777,6 +783,7 @@ class ConversationStore:
         if not (conv_dir / ".git").exists():
             return False
         try:
+            self._reset_jsonl_runtime_after_history_change(cid)
             # Restore the durable conversation tree exactly as it existed at
             # the target commit while keeping the current branch checked out.
             # `git checkout <hash> -- .` restores files present in the target
@@ -786,6 +793,7 @@ class ConversationStore:
             self._git(cid, "read-tree", "--reset", "-u", commit_hash)
             self._purge_derived_state_after_history_change(cid)
             # Reload cache from rolled-back state
+            self._reset_jsonl_runtime_after_history_change(cid)
             with self._cache_lock:
                 self._cache.pop(cid, None)
             self._invalidate_ctx_cache(cid)
@@ -892,8 +900,10 @@ class ConversationStore:
             return False
         try:
             self.git_snapshot(cid, f"before switch to {branch_name}")
+            self._reset_jsonl_runtime_after_history_change(cid)
             self._git(cid, "checkout", branch_name)
             self._purge_derived_state_after_history_change(cid)
+            self._reset_jsonl_runtime_after_history_change(cid)
             with self._cache_lock:
                 self._cache.pop(cid, None)
             self._invalidate_ctx_cache(cid)

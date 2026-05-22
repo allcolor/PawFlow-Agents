@@ -21,18 +21,51 @@ function pythonCommand() {
   return process.env.PAWFLOW_RELAY_PYTHON || process.env.PYTHON || (process.platform === 'win32' ? 'python' : 'python3');
 }
 
+function relayBinaryName() {
+  return process.platform === 'win32' ? 'pawflow-relay.exe' : 'pawflow-relay';
+}
+
 function appRoot() {
   return path.resolve(__dirname, '..');
 }
 
 function repoRoot() {
+  if (app.isPackaged) return runtimeRoot();
   return path.resolve(__dirname, '..', '..');
 }
 
 function runtimeRoot() {
   if (process.env.PAWFLOW_RELAY_RUNTIME_ROOT) return process.env.PAWFLOW_RELAY_RUNTIME_ROOT;
+  if (app.isPackaged) return path.join(process.resourcesPath, 'runtime');
   const localRuntime = path.join(appRoot(), 'runtime');
   return localRuntime;
+}
+
+function relayBinaryPath() {
+  const candidates = [];
+  if (process.env.PAWFLOW_RELAY_BIN) candidates.push(process.env.PAWFLOW_RELAY_BIN);
+  candidates.push(path.join(runtimeRoot(), 'bin', relayBinaryName()));
+  return firstExistingPath(candidates);
+}
+
+function relayClientCommand(extraArgs = []) {
+  const binary = relayBinaryPath();
+  if (binary) {
+    return {
+      command: binary,
+      args: extraArgs,
+      cwd: runtimeRoot(),
+      env: pythonEnv(),
+      description: binary,
+    };
+  }
+  return {
+    command: pythonCommand(),
+    args: ['-m', 'pawflow_relay', ...extraArgs],
+    cwd: repoRoot(),
+    env: pythonEnv(),
+    description: `${pythonCommand()} -m pawflow_relay`,
+  };
 }
 
 function pythonRoots() {
@@ -50,11 +83,12 @@ function pythonEnv() {
   return env;
 }
 
-function runPythonJson(source, args = []) {
+function runRelayClientJson(args = []) {
   return new Promise((resolve, reject) => {
-    const proc = spawn(pythonCommand(), ['-c', source, ...args], {
-      cwd: repoRoot(),
-      env: pythonEnv(),
+    const relay = relayClientCommand(['--json', ...args]);
+    const proc = spawn(relay.command, relay.args, {
+      cwd: relay.cwd,
+      env: relay.env,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let stdout = '';
@@ -64,13 +98,13 @@ function runPythonJson(source, args = []) {
     proc.on('error', reject);
     proc.on('close', code => {
       if (code !== 0) {
-        reject(new Error((stderr || stdout || `Python exited ${code}`).trim()));
+        reject(new Error((stderr || stdout || `${relay.description} exited ${code}`).trim()));
         return;
       }
       try {
         resolve(stdout.trim() ? JSON.parse(stdout) : null);
       } catch (err) {
-        reject(new Error(`Invalid JSON from Python: ${err.message}\n${stdout}`));
+        reject(new Error(`Invalid JSON from ${relay.description}: ${err.message}\n${stdout}`));
       }
     });
   });
@@ -266,10 +300,6 @@ async function buildRelayImage(input) {
   return { ok: true, image: imageName };
 }
 
-function managerJson(expression) {
-  return `import json\nfrom pawflow_relay import manager\nprint(json.dumps(${expression}))`;
-}
-
 function appendLog(name, text) {
   const win = mainWindow || BrowserWindow.getAllWindows()[0];
   if (!win || win.isDestroyed()) return;
@@ -285,14 +315,11 @@ function appendLog(name, text) {
 }
 
 function getRelayState() {
-  return runPythonJson(managerJson('{"servers": manager.list_servers(), "workspaces": manager.list_workspaces()}'));
+  return runRelayClientJson(['status']);
 }
 
 function cleanupRelayRuntime(name) {
-  return runPythonJson(
-    'import json, sys\nfrom pawflow_relay.manager import stop_workspace_runtime\nprint(json.dumps(stop_workspace_runtime(sys.argv[1])))',
-    [name || ''],
-  );
+  return runRelayClientJson(['cleanup', name || '']);
 }
 
 function showMainWindow() {
@@ -306,9 +333,10 @@ function showMainWindow() {
 
 function loginServer(name) {
   return new Promise((resolve, reject) => {
-    const proc = spawn(pythonCommand(), ['-m', 'pawflow_relay', 'server', 'login', name], {
-      cwd: repoRoot(),
-      env: pythonEnv(),
+    const relay = relayClientCommand(['server', 'login', name]);
+    const proc = spawn(relay.command, relay.args, {
+      cwd: relay.cwd,
+      env: relay.env,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let output = '';
@@ -337,9 +365,10 @@ function startRelay(name) {
   if (runningRelays.has(name)) {
     return { ok: true, alreadyRunning: true };
   }
-  const proc = spawn(pythonCommand(), ['-m', 'pawflow_relay', 'start', name], {
-    cwd: repoRoot(),
-    env: pythonEnv(),
+  const relay = relayClientCommand(['start', name]);
+  const proc = spawn(relay.command, relay.args, {
+    cwd: relay.cwd,
+    env: relay.env,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   runningRelays.set(name, proc);
@@ -485,19 +514,16 @@ function createWindow() {
 ipcMain.handle('relay:list', async () => getRelayState());
 
 ipcMain.handle('relay:add-server', async (_event, input) => {
-  const result = await runPythonJson(
-    'import json, sys\nfrom pawflow_relay.manager import add_server\nprint(json.dumps(add_server(sys.argv[1], sys.argv[2], sys.argv[3])))',
-    [input.name || '', input.url || '', input.gatewayKey || ''],
-  );
+  const result = await runRelayClientJson([
+    'server', 'add', input.name || '', input.url || '',
+    '--gateway-key', input.gatewayKey || '',
+  ]);
   refreshTrayMenu();
   return result;
 });
 
 ipcMain.handle('relay:delete-server', async (_event, name) => {
-  const result = await runPythonJson(
-    'import json, sys\nfrom pawflow_relay.manager import delete_server\nprint(json.dumps(delete_server(sys.argv[1])))',
-    [name || ''],
-  );
+  const result = await runRelayClientJson(['server', 'delete', name || '']);
   refreshTrayMenu();
   return result;
 });
@@ -509,36 +535,23 @@ ipcMain.handle('relay:login-server', async (_event, name) => {
 });
 
 ipcMain.handle('relay:add-workspace', async (_event, input) => {
-  const result = await runPythonJson(
-    [
-      'import json, sys',
-      'from pawflow_relay.manager import add_workspace',
-      'allow_local = sys.argv[6].lower() == "true"',
-      'allow_exec = sys.argv[7].lower() == "true"',
-      'allow_remote_desktop = sys.argv[8].lower() == "true"',
-      'share = add_workspace(sys.argv[1], sys.argv[2], sys.argv[3], mode=sys.argv[4], docker_image=sys.argv[5], allow_local=allow_local, allow_exec=allow_exec, allow_remote_desktop=allow_remote_desktop)',
-      'print(json.dumps(share))',
-    ].join('\n'),
-    [
-      input.name || '',
-      input.server || '',
-      input.path || '',
-      input.mode || 'rw',
-      input.dockerImage || '',
-      String(Boolean(input.allowLocal)),
-      String(Boolean(input.allowExec)),
-      String(input.allowRemoteDesktop !== false),
-    ],
-  );
+  const args = [
+    'workspace', 'add', input.name || '',
+    '--server', input.server || '',
+    '--path', input.path || '',
+    '--mode', input.mode || 'rw',
+    '--docker-image', input.dockerImage || '',
+  ];
+  if (Boolean(input.allowLocal)) args.push('--allow-local');
+  if (!Boolean(input.allowExec)) args.push('--no-exec');
+  if (input.allowRemoteDesktop === false) args.push('--no-remote-desktop');
+  const result = await runRelayClientJson(args);
   refreshTrayMenu();
   return result;
 });
 
 ipcMain.handle('relay:delete-workspace', async (_event, name) => {
-  const result = await runPythonJson(
-    'import json, sys\nfrom pawflow_relay.manager import delete_workspace\nprint(json.dumps(delete_workspace(sys.argv[1])))',
-    [name || ''],
-  );
+  const result = await runRelayClientJson(['workspace', 'delete', name || '']);
   refreshTrayMenu();
   return result;
 });

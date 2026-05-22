@@ -5,7 +5,7 @@ import pytest
 
 from pawflow_relay import manager
 from pawflow_relay.manager_cli import main as relay_cli_main
-from pawflow_relay.thread import RelayThread, _host_abs_path
+from pawflow_relay.thread import RelayThread, _host_abs_path, _relay_tools_dir
 
 
 def test_relay_manager_stores_servers_and_workspaces(monkeypatch, tmp_path):
@@ -56,6 +56,27 @@ def test_relay_manager_cli_add_and_list(monkeypatch, tmp_path, capsys):
     assert "servers=1 workspaces=1" in out
 
 
+def test_relay_manager_cli_json_contract(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("PAWFLOW_RELAY_HOME", str(tmp_path / "relay-home"))
+    workspace = tmp_path / "repo"
+    workspace.mkdir()
+
+    assert relay_cli_main([
+        "--json", "server", "add", "local", "https://pawflow.example",
+    ]) == 0
+    assert relay_cli_main([
+        "--json", "workspace", "add", "repo", "--server", "local",
+        "--path", str(workspace), "--no-exec", "--no-remote-desktop",
+    ]) == 0
+    assert relay_cli_main(["--json", "status"]) == 0
+
+    lines = [line for line in capsys.readouterr().out.splitlines() if line]
+    assert '"name": "local"' in lines[0]
+    assert '"allow_exec": false' in lines[1]
+    assert '"servers"' in lines[2]
+    assert '"workspaces"' in lines[2]
+
+
 def test_relay_manager_workspace_permission_flags(monkeypatch, tmp_path):
     monkeypatch.setenv("PAWFLOW_RELAY_HOME", str(tmp_path / "relay-home"))
     workspace = tmp_path / "repo"
@@ -69,6 +90,15 @@ def test_relay_manager_workspace_permission_flags(monkeypatch, tmp_path):
     assert share["allow_exec"] is False
     assert share["allow_remote_desktop"] is False
     assert share["allow_local"] is True
+
+
+def test_relay_runtime_root_env_points_tools_to_packaged_runtime(monkeypatch, tmp_path):
+    runtime = tmp_path / "runtime"
+    (runtime / "tools").mkdir(parents=True)
+
+    monkeypatch.setenv("PAWFLOW_RELAY_RUNTIME_ROOT", str(runtime))
+
+    assert _relay_tools_dir() == str(runtime.resolve() / "tools")
 
 
 def test_relay_manager_stop_workspace_runtime_uninstalls_and_cleans_docker(monkeypatch, tmp_path):

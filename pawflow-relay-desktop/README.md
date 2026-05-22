@@ -81,6 +81,42 @@ process alive. Override the Python executable when needed:
 PAWFLOW_RELAY_PYTHON=/path/to/python npm start
 ```
 
+## Native Installers
+
+Relay Desktop can be packaged as a user-facing app with an embedded relay
+binary. The packaged app no longer requires Python to start relays or manage
+local server/workspace profiles; it launches `runtime/bin/pawflow-relay` (or
+`pawflow-relay.exe` on Windows) and falls back to `python -m pawflow_relay` only
+for source development.
+
+Build the relay binary with PyInstaller, then create an installer for the host
+platform:
+
+```bash
+cd pawflow-relay-desktop
+python -m pip install pyinstaller
+npm install
+npm run dist:linux   # AppImage + deb
+npm run dist:win     # NSIS exe, from Windows
+npm run dist:mac     # dmg + zip, from macOS
+```
+
+On Windows, `electron-builder` extracts a `winCodeSign` helper archive that
+contains symlinks. If extraction fails with `Cannot create symbolic link`, enable
+Windows Developer Mode or run PowerShell as Administrator, clear the broken
+cache, then rebuild:
+
+```powershell
+Remove-Item -Recurse -Force "$env:LOCALAPPDATA\electron-builder\Cache\winCodeSign" -ErrorAction SilentlyContinue
+$env:CSC_IDENTITY_AUTO_DISCOVERY = "false"
+npm run dist:win
+```
+
+`npm run dist` runs `prepare-runtime`, builds the relay executable into
+`runtime/bin/`, then invokes `electron-builder`. Docker is still an external
+runtime dependency; the app detects Docker availability and reports startup or
+permission issues in the UI.
+
 ## Shared State
 
 Relay Desktop uses the same local state as the standalone CLI:

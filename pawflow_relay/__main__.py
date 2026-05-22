@@ -15,12 +15,22 @@ import signal
 import sys
 
 
-_MANAGER_COMMANDS = {"server", "workspace", "start", "status"}
+_MANAGER_COMMANDS = {"server", "workspace", "start", "status", "cleanup"}
+
+
+def _first_command(argv):
+    for arg in argv:
+        if arg == "--json":
+            continue
+        if arg.startswith("-"):
+            return ""
+        return arg
+    return ""
 
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
-    if argv and argv[0] in _MANAGER_COMMANDS:
+    if _first_command(argv) in _MANAGER_COMMANDS:
         from pawflow_relay.manager_cli import main as manager_main
         return manager_main(argv)
 

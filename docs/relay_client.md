@@ -78,4 +78,17 @@ npm install
 npm start
 ```
 
+Release builds use `pawflow-relay-desktop/npm run dist:<platform>`. The build
+prepares the runtime payload, creates a PyInstaller relay executable under
+`runtime/bin/`, and packages it with Electron Builder (`nsis` on Windows,
+`AppImage`/`deb` on Linux, `dmg`/`zip` on macOS). In packaged mode the desktop
+app launches the embedded relay binary and uses the Python fallback only for
+source checkouts.
+
+Windows builder hosts need symlink creation enabled because Electron Builder's
+`winCodeSign` cache contains symlinks. Use Windows Developer Mode or an elevated
+PowerShell, clear `%LOCALAPPDATA%\electron-builder\Cache\winCodeSign` after a
+failed extraction, and set `CSC_IDENTITY_AUTO_DISCOVERY=false` for unsigned local
+installer builds.
+
 PawCode and VS Code should not grow relay management screens. If a conversation has no linked relay, they can show server state, but relay creation and attachment remains a webchat/server-resource or Relay Desktop responsibility.

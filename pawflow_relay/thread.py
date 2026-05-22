@@ -39,6 +39,18 @@ def _is_host_absolute_path(path: str) -> bool:
     return raw.startswith("/") or raw.startswith("//") or _is_windows_drive_absolute_path(raw)
 
 
+def _relay_runtime_root() -> Path:
+    """Return the relay runtime root for source and packaged desktop modes."""
+    override = os.environ.get("PAWFLOW_RELAY_RUNTIME_ROOT", "")
+    if override:
+        return Path(override).expanduser().resolve()
+    return Path(__file__).resolve().parent.parent
+
+
+def _relay_tools_dir() -> str:
+    return str(_relay_runtime_root() / "tools")
+
+
 def _host_abs_path(raw_path: str, root_dir: str) -> str:
     raw = str(raw_path or ".").replace("\\", "/")
     if raw.startswith("fs://"):
@@ -339,7 +351,7 @@ class RelayThread:
     def _run_relay(self):
         """Run the WS relay connection loop."""
         # Add tools directory to path for imports
-        tools_dir = str(Path(__file__).resolve().parent.parent / "tools")
+        tools_dir = _relay_tools_dir()
         if tools_dir not in sys.path:
             sys.path.insert(0, tools_dir)
 
@@ -431,8 +443,7 @@ class RelayThread:
             # /opt/pawflow reflects the current tree. In standalone desktop
             # installs those files are not next to the app, so the container
             # falls back to the scripts baked into the relay image.
-            _project_root = os.path.dirname(
-                os.path.dirname(os.path.abspath(__file__)))
+            _project_root = str(_relay_runtime_root())
             _tools_dir = os.path.join(_project_root, "tools")
             _sdk_dir = os.path.join(_project_root, "docker", "pawflow_sdk")
             _pkg_dir = os.path.join(_project_root, "pawflow_relay")
@@ -758,7 +769,7 @@ class RelayThread:
         req = json.loads(buf.split(b"\n")[0])
         action = req.get("action", "")
 
-        tools_dir = str(Path(__file__).resolve().parent.parent / "tools")
+        tools_dir = _relay_tools_dir()
         if tools_dir not in sys.path:
             sys.path.insert(0, tools_dir)
 
@@ -1014,7 +1025,7 @@ class RelayThread:
 
     def _host_screen_tool(self, req, action):
         """Forward screen automation actions to the host's screen tools."""
-        tools_dir = str(Path(__file__).resolve().parent.parent / "tools")
+        tools_dir = _relay_tools_dir()
         if tools_dir not in sys.path:
             sys.path.insert(0, tools_dir)
         from screen_actions import handle_screen_action

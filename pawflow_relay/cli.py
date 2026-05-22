@@ -28,6 +28,13 @@ from pawflow_relay.register import (
 from pawflow_relay.worker import _ws_connect
 
 
+def _relay_runtime_root() -> Path:
+    override = os.environ.get("PAWFLOW_RELAY_RUNTIME_ROOT", "")
+    if override:
+        return Path(override).expanduser().resolve()
+    return Path(__file__).resolve().parent.parent
+
+
 def _ensure_home_writable() -> None:
     """Make sure $HOME is writable by the current user.
 
@@ -267,9 +274,9 @@ def worker_main():
             "--name", _docker_container,
             "-v", f"{translate_path(to_host_path(root_dir))}:/workspace",
         ]
-        _tools_dir = os.path.dirname(os.path.abspath(__file__))
-        _pkg_src = _tools_dir
-        _tools_src = os.path.normpath(os.path.join(_tools_dir, os.pardir, "tools"))
+        _runtime_root = _relay_runtime_root()
+        _pkg_src = str(_runtime_root / "pawflow_relay")
+        _tools_src = str(_runtime_root / "tools")
         for _relay_file in ["pawflow_relay_launcher.py", "fs_actions.py", "fs_exec.py",
                             "fs_screen.py", "fs_mcp.py", "fs_common.py"]:
             _src = os.path.join(_tools_src, _relay_file)

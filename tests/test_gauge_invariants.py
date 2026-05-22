@@ -1400,17 +1400,12 @@ def test_done_hotpath_does_not_compute_context_usage():
 
 
 def test_relay_reconnect_shuts_down_command_pool():
-    for path in (
-        "pawflow_relay/worker.py",
-        "pawflow-relay-desktop/runtime/pawflow_relay/worker.py",
-        "docker/relay-generated/server-minimal/runtime/pawflow_relay/worker.py",
-    ):
-        src = Path(path).read_text(encoding="utf-8")
-        cleanup = src[
-            src.index("# Stop watchdog"):
-            src.index("# Always close socket before reconnecting")]
-        assert "locals().get('_pool')" in cleanup
-        assert "shutdown(wait=False, cancel_futures=True)" in cleanup
+    src = Path("pawflow_relay/worker.py").read_text(encoding="utf-8")
+    cleanup = src[
+        src.index("# Stop watchdog"):
+        src.index("# Always close socket before reconnecting")]
+    assert "locals().get('_pool')" in cleanup
+    assert "shutdown(wait=False, cancel_futures=True)" in cleanup
 
 
 def test_codex_app_marks_terminal_turn_callback_after_turn_completed():

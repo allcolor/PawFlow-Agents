@@ -1,8 +1,9 @@
 """Search and import external Agent Skills marketplaces.
 
-External skills are untrusted content. This module downloads only bounded text
-packages, validates the Agent Skills structure, and returns PawFlow skill data
-for the caller to review before writing to ResourceStore.
+External skills are untrusted content. This module downloads bounded Agent
+Skills packages, including binary assets, validates the package structure, and
+returns PawFlow skill data for the caller to review before writing to
+ResourceStore.
 """
 
 from __future__ import annotations
@@ -29,10 +30,6 @@ _GITHUB_REF_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 _SKILL_NAME_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
 _FRONTMATTER_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*\n(.*)\Z", re.DOTALL)
 _RESERVED_SKILL_WORDS = ("anthropic", "claude")
-_SAFE_TEXT_EXTENSIONS = {
-    ".css", ".csv", ".html", ".js", ".json", ".md", ".mjs", ".ps1",
-    ".py", ".sh", ".svg", ".toml", ".ts", ".txt", ".yaml", ".yml",
-}
 _KNOWN_CLAUDE_MARKETPLACES = [
     ("anthropics", "skills", "official"),
     ("daymade", "claude-code-skills", "community"),
@@ -306,7 +303,7 @@ def _normalize_package(package: Dict[str, Any]) -> Dict[str, Any]:
     skill_md = files.get("SKILL.md")
     if not skill_md:
         raise SkillMarketplaceError("Skill package must contain SKILL.md at its root")
-    frontmatter, body = _parse_skill_md(skill_md)
+    frontmatter, body = _parse_skill_md(_decode_text_file(skill_md, "SKILL.md"))
     skill_name = str(frontmatter.get("name", "") or "").strip()
     _validate_skill_name(skill_name)
     description = str(frontmatter.get("description", "") or "").strip()
@@ -366,7 +363,7 @@ def _fetch_github_tree(owner: str, repo: str, ref: str, path: str,
     items = _github_contents(owner, repo, path, ref=ref)
     if isinstance(items, dict):
         raise SkillMarketplaceError("Skill ref must be a directory containing SKILL.md")
-    files: Dict[str, str] = {}
+    files: Dict[str, bytes] = {}
     _collect_github_files(owner, repo, ref, path, items, files)
     return {
         "files": files,
@@ -381,8 +378,8 @@ def _fetch_github_tree(owner: str, repo: str, ref: str, path: str,
 
 
 def _collect_github_files(owner: str, repo: str, ref: str, root_path: str,
-                          items: Iterable[Dict[str, Any]], files: Dict[str, str]) -> None:
-    total = sum(len(v.encode("utf-8")) for v in files.values())
+                          items: Iterable[Dict[str, Any]], files: Dict[str, bytes]) -> None:
+    total = sum(len(v) for v in files.values())
     for item in items:
         if len(files) >= _MAX_PACKAGE_FILES:
             raise SkillMarketplaceError("Skill package has too many files")
@@ -393,28 +390,20 @@ def _collect_github_files(owner: str, repo: str, ref: str, root_path: str,
             _reject_unsafe_path(rel or item.get("name", ""), is_dir=True)
             children = _github_contents(owner, repo, item_path, ref=ref)
             _collect_github_files(owner, repo, ref, root_path, children, files)
-            total = sum(len(v.encode("utf-8")) for v in files.values())
+            total = sum(len(v) for v in files.values())
             continue
         if item_type != "file":
             continue
-        if _unsupported_file_extension(rel):
-            if rel.startswith("assets/"):
-                omitted = files.get(".pawflow-omitted-assets.txt", "")
-                files[".pawflow-omitted-assets.txt"] = (
-                    omitted + f"Skipped non-text asset during import: {rel}\n")
-                continue
-            raise SkillMarketplaceError(f"Unsupported package file type: {rel}")
         _reject_unsafe_path(rel, is_dir=False)
         size = int(item.get("size") or 0)
         if size > _MAX_FILE_BYTES:
             raise SkillMarketplaceError(f"File too large for skill import: {rel}")
         download_url = item.get("download_url")
         if not download_url:
-            content = _github_blob_text(owner, repo, item.get("sha", ""))
+            content = _github_blob_bytes(owner, repo, item.get("sha", ""))
         else:
-            content = _fetch_text(download_url)
-        encoded_len = len(content.encode("utf-8"))
-        total += encoded_len
+            content = _fetch_bytes(download_url)
+        total += len(content)
         if total > _MAX_TOTAL_BYTES:
             raise SkillMarketplaceError("Skill package exceeds the total import size cap")
         files[rel] = content
@@ -428,17 +417,8 @@ def _reject_unsafe_path(path: str, *, is_dir: bool) -> None:
     blocked_dirs = {".git", "node_modules", "__pycache__", ".venv", "venv"}
     if any(p in blocked_dirs for p in parts):
         raise SkillMarketplaceError(f"Blocked package directory: {path}")
-    if not is_dir:
-        if _unsupported_file_extension(clean):
-            raise SkillMarketplaceError(f"Unsupported package file type: {path}")
-
-
-def _unsupported_file_extension(path: str) -> bool:
-    clean = (path or "").replace("\\", "/").strip("/")
-    if clean in {"LICENSE", "NOTICE"}:
-        return False
-    ext = "." + clean.rsplit(".", 1)[-1].lower() if "." in clean else ""
-    return clean != "SKILL.md" and ext not in _SAFE_TEXT_EXTENSIONS
+    if not is_dir and clean == "SKILL.md":
+        return
 
 
 def _parse_skill_md(text: str) -> Tuple[Dict[str, Any], str]:
@@ -489,14 +469,14 @@ def _github_path_exists(owner: str, repo: str, path: str, ref: str = "main") -> 
         return False
 
 
-def _github_blob_text(owner: str, repo: str, sha: str) -> str:
+def _github_blob_bytes(owner: str, repo: str, sha: str) -> bytes:
     blob = _fetch_json(f"https://api.github.com/repos/{owner}/{repo}/git/blobs/{sha}")
     if blob.get("encoding") != "base64":
         raise SkillMarketplaceError("Unsupported GitHub blob encoding")
     raw = base64.b64decode(blob.get("content", ""))
     if len(raw) > _MAX_FILE_BYTES:
         raise SkillMarketplaceError("GitHub blob exceeds file size cap")
-    return raw.decode("utf-8")
+    return raw
 
 
 def _github_skill_description(owner: str, repo: str, path: str) -> str:
@@ -518,12 +498,16 @@ def _fetch_json(url: str) -> Any:
 
 
 def _fetch_text(url: str) -> str:
+    return _fetch_bytes(url, readme="README.md" in url).decode("utf-8")
+
+
+def _fetch_bytes(url: str, *, readme: bool = False) -> bytes:
     response = requests.get(
         url, headers=_request_headers(), timeout=_FETCH_TIMEOUT_SECONDS,
         stream=True)
     if response.status_code >= 400:
         raise SkillMarketplaceError(f"Fetch failed {response.status_code}: {url}")
-    cap = _MAX_FILE_BYTES * 2 if "README.md" not in url else _MAX_TOTAL_BYTES
+    cap = _MAX_TOTAL_BYTES if readme else _MAX_FILE_BYTES
     chunks = []
     total = 0
     for chunk in response.iter_content(chunk_size=16384):
@@ -531,10 +515,18 @@ def _fetch_text(url: str) -> str:
             continue
         total += len(chunk)
         if total > cap:
-            raise SkillMarketplaceError(f"Fetched text exceeds import cap: {url}")
+            raise SkillMarketplaceError(f"Fetched file exceeds import cap: {url}")
         chunks.append(chunk)
-    data = b"".join(chunks)
-    return data.decode("utf-8")
+    return b"".join(chunks)
+
+
+def _decode_text_file(content: Any, path: str) -> str:
+    if isinstance(content, bytes):
+        try:
+            return content.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise SkillMarketplaceError(f"{path} must be UTF-8 text") from exc
+    return str(content or "")
 
 
 def _plugin_skill_paths(plugin: Dict[str, Any]) -> List[str]:
@@ -620,8 +612,15 @@ def _dedupe_results(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return out
 
 
-def _package_hash(files: Dict[str, str]) -> str:
-    raw = json.dumps(files, ensure_ascii=False, sort_keys=True).encode("utf-8")
+def _package_hash(files: Dict[str, Any]) -> str:
+    canonical = {}
+    for rel, content in sorted((files or {}).items()):
+        data = content if isinstance(content, bytes) else str(content or "").encode("utf-8")
+        canonical[rel] = {
+            "size": len(data),
+            "sha256": hashlib.sha256(data).hexdigest(),
+        }
+    raw = json.dumps(canonical, ensure_ascii=False, sort_keys=True).encode("utf-8")
     return hashlib.sha256(raw).hexdigest()
 
 

@@ -9,7 +9,9 @@ class _Response:
     def __init__(self, payload, status_code=200, content_type="application/json"):
         self._payload = payload
         self.status_code = status_code
-        if isinstance(payload, str):
+        if isinstance(payload, bytes):
+            self.content = payload
+        elif isinstance(payload, str):
             self.content = payload.encode("utf-8")
         else:
             self.content = json.dumps(payload).encode("utf-8")
@@ -180,7 +182,7 @@ def test_import_marketplace_review_only_does_not_create(monkeypatch):
     assert created == []
 
 
-def test_import_marketplace_omits_binary_assets(monkeypatch):
+def test_import_marketplace_preserves_binary_assets(monkeypatch):
     from core import skill_marketplace
 
     _patch_safe_review(monkeypatch)
@@ -215,6 +217,8 @@ def test_import_marketplace_omits_binary_assets(monkeypatch):
             return _Response(
                 "---\nname: review-pr\ndescription: Review pull requests.\n---\n\nReview the requested PR.",
                 content_type="text/plain")
+        if url == "https://raw.test/logo.png":
+            return _Response(b"\x89PNG\r\n\x1a\n\x00\x01\xff", content_type="image/png")
         raise AssertionError(url)
 
     monkeypatch.setattr(skill_marketplace.requests, "get", fake_get)
@@ -239,19 +243,36 @@ def test_import_marketplace_creates_low_risk_skill(monkeypatch):
 
     def fake_get(url, headers=None, **kwargs):
         if url.endswith("/contents/skills/.curated/review-pr?ref=main"):
-            return _Response([{
-                "name": "SKILL.md",
-                "path": "skills/.curated/review-pr/SKILL.md",
-                "type": "file",
-                "size": 96,
-                "download_url": "https://raw.test/SKILL.md",
-            }])
+            return _Response([
+                {
+                    "name": "SKILL.md",
+                    "path": "skills/.curated/review-pr/SKILL.md",
+                    "type": "file",
+                    "size": 96,
+                    "download_url": "https://raw.test/SKILL.md",
+                },
+                {
+                    "name": "assets",
+                    "path": "skills/.curated/review-pr/assets",
+                    "type": "dir",
+                },
+            ])
         if url.endswith("/contents/skills/.system/review-pr?ref=main"):
             return _Response({}, status_code=404)
         if url == "https://raw.test/SKILL.md":
             return _Response(
                 "---\nname: review-pr\ndescription: Review pull requests.\n---\n\nReview the requested PR.",
                 content_type="text/plain")
+        if url == "https://raw.test/logo.png":
+            return _Response(b"\x89PNG\r\n\x1a\n\x00\x02\xfe", content_type="image/png")
+        if url.endswith("/contents/skills/.curated/review-pr/assets?ref=main"):
+            return _Response([{
+                "name": "logo.png",
+                "path": "skills/.curated/review-pr/assets/logo.png",
+                "type": "file",
+                "size": 11,
+                "download_url": "https://raw.test/logo.png",
+            }])
         raise AssertionError(url)
 
     class Store:
@@ -270,6 +291,7 @@ def test_import_marketplace_creates_low_risk_skill(monkeypatch):
     assert args[:3] == ("skill", "review-pr", "alice")
     assert args[3]["instructions"] == "Review the requested PR."
     assert args[3]["imported_from"]["source"] == "codex"
+    assert args[3]["package_files"]["assets/logo.png"] == b"\x89PNG\r\n\x1a\n\x00\x02\xfe"
 
 
 def test_import_action_blocks_human_review_without_force(monkeypatch):

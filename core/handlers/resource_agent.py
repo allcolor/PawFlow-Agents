@@ -42,6 +42,8 @@ class ManageResourceHandler(ToolHandler):
             "- review: Review an untrusted skill before import\n"
             "- search_marketplace: Search external skill marketplaces\n"
             "- import_marketplace: Review/import an external Agent Skill\n"
+            "- assign_skill: Assign a skill to an agent and notify it\n"
+            "- unassign_skill: Remove a skill from an agent and notify it\n"
             "- activate: Activate a resource in the current conversation\n"
             "- deactivate: Deactivate a resource from the current conversation\n\n"
             "Resource types: agent, skill, mcp, task_def, tool\n\n"
@@ -64,7 +66,8 @@ class ManageResourceHandler(ToolHandler):
                     "type": "string",
                     "enum": ["create", "update", "delete", "list",
                              "get", "review", "search_marketplace",
-                             "import_marketplace", "activate", "deactivate"],
+                             "import_marketplace", "assign_skill", "unassign_skill",
+                             "activate", "deactivate"],
                     "description": "Action to perform",
                 },
                 "resource_type": {
@@ -91,6 +94,14 @@ class ManageResourceHandler(ToolHandler):
                 "ref": {
                     "type": "string",
                     "description": "Marketplace skill ref or GitHub tree URL for skill import.",
+                },
+                "agent_name": {
+                    "type": "string",
+                    "description": "Agent name for assign_skill/unassign_skill.",
+                },
+                "skill_name": {
+                    "type": "string",
+                    "description": "Skill name for assign_skill/unassign_skill. Defaults to name.",
                 },
                 "review_only": {
                     "type": "boolean",
@@ -357,6 +368,29 @@ class ManageResourceHandler(ToolHandler):
                     force=bool(arguments.get("force", False)),
                     scope=str(arguments.get("scope", "user") or "user"),
                 )
+                return json.dumps(result, ensure_ascii=False, indent=2)
+
+            elif action in {"assign_skill", "unassign_skill"}:
+                if rtype != "skill":
+                    return f"Error: {action} is only supported for skills"
+                agent_name = str(arguments.get("agent_name") or arguments.get("target_agent") or "").strip()
+                skill_name = str(arguments.get("skill_name") or name or "").strip()
+                if not agent_name or not skill_name:
+                    return "Error: 'agent_name' and 'skill_name' are required"
+                if action == "assign_skill":
+                    from core.skill_lifecycle import assign_skill_to_agent
+                    result = assign_skill_to_agent(
+                        agent_name, skill_name, user_id, self._conversation_id,
+                        resource_store=store,
+                        conversation_store=ConversationStore.instance(),
+                        source="skill_assign")
+                else:
+                    from core.skill_lifecycle import unassign_skill_from_agent
+                    result = unassign_skill_from_agent(
+                        agent_name, skill_name, user_id, self._conversation_id,
+                        resource_store=store,
+                        conversation_store=ConversationStore.instance(),
+                        source="skill_unassign")
                 return json.dumps(result, ensure_ascii=False, indent=2)
 
             elif action == "activate":

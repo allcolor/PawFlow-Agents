@@ -8,7 +8,7 @@ from typing import Any, Dict, Optional
 
 def review_for_write(subject: Dict[str, Any], *, operation: str,
                      user_id: str = "", conversation_id: str = "",
-                     package_files: Optional[Dict[str, str]] = None,
+                     package_files: Optional[Dict[str, Any]] = None,
                      force: bool = False) -> Dict[str, Any]:
     """Review skill-like content before create/update/import and return metadata."""
     from core.package_review import (

@@ -203,6 +203,111 @@ def test_manage_resource_create_skill_requires_force_for_human_review(monkeypatc
     assert "rerun with force" in result
 
 
+def test_manage_resource_assign_skill_notifies_agent(monkeypatch):
+    from core.handlers.resource_agent import ManageResourceHandler
+    from core.resource_store import ResourceStore
+    from core.conversation_store import ConversationStore
+    from core.pending_queue import PendingQueue
+
+    updated = []
+    appended = []
+    enqueued = []
+
+    class Store:
+        def get_any(self, rtype, name, user_id, conversation_id=""):
+            if rtype == "agent" and name == "assistant":
+                return {"name": "assistant", "assigned_skills": []}
+            if rtype == "skill" and name == "review-pr":
+                return {"name": "review-pr", "description": "Review PRs"}
+            return None
+
+        def update(self, *args, **kwargs):
+            updated.append((args, kwargs))
+
+    class ConvStore:
+        def append_message(self, conv_id, msg, agent_name="", user_id=""):
+            appended.append((conv_id, msg, agent_name, user_id))
+
+    class Queue:
+        def enqueue(self, msg, source=""):
+            enqueued.append((msg, source))
+
+    monkeypatch.setattr(ResourceStore, "instance", staticmethod(lambda: Store()))
+    monkeypatch.setattr(ConversationStore, "instance", staticmethod(lambda: ConvStore()))
+    monkeypatch.setattr(PendingQueue, "for_agent", staticmethod(lambda cid, agent: Queue()))
+
+    handler = ManageResourceHandler()
+    handler.set_user_id("alice")
+    handler.set_conversation_id("conv1")
+    raw = handler.execute({
+        "action": "assign_skill",
+        "resource_type": "skill",
+        "name": "review-pr",
+        "agent_name": "assistant",
+    })
+    result = json.loads(raw)
+
+    assert result["ok"] is True
+    assert result["changed"] is True
+    assert updated[0][0][3] == {"assigned_skills": ["review-pr"]}
+    assert appended[0][2] == "assistant"
+    assert "Skill available: review-pr" in appended[0][1]["content"]
+    assert enqueued[0][1] == "skill_assign"
+
+
+def test_manage_resource_unassign_skill_notifies_agent(monkeypatch):
+    from core.handlers.resource_agent import ManageResourceHandler
+    from core.resource_store import ResourceStore
+    from core.conversation_store import ConversationStore
+    from core.pending_queue import PendingQueue
+
+    updated = []
+    appended = []
+    enqueued = []
+
+    class Store:
+        def get_any(self, rtype, name, user_id, conversation_id=""):
+            if rtype == "agent" and name == "assistant":
+                return {
+                    "name": "assistant",
+                    "assigned_skills": [{"name": "review-pr", "params": {"mode": "fast"}}, "other"],
+                }
+            return None
+
+        def update(self, *args, **kwargs):
+            updated.append((args, kwargs))
+
+    class ConvStore:
+        def append_message(self, conv_id, msg, agent_name="", user_id=""):
+            appended.append((conv_id, msg, agent_name, user_id))
+
+    class Queue:
+        def enqueue(self, msg, source=""):
+            enqueued.append((msg, source))
+
+    monkeypatch.setattr(ResourceStore, "instance", staticmethod(lambda: Store()))
+    monkeypatch.setattr(ConversationStore, "instance", staticmethod(lambda: ConvStore()))
+    monkeypatch.setattr(PendingQueue, "for_agent", staticmethod(lambda cid, agent: Queue()))
+
+    handler = ManageResourceHandler()
+    handler.set_user_id("alice")
+    handler.set_conversation_id("conv1")
+    raw = handler.execute({
+        "action": "unassign_skill",
+        "resource_type": "skill",
+        "skill_name": "review-pr",
+        "agent_name": "assistant",
+    })
+    result = json.loads(raw)
+
+    assert result["ok"] is True
+    assert result["changed"] is True
+    assert updated[0][0][3] == {"assigned_skills": ["other"]}
+    assert appended[0][2] == "assistant"
+    assert "Skill removed: review-pr" in appended[0][1]["content"]
+    assert enqueued[0][1] == "skill_unassign"
+
+
 def test_review_fails_closed_without_summarizer_llm(monkeypatch):
     from core import package_review
     from core.package_review import review_skill_content

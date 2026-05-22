@@ -145,11 +145,17 @@ class ManageResourceHandler(ToolHandler):
                     from core.review_bindings import (
                         attach_review_metadata, review_for_write,
                     )
+                    package_files = data.get("package_files", {}) if isinstance(data, dict) else {}
+                    review_subject = {
+                        k: v for k, v in data.items()
+                        if k != "package_files"
+                    } if isinstance(data, dict) else {}
                     review_meta = review_for_write(
-                        data,
+                        review_subject,
                         operation="create",
                         user_id=user_id,
                         conversation_id=self._conversation_id,
+                        package_files=package_files if isinstance(package_files, dict) else {},
                         force=bool(arguments.get("force", False)),
                     )
                     if review_meta:
@@ -204,6 +210,12 @@ class ManageResourceHandler(ToolHandler):
                     merged = {k: v for k, v in existing.items()
                               if not str(k).startswith("_")}
                     merged.update(data if isinstance(data, dict) else {})
+                    package_files = merged.pop("package_files", {})
+                    if not package_files and merged.get("skill_root"):
+                        from pathlib import Path
+                        from core.repository import ScopedRepository
+                        package_files = ScopedRepository._read_skill_package_files(
+                            Path(merged["skill_root"]))
                     from core.review_bindings import (
                         attach_review_metadata, review_for_write,
                     )
@@ -212,6 +224,7 @@ class ManageResourceHandler(ToolHandler):
                         operation="update",
                         user_id=user_id,
                         conversation_id=self._conversation_id,
+                        package_files=package_files if isinstance(package_files, dict) else {},
                         force=bool(arguments.get("force", False)),
                     )
                     if review_meta:
@@ -225,6 +238,14 @@ class ManageResourceHandler(ToolHandler):
                         and self._conversation_id):
                     upd_kwargs["conversation_id"] = self._conversation_id
                 store.update(rtype, name, user_id, data, **upd_kwargs)
+                if rtype == "skill" and self._conversation_id:
+                    from core.skill_lifecycle import notify_skill_updated
+                    updated = store.get_any(
+                        "skill", name, user_id,
+                        conversation_id=self._conversation_id) or data
+                    notify_skill_updated(
+                        name, updated, user_id, self._conversation_id,
+                        resource_store=store)
                 return f"Updated {rtype} '{name}'."
 
             elif action == "delete":
@@ -232,14 +253,25 @@ class ManageResourceHandler(ToolHandler):
                     return "Error: 'name' is required for delete"
                 # Ownership check for agent/skill deletion
                 if rtype in ("agent", "skill"):
-                    existing = store.get_any(rtype, name, user_id)
+                    existing = store.get_any(
+                        rtype, name, user_id,
+                        conversation_id=self._conversation_id)
                     if existing:
-                        created_by = existing.get("created_by")  # None if legacy
+                        created_by = existing.get("_created_by", existing.get("created_by"))
                         if created_by is not None and created_by != (self._agent_name or ""):
                             return (f"Error: {rtype} '{name}' was created by "
                                     f"'{created_by}' — you can only delete "
                                     f"resources you created.")
-                if store.delete(rtype, name, user_id):
+                delete_kwargs = {}
+                if (rtype == "skill" and existing.get("_scope") == "conversation"
+                        and self._conversation_id):
+                    delete_kwargs["conversation_id"] = self._conversation_id
+                if store.delete(rtype, name, user_id, **delete_kwargs):
+                    if rtype == "skill":
+                        from core.skill_lifecycle import remove_skill_assignments
+                        remove_skill_assignments(
+                            name, user_id, self._conversation_id,
+                            resource_store=store, source="skill_delete")
                     return f"Deleted {rtype} '{name}'."
                 return f"{rtype} '{name}' not found."
 

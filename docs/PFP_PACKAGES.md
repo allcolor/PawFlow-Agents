@@ -144,7 +144,7 @@ Registry metadata is not trusted as executable authority. It is used for discove
 - `.pfp` install requires a valid Ed25519 signature.
 - Every archive path is normalized and rejected if it is absolute, escapes the package, or contains unsafe characters.
 - Registry refs and direct URLs show package size before download and require explicit confirmation before fetching. Local inspect shows package size, uncompressed content size, and file count before install; there is no arbitrary PFP size cap. Users decide whether a package is acceptable before installing it.
-- Installation writes only selected objects from the install plan.
+- Installation writes only selected objects from the install plan. Agents with `assigned_skills` can be installed only when every referenced skill is either already visible in the target scope or selected in the same install operation.
 - When at least one object is installed, the verified package payload is copied into a scoped local content store under the package repository. Runtime proxies reference that stable `content_dir` plus their signed entrypoint path; they never depend on the original `.pfp` file remaining on disk.
 - Installed resources receive `installed_from` provenance with package id, version, object id, file hash, package hash, and developer public key.
 - PFP runtime proxies validate their installed entrypoint before invocation: the file must still live under the scoped package content directory and its SHA-256 must match the signed install provenance. Dev-loaded `.pfpdir` packages still enforce path containment, but skip hash mismatch failures so source edits take effect immediately.
@@ -154,7 +154,7 @@ Registry metadata is not trusted as executable authority. It is used for discove
 - Required PFP secrets must be declared and explicitly bound during install. Runtime envelopes carry binding names only; secret values are resolved at invocation time and injected into the runner environment.
 - `PackageCapabilityBroker` centralizes runtime authorization for future package execution. It authorizes builtin grants such as `{"name": "read"}` and package-qualified grants such as `{"package": "community.media-core", "object": "tool:normalize_image"}`, then verifies the referenced package and object are installed before allowing the call.
 - Registry downloads verify the package SHA-256 when the registry provides one.
-- Uninstall uses the local install registry and does not remove secrets.
+- Uninstall uses the local install registry and does not remove secrets. When uninstall removes a skill, PawFlow also removes that skill from visible agents' `assigned_skills` lists and queues the normal skill-removal context message for conversation agents.
 
 ## Developer Checklist
 
@@ -164,7 +164,7 @@ Registry metadata is not trusted as executable authority. It is used for discove
 4. Declare every host call in `allowed_tools` or `allowed_services`; runtime code cannot expand its grants after install.
 5. Declare required secrets with package-local names and environment variable names. Do not put secret values in package files.
 6. Build with `/pfp build ... --key-env ENV_NAME` so the private signing key stays outside chat and shell history.
-7. Inspect the signed `.pfp`, verify capabilities and update diff, then install selected objects.
+7. Inspect the signed `.pfp`, verify capabilities and update diff, then install selected objects. If you export agents, include their assigned skills or let `/pfp export` add those skill objects automatically.
 
 Python entrypoints can import the lightweight SDK with `from pawflow import pfp`. The SDK exposes `pfp.input()` plus cached `pfp.payload`, `pfp.package`, and `pfp.context`; `pfp.result(value)` and `pfp.error(message)` emit `result.v1`; `pfp.call_tool(name, **arguments)` and `pfp.call_service(name, operation, **arguments)` emit brokered `host_call.v1` requests; `pfp.flowfile(content, attributes)` builds task result descriptors for `pfp.result(flowfiles=[...])`; and `pfp.artifact(kind, path, content_type, filename)` builds file artifact descriptors for large media results.
 
@@ -212,7 +212,7 @@ The referenced packages and objects must already be installed in the target scop
 
 ## Update and Uninstall
 
-`/pfp update` requires the package to already be installed in the selected scope. By default it updates only objects recorded from the previous install. New objects from the package can be selected explicitly with `--include`. Objects that were previously installed but no longer exist in the new package are removed during update, unless they were locally modified and `--force` is not provided. If a resource was modified locally after install, update skips it unless `--force` is provided. Secret bindings recorded on updated runtime objects are preserved automatically; pass `--secret name=stored_key` again to override a binding during update. Updating to a version that would violate an installed dependent's exact package version constraint is blocked unless `--force` is provided. Uninstall uses the same local install registry, refuses to remove a package that another installed package depends on unless `--force` is provided, including dependencies created by package-qualified `allowed_tools` or `allowed_services` grants. Conversation-scoped packages can also block uninstall of a user-scoped package they resolve through the inherited user scope. Uninstall removes the package content store when no installed object remains, and keeps secrets.
+`/pfp update` requires the package to already be installed in the selected scope. By default it updates only objects recorded from the previous install. New objects from the package can be selected explicitly with `--include`. Objects that were previously installed but no longer exist in the new package are removed during update, unless they were locally modified and `--force` is not provided. If a resource was modified locally after install, update skips it unless `--force` is provided. Skill updates notify currently assigned conversation agents to call `load_skill` again when the changed instructions are relevant. Secret bindings recorded on updated runtime objects are preserved automatically; pass `--secret name=stored_key` again to override a binding during update. Updating to a version that would violate an installed dependent's exact package version constraint is blocked unless `--force` is provided. Uninstall uses the same local install registry, refuses to remove a package that another installed package depends on unless `--force` is provided, including dependencies created by package-qualified `allowed_tools` or `allowed_services` grants. Conversation-scoped packages can also block uninstall of a user-scoped package they resolve through the inherited user scope. Uninstall removes the package content store when no installed object remains, removes uninstalled skills from visible agents' `assigned_skills`, and keeps secrets.
 
 ## Runtime Availability
 

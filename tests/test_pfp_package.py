@@ -5828,6 +5828,76 @@ def test_pfp_export_creates_source_package(tmp_path, monkeypatch):
     assert "review:" not in skill_md.read_text(encoding="utf-8")
 
 
+def test_pfp_export_agent_includes_assigned_skills(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    from core.resource_store import ResourceStore
+
+    store = ResourceStore.instance()
+    store.create("skill", "review-pr", "alice", {
+        "description": "Review PRs",
+        "instructions": "Review the PR.",
+    })
+    store.create("agent", "assistant", "alice", {
+        "prompt": "You are an assistant.",
+        "description": "Assistant",
+        "assigned_skills": [{"name": "review-pr", "params": {"mode": "fast"}}],
+    })
+
+    exported = pfp_package.export_pfpdir(
+        "alice.agent", "0.1.0", ["agent:assistant"],
+        output_dir=str(tmp_path / "agent-export.pfpdir"), user_id="alice")
+
+    assert exported["ok"] is True
+    assert [obj["id"] for obj in exported["objects"]] == [
+        "agent:assistant", "skill:review-pr"]
+    skill_md = (
+        tmp_path / "agent-export.pfpdir" / "content" / "skills"
+        / "review-pr" / "SKILL.md"
+    )
+    assert "Review the PR." in skill_md.read_text(encoding="utf-8")
+
+
+def test_pfp_install_skips_agent_when_assigned_skill_not_selected(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    keypair = pfp_package.create_signing_key()
+    pkgdir = _write_package_dir(tmp_path, keypair)
+    agent_path = pkgdir / "content" / "agents" / "helper.json"
+    agent_data = json.loads(agent_path.read_text(encoding="utf-8"))
+    agent_data["assigned_skills"] = ["pkg-skill"]
+    agent_path.write_text(json.dumps(agent_data), encoding="utf-8")
+    built = pfp_package.build_pfp(str(pkgdir), private_key=keypair["private_key"])
+
+    result = pfp_package.install_pfp(
+        built["path"], user_id="alice", include=["agent:helper"])
+
+    skipped = {row["id"]: row for row in result["skipped"]}
+    assert skipped["agent:helper"]["reason"] == "missing_dependency"
+    assert skipped["agent:helper"]["missing_assigned_skills"] == ["pkg-skill"]
+
+
+def test_pfp_uninstall_skill_cleans_agent_assignments(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    keypair = pfp_package.create_signing_key()
+    pkgdir = _write_package_dir(tmp_path, keypair)
+    built = pfp_package.build_pfp(str(pkgdir), private_key=keypair["private_key"])
+    pfp_package.install_pfp(
+        built["path"], user_id="alice", include=["skill:pkg-skill"])
+
+    from core.resource_store import ResourceStore
+    store = ResourceStore.instance()
+    store.create("agent", "assistant", "alice", {
+        "prompt": "You are an assistant.",
+        "assigned_skills": ["pkg-skill", "other"],
+    })
+
+    removed = pfp_package.uninstall_pfp(
+        "community.wavespeed", user_id="alice", force=True)
+
+    assert removed["ok"] is True
+    agent = store.get("agent", "assistant", "alice")
+    assert agent["assigned_skills"] == ["other"]
+
+
 def test_pfp_slash_parser_handles_install_flags():
     body = _parse_command(
         "/pfp install ./dist/pkg.pfp --scope conversation --include skill:a,flow:b --exclude tool:c --force --replace",

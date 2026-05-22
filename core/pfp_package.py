@@ -275,6 +275,15 @@ def install_pfp(path: str, *, user_id: str, conversation_id: str = "",
         if row["status"] == "conflict" and not replace:
             skipped.append({"id": obj_id, "reason": "conflict"})
             continue
+        selected_missing_skills = _selected_agent_missing_skills(
+            row, package, selected, user_id, conversation_id, scope)
+        if selected_missing_skills:
+            skipped.append({
+                "id": obj_id,
+                "reason": "missing_dependency",
+                "missing_assigned_skills": selected_missing_skills,
+            })
+            continue
         missing_secret_bindings = _missing_secret_bindings(row, secret_bindings)
         if missing_secret_bindings:
             skipped.append({
@@ -363,6 +372,15 @@ def dev_load_pfp(source_dir: str, *, user_id: str, conversation_id: str = "",
             continue
         if row["status"] == "conflict" and not replace:
             skipped.append({"id": obj_id, "reason": "conflict"})
+            continue
+        selected_missing_skills = _selected_agent_missing_skills(
+            row, package, selected, user_id, conversation_id, scope)
+        if selected_missing_skills:
+            skipped.append({
+                "id": obj_id,
+                "reason": "missing_dependency",
+                "missing_assigned_skills": selected_missing_skills,
+            })
             continue
         missing_secret_bindings = _missing_secret_bindings(row, secret_bindings)
         if missing_secret_bindings:
@@ -701,10 +719,19 @@ def export_pfpdir(package_id: str, version: str, include: Iterable[str], *,
     objects = []
     from core.resource_store import ResourceStore
     store = ResourceStore.instance()
-    for spec in include or []:
+    pending = [str(spec) for spec in (include or [])]
+    seen_refs = set()
+    index = 0
+    while index < len(pending):
+        spec = pending[index]
+        index += 1
         rtype, name = _split_object_ref(str(spec))
         if rtype == "task":
             rtype = "task_def"
+        ref_key = f"{rtype}:{name}"
+        if ref_key in seen_refs:
+            continue
+        seen_refs.add(ref_key)
         if rtype not in _RESOURCE_TYPES.values():
             raise PfpError(f"Export does not support resource type: {rtype}")
         item = store.get_any(rtype, name, user_id, conversation_id=conversation_id)
@@ -759,6 +786,16 @@ def export_pfpdir(package_id: str, version: str, include: Iterable[str], *,
             target = out / path
             target.parent.mkdir(parents=True, exist_ok=True)
             _write_json_file(target, clean)
+            if rtype == "agent":
+                for skill_name in _agent_assigned_skill_names(clean):
+                    if not store.get_any(
+                            "skill", skill_name, user_id,
+                            conversation_id=conversation_id):
+                        raise PfpError(
+                            f"agent:{name} assigned skill:{skill_name} not found")
+                    skill_ref = f"skill:{skill_name}"
+                    if skill_ref not in seen_refs:
+                        pending.append(skill_ref)
         objects.append({
             "id": f"{rtype}:{name}",
             "type": rtype,
@@ -786,6 +823,61 @@ def create_signing_key() -> Dict[str, str]:
         "private_key": "ed25519:" + base64.b64encode(private_raw).decode("ascii"),
         "public_key": _public_key_text(private.public_key()),
     }
+
+
+def _agent_assigned_skill_names(data: Dict[str, Any]) -> List[str]:
+    from core.skill_resolver import normalize_skill_entry
+    names = []
+    seen = set()
+    for entry in list((data or {}).get("assigned_skills") or []):
+        name, _params, _condition = normalize_skill_entry(entry)
+        if name and name not in seen:
+            seen.add(name)
+            names.append(name)
+    return names
+
+
+def _package_skill_names(package: Dict[str, Any]) -> set:
+    names = set()
+    for obj in (package.get("manifest") or {}).get("objects") or []:
+        if not isinstance(obj, dict) or str(obj.get("type") or "") != "skill":
+            continue
+        name = str(obj.get("name") or _name_from_id(str(obj.get("id") or "")) or "").strip()
+        if name:
+            names.add(name)
+    return names
+
+
+def _missing_agent_assigned_skills(data: Dict[str, Any], package: Dict[str, Any],
+                                  user_id: str, conversation_id: str,
+                                  scope: str, selected_ids: Optional[set] = None) -> List[str]:
+    package_skills = _package_skill_names(package)
+    missing = []
+    from core.resource_store import ResourceStore
+    store = ResourceStore.instance()
+    for skill_name in _agent_assigned_skill_names(data):
+        if selected_ids is None:
+            if skill_name in package_skills:
+                continue
+        elif f"skill:{skill_name}" in selected_ids:
+            continue
+        conv = conversation_id if scope == "conversation" else ""
+        if store.get_any("skill", skill_name, user_id, conversation_id=conv):
+            continue
+        missing.append(skill_name)
+    return missing
+
+
+def _selected_agent_missing_skills(row: Dict[str, Any], package: Dict[str, Any],
+                                   selected_ids: set, user_id: str,
+                                   conversation_id: str, scope: str) -> List[str]:
+    if str(row.get("type") or "") != "agent":
+        return []
+    obj = row.get("object") or {}
+    rel = _safe_relpath(str(obj.get("path") or ""))
+    data = _load_resource_data(package, rel, "agent", row.get("name", ""))
+    return _missing_agent_assigned_skills(
+        data, package, user_id, conversation_id, scope, selected_ids)
 
 
 def _load_package(path: str, require_verified: bool = False) -> Dict[str, Any]:
@@ -957,6 +1049,16 @@ def _object_plan(obj: Dict[str, Any], package: Dict[str, Any], user_id: str,
                 status, reason, installable = "blocked", "SKILL.md name does not match package object name", False
             elif not str(parsed.get("description") or "").strip():
                 status, reason, installable = "blocked", "SKILL.md frontmatter.description is required", False
+        except Exception as exc:
+            status, reason, installable = "blocked", str(exc), False
+    if installable and status == "new" and obj_type == "agent":
+        try:
+            data = _load_resource_data(package, _safe_relpath(path), "agent", name)
+            missing_skills = _missing_agent_assigned_skills(
+                data, package, user_id, conversation_id, scope)
+            if missing_skills:
+                status = "missing_dependency"
+                reason = "missing assigned skill: " + ", ".join(missing_skills)
         except Exception as exc:
             status, reason, installable = "blocked", str(exc), False
     if installable and status == "new":
@@ -1355,7 +1457,16 @@ def _install_object(obj: Dict[str, Any], package: Dict[str, Any], user_id: str,
         if rtype == "skill" and obj.get("_review"):
             from core.review_bindings import attach_review_metadata
             data = attach_review_metadata(data, obj["_review"])
+        existing_skill = None
+        if rtype == "skill":
+            from core.resource_store import ResourceStore
+            existing_skill = ResourceStore.instance().get(
+                "skill", name, user_id,
+                conversation_id if scope == "conversation" else "")
         _write_resource(rtype, name, data, user_id, conversation_id, scope, replace)
+        if rtype == "skill" and existing_skill and conversation_id:
+            from core.skill_lifecycle import notify_skill_updated
+            notify_skill_updated(name, data, user_id, conversation_id)
         return {
             "kind": "resource",
             "object_id": obj_id,
@@ -2178,7 +2289,13 @@ def _uninstall_object(record: Dict[str, Any], user_id: str, conversation_id: str
             installed_from = current.get("installed_from") or {}
             if installed_from.get("hash") != record.get("hash"):
                 return False
-        return store.delete(rtype, name, user_id, conv)
+        deleted = store.delete(rtype, name, user_id, conv)
+        if deleted and rtype == "skill":
+            from core.skill_lifecycle import remove_skill_assignments
+            remove_skill_assignments(
+                name, user_id, conversation_id,
+                resource_store=store, source="skill_delete")
+        return deleted
     if kind == "service":
         from core.service_registry import ServiceRegistry, SCOPE_CONV, SCOPE_USER
         reg_scope = SCOPE_CONV if scope == "conversation" else SCOPE_USER

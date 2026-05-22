@@ -383,6 +383,18 @@ def removed_skill_context_message(skill_name: str) -> str:
     )
 
 
+def updated_skill_context_message(skill_name: str,
+                                  skill_def: Dict[str, Any]) -> str:
+    """Return the context delta sent when a skill changes."""
+    summary = _skill_summary(skill_def or {})
+    return (
+        f"Skill updated: {skill_name}\n"
+        f"Description: {summary}\n"
+        f"Use `load_skill(name=\"{skill_name}\")` again when the updated "
+        "skill instructions are relevant."
+    )
+
+
 def inject_available_skills_into_prompt(system_prompt: str, skill_entries: List,
                                         user_id: str,
                                         conversation_id: str = "") -> str:

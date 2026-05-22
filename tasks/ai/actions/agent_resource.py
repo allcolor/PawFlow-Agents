@@ -17,10 +17,6 @@ _FLOW_TEMPLATES_CACHE: Dict[str, Dict[str, Any]] = {}
 _FLOW_TEMPLATES_REFRESHING: set[str] = set()
 _FLOW_TEMPLATES_LOCK = threading.Lock()
 
-# Serializes read-modify-write of agent.assigned_skills across concurrent
-# assign/unassign/delete so a concurrent update cannot drop an entry.
-_ASSIGNED_SKILLS_LOCK = threading.Lock()
-
 # Cap on UI-supplied skill bundle uploads (sum of decoded asset bytes).
 _SKILL_PACKAGE_FILES_MAX_BYTES = 2_000_000
 
@@ -410,6 +406,13 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                     flowfile.set_attribute("http.response.status", "404")
                     return [flowfile]
                 rs.update("skill", skill_name, uid, data, **scope_kwargs)
+                if conv_id:
+                    from core.skill_lifecycle import notify_skill_updated
+                    updated_def = rs.get_any(
+                        "skill", skill_name, uid, conversation_id=conv_id) or data
+                    notify_skill_updated(
+                        skill_name, updated_def, uid, conv_id,
+                        resource_store=rs, conversation_store=store)
             else:
                 if exists:
                     flowfile.set_content(json.dumps({
@@ -457,7 +460,6 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         from core.resource_store import ResourceStore
-        from core.skill_resolver import normalize_skill_entry
         uid = user_id
         rs = ResourceStore.instance()
         skill_def = rs.get_any(
@@ -475,46 +477,10 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         deleted = rs.delete("skill", skill_name, delete_uid, **delete_kwargs)
         cleaned_agents = []
         if deleted:
-            for agent_def in rs.list_all("agent", uid, conversation_id=conv_id):
-                agent_scope = agent_def.get("_scope", "user")
-                agent_name = agent_def.get("name", "")
-                update_kwargs = {"conversation_id": conv_id} if agent_scope == "conversation" and conv_id else {}
-                update_uid = uid if agent_scope in ("conversation", "user") else "__global__"
-                # Re-read under the lock so a concurrent assign can't be lost.
-                with _ASSIGNED_SKILLS_LOCK:
-                    fresh = rs.get_any("agent", agent_name, uid,
-                                       conversation_id=conv_id) or agent_def
-                    kept = []
-                    changed = False
-                    for entry in list(fresh.get("assigned_skills", []) or []):
-                        name, _params, _condition = normalize_skill_entry(entry)
-                        if name == skill_name:
-                            changed = True
-                            continue
-                        kept.append(entry)
-                    if changed:
-                        rs.update("agent", agent_name, update_uid,
-                                  {"assigned_skills": kept}, **update_kwargs)
-                if not changed:
-                    continue
-                cleaned_agents.append(agent_name)
-                if conv_id:
-                    try:
-                        from core.llm_client import stamp_message
-                        from core.pending_queue import PendingQueue
-                        from core.skill_resolver import removed_skill_context_message
-                        msg = stamp_message({
-                            "role": "system",
-                            "content": removed_skill_context_message(skill_name),
-                            "source": {"type": "context", "name": "pawflow"},
-                        }, conv_id)
-                        store.append_message(conv_id, msg, agent_name=agent_name,
-                                             user_id=uid)
-                        PendingQueue.for_agent(conv_id, agent_name).enqueue(
-                            dict(msg), source="skill_delete")
-                    except Exception:
-                        logger.debug("skill delete context injection failed",
-                                     exc_info=True)
+            from core.skill_lifecycle import remove_skill_assignments
+            cleaned_agents = remove_skill_assignments(
+                skill_name, uid, conv_id, resource_store=rs,
+                conversation_store=store, source="skill_delete")
         flowfile.set_content(json.dumps({
             "deleted": deleted, "name": skill_name,
             "cleaned_agents": cleaned_agents,
@@ -554,7 +520,8 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             }).encode())
             return [flowfile]
         # Re-read under the lock so a concurrent assign/unassign can't drop an entry.
-        with _ASSIGNED_SKILLS_LOCK:
+        from core.skill_lifecycle import ASSIGNED_SKILLS_LOCK
+        with ASSIGNED_SKILLS_LOCK:
             fresh = rs.get_any("agent", _def_name, uid,
                                conversation_id=conv_id) or agent_def
             assigned = list(fresh.get("assigned_skills", []) or [])
@@ -615,7 +582,8 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": f"Agent '{agent_name}' not found"}).encode())
             return [flowfile]
         # Re-read under the lock so a concurrent assign/unassign can't drop an entry.
-        with _ASSIGNED_SKILLS_LOCK:
+        from core.skill_lifecycle import ASSIGNED_SKILLS_LOCK
+        with ASSIGNED_SKILLS_LOCK:
             fresh = rs.get_any("agent", _def_name, uid,
                                conversation_id=conv_id) or agent_def
             assigned = list(fresh.get("assigned_skills", []) or [])
@@ -1731,6 +1699,14 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                     data = attach_review_metadata(data, review_meta)
             scope_kwargs = {"conversation_id": body.get("conversation_id", "")} if scope == "conversation" else {}
             rs.update(rtype, rname, target_uid, data, **scope_kwargs)
+            if rtype == "skill" and body.get("conversation_id", ""):
+                from core.skill_lifecycle import notify_skill_updated
+                updated = rs.get_any(
+                    "skill", rname, uid,
+                    conversation_id=body.get("conversation_id", "")) or data
+                notify_skill_updated(
+                    rname, updated, uid, body.get("conversation_id", ""),
+                    resource_store=rs, conversation_store=store)
             flowfile.set_content(json.dumps({"ok": True}).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
@@ -1907,6 +1883,11 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         else:
             scope_kwargs = {"conversation_id": conv_id} if scope == "conversation" and conv_id else {}
             deleted = rs.delete(rtype, rname, target_uid, **scope_kwargs)
+            if deleted and rtype == "skill":
+                from core.skill_lifecycle import remove_skill_assignments
+                remove_skill_assignments(
+                    rname, uid, conv_id, resource_store=rs,
+                    conversation_store=store, source="skill_delete")
         flowfile.set_content(json.dumps({"ok": True, "deleted": deleted}).encode())
         return [flowfile]
 

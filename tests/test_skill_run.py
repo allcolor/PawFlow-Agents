@@ -265,6 +265,14 @@ def test_skill_add_rejects_existing_skill_and_update_requires_existing(monkeypat
         def get(self, rtype, name, user_id, **kwargs):
             return {"instructions": "old"} if self.exists else None
 
+        def get_any(self, rtype, name, user_id, conversation_id=""):
+            if rtype == "skill" and self.exists:
+                return {"name": name, "description": "Review PRs", "instructions": "new"}
+            return None
+
+        def list_all(self, rtype, user_id, conversation_id=""):
+            return []
+
         def create(self, *args, **kwargs):
             calls.append(("create", args, kwargs))
 
@@ -300,6 +308,63 @@ def test_skill_add_rejects_existing_skill_and_update_requires_existing(monkeypat
     body = json.loads(ff.get_content().decode("utf-8"))
     assert body["updated"] is True
     assert calls[0][0] == "update"
+
+
+def test_skill_update_notifies_assigned_agents(monkeypatch):
+    updated = []
+    appended = []
+    enqueued = []
+
+    class Task:
+        pass
+
+    class Store:
+        def append_message(self, conv_id, msg, agent_name="", user_id=""):
+            appended.append((conv_id, msg, agent_name, user_id))
+
+    class ResourceStore:
+        def get(self, rtype, name, user_id, **kwargs):
+            return {"instructions": "old"}
+
+        def get_any(self, rtype, name, user_id, conversation_id=""):
+            if rtype == "skill" and name == "review-pr":
+                return {"name": name, "description": "Review PRs", "instructions": "new"}
+            if rtype == "agent" and name == "assistant":
+                return {"name": name, "assigned_skills": ["review-pr"]}
+            return None
+
+        def list_all(self, rtype, user_id, conversation_id=""):
+            if rtype == "agent":
+                return [{"name": "assistant", "assigned_skills": ["review-pr"]}]
+            return []
+
+        def update(self, *args, **kwargs):
+            updated.append((args, kwargs))
+
+    class Queue:
+        def enqueue(self, msg, source=""):
+            enqueued.append((msg, source))
+
+    import core.review_bindings as review_bindings
+    from core.resource_store import ResourceStore as RealResourceStore
+    from core.pending_queue import PendingQueue
+
+    monkeypatch.setattr(review_bindings, "review_for_write", lambda *a, **k: {})
+    monkeypatch.setattr(RealResourceStore, "instance", staticmethod(lambda: ResourceStore()))
+    monkeypatch.setattr(PendingQueue, "for_agent", staticmethod(lambda cid, agent: Queue()))
+
+    ff = FlowFile(content=b"")
+    result = _handle_agent_resource(Task(), "update_skill", {
+        "conversation_id": "conv1", "name": "review-pr",
+        "instructions": "new",
+    }, Store(), "alice", ff)
+
+    assert result == [ff]
+    assert updated
+    assert len(appended) == 1
+    assert appended[0][2] == "assistant"
+    assert "Skill updated: review-pr" in appended[0][1]["content"]
+    assert [row[1] for row in enqueued] == ["skill_update"]
 
 
 def test_resource_store_skill_update_is_patch_not_replace(tmp_path, monkeypatch):

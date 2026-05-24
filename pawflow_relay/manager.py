@@ -97,6 +97,38 @@ def _remove_workspace_runtime_lock(relay_id: str, *, only_stale: bool = True) ->
         return False
 
 
+def _terminate_workspace_runtime_lock(relay_id: str) -> bool:
+    """Terminate the process recorded in a workspace runtime lock.
+
+    Desktop Stop is an explicit user stop, not a passive stale-lock cleanup.
+    The launcher process may outlive Electron's child handle when it runs via
+    wsl.exe, so cleanup must target the PID recorded by the relay manager.
+    """
+    path = _workspace_runtime_lock_path(relay_id)
+    data = _read_runtime_lock(path)
+    pid = int(data.get("pid") or 0)
+    if not pid or not _process_is_running(pid):
+        return False
+    kill_sig = getattr(signal, "SIGKILL", signal.SIGTERM)
+    for sig in (signal.SIGTERM, kill_sig):
+        try:
+            os.kill(pid, sig)
+        except ProcessLookupError:
+            return True
+        except PermissionError:
+            return False
+        except OSError:
+            return False
+        if sig == signal.SIGTERM:
+            import time
+            deadline = time.monotonic() + 3.0
+            while time.monotonic() < deadline:
+                if not _process_is_running(pid):
+                    return True
+                time.sleep(0.1)
+    return not _process_is_running(pid)
+
+
 @contextmanager
 def _workspace_runtime_lock(name: str, relay_id: str):
     path = _workspace_runtime_lock_path(relay_id)
@@ -342,12 +374,14 @@ def stop_workspace_runtime(name: str) -> Dict[str, Any]:
         except Exception:
             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
     from pawflow_relay.thread import cleanup_relay_containers
+    runtime_process_terminated = _terminate_workspace_runtime_lock(relay_id)
     containers_removed = cleanup_relay_containers(relay_id)
-    runtime_lock_removed = _remove_workspace_runtime_lock(relay_id, only_stale=True)
+    runtime_lock_removed = _remove_workspace_runtime_lock(relay_id, only_stale=False)
     return {
         "workspace": name,
         "relay_id": relay_id,
         "service_uninstalled": service_uninstalled,
+        "runtime_process_terminated": runtime_process_terminated,
         "containers_removed": containers_removed,
         "runtime_lock_removed": runtime_lock_removed,
     }

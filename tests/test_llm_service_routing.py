@@ -420,6 +420,25 @@ class TestClassifyMessagesSource(unittest.TestCase):
         self.assertEqual(classified[1]["timestamp"], 1234.5)
         self.assertEqual(classified[1]["msg_id"], "m1")
 
+    def test_thinking_row_persisted_after_parent_replays_before_parent(self):
+        from tasks.ai.agent_loop import AgentLoopTask
+        raw = [
+            {"role": "assistant", "content": "visible answer",
+             "msg_id": "m1", "ts": 1234.5,
+             "source": {"type": "agent", "name": "bot"}},
+            {"role": "thinking", "content": "pre-answer reasoning",
+             "msg_id": "t1", "parent_message_id": "m1", "ts": 1234.5,
+             "source": {"type": "agent", "name": "bot"}},
+            {"role": "user", "content": "next prompt", "msg_id": "u2", "ts": 1235.0},
+        ]
+
+        classified = AgentLoopTask._classify_messages_for_display(raw)
+
+        self.assertEqual([m["type"] for m in classified], ["thinking", "assistant", "user"])
+        self.assertEqual(classified[0]["msg_id"], "t1")
+        self.assertEqual(classified[0]["parent_message_id"], "m1")
+        self.assertEqual(classified[1]["msg_id"], "m1")
+
     def test_thinking_only_row_rehydrates_as_thinking_row(self):
         from tasks.ai.agent_loop import AgentLoopTask
         raw = [{

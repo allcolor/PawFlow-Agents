@@ -400,6 +400,8 @@ class AgentSerializationMixin:
                          "display_only": True}
                 if m.get("msg_id"):
                     entry["msg_id"] = m["msg_id"]
+                if m.get("parent_message_id"):
+                    entry["parent_message_id"] = m["parent_message_id"]
                 if m.get("source"):
                     entry["source"] = m["source"]
                 if m.get("tool_name"):
@@ -466,7 +468,47 @@ class AgentSerializationMixin:
             _src = _item.get("source")
             if isinstance(_src, dict) and _src.get("task_id") and "task_id" not in _item:
                 _item["task_id"] = _src["task_id"]
-        return result
+        return AgentSerializationMixin._replay_thinking_before_parent(result)
+
+
+    @staticmethod
+    def _replay_thinking_before_parent(
+        messages: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Match live SSE order for persisted reasoning rows.
+
+        Provider transcripts can persist the visible assistant row first and the
+        attached thinking row immediately after it, both with the same
+        timestamp. Live SSE renders the reasoning before the final assistant
+        message, so reload must use the explicit parent link rather than raw
+        JSONL order for those display-only rows.
+        """
+        parent_ids = {
+            str(m.get("msg_id") or "")
+            for m in messages
+            if m.get("msg_id")
+        }
+        thinking_by_parent: Dict[str, List[Dict[str, Any]]] = {}
+        anchored_thinking_ids = set()
+        for item in messages:
+            if item.get("type") != "thinking":
+                continue
+            parent_id = str(item.get("parent_message_id") or "")
+            if parent_id and parent_id in parent_ids:
+                thinking_by_parent.setdefault(parent_id, []).append(item)
+                anchored_thinking_ids.add(id(item))
+        if not thinking_by_parent:
+            return messages
+
+        replayed: List[Dict[str, Any]] = []
+        for item in messages:
+            if id(item) in anchored_thinking_ids:
+                continue
+            msg_id = str(item.get("msg_id") or "")
+            if msg_id in thinking_by_parent:
+                replayed.extend(thinking_by_parent.pop(msg_id))
+            replayed.append(item)
+        return replayed
 
 
     @staticmethod

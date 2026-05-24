@@ -626,6 +626,8 @@ class RelayThread:
                                 except Exception:
                                     logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                                 if "HTTP/1.1 400 Bad Request" in msg:
+                                    if self._stop_event.is_set():
+                                        continue
                                     self._log(
                                         "[Relay] Relay handshake got 400; "
                                         "re-registering service without stopping Docker relay")
@@ -653,6 +655,8 @@ class RelayThread:
                         break
                     if _service_reregister_requested.is_set():
                         _service_reregister_requested.clear()
+                        if self._stop_event.is_set():
+                            break
                         try:
                             self._reregister_service()
                             _consecutive_fails = 0
@@ -669,6 +673,8 @@ class RelayThread:
                                 f"[Relay] Health: relay not connected "
                                 f"({_consecutive_fails} consecutive)")
                             if _consecutive_fails >= 3:
+                                if self._stop_event.is_set():
+                                    break
                                 self._log(
                                     "[Relay] Relay health still false; "
                                     "re-registering service without stopping Docker relay")

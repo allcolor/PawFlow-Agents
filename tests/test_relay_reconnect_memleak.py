@@ -136,6 +136,38 @@ async def test_relay_main_loop_keeps_session_after_dispatch_error(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_relay_main_loop_labels_result_with_pending_action(monkeypatch):
+    import services.filesystem_service as fs_mod
+
+    svc = RelayService({"_service_id": "fs1", "token": "tok"})
+    evt = asyncio.Event()
+    holder = {"_action": "grep"}
+    svc._pending["rid"] = (evt, holder)
+    frames = iter([
+        (0x01, json.dumps({"type": "result", "request_id": "rid"}).encode()),
+        (0x08, b""),
+    ])
+    conn_state = {
+        "last_msg_type": "",
+        "last_request_id": "",
+        "last_action": "",
+        "close_info": "",
+    }
+
+    async def _fake_recv(_reader):
+        return next(frames)
+
+    monkeypatch.setattr(fs_mod, "_ws_recv_frame", _fake_recv)
+
+    await svc._relay_main_loop(
+        object(), _Writer(), svc, asyncio.Lock(), set(), conn_state)
+
+    assert conn_state["last_msg_type"] == "result"
+    assert conn_state["last_request_id"] == "rid"
+    assert conn_state["last_action"] == "grep"
+
+
+@pytest.mark.asyncio
 async def test_relay_request_handler_returns_eio_on_fs_exception(monkeypatch):
     import services.filesystem_service as fs_mod
 

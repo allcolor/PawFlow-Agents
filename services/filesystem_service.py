@@ -604,8 +604,10 @@ class RelayService(BaseService):
                 continue
             conn_state['last_msg_type'] = str(msg.get('type') or '')
             conn_state['last_request_id'] = str(msg.get('request_id') or '')[:12]
-            conn_state['last_action'] = str(
-                msg.get('action') or msg.get('method') or msg.get('tool') or '')[:80]
+            _action = msg.get('action') or msg.get('method') or msg.get('tool') or ''
+            if not _action and msg.get('type') in ('result', 'error'):
+                _action = service._pending_action(conn_state['last_request_id'])
+            conn_state['last_action'] = str(_action)[:80]
             try:
                 await self._dispatch_relay_msg(
                     msg, writer, service, send_lock, relay_tasks)
@@ -904,6 +906,13 @@ class RelayService(BaseService):
                 holder["data"] = msg.get("data", {})
             evt.set()
 
+    def _pending_action(self, request_id: str) -> str:
+        with self._pending_lock:
+            entry = self._pending.get(request_id)
+        if not entry:
+            return ""
+        return str(entry[1].get("_action") or "")
+
     def cancel_pending(self, request_id: str):
         """Cancel a pending request — unblock the waiting thread AND tell
         the relay to kill the underlying subprocess.
@@ -1076,6 +1085,7 @@ class RelayService(BaseService):
         request_id = uuid.uuid4().hex[:12]
         evt = threading.Event()
         holder: Dict[str, Any] = {}
+        holder["_action"] = action
 
         with self._pending_lock:
             self._pending[request_id] = (evt, holder)
@@ -1134,6 +1144,7 @@ class RelayService(BaseService):
         request_id = uuid.uuid4().hex[:12]
         evt = threading.Event()
         holder: Dict[str, Any] = {}
+        holder["_action"] = action
         if on_progress:
             holder["_on_progress"] = on_progress
 
@@ -1192,6 +1203,7 @@ class RelayService(BaseService):
         request_id = uuid.uuid4().hex[:12]
         evt = threading.Event()
         holder: Dict[str, Any] = {}
+        holder["_action"] = action
         if on_output:
             holder["_on_output"] = on_output
 

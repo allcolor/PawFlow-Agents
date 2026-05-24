@@ -1692,6 +1692,19 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             import threading as _threading
             from concurrent.futures import ThreadPoolExecutor
             _pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="relay-cmd")
+            _socket_diag = {
+                "local_close": "",
+                "last_send": "",
+                "last_send_error": "",
+            }
+
+            def _diag_summary():
+                parts = []
+                for key in ("local_close", "last_send", "last_send_error"):
+                    value = _socket_diag.get(key) or ""
+                    if value:
+                        parts.append(f"{key}={value}")
+                return ";".join(parts) or "none"
 
             # Watchdog: force-close socket if no activity for _DEAD_TIMEOUT
             _watchdog_stop = _threading.Event()
@@ -1702,6 +1715,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                         break
                     idle = time.time() - _last_activity[0]
                     if idle > _DEAD_TIMEOUT:
+                        _socket_diag["local_close"] = f"watchdog idle={idle:.0f}s"
                         sys.stderr.write(f"[FSRelay] Watchdog: no activity for {idle:.0f}s, forcing reconnect\n")
                         try:
                             sock.close()
@@ -1873,6 +1887,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                         _last_activity[0] = time.time()  # successful send = connection alive
                     except Exception as _ping_err:
                         _disconnect_reason = f"ping send failed: {_ping_err}"
+                        _socket_diag["last_send_error"] = f"ping:{_ping_err}"
                         break  # send failed → connection dead
                     continue
 
@@ -2069,6 +2084,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                         }
                     # Execute in thread pool for parallel command handling
                     def _run_cmd(_msg, _rid, _sock, _send_fn):
+                        _action = _msg.get("action", "?")
                         # Streaming callback for exec_stream
                         _on_output = None
                         if _msg.get("action") == "exec_stream":
@@ -2096,7 +2112,15 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                             }).encode("utf-8")
                         try:
                             with _send_lock:
+                                _socket_diag["last_send"] = f"result:{_action}:{_rid[:8]}"
                                 _send_fn(_sock, _resp)
+                                _socket_diag["last_send_error"] = ""
+                        except Exception as _send_err:
+                            _socket_diag["last_send_error"] = (
+                                f"result:{_action}:{_rid[:8]}:{_send_err}")
+                            sys.stderr.write(
+                                f"[FSRelay] result send failed: action={_action} "
+                                f"rid={_rid[:8]} err={_send_err}\n")
                         finally:
                             with _inflight_lock:
                                 _inflight_cmds.pop(_rid, None)
@@ -2114,6 +2138,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 except Exception as _se:
                     sys.stderr.write(f"[FSRelay] combined-fs stop: {_se}\n")
             try:
+                _socket_diag["local_close"] = "keyboard_interrupt"
                 sock.close()
             except Exception:
                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
@@ -2129,7 +2154,8 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 f"[FSRelay] Connection error: {type(e).__name__}: {e} "
                 f"(last_activity={_idle:.1f}s "
                 f"reason={locals().get('_disconnect_reason', 'exception')} "
-                f"inflight={locals().get('_active_cmd_summary', lambda: 'unknown')()})\n")
+                f"inflight={locals().get('_active_cmd_summary', lambda: 'unknown')()} "
+                f"diag={locals().get('_diag_summary', lambda: 'unknown')()})\n")
         finally:
             # Guard: on early connect errors, _close_all_terminals may not
             # be defined yet (its definition sits past the handshake).

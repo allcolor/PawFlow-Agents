@@ -142,6 +142,38 @@ def test_relay_manager_stop_workspace_runtime_uninstalls_and_cleans_docker(monke
     assert calls[1] == ("cleanup", share["relay_id"])
 
 
+def test_relay_manager_stop_workspace_runtime_forces_live_runtime_lock(monkeypatch, tmp_path):
+    monkeypatch.setenv("PAWFLOW_RELAY_HOME", str(tmp_path / "relay-home"))
+    workspace = tmp_path / "repo"
+    workspace.mkdir()
+    manager.add_server("prod", "https://pawflow.example", gateway_key="k")
+    manager.update_server_auth(
+        "prod", gateway_cookie="gw", session_token="session", username="quentin")
+    share = manager.add_workspace("repo", "prod", str(workspace))
+    lock_path = manager._workspace_runtime_lock_path(share["relay_id"])
+    lock_path.parent.mkdir(parents=True)
+    lock_path.write_text(json.dumps({"pid": 424242}), encoding="utf-8")
+    probes = {"count": 0}
+    killed = []
+
+    def fake_process_is_running(pid):
+        assert pid == 424242
+        probes["count"] += 1
+        return probes["count"] == 1
+
+    monkeypatch.setattr(manager, "_process_is_running", fake_process_is_running)
+    monkeypatch.setattr(manager.os, "kill", lambda pid, sig: killed.append((pid, sig)))
+    monkeypatch.setattr(manager, "api_call", lambda *args, **kwargs: {"ok": True})
+    monkeypatch.setattr("pawflow_relay.thread.cleanup_relay_containers", lambda relay_id: 0)
+
+    result = manager.stop_workspace_runtime("repo")
+
+    assert result["runtime_process_terminated"] is True
+    assert result["runtime_lock_removed"] is True
+    assert killed == [(424242, manager.signal.SIGTERM)]
+    assert not lock_path.exists()
+
+
 def test_host_helper_relative_paths_remain_workspace_scoped(tmp_path):
     root = tmp_path / "repo"
     root.mkdir()
@@ -207,11 +239,13 @@ def test_relay_docker_loop_reregisters_service_without_killing_container():
     assert 'if "HTTP/1.1 400 Bad Request" in msg:' in source
     bad_request_branch = source.split('if "HTTP/1.1 400 Bad Request" in msg:', 1)[1]
     bad_request_branch = bad_request_branch.split("except Exception:", 1)[0]
+    assert "if self._stop_event.is_set():" in bad_request_branch
     assert "_service_reregister_requested.set()" in bad_request_branch
     assert "_full_reconnect_requested.set()" not in bad_request_branch
 
     health_branch = source.split("if _consecutive_fails >= 3:", 1)[1]
     health_branch = health_branch.split("\n\n                if self._stop_event.is_set():", 1)[0]
+    assert "if self._stop_event.is_set():" in health_branch
     assert "self._reregister_service()" in health_branch
     assert "self._docker_proc.kill()" not in health_branch
     assert "_full_reconnect_requested.set()" not in health_branch

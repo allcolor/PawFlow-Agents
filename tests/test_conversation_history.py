@@ -276,6 +276,43 @@ class TestAgentLoopActions(unittest.TestCase):
             "conversation_store": True,
         })
 
+    def _execute_async_action(self, body, user_id="alice@test.com", timeout=3.0):
+        from core.conversation_event_bus import ConversationEventBus
+
+        body = dict(body)
+        reply_conv = body.get("_reply_conversation_id") or f"__test__:{time.time_ns()}"
+        call_id = body.get("_call_id") or f"call-{time.time_ns()}"
+        body["_reply_conversation_id"] = reply_conv
+        body["_call_id"] = call_id
+        writer = ConversationEventBus.instance().subscribe(reply_conv)
+        try:
+            task = self._make_task()
+            ff = FlowFile(content=json.dumps(body).encode())
+            ff.set_attribute("http.auth.principal", user_id)
+            results = task.execute(ff)
+            ack = json.loads(results[0].get_content().decode())
+            assert ack["status"] == "accepted"
+            assert ack["_callId"] == call_id
+
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                try:
+                    item = writer._queue.get(timeout=0.1)
+                except Exception:
+                    continue
+                if not hasattr(item, "event") or item.event != "command_result":
+                    continue
+                data = item.data
+                if isinstance(data, str):
+                    data = json.loads(data)
+                if data.get("_callId") != call_id:
+                    continue
+                assert "error" not in data, data.get("error")
+                return ack, json.loads(data["result"])
+            raise AssertionError("No command_result event received")
+        finally:
+            ConversationEventBus.instance().unsubscribe(reply_conv, writer)
+
     def test_list_conversations_action(self):
         store = ConversationStore.instance()
         store.save("c1", [{"role": "user", "content": "hi"}],
@@ -308,7 +345,7 @@ class TestAgentLoopActions(unittest.TestCase):
         assert body["conversations"][0]["conversation_id"] == "c1"
 
     def test_load_history_action(self):
-        """load_history is a read-only sync action — verify payload in HTTP response."""
+        """load_history is a read-only async action — verify command_result payload."""
         from core.conv_agent_config import add_agent_to_conv
         store = ConversationStore.instance()
         store.save("c1", [
@@ -319,15 +356,10 @@ class TestAgentLoopActions(unittest.TestCase):
         add_agent_to_conv("c1", "assistant", llm_service="default",
                           definition="assistant")
 
-        task = self._make_task()
-        ff = FlowFile(content=json.dumps({
+        _ack, body = self._execute_async_action({
             "action": "load_history",
             "conversation_id": "c1",
-        }).encode())
-        ff.set_attribute("http.auth.principal", "alice@test.com")
-        results = task.execute(ff)
-
-        body = json.loads(results[0].get_content().decode())
+        })
         assert body["conversation_id"] == "c1"
         assert "messages" in body
         assert body["message_count"] == 3
@@ -346,15 +378,10 @@ class TestAgentLoopActions(unittest.TestCase):
             raise AssertionError("load_history must not prewarm append targets")
 
         store.prewarm_append_targets = _unexpected
-        task = self._make_task()
-        ff = FlowFile(content=json.dumps({
+        _ack, body = self._execute_async_action({
             "action": "load_history",
             "conversation_id": "c1",
-        }).encode())
-        ff.set_attribute("http.auth.principal", "alice@test.com")
-
-        results = task.execute(ff)
-        body = json.loads(results[0].get_content().decode())
+        })
         assert body["conversation_id"] == "c1"
 
     def test_load_history_resolves_technical_grouping_expression(self):
@@ -376,32 +403,24 @@ class TestAgentLoopActions(unittest.TestCase):
         add_agent_to_conv("c1", "assistant", llm_service="default",
                           definition="assistant")
 
-        task = self._make_task()
-        ff = FlowFile(content=json.dumps({
+        _ack, body = self._execute_async_action({
             "action": "load_history",
             "conversation_id": "c1",
-        }).encode())
-        ff.set_attribute("http.auth.principal", "alice@test.com")
-        results = task.execute(ff)
-
-        body = json.loads(results[0].get_content().decode())
+        })
         assert body["group_technical_messages"] is True
 
     def test_load_history_wrong_user(self):
-        """load_history runs sync — wrong user gets 404."""
+        """load_history runs async with a conversation scope — wrong user gets not found."""
         store = ConversationStore.instance()
         store.save("c1", [{"role": "user", "content": "hi"}],
                    ttl=60, user_id="alice@test.com")
 
-        task = self._make_task()
-        ff = FlowFile(content=json.dumps({
+        _ack, body = self._execute_async_action({
             "action": "load_history",
             "conversation_id": "c1",
-        }).encode())
-        ff.set_attribute("http.auth.principal", "bob@test.com")
-        results = task.execute(ff)
+        }, user_id="bob@test.com")
 
-        assert results[0].get_attribute("http.response.status") == "404"
+        assert body["error"] == "Conversation not found"
 
     def test_load_history_missing_conv_id(self):
         task = self._make_task()

@@ -2,11 +2,14 @@
 
 Routes action requests to sub-modules in tasks/ai/actions/.
 """
+import atexit
 import json
 import logging
 import os
 import threading
 import time
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, Any, List, Optional
 
 from core import FlowFile
@@ -37,8 +40,51 @@ from tasks.ai.actions.pfp_ui import _handle_pfp_ui
 logger = logging.getLogger(__name__)
 
 _MAX_BG_ACTIONS = int(os.getenv("PAWFLOW_MAX_BG_ACTIONS", "32") or "32")
-_BG_ACTION_SEMAPHORE = threading.BoundedSemaphore(max(1, _MAX_BG_ACTIONS))
+_BG_ACTION_EXECUTOR = ThreadPoolExecutor(
+    max_workers=max(1, _MAX_BG_ACTIONS),
+    thread_name_prefix="cmd-action",
+)
+atexit.register(_BG_ACTION_EXECUTOR.shutdown, wait=False, cancel_futures=True)
+_BG_ACTION_SUBMIT_DELAY = float(os.getenv("PAWFLOW_BG_ACTION_SUBMIT_DELAY", "1.0") or "1.0")
+_BG_ACTION_QUEUE = deque()
+_BG_ACTION_QUEUE_COND = threading.Condition()
+_BG_ACTION_SCHEDULER_STARTED = False
+_BG_ACTION_LAST_ENQUEUE = 0.0
 
+
+def _ensure_bg_action_scheduler() -> None:
+    global _BG_ACTION_SCHEDULER_STARTED
+    with _BG_ACTION_QUEUE_COND:
+        if _BG_ACTION_SCHEDULER_STARTED:
+            return
+        _BG_ACTION_SCHEDULER_STARTED = True
+
+    def _loop() -> None:
+        while True:
+            with _BG_ACTION_QUEUE_COND:
+                while not _BG_ACTION_QUEUE:
+                    _BG_ACTION_QUEUE_COND.wait()
+                deadline = _BG_ACTION_LAST_ENQUEUE + _BG_ACTION_SUBMIT_DELAY
+                wait_for = deadline - time.monotonic()
+                if wait_for > 0:
+                    _BG_ACTION_QUEUE_COND.wait(wait_for)
+                    continue
+                fn = _BG_ACTION_QUEUE.popleft()
+            try:
+                _BG_ACTION_EXECUTOR.submit(fn)
+            except RuntimeError:
+                logger.debug("action background executor unavailable", exc_info=True)
+
+    threading.Thread(target=_loop, daemon=True, name="cmd-action-scheduler").start()
+
+
+def _schedule_bg_action(fn) -> None:
+    global _BG_ACTION_LAST_ENQUEUE
+    _ensure_bg_action_scheduler()
+    with _BG_ACTION_QUEUE_COND:
+        _BG_ACTION_LAST_ENQUEUE = time.monotonic()
+        _BG_ACTION_QUEUE.append(fn)
+        _BG_ACTION_QUEUE_COND.notify()
 
 _ACTION_HANDLERS = [
     # PFP UI extension handlers run first: any body carrying `_ext` is
@@ -127,13 +173,6 @@ class AgentActionsMixin:
         conversation_id = body.get("conversation_id", "")
         reply_conversation_id = body.get("_reply_conversation_id", "") or reply_conversation_id or conversation_id
         call_id = body.get("_call_id", "") or call_id
-
-        if action == "load_history":
-            for handler in _ACTION_HANDLERS:
-                result = handler(self, action, body, store, user_id, flowfile)
-                if result is not None:
-                    return result
-            return None
 
         # No reply bus available → run synchronously and return the payload
         # in the HTTP response. System clients (relay, CLI, registration
@@ -228,17 +267,6 @@ class AgentActionsMixin:
             except Exception:
                 logger.debug("failed to publish action error", exc_info=True)
 
-        if not _BG_ACTION_SEMAPHORE.acquire(blocking=False):
-            logger.warning("[bg-cmd] dropping %s: too many background actions", action)
-            _publish_error("Too many UI actions are already running")
-            from tasks.ai.agent_streaming import SERVER_START_TIME
-            flowfile.set_content(json.dumps({
-                "status": "accepted", "action": action,
-                "_callId": call_id,
-                "server_start_time": SERVER_START_TIME,
-            }).encode())
-            return [flowfile]
-
         def _bg():
             try:
                 for handler in _ACTION_HANDLERS:
@@ -264,17 +292,17 @@ class AgentActionsMixin:
             except Exception as e:
                 logger.error("[bg-cmd] %s failed: %s", action, e, exc_info=True)
                 _publish_error(str(e))
-            finally:
-                _BG_ACTION_SEMAPHORE.release()
 
-        threading.Thread(target=_bg, daemon=True,
-                         name=f"cmd-{action}-{(conversation_id or reply_conversation_id)[:8]}").start()
         from tasks.ai.agent_streaming import SERVER_START_TIME
         flowfile.set_content(json.dumps({
             "status": "accepted", "action": action,
             "_callId": call_id,
             "server_start_time": SERVER_START_TIME,
         }).encode())
+        # Defer submitting the real handler until after the HTTP ACK has had a
+        # chance to leave the request thread. A single scheduler drains bursty
+        # UI refreshes without creating a timer thread for each request.
+        _schedule_bg_action(_bg)
         return [flowfile]
 
 
@@ -361,7 +389,8 @@ class AgentActionsMixin:
         # /conv info (default)
         active = ids.get_active_conv(resolved_user, "telegram")
         if active:
-            count = store.message_count(active)
+            count = int(store.get_extra_snapshot(
+                active, "_meta_msg_count", 0) or 0)
             flowfile.set_content(
                 f"Active conversation: {active[:12]} ({count} msgs)\n"
                 f"User: {resolved_user}".encode("utf-8")

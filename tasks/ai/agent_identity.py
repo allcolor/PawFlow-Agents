@@ -143,6 +143,7 @@ class AgentIdentityMixin:
         """Build a 'done' event dict for SSE publishing."""
         from core.conversation_store import ConversationStore
         duration_ms = (time.time() - start_time) * 1000
+        store = ConversationStore.instance()
         event = {
             "response": response_content,
             "conversation_id": conversation_id,
@@ -155,7 +156,8 @@ class AgentIdentityMixin:
             "tools_called": tools_called,
             "iterations": iteration,
             "duration_ms": round(duration_ms, 1),
-            "message_count": ConversationStore.instance().message_count(conversation_id),
+            "message_count": int(store.get_extra_snapshot(
+                conversation_id, "_meta_msg_count", 0) or 0),
             "source": source or {},
         }
         if continuing:

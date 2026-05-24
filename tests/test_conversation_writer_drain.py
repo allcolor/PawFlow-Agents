@@ -160,6 +160,37 @@ def test_writer_batches_non_sse_runs(monkeypatch):
     assert store.single == []
 
 
+def test_writer_prewarms_append_targets_before_batched_write(monkeypatch):
+    events = []
+
+    class _BatchStore:
+        def prewarm_append_targets(self, cid, agent_name=""):
+            events.append(("prewarm", cid, agent_name))
+
+        def append_messages(self, cid, items):
+            events.append(("append_messages", cid,
+                           [item["msg"]["content"] for item in items]))
+
+        def append_message(self, cid, msg, agent_name="", user_id="", ttl=0):
+            events.append(("append_message", cid, msg["content"]))
+
+    store = _BatchStore()
+    from core import conversation_store as _cs
+    monkeypatch.setattr(_cs.ConversationStore, "instance",
+                        classmethod(lambda _c: store))
+
+    cid = "conv-batch-prewarm"
+    w = ConversationWriter.for_conversation(cid)
+    w.enqueue_message(_msg(content="a"), agent_name="assistant")
+    w.enqueue_message(_msg(content="b"), agent_name="assistant")
+
+    assert ConversationWriter.shutdown_all(wait_timeout=5.0)
+    assert events == [
+        ("prewarm", cid, "assistant"),
+        ("append_messages", cid, ["a", "b"]),
+    ]
+
+
 def test_writer_does_not_batch_sse_items(monkeypatch):
     class _BatchStore:
         def __init__(self):

@@ -1,4 +1,6 @@
 import inspect
+import json
+import os
 from pathlib import Path
 
 import pytest
@@ -109,6 +111,9 @@ def test_relay_manager_stop_workspace_runtime_uninstalls_and_cleans_docker(monke
     manager.update_server_auth(
         "prod", gateway_cookie="gw", session_token="session", username="quentin")
     share = manager.add_workspace("repo", "prod", str(workspace))
+    lock_path = manager._workspace_runtime_lock_path(share["relay_id"])
+    lock_path.parent.mkdir(parents=True)
+    lock_path.write_text(json.dumps({"pid": 99999999}), encoding="utf-8")
     calls = []
 
     def fake_api_call(server_url, method, path, body=None, **kwargs):
@@ -126,6 +131,8 @@ def test_relay_manager_stop_workspace_runtime_uninstalls_and_cleans_docker(monke
     assert result["relay_id"] == share["relay_id"]
     assert result["service_uninstalled"] is True
     assert result["containers_removed"] == 2
+    assert result["runtime_lock_removed"] is True
+    assert not lock_path.exists()
     assert calls[0][0:4] == (
         "https://pawflow.example", "POST", "/api/ui",
         {"action": "service_uninstall", "service_id": share["relay_id"]},
@@ -230,6 +237,53 @@ def test_relay_manager_start_requires_logged_in_server(monkeypatch, tmp_path):
         assert "server login prod" in str(exc)
     else:
         raise AssertionError("start_workspace should require a logged-in server")
+
+
+def test_relay_manager_start_rejects_duplicate_live_runtime(monkeypatch, tmp_path):
+    monkeypatch.setenv("PAWFLOW_RELAY_HOME", str(tmp_path / "relay-home"))
+    workspace = tmp_path / "repo"
+    workspace.mkdir()
+    manager.add_server("prod", "https://pawflow.example")
+    manager.update_server_auth(
+        "prod", gateway_cookie="gw", session_token="session", username="quentin")
+    share = manager.add_workspace("repo", "prod", str(workspace))
+    lock_path = manager._workspace_runtime_lock_path(share["relay_id"])
+    lock_path.parent.mkdir(parents=True)
+    lock_path.write_text(json.dumps({"pid": os.getpid()}), encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="already running"):
+        manager.start_workspace("repo")
+
+
+def test_relay_manager_start_cleans_runtime_lock_after_exit(monkeypatch, tmp_path):
+    monkeypatch.setenv("PAWFLOW_RELAY_HOME", str(tmp_path / "relay-home"))
+    workspace = tmp_path / "repo"
+    workspace.mkdir()
+    manager.add_server("prod", "https://pawflow.example")
+    manager.update_server_auth(
+        "prod", gateway_cookie="gw", session_token="session", username="quentin")
+    share = manager.add_workspace("repo", "prod", str(workspace))
+    events = []
+
+    class FakeRelay:
+        def __init__(self, *args, **kwargs):
+            self.relay_id = kwargs["relay_id"]
+
+        def start(self):
+            events.append("start")
+
+        def wait(self):
+            events.append("wait")
+
+        def stop(self):
+            events.append("stop")
+
+    monkeypatch.setattr("pawflow_relay.thread.RelayThread", FakeRelay)
+
+    manager.start_workspace("repo")
+
+    assert events == ["start", "wait", "stop"]
+    assert not manager._workspace_runtime_lock_path(share["relay_id"]).exists()
 
 
 def test_relay_manager_delete_server_cascades_workspaces(monkeypatch, tmp_path):

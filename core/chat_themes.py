@@ -156,14 +156,25 @@ def _css_from_theme_dir(theme_dir: Path) -> str:
     return "\n\n".join(css_parts)
 
 
-def _read_theme(theme_dir: Path, scope: str) -> Optional[Dict[str, Any]]:
+def _css_length_from_theme_dir(theme_dir: Path) -> int:
+    total = 0
+    for path in theme_dir.rglob("*.css"):
+        if path.is_file():
+            try:
+                total += path.stat().st_size
+            except OSError:
+                pass
+    return total
+
+
+def _read_theme(theme_dir: Path, scope: str, *, include_css: bool = True) -> Optional[Dict[str, Any]]:
     if not theme_dir.is_dir():
         return None
     if not (theme_dir / THEME_META).is_file():
         return None
     meta = _read_json(theme_dir / THEME_META)
     name = meta.get("name") or theme_dir.name
-    css = _css_from_theme_dir(theme_dir)
+    css = _css_from_theme_dir(theme_dir) if include_css else ""
     out = dict(meta)
     out.update({
         "name": name,
@@ -173,36 +184,39 @@ def _read_theme(theme_dir: Path, scope: str) -> Optional[Dict[str, Any]]:
         "ref": _ref(_public_scope(scope), name),
         "builtin": False,
         "css": css,
-        "css_length": len(css),
+        "css_length": len(css) if include_css else _css_length_from_theme_dir(theme_dir),
     })
     return out
 
 
-def _list_scope(scope: str, user_id: str = "", conversation_id: str = "") -> List[Dict[str, Any]]:
+def _list_scope(scope: str, user_id: str = "", conversation_id: str = "", *,
+                include_css: bool = True) -> List[Dict[str, Any]]:
     directory = _scope_dir(scope, user_id, conversation_id)
     if not directory.exists():
         return []
     items = []
     for theme_path in sorted(p for p in directory.iterdir() if p.is_dir()):
-        item = _read_theme(theme_path, _repo_scope(scope))
+        item = _read_theme(theme_path, _repo_scope(scope), include_css=include_css)
         if item:
             item["_scope"] = item["scope"]
             items.append(item)
     return items
 
 
-def list_themes(user_id: str, conversation_id: str = "") -> List[Dict[str, Any]]:
+def list_themes(user_id: str, conversation_id: str = "", *,
+                include_css: bool = True) -> List[Dict[str, Any]]:
     if user_id == "__global__":
-        themes = _list_scope("global")
+        themes = _list_scope("global", include_css=include_css)
     else:
-        themes = _list_scope("user", user_id)
+        themes = _list_scope("user", user_id, include_css=include_css)
         seen = {t.get("name") for t in themes}
-        for item in _list_scope("global"):
+        for item in _list_scope("global", include_css=include_css):
             if item.get("name") not in seen:
                 themes.append(item)
                 seen.add(item.get("name"))
         if conversation_id:
-            for item in _list_scope("conversation", user_id, conversation_id):
+            for item in _list_scope("conversation", user_id, conversation_id,
+                                    include_css=include_css):
                 if item.get("name") not in seen:
                     themes.append(item)
                     seen.add(item.get("name"))

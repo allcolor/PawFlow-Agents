@@ -3,6 +3,7 @@
 from __future__ import annotations
 import logging
 
+import threading
 import time
 from typing import Any, Dict, Optional, Tuple
 
@@ -14,6 +15,8 @@ from typing import Any, Dict, Optional, Tuple
 # adds them as a flat offset. Applied only to claude-code providers.
 _CLI_INVISIBLE_OVERHEAD_TOKENS = 30000
 _CLI_CLAUDE_PROVIDERS = ("claude-code", "claude-code-interactive")
+_USAGE_CACHE_LOCK = threading.RLock()
+_USAGE_CACHE: Dict[Tuple[str, str], Dict[str, Any]] = {}
 
 
 def _agent_key(agent_name: str) -> str:
@@ -208,6 +211,31 @@ def compute_context_usage(conversation_id: str, agent_name: str, *,
 
     raw_messages, cache, _already_deserialized = _context_messages(
         conversation_id, agent_name, user_id, store, active_ctx)
+    if cache is None and active_ctx is None:
+        with _USAGE_CACHE_LOCK:
+            cached_usage = _USAGE_CACHE.get((conversation_id, agent_name))
+            if isinstance(cached_usage, dict):
+                cache = dict(cached_usage)
+        try:
+            if cache is None:
+                usage_map = store.get_extra_snapshot(conversation_id, "context_usage", {})
+                if not isinstance(usage_map, dict):
+                    usage_map = {}
+                if not usage_map and hasattr(store, "_read_extras"):
+                    raw_extras = store._read_extras(conversation_id) or {}
+                    raw_usage = raw_extras.get("context_usage")
+                    usage_map = raw_usage if isinstance(raw_usage, dict) else {}
+                    if usage_map:
+                        with _USAGE_CACHE_LOCK:
+                            for aname, entry in usage_map.items():
+                                if isinstance(entry, dict):
+                                    _USAGE_CACHE[(conversation_id, str(aname))] = dict(entry)
+                cached_usage = usage_map.get(agent_name)
+                if isinstance(cached_usage, dict):
+                    cache = cached_usage
+        except Exception:
+            logging.getLogger(__name__).debug(
+                "context usage snapshot lookup failed", exc_info=True)
     messages = raw_messages or []
     cfg_for_count = dict(svc_cfg)
     if configured > 0:
@@ -240,10 +268,29 @@ def persist_context_usage(conversation_id: str, agent_name: str,
     if store is None:
         from core.conversation_store import ConversationStore
         store = ConversationStore.instance()
-    usage_map = store.get_extra(conversation_id, "context_usage") or {}
-    usage_map = dict(usage_map)
-    usage_map[agent_name] = dict(usage)
-    store.set_extra(conversation_id, "context_usage", usage_map)
+    with _USAGE_CACHE_LOCK:
+        usage_map = {
+            aname: dict(entry)
+            for (cid, aname), entry in _USAGE_CACHE.items()
+            if cid == conversation_id and isinstance(entry, dict)
+        }
+        if not usage_map:
+            try:
+                snap = store.get_extra_snapshot(
+                    conversation_id, "context_usage", {})
+                if isinstance(snap, dict):
+                    usage_map.update({
+                        str(aname): dict(entry)
+                        for aname, entry in snap.items()
+                        if isinstance(entry, dict)
+                    })
+            except Exception:
+                logging.getLogger(__name__).debug(
+                    "context usage snapshot merge failed", exc_info=True)
+        usage_map[agent_name] = dict(usage)
+        _USAGE_CACHE[(conversation_id, agent_name)] = dict(usage)
+    if hasattr(store, "set_extra"):
+        store.set_extra(conversation_id, "context_usage", usage_map)
 
 
 def usage_event_payload(usage: Dict[str, Any]) -> Dict[str, Any]:

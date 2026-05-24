@@ -25,6 +25,8 @@ class IdentityService:
 
     _instance: Optional["IdentityService"] = None
     _lock = threading.Lock()
+    _mapping_cache: Dict[str, dict] = {}
+    _mapping_cache_lock = threading.Lock()
 
     def __init__(self):
         self._store_lock = threading.Lock()
@@ -41,6 +43,8 @@ class IdentityService:
     def reset(cls):
         with cls._lock:
             cls._instance = None
+        with cls._mapping_cache_lock:
+            cls._mapping_cache.clear()
 
     # ── Paths ─────────────────────────────────────────────────────
 
@@ -55,12 +59,26 @@ class IdentityService:
 
     @classmethod
     def _read_mapping(cls, identity: str) -> dict:
+        safe_id = cls._safe_id(identity)
+        with cls._mapping_cache_lock:
+            cached = cls._mapping_cache.get(safe_id)
+            if cached is not None:
+                return dict(cached)
         path = _paths.USER_CONFIG_DIR / cls._safe_id(identity) / "identity_mapping.json"
         if not path.exists():
+            with cls._mapping_cache_lock:
+                cls._mapping_cache[safe_id] = {}
             return {}
         try:
-            return json.loads(path.read_text(encoding="utf-8"))
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                data = {}
+            with cls._mapping_cache_lock:
+                cls._mapping_cache[safe_id] = dict(data)
+            return data
         except Exception:
+            with cls._mapping_cache_lock:
+                cls._mapping_cache[safe_id] = {}
             return {}
 
     @classmethod
@@ -71,6 +89,8 @@ class IdentityService:
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2),
                        encoding="utf-8")
         tmp.replace(path)
+        with cls._mapping_cache_lock:
+            cls._mapping_cache[cls._safe_id(identity)] = dict(data)
 
     # ── Link / Unlink ─────────────────────────────────────────────
 
@@ -128,6 +148,8 @@ class IdentityService:
             alias_file = alias_dir / "identity_mapping.json"
             if alias_file.exists():
                 alias_file.unlink()
+                with self._mapping_cache_lock:
+                    self._mapping_cache.pop(self._safe_id(channel_id), None)
                 try:
                     alias_dir.rmdir()
                 except OSError:

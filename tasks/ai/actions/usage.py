@@ -113,7 +113,7 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         from core.conv_agent_config import get_all_agent_configs
-        from tasks.ai.context_usage import compute_context_usage
+        from tasks.ai.context_usage import compute_context_usage, persist_context_usage
 
         out = {}
         for agent_name in (get_all_agent_configs(conv_id) or {}).keys():
@@ -122,6 +122,7 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
                 owner=self, source="list_context_usage")
             if int(usage.get("max", 0) or 0) > 0:
                 out[agent_name] = usage
+                persist_context_usage(conv_id, agent_name, usage, store=store)
         flowfile.set_content(json.dumps({"context_usage": out}, ensure_ascii=False).encode())
         return [flowfile]
 
@@ -229,7 +230,7 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
             logger.debug("cc_live enrichment failed", exc_info=True)
         try:
             from core.claude_code_interactive_pool import InteractiveClaudeCodePool
-            _cci_entries = InteractiveClaudeCodePool.instance().list_sessions(
+            _cci_entries = InteractiveClaudeCodePool.instance().list_sessions_snapshot(
                 user_id, conv_id)
             _by_agent_cci = {e["agent_name"]: e for e in _cci_entries}
             for row in active:

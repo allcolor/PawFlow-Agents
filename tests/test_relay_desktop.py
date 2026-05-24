@@ -42,11 +42,14 @@ def test_relay_desktop_uses_python_manager_and_safe_preload():
     assert "function createTray()" in main
     assert "function refreshTrayMenu()" in main
     assert "function cleanupRelayRuntime(name)" in main
+    assert "function waitForProcessExit(proc, timeoutMs)" in main
     assert "async function stopRelay(name)" in main
     assert "async function stopAllRelays()" in main
     assert "async function quitApp()" in main
     assert "runRelayClientJson(['cleanup', name || ''])" in main
     assert "process.platform === 'win32' ? 'SIGTERM' : 'SIGINT'" in main
+    assert "stopRequested" in main
+    assert "await waitForProcessExit(proc, 5000)" in main
     assert "await stopAllRelays()" in main
     assert "win.hide()" in main
     assert "before-quit" in main

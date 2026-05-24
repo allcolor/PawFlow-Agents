@@ -8,6 +8,7 @@ and local workspace shares, then starts relay processes on demand.
 from __future__ import annotations
 import logging
 
+from contextlib import contextmanager
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -37,6 +38,98 @@ def relay_home() -> Path:
     if os.name == "nt" and os.environ.get("APPDATA"):
         return Path(os.environ["APPDATA"]) / "PawFlow" / "relay"
     return Path.home() / ".pawflow" / "relay"
+
+
+def _runtime_dir() -> Path:
+    return relay_home() / "runtime"
+
+
+def _workspace_runtime_lock_path(relay_id: str) -> Path:
+    safe_id = _slug(relay_id or "relay")
+    return _runtime_dir() / f"{safe_id}.lock"
+
+
+def _process_is_running(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        try:
+            import ctypes
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            handle = kernel32.OpenProcess(0x1000, False, int(pid))
+            if handle:
+                kernel32.CloseHandle(handle)
+                return True
+            return ctypes.get_last_error() == 5
+        except Exception:
+            return True
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _read_runtime_lock(path: Path) -> Dict[str, Any]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _remove_workspace_runtime_lock(relay_id: str, *, only_stale: bool = True) -> bool:
+    path = _workspace_runtime_lock_path(relay_id)
+    if not path.exists():
+        return False
+    data = _read_runtime_lock(path)
+    pid = int(data.get("pid") or 0)
+    if only_stale and pid and _process_is_running(pid):
+        return False
+    try:
+        path.unlink()
+        return True
+    except FileNotFoundError:
+        return False
+
+
+@contextmanager
+def _workspace_runtime_lock(name: str, relay_id: str):
+    path = _workspace_runtime_lock_path(relay_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "pid": os.getpid(),
+        "workspace": name,
+        "relay_id": relay_id,
+        "created_at": _now(),
+    }
+    while True:
+        try:
+            fd = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            break
+        except FileExistsError:
+            data = _read_runtime_lock(path)
+            pid = int(data.get("pid") or 0)
+            if pid and _process_is_running(pid):
+                raise RuntimeError(
+                    f"Workspace relay '{name}' is already running "
+                    f"for relay_id '{relay_id}' (pid {pid})"
+                )
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                pass
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, sort_keys=True)
+            fh.write("\n")
+        yield
+    finally:
+        _remove_workspace_runtime_lock(relay_id, only_stale=False)
 
 
 def _load_json(filename: str) -> Dict[str, Any]:
@@ -250,11 +343,13 @@ def stop_workspace_runtime(name: str) -> Dict[str, Any]:
             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
     from pawflow_relay.thread import cleanup_relay_containers
     containers_removed = cleanup_relay_containers(relay_id)
+    runtime_lock_removed = _remove_workspace_runtime_lock(relay_id, only_stale=True)
     return {
         "workspace": name,
         "relay_id": relay_id,
         "service_uninstalled": service_uninstalled,
         "containers_removed": containers_removed,
+        "runtime_lock_removed": runtime_lock_removed,
     }
 
 
@@ -282,27 +377,28 @@ def start_workspace(name: str):
         allow_local=bool(share.get("allow_local", False)),
         read_only=(share.get("mode") == "ro"),
     )
-    previous_handlers = {}
+    with _workspace_runtime_lock(name, relay.relay_id):
+        previous_handlers = {}
 
-    def _request_stop(_sig, _frame):
-        raise KeyboardInterrupt
+        def _request_stop(_sig, _frame):
+            raise KeyboardInterrupt
 
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        try:
-            previous_handlers[sig] = signal.getsignal(sig)
-            signal.signal(sig, _request_stop)
-        except Exception:
-            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-    try:
-        relay.start()
-        relay.wait()
-    except KeyboardInterrupt:
-        pass
-    finally:
-        relay.stop()
-        for sig, handler in previous_handlers.items():
+        for sig in (signal.SIGINT, signal.SIGTERM):
             try:
-                signal.signal(sig, handler)
+                previous_handlers[sig] = signal.getsignal(sig)
+                signal.signal(sig, _request_stop)
             except Exception:
                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+        try:
+            relay.start()
+            relay.wait()
+        except KeyboardInterrupt:
+            pass
+        finally:
+            relay.stop()
+            for sig, handler in previous_handlers.items():
+                try:
+                    signal.signal(sig, handler)
+                except Exception:
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
     return relay

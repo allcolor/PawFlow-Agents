@@ -1504,7 +1504,8 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             return [flowfile]
         flowfile.set_content(json.dumps({
             "ok": True, "updated": updated, "conversation_id": conv_id,
-            "message_count": store.message_count(conv_id),
+            "message_count": int(store.get_extra_snapshot(
+                conv_id, "_meta_msg_count", 0) or 0),
         }).encode())
         return [flowfile]
 
@@ -1528,7 +1529,8 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             return [flowfile]
         flowfile.set_content(json.dumps({
             "deleted": deleted, "conversation_id": conv_id,
-            "message_count": store.message_count(conv_id),
+            "message_count": int(store.get_extra_snapshot(
+                conv_id, "_meta_msg_count", 0) or 0),
         }).encode())
         return [flowfile]
 

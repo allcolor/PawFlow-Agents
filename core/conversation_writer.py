@@ -10,6 +10,7 @@ Usage:
 """
 
 import logging
+import os
 import queue
 import threading
 import time
@@ -19,6 +20,8 @@ logger = logging.getLogger(__name__)
 
 _IDLE_TIMEOUT = 300  # 5 minutes idle → writer thread exits
 _WRITER_BATCH_MAX = 64
+_WRITER_FIRST_DRAIN_DELAY_SECONDS = float(
+    os.getenv("PAWFLOW_WRITER_FIRST_DRAIN_DELAY_MS", "10") or "10") / 1000.0
 
 
 def _require_ts_seq(m: Dict) -> None:
@@ -115,6 +118,8 @@ class ConversationWriter:
         self._queue: queue.Queue = queue.Queue()
         self._stop = False
         self._alive = True
+        self._prewarmed_agents = set()
+        self._first_drain_delay_applied = False
         self._thread = threading.Thread(
             target=self._writer_loop, daemon=True,
             name=f"conv-writer-{cid[:8]}")
@@ -229,6 +234,22 @@ class ConversationWriter:
                 logger.debug("[conv-writer:%s] append-handle flush failed before SSE",
                              self._cid[:8], exc_info=True)
 
+        def prewarm_before_write(agent_name: str = "") -> None:
+            agent_name = agent_name or ""
+            key = agent_name or "__conversation__"
+            if not hasattr(self, "_prewarmed_agents"):
+                self._prewarmed_agents = set()
+            if key in self._prewarmed_agents:
+                return
+            try:
+                prewarm = getattr(store, "prewarm_append_targets", None)
+                if callable(prewarm):
+                    prewarm(self._cid, agent_name)
+                self._prewarmed_agents.add(key)
+            except Exception:
+                logger.debug("[conv-writer:%s] append prewarm failed",
+                             self._cid[:8], exc_info=True)
+
         while not self._stop:
             try:
                 item = self._queue.get(timeout=_IDLE_TIMEOUT)
@@ -273,6 +294,13 @@ class ConversationWriter:
                     evt.set()
                 continue
 
+            if not hasattr(self, "_first_drain_delay_applied"):
+                self._first_drain_delay_applied = True
+            if (not self._first_drain_delay_applied
+                    and _WRITER_FIRST_DRAIN_DELAY_SECONDS > 0):
+                self._first_drain_delay_applied = True
+                time.sleep(_WRITER_FIRST_DRAIN_DELAY_SECONDS)
+
             batch = [item]
             flush_events = []
             post_events = []
@@ -295,6 +323,7 @@ class ConversationWriter:
 
             _batch_started = time.monotonic()
             written = []
+            _prewarm_ms = 0.0
             _write_ms = 0.0
             _publish_ms = 0.0
             i = 0
@@ -329,6 +358,10 @@ class ConversationWriter:
                                 break
                             run.append(next_item)
                             j += 1
+                        _prewarm_started = time.monotonic()
+                        prewarm_before_write(batch_agent)
+                        _prewarm_ms += ((time.monotonic() - _prewarm_started)
+                                        * 1000.0)
                         _write_started = time.monotonic()
                         store.append_messages(self._cid, run)
                         _write_ms += ((time.monotonic() - _write_started)
@@ -337,6 +370,10 @@ class ConversationWriter:
                         i = j
                         continue
 
+                    _prewarm_started = time.monotonic()
+                    prewarm_before_write(write_item.get("agent_name", ""))
+                    _prewarm_ms += ((time.monotonic() - _prewarm_started)
+                                    * 1000.0)
                     _write_started = time.monotonic()
                     store.append_message(
                         self._cid, write_item["msg"],
@@ -366,9 +403,9 @@ class ConversationWriter:
 
             logger.info(
                 "[conv-writer:%s] batch size=%d written=%d queued=%d "
-                "write_ms=%.1f publish_ms=%.1f total_ms=%.1f",
+                "prewarm_ms=%.1f write_ms=%.1f publish_ms=%.1f total_ms=%.1f",
                 self._cid[:8], len(batch), len(written), self._queue.qsize(),
-                _write_ms, _publish_ms,
+                _prewarm_ms, _write_ms, _publish_ms,
                 (time.monotonic() - _batch_started) * 1000.0)
 
             for write_item in batch:

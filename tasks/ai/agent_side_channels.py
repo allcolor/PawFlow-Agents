@@ -325,7 +325,8 @@ class AgentSideChannelsMixin:
                 logger.warning("[broadcast] writer flush failed: %s", _fe)
             bus.publish_event(conversation_id, "broadcast_done", {
                 "agent_count": len(results),
-                "message_count": cstore.message_count(conversation_id),
+                "message_count": int(cstore.get_extra_snapshot(
+                    conversation_id, "_meta_msg_count", 0) or 0),
             })
 
             sub_executor.shutdown()

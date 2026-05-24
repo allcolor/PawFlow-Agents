@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from core.base_service import BaseService
 
 logger = logging.getLogger(__name__)
+_HTTP_TIMING_DIAG_MS = float(os.getenv("PAWFLOW_HTTP_TIMING_DIAG_MS", "20") or "20")
 
 
 _SECURITY_HEADERS = {
@@ -199,6 +200,33 @@ def _request_action_label(req: "PendingRequest") -> str:
         return ""
 
 
+def _request_action_meta(req: "PendingRequest") -> str:
+    if req.path != "/api/ui" or not req.body:
+        return ""
+    try:
+        data = json.loads(req.body.decode("utf-8", errors="replace"))
+        if not isinstance(data, dict):
+            return ""
+        if data.get("_reply_conversation_id"):
+            reply = "bus"
+        elif data.get("conversation_id"):
+            reply = "conv"
+        else:
+            reply = "inline"
+    except Exception:
+        return ""
+    mode = ""
+    try:
+        body = req.response_body or b""
+        if body:
+            payload = json.loads(body[:512].decode("utf-8", errors="replace"))
+            if isinstance(payload, dict):
+                mode = "accepted" if payload.get("status") == "accepted" else "inline"
+    except Exception:
+        mode = ""
+    return f" reply={reply}" + (f" mode={mode}" if mode else "")
+
+
 def _is_long_lived_stream_path(path: str) -> bool:
     return path == "/api/agent/events" or path.startswith("/relay-proxy/")
 
@@ -218,13 +246,14 @@ def _emit_timing_summary(req: "PendingRequest") -> None:
     last = (t.get("respond") if is_long_stream else None) or t.get("send") or t.get("respond") or t.get("dispatch")
     total = round((last - t["recv"]) * 1000) if last else 0
     action = _request_action_label(req)
-    msg = "[http-timing] req_id=%s %s %s%s total=%dms %s status=%d"
+    meta = _request_action_meta(req)
+    msg = "[http-timing] req_id=%s %s %s%s%s total=%dms %s status=%d"
     args = (
         req.request_id[:8], req.method, req.path,
-        f" action={action}" if action else "",
+        f" action={action}" if action else "", meta,
         total, " ".join(segments), req.response_status,
     )
-    if total > 5000 and not is_long_stream:
+    if total > _HTTP_TIMING_DIAG_MS and not is_long_stream:
         logger.info(msg, *args)
     else:
         logger.debug(msg, *args)
@@ -353,6 +382,9 @@ class RouteRegistry:
 class _RequestHandler(BaseHTTPRequestHandler):
     """Handler dispatching to the RouteRegistry on the server."""
 
+    _chat_js_cache_lock = threading.RLock()
+    _chat_js_cache: Dict[str, Tuple[int, int, bytes]] = {}
+
     # Silence default log output
     def log_message(self, format, *args):
         logger.debug(f"HTTP: {format % args}")
@@ -383,6 +415,70 @@ class _RequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b'{"error": "Too Many Requests"}')
         return False
+
+    def _handle_chat_js_asset(self, path: str) -> bool:
+        """Serve built-in chat JS assets without going through the flow DAG."""
+        if not path.startswith("/chat/js/"):
+            return False
+
+        from pathlib import Path
+        from urllib.parse import unquote
+        import mimetypes
+
+        rel = unquote(path[len("/chat/js/"):]).replace("\\", "/")
+        if not rel or rel.startswith("/") or ".." in rel.split("/"):
+            body = b'{"error": "Invalid path"}'
+            self.send_response(403)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return True
+
+        root = Path(__file__).resolve().parent.parent / "tasks" / "io" / "chat_ui"
+        target = (root / rel).resolve()
+        try:
+            target.relative_to(root.resolve())
+        except ValueError:
+            body = b'{"error": "Invalid path"}'
+            self.send_response(403)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return True
+
+        if not target.is_file():
+            body = b'{"error": "Not found"}'
+            self.send_response(404)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return True
+
+        stat = target.stat()
+        cache_key = str(target)
+        cache_sig = (stat.st_mtime_ns, stat.st_size)
+        with self._chat_js_cache_lock:
+            cached = self._chat_js_cache.get(cache_key)
+            if cached and cached[:2] == cache_sig:
+                body = cached[2]
+            else:
+                body = target.read_bytes()
+                self._chat_js_cache[cache_key] = (*cache_sig, body)
+
+        mime_type, _ = mimetypes.guess_type(str(target))
+        self.send_response(200)
+        self.send_header("Content-Type", mime_type or "application/octet-stream")
+        self.send_header("Cache-Control", "public, max-age=31536000, immutable")
+        self.send_header("Content-Length", str(len(body)))
+        if hasattr(self, '_renew_cookie') and self._renew_cookie:
+            self.send_header("Set-Cookie", self._renew_cookie)
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
+        return True
 
     def _handle(self):
         method = self.command
@@ -478,6 +574,10 @@ class _RequestHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
                 self.wfile.write(b'{"error": "Internal Server Error"}')
+                return
+
+        if method == "GET" and _matched and path.startswith("/chat/js/"):
+            if self._handle_chat_js_asset(path):
                 return
 
         # WebSocket upgrades are intercepted in _HTTPServerWithRegistry.process_request
@@ -585,7 +685,7 @@ class _RequestHandler(BaseHTTPRequestHandler):
         # Block until flow responds. NO TIMEOUT — project rule: only the
         # LLM watchdog has a timeout, nowhere else. If a request stalls
         # forever, that's a backend bug we want to surface (not paper over
-        # with a 504). The slow-response log below catches anything > 5s,
+        # with a 504). The slow-response log below catches slow responses,
         # but skips paths that are legitimately long-lived (LLM streaming
         # through /relay-proxy/ can take 60+ s per turn).
         req.wait()
@@ -595,13 +695,14 @@ class _RequestHandler(BaseHTTPRequestHandler):
         _waited = time.monotonic() - req.timing.get(
             "recv", req.timing.get("dispatch", time.monotonic()))
         _is_streaming_path = _is_long_lived_stream_path(path)
-        if _waited > 5.0 and not _is_streaming_path:
+        _waited_ms = _waited * 1000.0
+        if _waited_ms > _HTTP_TIMING_DIAG_MS and not _is_streaming_path:
             _action = _request_action_label(req)
-            logger.warning("[http] slow response — %s %s%s took %.1fs "
+            logger.warning("[http] slow response — %s %s%s took %.0fms "
                             "(request_id=%s, status=%d)",
                             method, path,
                             f" action={_action}" if _action else "",
-                            _waited, req.request_id[:8],
+                            _waited_ms, req.request_id[:8],
                             req.response_status)
 
         # Send the flow's response

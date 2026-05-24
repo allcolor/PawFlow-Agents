@@ -524,7 +524,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                     "scope": "user",
                     "provider": (sdef.config or {}).get("provider", ""),
                 }
-                svc = reg.get_live_instance("user", user_id, sid) if sdef.enabled else None
+                svc = reg.get_live_instance_cached("user", user_id, sid) if sdef.enabled else None
                 if svc and hasattr(svc, '_relay_info') and svc._relay_info:
                     entry["relay_info"] = svc._relay_info
                 elif sdef.config and sdef.config.get("docker_image"):

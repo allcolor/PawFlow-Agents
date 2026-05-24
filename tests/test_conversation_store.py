@@ -263,8 +263,8 @@ class TestCreateConversation:
             user_id=uid,
         )
 
-        assert len(scheduled) == 1
-        assert scheduled[0]["target"] == store._persist_hot_metadata_worker
+        targets = [item["target"] for item in scheduled]
+        assert store._persist_hot_metadata_worker in targets
 
     def test_exists_uses_loaded_conversation_cache_without_disk_stat(self, conv, monkeypatch):
         store, cid, _uid = conv
@@ -275,6 +275,74 @@ class TestCreateConversation:
         monkeypatch.setattr("pathlib.Path.is_dir", fail_is_dir)
 
         assert store.exists(cid) is True
+
+    def test_cache_agents_for_append_memoizes_directory_scan(self, conv, monkeypatch):
+        store, cid, _uid = conv
+        calls = {"dirs": 0}
+
+        with store._cache_lock:
+            store._cache.pop(cid, None)
+            store._append_agents_cache.pop(cid, None)
+
+        monkeypatch.setattr(store, "_read_extras", lambda _cid: {})
+
+        def scan_dirs(_cid):
+            calls["dirs"] += 1
+            return {"bot"}
+
+        monkeypatch.setattr(store, "_agent_context_dirs", scan_dirs)
+
+        assert store._cache_agents_for_append(cid) == {"bot"}
+        assert store._cache_agents_for_append(cid) == {"bot"}
+        assert calls["dirs"] == 1
+
+    def test_new_conversations_mark_empty_conv_agents(self, store):
+        cid = store.generate_id()
+        store.save(cid, [], user_id="alice")
+
+        assert store.get_extra(cid, "conv_agents") == {}
+
+    def test_append_bg_notify_runs_outside_conversation_lock(self, conv, monkeypatch):
+        store, cid, uid = conv
+        lock = store._get_conv_lock(cid)
+        checked = {"ok": False}
+
+        def notify(_cid, _chars):
+            with lock._state_lock:
+                assert lock._owner_ident is None
+            checked["ok"] = True
+
+        class FakeExecutor:
+            def submit(self, target, *args):
+                if target == notify:
+                    target(*args)
+
+        import core.conversation_store as cs_mod
+
+        monkeypatch.setattr(cs_mod, "_HOT_METADATA_EXECUTOR", FakeExecutor())
+        monkeypatch.setattr(store, "_notify_bg_transcript_chars", notify)
+
+        store.append_message(
+            cid,
+            _msg(content="outside lock", source={"type": "user", "target_agent": "bot"}),
+            agent_name="bot",
+            user_id=uid,
+        )
+
+        assert checked["ok"] is True
+
+    def test_append_reuses_agent_context_exists_cache(self, conv, monkeypatch):
+        store, cid, uid = conv
+        first = _msg(content="first", source={"type": "user", "target_agent": "bot"})
+        store.append_message(cid, first, agent_name="bot", user_id=uid)
+
+        def fail_exists(_self):
+            raise AssertionError("warm append must not stat agent context existence")
+
+        monkeypatch.setattr("core.conversation_store.SegmentedJsonl.exists", fail_exists)
+
+        second = _msg(content="second", source={"type": "user", "target_agent": "bot"})
+        store.append_message(cid, second, agent_name="bot", user_id=uid)
 
     def test_git_history_retention_rewrites_to_sliding_window(self, store, monkeypatch):
         try:
@@ -741,6 +809,19 @@ class TestListConversations:
         convs = store.list_conversations(user_id="alice")
         assert convs[0]["title"] == "Chat Title"
 
+    def test_git_current_branch_reads_head_without_spawning_git(self, store, monkeypatch):
+        cid = store.generate_id()
+        store.save(cid, [], user_id="alice")
+        git_dir = store._conv_dir(cid) / ".git"
+        git_dir.mkdir(exist_ok=True)
+        (git_dir / "HEAD").write_text("ref: refs/heads/feature/perf\n", encoding="utf-8")
+
+        def _fail_git(*_args, **_kwargs):
+            raise AssertionError("git subprocess should not be used")
+
+        monkeypatch.setattr(store, "_git", _fail_git)
+        assert store.git_current_branch(cid) == "feature/perf"
+
 
 # ── delete ───────────────────────────────────────────────────────────
 
@@ -1155,6 +1236,17 @@ class TestAppendMessage:
         assert bob_ctx and any(
             "[Agent alice]" in str(msg.get("content", ""))
             for msg in bob_ctx)
+
+    def test_user_target_agent_is_not_written_twice_to_same_context(self, conv):
+        store, cid, uid = conv
+        m = _msg(role="user", content="hello once",
+                 source={"type": "user", "target_agent": "bot"})
+
+        store.append_message(cid, m, user_id=uid)
+
+        bot_ctx = store.load_agent_context(cid, "bot") or []
+        assert sum(1 for row in bot_ctx
+                   if row.get("msg_id") == m["msg_id"]) == 1
 
     def test_append_agent_cache_miss_does_not_reload_transcript(self, conv, monkeypatch):
         store, cid, uid = conv

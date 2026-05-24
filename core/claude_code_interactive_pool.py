@@ -28,11 +28,19 @@ import logging
 
 from core.cc_interactive_certs import generate_leaf, ca_private_key_is_host_only
 from core.docker_utils import docker_cmd, get_host_ip, get_server_id, to_host_path, translate_path
-from core.llm_providers.claude_code_session import ClaudeCodeSessionMixin
 import core.paths as _paths
 
 
 logger = logging.getLogger(__name__)
+
+_DISALLOWED_BUILTIN_TOOLS = (
+    "Bash,Edit,Read,Write,Glob,Grep,NotebookEdit,WebFetch,WebSearch,"
+    "Task,Agent,ToolSearch,ListMcpResourcesTool,ReadMcpResourceTool,"
+    "EnterPlanMode,ExitPlanMode,EnterWorktree,ExitWorktree,"
+    "RemoteTrigger,Skill,TaskOutput,TaskStop,TodoWrite,"
+    "CronCreate,CronDelete,CronList,AskUserQuestion,Monitor,"
+    "ScheduleWakeup,PushNotification"
+)
 
 
 @dataclass
@@ -75,7 +83,7 @@ class InteractiveClaudeCodePool:
     def __init__(self):
         self._lock = threading.RLock()
         self._sessions: Dict[tuple[str, str, str, str], InteractiveContainer] = {}
-        self._disallowed_builtin_tools = ClaudeCodeSessionMixin._DISALLOWED_BUILTIN_TOOLS
+        self._disallowed_builtin_tools = _DISALLOWED_BUILTIN_TOOLS
         self._sweeper_started = False
         self._sweeper_stop = threading.Event()
         self._tick_seconds = 60
@@ -204,6 +212,39 @@ class InteractiveClaudeCodePool:
                     "created_at": state.created_at,
                     "idle_seconds": max(0.0, time.time() - state.last_used),
                     "lived_seconds": max(0.0, time.time() - state.created_at),
+                    "provider": "claude-code-interactive",
+                })
+        return sessions
+
+    def list_sessions_snapshot(self, user_id: str, conversation_id: str,
+                               service_id: str = "") -> list[dict]:
+        """Return in-memory sessions without probing Docker.
+
+        Polling endpoints such as list_active must not run docker inspect for
+        every warm session. Reuse/send paths still validate liveness before
+        using a container; this snapshot is only UI status.
+        """
+        sessions: list[dict] = []
+        now = time.time()
+        with self._lock:
+            candidates = [
+                (key, state) for key, state in self._sessions.items()
+                if key[0] == user_id
+                and key[1] == conversation_id
+                and (not service_id or key[3] == service_id)
+            ]
+            candidates.sort(key=lambda row: row[1].last_used, reverse=True)
+            for key, state in candidates:
+                sessions.append({
+                    "agent_name": key[2],
+                    "service_id": key[3],
+                    "container_name": state.name,
+                    "last_used": state.last_used,
+                    "live": True,
+                    "reuse_count": 1 if state.initial_context_loaded else 0,
+                    "created_at": state.created_at,
+                    "idle_seconds": max(0.0, now - state.last_used),
+                    "lived_seconds": max(0.0, now - state.created_at),
                     "provider": "claude-code-interactive",
                 })
         return sessions

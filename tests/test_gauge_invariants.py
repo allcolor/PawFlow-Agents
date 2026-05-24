@@ -717,6 +717,41 @@ def test_list_context_usage_prefers_active_context_over_disk():
     assert usage["used"] > 0
 
 
+def test_inactive_context_usage_reuses_persisted_snapshot_cache():
+    from tasks.ai.context_usage import compute_context_usage
+    from tasks.ai.context_usage_cache import context_usage_entry
+
+    stored_messages = [
+        {"role": "user", "content": "stored user", "msg_id": "s1"},
+        {"role": "assistant", "content": "stored assistant", "msg_id": "s2"},
+    ]
+    cached = context_usage_entry(
+        stored_messages, 123, 10000, source="message_meta")
+
+    class _Store:
+        def load_agent_context(self, *_args, **_kwargs):
+            return stored_messages
+
+        def load_transcript_for_agent(self, *_args, **_kwargs):
+            raise AssertionError("agent context should be used first")
+
+        def get_extra_snapshot(self, *_args, **_kwargs):
+            return {"assistant": cached}
+
+    with patch("tasks.ai.agent_loop.AgentLoopTask._live_instance", None), \
+            patch("tasks.ai.context_usage._service_config",
+                  return_value=({"max_context_size": 10000}, 0, "")), \
+            patch("core.token_counter.count_messages_tokens",
+                  side_effect=AssertionError("valid cache should avoid recount")):
+        usage = compute_context_usage(
+            "conv-cached", "assistant", user_id="user", store=_Store(),
+            source="list_context_usage")
+
+    assert usage["used"] == 123
+    assert usage["source"] == "list_context_usage"
+    assert usage["cache_mode"] == "full"
+
+
 def test_cli_resumed_context_usage_uses_stored_context_plus_live_delta():
     from core.llm_client import LLMMessage
     from tasks.ai.context_usage import compute_context_usage

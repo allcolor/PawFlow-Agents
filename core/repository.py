@@ -11,6 +11,7 @@ Scopes:
 Flows have special handling (packages, versions).
 """
 
+import copy
 import json
 import logging
 import shutil
@@ -61,6 +62,8 @@ class ScopedRepository:
 
     def __init__(self):
         self._write_lock = threading.Lock()
+        self._list_cache_lock = threading.Lock()
+        self._list_cache: Dict[tuple, tuple] = {}
 
     @classmethod
     def instance(cls) -> "ScopedRepository":
@@ -74,6 +77,36 @@ class ScopedRepository:
     def reset(cls):
         with cls._lock:
             cls._instance = None
+
+    def _invalidate_list_cache(self) -> None:
+        with self._list_cache_lock:
+            self._list_cache.clear()
+
+    @staticmethod
+    def _list_signature(rtype: str, directory: Path):
+        try:
+            if rtype in _DIRECTORY_TYPES:
+                items = []
+                for child in sorted(x for x in directory.iterdir() if x.is_dir()):
+                    st = child.stat()
+                    item = [child.name, st.st_mtime_ns, st.st_size]
+                    for path in sorted(x for x in child.rglob("*") if x.is_file()):
+                        try:
+                            rel = path.relative_to(child).as_posix()
+                            pst = path.stat()
+                            item.extend([rel, pst.st_mtime_ns, pst.st_size])
+                        except FileNotFoundError:
+                            continue
+                    items.append(tuple(item))
+                return tuple(items)
+            ext = "*.md" if rtype in _MARKDOWN_TYPES else "*.json"
+            items = []
+            for path in sorted(directory.glob(ext)):
+                st = path.stat()
+                items.append((path.name, st.st_mtime_ns, st.st_size))
+            return tuple(items)
+        except OSError:
+            return None
 
     # ── CRUD ───────────────────────────────────────────────────────
 
@@ -92,6 +125,7 @@ class ScopedRepository:
             entry.setdefault("created_at", time.time())
             entry["updated_at"] = time.time()
             self._write_directory_resource(rtype, path, entry)
+            self._invalidate_list_cache()
             return self._read_directory_resource(rtype, path) or entry
 
         path = repo_file(rtype, name, scope, user_id, conv_id)
@@ -105,6 +139,7 @@ class ScopedRepository:
         entry["updated_at"] = time.time()
 
         self._write(rtype, path, entry)
+        self._invalidate_list_cache()
         return entry
 
     def get(self, rtype: str, name: str, scope: str,
@@ -128,6 +163,7 @@ class ScopedRepository:
             existing.update(data)
             existing["updated_at"] = time.time()
             self._write_directory_resource(rtype, path, existing)
+            self._invalidate_list_cache()
             return self._read_directory_resource(rtype, path) or existing
 
         path = repo_file(rtype, name, scope, user_id, conv_id)
@@ -137,6 +173,7 @@ class ScopedRepository:
         existing.update(data)
         existing["updated_at"] = time.time()
         self._write(rtype, path, existing)
+        self._invalidate_list_cache()
         return existing
 
     def delete(self, rtype: str, name: str, scope: str,
@@ -147,12 +184,14 @@ class ScopedRepository:
             if not path.exists():
                 return False
             shutil.rmtree(path)
+            self._invalidate_list_cache()
             return True
 
         path = repo_file(rtype, name, scope, user_id, conv_id)
         if not path.exists():
             return False
         path.unlink()
+        self._invalidate_list_cache()
         return True
 
     def list(self, rtype: str, scope: str,
@@ -161,6 +200,13 @@ class ScopedRepository:
         directory = repo_dir(rtype, scope, user_id, conv_id)
         if not directory.exists():
             return []
+        cache_key = (rtype, scope, user_id or "", conv_id or "")
+        signature = self._list_signature(rtype, directory)
+        if signature is not None:
+            with self._list_cache_lock:
+                cached = self._list_cache.get(cache_key)
+                if cached and cached[0] == signature:
+                    return copy.deepcopy(cached[1])
         if rtype in _DIRECTORY_TYPES:
             results = []
             for p in sorted(x for x in directory.iterdir() if x.is_dir()):
@@ -168,6 +214,9 @@ class ScopedRepository:
                 if entry is not None:
                     entry["_scope"] = self._scope_label(scope, user_id, conv_id)
                     results.append(entry)
+            if signature is not None:
+                with self._list_cache_lock:
+                    self._list_cache[cache_key] = (signature, copy.deepcopy(results))
             return results
 
         ext = "*.md" if rtype in _MARKDOWN_TYPES else "*.json"
@@ -177,6 +226,9 @@ class ScopedRepository:
             if entry is not None:
                 entry["_scope"] = self._scope_label(scope, user_id, conv_id)
                 results.append(entry)
+        if signature is not None:
+            with self._list_cache_lock:
+                self._list_cache[cache_key] = (signature, copy.deepcopy(results))
         return results
 
     def list_available(self, rtype: str,

@@ -533,6 +533,13 @@ class ServiceRegistry:
         with self._data_lock:
             return self._live_instances.get(sid, {}).get(service_id)
 
+    def get_live_instance_cached(self, scope: str, scope_id: str,
+                                 service_id: str) -> Optional[Service]:
+        """Return a live instance snapshot without lazy-connecting."""
+        sid = self._resolve_scope_id(scope, scope_id)
+        with self._data_lock:
+            return self._live_instances.get(sid, {}).get(service_id)
+
     def get_compatible(self, scope: str, scope_id: str,
                        service_type: str) -> List[ServiceDef]:
         """Get all services compatible with a given type."""

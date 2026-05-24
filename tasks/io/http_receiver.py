@@ -61,6 +61,11 @@ class HTTPReceiverTask(BaseTask):
         self._seq = itertools.count()
         self._registered = False
         self._owner_id: Optional[str] = None
+        self._scheduler_wake = None
+
+    def set_scheduler_wake(self, callback):
+        """Attach the executor wake callback for low-latency source input."""
+        self._scheduler_wake = callback
 
     def initialize(self):
         """Register routes on startup (called by executor after services connect)."""
@@ -181,6 +186,8 @@ class HTTPReceiverTask(BaseTask):
         pending_req.mark("enqueue")
         try:
             self._queue.put_nowait((queue_priority, next(self._seq), ff))
+            if callable(self._scheduler_wake):
+                self._scheduler_wake()
             logger.debug("[httpReceiver] enqueued %s %s (req_id=%s, qsize=%d)",
                         pending_req.method, pending_req.path,
                         pending_req.request_id[:8], self._queue.qsize())

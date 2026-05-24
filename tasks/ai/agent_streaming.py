@@ -5,6 +5,7 @@ Thread spawning, ACK return. The actual loop logic is in agent_core.py
 """
 import json
 import logging
+import os
 import threading
 import time
 from typing import Dict, Any, List, Optional
@@ -16,6 +17,8 @@ from typing import Dict, Any, List, Optional
 # new process has no subscribers for its conversation. On mismatch the
 # client force-reconnects SSE and picks up the buffered events.
 SERVER_START_TIME = time.time()
+_ACK_BG_START_DELAY_SECONDS = float(
+    os.getenv("PAWFLOW_AGENT_ACK_BG_START_DELAY_MS", "10") or "10") / 1000.0
 
 from core import FlowFile
 from core.llm_client import (
@@ -87,6 +90,13 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
         if _user_msg_id:
             flowfile.set_attribute("_user_msg_id", _user_msg_id)
         bus = ConversationEventBus.instance()
+
+        def _ack_message_count() -> int:
+            try:
+                return int(ConversationStore.instance().get_extra_snapshot(
+                    conversation_id, "_meta_msg_count", 0) or 0)
+            except Exception:
+                return 0
 
         _stream_mark("body_parsed")
 
@@ -273,7 +283,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                         conversation_id[:8],
                         "; queued rescue" if _rescued else "")
                     ack = json.dumps({"status": "accepted", "conversation_id": conversation_id,
-                                      "message_count": ConversationStore.instance().message_count(conversation_id),
+                                      "message_count": _ack_message_count(),
                                       "server_start_time": SERVER_START_TIME})
                     flowfile.set_content(ack.encode("utf-8"))
                     flowfile.set_attribute("agent.conversation_id", conversation_id)
@@ -327,7 +337,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                 # fire if the turn somehow ended before we got here.
                 _queue_pending_user(source="http")
                 ack = json.dumps({"status": "queued", "conversation_id": conversation_id,
-                                  "message_count": ConversationStore.instance().message_count(conversation_id),
+                                  "message_count": _ack_message_count(),
                                   "server_start_time": SERVER_START_TIME})
                 flowfile.set_content(ack.encode("utf-8"))
                 flowfile.set_attribute("agent.conversation_id", conversation_id)
@@ -444,15 +454,6 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
 
             self._streaming_agent_loop(ctx, conversation_id, bus)
 
-        _stream_mark("before_thread_start")
-        thread = threading.Thread(
-            target=_bg_streaming, daemon=True,
-            name=_thread_name)
-        _thread_started = _t_stream.monotonic()
-        thread.start()
-        _stream_step("thread_started", _thread_started)
-        logger.info("[agent:%s] bg thread started: %s", conversation_id[:8], _thread_name)
-
         # Start poller if configured
         poll_interval = int(self.config.get("poll_interval", 0))
         if poll_interval > 0 and not self._poller_started:
@@ -464,13 +465,26 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
 
         _ack_started = _t_stream.monotonic()
         ack = json.dumps({"status": "accepted", "conversation_id": conversation_id,
-                          "message_count": ConversationStore.instance().message_count(conversation_id),
+                          "message_count": _ack_message_count(),
                           "server_start_time": SERVER_START_TIME})
         _stream_step("ack_message_count", _ack_started)
         _stream_mark("ack_built")
         flowfile.set_content(ack.encode("utf-8"))
         flowfile.set_attribute("agent.conversation_id", conversation_id)
         flowfile.set_attribute("agent.streaming", "true")
+        _stream_mark("before_thread_start")
+        def _bg_streaming_after_ack():
+            if _ACK_BG_START_DELAY_SECONDS > 0:
+                time.sleep(_ACK_BG_START_DELAY_SECONDS)
+            _bg_streaming()
+
+        thread = threading.Thread(
+            target=_bg_streaming_after_ack, daemon=True,
+            name=_thread_name)
+        _thread_started = _t_stream.monotonic()
+        thread.start()
+        _stream_step("thread_started", _thread_started)
+        logger.info("[agent:%s] bg thread started: %s", conversation_id[:8], _thread_name)
         return [flowfile]
 
     def _streaming_agent_loop(self, ctx: Dict, conversation_id: str, bus) -> None:

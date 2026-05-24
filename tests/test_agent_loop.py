@@ -1260,6 +1260,50 @@ class TestContextActionsAsync(unittest.TestCase):
             "context_keep_recent": 6,
         })
 
+    def test_ui_actions_with_reply_bus_return_ack_and_publish_result(self):
+        import time
+
+        task = self._make_task()
+        reply_conv = "__ui__:status_async"
+        call_id = "call-status-async"
+        writer = self._bus.subscribe(reply_conv)
+        ff = FlowFile(content=json.dumps({
+            "action": "pfp_list_installed",
+            "conversation_id": "status_async",
+            "scope": "user",
+            "_reply_conversation_id": reply_conv,
+            "_call_id": call_id,
+        }).encode())
+        try:
+            result = task._handle_action(ff)
+            ack = json.loads(result[0].get_content())
+
+            assert ack["status"] == "accepted"
+            assert ack["action"] == "pfp_list_installed"
+            assert ack["_callId"] == call_id
+
+            event_data = None
+            deadline = time.monotonic() + 2.0
+            while time.monotonic() < deadline:
+                try:
+                    item = writer._queue.get(timeout=0.1)
+                except Exception:
+                    continue
+                if hasattr(item, "event") and item.event == "command_result":
+                    event_data = item.data
+                    if isinstance(event_data, str):
+                        event_data = json.loads(event_data)
+                    break
+
+            assert event_data is not None, "No command_result event received"
+            assert event_data["action"] == "pfp_list_installed"
+            assert event_data["_callId"] == call_id
+            payload = json.loads(event_data["result"])
+
+            assert payload["packages"] == []
+        finally:
+            self._bus.unsubscribe(reply_conv, writer)
+
     def _exec_async(self, task, body, timeout=2.0):
         """Execute an action through the real async path.
 

@@ -318,6 +318,28 @@ function getRelayState() {
   return runRelayClientJson(['status']);
 }
 
+function waitForProcessExit(proc, timeoutMs) {
+  return new Promise(resolve => {
+    if (!proc || proc.exitCode !== null || proc.signalCode !== null) {
+      resolve(true);
+      return;
+    }
+    let done = false;
+    const finish = exited => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      proc.off('close', onClose);
+      proc.off('exit', onClose);
+      resolve(exited);
+    };
+    const onClose = () => finish(true);
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    proc.once('close', onClose);
+    proc.once('exit', onClose);
+  });
+}
+
 function cleanupRelayRuntime(name) {
   return runRelayClientJson(['cleanup', name || '']);
 }
@@ -371,14 +393,18 @@ function startRelay(name) {
     env: relay.env,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
-  runningRelays.set(name, proc);
+  const entry = { proc, stopRequested: false };
+  runningRelays.set(name, entry);
   appendLog(name, `[relay] starting ${name}\n`);
   proc.stdout.on('data', chunk => appendLog(name, chunk.toString()));
   proc.stderr.on('data', chunk => appendLog(name, chunk.toString()));
   proc.on('error', err => appendLog(name, `[relay] error: ${err.message}\n`));
   proc.on('close', code => {
-    runningRelays.delete(name);
-    appendLog(name, `[relay] exited with code ${code}\n`);
+    if (runningRelays.get(name) === entry) {
+      runningRelays.delete(name);
+    }
+    const suffix = entry.stopRequested ? ' after stop request' : '';
+    appendLog(name, `[relay] exited with code ${code}${suffix}\n`);
     refreshTrayMenu();
   });
   refreshTrayMenu();
@@ -386,15 +412,29 @@ function startRelay(name) {
 }
 
 async function stopRelay(name) {
-  const proc = runningRelays.get(name);
-  if (proc) {
+  const entry = runningRelays.get(name);
+  const proc = entry && entry.proc;
+  if (entry && proc) {
+    entry.stopRequested = true;
     appendLog(name, `[relay] stop requested\n`);
     try {
       proc.kill(process.platform === 'win32' ? 'SIGTERM' : 'SIGINT');
     } catch (err) {
       appendLog(name, `[relay] process stop failed: ${err.message}\n`);
     }
-    runningRelays.delete(name);
+    const exited = await waitForProcessExit(proc, 5000);
+    if (!exited) {
+      appendLog(name, `[relay] process did not exit after SIGTERM; killing\n`);
+      try {
+        proc.kill('SIGKILL');
+      } catch (err) {
+        appendLog(name, `[relay] process kill failed: ${err.message}\n`);
+      }
+      await waitForProcessExit(proc, 2000);
+    }
+    if (runningRelays.get(name) === entry) {
+      runningRelays.delete(name);
+    }
   }
   try {
     const cleanup = await cleanupRelayRuntime(name);

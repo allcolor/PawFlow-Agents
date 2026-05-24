@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 import time
 import threading
 from typing import Dict, Any, List, Optional
@@ -19,6 +20,27 @@ _FLOW_TEMPLATES_LOCK = threading.Lock()
 
 # Cap on UI-supplied skill bundle uploads (sum of decoded asset bytes).
 _SKILL_PACKAGE_FILES_MAX_BYTES = 2_000_000
+
+
+def _safe_package_component(value: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.@+-]", "_", str(value or "")) or "default"
+
+
+def _has_pfp_install_records(user_id: str, conversation_id: str = "",
+                             scope: str = "user") -> bool:
+    try:
+        from core.paths import REPOSITORY_DIR
+        root = REPOSITORY_DIR / "packages"
+        if scope in {"conversation", "conv"} and conversation_id:
+            conv_root = (root / "conversations" / _safe_package_component(user_id)
+                         / _safe_package_component(conversation_id))
+            if conv_root.exists() and any(conv_root.glob("*.json")):
+                return True
+        user_root = root / "users" / _safe_package_component(user_id)
+        return user_root.exists() and any(user_root.glob("*.json"))
+    except Exception:
+        logger.debug("PFP install record fast check failed", exc_info=True)
+        return True
 
 
 def _decode_skill_package_files(raw) -> Dict[str, bytes]:
@@ -909,13 +931,24 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
 
     if action.startswith("pfp_"):
         try:
-            from core import pfp_package
             pfp_action = action[4:]
             if pfp_action == "error":
                 result = {"error": body.get("error", "Invalid /pfp command")}
+            elif pfp_action == "list_installed" and not _has_pfp_install_records(
+                    user_id,
+                    body.get("conversation_id", "") or "",
+                    body.get("scope") or "user"):
+                _scope = body.get("scope") or "user"
+                if _scope in {"conversation", "conv"} and body.get("conversation_id"):
+                    _scope = "conversation"
+                else:
+                    _scope = "user"
+                result = {"ok": True, "scope": _scope, "packages": []}
             elif pfp_action == "key_create":
+                from core import pfp_package
                 result = pfp_package.create_signing_key()
             elif pfp_action == "build":
+                from core import pfp_package
                 result = pfp_package.build_pfp(
                     body.get("source_dir") or body.get("path") or "",
                     body.get("output_path") or "",
@@ -923,6 +956,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                     private_key_env=body.get("private_key_env") or "",
                 )
             elif pfp_action == "inspect":
+                from core import pfp_package
                 from core import pfp_registry
                 resolved = pfp_registry.resolve_package_path(
                     body.get("path") or body.get("ref") or "",
@@ -944,6 +978,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                 if resolved.get("downloaded"):
                     result["download"] = resolved
             elif pfp_action == "install":
+                from core import pfp_package
                 from core import pfp_registry
                 agent_name = str(body.get("agent_name") or getattr(self, "_agent_name", "") or "")
                 resolved = pfp_registry.resolve_package_path(
@@ -972,6 +1007,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                 if resolved.get("downloaded"):
                     result["download"] = resolved
             elif pfp_action == "update":
+                from core import pfp_package
                 from core import pfp_registry
                 agent_name = str(body.get("agent_name") or getattr(self, "_agent_name", "") or "")
                 resolved = pfp_registry.resolve_package_path(
@@ -999,6 +1035,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                 if resolved.get("downloaded"):
                     result["download"] = resolved
             elif pfp_action == "dev_load":
+                from core import pfp_package
                 agent_name = str(body.get("agent_name") or getattr(self, "_agent_name", "") or "")
                 result = pfp_package.dev_load_pfp(
                     body.get("source_dir") or body.get("path") or "",
@@ -1014,6 +1051,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                     agent_name=agent_name,
                 )
             elif pfp_action == "dev_unload":
+                from core import pfp_package
                 result = pfp_package.dev_unload_pfp(
                     body.get("package") or "",
                     user_id=user_id,
@@ -1022,6 +1060,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                     force=bool(body.get("force", True)),
                 )
             elif pfp_action == "uninstall":
+                from core import pfp_package
                 result = pfp_package.uninstall_pfp(
                     body.get("package") or "",
                     user_id=user_id,
@@ -1030,18 +1069,21 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                     force=bool(body.get("force", False)),
                 )
             elif pfp_action == "list_installed":
+                from core import pfp_package
                 result = pfp_package.list_installed_packages(
                     user_id=user_id,
                     conversation_id=body.get("conversation_id", "") or "",
                     scope=body.get("scope") or "user",
                 )
             elif pfp_action == "reload_tasks":
+                from core import pfp_package
                 result = pfp_package.load_installed_package_tasks(
                     user_id=user_id,
                     conversation_id=body.get("conversation_id", "") or "",
                     scope=body.get("scope") or "user",
                 )
             elif pfp_action == "export":
+                from core import pfp_package
                 result = pfp_package.export_pfpdir(
                     body.get("package") or "",
                     body.get("version") or "",
@@ -1123,9 +1165,13 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         from core.resource_store import ResourceStore
         rs = ResourceStore.instance()
         uid = user_id
+        if conv_id and hasattr(store, "get_extras_snapshot"):
+            extras_snapshot = store.get_extras_snapshot(conv_id)
+        else:
+            extras_snapshot = {}
         active = {}
         if conv_id:
-            active = store.get_extra(conv_id, "active_resources") or {}
+            active = extras_snapshot.get("active_resources") or {}
             active = self._ensure_active_agent(conv_id, active, uid)
         # conv_agents is the source of truth for agent membership
         from core.conv_agent_config import get_all_agent_configs
@@ -1164,7 +1210,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             for skill_name in assigned_names:
                 assigned_by_skill.setdefault(skill_name, []).append(aname)
             if conv_id:
-                ac_cfg = store.get_extra(conv_id, f"random_thought::{aname.lower()}") or {}
+                ac_cfg = extras_snapshot.get(f"random_thought::{aname.lower()}") or {}
                 if ac_cfg.get("enabled"):
                     entry["autoconv"] = ac_cfg.get("frequency", "on")
             agents_out.append(entry)
@@ -1236,7 +1282,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         try:
             from core.agent_hooks import VALID_AGENT_HOOK_EVENTS
             all_agent_hooks = rs.list_all("agent_hook", uid, conversation_id=conv_id)
-            _active_hooks = store.get_extra(conv_id, "conversation_hooks") or [] if conv_id else []
+            _active_hooks = extras_snapshot.get("conversation_hooks") or [] if conv_id else []
             _active_names = set()
             if isinstance(_active_hooks, dict):
                 _active_hooks = _active_hooks.get("hooks", list(_active_hooks.values()))
@@ -1262,7 +1308,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
 
         try:
             from core.chat_themes import list_themes as _list_themes
-            themes_out = _list_themes(uid, conv_id)
+            themes_out = _list_themes(uid, conv_id, include_css=False)
         except Exception as e:
             logger.debug("list_resources: themes failed: %s", e)
             themes_out = []
@@ -1301,7 +1347,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         }
         # Task instances for this conversation
         if conv_id:
-            all_tasks = store.get_extra(conv_id, "agent_tasks") or {}
+            all_tasks = extras_snapshot.get("agent_tasks") or {}
             running = []
             all_task_instances = []
             for tid, t in all_tasks.items():
@@ -1362,13 +1408,13 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                         # Same logic as service list: use registry.is_connected
                         try:
                             _connected = _greg2.is_connected("global", "", _rid)
-                            _rsvc = _greg2.get_live_instance("global", "", _rid)
+                            _rsvc = _greg2.get_live_instance_cached("global", "", _rid)
                         except Exception:
                             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                         if not _rsvc and _ureg2 and user_id:
                             try:
                                 _connected = _ureg2.is_connected("user", user_id, _rid)
-                                _rsvc = _ureg2.get_live_instance("user", user_id, _rid)
+                                _rsvc = _ureg2.get_live_instance_cached("user", user_id, _rid)
                             except Exception:
                                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                         _ri2 = getattr(_rsvc, '_relay_info', {}) or {} if _rsvc else {}
@@ -1442,7 +1488,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             from core.chat_themes import list_themes
             selected = store.get_extra(conv_id, "theme_ref", user_id=user_id) if conv_id else ""
             flowfile.set_content(json.dumps({
-                "themes": list_themes(user_id, conv_id),
+                "themes": list_themes(user_id, conv_id, include_css=False),
                 "conversation_theme_ref": selected or "",
             }, ensure_ascii=False).encode())
         except Exception as e:

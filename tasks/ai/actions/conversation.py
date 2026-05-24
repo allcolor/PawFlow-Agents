@@ -58,10 +58,12 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
         raw_messages = page["messages"]
         raw_count = len(raw_messages)
         history = self._classify_messages_for_display(raw_messages)
-        nicknames = store.get_extra(conv_id, "agent_nicknames", user_id=user_id) or {}
-        active_res = store.get_extra(conv_id, "active_resources", user_id=user_id) or {}
+        extras = store.get_extras_snapshot(conv_id)
+        nicknames = extras.get("agent_nicknames") or {}
+        active_res = extras.get("active_resources") or {}
         active_res = self._ensure_active_agent(conv_id, active_res, user_id)
-        custom_css = store.get_extra(conv_id, "custom_css", user_id=user_id) or ""
+        active_agent = active_res.get("agent", "")
+        custom_css = extras.get("custom_css") or ""
         def _resolve_chat_flag(key: str, default: str = "true") -> bool:
             try:
                 from core.expression import resolve_expression
@@ -86,7 +88,7 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
             "offset": page["offset"],
             "raw_count": raw_count,
             "nicknames": nicknames,
-            "active_agent": active_res.get("agent", ""),
+            "active_agent": active_agent,
             "custom_css": custom_css,
             "group_technical_messages": group_technical_messages,
             "group_task_messages": group_task_messages,
@@ -200,7 +202,8 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
         if not conv_id:
             flowfile.set_content(json.dumps({"new_messages": []}).encode())
             return [flowfile]
-        current_count = store.message_count(conv_id)
+        current_count = int(store.get_extra_snapshot(
+            conv_id, "_meta_msg_count", last_count) or last_count)
         if current_count <= last_count:
             flowfile.set_content(json.dumps({
                 "new_messages": [], "message_count": current_count,

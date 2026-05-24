@@ -347,6 +347,18 @@ def test_initial_extensions_block_is_empty_without_user():
     assert "window.PAWFLOW_EXTENSIONS=[]" in out
 
 
+def test_initial_extensions_block_skips_pfp_import_without_records(tmp_path, monkeypatch):
+    monkeypatch.setattr("core.paths.REPOSITORY_DIR", tmp_path / "repo")
+    import sys
+    sys.modules.pop("core.pfp_package", None)
+
+    from tasks.io.serve_chat_ui import _initial_extensions_block
+    out = _initial_extensions_block(user_id="alice", conversation_id="conv1")
+
+    assert "window.PAWFLOW_EXTENSIONS=[]" in out
+    assert "core.pfp_package" not in sys.modules
+
+
 def test_initial_extensions_block_emits_installed_packages(tmp_path, keypair, monkeypatch):
     monkeypatch.setattr("core.paths.REPOSITORY_DIR", tmp_path / "repo")
     _install_ui_pkg(tmp_path, keypair)

@@ -115,6 +115,13 @@ def add_agent_to_conv(conv_id: str, instance_name: str,
         "max_depth": max_depth,
     }
     set_agent_config(conv_id, instance_name, config)
+    try:
+        from core.conversation_store import ConversationStore
+        ConversationStore.instance().prewarm_agent_context(conv_id, instance_name)
+    except Exception:
+        logger.debug(
+            "agent context prewarm failed for %s/%s",
+            conv_id[:8], instance_name, exc_info=True)
     return config
 
 

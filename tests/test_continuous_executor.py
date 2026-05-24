@@ -59,11 +59,14 @@ class TestContinuousFlowExecutor:
     def test_http_receiver_prioritizes_api_ui_requests(self):
         task = HTTPReceiverTask({"service_id": "missing", "routes": []})
         task._registered = True
+        wake_calls = []
+        task.set_scheduler_wake(lambda: wake_calls.append(True))
         slow = PendingRequest("slow", "POST", "/api/agent", {}, b"{}")
         ui = PendingRequest("ui", "POST", "/api/ui", {}, b'{"action":"load_history"}')
 
         task._on_request(slow, "POST:/api/agent")
         task._on_request(ui, "POST:/api/ui")
+        assert len(wake_calls) == 2
 
         [first] = task.execute(None)
         [second] = task.execute(None)
@@ -100,6 +103,31 @@ class TestContinuousFlowExecutor:
         try:
             executor.inject(FlowFile(content=b"pipeline"), entry_task_id="a")
             time.sleep(0.8)
+
+            states = executor.get_all_task_states()
+            assert states["a"]["flowfiles_in"] >= 1
+            assert states["b"]["flowfiles_in"] >= 1
+        finally:
+            executor.stop()
+
+    def test_scheduler_wakes_on_inject_and_downstream_enqueue(self):
+        flow = make_flow(
+            {
+                "a": {"type": "log", "parameters": {"message": "a", "level": "INFO"}},
+                "b": {"type": "log", "parameters": {"message": "b", "level": "INFO"}},
+            },
+            [{"from": "a", "to": "b"}],
+        )
+        executor = ContinuousFlowExecutor(flow, max_retries=1, schedule_interval=0.5)
+        executor.start()
+        try:
+            executor.inject(FlowFile(content=b"pipeline"), entry_task_id="a")
+            deadline = time.monotonic() + 0.25
+            while time.monotonic() < deadline:
+                states = executor.get_all_task_states()
+                if states["a"]["flowfiles_in"] >= 1 and states["b"]["flowfiles_in"] >= 1:
+                    break
+                time.sleep(0.01)
 
             states = executor.get_all_task_states()
             assert states["a"]["flowfiles_in"] >= 1

@@ -106,6 +106,7 @@ class ContinuousFlowExecutor:
         self._interactive_pool: Optional[ThreadPoolExecutor] = None
         self._scheduler_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
+        self._schedule_wake = threading.Event()
         self._lock = threading.Lock()
 
         # Track concurrent executions per task (counter, not boolean)
@@ -153,6 +154,8 @@ class ContinuousFlowExecutor:
             self._task_retry_counts[task_id] = 0
             self._max_instances[task_id] = getattr(task, '_max_instances', 1)
             self._inject_runtime_context(task)
+            if hasattr(task, 'set_scheduler_wake'):
+                task.set_scheduler_wake(self._wake_scheduler)
             # Inject controller services into task
             if flow.services and hasattr(task, 'set_services'):
                 task.set_services(flow.services)
@@ -308,6 +311,7 @@ class ContinuousFlowExecutor:
             self._task_states.start(task_id)
 
         self._stop_event.clear()
+        self._schedule_wake.clear()
         self._pool = ThreadPoolExecutor(max_workers=self._max_workers)
         self._interactive_pool = ThreadPoolExecutor(
             max_workers=max(2, min(8, self._max_workers)),
@@ -350,6 +354,7 @@ class ContinuousFlowExecutor:
     def stop(self):
         """Stop the scheduler and all tasks."""
         self._stop_event.set()
+        self._schedule_wake.set()
 
         # Stop scheduler thread first
         if self._scheduler_thread:
@@ -388,6 +393,10 @@ class ContinuousFlowExecutor:
         self._save_checkpoint()
 
         logger.info("ContinuousFlowExecutor stopped")
+
+    def _wake_scheduler(self):
+        """Wake the scheduler when new work is available."""
+        self._schedule_wake.set()
 
     @property
     def is_running(self) -> bool:
@@ -433,6 +442,7 @@ class ContinuousFlowExecutor:
             )
             return False
 
+        self._wake_scheduler()
         logger.debug(f"Injected FlowFile into '{entry_task_id}'")
         return True
 
@@ -540,7 +550,8 @@ class ContinuousFlowExecutor:
                         break
 
             if not scheduled_any:
-                self._stop_event.wait(timeout=self._schedule_interval)
+                self._schedule_wake.wait(timeout=self._schedule_interval)
+                self._schedule_wake.clear()
 
                 # Auto-stop for one-shot flows (no persistent sources)
                 if not self._has_persistent_sources:
@@ -798,7 +809,9 @@ class ContinuousFlowExecutor:
                         # Put back in a "penalty" — re-enqueue to input
                         # This prevents FlowFile loss even under backpressure
                         source_conn.enqueue(ff_to_send)
+                        self._wake_scheduler()
                     else:
+                        self._wake_scheduler()
                         # Data preview capture (non-blocking)
                         if self._data_preview and self._data_preview.is_enabled(task_id, out_conn.target_id):
                             self._data_preview.capture(task_id, out_conn.target_id, ff_to_send)

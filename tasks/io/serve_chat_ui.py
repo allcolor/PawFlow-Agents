@@ -11,6 +11,9 @@ Flow pattern:
 import hashlib
 import json
 import logging
+import re
+import threading
+import time
 from pathlib import Path
 from typing import Dict, Any, List
 from urllib.parse import unquote
@@ -40,6 +43,35 @@ _JS_MODULES = [
 ]
 
 _html_cache: str = ""
+_html_cache_sig = None
+_html_cache_version = ""
+_html_cache_lock = threading.Lock()
+_html_preload_started = False
+_html_cache_checked_at = 0.0
+_HTML_SIG_CHECK_INTERVAL = 5.0
+
+
+def _asset_signature():
+    items = []
+    for mod in _JS_MODULES:
+        p = _CHAT_UI_DIR / mod
+        try:
+            st = p.stat()
+            items.append((mod, st.st_mtime_ns, st.st_size))
+        except FileNotFoundError:
+            items.append((mod, 0, 0))
+    i18n_dir = _CHAT_UI_DIR / "i18n"
+    try:
+        i18n_paths = sorted(i18n_dir.glob("*.json"))
+    except Exception:
+        i18n_paths = []
+    for p in i18n_paths:
+        try:
+            st = p.stat()
+            items.append(("i18n/" + p.name, st.st_mtime_ns, st.st_size))
+        except FileNotFoundError:
+            items.append(("i18n/" + p.name, 0, 0))
+    return tuple(items)
 
 
 def _cookie_value(cookie_header: str, name: str) -> str:
@@ -117,6 +149,8 @@ def _initial_extensions_block(user_id: str = "", conversation_id: str = "") -> s
     """
     if not user_id:
         return "<script>window.PAWFLOW_EXTENSIONS=[];</script>\n"
+    if not _has_pfp_install_records(user_id, conversation_id):
+        return "<script>window.PAWFLOW_EXTENSIONS=[];</script>\n"
     try:
         from core.pfp_package import list_installed_ui_extensions, _UI_API_VERSION
         from core.tool_mcp_filters import (
@@ -172,52 +206,100 @@ def _initial_extensions_block(user_id: str = "", conversation_id: str = "") -> s
     )
 
 
-def _compute_js_version() -> str:
-    """Short hash of all chat assets that affect boot-time rendering."""
+def _compute_js_version(sig=None) -> str:
+    """Short hash of chat asset metadata for boot cache busting."""
     h = hashlib.md5(usedforsecurity=False)
-    for mod in _JS_MODULES:
-        p = _CHAT_UI_DIR / mod
-        if p.exists():
-            h.update(p.read_bytes())
-    i18n_dir = _CHAT_UI_DIR / "i18n"
-    if i18n_dir.exists():
-        for p in sorted(i18n_dir.glob("*.json")):
-            h.update(p.read_bytes())
+    for item in sig or _asset_signature():
+        h.update(repr(item).encode("utf-8"))
     return h.hexdigest()[:8]
 
 
 _EXTENSIONS_PLACEHOLDER = "<!--__PAWFLOW_EXTENSIONS_PLACEHOLDER__-->"
 
 
+def _safe_package_component(value: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.@+-]", "_", str(value or "")) or "default"
+
+
+def _has_pfp_install_records(user_id: str, conversation_id: str = "") -> bool:
+    """Cheap pre-check before importing the heavier PFP package module."""
+    try:
+        from core.paths import REPOSITORY_DIR
+        root = REPOSITORY_DIR / "packages"
+        user_root = root / "users" / _safe_package_component(user_id)
+        if user_root.exists() and any(user_root.glob("*.json")):
+            return True
+        if conversation_id:
+            conv_root = (root / "conversations" / _safe_package_component(user_id)
+                         / _safe_package_component(conversation_id))
+            if conv_root.exists() and any(conv_root.glob("*.json")):
+                return True
+    except Exception:
+        logger.debug("PFP install record fast check failed", exc_info=True)
+        return True
+    return False
+
+
 def _load_html() -> str:
-    global _html_cache
-    if _html_cache:
-        return _html_cache
+    global _html_cache, _html_cache_sig, _html_cache_version, _html_cache_checked_at
+    with _html_cache_lock:
+        now = time.monotonic()
+        if _html_cache and now - _html_cache_checked_at < _HTML_SIG_CHECK_INTERVAL:
+            return _html_cache
+        sig = _asset_signature()
+        if _html_cache and _html_cache_sig == sig:
+            _html_cache_checked_at = now
+            return _html_cache
 
-    v = _compute_js_version()
-    template = (_CHAT_UI_DIR / "template.html").read_text(encoding="utf-8")
+        v = _compute_js_version(sig)
+        template = (_CHAT_UI_DIR / "template.html").read_text(encoding="utf-8")
 
-    # Build <script defer> tags — all load in parallel, execute in order,
-    # only AFTER HTML is fully parsed (no HTTP slot contention)
-    script_tags = []
-    for mod in _JS_MODULES:
-        if (_CHAT_UI_DIR / mod).exists():
-            script_tags.append(f'<script defer src="/chat/js/{mod}?v={v}"></script>')
-    scripts_html = (
-        f'<script>window.PAWFLOW_ASSET_VERSION={json.dumps(v)};</script>\n'
-        + _initial_i18n_block()
-        + _EXTENSIONS_PLACEHOLDER
-        + "\n".join(script_tags)
-    )
+        # Build <script defer> tags — all load in parallel, execute in order,
+        # only AFTER HTML is fully parsed (no HTTP slot contention)
+        script_tags = []
+        for mod in _JS_MODULES:
+            if (_CHAT_UI_DIR / mod).exists():
+                script_tags.append(f'<script defer src="/chat/js/{mod}?v={v}"></script>')
+        scripts_html = (
+            f'<script>window.PAWFLOW_ASSET_VERSION={json.dumps(v)};</script>\n'
+            + _initial_i18n_block()
+            + _EXTENSIONS_PLACEHOLDER
+            + "\n".join(script_tags)
+        )
 
-    # Replace placeholder with script tags
-    html = template.replace("/* JS_PLACEHOLDER */", "")
-    html = html.replace("</body>", f"{scripts_html}\n</body>")
+        # Replace placeholder with script tags
+        html = template.replace("/* JS_PLACEHOLDER */", "")
+        html = html.replace("</body>", f"{scripts_html}\n</body>")
 
-    _html_cache = html
-    logger.info("Chat UI loaded: %d chars template, %d JS modules, version=%s",
-                len(template), len(_JS_MODULES), v)
-    return html
+        _html_cache = html
+        _html_cache_sig = sig
+        _html_cache_version = v
+        _html_cache_checked_at = now
+        logger.info("Chat UI loaded: %d chars template, %d JS modules, version=%s",
+                    len(template), len(_JS_MODULES), v)
+        return html
+
+
+def _start_html_preload_once() -> None:
+    global _html_preload_started
+    with _html_cache_lock:
+        if _html_preload_started or _html_cache:
+            return
+        _html_preload_started = True
+
+    def _preload() -> None:
+        try:
+            _load_html()
+        except Exception:
+            logger.debug("Chat UI preload failed", exc_info=True)
+
+    # Defer the real work until the executor has finished its init phase. A
+    # plain thread can still contend with startup under the GIL and make the
+    # task initialize timing look slow even though initialize() does not join.
+    timer = threading.Timer(0.2, _preload)
+    timer.daemon = True
+    timer.name = "chat-ui-preload"
+    timer.start()
 
 
 class ServeChatUITask(BaseTask):
@@ -228,6 +310,9 @@ class ServeChatUITask(BaseTask):
     NAME = "Serve Chat UI"
     DESCRIPTION = "Serve an HTML chat interface for the agent"
     ICON = "chat"
+
+    def initialize(self):
+        _start_html_preload_once()
 
     def get_parameter_schema(self) -> Dict[str, Any]:
         return {

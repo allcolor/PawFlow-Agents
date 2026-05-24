@@ -219,7 +219,7 @@ def list_available_relays(user_id: str = "") -> List[Dict[str, Any]]:
             if sdef.service_type not in ("filesystem", "relay"):
                 continue
             connected = reg.is_connected(sdef.scope, sdef.scope_id, sid)
-            svc = reg.resolve(sid, user_id=user_id)
+            svc = reg.get_live_instance_cached(sdef.scope, sdef.scope_id, sid)
             _ri = getattr(svc, '_relay_info', {}) or {} if svc else {}
             relays.append({
                 "relay_id": sid,

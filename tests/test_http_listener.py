@@ -376,6 +376,29 @@ class TestHTTPListenerService:
         finally:
             svc.disconnect()
 
+    def test_chat_js_assets_are_served_without_flow_dispatch(self):
+        svc = HTTPListenerService({"host": "127.0.0.1", "port": 19911})
+        svc.connect()
+        try:
+            dispatched = []
+            svc.register_route(
+                "GET", "/chat/js/{path}", "test",
+                lambda req: dispatched.append(req),
+            )
+            req = urllib.request.Request(
+                "http://127.0.0.1:19911/chat/js/i18n.js",
+                method="GET",
+                headers={"Cookie": f"pawflow_token={_create_test_session()}"},
+            )
+            resp = urllib.request.urlopen(req, timeout=5)
+
+            assert resp.status == 200
+            assert b"function" in resp.read()
+            assert resp.headers.get("Cache-Control") == "public, max-age=31536000, immutable"
+            assert dispatched == []
+        finally:
+            svc.disconnect()
+
     def test_pending_count(self):
         svc = HTTPListenerService({"host": "127.0.0.1", "port": 19882})
         svc.connect()

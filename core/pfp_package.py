@@ -582,16 +582,57 @@ def list_installed_packages(*, user_id: str, conversation_id: str = "",
     scope = _normalize_scope(scope, conversation_id)
     root = _install_scope_dir(user_id, conversation_id, scope)
     packages = []
+    package_ids = set()
     if root.exists():
         for path in sorted(root.glob("*.json")):
             try:
                 record = _read_json_file(path)
                 package_id = str(record.get("package") or "")
-                record["blocked_by"] = _dependent_packages(
-                    package_id, user_id, conversation_id, scope) if package_id else []
+                if package_id:
+                    package_ids.add(package_id)
                 packages.append(record)
             except (OSError, json.JSONDecodeError, PfpError) as exc:
                 logger.debug("Skipping unreadable package install record %s: %s", path, exc)
+    blocked_by = {pid: [] for pid in package_ids}
+    blocked_keys = {pid: set() for pid in package_ids}
+    if package_ids:
+        for dep_root, record_scope, record_conversation_id in _dependent_record_roots(
+                user_id, conversation_id, scope):
+            if not dep_root.exists():
+                continue
+            for dep_path in sorted(dep_root.glob("*.json")):
+                try:
+                    dep_record = _read_json_file(dep_path)
+                except Exception:
+                    logging.getLogger(__name__).debug(
+                        "Ignored exception", exc_info=True)
+                    continue
+                dependent_package = str(dep_record.get("package") or "")
+                if not dependent_package:
+                    continue
+                for package_id in package_ids:
+                    if dependent_package == package_id:
+                        continue
+                    if any(_record_depends_on_package(obj, package_id)
+                           for obj in dep_record.get("objects") or []):
+                        dep_key = (
+                            f"{record_scope}:{record_conversation_id}:"
+                            f"{dependent_package}")
+                        if dep_key in blocked_keys.setdefault(package_id, set()):
+                            continue
+                        dependent = {
+                            "package": dependent_package,
+                            "version": str(dep_record.get("version") or ""),
+                        }
+                        if record_scope != scope:
+                            dependent["scope"] = record_scope
+                            if record_conversation_id:
+                                dependent["conversation_id"] = record_conversation_id
+                        blocked_keys.setdefault(package_id, set()).add(dep_key)
+                        blocked_by.setdefault(package_id, []).append(dependent)
+    for record in packages:
+        package_id = str(record.get("package") or "")
+        record["blocked_by"] = blocked_by.get(package_id, [])
     return {"ok": True, "scope": scope, "packages": packages}
 
 

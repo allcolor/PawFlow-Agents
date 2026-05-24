@@ -333,6 +333,30 @@ class TestAgentLoopActions(unittest.TestCase):
         assert body["message_count"] == 3
         assert body["group_technical_messages"] is True
 
+    def test_load_history_does_not_prewarm_append_targets(self):
+        """load_history must stay read-only and not pre-open writer paths."""
+        from core.conv_agent_config import add_agent_to_conv
+        store = ConversationStore.instance()
+        store.save("c1", [{"role": "user", "content": "Hello"}],
+                   ttl=60, user_id="alice@test.com")
+        add_agent_to_conv("c1", "assistant", llm_service="default",
+                          definition="assistant")
+
+        def _unexpected(*_args, **_kwargs):
+            raise AssertionError("load_history must not prewarm append targets")
+
+        store.prewarm_append_targets = _unexpected
+        task = self._make_task()
+        ff = FlowFile(content=json.dumps({
+            "action": "load_history",
+            "conversation_id": "c1",
+        }).encode())
+        ff.set_attribute("http.auth.principal", "alice@test.com")
+
+        results = task.execute(ff)
+        body = json.loads(results[0].get_content().decode())
+        assert body["conversation_id"] == "c1"
+
     def test_load_history_resolves_technical_grouping_expression(self):
         from core.conv_agent_config import add_agent_to_conv
         store = ConversationStore.instance()

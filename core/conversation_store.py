@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 _CTX_CACHE_MAX_MESSAGES = int(os.getenv("PAWFLOW_CTX_CACHE_MAX_MESSAGES", "500") or "500")
 _CTX_CACHE_MAX_CHARS = int(os.getenv("PAWFLOW_CTX_CACHE_MAX_CHARS", "1000000") or "1000000")
 _CTX_CACHE_MAX_CONVS = int(os.getenv("PAWFLOW_CTX_CACHE_MAX_CONVS", "20") or "20")
-_CONV_LOCK_DIAG_MS = float(os.getenv("PAWFLOW_CONV_LOCK_DIAG_MS", "100") or "100")
+_CONV_LOCK_DIAG_MS = float(os.getenv("PAWFLOW_CONV_LOCK_DIAG_MS", "20") or "20")
 _GIT_RETENTION_DAYS = int(os.getenv("PAWFLOW_CONV_GIT_RETENTION_DAYS", "7") or "7")
 _GIT_RETENTION_COMMITS = int(os.getenv("PAWFLOW_CONV_GIT_RETENTION_COMMITS", "250") or "250")
 _GIT_RETENTION_INTERVAL_SEC = int(os.getenv("PAWFLOW_CONV_GIT_RETENTION_INTERVAL_SEC", "86400") or "86400")
@@ -154,6 +154,8 @@ class ConversationStore:
         self._cache_lock = threading.Lock()
         self._ctx_cache: Dict[str, Dict[str, List[Dict]]] = {}  # cid -> {agent -> messages}
         self._ctx_cache_lock = threading.Lock()
+        self._agent_ctx_exists_cache = set()
+        self._append_agents_cache: Dict[str, set] = {}
         self._tool_parent_cache: Dict[str, Dict[str, str]] = {}
         self._hot_metadata_flush: Dict[str, Dict[str, Any]] = {}
         self._context_usage_repair_mtime: Dict[str, float] = {}
@@ -720,6 +722,11 @@ class ConversationStore:
                 except OSError:
                     pass
         self._invalidate_ctx_cache(cid)
+        with self._cache_lock:
+            self._agent_ctx_exists_cache = {
+                key for key in self._agent_ctx_exists_cache
+                if key[0] != cid
+            }
         self._invalidate_pyramid_cache(cid)
 
     def _reset_jsonl_runtime_after_history_change(self, cid: str) -> None:
@@ -861,10 +868,12 @@ class ConversationStore:
         if not git_dir.exists() or not (git_dir / "HEAD").exists():
             return ""
         try:
-            result = self._git(cid, "branch", "--show-current")
-            return result.stdout.strip()
-        except (subprocess.CalledProcessError, FileNotFoundError,
-                subprocess.TimeoutExpired):
+            head = (git_dir / "HEAD").read_text(encoding="utf-8", errors="replace").strip()
+            prefix = "ref: refs/heads/"
+            if head.startswith(prefix):
+                return head[len(prefix):]
+            return ""
+        except OSError:
             return "main"
 
     def git_list_branches(self, cid: str) -> List[Dict]:
@@ -1148,6 +1157,24 @@ class ConversationStore:
         except Exception:
             logger.debug("bg transcript-chars hint failed", exc_info=True)
 
+    def _notify_shared_bg_worker(self, cid: str, max_seq: int,
+                                 row_count: int, char_count: int) -> None:
+        try:
+            from core.bg_bucket_builder import BgBucketBuilder
+            bb = BgBucketBuilder.instance()
+            if max_seq:
+                bb.note_shared_seq(cid, max_seq)
+            if row_count:
+                bb.note_shared_rows_appended(cid, row_count)
+            if char_count:
+                bb.note_shared_chars_appended(cid, char_count)
+            uid = self._cid_user.get(cid, "") or ""
+            if uid:
+                trigger = getattr(bb, "maybe_trigger_async", bb.maybe_trigger)
+                trigger(cid, uid)
+        except Exception:
+            logger.debug("bg bucket trigger failed", exc_info=True)
+
     def _append_ctx_file(self, cid: str, agent: str, messages: List[Dict]):
         """Append messages to an agent's context file.
 
@@ -1161,6 +1188,9 @@ class ConversationStore:
             self._validate_message(m)
             rows.append(self._stamp_line(cid, dict(m)))
         self._agent_ctx_log(cid, agent).append_dicts(rows)
+        if agent and rows:
+            with self._cache_lock:
+                self._agent_ctx_exists_cache.add((cid, self._canon_agent(agent)))
 
     def _seed_agent_context_from_shared_if_missing(self, cid: str, agent: str) -> int:
         """Initialize a new agent context from shared before its first row.
@@ -1173,13 +1203,21 @@ class ConversationStore:
         agent = self._canon_agent(agent) if agent else ""
         if not agent:
             return 0
+        key = (cid, agent)
+        with self._cache_lock:
+            if key in self._agent_ctx_exists_cache:
+                return 0
         log = self._agent_ctx_log(cid, agent)
         if log.exists():
+            with self._cache_lock:
+                self._agent_ctx_exists_cache.add(key)
             return 0
         seed = self.load_shared_for_agent(cid, agent) or []
         if not seed:
             return 0
         self._write_ctx_file(self._agent_ctx_path(cid, agent), seed)
+        with self._cache_lock:
+            self._agent_ctx_exists_cache.add(key)
         logger.info(
             "[context:%s] seeded %s context from shared before first append: %d messages",
             cid[:8], agent, len(seed))
@@ -1385,28 +1423,14 @@ class ConversationStore:
         self._shared_ctx_log(cid).append_dicts(rows)
         _add_timing("shared_write", _t0)
 
-        # Keep cache hints synchronous so the queued trigger decision sees
-        # this row, but run the decision itself in the bg executor. Resolving
-        # expression config and logging state transitions are too expensive
-        # for the writer hot path.
+        _t0 = time.monotonic()
         try:
-            _t0 = time.monotonic()
-            from core.bg_bucket_builder import BgBucketBuilder
-            _bb = BgBucketBuilder.instance()
-            if _max_seq:
-                _bb.note_shared_seq(cid, _max_seq)
-            if messages:
-                _bb.note_shared_rows_appended(cid, len(messages))
-            if _shared_chars:
-                _bb.note_shared_chars_appended(cid, _shared_chars)
-            _uid = self._cid_user.get(cid, "") or ""
-            if _uid:
-                trigger = getattr(_bb, "maybe_trigger_async",
-                                  _bb.maybe_trigger)
-                trigger(cid, _uid)
-            _add_timing("shared_bg_trigger", _t0)
+            _HOT_METADATA_EXECUTOR.submit(
+                self._notify_shared_bg_worker,
+                cid, _max_seq, len(messages), _shared_chars)
         except Exception:
-            logger.debug("bg bucket trigger failed", exc_info=True)
+            logger.debug("bg bucket trigger schedule failed", exc_info=True)
+        _add_timing("shared_bg_trigger", _t0)
 
     def _read_ctx_file(self, path: Path) -> List[Dict]:
         """Read all messages from a context JSONL file, sorted by (ts, seq).
@@ -1629,9 +1653,11 @@ class ConversationStore:
         if isinstance(conv_agents, dict) and conv_agents:
             declared_agents.update(self._canon_agent(a) for a in conv_agents if a)
             c["agents"].update(declared_agents)
-            self._prune_invalid_agent_context_dirs(cid, declared_agents)
         with self._cache_lock:
             self._cache[cid] = c
+            self._append_agents_cache[cid] = set(declared_agents)
+        if declared_agents:
+            self._prune_invalid_agent_context_dirs(cid, declared_agents)
         return c
 
     @staticmethod
@@ -1702,10 +1728,22 @@ class ConversationStore:
         if isinstance(conv_agents, dict) and conv_agents:
             declared_agents.update(self._canon_agent(a) for a in conv_agents if a)
             c["agents"].update(declared_agents)
-            self._prune_invalid_agent_context_dirs(cid, declared_agents)
         with self._cache_lock:
             self._cache[cid] = c
+            self._append_agents_cache[cid] = set(declared_agents)
+        self._schedule_prune_invalid_agent_context_dirs(cid, declared_agents)
         return c
+
+    def _schedule_prune_invalid_agent_context_dirs(self, cid: str,
+                                                   declared_agents: set) -> None:
+        if not declared_agents:
+            return
+        try:
+            _HOT_METADATA_EXECUTOR.submit(
+                self._prune_invalid_agent_context_dirs,
+                cid, set(declared_agents))
+        except Exception:
+            logger.debug("invalid context-dir prune schedule failed", exc_info=True)
 
     def _prune_invalid_agent_context_dirs(self, cid: str,
                                           declared_agents: set) -> None:
@@ -1757,17 +1795,23 @@ class ConversationStore:
     def _cache_agents_for_append(self, cid: str) -> set:
         """Return known agents without rescanning the transcript hot path."""
         with self._cache_lock:
+            append_cached = self._append_agents_cache.get(cid)
+            if append_cached is not None:
+                return set(append_cached)
             cached = self._cache.get(cid)
             if cached is not None:
                 agents = set(cached.get("agents", set()))
                 if agents:
+                    self._append_agents_cache[cid] = set(agents)
                     return agents
                 extras = cached.get("extras") or {}
                 if "conv_agents" not in extras:
                     agents = self._agent_context_dirs(cid)
                     if agents:
                         cached.setdefault("agents", set()).update(agents)
+                    self._append_agents_cache[cid] = set(agents)
                     return agents
+                self._append_agents_cache[cid] = set()
                 return set()
 
         # This method runs under the per-conversation append lock.  A cache
@@ -1785,6 +1829,8 @@ class ConversationStore:
             # conv_agents sidecar yet. Directory listing is bounded by agent
             # count and preserves old fan-out without scanning transcript rows.
             agents.update(self._agent_context_dirs(cid))
+        with self._cache_lock:
+            self._append_agents_cache[cid] = set(agents)
         return agents
 
     def _note_cache_append(self, cid: str, transcript_line: Optional[Dict],
@@ -1797,6 +1843,9 @@ class ConversationStore:
         affected by an append are trivial to update in memory.
         """
         with self._cache_lock:
+            if agents:
+                self._append_agents_cache.setdefault(cid, set()).update(
+                    self._canon_agent(a) for a in agents if a)
             cached = self._cache.get(cid)
             if cached is None:
                 return
@@ -2013,6 +2062,7 @@ class ConversationStore:
             "_meta_updated_at": _now,
             "_meta_msg_count": len(rows),
             "_meta_max_seq": max((int(r.get("seq") or 0) for r in rows), default=0),
+            "conv_agents": {},
         }
         for row in rows:
             if row.get("role") == "user":
@@ -2021,6 +2071,14 @@ class ConversationStore:
                     extras["_meta_preview"] = content[:80]
                     break
         self._write_extras(cid, extras)
+
+        # Pre-open the always-written logs so the first user append does not
+        # pay Windows/WSL UNC first-open latency for transcript/shared.
+        try:
+            self._transcript_log(cid).prewarm_append()
+            self._shared_ctx_log(cid).prewarm_append()
+        except Exception:
+            logger.debug("conversation log prewarm failed for %s", cid[:8], exc_info=True)
 
         # Initialize git repo
         self._git_init(cid)
@@ -2088,6 +2146,7 @@ class ConversationStore:
         display_only = bool(msg.get("display_only"))
         now = time.time()
         transcript_lines: List[Dict[str, Any]] = []
+        transcript_chars_to_notify = 0
         touched_agents = set()
 
         try:
@@ -2105,7 +2164,14 @@ class ConversationStore:
             _mark_timing("lock_wait", _t0)
             # Create conv if missing
             _t0 = time.monotonic()
-            if not self.exists(cid):
+            if user_id and (cid in self._cid_user or cid in self._cache):
+                conv_exists = True
+            elif user_id:
+                conv_dir = self._conv_dir(cid, user_id=user_id)
+                conv_exists = conv_dir.is_dir()
+            else:
+                conv_exists = self.exists(cid)
+            if not conv_exists:
                 if not user_id:
                     raise ValueError(
                         "user_id required for new conversation")
@@ -2126,14 +2192,9 @@ class ConversationStore:
                 self._transcript_log(cid).append_dicts(lines)
                 self._remember_tool_call_parents(cid, lines)
                 _mark_timing("transcript_write", _t0)
-                # Feed bg_bucket_builder's token-budget trigger so it
-                # can fire a partial bucket BEFORE the agent's hot-path
-                # /compact has to digest-tail at runtime.
-                _t0 = time.monotonic()
-                self._notify_bg_transcript_chars(
-                    cid, sum(self._row_payload_chars(line) for line in lines))
-                _mark_timing("bg_notify", _t0)
                 _mark_timing("transcript", _transcript_t0)
+                transcript_chars_to_notify = sum(
+                    self._row_payload_chars(line) for line in lines)
 
             if display_only:
                 pass  # transcript only, no context files
@@ -2171,14 +2232,21 @@ class ConversationStore:
                         self._append_shared_ctx(cid, shared_msgs, _timings)
                         _mark_timing("shared_append", _t0)
                         _t0 = time.monotonic()
-                        known_agents = self._cache_agents_for_append(cid)
+                        with self._cache_lock:
+                            fanout_cache_warm = (
+                                cid in self._append_agents_cache
+                                or cid in self._cache)
+                        if role == "user" and route_agent and not fanout_cache_warm:
+                            known_agents = {route_agent}
+                        else:
+                            known_agents = self._cache_agents_for_append(cid)
                         if route_agent:
                             known_agents.add(route_agent)
                         _mark_timing("known_agents", _t0)
                         _broadcast_count = 0
                         _t0 = time.monotonic()
                         for other in known_agents:
-                            if not other or other == agent_name:
+                            if not other or other == (route_agent or agent_name):
                                 continue
                             transformed = [
                                 self._transform_for_other_agent(m, other)
@@ -2189,6 +2257,19 @@ class ConversationStore:
                         _mark_timing("broadcast", _t0)
                         _timings["broadcast_count"] = float(_broadcast_count)
 
+        # Feed bg_bucket_builder outside the conversation write lock. The
+        # trigger is best-effort cache maintenance; it must not serialize disk
+        # appends on Python-for-Windows over WSL UNC paths.
+        if transcript_chars_to_notify:
+            _t0 = time.monotonic()
+            try:
+                _HOT_METADATA_EXECUTOR.submit(
+                    self._notify_bg_transcript_chars,
+                    cid, transcript_chars_to_notify)
+            except Exception:
+                logger.debug("bg transcript-chars hint schedule failed", exc_info=True)
+            _mark_timing("bg_notify", _t0)
+
         # Refresh cache (msg_count, agents set) after any write.
         _t0 = time.monotonic()
         self._invalidate_ctx_cache(cid)
@@ -2198,7 +2279,7 @@ class ConversationStore:
             self._note_cache_append(cid, transcript_line, touched_agents)
         _mark_timing("cache_note", _t0)
         _total_ms = (time.monotonic() - _append_started) * 1000.0
-        if _total_ms >= 100.0:
+        if _total_ms >= _CONV_LOCK_DIAG_MS:
             logger.warning(
                 "[convstore:%s] append slow role=%s msg_id=%s total_ms=%.1f "
                 "pre_lock=%.1f lock_wait=%.1f create_or_exists=%.1f "
@@ -2303,11 +2384,18 @@ class ConversationStore:
 
         lock = self._get_conv_lock(cid)
         with lock:
-            if not self.exists(cid):
-                first = normalized[0]["item"]
-                if not first.get("user_id"):
+            first = normalized[0]["item"]
+            first_user_id = first.get("user_id", "")
+            if first_user_id and (cid in self._cid_user or cid in self._cache):
+                conv_exists = True
+            elif first_user_id:
+                conv_exists = self._conv_dir(cid, user_id=first_user_id).is_dir()
+            else:
+                conv_exists = self.exists(cid)
+            if not conv_exists:
+                if not first_user_id:
                     raise ValueError("user_id required for new conversation")
-                self.save(cid, [], user_id=first.get("user_id", ""),
+                self.save(cid, [], user_id=first_user_id,
                           ttl=first.get("ttl", 0))
 
             for entry in normalized:
@@ -2345,11 +2433,18 @@ class ConversationStore:
                                 for m in shared_candidates):
                             shared_rows.append(
                                 self._stamp_line(cid, shared_msg))
-                        known_agents = self._cache_agents_for_append(cid)
+                        with self._cache_lock:
+                            fanout_cache_warm = (
+                                cid in self._append_agents_cache
+                                or cid in self._cache)
+                        if role == "user" and route_agent and not fanout_cache_warm:
+                            known_agents = {route_agent}
+                        else:
+                            known_agents = self._cache_agents_for_append(cid)
                         if route_agent:
                             known_agents.add(route_agent)
                         for other in known_agents:
-                            if not other or other == entry["agent_name"]:
+                            if not other or other == (route_agent or entry["agent_name"]):
                                 continue
                             transformed = [
                                 self._transform_for_other_agent(m, other)
@@ -2362,35 +2457,32 @@ class ConversationStore:
             if transcript_rows:
                 self._transcript_log(cid).append_dicts(transcript_rows)
                 self._remember_tool_call_parents(cid, transcript_rows)
-                if transcript_chars:
-                    self._notify_bg_transcript_chars(cid, transcript_chars)
             for agent, rows in ctx_rows.items():
                 self._agent_ctx_log(cid, agent).append_dicts(rows)
             if shared_rows:
                 self._shared_ctx_log(cid).append_dicts(shared_rows)
-                try:
-                    from core.bg_bucket_builder import BgBucketBuilder
-                    _bb = BgBucketBuilder.instance()
-                    _max_seq = max(int(row.get("seq") or 0) for row in shared_rows)
-                    _shared_chars = sum(self._row_payload_chars(row) for row in shared_rows)
-                    if _max_seq:
-                        _bb.note_shared_seq(cid, _max_seq)
-                    _bb.note_shared_rows_appended(cid, len(shared_rows))
-                    if _shared_chars:
-                        _bb.note_shared_chars_appended(cid, _shared_chars)
-                    _uid = self._cid_user.get(cid, "") or ""
-                    if _uid:
-                        trigger = getattr(_bb, "maybe_trigger_async",
-                                          _bb.maybe_trigger)
-                        trigger(cid, _uid)
-                except Exception:
-                    logger.debug("bg bucket trigger failed", exc_info=True)
+
+        if transcript_chars:
+            try:
+                _HOT_METADATA_EXECUTOR.submit(
+                    self._notify_bg_transcript_chars, cid, transcript_chars)
+            except Exception:
+                logger.debug("bg transcript-chars hint schedule failed", exc_info=True)
+        if shared_rows:
+            _max_seq = max(int(row.get("seq") or 0) for row in shared_rows)
+            _shared_chars = sum(self._row_payload_chars(row) for row in shared_rows)
+            try:
+                _HOT_METADATA_EXECUTOR.submit(
+                    self._notify_shared_bg_worker,
+                    cid, _max_seq, len(shared_rows), _shared_chars)
+            except Exception:
+                logger.debug("bg bucket trigger schedule failed", exc_info=True)
 
         self._invalidate_ctx_cache(cid)
         for line in transcript_rows:
             self._note_cache_append(cid, line, touched_agents)
         total_ms = (time.monotonic() - batch_started) * 1000.0
-        if total_ms >= 100.0:
+        if total_ms >= _CONV_LOCK_DIAG_MS:
             logger.warning(
                 "[convstore:%s] append batch slow rows=%d transcript=%d "
                 "shared=%d ctx_targets=%d total_ms=%.1f touched_agents=%d",
@@ -2799,10 +2891,44 @@ class ConversationStore:
         # wouldn't see the newly created agent until a server restart.
         if agent_name:
             with self._cache_lock:
+                self._agent_ctx_exists_cache.add((cid, agent_name))
+                self._append_agents_cache.setdefault(cid, set()).add(agent_name)
                 cached = self._cache.get(cid)
                 if cached is not None:
                     cached.setdefault("agents", set()).add(agent_name)
         return True
+
+    def prewarm_agent_context(self, cid: str, agent_name: str) -> None:
+        """Open an agent context append handle before the first routed message."""
+        agent_name = self._canon_agent(agent_name) if agent_name else ""
+        if not agent_name or not self.exists(cid):
+            return
+        try:
+            self._seed_agent_context_from_shared_if_missing(cid, agent_name)
+            self._agent_ctx_log(cid, agent_name).prewarm_append()
+            with self._cache_lock:
+                self._agent_ctx_exists_cache.add((cid, agent_name))
+                self._append_agents_cache.setdefault(cid, set()).add(agent_name)
+                cached = self._cache.get(cid)
+                if cached is not None:
+                    cached.setdefault("agents", set()).add(agent_name)
+        except Exception:
+            logger.debug(
+                "agent context prewarm failed for %s/%s",
+                cid[:8], agent_name, exc_info=True)
+
+    def prewarm_append_targets(self, cid: str, agent_name: str = "") -> None:
+        """Open append handles normally touched by the next user message."""
+        if not self.exists(cid):
+            return
+        try:
+            self._transcript_log(cid).prewarm_append()
+            self._shared_ctx_log(cid).prewarm_append()
+        except Exception:
+            logger.debug("conversation append prewarm failed for %s",
+                         cid[:8], exc_info=True)
+        if agent_name:
+            self.prewarm_agent_context(cid, agent_name)
 
     @staticmethod
     def _compute_min_changed_seq(old: List[Dict],
@@ -2868,6 +2994,8 @@ class ConversationStore:
         self._invalidate_ctx_cache(cid, agent_name)
         # Reload main cache so agents set is updated
         with self._cache_lock:
+            if agent_name:
+                self._agent_ctx_exists_cache.discard((cid, agent_name))
             self._cache.pop(cid, None)
         self._reload_cache(cid)
         return True
@@ -3234,6 +3362,12 @@ class ConversationStore:
             return list(value)
         return value
 
+    def get_extras_snapshot(self, cid: str) -> Dict[str, Any]:
+        """Return all cached extras without disk IO or repair."""
+        with self._cache_lock:
+            data = dict(((self._cache.get(cid) or {}).get("extras") or {}))
+        return data
+
     def get_extra(self, cid: str, key: str, default: Any = None,
                   user_id: str = "") -> Any:
         if not self.exists(cid):
@@ -3271,9 +3405,16 @@ class ConversationStore:
             self._write_extras(cid, data)
         # Update in-memory cache for list_conversations (title, updated_at)
         with self._cache_lock:
+            if key == "conv_agents":
+                agents = set()
+                if isinstance(value, dict):
+                    agents.update(self._canon_agent(a) for a in value if a)
+                self._append_agents_cache[cid] = set(agents)
             if cid in self._cache:
                 self._cache[cid]["extra_keys"].add(key)
                 self._cache[cid].setdefault("extras", {})[key] = value
+                if key == "conv_agents":
+                    self._cache[cid]["agents"] = set(agents)
                 if key == "title":
                     self._cache[cid]["title"] = value
                 self._cache[cid]["updated_at"] = time.time()
@@ -3717,6 +3858,11 @@ class ConversationStore:
                 shutil.rmtree(conv_dir, onerror=_force_remove)
         with self._cache_lock:
             self._cache.pop(cid, None)
+            self._append_agents_cache.pop(cid, None)
+            self._agent_ctx_exists_cache = {
+                key for key in self._agent_ctx_exists_cache
+                if key[0] != cid
+            }
         self._conv_locks.pop(cid, None)
         self._extras_locks.pop(cid, None)
         self._cid_user.pop(cid, None)

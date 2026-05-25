@@ -601,6 +601,43 @@ def test_antigravity_tmux_literal_chunks_are_throttled(monkeypatch, tmp_path):
     assert sleeps[-1] >= 0.15
 
 
+def test_antigravity_pool_kill_and_evict_scopes_by_conv_and_agent(
+        monkeypatch, tmp_path):
+    from core.antigravity_observer_pool import (
+        AntigravityObserverPool,
+        AntigravityObserverSession,
+    )
+
+    pool = AntigravityObserverPool()
+    killed = []
+
+    def fake_kill(state):
+        killed.append(state.name)
+
+    monkeypatch.setattr(pool, "kill", fake_kill)
+
+    def add(key, name):
+        pool._sessions[key] = AntigravityObserverSession(
+            key=key, name=name, workdir=str(tmp_path / name),
+            container_workdir=f"/cc_sessions/{key[1]}/{key[2]}",
+            log_path=str(tmp_path / f"{name}.jsonl"),
+        )
+
+    add(("u", "c", "agent-a", "svc1"), "a1")
+    add(("u", "c", "agent-a", "svc2"), "a2")
+    add(("u", "c", "agent-b", "svc1"), "b1")
+    add(("u", "other", "agent-a", "svc1"), "other")
+
+    assert pool.kill_and_evict_by_conv_agent("c", "agent-a", "compact") == 2
+    assert killed == ["a1", "a2"]
+    assert ("u", "c", "agent-b", "svc1") in pool._sessions
+    assert ("u", "other", "agent-a", "svc1") in pool._sessions
+
+    assert pool.kill_and_evict_by_conv("c", "invalidate") == 1
+    assert killed == ["a1", "a2", "b1"]
+    assert list(pool._sessions) == [("u", "other", "agent-a", "svc1")]
+
+
 def test_chat_ui_exposes_single_agent_tmux_action_for_antigravity():
     terminal = Path("tasks/io/chat_ui/terminal.js").read_text(encoding="utf-8")
     template = Path("tasks/io/chat_ui/template.html").read_text(encoding="utf-8")

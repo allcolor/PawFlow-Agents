@@ -1643,6 +1643,29 @@ class TestCleanupOrphanClaudeSessions:
         assert store.get_extra(cid, "gemini_acp_pool_idx:gemini") == ""
         assert store.get_extra(cid, "gemini_acp_session_version:gemini") == ""
 
+    def test_invalidate_per_agent_kills_antigravity_session(
+            self, store, tmp_path, monkeypatch):
+        """Compaction invalidation must hard-reset live agy sessions."""
+        self._setup(tmp_path, monkeypatch)
+        cid = store.generate_id()
+        store.save(cid, [], user_id="alice")
+        calls = []
+
+        class _Pool:
+            def kill_and_evict_by_conv_agent(self, conv_id, agent_name, reason):
+                calls.append((conv_id, agent_name, reason))
+                return 1
+
+        from core.antigravity_observer_pool import AntigravityObserverPool
+
+        monkeypatch.setattr(
+            AntigravityObserverPool, "instance", staticmethod(lambda: _Pool()))
+
+        store.invalidate_claude_session_for_agent(cid, "gemini")
+
+        assert calls == [(
+            cid, "gemini", "invalidate_claude_session_for_agent")]
+
     def test_invalidate_per_agent_prunes_companion_dir(
             self, store, tmp_path, monkeypatch):
         """After compact, both <sid>.jsonl AND the <sid>/ workdir must

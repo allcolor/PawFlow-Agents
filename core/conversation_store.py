@@ -3551,8 +3551,9 @@ class ConversationStore:
         except Exception as _e:
             logger.debug("invalidate_claude_sessions disk prune failed for %s: %s",
                          cid[:8], _e)
-        # Kill any warm CC / CCI / codex / gemini session running in this conv
-        # — its view of history is now stale (edit/compact/branch-switch).
+        # Kill any warm CC / CCI / codex / gemini / antigravity session running
+        # in this conv — its view of history is now stale
+        # (edit/compact/branch-switch).
         try:
             from core.cc_live_registry import LiveSessionRegistry
             n = LiveSessionRegistry.instance().kill_and_evict_by_conv(
@@ -3600,6 +3601,18 @@ class ConversationStore:
         except Exception as _e:
             logger.debug(
                 "invalidate_claude_sessions gemini-evict failed for %s: %s",
+                cid[:8], _e)
+        try:
+            from core.antigravity_observer_pool import AntigravityObserverPool
+            n = AntigravityObserverPool.instance().kill_and_evict_by_conv(
+                cid, reason="invalidate_claude_sessions")
+            if n:
+                logger.info(
+                    "Invalidated %d live Antigravity container(s) for conv %s",
+                    n, cid[:8])
+        except Exception as _e:
+            logger.debug(
+                "invalidate_claude_sessions antigravity-evict failed for %s: %s",
                 cid[:8], _e)
 
     def invalidate_claude_session_for_agent(self, cid: str,
@@ -3707,8 +3720,8 @@ class ConversationStore:
             logger.debug(
                 "invalidate_claude_session_for_agent cli disk prune failed "
                 "for %s/%s: %s", cid[:8], agent_name, _e)
-        # Kill any warm CC / CCI / codex / gemini session for this (conv, agent)
-        # pair so the next turn spawns fresh.
+        # Kill any warm CC / CCI / codex / gemini / antigravity session for this
+        # (conv, agent) pair so the next turn spawns fresh.
         try:
             from core.cc_live_registry import LiveSessionRegistry
             n = LiveSessionRegistry.instance().kill_and_evict_by_conv_agent(
@@ -3760,6 +3773,19 @@ class ConversationStore:
         except Exception as _e:
             logger.debug(
                 "invalidate_claude_session_for_agent gemini-evict failed "
+                "for %s/%s: %s", cid[:8], agent_name, _e)
+        try:
+            from core.antigravity_observer_pool import AntigravityObserverPool
+            n = AntigravityObserverPool.instance().kill_and_evict_by_conv_agent(
+                cid, agent_name,
+                reason="invalidate_claude_session_for_agent")
+            if n:
+                logger.info(
+                    "Invalidated %d live Antigravity container(s) for %s/%s",
+                    n, cid[:8], agent_name)
+        except Exception as _e:
+            logger.debug(
+                "invalidate_claude_session_for_agent antigravity-evict failed "
                 "for %s/%s: %s", cid[:8], agent_name, _e)
 
     # ── Bindings (repository associations) ──────────────────

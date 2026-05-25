@@ -17,7 +17,7 @@ import logging
 import os
 import shlex
 import socket
-import subprocess
+import subprocess  # nosec B404 - Docker/tmux process control is this module's job.
 import threading
 import time
 import uuid
@@ -204,6 +204,33 @@ class AntigravityObserverPool:
                     "provider": "antigravity-observer",
                 })
         return out
+
+    def kill_and_evict_by_conv(self, conv_id: str, reason: str) -> int:
+        """Kill all live Antigravity sessions for one conversation."""
+        with self._lock:
+            victims = [(key, state) for key, state in self._sessions.items()
+                       if key[1] == conv_id]
+            for key, _state in victims:
+                self._sessions.pop(key, None)
+        for key, state in victims:
+            logger.info("[ag-live] kill_by_conv %s/%s/%s (%s)",
+                        key[1][:8], key[2], key[3], reason)
+            self.kill(state)
+        return len(victims)
+
+    def kill_and_evict_by_conv_agent(self, conv_id: str, agent_name: str,
+                                      reason: str) -> int:
+        """Kill live Antigravity sessions for one (conversation, agent) pair."""
+        with self._lock:
+            victims = [(key, state) for key, state in self._sessions.items()
+                       if key[1] == conv_id and key[2] == agent_name]
+            for key, _state in victims:
+                self._sessions.pop(key, None)
+        for key, state in victims:
+            logger.info("[ag-live] kill_by_conv_agent %s/%s/%s (%s)",
+                        key[1][:8], key[2], key[3], reason)
+            self.kill(state)
+        return len(victims)
 
     def touch(self, state: AntigravityObserverSession) -> None:
         state.last_used = time.time()

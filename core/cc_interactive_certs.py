@@ -56,7 +56,7 @@ def ensure_ca() -> tuple[Path, Path]:
 
     from datetime import timedelta
 
-    _paths.SYSTEM_DIR.mkdir(parents=True, exist_ok=True)
+    CA_CERT.parent.mkdir(parents=True, exist_ok=True)
     key = rsa.generate_private_key(public_exponent=65537, key_size=4096)
     subject = issuer = x509.Name([
         x509.NameAttribute(NameOID.COMMON_NAME, "PawFlow Claude Code Interactive CA"),

@@ -27,9 +27,9 @@ UPSTREAM_HOST = os.environ.get("PAWFLOW_AG_UPSTREAM_HOST", "daily-cloudcode-pa.g
 UPSTREAM_PORT = int(os.environ.get("PAWFLOW_AG_UPSTREAM_PORT", "443"))
 LISTEN_HOST = os.environ.get("PAWFLOW_AG_PROXY_HOST", "0.0.0.0")  # nosec B104 - container-local proxy bind.
 LISTEN_PORT = int(os.environ.get("PAWFLOW_AG_PROXY_PORT", "443"))
-CERT_FILE = os.environ.get("PAWFLOW_AG_LEAF_CERT", "/tmp/aicode-googleapis.crt")
-KEY_FILE = os.environ.get("PAWFLOW_AG_LEAF_KEY", "/tmp/aicode-googleapis.key")
-LOG_FILE = os.environ.get("PAWFLOW_AG_OBSERVER_LOG", "/tmp/pawflow-antigravity-observer.jsonl")
+CERT_FILE = os.environ.get("PAWFLOW_AG_LEAF_CERT", "/tmp/aicode-googleapis.crt")  # nosec B108 - ephemeral container fallback; production passes a session path.
+KEY_FILE = os.environ.get("PAWFLOW_AG_LEAF_KEY", "/tmp/aicode-googleapis.key")  # nosec B108 - ephemeral container fallback; production passes a session path.
+LOG_FILE = os.environ.get("PAWFLOW_AG_OBSERVER_LOG", "/tmp/pawflow-antigravity-observer.jsonl")  # nosec B108 - ephemeral container fallback; production passes a session path.
 LOG_B64 = os.environ.get("PAWFLOW_AG_OBSERVER_LOG_B64", "0").lower() in {"1", "true", "yes"}
 MAX_B64_BYTES = int(os.environ.get("PAWFLOW_AG_OBSERVER_MAX_B64_BYTES", "4096") or "4096")
 MAX_BODY_CAPTURE_BYTES = int(os.environ.get("PAWFLOW_AG_OBSERVER_MAX_BODY_BYTES", str(8 * 1024 * 1024)) or str(8 * 1024 * 1024))
@@ -353,7 +353,7 @@ class HTTP1Observer:
                 continue
             try:
                 parsed = json.loads(payload)
-            except Exception:
+            except json.JSONDecodeError:
                 continue
             delta = _semantic_model_delta(parsed)
             if delta:
@@ -705,8 +705,8 @@ def _pipe(src: ssl.SSLSocket, dst: ssl.SSLSocket, observer) -> None:
         if not data:
             try:
                 dst.shutdown(socket.SHUT_WR)
-            except Exception:
-                pass
+            except OSError as exc:
+                _event({"type": "socket_shutdown_error", "error": str(exc)})
             return
         observer.feed(data)
         dst.sendall(data)
@@ -765,8 +765,8 @@ def handle_client(client: ssl.SSLSocket) -> None:
             if sock:
                 try:
                     sock.close()
-                except Exception:
-                    pass
+                except OSError as exc:
+                    _event({"type": "socket_close_error", "connection_id": connection_id, "error": str(exc)})
 
 
 def main() -> None:

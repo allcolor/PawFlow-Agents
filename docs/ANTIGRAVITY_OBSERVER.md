@@ -48,6 +48,10 @@ The provider handles:
   call/function response parts.
 - Live preempt and force stop through tmux key injection.
 - Fresh cold sessions whenever the tracked tmux/container is missing.
+- Session invalidation after compact, edit, or branch changes kills and evicts
+  matching live `agy` containers so the next provider turn cold-starts from the
+  compacted PawFlow context instead of reusing Antigravity's stale internal
+  conversation.
 
 ## UI
 

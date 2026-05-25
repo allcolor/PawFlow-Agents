@@ -91,3 +91,5 @@ data_backup/
 .pawflow_exec_*.py
 .git-credentials
 graphify-out/
+
+.antigravitycli/

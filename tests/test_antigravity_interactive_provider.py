@@ -58,8 +58,14 @@ def test_antigravity_turn_coordinator_reads_jsonl_text_thinking_and_tools(monkey
     assert response.tokens_in == 3
     assert response.tokens_out == 2
     assert ("text", {"text": "Hi there"}) in blocks
-    assert ("tool_use", {"id": "ag_tool_1", "name": "read", "arguments": {"path": "a.py"}}) in blocks
-    assert ("tool_result", {"tc_id": "ag_tool_1", "tool": "read", "result": "ok"}) in blocks
+    assert ("tool_use", {
+        "id": "ag_tool_1", "name": "read", "arguments": {"path": "a.py"},
+        "tool_origin": "native",
+    }) in blocks
+    assert ("tool_result", {
+        "tc_id": "ag_tool_1", "tool": "read", "result": "ok",
+        "tool_origin": "native",
+    }) in blocks
     assert turns == []
 
 
@@ -91,8 +97,8 @@ def test_antigravity_turn_coordinator_flushes_text_at_tool_boundaries(monkeypatc
     assert response.content == "I will inspect.Done."
     assert blocks == [
         ("text", {"text": "I will inspect."}),
-        ("tool_use", {"id": "tc1", "name": "list_dir", "arguments": {"DirectoryPath": "."}}),
-        ("tool_result", {"tc_id": "tc1", "tool": "list_dir", "result": "a.py"}),
+        ("tool_use", {"id": "tc1", "name": "list_dir", "arguments": {"DirectoryPath": "."}, "tool_origin": "native"}),
+        ("tool_result", {"tc_id": "tc1", "tool": "list_dir", "result": "a.py", "tool_origin": "native"}),
         ("text", {"text": "Done."}),
     ]
     assert turns == []
@@ -124,6 +130,7 @@ def test_antigravity_turn_coordinator_matches_idless_function_response_by_name(m
         "tc_id": "tc-list",
         "tool": "list_dir",
         "result": "initial_context.md\nsettings.json",
+        "tool_origin": "native",
     }) in blocks
 
 
@@ -187,6 +194,152 @@ def test_antigravity_turn_coordinator_ignores_tool_step_stop(monkeypatch, tmp_pa
     assert response.content == "final answer"
 
 
+def test_antigravity_turn_coordinator_does_not_finish_on_text_stop_without_done(monkeypatch, tmp_path):
+    import threading
+    import time
+    import core.llm_providers.antigravity_interactive as agi
+
+    monkeypatch.setattr(agi, "_NO_DONE_IDLE_DRAIN_SECONDS", 0.3)
+    log_path = tmp_path / "observer.jsonl"
+    log_path.write_text("".join(json.dumps(e) + "\n" for e in [
+        {"type": "ag_text_delta", "text": "first part"},
+        {"type": "ag_text_delta", "finish_reason": "STOP"},
+    ]), encoding="utf-8")
+
+    def append_late_answer():
+        time.sleep(0.1)
+        with log_path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"type": "ag_text_delta", "text": " second part", "done": True}) + "\n")
+
+    threading.Thread(target=append_late_answer, daemon=True).start()
+    response = _AntigravityTurnCoordinator(str(log_path), offset=0).run()
+
+    assert response.content == "first part second part"
+
+
+def test_antigravity_turn_coordinator_waits_for_tool_result_after_step_stop(monkeypatch, tmp_path):
+    import threading
+    import time
+    import core.llm_providers.antigravity_interactive as agi
+
+    monkeypatch.setattr(agi, "_NO_DONE_IDLE_DRAIN_SECONDS", 0)
+    monkeypatch.setattr(agi, "_POST_DONE_IDLE_DRAIN_SECONDS", 0.05)
+    log_path = tmp_path / "observer.jsonl"
+    log_path.write_text("".join(json.dumps(e) + "\n" for e in [
+        {"type": "ag_text_delta", "tool_calls": [{
+            "id": "tc1", "name": "pawflow/use_tool",
+            "arguments": {"tool_name": "list_dir", "arguments": {"path": "."}},
+            "tool_origin": "mcp",
+        }]},
+        {"type": "ag_text_delta", "finish_reason": "STOP"},
+    ]), encoding="utf-8")
+
+    def append_late_events():
+        time.sleep(0.1)
+        with log_path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"type": "ag_text_delta", "tool_results": [{
+                "name": "list_dir", "content": "a.py", "tool_origin": "mcp",
+            }]}) + "\n")
+            fh.write(json.dumps({"type": "ag_text_delta", "text": "done", "done": True}) + "\n")
+
+    threading.Thread(target=append_late_events, daemon=True).start()
+    blocks = []
+    response = _AntigravityTurnCoordinator(
+        str(log_path), offset=0,
+        block_callback=lambda kind, payload: blocks.append((kind, payload)),
+    ).run()
+
+    assert ("tool_result", {
+        "tc_id": "tc1", "tool": "pawflow/use_tool", "result": "a.py",
+        "tool_origin": "mcp",
+    }) in blocks
+    assert response.content == "done"
+
+
+def test_antigravity_turn_coordinator_reads_mcp_result_from_mitm_tool_result(monkeypatch, tmp_path):
+    import core.llm_providers.antigravity_interactive as agi
+
+    monkeypatch.setattr(agi, "_POST_DONE_IDLE_DRAIN_SECONDS", 0)
+    log_path = tmp_path / "observer.jsonl"
+    log_path.write_text("".join(json.dumps(e) + "\n" for e in [
+        {"type": "tool_use",
+            "tool_use_id": "tc1", "name": "pawflow/use_tool",
+            "arguments": {"tool_name": "bash", "arguments": {"command": "git status"}},
+            "tool_origin": "mcp",
+        },
+        {"type": "tool_result",
+            "tool_use_id": "tc1", "name": "pawflow/use_tool",
+            "content": "Created At: now\nCompleted At: now\nOn branch main\n",
+            "tool_origin": "mcp",
+        },
+        {"type": "ag_text_delta", "finish_reason": "STOP"},
+        {"type": "ag_text_delta", "done": True},
+    ]), encoding="utf-8")
+
+    blocks = []
+    _AntigravityTurnCoordinator(
+        str(log_path), offset=0,
+        block_callback=lambda kind, payload: blocks.append((kind, payload)),
+    ).run()
+
+    assert ("tool_result", {
+        "tc_id": "tc1",
+        "tool": "pawflow/use_tool",
+        "result": "Created At: now\nCompleted At: now\nOn branch main\n",
+        "tool_origin": "mcp",
+    }) in blocks
+
+
+def test_antigravity_turn_coordinator_exits_when_tmux_is_interrupted(monkeypatch, tmp_path):
+    import core.llm_providers.antigravity_interactive as agi
+
+    monkeypatch.setattr(agi, "_NO_DONE_IDLE_DRAIN_SECONDS", 30)
+    log_path = tmp_path / "observer.jsonl"
+    log_path.write_text("".join(json.dumps(e) + "\n" for e in [
+        {"type": "ag_text_delta", "tool_calls": [{
+            "id": "tc1", "name": "pawflow/use_tool",
+            "arguments": {"tool_name": "bash", "arguments": {"command": "sleep 60"}},
+            "tool_origin": "mcp",
+        }]},
+        {"type": "ag_text_delta", "finish_reason": "STOP"},
+    ]), encoding="utf-8")
+
+    checks = []
+    response = _AntigravityTurnCoordinator(
+        str(log_path), offset=0,
+        interrupted_callback=lambda: checks.append(True) or True,
+    ).run()
+
+    assert checks
+    assert response.content == ""
+
+
+def test_antigravity_turn_coordinator_does_not_match_native_result_to_mcp_call(monkeypatch, tmp_path):
+    import core.llm_providers.antigravity_interactive as agi
+
+    monkeypatch.setattr(agi, "_POST_DONE_IDLE_DRAIN_SECONDS", 0)
+    log_path = tmp_path / "observer.jsonl"
+    log_path.write_text("".join(json.dumps(e) + "\n" for e in [
+        {"type": "ag_text_delta", "tool_calls": [{
+            "id": "tc1", "name": "pawflow/use_tool",
+            "arguments": {"tool_name": "read", "arguments": {"path": "x"}},
+            "tool_origin": "mcp",
+        }]},
+        {"type": "ag_text_delta", "tool_results": [{
+            "name": "read", "content": "stale native", "tool_origin": "native",
+        }]},
+        {"type": "ag_text_delta", "done": True},
+    ]), encoding="utf-8")
+
+    blocks = []
+    _AntigravityTurnCoordinator(
+        str(log_path), offset=0,
+        block_callback=lambda kind, payload: blocks.append((kind, payload)),
+    ).run()
+
+    assert not [payload for kind, payload in blocks if kind == "tool_result"]
+
+
 def test_antigravity_proxy_emits_incremental_sse_semantic_delta(monkeypatch):
     from tools import ag_observer_proxy
 
@@ -205,6 +358,7 @@ def test_antigravity_proxy_emits_incremental_sse_semantic_delta(monkeypatch):
     assert deltas[0]["finish_reason"] == "STOP"
     assert deltas[0]["tool_calls"][0]["name"] == "read"
     assert deltas[0]["tool_calls"][0]["arguments"] == {"path": "a.py"}
+    assert deltas[0]["tool_calls"][0]["tool_origin"] == "native"
 
 
 def test_antigravity_proxy_emits_user_prompt_from_request_body(monkeypatch):
@@ -248,12 +402,19 @@ def test_antigravity_proxy_emits_tool_result_from_request_function_response(monk
         b"Content-Type: application/json\r\nContent-Length: " + str(len(body)).encode() + b"\r\n\r\n" + body
     )
 
-    deltas = [event for event in events if event.get("type") == "ag_text_delta"]
-    assert deltas[-1]["tool_results"] == [{
-        "tool_use_id": deltas[-1]["tool_results"][0]["tool_use_id"],
+    results = [event for event in events if event.get("type") == "tool_result"]
+    assert results[-1] == {
+        "type": "tool_result",
+        "connection_id": "conn1",
+        "direction": "client_to_upstream",
+        "method": "POST",
+        "path": "/v1internal:streamGenerateContent?alt=sse",
+        "request_id": results[-1]["request_id"],
+        "tool_use_id": results[-1]["tool_use_id"],
         "name": "list_dir",
         "content": "a.py\nb.py",
-    }]
+        "tool_origin": "native",
+    }
 
 
 def test_antigravity_proxy_emits_tool_result_after_large_request_prefix(monkeypatch):
@@ -283,9 +444,95 @@ def test_antigravity_proxy_emits_tool_result_after_large_request_prefix(monkeypa
 
     summaries = [event for event in events if event.get("type") == "http1_body_summary"]
     assert summaries[-1]["observed_body_bytes"] == len(body)
-    deltas = [event for event in events if event.get("type") == "ag_text_delta"]
-    assert deltas[-1]["tool_results"][0]["name"] == "view_file"
-    assert deltas[-1]["tool_results"][0]["content"] == "late result"
+    results = [event for event in events if event.get("type") == "tool_result"]
+    assert results[-1]["name"] == "view_file"
+    assert results[-1]["content"] == "late result"
+    assert results[-1]["tool_origin"] == "native"
+
+
+def test_antigravity_proxy_emits_text_encoded_mcp_tool_result(monkeypatch):
+    from tools import ag_observer_proxy
+
+    events = []
+    monkeypatch.setattr(ag_observer_proxy, "_event", events.append)
+    body = json.dumps({
+        "request": {
+            "contents": [
+                {"role": "model", "parts": [{"functionCall": {
+                    "name": "call_mcp_tool",
+                    "args": {
+                        "ServerName": "pawflow",
+                        "ToolName": "use_tool",
+                        "Arguments": {"tool_name": "bash", "arguments": {"command": "git status"}},
+                    },
+                }}]},
+                {"role": "user", "parts": [{"text": "Created At: now\nCompleted At: now\nOn branch main\n"}]},
+            ],
+        },
+    }).encode()
+    req = ag_observer_proxy.HTTP1Observer("conn1", "client_to_upstream")
+    req.feed(
+        b"POST /v1internal:streamGenerateContent?alt=sse HTTP/1.1\r\n"
+        b"Content-Type: application/json\r\nContent-Length: " + str(len(body)).encode() + b"\r\n\r\n" + body
+    )
+
+    results = [event for event in events if event.get("type") == "tool_result"]
+    assert results[-1]["name"] == "pawflow/use_tool"
+    assert results[-1]["content"] == "Created At: now\nCompleted At: now\nOn branch main\n"
+    assert results[-1]["tool_origin"] == "mcp"
+
+
+def test_antigravity_proxy_scans_latest_non_user_content_for_tool_result(monkeypatch):
+    from tools import ag_observer_proxy
+
+    events = []
+    monkeypatch.setattr(ag_observer_proxy, "_event", events.append)
+    body = json.dumps({
+        "request": {
+            "contents": [
+                {"role": "user", "parts": [{"text": "old prompt"}]},
+                {"role": "model", "parts": [{"functionResponse": {
+                    "name": "call_mcp_tool",
+                    "response": {"content": "Created At: now\nCompleted At: now\nerror\n"},
+                    "ServerName": "pawflow",
+                    "ToolName": "use_tool",
+                }}]},
+            ],
+        },
+    }).encode()
+    req = ag_observer_proxy.HTTP1Observer("conn1", "client_to_upstream")
+    req.feed(
+        b"POST /v1internal:streamGenerateContent?alt=sse HTTP/1.1\r\n"
+        b"Content-Type: application/json\r\nContent-Length: " + str(len(body)).encode() + b"\r\n\r\n" + body
+    )
+
+    results = [event for event in events if event.get("type") == "tool_result"]
+    assert results[-1]["content"] == "Created At: now\nCompleted At: now\nerror\n"
+
+
+def test_antigravity_proxy_keeps_mcp_function_response_without_server_fields(monkeypatch):
+    from tools import ag_observer_proxy
+
+    events = []
+    monkeypatch.setattr(ag_observer_proxy, "_event", events.append)
+    body = json.dumps({
+        "request": {
+            "contents": [{"role": "user", "parts": [{"functionResponse": {
+                "name": "call_mcp_tool",
+                "response": {"content": "Created At: now\nCompleted At: now\nunknown argument\n"},
+            }}]}],
+        },
+    }).encode()
+    req = ag_observer_proxy.HTTP1Observer("conn1", "client_to_upstream")
+    req.feed(
+        b"POST /v1internal:streamGenerateContent?alt=sse HTTP/1.1\r\n"
+        b"Content-Type: application/json\r\nContent-Length: " + str(len(body)).encode() + b"\r\n\r\n" + body
+    )
+
+    results = [event for event in events if event.get("type") == "tool_result"]
+    assert results[-1]["name"] == "pawflow/use_tool"
+    assert results[-1]["content"] == "Created At: now\nCompleted At: now\nunknown argument\n"
+    assert results[-1]["tool_origin"] == "mcp"
 
 
 def test_antigravity_proxy_unwraps_call_mcp_tool_function_call(monkeypatch):
@@ -303,6 +550,90 @@ def test_antigravity_proxy_unwraps_call_mcp_tool_function_call(monkeypatch):
     deltas = [event for event in events if event.get("type") == "ag_text_delta"]
     assert deltas[-1]["tool_calls"][0]["name"] == "pawflow/get_tool_schema"
     assert deltas[-1]["tool_calls"][0]["arguments"] == {"tool_name": "bash"}
+    assert deltas[-1]["tool_calls"][0]["tool_origin"] == "mcp"
+
+
+def test_antigravity_proxy_skips_incomplete_mcp_tool_call(monkeypatch):
+    from tools import ag_observer_proxy
+
+    events = []
+    monkeypatch.setattr(ag_observer_proxy, "_event", events.append)
+    chunk = b'data: {"response":{"candidates":[{"content":{"parts":[{"functionCall":{"name":"call_mcp_tool","args":{"ServerName":"pawflow"}}}]}}]}}\n\n'
+    resp = ag_observer_proxy.HTTP1Observer("conn1", "upstream_to_client")
+    resp.feed(
+        b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n"
+        + f"{len(chunk):x}\r\n".encode() + chunk + b"\r\n0\r\n\r\n"
+    )
+
+    deltas = [event for event in events if event.get("type") == "ag_text_delta"]
+    assert not deltas
+
+
+def test_antigravity_turn_coordinator_preserves_tool_origin(monkeypatch, tmp_path):
+    import core.llm_providers.antigravity_interactive as agi
+
+    monkeypatch.setattr(agi, "_POST_DONE_IDLE_DRAIN_SECONDS", 0)
+    log_path = tmp_path / "observer.jsonl"
+    events = [
+        {"type": "ag_text_delta", "tool_calls": [{
+            "id": "tc-mcp", "name": "pawflow/read",
+            "arguments": {"path": "a.py"}, "tool_origin": "mcp",
+        }]},
+        {"type": "ag_text_delta", "tool_results": [{
+            "tool_use_id": "tc-mcp", "name": "pawflow/read",
+            "content": "ok", "tool_origin": "mcp",
+        }]},
+        {"type": "ag_text_delta", "done": True},
+    ]
+    log_path.write_text("".join(json.dumps(e) + "\n" for e in events), encoding="utf-8")
+
+    blocks = []
+    _AntigravityTurnCoordinator(
+        str(log_path), offset=0,
+        block_callback=lambda kind, payload: blocks.append((kind, payload)),
+    ).run()
+
+    assert ("tool_use", {
+        "id": "tc-mcp", "name": "pawflow/read",
+        "arguments": {"path": "a.py"}, "tool_origin": "mcp",
+    }) in blocks
+    assert ("tool_result", {
+        "tc_id": "tc-mcp", "tool": "pawflow/read",
+        "result": "ok", "tool_origin": "mcp",
+    }) in blocks
+
+
+def test_antigravity_turn_coordinator_defaults_observed_tool_origin_native(monkeypatch, tmp_path):
+    import core.llm_providers.antigravity_interactive as agi
+
+    monkeypatch.setattr(agi, "_POST_DONE_IDLE_DRAIN_SECONDS", 0)
+    log_path = tmp_path / "observer.jsonl"
+    events = [
+        {"type": "ag_text_delta", "tool_calls": [{
+            "id": "tc-native", "name": "view_file",
+            "arguments": {"path": "a.py"},
+        }]},
+        {"type": "ag_text_delta", "tool_results": [{
+            "tool_use_id": "tc-native", "name": "view_file", "content": "ok",
+        }]},
+        {"type": "ag_text_delta", "done": True},
+    ]
+    log_path.write_text("".join(json.dumps(e) + "\n" for e in events), encoding="utf-8")
+
+    blocks = []
+    _AntigravityTurnCoordinator(
+        str(log_path), offset=0,
+        block_callback=lambda kind, payload: blocks.append((kind, payload)),
+    ).run()
+
+    assert ("tool_use", {
+        "id": "tc-native", "name": "view_file",
+        "arguments": {"path": "a.py"}, "tool_origin": "native",
+    }) in blocks
+    assert ("tool_result", {
+        "tc_id": "tc-native", "tool": "view_file",
+        "result": "ok", "tool_origin": "native",
+    }) in blocks
 
 
 def test_antigravity_initial_context_uses_ag_file(tmp_path):
@@ -324,7 +655,98 @@ def test_antigravity_initial_context_uses_ag_file(tmp_path):
     assert "hello" in initial_context
 
 
-def test_antigravity_pool_types_multiline_prompts_with_shift_enter(monkeypatch):
+def test_antigravity_prompt_materializes_image_ref_as_at_path(tmp_path, monkeypatch):
+    from core.llm_client import LLMMessage
+
+    class _Store:
+        def get_required(self, file_id, user_id, conversation_id):
+            assert (file_id, user_id, conversation_id) == ("img1", "u", "conv")
+            return "sample.png", b"PNG", "image/png"
+
+    monkeypatch.setattr("core.file_store.FileStore.instance", staticmethod(lambda: _Store()))
+
+    client = LLMClient("antigravity-interactive")
+    msg = LLMMessage(
+        role="user",
+        conversation_id="conv",
+        content=[
+            {"type": "text", "text": "describe"},
+            {"type": "image_ref", "file_id": "img1", "filename": "sample.png"},
+        ],
+    )
+
+    prompt = client._agi_prompt([msg], None, str(tmp_path), "/cc_sessions/u/conv/a", "u", "conv")
+
+    assert "Attachments:\n@/cc_sessions/u/conv/a/.pawflow_vision/img1.png" in prompt
+    assert "describe" in prompt
+    assert (tmp_path / ".pawflow_vision" / "img1.png").read_bytes() == b"PNG"
+
+
+def test_antigravity_prompt_materializes_inline_image_url_as_at_path(tmp_path):
+    from core.llm_client import LLMMessage
+
+    client = LLMClient("antigravity-interactive")
+    msg = LLMMessage(
+        role="user",
+        conversation_id="conv",
+        content=[
+            {"type": "text", "text": "describe"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,UE5H"}},
+        ],
+    )
+
+    prompt = client._agi_prompt([msg], None, str(tmp_path), "/cc_sessions/u/conv/a", "u", "conv")
+
+    assert "Attachments:\n@/cc_sessions/u/conv/a/.pawflow_vision/inline_" in prompt
+    image_files = list((tmp_path / ".pawflow_vision").glob("inline_*.png"))
+    assert len(image_files) == 1
+    assert image_files[0].read_bytes() == b"PNG"
+
+
+def test_antigravity_live_preempt_materializes_image_attachment(tmp_path, monkeypatch):
+    class _Store:
+        def get_required(self, file_id, user_id, conversation_id):
+            assert (file_id, user_id, conversation_id) == ("img1", "u", "conv")
+            return "sample.png", b"PNG", "image/png"
+
+    class _State:
+        workdir = str(tmp_path)
+        container_workdir = "/cc_sessions/u/conv/a"
+
+    class _Pool:
+        def __init__(self):
+            self.sent = []
+
+        def find_session(self, *args, **kwargs):
+            return _State()
+
+        def send_interrupt(self, state, text):
+            self.sent.append(text)
+            return True
+
+    pool = _Pool()
+    monkeypatch.setattr("core.file_store.FileStore.instance", staticmethod(lambda: _Store()))
+    monkeypatch.setattr(
+        "core.llm_providers.antigravity_interactive.AntigravityObserverPool.instance",
+        staticmethod(lambda: pool),
+    )
+
+    client = LLMClient("antigravity-interactive")
+
+    assert client._agi_send_user_message(
+        "look at this",
+        attachments=[{"file_id": "img1", "filename": "sample.png", "mime_type": "image/png"}],
+        user_id="u",
+        conversation_id="conv",
+        agent_name="a",
+    ) is True
+
+    assert "Attachments:\n@/cc_sessions/u/conv/a/.pawflow_vision/img1.png" in pool.sent[0]
+    assert "look at this" in pool.sent[0]
+    assert (tmp_path / ".pawflow_vision" / "img1.png").read_bytes() == b"PNG"
+
+
+def test_antigravity_pool_pastes_multiline_prompts_atomically(monkeypatch):
     from core.antigravity_observer_pool import AntigravityObserverPool, AntigravityObserverSession
     import core.antigravity_observer_pool as pool_mod
 
@@ -337,16 +759,14 @@ def test_antigravity_pool_types_multiline_prompts_with_shift_enter(monkeypatch):
 
     monkeypatch.setattr(pool, "_is_alive", lambda name: True)
     monkeypatch.setattr(pool_mod.time, "sleep", lambda seconds: None)
-    monkeypatch.setattr(pool, "_send_literal_text", lambda _state, text: events.append(("text", text)) or True)
+    monkeypatch.setattr(pool, "_load_buffer", lambda _state, text: events.append(("load", text)) or True)
+    monkeypatch.setattr(pool, "_paste_buffer", lambda _state: events.append(("paste", None)) or True)
     monkeypatch.setattr(pool, "send_keys", lambda _state, keys: events.append(("keys", keys)) or True)
 
     assert pool.send_text(state, "line 1\nline 2\nline 3") is True
     assert events == [
-        ("text", "line 1"),
-        ("keys", ["S-Enter"]),
-        ("text", "line 2"),
-        ("keys", ["S-Enter"]),
-        ("text", "line 3"),
+        ("load", "line 1\nline 2\nline 3"),
+        ("paste", None),
         ("keys", ["Enter"]),
     ]
 

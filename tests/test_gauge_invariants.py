@@ -137,13 +137,19 @@ def test_core_dialog_labels_use_i18n_catalogs():
 
 def test_chat_tool_display_unwraps_meta_use_tool_calls():
     assert "function _unwrapDisplayedToolCall" in _MESSAGES_JS
+    assert "function _hasCompleteMcpDisplayedToolCall" in _MESSAGES_JS
     assert "mcp_pawflow_use_tool" in _MESSAGES_JS
     assert "mcp__pawflow__use_tool" in _MESSAGES_JS
     assert "mcp__pawflow__.use_tool" in _MESSAGES_JS
     assert "pawflow.use_tool" in _MESSAGES_JS
+    assert "pawflow/use_tool" in _MESSAGES_JS
     assert "toolArgs.tool_name" in _MESSAGES_JS
     assert "toolArgs.parameters" in _MESSAGES_JS
     assert "payload.arguments || payload.parameters || {}" in _MESSAGES_JS
+    assert "if (value === 'mcp' || value === 'native') return value;" in _MESSAGES_JS
+    assert "_toolOriginValue(extra, (extra && (extra.tool_name || extra.tool)) || toolName)" in _MESSAGES_JS
+    assert "if (!_hasCompleteMcpDisplayedToolCall(rawToolName, rawToolArgs)) return null;" in _MESSAGES_JS
+    assert "!_hasCompleteMcpDisplayedToolCall(data.tool, data.arguments || {})" in _SSE_JS
 
 
 def test_transcript_tool_events_are_not_filtered_by_cancelled_ui_state():
@@ -165,6 +171,18 @@ def test_live_tool_call_passes_arguments_to_renderer():
         _SSE_JS.index("eventSource.addEventListener('tool_result'")]
     assert "arguments: data.arguments || {}" in tool_call
     assert "tool_args: data.arguments || {}" in tool_call
+
+
+def test_incomplete_mcp_tool_calls_are_filtered_before_persist_and_display():
+    core_src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
+    serialization_src = Path("tasks/ai/agent_serialization.py").read_text(encoding="utf-8")
+    client_src = Path("core/llm_client.py").read_text(encoding="utf-8")
+
+    assert "def has_complete_mcp_tool_call" in client_src
+    assert "if not has_complete_mcp_tool_call(_raw_name, _raw_args):" in core_src
+    assert "return" in core_src[core_src.index("if not has_complete_mcp_tool_call(_raw_name, _raw_args):"):]
+    assert "if not has_complete_mcp_tool_call(raw_name, raw_args):" in serialization_src
+    assert "continue" in serialization_src[serialization_src.index("if not has_complete_mcp_tool_call(raw_name, raw_args):"):]
 
 
 def test_iteration_status_updates_state_without_polluting_chat_timeline():
@@ -1244,7 +1262,7 @@ def test_live_agent_thread_without_context_is_not_killed_as_zombie():
     core_src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
     codex_src = Path("core/llm_providers/codex_app_server.py").read_text(encoding="utf-8")
     assert "zombie thread detected" not in streaming_src
-    assert "active thread has no context yet" in streaming_src
+    assert "active turn has no context yet" in streaming_src
     assert "active turn not preemptable yet — queuing for next drain" in streaming_src
     assert "preempted preparing provider turn — fast-restarting" not in streaming_src
     assert "t.name == f\"agent-stream-{conversation_id}\"" in loop_src

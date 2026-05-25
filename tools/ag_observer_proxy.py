@@ -314,7 +314,7 @@ class HTTP1Observer:
     def _emit_body(self, data: bytes) -> None:
         if not data:
             return
-        text = data[:2048].decode("utf-8", errors="replace")
+        preview_text = data[:2048].decode("utf-8", errors="replace")
         record = {"type": "http1_body", "connection_id": self.connection_id,
                   "direction": self.direction, **_payload_meta(data)}
         for key in ("method", "path", "status", "content_type"):
@@ -323,7 +323,13 @@ class HTTP1Observer:
         self._body_total_bytes += len(data)
         if len(self._body_buf) < MAX_BODY_CAPTURE_BYTES:
             self._body_buf += data[:MAX_BODY_CAPTURE_BYTES - len(self._body_buf)]
-        if "text/event-stream" in text or text.startswith("data:") or "\ndata:" in text:
+        is_sse = (
+            "text/event-stream" in self._current.get("content_type", "")
+            or preview_text.startswith("data:")
+            or "\ndata:" in preview_text
+        )
+        if is_sse:
+            text = data.decode("utf-8", errors="replace")
             record["sse_line_count"] = sum(1 for line in text.splitlines() if line.startswith("data:"))
             if self.direction == "upstream_to_client":
                 self._emit_sse_deltas(text)
@@ -350,6 +356,13 @@ class HTTP1Observer:
                     "path": self._current.get("path", ""),
                     "done": True,
                 })
+                _event({
+                    "type": "hook",
+                    "connection_id": self.connection_id,
+                    "direction": self.direction,
+                    "path": self._current.get("path", ""),
+                    "hook_event_name": "Stop",
+                })
                 continue
             try:
                 parsed = json.loads(payload)
@@ -357,6 +370,28 @@ class HTTP1Observer:
                 continue
             delta = _semantic_model_delta(parsed)
             if delta:
+                for tool_call in delta.get("tool_calls") or []:
+                    _event({
+                        "type": "tool_use",
+                        "connection_id": self.connection_id,
+                        "direction": self.direction,
+                        "path": self._current.get("path", ""),
+                        "tool_use_id": tool_call.get("id", ""),
+                        "name": tool_call.get("name", ""),
+                        "arguments": tool_call.get("arguments") or {},
+                        "tool_origin": tool_call.get("tool_origin", ""),
+                    })
+                for tool_result in delta.get("tool_results") or []:
+                    _event({
+                        "type": "tool_result",
+                        "connection_id": self.connection_id,
+                        "direction": self.direction,
+                        "path": self._current.get("path", ""),
+                        "tool_use_id": tool_result.get("tool_use_id", ""),
+                        "name": tool_result.get("name", ""),
+                        "content": tool_result.get("content", ""),
+                        "tool_origin": tool_result.get("tool_origin", ""),
+                    })
                 _event({
                     "type": "ag_text_delta",
                     "connection_id": self.connection_id,
@@ -388,16 +423,26 @@ class HTTP1Observer:
                 parsed = json.loads(text)
                 summary["json_shape"] = _json_shape(parsed)
                 if self.direction == "client_to_upstream":
-                    tool_results = _extract_tool_results(parsed)
-                    if tool_results:
+                    request_id = hashlib.sha256(body).hexdigest()[:16]
+                    _event({
+                        "type": "request_start",
+                        "connection_id": self.connection_id,
+                        "direction": self.direction,
+                        "method": self._current.get("method", ""),
+                        "path": self._current.get("path", ""),
+                        "request_id": request_id,
+                        "body_sha256": hashlib.sha256(body).hexdigest(),
+                        "body_bytes": self._body_total_bytes,
+                    })
+                    for tool_result in _latest_request_tool_results(parsed):
                         _event({
-                            "type": "ag_text_delta",
+                            "type": "tool_result",
                             "connection_id": self.connection_id,
                             "direction": self.direction,
                             "method": self._current.get("method", ""),
                             "path": self._current.get("path", ""),
-                            "request_id": hashlib.sha256(body).hexdigest()[:16],
-                            "tool_results": tool_results,
+                            "request_id": request_id,
+                            **tool_result,
                         })
                     prompt = _semantic_user_prompt(parsed)
                     if prompt:
@@ -407,7 +452,7 @@ class HTTP1Observer:
                             "direction": self.direction,
                             "method": self._current.get("method", ""),
                             "path": self._current.get("path", ""),
-                            "request_id": hashlib.sha256(body).hexdigest()[:16],
+                            "request_id": request_id,
                             "text": prompt,
                         })
             except Exception as exc:
@@ -502,6 +547,79 @@ def _semantic_model_delta(value) -> dict:
     return out
 
 
+def _latest_request_tool_results(value) -> list[dict]:
+    """Extract tool results from the latest Antigravity request input only."""
+    payload = value.get("request") if isinstance(value, dict) else None
+    root = payload if isinstance(payload, dict) else value
+    contents = root.get("contents") if isinstance(root, dict) else None
+    if not isinstance(contents, list):
+        contents = root.get("messages") if isinstance(root, dict) else None
+    if not isinstance(contents, list):
+        return _standard_tool_results(_extract_tool_results(root))
+    for message in reversed(contents):
+        if not isinstance(message, dict):
+            continue
+        results = _extract_tool_results(message)
+        if results:
+            return _standard_tool_results(results)
+        for content in _extract_tool_output_texts(message):
+            return [{
+                "tool_use_id": "",
+                "name": "pawflow/use_tool",
+                "content": content,
+                "tool_origin": "mcp",
+            }]
+    return []
+
+
+def _extract_tool_output_texts(value) -> list[str]:
+    """Find Antigravity text-encoded tool outputs in request contents."""
+    out: list[str] = []
+
+    def visit(item) -> None:
+        if isinstance(item, dict):
+            for key, child in item.items():
+                if str(key).lower() == "text" and isinstance(child, str):
+                    if _looks_like_tool_output(child):
+                        out.append(child)
+                    continue
+                visit(child)
+        elif isinstance(item, list):
+            for child in item:
+                visit(child)
+
+    visit(value)
+    return out
+
+
+def _looks_like_tool_output(text: str) -> bool:
+    if not text:
+        return False
+    markers = (
+        "Created At:",
+        "Completed At:",
+        "[Result cleared",
+        "tool_result_",
+    )
+    if any(marker in text for marker in markers):
+        return True
+    return False
+
+
+def _standard_tool_results(results: list[dict]) -> list[dict]:
+    out = []
+    for result in results:
+        if not isinstance(result, dict):
+            continue
+        out.append({
+            "tool_use_id": result.get("tool_use_id", ""),
+            "name": result.get("name", ""),
+            "content": result.get("content", ""),
+            "tool_origin": result.get("tool_origin", ""),
+        })
+    return out
+
+
 def _semantic_user_prompt(value) -> str:
     """Extract the latest user-authored text from an Antigravity request body."""
     prompts: list[str] = []
@@ -538,23 +656,37 @@ def _json_dict(value) -> dict:
     return value if isinstance(value, dict) else {}
 
 
-def _normalize_tool_call(name: str, args: dict) -> tuple[str, dict]:
+def _clean_name_part(value) -> str:
+    text = str(value or "")
+    if len(text) >= 2 and text[0] == text[-1] == '"':
+        try:
+            decoded = json.loads(text)
+            if isinstance(decoded, str):
+                return decoded
+        except (TypeError, ValueError):
+            pass
+    return text
+
+
+def _normalize_tool_call(name: str, args: dict) -> tuple[str, dict, str]:
     raw_name = str(name or "")
     payload = args if isinstance(args, dict) else {}
+    if raw_name.startswith("pawflow/"):
+        return raw_name, payload, "mcp"
     if raw_name != "call_mcp_tool":
-        return raw_name, payload
-    server_name = str(
+        return raw_name, payload, "native"
+    server_name = _clean_name_part(
         payload.get("ServerName") or payload.get("serverName")
         or payload.get("server_name") or "")
-    tool_name = str(
+    tool_name = _clean_name_part(
         payload.get("ToolName") or payload.get("toolName")
-        or payload.get("tool_name") or raw_name)
+        or payload.get("tool_name") or "")
     inner = (
         payload.get("Arguments") if "Arguments" in payload
         else payload.get("arguments", payload.get("Parameters", payload.get("parameters", {})))
     )
     display_name = f"{server_name}/{tool_name}" if server_name and tool_name else tool_name
-    return display_name, _json_dict(inner)
+    return display_name, _json_dict(inner), "mcp"
 
 
 def _tool_result_content(response) -> str:
@@ -577,11 +709,14 @@ def _extract_tool_calls(value) -> list[dict]:
                 name = call.get("name") or call.get("tool") or ""
                 args = call.get("args") or call.get("arguments") or call.get("input") or {}
                 args = _json_dict(args)
-                name, args = _normalize_tool_call(str(name or ""), args)
+                name, args, origin = _normalize_tool_call(str(name or ""), args)
+                if origin == "mcp" and not name:
+                    continue
                 out.append({
                     "id": str(call.get("id") or call.get("tool_call_id") or _stable_tool_id("ag_tool", call)),
                     "name": str(name or ""),
                     "arguments": args,
+                    "tool_origin": origin,
                 })
         for item in value.values():
             out.extend(_extract_tool_calls(item))
@@ -598,12 +733,18 @@ def _extract_tool_results(value) -> list[dict]:
             result = value.get(key)
             if isinstance(result, dict):
                 response = result.get("response") or result.get("result") or result.get("content") or ""
-                name, _args = _normalize_tool_call(
-                    str(result.get("name") or result.get("tool") or ""), result)
+                raw_name = str(result.get("name") or result.get("tool") or "")
+                name, _args, origin = _normalize_tool_call(
+                    raw_name, result)
+                if raw_name == "call_mcp_tool" and origin == "mcp" and not name:
+                    name = "pawflow/use_tool"
+                if origin == "mcp" and not name:
+                    continue
                 out.append({
                     "tool_use_id": str(result.get("id") or result.get("tool_call_id") or _stable_tool_id("ag_tool", result)),
                     "name": str(name or ""),
                     "content": _tool_result_content(response),
+                    "tool_origin": origin,
                 })
         for item in value.values():
             out.extend(_extract_tool_results(item))

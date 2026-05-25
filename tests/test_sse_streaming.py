@@ -738,6 +738,72 @@ class TestAgentLoopStreaming(unittest.TestCase):
 
         PendingQueue.drop_cache()
 
+    def test_user_message_during_preparing_turn_queues_before_thread_visible(self):
+        from tasks.ai.agent_loop import AgentLoopTask
+        from core.pending_queue import PendingQueue
+
+        conversation_id = "test-conv-preparing-race"
+        agent_name = "assistant"
+        agent_key = f"{conversation_id}:{agent_name}"
+        started_threads = []
+
+        class _FakeStore:
+            def __init__(self, root):
+                self._store_dir = root / "convs"
+
+            def _conv_dir(self, cid, user_id=""):
+                path = self._store_dir / "u" / cid
+                path.mkdir(parents=True, exist_ok=True)
+                return path
+
+            def message_count(self, cid):
+                return 0
+
+        class _NewThread:
+            def __init__(self, target, daemon=False, name=""):
+                self.target = target
+                self.daemon = daemon
+                self.name = name
+
+            def start(self):
+                started_threads.append(self)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_store = _FakeStore(root)
+            with patch("core.conversation_store.ConversationStore.instance",
+                       return_value=fake_store), \
+                    patch("core.conversation_writer.ConversationWriter.for_conversation") as writer_for_conv, \
+                    patch("tasks.ai.agent_streaming.threading.enumerate",
+                          return_value=[]), \
+                    patch("tasks.ai.agent_streaming.threading.Thread", _NewThread):
+                writer_for_conv.return_value.enqueue_message = MagicMock()
+                PendingQueue.drop_cache()
+                task = AgentLoopTask({"api_key": "k", "streaming": True})
+                with task._active_contexts_lock:
+                    task._active_turns[agent_key] = {
+                        "conversation_id": conversation_id,
+                        "agent_name": agent_name,
+                        "status": "preparing",
+                        "generation": 0,
+                    }
+
+                ff = FlowFile(content=json.dumps({
+                    "message": "retry same request",
+                    "conversation_id": conversation_id,
+                    "target_agent": agent_name,
+                    "msg_id": "m-preparing-race",
+                }).encode())
+
+                results = task._execute_streaming(ff)
+
+                body = json.loads(results[0].get_content().decode())
+                assert body["status"] == "queued"
+                assert len(started_threads) == 0
+                assert PendingQueue.for_agent(conversation_id, agent_name).peek_count() == 1
+
+        PendingQueue.drop_cache()
+
     def test_user_message_live_preempt_passes_request_identity(self):
         from tasks.ai.agent_loop import AgentLoopTask
         from core.pending_queue import PendingQueue

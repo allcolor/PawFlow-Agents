@@ -277,6 +277,56 @@ def test_observer_manual_ingest_persists_user_and_assistant(monkeypatch, tmp_pat
     assert writes[1][1]["sse_events"][0]["type"] == "new_message"
 
 
+def test_observer_manual_ingest_streams_text_tokens_with_final_msg_id(monkeypatch, tmp_path):
+    from core.antigravity_observer_pool import AntigravityObserverPool, AntigravityObserverSession
+    from core.conversation_event_bus import ConversationEventBus
+    from core.conversation_writer import ConversationWriter
+
+    events = []
+    writes = []
+
+    class _Bus:
+        def publish_event(self, cid, event_type, data=None):
+            events.append((cid, event_type, data or {}))
+
+    class _Writer:
+        def enqueue_message(self, msg, **kwargs):
+            writes.append((msg, kwargs))
+
+    monkeypatch.setattr(
+        ConversationEventBus,
+        "instance",
+        classmethod(lambda cls: _Bus()),
+    )
+    monkeypatch.setattr(
+        ConversationWriter,
+        "for_conversation",
+        classmethod(lambda cls, cid: _Writer()),
+    )
+    state = AntigravityObserverSession(
+        key=("alice", "conv", "gemini", "agy_service"),
+        name="container",
+        workdir=str(tmp_path),
+        container_workdir="/cc_sessions/conv/gemini",
+        log_path=str(tmp_path / "observer.jsonl"),
+    )
+    pool = AntigravityObserverPool()
+    turn = pool._new_manual_turn()
+
+    pool._accumulate_manual_event(state, turn, {"type": "ag_text_delta", "text": "hello "})
+    pool._accumulate_manual_event(state, turn, {"type": "ag_text_delta", "text": "world"})
+    pool._accumulate_manual_event(state, turn, {"type": "ag_text_delta", "done": True})
+    pool._flush_manual_turn(state, turn)
+
+    token_events = [event for event in events if event[1] == "token"]
+    assert [event[2]["text"] for event in token_events] == ["hello ", "world"]
+    assert token_events[0][2]["msg_id"] == token_events[1][2]["msg_id"]
+    assert writes[0][0]["role"] == "assistant"
+    assert writes[0][0]["msg_id"] == token_events[0][2]["msg_id"]
+    assert [evt["type"] for evt in writes[0][1]["sse_events"]] == [
+        "new_message", "turn_complete"]
+
+
 def test_observer_manual_ingest_does_not_fabricate_missing_tool_result(monkeypatch, tmp_path):
     from core.antigravity_observer_pool import AntigravityObserverPool, AntigravityObserverSession
     from core.conversation_writer import ConversationWriter
@@ -312,6 +362,92 @@ def test_observer_manual_ingest_does_not_fabricate_missing_tool_result(monkeypat
     assert [msg["role"] for msg, _kw in writes] == ["assistant"]
     assert writes[0][0]["tool_calls"][0]["name"] == "view_file"
     assert all(msg["role"] != "tool" for msg, _kw in writes)
+
+
+def test_observer_manual_ingest_flushes_tool_call_immediately_without_duplicate(monkeypatch, tmp_path):
+    from core.antigravity_observer_pool import AntigravityObserverPool, AntigravityObserverSession
+    from core.conversation_writer import ConversationWriter
+
+    writes = []
+
+    class _Writer:
+        def enqueue_message(self, msg, **kwargs):
+            writes.append((msg, kwargs))
+
+    monkeypatch.setattr(
+        ConversationWriter,
+        "for_conversation",
+        classmethod(lambda cls, cid: _Writer()),
+    )
+    state = AntigravityObserverSession(
+        key=("alice", "conv", "gemini", "agy_service"),
+        name="container",
+        workdir=str(tmp_path),
+        container_workdir="/cc_sessions/conv/gemini",
+        log_path=str(tmp_path / "observer.jsonl"),
+    )
+    pool = AntigravityObserverPool()
+    turn = pool._new_manual_turn()
+
+    pool._accumulate_manual_event(state, turn, {
+        "type": "ag_text_delta",
+        "tool_calls": [{"id": "tc1", "name": "view_file", "arguments": {"path": "a.py"}}],
+    })
+    assert [msg["role"] for msg, _kw in writes] == ["assistant"]
+    assert writes[0][0]["tool_calls"][0]["id"] == "tc1"
+
+    pool._flush_manual_turn(state, turn)
+
+    assert [msg["role"] for msg, _kw in writes] == ["assistant"]
+
+
+def test_observer_manual_ingest_unwraps_mcp_tool_call(monkeypatch, tmp_path):
+    from core.antigravity_observer_pool import AntigravityObserverPool, AntigravityObserverSession
+    from core.conversation_writer import ConversationWriter
+
+    writes = []
+
+    class _Writer:
+        def enqueue_message(self, msg, **kwargs):
+            writes.append((msg, kwargs))
+
+    monkeypatch.setattr(
+        ConversationWriter,
+        "for_conversation",
+        classmethod(lambda cls, cid: _Writer()),
+    )
+    state = AntigravityObserverSession(
+        key=("alice", "conv", "gemini", "agy_service"),
+        name="container",
+        workdir=str(tmp_path),
+        container_workdir="/cc_sessions/conv/gemini",
+        log_path=str(tmp_path / "observer.jsonl"),
+    )
+    pool = AntigravityObserverPool()
+    turn = pool._new_manual_turn()
+
+    pool._accumulate_manual_event(state, turn, {
+        "type": "ag_text_delta",
+        "tool_calls": [{
+            "id": "tc1",
+            "name": "call_mcp_tool",
+            "arguments": {
+                "ServerName": "pawflow",
+                "ToolName": "read",
+                "Arguments": {"path": "a.py", "limit": 20},
+            },
+        }],
+    })
+    pool._flush_manual_turn(state, turn)
+
+    tool_call = writes[0][0]["tool_calls"][0]
+    assert tool_call["name"] == "read"
+    assert tool_call["arguments"] == {"path": "a.py", "limit": 20}
+    assert tool_call["tool_origin"] == "mcp"
+    sse_data = writes[0][1]["sse_events"][0]["data"]
+    assert sse_data["tool"] == "read"
+    assert sse_data["arguments"] == {"path": "a.py", "limit": 20}
+    assert sse_data["tool_origin"] == "mcp"
 
 
 def test_observer_manual_ingest_matches_idless_tool_result_by_name(monkeypatch, tmp_path):
@@ -353,6 +489,69 @@ def test_observer_manual_ingest_matches_idless_tool_result_by_name(monkeypatch, 
     assert writes[0][0]["tool_calls"][0]["id"] == "tc1"
     assert writes[1][0]["tool_call_id"] == "tc1"
     assert writes[1][1]["sse_events"][0]["data"]["tc_id"] == "tc1"
+
+
+def test_observer_manual_ingest_does_not_match_native_result_to_mcp_call(monkeypatch, tmp_path):
+    from core.antigravity_observer_pool import AntigravityObserverPool, AntigravityObserverSession
+    from core.conversation_writer import ConversationWriter
+
+    writes = []
+
+    class _Writer:
+        def enqueue_message(self, msg, **kwargs):
+            writes.append((msg, kwargs))
+
+    monkeypatch.setattr(
+        ConversationWriter,
+        "for_conversation",
+        classmethod(lambda cls, cid: _Writer()),
+    )
+    state = AntigravityObserverSession(
+        key=("alice", "conv", "gemini", "agy_service"),
+        name="container",
+        workdir=str(tmp_path),
+        container_workdir="/cc_sessions/conv/gemini",
+        log_path=str(tmp_path / "observer.jsonl"),
+    )
+    pool = AntigravityObserverPool()
+    turn = pool._new_manual_turn()
+
+    pool._accumulate_manual_event(state, turn, {
+        "type": "ag_text_delta",
+        "tool_calls": [{
+            "id": "tc1", "name": "pawflow/use_tool",
+            "arguments": {"tool_name": "read", "arguments": {"path": "x"}},
+            "tool_origin": "mcp",
+        }],
+    })
+    pool._accumulate_manual_event(state, turn, {
+        "type": "ag_text_delta",
+        "tool_results": [{"name": "read", "content": "old output", "tool_origin": "native"}],
+    })
+    pool._flush_manual_turn(state, turn)
+
+    assert [msg["role"] for msg, _kw in writes] == ["assistant"]
+    assert all(msg["role"] != "tool" for msg, _kw in writes)
+
+
+def test_observer_pool_detects_antigravity_interrupted_prompt(monkeypatch, tmp_path):
+    from core.antigravity_observer_pool import AntigravityObserverPool, AntigravityObserverSession
+
+    state = AntigravityObserverSession(
+        key=("alice", "conv", "gemini", "agy_service"),
+        name="container",
+        workdir=str(tmp_path),
+        container_workdir="/cc_sessions/conv/gemini",
+        log_path=str(tmp_path / "observer.jsonl"),
+    )
+    pool = AntigravityObserverPool()
+    monkeypatch.setattr(
+        pool,
+        "capture_tmux_tail",
+        lambda _state, lines=80: "\nInterrupted - What should Antigravity CLI do instead?\n",
+    )
+
+    assert pool.is_interrupted_prompt(state) is True
 
 
 def test_observer_manual_ingest_ignores_tool_step_stop(tmp_path):
@@ -475,6 +674,30 @@ def test_observer_manual_ingest_skips_pending_injected_prompt_when_proxy_text_di
     assert pool._consume_injected_prompt(state, "manual follow-up") is False
 
 
+def test_observer_manual_ingest_persist_consumes_injected_prompt(tmp_path):
+    from core.antigravity_observer_pool import AntigravityObserverPool, AntigravityObserverSession
+
+    state = AntigravityObserverSession(
+        key=("alice", "conv", "gemini", "agy_service"),
+        name="container",
+        workdir=str(tmp_path),
+        container_workdir="/cc_sessions/conv/gemini",
+        log_path=str(tmp_path / "observer.jsonl"),
+    )
+    pool = AntigravityObserverPool()
+    prompt = (
+        "PawFlow cold-session bootstrap.\n\n"
+        "Path: /cc_sessions/conv/gemini/.pawflow_ag/initial_context.md\n"
+        "Latest turn to answer now:\n<message role=\"user\">hi</message>\n"
+    )
+    pool._remember_injected_prompt(state, prompt)
+
+    pool._persist_manual_user_prompt(state, {"text": prompt})
+
+    assert state.injected_prompt_hashes == {}
+    assert state.pending_injected_prompt_ignores == []
+
+
 def test_observer_manual_ingest_skips_antigravity_provider_context_prompt(tmp_path):
     from core.antigravity_observer_pool import AntigravityObserverPool, AntigravityObserverSession
 
@@ -552,7 +775,7 @@ def test_observer_tmux_starts_agy_without_prompt_injection(monkeypatch):
     assert "tmux send-keys -t pawflow-agy Enter" in calls[2][-1]
 
 
-def test_antigravity_tmux_submit_sends_literal_chunks_and_delays_enter(monkeypatch, tmp_path):
+def test_antigravity_tmux_submit_pastes_complete_prompt_before_enter(monkeypatch, tmp_path):
     from core.antigravity_observer_pool import AntigravityObserverPool, AntigravityObserverSession
 
     calls = []
@@ -582,12 +805,84 @@ def test_antigravity_tmux_submit_sends_literal_chunks_and_delays_enter(monkeypat
     flat = [cmd for cmd, _kw in calls]
     assert flat[0][-3:] == ["tmux", "load-buffer", "-"]
     assert calls[0][1]["input"] == b"hello"
-    assert flat[1][-3:] == ["paste-buffer", "-t", "pawflow-agy:0.0"]
+    assert flat[1][-4:] == ["paste-buffer", "-p", "-t", "pawflow-agy:0.0"]
     assert flat[2][-4:] == ["send-keys", "-t", "pawflow-agy:0.0", "Enter"]
     assert sleeps and sleeps[0] >= 0.15
 
 
-def test_antigravity_tmux_literal_chunks_are_throttled(monkeypatch, tmp_path):
+def test_antigravity_tmux_submit_strips_trailing_submit_newline(monkeypatch, tmp_path):
+    from core.antigravity_observer_pool import AntigravityObserverPool, AntigravityObserverSession
+
+    calls = []
+
+    class _Run:
+        returncode = 0
+        stdout = b""
+        stderr = b""
+
+    def fake_run(cmd, **kwargs):
+        calls.append((cmd, kwargs))
+        return _Run()
+
+    monkeypatch.setattr("core.antigravity_observer_pool.docker_cmd", lambda: ["docker"])
+    monkeypatch.setattr("core.antigravity_observer_pool.subprocess.run", fake_run)
+    monkeypatch.setattr("core.antigravity_observer_pool.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr(AntigravityObserverPool, "_is_alive", lambda self, name: True)
+
+    state = AntigravityObserverSession(
+        key=("u", "c", "a", "svc"), name="container",
+        workdir=str(tmp_path), container_workdir="/cc_sessions/c/a",
+        log_path=str(tmp_path / "observer.jsonl"),
+    )
+
+    assert AntigravityObserverPool().send_text(state, "hello\n") is True
+    flat = [cmd for cmd, _kw in calls]
+    assert calls[0][1]["input"] == b"hello"
+    assert flat[1][-4:] == ["paste-buffer", "-p", "-t", "pawflow-agy:0.0"]
+    assert flat[2][-4:] == ["send-keys", "-t", "pawflow-agy:0.0", "Enter"]
+
+
+def test_antigravity_tmux_submit_rejects_duplicate_in_flight_prompt(monkeypatch, tmp_path):
+    from core.antigravity_observer_pool import AntigravityObserverPool, AntigravityObserverSession
+
+    calls = []
+
+    class _Run:
+        returncode = 0
+        stdout = b""
+        stderr = b""
+
+    def fake_run(cmd, **kwargs):
+        calls.append((cmd, kwargs))
+        return _Run()
+
+    monkeypatch.setattr("core.antigravity_observer_pool.docker_cmd", lambda: ["docker"])
+    monkeypatch.setattr("core.antigravity_observer_pool.subprocess.run", fake_run)
+    monkeypatch.setattr("core.antigravity_observer_pool.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr(AntigravityObserverPool, "_is_alive", lambda self, name: True)
+
+    state = AntigravityObserverSession(
+        key=("u", "c", "a", "svc"), name="container",
+        workdir=str(tmp_path), container_workdir="/cc_sessions/c/a",
+        log_path=str(tmp_path / "observer.jsonl"),
+    )
+    pool = AntigravityObserverPool()
+
+    assert pool.send_text(state, "hello\n") is True
+    assert pool.send_text(state, "hello\n") is False
+    assert state.last_error == "duplicate in-flight Antigravity tmux submit"
+    flat = [cmd for cmd, _kw in calls]
+    assert [cmd[-3:] for cmd in flat].count(["tmux", "load-buffer", "-"]) == 1
+    assert [cmd[-4:] for cmd in flat].count(["paste-buffer", "-p", "-t", "pawflow-agy:0.0"]) == 1
+    assert [cmd[-4:] for cmd in flat].count(["send-keys", "-t", "pawflow-agy:0.0", "Enter"]) == 1
+
+    pool.mark_submit_complete(state)
+    assert pool.send_text(state, "hello\n") is True
+    flat = [cmd for cmd, _kw in calls]
+    assert [cmd[-3:] for cmd in flat].count(["tmux", "load-buffer", "-"]) == 2
+
+
+def test_antigravity_tmux_submit_does_not_replay_large_prompt_in_chunks(monkeypatch, tmp_path):
     from core.antigravity_observer_pool import AntigravityObserverPool, AntigravityObserverSession
 
     calls = []
@@ -613,15 +908,57 @@ def test_antigravity_tmux_literal_chunks_are_throttled(monkeypatch, tmp_path):
         log_path=str(tmp_path / "observer.jsonl"),
     )
 
-    assert AntigravityObserverPool().send_text(state, "x" * 513) is True
+    payload = "x" * 513
+
+    assert AntigravityObserverPool().send_text(state, payload) is True
     flat = [cmd for cmd, _kw in calls]
-    assert calls[0][1]["input"] == b"x" * 512
-    assert flat[1][-3:] == ["paste-buffer", "-t", "pawflow-agy:0.0"]
-    assert calls[2][1]["input"] == b"x"
-    assert flat[3][-3:] == ["paste-buffer", "-t", "pawflow-agy:0.0"]
-    assert flat[4][-4:] == ["send-keys", "-t", "pawflow-agy:0.0", "Enter"]
-    assert sleeps[0] == AntigravityObserverPool._LITERAL_CHUNK_DELAY_SECONDS
+    assert calls[0][1]["input"] == payload.encode("utf-8")
+    assert flat[1][-4:] == ["paste-buffer", "-p", "-t", "pawflow-agy:0.0"]
+    assert flat[2][-4:] == ["send-keys", "-t", "pawflow-agy:0.0", "Enter"]
+    assert len(flat) == 3
     assert sleeps[-1] >= 0.15
+
+
+def test_antigravity_tmux_submit_aborts_if_session_invalidated_after_paste(monkeypatch, tmp_path):
+    from core.antigravity_observer_pool import AntigravityObserverPool, AntigravityObserverSession
+
+    calls = []
+
+    class _Run:
+        returncode = 0
+        stdout = b""
+        stderr = b""
+
+    def fake_run(cmd, **kwargs):
+        calls.append((cmd, kwargs))
+        return _Run()
+
+    monkeypatch.setattr("core.antigravity_observer_pool.docker_cmd", lambda: ["docker"])
+    monkeypatch.setattr("core.antigravity_observer_pool.subprocess.run", fake_run)
+    monkeypatch.setattr("core.antigravity_observer_pool.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr(AntigravityObserverPool, "_is_alive", lambda self, name: True)
+
+    state = AntigravityObserverSession(
+        key=("u", "c", "a", "svc"), name="container",
+        workdir=str(tmp_path), container_workdir="/cc_sessions/c/a",
+        log_path=str(tmp_path / "observer.jsonl"),
+    )
+    pool = AntigravityObserverPool()
+    original_paste = pool._paste_buffer
+
+    def paste_and_invalidate(_state):
+        ok = original_paste(_state)
+        _state.manual_ingest_stop.set()
+        return ok
+
+    monkeypatch.setattr(pool, "_paste_buffer", paste_and_invalidate)
+
+    assert pool.send_text(state, "hello") is False
+    assert state.last_error == "Container container was invalidated during tmux submit"
+    flat = [cmd for cmd, _kw in calls]
+    assert flat[0][-3:] == ["tmux", "load-buffer", "-"]
+    assert flat[1][-4:] == ["paste-buffer", "-p", "-t", "pawflow-agy:0.0"]
+    assert all(cmd[-1] != "Enter" for cmd in flat)
 
 
 def test_antigravity_pool_kill_and_evict_scopes_by_conv_and_agent(
@@ -659,6 +996,38 @@ def test_antigravity_pool_kill_and_evict_scopes_by_conv_and_agent(
     assert pool.kill_and_evict_by_conv("c", "invalidate") == 1
     assert killed == ["a1", "a2", "b1"]
     assert list(pool._sessions) == [("u", "other", "agent-a", "svc1")]
+
+
+def test_antigravity_kill_sends_sigkill_before_remove(monkeypatch, tmp_path):
+    from core.antigravity_observer_pool import AntigravityObserverPool, AntigravityObserverSession
+
+    calls = []
+
+    class _Run:
+        returncode = 0
+        stdout = b""
+        stderr = b""
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return _Run()
+
+    monkeypatch.setattr("core.antigravity_observer_pool.docker_cmd", lambda: ["docker"])
+    monkeypatch.setattr("core.antigravity_observer_pool.subprocess.run", fake_run)
+    monkeypatch.setattr("core.antigravity_observer_pool.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr(AntigravityObserverPool, "_is_alive", lambda self, name: False)
+
+    state = AntigravityObserverSession(
+        key=("u", "c", "a", "svc"), name="container",
+        workdir=str(tmp_path), container_workdir="/cc_sessions/c/a",
+        log_path=str(tmp_path / "observer.jsonl"),
+    )
+
+    AntigravityObserverPool().kill(state)
+
+    assert calls[0] == ["docker", "kill", "--signal=KILL", "container"]
+    assert calls[1] == ["docker", "rm", "-f", "container"]
+    assert state.manual_ingest_stop.is_set()
 
 
 def test_chat_ui_exposes_single_agent_tmux_action_for_antigravity():

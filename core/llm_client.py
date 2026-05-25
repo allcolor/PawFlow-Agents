@@ -74,6 +74,7 @@ class LLMToolCall:
     name: str
     arguments: Dict[str, Any]
     timestamp: float = 0.0
+    tool_origin: str = ""
 
     def __post_init__(self):
         if not self.timestamp:
@@ -103,6 +104,56 @@ _TOOL_ALIASES = {
     "AgentOutputTool": "TaskOutput", "BashOutputTool": "TaskOutput",
 }
 
+_MCP_USE_TOOL_WRAPPERS = {
+    "mcp__pawflow__use_tool", "mcp__pawflow__.use_tool",
+    "mcp_pawflow_use_tool", "mcp_pawflow.use_tool",
+    "pawflow.use_tool", "pawflow/use_tool", "use_tool",
+}
+
+_MCP_SCHEMA_WRAPPERS = {
+    "mcp__pawflow__get_tool_schema", "mcp__pawflow__.get_tool_schema",
+    "mcp_pawflow_get_tool_schema", "mcp_pawflow.get_tool_schema",
+    "pawflow.get_tool_schema", "pawflow/get_tool_schema", "get_tool_schema",
+}
+
+
+def is_mcp_tool_call_name(name: str) -> bool:
+    """Return True when a provider name denotes a PawFlow MCP call."""
+    raw_name = str(name or "")
+    return (raw_name == "call_mcp_tool"
+            or raw_name.startswith("pawflow/")
+            or raw_name in _MCP_USE_TOOL_WRAPPERS
+            or raw_name in _MCP_SCHEMA_WRAPPERS)
+
+
+def has_complete_mcp_tool_call(name: str, arguments: dict) -> bool:
+    """Return False for MCP wrapper calls missing the inner tool name."""
+    raw_name = str(name or "")
+    if raw_name == "call_mcp_tool":
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments)
+            except (ValueError, TypeError):
+                return False
+        if not isinstance(arguments, dict):
+            return False
+        return bool(arguments.get("ToolName") or arguments.get("toolName")
+                    or arguments.get("tool_name"))
+    if raw_name in _MCP_USE_TOOL_WRAPPERS:
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments)
+            except (ValueError, TypeError):
+                return False
+        if not isinstance(arguments, dict):
+            return False
+        payload = arguments
+        if ("tool_name" not in payload
+                and isinstance(payload.get("parameters"), dict)):
+            payload = payload["parameters"]
+        return bool(payload.get("tool_name"))
+    return True
+
 
 def unwrap_mcp_tool(name: str, arguments: dict) -> tuple:
     """Unwrap wrapper tool names to the inner tool name + arguments.
@@ -117,17 +168,33 @@ def unwrap_mcp_tool(name: str, arguments: dict) -> tuple:
 
     Also resolves tool aliases (shell → bash, etc.) so display is correct.
     """
-    use_tool_wrappers = {
-        "mcp__pawflow__use_tool", "mcp__pawflow__.use_tool",
-        "mcp_pawflow_use_tool", "mcp_pawflow.use_tool",
-        "pawflow.use_tool", "use_tool",
-    }
-    schema_wrappers = {
-        "mcp__pawflow__get_tool_schema", "mcp__pawflow__.get_tool_schema",
-        "mcp_pawflow_get_tool_schema", "mcp_pawflow.get_tool_schema",
-        "pawflow.get_tool_schema", "get_tool_schema",
-    }
-    if name in use_tool_wrappers:
+    if name == "call_mcp_tool":
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments)
+            except (ValueError, TypeError):
+                pass
+        if isinstance(arguments, dict):
+            payload = arguments
+            tool_name = str(
+                payload.get("ToolName") or payload.get("toolName")
+                or payload.get("tool_name") or name)
+            tool_name = _TOOL_ALIASES.get(tool_name, tool_name)
+            inner = (
+                payload.get("Arguments") if "Arguments" in payload
+                else payload.get("arguments", payload.get("Parameters", payload.get("parameters", {})))
+            )
+            if isinstance(inner, str):
+                try:
+                    inner = json.loads(inner)
+                except (ValueError, TypeError):
+                    pass
+            return tool_name, inner
+    if isinstance(name, str) and name.startswith("pawflow/"):
+        name = name.split("/", 1)[1]
+        if name not in _MCP_USE_TOOL_WRAPPERS and name not in _MCP_SCHEMA_WRAPPERS:
+            return _TOOL_ALIASES.get(name, name), arguments
+    if name in _MCP_USE_TOOL_WRAPPERS:
         # Arguments may arrive as a JSON string (some LLMs serialize it).
         if isinstance(arguments, str):
             try:
@@ -147,7 +214,7 @@ def unwrap_mcp_tool(name: str, arguments: dict) -> tuple:
                 except (ValueError, TypeError):
                     pass
             return tool_name, inner
-    if name in schema_wrappers:
+    if name in _MCP_SCHEMA_WRAPPERS:
         return "get_tool_schema", arguments
     return name, arguments
 

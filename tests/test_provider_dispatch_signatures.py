@@ -18,7 +18,7 @@ import json
 from pathlib import Path
 
 import core.llm_client  # registers providers
-from core.llm_client import LLMClient, unwrap_mcp_tool
+from core.llm_client import LLMClient, is_mcp_tool_call_name, unwrap_mcp_tool
 
 
 def _parse_dispatch_branches() -> dict:
@@ -333,6 +333,24 @@ def test_mcp_use_tool_unwraps_dotted_provider_wrapper():
 
     assert name == "read"
     assert args == {"path": "/workspace/README.md"}
+
+
+def test_mcp_use_tool_unwraps_slash_provider_wrapper():
+    name, args = unwrap_mcp_tool(
+        "pawflow/use_tool",
+        {"tool_name": "bash", "arguments": {"command": "git status --short"}},
+    )
+
+    assert name == "bash"
+    assert args == {"command": "git status --short"}
+
+
+def test_mcp_call_name_detection_covers_antigravity_wrappers():
+    assert is_mcp_tool_call_name("call_mcp_tool")
+    assert is_mcp_tool_call_name("pawflow/read")
+    assert is_mcp_tool_call_name("pawflow/use_tool")
+    assert is_mcp_tool_call_name("mcp__pawflow__use_tool")
+    assert not is_mcp_tool_call_name("read")
 
 
 def test_mcp_use_tool_unwraps_parameters_payload():

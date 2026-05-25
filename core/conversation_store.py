@@ -1995,6 +1995,41 @@ class ConversationStore:
         if count:
             logger.info(f"ConversationStore: loaded {count} conversations from disk")
 
+    def _reconcile_list_cache_from_disk(self, user_id: str = "") -> None:
+        """Ensure list_conversations includes conversation dirs created on disk.
+
+        The warm cache is intentionally metadata-only and long-lived. Rewrite
+        operations such as restart_from can invalidate one conversation cache
+        entry while leaving the process loaded; the sidebar must still reflect
+        the durable conversation directories on the next list request.
+        """
+        roots = []
+        if user_id:
+            roots.append(self._store_dir / user_id)
+        else:
+            try:
+                roots.extend(p for p in self._store_dir.iterdir() if p.is_dir())
+            except FileNotFoundError:
+                return
+
+        for user_dir in roots:
+            if not user_dir.is_dir():
+                continue
+            uid = user_dir.name
+            for conv_dir in user_dir.iterdir():
+                if not conv_dir.is_dir():
+                    continue
+                if (not SegmentedJsonl(conv_dir / "transcript.jsonl").exists()
+                        and not (conv_dir / "extras.json").exists()):
+                    continue
+                cid = conv_dir.name.replace("__", ":")
+                with self._cache_lock:
+                    cached = cid in self._cache
+                if cached:
+                    continue
+                self._cid_user[cid] = uid
+                self._load_cache_metadata(cid, uid)
+
     @staticmethod
     def _validate_message(m: Dict):
         """Every message MUST have msg_id and timestamp at CREATION.
@@ -4058,6 +4093,7 @@ class ConversationStore:
 
     def list_conversations(self, user_id: str = "") -> List[Dict]:
         self._ensure_loaded()
+        self._reconcile_list_cache_from_disk(user_id=user_id)
         result = []
         with self._cache_lock:
             for cid, c in self._cache.items():

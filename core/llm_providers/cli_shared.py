@@ -48,7 +48,10 @@ def summarize_tool_call(name: str, args: Any) -> str:
             if rendered:
                 return "parallel(" + "; ".join(rendered) + ")"
     # Unwrap MCP bridge wrapper
-    if name in ("mcp__pawflow__use_tool", "mcp__pawflow__.use_tool", "use_tool") and isinstance(args, dict):
+    if name in (
+        "mcp__pawflow__use_tool", "mcp__pawflow__.use_tool",
+        "pawflow.use_tool", "pawflow/use_tool", "use_tool",
+    ) and isinstance(args, dict):
         inner_name = args.get("tool_name") or args.get("name") or ""
         inner_args = args.get("arguments", {})
         if inner_name:

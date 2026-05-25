@@ -172,6 +172,12 @@ def test_codex_app_server_surfaces_native_tool_leaks():
     assert LLMCodexAppServerMixin._codex_app_native_tool_args(dyn) == {"patch": "..."}
 
 
+def test_codex_app_server_marks_native_and_mcp_tool_origins():
+    src = inspect.getsource(LLMCodexAppServerMixin._stream_codex_app_server)
+    assert '"tool_origin": "native"' in src
+    assert '"tool_origin": "mcp"' in src
+
+
 def test_codex_app_server_steers_mcp_hint_after_native_tool():
     src = inspect.getsource(LLMCodexAppServerMixin._stream_codex_app_server)
     assert "native_tool_hint_sent = False" in src

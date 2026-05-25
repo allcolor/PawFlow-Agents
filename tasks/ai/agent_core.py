@@ -801,10 +801,16 @@ class AgentCoreMixin:
                     if msg.thinking:
                         _store_msg["thinking"] = msg.thinking
                     if msg.tool_calls:
-                        _store_msg["tool_calls"] = [
-                            {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
-                            for tc in msg.tool_calls
-                        ]
+                        _store_msg["tool_calls"] = []
+                        for tc in msg.tool_calls:
+                            _tc_entry = {
+                                "id": tc.id,
+                                "name": tc.name,
+                                "arguments": tc.arguments,
+                            }
+                            if getattr(tc, "tool_origin", ""):
+                                _tc_entry["tool_origin"] = tc.tool_origin
+                            _store_msg["tool_calls"].append(_tc_entry)
                     # Build SSE events to publish AFTER write.
                     # IMMUTABLE RULE: stream block → LLMMessage → writer →
                     # transcript/shared/ctx → SSE (emitted post-write by the
@@ -856,14 +862,17 @@ class AgentCoreMixin:
                             _tc_name, _tc_args = unwrap_mcp_tool(tc.name, tc.arguments)
                             if _tc_name in _hidden_schema_tools:
                                 continue
-                            _sse.append({"type": "tool_call", "data": {
+                            _tc_data = {
                                 "tool": _tc_name, "arguments": _tc_args,
                                 "tc_id": tc.id,
                                 "agent_name": _agent, "llm_service": _svc,
                                 "msg_id": getattr(msg, "msg_id", ""),
                                 "ts": getattr(msg, "timestamp", 0) or None,
                                 "source": msg.source,
-                            }})
+                            }
+                            if getattr(tc, "tool_origin", ""):
+                                _tc_data["tool_origin"] = tc.tool_origin
+                            _sse.append({"type": "tool_call", "data": _tc_data})
                     # role=tool → tool_result SSE. Prefer the `_tool_name`
                     # attr stamped by the dispatching side, but do not make
                     # live result delivery depend on that optional label: the
@@ -871,6 +880,7 @@ class AgentCoreMixin:
                     # to the already-rendered tool_call.
                     if msg.role == "tool":
                         _raw_tool_name = getattr(msg, '_tool_name', '')
+                        _raw_tool_origin = getattr(msg, '_tool_origin', '')
                         if not _raw_tool_name and getattr(msg, 'tool_call_id', ''):
                             _tcid = getattr(msg, 'tool_call_id', '')
                             for _prev in reversed(messages[:-1]):
@@ -879,6 +889,7 @@ class AgentCoreMixin:
                                 for _tc in (getattr(_prev, 'tool_calls', None) or []):
                                     if getattr(_tc, 'id', '') == _tcid:
                                         _raw_tool_name = getattr(_tc, 'name', '') or ""
+                                        _raw_tool_origin = getattr(_tc, 'tool_origin', '') or ""
                                         break
                                 if _raw_tool_name:
                                     break
@@ -906,14 +917,17 @@ class AgentCoreMixin:
                             # Truncate AFTER strip so we keep the real
                             # content, not the wrapper eating our budget.
                             _preview = _preview[:2000]
-                            _sse.append({"type": "tool_result", "data": {
+                            _tr_data = {
                                 "tool": _raw_tool_name,
                                 "result": _preview,
                                 "tc_id": getattr(msg, 'tool_call_id', ''),
                                 "msg_id": getattr(msg, "msg_id", ""),
                                 "ts": getattr(msg, "timestamp", 0) or None,
                                 "agent_name": _agent, "llm_service": _svc,
-                            }})
+                            }
+                            if _raw_tool_origin:
+                                _tr_data["tool_origin"] = _raw_tool_origin
+                            _sse.append({"type": "tool_result", "data": _tr_data})
                     _agent_for_route = ctx.get("active_agent_name", "") or ""
                     logger.info(
                         "[_append] role=%s msg_id=%s content_len=%d "
@@ -1753,16 +1767,24 @@ class AgentCoreMixin:
                             # directly -- without unwrap here, reloads and post-turn
                             # renders show use_tool(tool_name=..., arguments=[object Object])
                             # even though live SSE (claude_code.py:1220) was clean.
-                            from core.llm_client import unwrap_mcp_tool
+                            from core.llm_client import (
+                                has_complete_mcp_tool_call, is_mcp_tool_call_name,
+                                unwrap_mcp_tool)
                             tc_objects = []
                             for tc in tool_calls:
                                 _raw_name = tc.get("name", "")
                                 _raw_args = tc.get("arguments", {})
+                                if not has_complete_mcp_tool_call(_raw_name, _raw_args):
+                                    continue
                                 _inner_name, _inner_args = unwrap_mcp_tool(_raw_name, _raw_args)
+                                _tool_origin = tc.get("tool_origin", "") or ""
+                                if not _tool_origin and is_mcp_tool_call_name(_raw_name):
+                                    _tool_origin = "mcp"
                                 tc_objects.append(LLMToolCall(
                                     id=tc.get("id", ""),
                                     name=_inner_name,
                                     arguments=_inner_args,
+                                    tool_origin=_tool_origin,
                                 ))
                             for tc_obj in tc_objects:
                                 tools_called.append(tc_obj.name)
@@ -1856,7 +1878,9 @@ class AgentCoreMixin:
                         This callback keeps the visible=>persisted invariant by
                         routing each live block through _append/ConversationWriter.
                         """
-                        from core.llm_client import LLMToolCall, unwrap_mcp_tool
+                        from core.llm_client import (
+                            LLMToolCall, has_complete_mcp_tool_call,
+                            is_mcp_tool_call_name, unwrap_mcp_tool)
 
                         _src = _agent_source(include_context=False)
                         if event_type == "text":
@@ -1890,11 +1914,17 @@ class AgentCoreMixin:
                         if event_type == "tool_use":
                             _raw_name = payload.get("name", "")
                             _raw_args = payload.get("arguments", {}) or {}
+                            if not has_complete_mcp_tool_call(_raw_name, _raw_args):
+                                return
                             _tool_name, _tool_args = unwrap_mcp_tool(_raw_name, _raw_args)
+                            _tool_origin = payload.get("tool_origin", "") or ""
+                            if not _tool_origin and is_mcp_tool_call_name(_raw_name):
+                                _tool_origin = "mcp"
                             tc_obj = LLMToolCall(
                                 id=payload.get("id", ""),
                                 name=_tool_name,
                                 arguments=_tool_args,
+                                tool_origin=_tool_origin,
                             )
                             tools_called.append(tc_obj.name)
                             ctx["_last_tool"] = tc_obj.name
@@ -1916,6 +1946,8 @@ class AgentCoreMixin:
                                 tool_call_id=payload.get("tc_id", ""),
                                 conversation_id=conversation_id)
                             msg._tool_name = _tool_name
+                            if payload.get("tool_origin"):
+                                msg._tool_origin = payload.get("tool_origin")
                             _append(msg)
 
                     def _llm_call(msgs, ps=poll_silent):

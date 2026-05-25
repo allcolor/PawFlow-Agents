@@ -384,7 +384,10 @@ updateActiveAgentBadge();
 action$('list_conversations', {}).subscribe(data => {
   const convs = data.conversations || [];
   renderConvList(convs);
-  if (convs.length && !conversationId) {
+  const requestedCid = new URLSearchParams(window.location.search).get('conversation_id') || '';
+  if (requestedCid && !conversationId) {
+    resumeConv(requestedCid);
+  } else if (convs.length && !conversationId) {
     resumeConv(convs[0].conversation_id);
   } else if (!convs.length) {
     _setInputEnabled(false);

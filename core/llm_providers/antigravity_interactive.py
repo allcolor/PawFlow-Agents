@@ -98,13 +98,15 @@ class _AntigravityTurnCoordinator:
     def __init__(self, log_path: str, offset: int = 0, callback=None,
                  thinking_callback=None, block_callback=None,
                  turn_callback=None, touch_callback=None,
-                 emitted_tool_use_ids=None, emitted_tool_result_ids=None):
+                 emitted_tool_use_ids=None, emitted_tool_result_ids=None,
+                 interrupted_callback=None):
         self.tail = _AntigravityLogTail(log_path, offset)
         self.callback = callback
         self.thinking_callback = thinking_callback
         self.block_callback = block_callback
         self.turn_callback = turn_callback
         self.touch_callback = touch_callback
+        self.interrupted_callback = interrupted_callback
         self.emitted_tool_use_ids = emitted_tool_use_ids if emitted_tool_use_ids is not None else set()
         self.emitted_tool_result_ids = emitted_tool_result_ids if emitted_tool_result_ids is not None else set()
         self.text_parts: list[str] = []
@@ -112,6 +114,7 @@ class _AntigravityTurnCoordinator:
         self.thinking_parts: list[str] = []
         self.turn_tool_calls: list[dict] = []
         self.tool_by_id: dict[str, dict] = {}
+        self.pending_tool_results: list[dict] = []
         self.usage: dict = {}
         self._saw_proxy_event = False
         self._done_seen = False
@@ -119,6 +122,7 @@ class _AntigravityTurnCoordinator:
         self._last_event_at = 0.0
         self._awaiting_tool_followup = False
         self._turn_callback_sent = False
+        self._last_interrupt_check_at = 0.0
 
     def run(self, abort_event=None):
         from core.llm_client import LLMResponse
@@ -127,8 +131,11 @@ class _AntigravityTurnCoordinator:
         while True:
             if abort_event is not None and abort_event.is_set():
                 raise RuntimeError("antigravity-interactive aborted")
-            event = self.tail.wait_event(timeout=0.05 if self._done_seen else 0.25)
+            event = self._next_event()
             if not event:
+                if self._tmux_interrupted():
+                    self._flush_text_block()
+                    break
                 if not self._saw_proxy_event:
                     waited = time.time() - started_at
                     if waited >= _NO_PROXY_EVENT_TIMEOUT_SECONDS:
@@ -138,7 +145,8 @@ class _AntigravityTurnCoordinator:
                 if self._done_seen and time.time() - self._done_at >= _POST_DONE_IDLE_DRAIN_SECONDS:
                     self._emit_turn_callback()
                     break
-                if (not self._done_seen and self._last_event_at
+                if (not self._done_seen and not self._awaiting_tool_followup
+                        and self._last_event_at
                         and time.time() - self._last_event_at >= _NO_DONE_IDLE_DRAIN_SECONDS):
                     self._emit_turn_callback()
                     break
@@ -161,8 +169,60 @@ class _AntigravityTurnCoordinator:
             raw={"provider": "antigravity-interactive", "usage": self.usage},
         )
 
+    def _next_event(self) -> dict:
+        event = self.tail.wait_event(timeout=0.05 if self._done_seen else 0.25)
+        if event:
+            return event
+        return {}
+
+    def _tmux_interrupted(self) -> bool:
+        if not self.interrupted_callback:
+            return False
+        now = time.time()
+        if now - self._last_interrupt_check_at < 0.5:
+            return False
+        self._last_interrupt_check_at = now
+        try:
+            return bool(self.interrupted_callback())
+        except Exception:
+            logger.debug("Ignored Antigravity interrupt check failure", exc_info=True)
+            return False
+
     def _handle_event(self, event: dict) -> bool:
         etype = event.get("type", "")
+        if etype == "request_start":
+            self._saw_proxy_event = True
+            self._last_event_at = time.time()
+            return True
+        if etype == "tool_use":
+            self._saw_proxy_event = True
+            self._last_event_at = time.time()
+            self._flush_text_block()
+            self._emit_tool_use({
+                "id": event.get("tool_use_id") or event.get("id") or "",
+                "name": event.get("name", ""),
+                "arguments": event.get("arguments") or {},
+                "tool_origin": event.get("tool_origin", ""),
+            })
+            return True
+        if etype == "tool_result":
+            self._saw_proxy_event = True
+            self._last_event_at = time.time()
+            self._flush_text_block()
+            self._emit_tool_result({
+                "tool_use_id": event.get("tool_use_id") or event.get("id") or "",
+                "name": event.get("name", ""),
+                "content": event.get("content", ""),
+                "tool_origin": event.get("tool_origin", ""),
+            })
+            return True
+        if etype == "hook":
+            self._saw_proxy_event = True
+            self._last_event_at = time.time()
+            if event.get("hook_event_name") == "Stop":
+                self._done_seen = True
+                self._done_at = time.time()
+            return True
         if etype not in {"ag_text_delta", "ag_model_delta"}:
             return False
         self._saw_proxy_event = True
@@ -202,7 +262,7 @@ class _AntigravityTurnCoordinator:
         if text:
             if not tool_calls and self._awaiting_tool_followup:
                 self._awaiting_tool_followup = False
-        if event.get("done") or (event.get("finish_reason") and not self._awaiting_tool_followup):
+        if event.get("done"):
             self._done_seen = True
             self._done_at = time.time()
         return True
@@ -224,25 +284,38 @@ class _AntigravityTurnCoordinator:
         args = tc.get("arguments") or tc.get("args") or {}
         if not isinstance(args, dict):
             args = {}
+        origin = str(tc.get("tool_origin") or "")
+        if not origin and "/" in name:
+            origin = "mcp"
+        if not origin and name:
+            origin = "native"
         entry = {"id": tc_id, "name": name, "arguments": args}
+        if origin:
+            entry["tool_origin"] = origin
         self.tool_by_id[tc_id] = entry
         self.turn_tool_calls.append(dict(entry))
         self._awaiting_tool_followup = True
         if self.block_callback:
             self.block_callback("tool_use", entry)
+        self._emit_pending_tool_results()
 
-    def _emit_tool_result(self, tr: dict) -> None:
+    def _emit_tool_result(self, tr: dict, *, store_pending: bool = True) -> None:
+        from core.llm_client import unwrap_mcp_tool
+
         raw_tc_id = str(tr.get("tool_use_id") or tr.get("tool_call_id") or tr.get("id") or "")
         name = str(tr.get("name") or tr.get("tool") or "")
+        match_name, _match_args = unwrap_mcp_tool(name, tr)
         tc_id = raw_tc_id
         if not tc_id or tc_id not in self.tool_by_id:
             matches = [
                 tc for tc in self.turn_tool_calls
-                if not tc.get("result") and (not name or tc.get("name") == name)
+                if not tc.get("result") and self._tool_result_matches(tc, name, match_name, tr)
             ]
             if len(matches) == 1:
                 tc_id = str(matches[0].get("id") or "")
         if not tc_id:
+            if store_pending:
+                self.pending_tool_results.append(dict(tr))
             return
         dedupe_id = raw_tc_id if raw_tc_id and raw_tc_id in self.tool_by_id else tc_id
         if dedupe_id in self.emitted_tool_result_ids:
@@ -253,10 +326,46 @@ class _AntigravityTurnCoordinator:
         for tc in self.turn_tool_calls:
             if tc.get("id") == tc_id:
                 tc["result"] = result
+                if tr.get("tool_origin") and not tc.get("tool_origin"):
+                    tc["tool_origin"] = tr.get("tool_origin")
                 break
+        self._awaiting_tool_followup = any(
+            not tc.get("result") for tc in self.turn_tool_calls)
         if self.block_callback:
             tool = (self.tool_by_id.get(tc_id) or {}).get("name", "") or name
-            self.block_callback("tool_result", {"tc_id": tc_id, "tool": tool, "result": result})
+            origin = str(
+                tr.get("tool_origin")
+                or (self.tool_by_id.get(tc_id) or {}).get("tool_origin")
+                or "")
+            payload = {"tc_id": tc_id, "tool": tool, "result": result}
+            if origin:
+                payload["tool_origin"] = origin
+            self.block_callback("tool_result", payload)
+
+    def _emit_pending_tool_results(self) -> None:
+        if not self.pending_tool_results:
+            return
+        pending = self.pending_tool_results
+        self.pending_tool_results = []
+        for event in pending:
+            before = len(self.emitted_tool_result_ids)
+            self._emit_tool_result(event, store_pending=False)
+            if len(self.emitted_tool_result_ids) == before:
+                self.pending_tool_results.append(event)
+
+    @staticmethod
+    def _tool_result_matches(tc: dict, name: str, match_name: str, tr: dict) -> bool:
+        tc_origin = str(tc.get("tool_origin") or "")
+        result_origin = str(tr.get("tool_origin") or "")
+        if tc_origin == "mcp" and result_origin and result_origin != "mcp":
+            return False
+        if not name:
+            return True
+        if tc.get("name") == name:
+            return True
+        from core.llm_client import unwrap_mcp_tool
+
+        return unwrap_mcp_tool(tc.get("name", ""), tc.get("arguments", {}) or {})[0] == match_name
 
     def _emit_turn_callback(self) -> None:
         if self._turn_callback_sent or not self.turn_callback:
@@ -328,9 +437,11 @@ class LLMAntigravityInteractiveMixin(ClaudeCodeSessionMixin):
                 thinking_callback=thinking_callback, block_callback=block_callback,
                 turn_callback=turn_callback, touch_callback=lambda: pool.touch(state),
                 emitted_tool_use_ids=state.emitted_tool_use_ids,
-                emitted_tool_result_ids=state.emitted_tool_result_ids)
+                emitted_tool_result_ids=state.emitted_tool_result_ids,
+                interrupted_callback=lambda: pool.is_interrupted_prompt(state))
             response = coord.run(getattr(self, "_abort", None))
         finally:
+            pool.mark_submit_complete(state)
             pool.resume_manual_ingest(state)
         response.model = model or self.default_model
         logger.info(
@@ -495,7 +606,8 @@ class LLMAntigravityInteractiveMixin(ClaudeCodeSessionMixin):
                 thinking_callback=thinking_callback, block_callback=block_callback,
                 turn_callback=turn_callback, touch_callback=lambda: pool.touch(state),
                 emitted_tool_use_ids=state.emitted_tool_use_ids,
-                emitted_tool_result_ids=state.emitted_tool_result_ids)
+                emitted_tool_result_ids=state.emitted_tool_result_ids,
+                interrupted_callback=lambda: pool.is_interrupted_prompt(state))
             response = coord.run(getattr(self, "_abort", None))
         finally:
             pool.resume_manual_ingest(state)

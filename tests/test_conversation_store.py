@@ -809,6 +809,18 @@ class TestListConversations:
         convs = store.list_conversations(user_id="alice")
         assert convs[0]["title"] == "Chat Title"
 
+    def test_list_recovers_conversation_missing_from_warm_cache(self, store):
+        cid = store.generate_id()
+        store.save(cid, [_msg(source={"type": "user", "target_agent": "bot"})],
+                   user_id="alice")
+        store._ensure_loaded()
+        with store._cache_lock:
+            store._cache.pop(cid, None)
+
+        convs = store.list_conversations(user_id="alice")
+
+        assert any(c["conversation_id"] == cid for c in convs)
+
     def test_git_current_branch_reads_head_without_spawning_git(self, store, monkeypatch):
         cid = store.generate_id()
         store.save(cid, [], user_id="alice")

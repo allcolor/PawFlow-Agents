@@ -868,6 +868,26 @@ class ToolRelayService(BaseService):
             if actual != value:
                 raise ValueError(f"PFP host-call context mismatch: {key}")
 
+    @classmethod
+    def _active_tool_result_max_chars(cls, user_id: str, conversation_id: str,
+                                      agent_name: str) -> Optional[int]:
+        if not (user_id and conversation_id and agent_name):
+            return None
+        conv_id = cls._root_conversation_id(conversation_id)
+        from core.conv_agent_config import get_agent_config
+        cfg = get_agent_config(conv_id, agent_name)
+        llm_service = str(cfg.get("llm_service") or "").strip()
+        if not llm_service:
+            return None
+        from core.service_registry import ServiceRegistry
+        sdef = ServiceRegistry.get_instance().resolve_definition(
+            llm_service, user_id=user_id, conv_id=conv_id)
+        if not sdef:
+            return None
+        value = (getattr(sdef, "config", {}) or {}).get("tool_result_max_chars", 0)
+        max_chars = int(value or 0)
+        return max_chars if max_chars > 0 else None
+
     def _get_registry(self, user_id: str = "", conversation_id: str = "",
                        agent_name: str = ""):
         """Get a configured tool registry for this request context.
@@ -982,9 +1002,15 @@ class ToolRelayService(BaseService):
             user_id, conversation_id, agent_name, default_service=fs_svc)
         fs_find_ms = (time.perf_counter() - fs_find_started) * 1000
 
+        tool_result_max_chars = self._active_tool_result_max_chars(
+            user_id, conversation_id, agent_name)
+
         # Configure ALL handlers that need user/filesystem context
         context_started = time.perf_counter()
         for h in registry.list_tools():
+            if (tool_result_max_chars is not None and
+                    hasattr(h, '_tool_result_max_chars')):
+                h._tool_result_max_chars = tool_result_max_chars
             # Set user_id on any handler that supports it
             if hasattr(h, 'set_user_id') and user_id:
                 h.set_user_id(user_id)

@@ -49,7 +49,8 @@ function _ctxToolCallsText(m) {
     let name = tc.name || tc.tool || (tc.function && tc.function.name) || 'tool';
     let args = tc.arguments !== undefined ? tc.arguments : (tc.args !== undefined ? tc.args : (tc.function && tc.function.arguments));
     if ((name === 'use_tool' || name === 'mcp_pawflow_use_tool' || name === 'mcp_pawflow.use_tool'
-        || name === 'mcp__pawflow__use_tool' || name === 'mcp__pawflow__.use_tool' || name === 'pawflow.use_tool') && args) {
+        || name === 'mcp__pawflow__use_tool' || name === 'mcp__pawflow__.use_tool'
+        || name === 'pawflow.use_tool' || name === 'pawflow/use_tool') && args) {
       const parsed = typeof args === 'string' ? (() => { try { return JSON.parse(args); } catch (_) { return null; } })() : args;
       if (parsed && parsed.tool_name) {
         name = parsed.tool_name;

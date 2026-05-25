@@ -106,18 +106,23 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
         _already_active = any(
             t.is_alive() and t.name == _thread_name
             for t in threading.enumerate())
+        if not _already_active:
+            with self._active_contexts_lock:
+                _already_active = (
+                    _agent_key in self._active_turns
+                    or _agent_key in self._active_contexts
+                )
         _stream_mark("active_check")
-        # A live agent thread can temporarily have no _active_contexts entry:
-        # context preparation, provider compact/restart, and final cleanup all
-        # run outside _run_agent_loop's push/pop window. Treat the thread name
-        # as authoritative here and queue/preempt below; killing it as a
-        # "zombie" creates duplicate ghost loops while the old thread can still
-        # flush callbacks into the transcript.
+        # A live agent can temporarily have no _active_contexts entry: context
+        # preparation, provider compact/restart, and final cleanup all run
+        # outside _run_agent_loop's push/pop window. Treat either the thread or
+        # the provider-agnostic _active_turns marker as authoritative here;
+        # missing that marker lets a retry start a duplicate provider turn.
         if _already_active:
             with self._active_contexts_lock:
                 if _agent_key not in self._active_contexts:
                     logger.info(
-                        "[agent:%s] active thread has no context yet — treating as busy",
+                        "[agent:%s] active turn has no context yet — treating as busy",
                         conversation_id[:8])
 
         # Source of truth: persist the user message to the transcript

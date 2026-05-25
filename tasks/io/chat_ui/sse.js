@@ -947,6 +947,11 @@ function connectSSE(cid, onReady, opts) {
   eventSource.addEventListener('tool_call', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
+    if (typeof _hasCompleteMcpDisplayedToolCall === 'function'
+        && !_hasCompleteMcpDisplayedToolCall(data.tool, data.arguments || {})) {
+      pawflowDebugLog('[SSE] ignoring incomplete MCP tool_call:', data.tool);
+      return;
+    }
     finalizeThinkingFromEvent(data, 'tool_call');
     if (typeof _noteLiveHistoryAppend === 'function') {
       _noteLiveHistoryAppend(data.message_count, 1, data.msg_id || '');
@@ -981,6 +986,7 @@ function connectSSE(cid, onReady, opts) {
       source: data.source || {type: 'agent', name: tcAgent, llm_service: data.llm_service || ''},
       agent_name: tcAgent,
       llm_service: data.llm_service || '',
+      tool_origin: data.tool_origin || '',
       ts: data.ts,
       live: true,
     };
@@ -1049,6 +1055,7 @@ function connectSSE(cid, onReady, opts) {
       source: data.source || {type: 'agent', name: data.agent_name || '', llm_service: data.llm_service || ''},
       agent_name: data.agent_name || '',
       llm_service: data.llm_service || '',
+      tool_origin: data.tool_origin || '',
       path: data.path || '',
       ts: data.ts,
       msg_id: data.msg_id || '',

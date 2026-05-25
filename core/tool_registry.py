@@ -338,10 +338,7 @@ class ToolRegistry:
                         conversation_id=_cid,
                         ttl=4 * 3600,  # 4h safety net, cleaned at compaction
                     )
-                    _first = result.split("\n", 1)[0][:200]
                     result = (
-                        result[:_max]
-                        + f"\n\n{_first}\n"
                         f"[Result cleared — {len(result):,} chars. "
                         f"Full output: read(path=\"{_fid}\", source=\"filestore\")]"
                     )

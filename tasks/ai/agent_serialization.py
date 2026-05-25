@@ -89,6 +89,8 @@ class AgentSerializationMixin:
                         "name": tc.name,
                         "arguments": tc.arguments,
                     }
+                    if getattr(tc, "tool_origin", ""):
+                        crow["tool_origin"] = tc.tool_origin
                     if channel:
                         crow["channel"] = channel
                     if m.source:
@@ -156,6 +158,7 @@ class AgentSerializationMixin:
                         name=entry.get("tool_name") or entry.get("name") or entry.get("tool") or "",
                         arguments=entry.get("arguments", {}) or {},
                         timestamp=entry.get("ts", 0),
+                        tool_origin=entry.get("tool_origin", "") or "",
                     ))
                 continue
 
@@ -243,6 +246,7 @@ class AgentSerializationMixin:
         """
         result = []
         _tc_id_to_name = {}  # tool_call_id → display name (for tool_result matching)
+        _tc_id_to_origin = {}  # tool_call_id → mcp/native origin
         _delegate_tc_ids = set()  # tc_ids for delegate calls (hidden, replaced by delegate blocks)
         _META_TOOLS = {"get_tool_schema"}
         for raw_idx, m in enumerate(raw_messages):
@@ -313,6 +317,8 @@ class AgentSerializationMixin:
                     _tr_entry["msg_id"] = m["msg_id"]
                 if tool_call_id in _tc_id_to_name:
                     _tr_entry["tool_name"] = _tc_id_to_name[tool_call_id]
+                if tool_call_id in _tc_id_to_origin:
+                    _tr_entry["tool_origin"] = _tc_id_to_origin[tool_call_id]
                 if m.get("source"):
                     _tr_entry["source"] = m["source"]
                 if _display_ts:
@@ -339,14 +345,19 @@ class AgentSerializationMixin:
                     entry["timestamp"] = _display_ts
                 result.append(entry)
             elif role in ("tool_call", "tool_result", "thinking"):
-                from core.llm_client import unwrap_mcp_tool
+                from core.llm_client import has_complete_mcp_tool_call, unwrap_mcp_tool
                 if role == "tool_call":
                     raw_name = m.get("tool_name") or m.get("name") or m.get("tool") or "?"
                     raw_args = m.get("arguments", {}) or {}
+                    if not has_complete_mcp_tool_call(raw_name, raw_args):
+                        continue
                     tool_name, tool_args = unwrap_mcp_tool(raw_name, raw_args)
                     tcid = m.get("tool_call_id") or m.get("tc_id") or ""
                     if tcid:
                         _tc_id_to_name[tcid] = tool_name
+                    tool_origin = m.get("tool_origin", "") or ""
+                    if tcid and tool_origin:
+                        _tc_id_to_origin[tcid] = tool_origin
                     if tool_name == "delegate":
                         if tcid:
                             _delegate_tc_ids.add(tcid)
@@ -379,6 +390,8 @@ class AgentSerializationMixin:
                         "tool_args": tool_args_str,
                         "arguments": tool_args,
                     }
+                    if tool_origin:
+                        entry["tool_origin"] = tool_origin
                     if tcid:
                         entry["tool_call_id"] = tcid
                         entry["tc_id"] = tcid
@@ -408,6 +421,8 @@ class AgentSerializationMixin:
                     entry["tool_name"] = m["tool_name"]
                 if m.get("tool_args"):
                     entry["tool_args"] = m["tool_args"]
+                if m.get("tool_origin"):
+                    entry["tool_origin"] = m["tool_origin"]
                 if m.get("tool_call_id"):
                     entry["tool_call_id"] = m["tool_call_id"]
                 if m.get("tc_id"):

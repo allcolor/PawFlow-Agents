@@ -48,6 +48,7 @@ class AntigravityObserverSession:
     last_error: str = ""
     emitted_tool_use_ids: set = field(default_factory=set)
     emitted_tool_result_ids: set = field(default_factory=set)
+    manual_live_tool_calls: dict = field(default_factory=dict)
     manual_ingest_enabled: bool = False
     manual_ingest_suspended: bool = False
     manual_ingest_offset: int = 0
@@ -56,6 +57,9 @@ class AntigravityObserverSession:
     manual_ingest_seen_requests: set = field(default_factory=set)
     injected_prompt_hashes: dict = field(default_factory=dict)
     pending_injected_prompt_ignores: list[float] = field(default_factory=list)
+    active_submit_lock: threading.Lock = field(default_factory=threading.Lock)
+    active_submit_hash: str = ""
+    active_submit_at: float = 0.0
 
     @property
     def agent_name(self) -> str:
@@ -314,7 +318,7 @@ class AntigravityObserverPool:
                 self._persist_manual_user_prompt(state, event)
                 turn["prompt_seen"] = True
                 continue
-            if etype not in {"ag_text_delta", "ag_model_delta"}:
+            if etype not in {"ag_text_delta", "ag_model_delta", "tool_use", "tool_result", "hook", "request_start"}:
                 continue
             self._accumulate_manual_event(state, turn, event)
             if turn["done"] and time.time() - turn["done_at"] >= _POST_DONE_IDLE_DRAIN_SECONDS:
@@ -328,12 +332,17 @@ class AntigravityObserverPool:
             "thinking_parts": [],
             "tool_calls": [],
             "tool_by_id": {},
+            "pending_tool_results": [],
             "usage": {},
             "done": False,
             "done_at": 0.0,
             "last_event_at": 0.0,
             "awaiting_tool_followup": False,
             "prompt_seen": False,
+            "live_text_msg_id": "",
+            "live_text_ts": 0.0,
+            "live_text_emitted": False,
+            "flushed_tool_call_ids": set(),
         }
 
     @staticmethod
@@ -347,7 +356,37 @@ class AntigravityObserverPool:
 
     def _accumulate_manual_event(self, state: AntigravityObserverSession,
                                  turn: dict, event: dict) -> None:
+        from core.llm_client import is_mcp_tool_call_name, unwrap_mcp_tool
+
         turn["last_event_at"] = time.time()
+        etype = event.get("type", "")
+        if etype == "request_start":
+            return
+        if etype == "hook":
+            if event.get("hook_event_name") == "Stop":
+                turn["done"] = True
+                turn["done_at"] = time.time()
+            return
+        if etype == "tool_use":
+            event = {
+                "type": "ag_text_delta",
+                "tool_calls": [{
+                    "id": event.get("tool_use_id") or event.get("id") or "",
+                    "name": event.get("name", ""),
+                    "arguments": event.get("arguments") or {},
+                    "tool_origin": event.get("tool_origin", ""),
+                }],
+            }
+        elif etype == "tool_result":
+            event = {
+                "type": "ag_text_delta",
+                "tool_results": [{
+                    "tool_use_id": event.get("tool_use_id") or event.get("id") or "",
+                    "name": event.get("name", ""),
+                    "content": event.get("content", ""),
+                    "tool_origin": event.get("tool_origin", ""),
+                }],
+            }
         if event.get("usage") and isinstance(event.get("usage"), dict):
             turn["usage"].update(event["usage"])
         tool_calls = event.get("tool_calls") or []
@@ -361,46 +400,201 @@ class AntigravityObserverPool:
             args = tc.get("arguments") or tc.get("args") or {}
             if not isinstance(args, dict):
                 args = {}
-            entry = {"id": tc_id, "name": str(tc.get("name") or tc.get("tool") or ""), "arguments": args}
+            name = str(tc.get("name") or tc.get("tool") or "")
+            origin = str(tc.get("tool_origin") or "")
+            if not origin and is_mcp_tool_call_name(name):
+                origin = "mcp"
+            if not origin and name:
+                origin = "native"
+            if any(existing.get("name") == name
+                   and existing.get("arguments") == args
+                   and (existing.get("tool_origin") or "") == origin
+                   for existing in turn.get("tool_calls") or []):
+                state.emitted_tool_use_ids.add(tc_id)
+                continue
+            entry = {"id": tc_id, "name": name, "arguments": args}
+            if origin:
+                entry["tool_origin"] = origin
             turn["tool_by_id"][tc_id] = entry
             turn["tool_calls"].append(dict(entry))
             turn["awaiting_tool_followup"] = True
+            self._drain_manual_pending_tool_results(state, turn)
+        if tool_calls:
+            self._flush_manual_tool_calls_now(state, turn)
         for tr in event.get("tool_results") or []:
             if not isinstance(tr, dict):
                 continue
-            raw_tc_id = str(tr.get("tool_use_id") or tr.get("tool_call_id") or tr.get("id") or "")
-            name = str(tr.get("name") or tr.get("tool") or "")
-            tc_id = raw_tc_id
-            if not tc_id or tc_id not in turn["tool_by_id"]:
-                matches = [
-                    tc for tc in turn["tool_calls"]
-                    if not tc.get("result") and (not name or tc.get("name") == name)
-                ]
-                if len(matches) == 1:
-                    tc_id = str(matches[0].get("id") or "")
-            if not tc_id:
-                continue
-            dedupe_id = raw_tc_id if raw_tc_id and raw_tc_id in turn["tool_by_id"] else tc_id
-            if dedupe_id in state.emitted_tool_result_ids:
-                continue
-            state.emitted_tool_result_ids.add(dedupe_id)
-            state.emitted_tool_result_ids.add(tc_id)
-            result = tr.get("content") or tr.get("result") or tr.get("response") or "(no output)"
-            for tc in turn["tool_calls"]:
-                if tc.get("id") == tc_id:
-                    tc["result"] = result
-                    break
+            if not self._apply_manual_tool_result(state, turn, tr):
+                turn.setdefault("pending_tool_results", []).append(dict(tr))
         thinking = event.get("thinking", "") or "".join(event.get("thinking_texts") or [])
         if thinking:
             turn["thinking_parts"].append(thinking)
         text = event.get("text", "") or "".join(event.get("texts") or [])
         if text:
+            self._publish_manual_text_token(state, turn, text)
             turn["text_parts"].append(text)
             if not tool_calls and turn.get("awaiting_tool_followup"):
                 turn["awaiting_tool_followup"] = False
         if event.get("done") or (event.get("finish_reason") and not turn.get("awaiting_tool_followup")):
             turn["done"] = True
             turn["done_at"] = time.time()
+
+    def _flush_manual_tool_calls_now(self, state: AntigravityObserverSession,
+                                     turn: dict) -> None:
+        pending = [
+            tc for tc in (turn.get("tool_calls") or [])
+            if tc.get("id") not in (turn.get("flushed_tool_call_ids") or set())
+        ]
+        if not pending:
+            return
+        from core.llm_client import LLMMessage, LLMToolCall, is_mcp_tool_call_name, unwrap_mcp_tool
+        from core.conversation_writer import ConversationWriter
+
+        cid = state.key[1]
+        user_id = state.key[0]
+        source = self._manual_agent_source(state, turn.get("usage") or {})
+        tc_objects = []
+        for tc in pending:
+            raw_name = tc.get("name", "")
+            name, args = unwrap_mcp_tool(raw_name, tc.get("arguments", {}) or {})
+            tool_origin = tc.get("tool_origin", "") or ""
+            if not tool_origin and is_mcp_tool_call_name(raw_name):
+                tool_origin = "mcp"
+            tc_objects.append(LLMToolCall(
+                id=tc.get("id", ""),
+                name=name,
+                arguments=args if isinstance(args, dict) else {},
+                tool_origin=tool_origin,
+            ))
+        if not tc_objects:
+            return
+        tc_msg = LLMMessage(
+            role="assistant",
+            content="",
+            tool_calls=tc_objects,
+            thinking="".join(turn.get("thinking_parts") or []),
+            source=source,
+            conversation_id=cid,
+        )
+        tc_sse = []
+        for tc_obj in tc_objects:
+            state.manual_live_tool_calls[tc_obj.id] = {
+                "name": tc_obj.name,
+                "tool_origin": tc_obj.tool_origin,
+            }
+            tc_data = {
+                "tool": tc_obj.name,
+                "arguments": tc_obj.arguments,
+                "tc_id": tc_obj.id,
+                "agent_name": state.agent_name,
+                "llm_service": state.service_id,
+                "msg_id": tc_msg.msg_id,
+                "ts": tc_msg.timestamp,
+                "source": source,
+            }
+            if tc_obj.tool_origin:
+                tc_data["tool_origin"] = tc_obj.tool_origin
+            tc_sse.append({"type": "tool_call", "data": tc_data})
+        ConversationWriter.for_conversation(cid).enqueue_message({
+            "role": "assistant",
+            "content": "",
+            "source": source,
+            "msg_id": tc_msg.msg_id,
+            "ts": tc_msg.timestamp,
+            "seq": tc_msg.seq or None,
+            "thinking": tc_msg.thinking or "",
+            "tool_calls": [
+                {
+                    "id": tc.id,
+                    "name": tc.name,
+                    "arguments": tc.arguments,
+                    **({"tool_origin": tc.tool_origin} if tc.tool_origin else {}),
+                }
+                for tc in tc_objects
+            ],
+        }, agent_name=state.agent_name, user_id=user_id, sse_events=tc_sse)
+        turn.setdefault("flushed_tool_call_ids", set()).update(tc.id for tc in tc_objects)
+
+    def _publish_manual_text_token(self, state: AntigravityObserverSession,
+                                   turn: dict, text: str) -> None:
+        if not text:
+            return
+        if not turn.get("live_text_msg_id"):
+            turn["live_text_msg_id"] = uuid.uuid4().hex[:12]
+            turn["live_text_ts"] = time.time()
+        source = self._manual_agent_source(state, turn.get("usage") or {})
+        try:
+            from core.conversation_event_bus import ConversationEventBus
+            ConversationEventBus.instance().publish_event(state.key[1], "token", {
+                "agent_name": state.agent_name,
+                "text": text,
+                "msg_id": turn["live_text_msg_id"],
+                "ts": turn["live_text_ts"],
+                "source": source,
+            })
+            turn["live_text_emitted"] = True
+        except Exception:
+            logger.debug(
+                "[antigravity-observer] live token publish failed for %s/%s",
+                state.key[1][:8], state.agent_name, exc_info=True)
+
+    def _apply_manual_tool_result(self, state: AntigravityObserverSession,
+                                  turn: dict, tr: dict) -> bool:
+        from core.llm_client import unwrap_mcp_tool
+
+        raw_tc_id = str(tr.get("tool_use_id") or tr.get("tool_call_id") or tr.get("id") or "")
+        name = str(tr.get("name") or tr.get("tool") or "")
+        match_name, _match_args = unwrap_mcp_tool(name, tr)
+        tc_id = raw_tc_id
+        if not tc_id or tc_id not in turn["tool_by_id"]:
+            matches = [
+                tc for tc in turn["tool_calls"]
+                if not tc.get("result") and self._manual_tool_result_matches(tc, name, match_name, tr)
+            ]
+            if len(matches) == 1:
+                tc_id = str(matches[0].get("id") or "")
+        if not tc_id:
+            return False
+        dedupe_id = raw_tc_id if raw_tc_id and raw_tc_id in turn["tool_by_id"] else tc_id
+        if dedupe_id in state.emitted_tool_result_ids:
+            return True
+        state.emitted_tool_result_ids.add(dedupe_id)
+        state.emitted_tool_result_ids.add(tc_id)
+        result = tr.get("content") or tr.get("result") or tr.get("response") or "(no output)"
+        for tc in turn["tool_calls"]:
+            if tc.get("id") == tc_id:
+                tc["result"] = result
+                if tr.get("tool_origin") and not tc.get("tool_origin"):
+                    tc["tool_origin"] = tr.get("tool_origin")
+                break
+        turn["awaiting_tool_followup"] = any(
+            not tc.get("result") for tc in turn.get("tool_calls") or [])
+        return True
+
+    def _drain_manual_pending_tool_results(self, state: AntigravityObserverSession,
+                                           turn: dict) -> None:
+        pending = turn.get("pending_tool_results") or []
+        if not pending:
+            return
+        misses = []
+        for event in pending:
+            if not self._apply_manual_tool_result(state, turn, event):
+                misses.append(event)
+        turn["pending_tool_results"] = misses
+
+    @staticmethod
+    def _manual_tool_result_matches(tc: dict, name: str, match_name: str, tr: dict) -> bool:
+        tc_origin = str(tc.get("tool_origin") or "")
+        result_origin = str(tr.get("tool_origin") or "")
+        if tc_origin == "mcp" and result_origin and result_origin != "mcp":
+            return False
+        if not name:
+            return True
+        if tc.get("name") == name:
+            return True
+        from core.llm_client import unwrap_mcp_tool
+
+        return unwrap_mcp_tool(tc.get("name", ""), tc.get("arguments", {}) or {})[0] == match_name
 
     def _manual_agent_source(self, state: AntigravityObserverSession, usage: dict | None = None) -> dict:
         usage = usage or {}
@@ -421,6 +615,8 @@ class AntigravityObserverPool:
     def _persist_manual_user_prompt(self, state: AntigravityObserverSession, event: dict) -> None:
         text = str(event.get("text") or "").strip()
         if not text:
+            return
+        if self._consume_injected_prompt(state, text):
             return
         if self._is_provider_context_prompt(text):
             logger.info(
@@ -466,7 +662,7 @@ class AntigravityObserverPool:
         tool_calls = turn.get("tool_calls") or []
         if not text and not thinking and not tool_calls:
             return
-        from core.llm_client import LLMMessage, LLMToolCall, unwrap_mcp_tool
+        from core.llm_client import LLMMessage, LLMToolCall, is_mcp_tool_call_name, unwrap_mcp_tool
         from core.conversation_writer import ConversationWriter
         from tasks.ai.agent_core import AgentCoreMixin
 
@@ -481,6 +677,8 @@ class AntigravityObserverPool:
                 thinking=thinking if not tool_calls else "",
                 source=source,
                 conversation_id=cid,
+                msg_id=turn.get("live_text_msg_id") or "",
+                timestamp=float(turn.get("live_text_ts") or 0.0),
             )
             sse = []
             if msg.thinking:
@@ -499,6 +697,18 @@ class AntigravityObserverPool:
                     "ts": msg.timestamp,
                     "source": source,
                 }})
+                if turn.get("live_text_emitted"):
+                    usage = turn.get("usage") or {}
+                    sse.append({"type": "turn_complete", "data": {
+                        "agent_name": state.agent_name,
+                        "msg_id": msg.msg_id,
+                        "source": source,
+                        "model": source.get("model", ""),
+                        "provider": source.get("provider", ""),
+                        "tokens_in": int(usage.get("input_tokens", 0) or 0),
+                        "tokens_out": int(usage.get("output_tokens", 0) or 0),
+                        "ts": msg.timestamp,
+                    }})
             store_msg = {
                 "role": "assistant",
                 "content": msg.content,
@@ -510,11 +720,25 @@ class AntigravityObserverPool:
             if msg.thinking:
                 store_msg["thinking"] = msg.thinking
             writer.enqueue_message(store_msg, agent_name=state.agent_name, user_id=user_id, sse_events=sse or None)
-        if tool_calls:
+        flushed_tool_call_ids = turn.get("flushed_tool_call_ids") or set()
+        unflushed_tool_calls = [
+            tc for tc in tool_calls
+            if tc.get("id") not in flushed_tool_call_ids
+        ]
+        if unflushed_tool_calls:
             tc_objects = []
-            for tc in tool_calls:
-                name, args = unwrap_mcp_tool(tc.get("name", ""), tc.get("arguments", {}) or {})
-                tc_objects.append(LLMToolCall(id=tc.get("id", ""), name=name, arguments=args if isinstance(args, dict) else {}))
+            for tc in unflushed_tool_calls:
+                raw_name = tc.get("name", "")
+                name, args = unwrap_mcp_tool(raw_name, tc.get("arguments", {}) or {})
+                tool_origin = tc.get("tool_origin", "") or ""
+                if not tool_origin and is_mcp_tool_call_name(raw_name):
+                    tool_origin = "mcp"
+                tc_objects.append(LLMToolCall(
+                    id=tc.get("id", ""),
+                    name=name,
+                    arguments=args if isinstance(args, dict) else {},
+                    tool_origin=tool_origin,
+                ))
             if tc_objects:
                 tc_msg = LLMMessage(
                     role="assistant",
@@ -534,7 +758,7 @@ class AntigravityObserverPool:
                         "source": source,
                     }})
                 for tc_obj in tc_objects:
-                    tc_sse.append({"type": "tool_call", "data": {
+                    tc_data = {
                         "tool": tc_obj.name,
                         "arguments": tc_obj.arguments,
                         "tc_id": tc_obj.id,
@@ -543,7 +767,10 @@ class AntigravityObserverPool:
                         "msg_id": tc_msg.msg_id,
                         "ts": tc_msg.timestamp,
                         "source": source,
-                    }})
+                    }
+                    if tc_obj.tool_origin:
+                        tc_data["tool_origin"] = tc_obj.tool_origin
+                    tc_sse.append({"type": "tool_call", "data": tc_data})
                 writer.enqueue_message({
                     "role": "assistant",
                     "content": "",
@@ -552,10 +779,18 @@ class AntigravityObserverPool:
                     "ts": tc_msg.timestamp,
                     "seq": tc_msg.seq or None,
                     "thinking": thinking or "",
-                    "tool_calls": [{"id": tc.id, "name": tc.name, "arguments": tc.arguments} for tc in tc_objects],
+                    "tool_calls": [
+                        {
+                            "id": tc.id,
+                            "name": tc.name,
+                            "arguments": tc.arguments,
+                            **({"tool_origin": tc.tool_origin} if tc.tool_origin else {}),
+                        }
+                        for tc in tc_objects
+                    ],
                 }, agent_name=state.agent_name, user_id=user_id, sse_events=tc_sse)
                 for idx, tc_obj in enumerate(tc_objects):
-                    raw = tool_calls[idx] if idx < len(tool_calls) else {}
+                    raw = unflushed_tool_calls[idx] if idx < len(unflushed_tool_calls) else {}
                     has_result = any(raw.get(k) for k in ("result", "content", "response"))
                     if not has_result:
                         continue
@@ -567,14 +802,8 @@ class AntigravityObserverPool:
                         conversation_id=cid,
                     )
                     tr_msg._tool_name = tc_obj.name
-                    writer.enqueue_message({
-                        "role": "tool",
-                        "content": tr_msg.content,
-                        "msg_id": tr_msg.msg_id,
-                        "tool_call_id": tc_obj.id,
-                        "ts": tr_msg.timestamp,
-                        "seq": tr_msg.seq or None,
-                    }, agent_name=state.agent_name, user_id=user_id, sse_events=[{"type": "tool_result", "data": {
+                    tool_origin = getattr(tc_obj, "tool_origin", "") or ""
+                    tr_event = {
                         "tool": tc_obj.name,
                         "result": str(result)[:2000],
                         "tc_id": tc_obj.id,
@@ -582,28 +811,107 @@ class AntigravityObserverPool:
                         "ts": tr_msg.timestamp,
                         "agent_name": state.agent_name,
                         "llm_service": state.service_id,
-                    }}])
+                    }
+                    if tool_origin:
+                        tr_msg._tool_origin = tool_origin
+                        tr_event["tool_origin"] = tool_origin
+                    writer.enqueue_message({
+                        "role": "tool",
+                        "content": tr_msg.content,
+                        "msg_id": tr_msg.msg_id,
+                        "tool_call_id": tc_obj.id,
+                        **({"tool_origin": tool_origin} if tool_origin else {}),
+                        "ts": tr_msg.timestamp,
+                        "seq": tr_msg.seq or None,
+                    }, agent_name=state.agent_name, user_id=user_id, sse_events=[{"type": "tool_result", "data": tr_event}])
+        for raw in tool_calls:
+            if raw.get("id") not in flushed_tool_call_ids:
+                continue
+            has_result = any(raw.get(k) for k in ("result", "content", "response"))
+            if not has_result:
+                continue
+            raw_name = raw.get("name", "")
+            name, args = unwrap_mcp_tool(raw_name, raw.get("arguments", {}) or {})
+            tool_origin = raw.get("tool_origin", "") or ""
+            if not tool_origin and is_mcp_tool_call_name(raw_name):
+                tool_origin = "mcp"
+            result = raw.get("result") or raw.get("content") or raw.get("response")
+            tr_msg = LLMMessage(
+                role="tool",
+                content=AgentCoreMixin._wrap_tool_output(name, result),
+                tool_call_id=raw.get("id", ""),
+                conversation_id=cid,
+            )
+            tr_msg._tool_name = name
+            tr_event = {
+                "tool": name,
+                "result": str(result)[:2000],
+                "tc_id": raw.get("id", ""),
+                "msg_id": tr_msg.msg_id,
+                "ts": tr_msg.timestamp,
+                "agent_name": state.agent_name,
+                "llm_service": state.service_id,
+            }
+            if tool_origin:
+                tr_msg._tool_origin = tool_origin
+                tr_event["tool_origin"] = tool_origin
+            writer.enqueue_message({
+                "role": "tool",
+                "content": tr_msg.content,
+                "msg_id": tr_msg.msg_id,
+                "tool_call_id": raw.get("id", ""),
+                **({"tool_origin": tool_origin} if tool_origin else {}),
+                "ts": tr_msg.timestamp,
+                "seq": tr_msg.seq or None,
+            }, agent_name=state.agent_name, user_id=user_id, sse_events=[{"type": "tool_result", "data": tr_event}])
 
     def send_text(self, state: AntigravityObserverSession, text: str) -> bool:
         state.last_error = ""
         if not self._is_alive(state.name):
             state.last_error = f"Container {state.name} is not running"
             return False
+        submit_hash = self._prompt_hash(text)
+        with state.active_submit_lock:
+            if state.active_submit_hash == submit_hash:
+                state.last_error = "duplicate in-flight Antigravity tmux submit"
+                logger.info(
+                    "[antigravity-interactive] rejected duplicate in-flight tmux submit container=%s bytes=%d",
+                    state.name, len((text or "").encode("utf-8")))
+                return False
+            state.active_submit_hash = submit_hash
+            state.active_submit_at = time.time()
         self._remember_injected_prompt(state, text)
         logger.info(
             "[antigravity-interactive] tmux submit start container=%s bytes=%d",
             state.name, len((text or "").encode("utf-8")))
         if not self._send_multiline_text(state, text):
             return False
+        if state.manual_ingest_stop.is_set() or not self._is_alive(state.name):
+            state.last_error = f"Container {state.name} was invalidated during tmux submit"
+            logger.info(
+                "[antigravity-interactive] tmux submit aborted after paste container=%s",
+                state.name)
+            return False
         # Antigravity renders tmux-injected text with a short delay. Submit only
         # after a bounded drain window so Enter does not race ahead of input.
         time.sleep(min(1.5, max(0.15, len(text or "") / 50000.0)))
+        if state.manual_ingest_stop.is_set() or not self._is_alive(state.name):
+            state.last_error = f"Container {state.name} was invalidated before tmux submit"
+            logger.info(
+                "[antigravity-interactive] tmux submit aborted before Enter container=%s",
+                state.name)
+            return False
         ok = self.send_keys(state, ["Enter"])
         if ok:
             logger.info(
                 "[antigravity-interactive] tmux submit sent container=%s bytes=%d",
                 state.name, len((text or "").encode("utf-8")))
         return ok
+
+    def mark_submit_complete(self, state: AntigravityObserverSession) -> None:
+        with state.active_submit_lock:
+            state.active_submit_hash = ""
+            state.active_submit_at = 0.0
 
     def send_interrupt(self, state: AntigravityObserverSession, text: str) -> bool:
         state.last_error = ""
@@ -612,6 +920,7 @@ class AntigravityObserverPool:
             return False
         self._remember_injected_prompt(state, text)
         return (self._send_multiline_text(state, text)
+                and not state.manual_ingest_stop.is_set()
                 and self.send_keys(state, ["Escape"])
                 and self.send_keys(state, ["Enter"]))
 
@@ -689,19 +998,15 @@ class AntigravityObserverPool:
         return any(marker in text for marker in markers)
 
     def _send_multiline_text(self, state: AntigravityObserverSession, text: str) -> bool:
-        """Type text into agy, using Shift+Enter for embedded newlines."""
-        payload = text or ""
+        """Paste the complete prompt into agy without line-by-line key replay."""
+        payload = (text or "").rstrip("\r\n")
         if not payload:
             return True
-        lines = payload.split("\n")
-        for idx, line in enumerate(lines):
-            if line and not self._send_literal_text(state, line):
-                return False
-            if idx < len(lines) - 1:
-                if not self.send_keys(state, ["S-Enter"]):
-                    return False
-                time.sleep(self._LITERAL_CHUNK_DELAY_SECONDS)
-        return True
+        # Do not replay lines with Shift+Enter: after compact this can leave a
+        # visible, minutes-long prompt injection in tmux while agy is still
+        # rendering prior output. tmux bracketed paste keeps the payload literal
+        # and submits only when send_text sends the final Enter.
+        return self._load_buffer(state, payload) and self._paste_buffer(state)
 
     def _send_literal_text(self, state: AntigravityObserverSession, text: str) -> bool:
         payload = text or ""
@@ -733,6 +1038,33 @@ class AntigravityObserverPool:
     def force_stop(self, state: AntigravityObserverSession) -> bool:
         return self.send_keys(state, ["Escape", "Escape"])
 
+    def is_interrupted_prompt(self, state: AntigravityObserverSession) -> bool:
+        """Return True when manual Escape has stopped AGY and returned to prompt."""
+        text = self.capture_tmux_tail(state, lines=80)
+        if not text:
+            return False
+        markers = (
+            "Interrupted - What should Antigravity CLI do instead?",
+            "Interrupted - What should Antigravity do instead?",
+            "What should Antigravity CLI do instead?",
+        )
+        return any(marker in text for marker in markers)
+
+    def capture_tmux_tail(self, state: AntigravityObserverSession, lines: int = 80) -> str:
+        if not self._is_alive(state.name):
+            return ""
+        start = f"-{max(1, int(lines or 80))}"
+        r = subprocess.run(  # nosec B603
+            docker_cmd() + ["exec", "--user", "1000:1000", state.name,
+                            "tmux", "capture-pane", "-pt", self._TMUX_TARGET,
+                            "-S", start],
+            capture_output=True, timeout=10)
+        if r.returncode != 0:
+            logger.debug("tmux capture-pane failed for %s: %s", state.name,
+                         self._command_error("tmux capture-pane", r))
+            return ""
+        return r.stdout.decode("utf-8", errors="replace")
+
     def send_keys(self, state: AntigravityObserverSession, keys: list[str]) -> bool:
         state.last_error = ""
         if not self._is_alive(state.name):
@@ -760,7 +1092,7 @@ class AntigravityObserverPool:
     def _paste_buffer(self, state: AntigravityObserverSession) -> bool:
         r = subprocess.run(  # nosec B603
             docker_cmd() + ["exec", "--user", "1000:1000", state.name,
-                            "tmux", "paste-buffer", "-t", self._TMUX_TARGET],
+                            "tmux", "paste-buffer", "-p", "-t", self._TMUX_TARGET],
             capture_output=True, timeout=10)
         if r.returncode != 0:
             state.last_error = self._command_error("tmux paste-buffer", r)
@@ -1177,6 +1509,27 @@ class AntigravityObserverPool:
 
     def kill(self, state: AntigravityObserverSession) -> None:
         state.manual_ingest_stop.set()
-        subprocess.run(docker_cmd() + ["rm", "-f", state.name], capture_output=True, timeout=15)  # nosec B603
+        kill_result = subprocess.run(  # nosec B603
+            docker_cmd() + ["kill", "--signal=KILL", state.name],
+            capture_output=True, timeout=10)
+        if kill_result.returncode != 0 and self._is_alive(state.name):
+            logger.warning(
+                "[antigravity-interactive] docker kill -9 failed for %s: %s",
+                state.name, self._command_error("docker kill -9", kill_result))
+        rm_result = subprocess.run(  # nosec B603
+            docker_cmd() + ["rm", "-f", state.name], capture_output=True, timeout=15)
+        if rm_result.returncode != 0:
+            logger.warning(
+                "[antigravity-interactive] docker rm -f failed for %s: %s",
+                state.name, self._command_error("docker rm -f", rm_result))
+        deadline = time.time() + 3.0
+        while time.time() < deadline:
+            if not self._is_alive(state.name):
+                break
+            time.sleep(0.05)
+        else:
+            logger.warning(
+                "[antigravity-interactive] container still alive after kill: %s",
+                state.name)
         with self._lock:
             self._sessions.pop(state.key, None)

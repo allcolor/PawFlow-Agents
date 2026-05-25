@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 from services.tool_relay_service import ToolRelayService
 
 
@@ -90,6 +92,58 @@ def test_registry_build_lists_available_filesystems_once(monkeypatch):
         registry = svc._get_registry("alice", "conv1", "assistant")
         assert registry.handler._available_services == available
         assert len(calls) == 1
+    finally:
+        ToolRelayService.clear_registry_cache()
+
+
+def test_registry_build_applies_llm_service_tool_result_limit(monkeypatch):
+    import core.conv_agent_config as agent_config_mod
+    import core.service_registry as service_registry_mod
+    import core.tool_mcp_filters as filters_mod
+    import core.tool_registry as registry_mod
+
+    class _LimitedHandler:
+        name = "read"
+        _tool_result_max_chars = 50000
+
+    class _FakeRegistry:
+        def __init__(self):
+            self.handler = _LimitedHandler()
+
+        def list_tools(self):
+            return [self.handler]
+
+        def unregister(self, _name):
+            return None
+
+    class _ServiceRegistry:
+        def __init__(self):
+            self.calls = []
+
+        def resolve_definition(self, service_id, *, user_id="", conv_id=""):
+            self.calls.append((service_id, user_id, conv_id))
+            return SimpleNamespace(config={"tool_result_max_chars": "3500"})
+
+    fake_services = _ServiceRegistry()
+    svc = ToolRelayService({"_service_id": "svc-limit", "file_base_url": ""})
+    monkeypatch.setattr(registry_mod, "create_default_registry", _FakeRegistry)
+    monkeypatch.setattr(svc, "_load_mcp_tools", lambda *a, **k: None)
+    monkeypatch.setattr(filters_mod, "get_filters", lambda _cid: {})
+    monkeypatch.setattr(filters_mod, "is_tool_enabled_from_filters", lambda *a, **k: True)
+    monkeypatch.setattr(svc, "_list_available_filesystem_services", lambda *a, **k: [])
+    monkeypatch.setattr(svc, "_filesystem_service_from_available", lambda *a, **k: None)
+    monkeypatch.setattr(
+        agent_config_mod, "get_agent_config",
+        lambda conv_id, agent_name: {"llm_service": "agy_llm"})
+    monkeypatch.setattr(
+        service_registry_mod.ServiceRegistry, "get_instance",
+        classmethod(lambda cls: fake_services))
+
+    ToolRelayService.clear_registry_cache()
+    try:
+        registry = svc._get_registry("alice", "conv1", "assistant")
+        assert registry.handler._tool_result_max_chars == 3500
+        assert fake_services.calls == [("agy_llm", "alice", "conv1")]
     finally:
         ToolRelayService.clear_registry_cache()
 

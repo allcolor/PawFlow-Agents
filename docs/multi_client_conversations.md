@@ -21,6 +21,11 @@ Conversation transcripts and contexts are logical JSONL streams. PawFlow can rea
 
 Conversation startup warms metadata from `extras.json`, segment indexes, and the latest transcript row instead of scanning every transcript line. Hot write paths persist `_meta_msg_count`, `_meta_preview`, `_meta_updated_at`, and `_meta_max_seq` so list/count/seq bootstrap stays O(conversations) rather than O(transcript-size).
 
+`list_conversations` reconciles its warm cache against durable conversation
+directories before returning. If an edit operation invalidates an in-memory
+entry while the process stays loaded, the sidebar list must still re-adopt the
+conversation from `extras.json`/transcript metadata on the next list request.
+
 Each conversation keeps a small Git repository for recent rollback history. PawFlow bounds that history with `PAWFLOW_CONV_GIT_RETENTION_DAYS` (default 7) and `PAWFLOW_CONV_GIT_RETENTION_COMMITS` (default 250), then expires reflogs and runs `git gc --prune=now` during retention maintenance so old snapshot objects are actually reclaimable.
 
 Conversation Git snapshots track only durable state: transcript, shared context, extras, and bindings. Per-agent contexts and `summaries/_shared` bucket files are derived caches; snapshots untrack them, and rollback or branch switch deletes them so they are rebuilt from the restored transcript/shared state.

@@ -13,17 +13,62 @@ const _TOOL_DISPLAY = {
   get_tool_schema: 'GetToolSchema',
 };
 
+const _MCP_USE_TOOL_WRAPPERS = new Set([
+  'use_tool', 'mcp_pawflow_use_tool', 'mcp_pawflow.use_tool',
+  'mcp__pawflow__use_tool', 'mcp__pawflow__.use_tool', 'pawflow.use_tool', 'pawflow/use_tool'
+]);
+
+const _MCP_SCHEMA_WRAPPERS = new Set([
+  'get_tool_schema', 'mcp_pawflow_get_tool_schema', 'mcp_pawflow.get_tool_schema',
+  'mcp__pawflow__get_tool_schema', 'mcp__pawflow__.get_tool_schema', 'pawflow.get_tool_schema', 'pawflow/get_tool_schema'
+]);
+
+function _isMcpDisplayedToolCallName(name) {
+  const raw = String(name || '');
+  return raw === 'call_mcp_tool' || raw.startsWith('pawflow/')
+      || _MCP_USE_TOOL_WRAPPERS.has(raw) || _MCP_SCHEMA_WRAPPERS.has(raw);
+}
+
+function _hasCompleteMcpDisplayedToolCall(name, args) {
+  const rawName = String(name || '');
+  let payload = args || {};
+  if (typeof payload === 'string') {
+    try { payload = JSON.parse(payload); } catch(e) { return false; }
+  }
+  if (rawName === 'call_mcp_tool') {
+    return !!(payload && typeof payload === 'object'
+      && (payload.ToolName || payload.toolName || payload.tool_name));
+  }
+  if (_MCP_USE_TOOL_WRAPPERS.has(rawName)) {
+    if (!payload || typeof payload !== 'object') return false;
+    if (!payload.tool_name && payload.parameters && typeof payload.parameters === 'object') {
+      payload = payload.parameters;
+    }
+    return !!(payload && typeof payload === 'object' && payload.tool_name);
+  }
+  return true;
+}
+
 function _unwrapDisplayedToolCall(name, args) {
   let toolName = name || '?';
   let toolArgs = args || {};
   if (typeof toolArgs === 'string') {
     try { toolArgs = JSON.parse(toolArgs); } catch(e) {}
   }
-  const useToolWrappers = new Set([
-    'use_tool', 'mcp_pawflow_use_tool', 'mcp_pawflow.use_tool',
-    'mcp__pawflow__use_tool', 'mcp__pawflow__.use_tool', 'pawflow.use_tool'
-  ]);
-  if (useToolWrappers.has(toolName) && toolArgs && typeof toolArgs === 'object') {
+  if (toolName === 'call_mcp_tool' && toolArgs && typeof toolArgs === 'object') {
+    toolName = toolArgs.ToolName || toolArgs.toolName || toolArgs.tool_name || toolName;
+    toolArgs = toolArgs.Arguments || toolArgs.arguments || toolArgs.Parameters || toolArgs.parameters || {};
+    if (typeof toolArgs === 'string') {
+      try { toolArgs = JSON.parse(toolArgs); } catch(e) {}
+    }
+  }
+  if (typeof toolName === 'string' && toolName.startsWith('pawflow/')) {
+    toolName = toolName.substring('pawflow/'.length);
+  }
+  if (_MCP_SCHEMA_WRAPPERS.has(toolName)) {
+    toolName = 'get_tool_schema';
+  }
+  if (_MCP_USE_TOOL_WRAPPERS.has(toolName) && toolArgs && typeof toolArgs === 'object') {
     const payload = (!toolArgs.tool_name && toolArgs.parameters && typeof toolArgs.parameters === 'object')
       ? toolArgs.parameters
       : toolArgs;
@@ -68,6 +113,23 @@ function _toolCallSummary(name, args) {
     }
   }
   return display + '(' + summary + ')';
+}
+
+function _toolOriginValue(extra, toolName) {
+  const raw = (extra && (extra.tool_origin || extra.tool_source)) || '';
+  const value = String(raw || '').toLowerCase();
+  if (value === 'mcp' || value === 'native') return value;
+  const rawName = (extra && (extra.tool_name || extra.tool)) || toolName || '';
+  return _isMcpDisplayedToolCallName(rawName) ? 'mcp' : '';
+}
+
+function _toolOriginBadge(extra, toolName) {
+  const origin = _toolOriginValue(extra, toolName);
+  if (!origin) return '';
+  const label = origin === 'mcp' ? 'MCP' : 'Native';
+  const bg = origin === 'mcp' ? '#123b5d' : '#4a2b16';
+  const fg = origin === 'mcp' ? '#8bd3ff' : '#ffbf80';
+  return '<span class="tc-origin tc-origin-' + origin + '" style="font-size:10px;border:1px solid ' + fg + ';color:' + fg + ';background:' + bg + ';border-radius:3px;padding:1px 3px;margin-right:4px;vertical-align:middle">' + label + '</span>';
 }
 
 function sourceBadge(source) {
@@ -515,6 +577,13 @@ function addMsg(role, text, extra) {
     scrollBottom(true);
     return notifEl;
   }
+  if (role === 'tool_call' || role === 'tool') {
+    const rawToolName = (extra && (extra.tool_name || extra.tool)) || text || '?';
+    const rawToolArgs = (extra && extra.arguments !== undefined)
+      ? extra.arguments
+      : ((extra && extra.tool_args) || {});
+    if (!_hasCompleteMcpDisplayedToolCall(rawToolName, rawToolArgs)) return null;
+  }
   const el = document.createElement('div');
   // Map roles to CSS classes
   let cssClass = role;
@@ -609,6 +678,8 @@ function addMsg(role, text, extra) {
       const tcId = (extra && extra.tc_id) || '';
       if (tcId) _inner.dataset.tcId = tcId;
       _inner.dataset.tool = toolName;
+      const origin = _toolOriginValue(extra, (extra && (extra.tool_name || extra.tool)) || toolName);
+      if (origin) _inner.dataset.toolOrigin = origin;
       // Tag the agent that owns this tool so the `done` handler can
       // scope its pending-bullet cleanup correctly.
       const _ownerAgent = (extra && (extra.agent_name
@@ -617,15 +688,16 @@ function addMsg(role, text, extra) {
       if (args && args.path) _inner.dataset.path = args.path;
       if (args && args.command) _inner.dataset.command = args.command.substring(0, 200);
       const isLive = extra && extra.live;
+      const originBadge = _toolOriginBadge(extra, (extra && (extra.tool_name || extra.tool)) || toolName);
       const bulletClass = isLive ? 'pending' : 'done';
       const bgBtn = (tcId && isLive) ? ' <button class="tc-bg-btn" onclick="backgroundTool(\'' + tcId + '\')" title="' + escapeHtml(t('runInBackground')) + '">\u2192 BG</button>' : '';
       const klBtn = (tcId && isLive) ? ' <button class="tc-kl-btn" onclick="killTool(\'' + tcId + '\')" title="' + escapeHtml(t('kill')) + '">\u2718</button>' : '';
       if (toolName === 'edit' && args && args.path) {
-        _inner.innerHTML = timeHtml + '<span class="tc-bullet ' + bulletClass + '">\u25cf</span> ' + _renderToolCallEdit('', args) + bgBtn + klBtn;
+        _inner.innerHTML = timeHtml + '<span class="tc-bullet ' + bulletClass + '">\u25cf</span> ' + originBadge + _renderToolCallEdit('', args) + bgBtn + klBtn;
       } else if (toolName === 'apply_patch' && args && args.path) {
-        _inner.innerHTML = timeHtml + '<span class="tc-bullet ' + bulletClass + '">\u25cf</span> ' + _renderToolCallPatch('', args) + bgBtn + klBtn;
+        _inner.innerHTML = timeHtml + '<span class="tc-bullet ' + bulletClass + '">\u25cf</span> ' + originBadge + _renderToolCallPatch('', args) + bgBtn + klBtn;
       } else {
-        _inner.innerHTML = timeHtml + '<span class="tc-bullet ' + bulletClass + '">\u25cf</span> ' + escapeHtml(_toolCallSummary(toolName, args || {})) + bgBtn + klBtn;
+        _inner.innerHTML = timeHtml + '<span class="tc-bullet ' + bulletClass + '">\u25cf</span> ' + originBadge + escapeHtml(_toolCallSummary(toolName, args || {})) + bgBtn + klBtn;
       }
     } else if (role === 'tool_result') {
       const tcId = (extra && extra.tc_id) || '';
@@ -682,19 +754,22 @@ function addMsg(role, text, extra) {
     const tcId = (extra && extra.tc_id) || '';
     if (tcId) el.dataset.tcId = tcId;
     el.dataset.tool = toolName;
+    const origin = _toolOriginValue(extra, (extra && (extra.tool_name || extra.tool)) || toolName);
+    if (origin) el.dataset.toolOrigin = origin;
     if (args && args.path) el.dataset.path = args.path;
     if (args && args.command) el.dataset.command = args.command.substring(0, 200);
 
     const isLive = extra && extra.live;
+    const originBadge = _toolOriginBadge(extra, (extra && (extra.tool_name || extra.tool)) || toolName);
     const bulletClass = isLive ? 'pending' : 'done';
     const bgBtn = (tcId && isLive) ? ' <button class="tc-bg-btn" onclick="backgroundTool(\'' + tcId + '\')" title="' + escapeHtml(t('runInBackground')) + '">\u2192 BG</button>' : '';
     const klBtn = (tcId && isLive) ? ' <button class="tc-kl-btn" onclick="killTool(\'' + tcId + '\')" title="' + escapeHtml(t('kill')) + '">\u2718</button>' : '';
     if (toolName === 'edit' && args && args.path) {
-      el.innerHTML = timeHtml + '<span class="tc-bullet ' + bulletClass + '">\u25cf</span> ' + _renderToolCallEdit('', args) + bgBtn + klBtn;
+      el.innerHTML = timeHtml + '<span class="tc-bullet ' + bulletClass + '">\u25cf</span> ' + originBadge + _renderToolCallEdit('', args) + bgBtn + klBtn;
     } else if (toolName === 'apply_patch' && args && args.path) {
-      el.innerHTML = timeHtml + '<span class="tc-bullet ' + bulletClass + '">\u25cf</span> ' + _renderToolCallPatch('', args) + bgBtn + klBtn;
+      el.innerHTML = timeHtml + '<span class="tc-bullet ' + bulletClass + '">\u25cf</span> ' + originBadge + _renderToolCallPatch('', args) + bgBtn + klBtn;
     } else {
-      el.innerHTML = timeHtml + '<span class="tc-bullet ' + bulletClass + '">\u25cf</span> ' + escapeHtml(_toolCallSummary(toolName, args || {})) + bgBtn + klBtn;
+      el.innerHTML = timeHtml + '<span class="tc-bullet ' + bulletClass + '">\u25cf</span> ' + originBadge + escapeHtml(_toolCallSummary(toolName, args || {})) + bgBtn + klBtn;
     }
   } else if (role === 'tool_result') {
     const tcId = (extra && extra.tc_id) || '';

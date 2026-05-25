@@ -1282,6 +1282,31 @@ class TestImageMarkerCapBypass(unittest.TestCase):
             f"cap should clip; got {len(out):,} chars",
         )
 
+    def test_oversized_result_spills_without_returning_capped_prefix(self):
+        class _Store:
+            def __init__(self):
+                self.saved = None
+
+            def store(self, name, data, mime, **kwargs):
+                self.saved = (name, data, mime, kwargs)
+                return "fid123"
+
+        big = "A" * 60_000
+        h = MockHandler(name="large_text", result=big)
+        h._tool_result_max_chars = 3500
+        reg = ToolRegistry()
+        reg.register(h)
+        store = _Store()
+
+        with patch("core.file_store.FileStore.instance", return_value=store):
+            out = reg.execute("large_text", {})
+
+        self.assertEqual(store.saved[1], big.encode("utf-8"))
+        self.assertLess(len(out), 500)
+        self.assertIn("[Result cleared — 60,000 chars.", out)
+        self.assertIn("read(path=\"fid123\", source=\"filestore\")", out)
+        self.assertNotIn("AAAA", out)
+
     def test_marker_bypasses_cap_only_when_handler_returns_images(self):
         big = ("__image_data__:image/png:" + ("A" * 200_000))
         h = MockHandler(name="image_tool", result=big)

@@ -8,7 +8,7 @@ import json
 _USE_TOOL_WRAPPERS = {
     "mcp__pawflow__use_tool", "mcp__pawflow__.use_tool",
     "mcp_pawflow_use_tool", "mcp_pawflow.use_tool",
-    "pawflow.use_tool", "use_tool",
+    "pawflow.use_tool", "pawflow/use_tool", "use_tool",
 }
 _SCHEMA_WRAPPERS = {
     "mcp__pawflow__get_tool_schema",

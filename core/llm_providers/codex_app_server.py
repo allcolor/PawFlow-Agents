@@ -1121,6 +1121,7 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                                 "name": native_name,
                                 "arguments": self._codex_app_native_tool_args(item),
                                 "thinking": "".join(thinking_parts).strip(),
+                                "tool_origin": "native",
                             })
                             thinking_parts.clear()
                         continue
@@ -1150,6 +1151,7 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                                 "name": raw_name,
                                 "arguments": raw_args,
                                 "thinking": "".join(thinking_parts).strip(),
+                                "tool_origin": "mcp",
                             })
                             thinking_parts.clear()
                         continue
@@ -1175,6 +1177,7 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                                 "tc_id": tc_id,
                                 "tool": native_name,
                                 "result": self._codex_app_native_tool_result(item),
+                                "tool_origin": "native",
                             })
                         continue
                     if item.get("type") == "mcpToolCall":
@@ -1197,6 +1200,7 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                                 "tc_id": tc_id,
                                 "tool": raw_name,
                                 "result": result_str,
+                                "tool_origin": "mcp",
                             })
                         continue
 

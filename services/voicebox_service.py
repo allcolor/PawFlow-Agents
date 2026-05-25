@@ -29,6 +29,9 @@ from services.base_voice_clone import BaseVoiceCloneService
 
 logger = logging.getLogger(__name__)
 
+_VOICEBOX_DEFAULT_REPO_URL = "https://github.com/jamiepine/voicebox.git"
+_VOICEBOX_DEFAULT_REPO_REF = "b35b90961d5bc83a8b4e96e8b6ccde2a03152ff9"
+
 
 def _multipart(fields: Dict[str, str], files: Dict[str, tuple[str, bytes, str]]) -> tuple[bytes, str]:
     boundary = "----PawFlowVoicebox" + uuid.uuid4().hex
@@ -91,6 +94,16 @@ class VoiceboxService(BaseVoiceCloneService, BaseSTTService):
                 "type": "string", "required": False, "default": "data/runtime/voicebox",
                 "description": "Managed Voicebox checkout directory used for auto-install/start.",
             },
+            "repo_url": {
+                "type": "string", "required": False,
+                "default": _VOICEBOX_DEFAULT_REPO_URL,
+                "description": "Git repository used when auto_install creates the managed Voicebox checkout.",
+            },
+            "repo_ref": {
+                "type": "string", "required": False,
+                "default": _VOICEBOX_DEFAULT_REPO_REF,
+                "description": "Immutable git ref checked out after auto-install for reproducible setup.",
+            },
             "start_command": {
                 "type": "string", "required": False, "default": "",
                 "description": "Optional explicit command to start the Voicebox API backend.",
@@ -115,6 +128,8 @@ class VoiceboxService(BaseVoiceCloneService, BaseSTTService):
         self.auto_start = str(config.get("auto_start", True)).lower() not in {"0", "false", "no"}
         self.auto_install = str(config.get("auto_install", True)).lower() not in {"0", "false", "no"}
         self.install_dir = Path(str(config.get("install_dir") or "data/runtime/voicebox"))
+        self.repo_url = str(config.get("repo_url") or _VOICEBOX_DEFAULT_REPO_URL)
+        self.repo_ref = str(config.get("repo_ref") or _VOICEBOX_DEFAULT_REPO_REF)
         self.start_command = str(config.get("start_command") or "").strip()
         self.startup_timeout = int(config.get("startup_timeout") or 180)
         self._managed_proc = None
@@ -234,8 +249,12 @@ class VoiceboxService(BaseVoiceCloneService, BaseSTTService):
             if not git:
                 raise ServiceError("git is required to auto-install Voicebox")
             subprocess.check_call([  # nosec B603 - fixed git clone argv for the managed Voicebox checkout.
-                git, "clone", "https://github.com/jamiepine/voicebox.git", str(repo),
+                git, "clone", "--no-checkout", self.repo_url, str(repo),
             ])
+            if self.repo_ref:
+                subprocess.check_call([  # nosec B603 - immutable configured Voicebox ref checkout without shell.
+                    git, "-C", str(repo), "checkout", "--detach", self.repo_ref,
+                ])
         python = repo / "backend" / "venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
         if python.exists():
             return

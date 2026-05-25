@@ -169,11 +169,14 @@ match Voicebox's local profile and MCP/client bindings.
 Like Supertonic, the service starts lazily on first use. With `auto_start=true`
 it first probes the local API, then opens the installed macOS Voicebox app when
 available, then starts a backend from `install_dir`, and with `auto_install=true`
-it can clone/setup `jamiepine/voicebox` into `data/runtime/voicebox` before
-starting `backend.main:app` through the checkout's virtualenv. `start_command`
-can override the managed command for packaged deployments. Voicebox voice
-cloning is profile-based: PawFlow can speak through existing Voicebox profiles
-by name/id, while profile creation and sample management remain in Voicebox.
+it can clone/setup Voicebox into `data/runtime/voicebox` before starting
+`backend.main:app` through the checkout's virtualenv. Auto-install uses
+`repo_url` (default `https://github.com/jamiepine/voicebox.git`) and checks out
+the pinned `repo_ref` commit before running dependency setup, so default installs
+are reproducible instead of tracking upstream `HEAD`. `start_command` can
+override the managed command for packaged deployments. Voicebox voice cloning is
+profile-based: PawFlow can speak through existing Voicebox profiles by name/id,
+while profile creation and sample management remain in Voicebox.
 
 ### LuxTTS Local Voice Clone Service
 

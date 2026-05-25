@@ -1,4 +1,5 @@
 import json
+import sys
 import types
 
 from services.voicebox_service import VoiceboxService
@@ -118,4 +119,40 @@ def test_voice_io_services_are_registered():
     types = set(ServiceFactory.list_types())
     assert "voicebox" in types
     assert "luxTTS" in types
+
+
+def test_voicebox_auto_install_checks_out_pinned_ref(monkeypatch, tmp_path):
+    commands = []
+    repo = tmp_path / "voicebox"
+    expected_ref = "b35b90961d5bc83a8b4e96e8b6ccde2a03152ff9"
+
+    def fake_which(name):
+        if name == "git":
+            return "/usr/bin/git"
+        if name == "just":
+            return ""
+        return ""
+
+    def fake_check_call(cmd, cwd=None):
+        commands.append((list(cmd), cwd))
+        if cmd[:3] == ["/usr/bin/git", "clone", "--no-checkout"]:
+            (repo / "backend").mkdir(parents=True)
+            (repo / "backend" / "requirements.txt").write_text("", encoding="utf-8")
+
+    monkeypatch.setattr("shutil.which", fake_which)
+    monkeypatch.setattr("subprocess.check_call", fake_check_call)
+    svc = VoiceboxService({"install_dir": str(repo)})
+
+    svc._ensure_checkout()
+
+    assert commands[0][0] == [
+        "/usr/bin/git", "clone", "--no-checkout",
+        "https://github.com/jamiepine/voicebox.git", str(repo),
+    ]
+    assert commands[1][0] == [
+        "/usr/bin/git", "-C", str(repo), "checkout", "--detach", expected_ref,
+    ]
+    assert commands[2][0] == [
+        sys.executable, "-m", "venv", str(repo / "backend" / "venv"),
+    ]
 

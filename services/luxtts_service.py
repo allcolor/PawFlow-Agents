@@ -20,6 +20,7 @@ class LuxTTSService(BaseAudioGenerationService, BaseVoiceCloneService):
     NAME = "LuxTTS Local Voice Clone"
     CATEGORY = "audio"
     SUPPORTS_NATIVE_TTS_VOICES = False
+    ACCEPTS_FILESTORE_URLS = False
 
     def get_parameter_schema(self) -> dict:
         return {

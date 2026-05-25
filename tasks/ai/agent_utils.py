@@ -332,6 +332,7 @@ class AgentUtilsMixin:
         from services.base_image_generation import BaseImageGenerationService
         from services.base_video_generation import BaseVideoGenerationService
         from services.base_audio_generation import BaseAudioGenerationService
+        from services.base_tts import BaseTTSService
         from services.base_capabilities import (
             BaseImage3DService, BaseImageUpscaleService,
             BaseTryOnService, BaseLipsyncService, BaseImageTrainerService,
@@ -342,6 +343,7 @@ class AgentUtilsMixin:
             (BaseImageGenerationService, {"media.image_generation"}),
             (BaseVideoGenerationService, {"media.video_generation"}),
             (BaseAudioGenerationService, {"media.audio_generation"}),
+            (BaseTTSService, {"media.tts", "media.audio_generation", "media.voice_clone"}),
             (BaseImage3DService, {"media.3d_generation"}),
             (BaseImageUpscaleService, {
                 "media.image_upscale", "media.video_upscale",
@@ -554,6 +556,15 @@ class AgentUtilsMixin:
             user_id, conversation_id, agent_name,
             BaseAudioGenerationService, "audio_services",
             "audio generation", "/audioservice", required_methods,
+        )
+
+    def _make_tts_resolver(self, user_id, conversation_id, agent_name,
+                           required_methods=("speak",)):
+        from services.base_tts import BaseTTSService
+        return self._make_media_resolver(
+            user_id, conversation_id, agent_name,
+            BaseTTSService, "audio_services",
+            "text-to-speech", "/audioservice", required_methods,
         )
 
     def _make_3d_resolver(self, user_id, conversation_id, agent_name,

@@ -55,11 +55,26 @@ Example chain:
 | Tool | Purpose |
 |---|---|
 | `generate_audio` | Generate music, sound, or text-to-audio depending on active service/model. |
-| `clone_voice` | Register or reuse a voice clone from a reference sample. |
-| `speak` | Synthesize speech using a registered voice clone. |
+| `clone_voice` | Register or reuse a provider voice from a reference sample when the selected TTS provider supports voice creation. |
+| `speak` | Synthesize speech through the active TTS provider using either a registered PawFlow voice alias or a provider-native voice name/id. |
 | `delete_voice` | Remove local voice clone state, cached TTS renders, and provider voice id where applicable. |
 
-Only clone voices when the user has explicit rights to use the speaker's voice.
+`speak` is the single text-to-speech entry point. Supertonic, Pixazo, WaveSpeed,
+ElevenLabs, Fish Audio, and other compatible providers all expose speech through
+the same tool. Use `clone_voice` only when the provider needs or supports a
+stored voice resource; only clone voices when the user has explicit rights to use
+the speaker's voice.
+
+The webchat header includes a speaker toggle that reads new agent messages as
+they stream in. It calls the silent UI action `tts_synthesize`, which delegates
+to `speak` and returns an audio URL without adding `tool_call` or `tool_result`
+messages to the conversation. The button is hidden until at least one compatible
+TTS service is configured. With one service it toggles immediately; with several
+services it opens a service picker before playback. The selected service is
+remembered in local storage as `pawflow_tts_service`; optional advanced overrides
+for provider-native voice/language remain available as `pawflow_tts_voice` and
+`pawflow_tts_language`, otherwise the selected service's configured defaults are
+used.
 
 ## 3D, Try-On, Training
 
@@ -89,6 +104,7 @@ Supported service families include:
 - `klingVideoGeneration`
 - `soraVideoGeneration`
 - `sunoAudioGeneration`
+- `supertonicTTS`
 - `pixazoImageGeneration`
 - `pixazoVideoGeneration`
 - `pixazoAudioGeneration`
@@ -109,11 +125,28 @@ Supported service families include:
 - `elevenLabsVoiceClone`
 - `wavespeedVoiceClone`
 
-For Pixazo model-specific schemas and pricing notes, see [Pixazo](pixazo.md). For WaveSpeedAI model-specific schemas and pricing notes, see [WaveSpeedAI](wavespeed.md). For voice clone internals, see [Voice Clone](voice_clone.md).
+For Pixazo model-specific schemas and pricing notes, see [Pixazo](pixazo.md). For WaveSpeedAI model-specific schemas and pricing notes, see [WaveSpeedAI](wavespeed.md). For registered voice internals, see [Voice Clone](voice_clone.md).
 
 ### Suno Audio Service
 
 `sunoAudioGeneration` sends Suno's required `callBackUrl` on generation requests. Configure the service `callback_url` when the PawFlow server has a public webhook URL. If `callback_url` is omitted, the tool derives `callBackUrl` from the runtime `file_base_url` as `/webhooks/suno/callback` and still polls Suno's `GET /api/v1/generate/record-info?taskId=...` endpoint before returning generated audio files.
+
+### Supertonic Local TTS Service
+
+`supertonicTTS` manages a local Supertonic 3 HTTP daemon and is intended for
+fast, private, on-device text-to-speech. PawFlow installs Supertonic through its
+Python requirements and starts the package's `supertonic serve` entrypoint
+automatically when the service connects.
+
+Configure the service with `base_url` (default `http://127.0.0.1:7788`),
+`auto_start` (default `true`), `startup_timeout`, `voice` (`M1`-`M5`, `F1`-`F5`,
+or an imported style name), `lang` (`fr`, `en`, `ja`, `ko`, `na`, ...), `steps`,
+`speed`, and `response_format` (`wav`, `flac`, or `ogg`). Prefer `speak` for
+speech, for example `speak(text="Bonjour", service="supertonic", voice="F1",
+language="fr")`. `generate_audio` also works with `prompt` as the spoken text
+for compatibility with audio-generation flows. Supertonic's open-weight local
+package does not create voice styles directly from raw audio; custom voices
+require a Voice Builder JSON imported into the managed Supertonic daemon.
 
 ### Codex CLI Image Service
 

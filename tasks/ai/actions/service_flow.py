@@ -95,6 +95,7 @@ _SERVICE_CATEGORY_BY_TYPE = {
     "soraVideoGeneration": "video",
     "wavespeedVideoGeneration": "video",
     "sunoAudioGeneration": "audio",
+    "supertonicTTS": "audio",
     "wavespeedAudioGeneration": "audio",
     "elevenLabsVoiceClone": "voice",
     "fishAudioVoiceClone": "voice",
@@ -142,6 +143,27 @@ def _service_category(service_type: str, service_cls: type) -> str:
 def _service_type_sort_key(service: Dict[str, Any]):
     category = service.get("category", "other")
     return (_SERVICE_CATEGORY_ORDER.get(category, 99), service.get("name", "").lower(), service.get("type", ""))
+
+
+def _service_requires_connected_state(service_type: str) -> bool:
+    try:
+        from core import ServiceFactory
+        from services.base_tts import BaseTTSService
+        cls = ServiceFactory.get(service_type)
+        if issubclass(cls, BaseTTSService):
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _service_started_for_listing(reg, scope: str, scope_id: str, sid: str,
+                                 sdef) -> bool:
+    if not getattr(sdef, "enabled", True):
+        return False
+    if not _service_requires_connected_state(getattr(sdef, "service_type", "")):
+        return True
+    return reg.is_connected(scope, scope_id, sid)
 
 
 def _credential_provider_for_service(service_id: str, user_id: str = "") -> str:
@@ -494,7 +516,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                     continue
                 _enabled = getattr(sdef, "enabled", True)
                 try:
-                    _started = reg.is_connected("global", "", sid) if _enabled else False
+                    _started = _service_started_for_listing(reg, "global", "", sid, sdef)
                 except Exception:
                     _started = False
                 services.append({
@@ -511,7 +533,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 if filter_type and sdef.service_type != filter_type:
                     continue
                 try:
-                    _started = reg.is_connected("user", user_id, sid) if sdef.enabled else False
+                    _started = _service_started_for_listing(reg, "user", user_id, sid, sdef)
                 except Exception:
                     _started = False
                 entry = {
@@ -538,7 +560,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                     if filter_type and sdef.service_type != filter_type:
                         continue
                     try:
-                        _started = reg.is_connected("conv", conv_id, sid) if sdef.enabled else False
+                        _started = _service_started_for_listing(reg, "conv", conv_id, sid, sdef)
                     except Exception:
                         _started = False
                     services.append({
@@ -669,6 +691,12 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             reg.install(scope, scope_id, service_id=svc_name,
                         service_type=svc_type, config=config,
                         description=description)
+            if _service_requires_connected_state(svc_type) and not reg.is_connected(scope, scope_id, svc_name):
+                reg.uninstall(scope, scope_id, svc_name)
+                flowfile.set_content(json.dumps({
+                    "error": f"Service '{svc_name}' did not start. Check server logs for the provider error.",
+                }).encode())
+                return [flowfile]
             flowfile.set_content(json.dumps({
                 "installed": True, "id": svc_name, "type": svc_type,
             }, ensure_ascii=False).encode())

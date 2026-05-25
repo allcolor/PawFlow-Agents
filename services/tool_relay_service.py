@@ -1162,14 +1162,19 @@ class ToolRelayService(BaseService):
             elif h.name in ("clone_voice", "speak", "delete_voice"):
                 if file_base_url and hasattr(h, 'set_base_url'):
                     h.set_base_url(file_base_url)
+                if hasattr(h, 'set_user_id'):
+                    h.set_user_id(user_id)
+                if hasattr(h, 'set_conversation_id'):
+                    h.set_conversation_id(conversation_id)
                 voice_methods = {
                     "clone_voice": ("clone_speak",),
-                    "speak": ("clone_speak",),
+                    "speak": ("speak",),
                     "delete_voice": ("delete_voice_id",),
                 }[h.name]
+                media_type = "tts" if h.name == "speak" else "voice"
                 h.set_service_resolver(
                     self._make_media_resolver(
-                        user_id, conversation_id, "voice", voice_methods))
+                        user_id, conversation_id, media_type, voice_methods))
             elif h.name in ("describe_image", "remix_image"):
                 if file_base_url and hasattr(h, 'set_base_url'):
                     h.set_base_url(file_base_url)
@@ -1262,6 +1267,7 @@ class ToolRelayService(BaseService):
                 "video": ("base_video_generation", "BaseVideoGenerationService"),
                 "speech_to_video": ("base_video_generation", "BaseVideoGenerationService"),
                 "audio": ("base_audio_generation", "BaseAudioGenerationService"),
+                "tts": ("base_tts", "BaseTTSService"),
                 "3d": ("base_capabilities", "BaseImage3DService"),
                 "upscale": ("base_capabilities", "BaseImageUpscaleService"),
                 "tryon": ("base_capabilities", "BaseTryOnService"),
@@ -1302,6 +1308,7 @@ class ToolRelayService(BaseService):
                 "video": {"media.video_generation"},
                 "speech_to_video": {"media.video_generation", "media.lipsync"},
                 "audio": {"media.audio_generation"},
+                "tts": {"media.tts", "media.audio_generation", "media.voice_clone"},
                 "3d": {"media.3d_generation"},
                 "upscale": {
                     "media.image_upscale", "media.video_upscale",
@@ -1336,6 +1343,7 @@ class ToolRelayService(BaseService):
                     "reference_to_video", "video_edit"),
                 "speech_to_video": ("speech_to_video",),
                 "audio": ("generate",),
+                "tts": ("speak",),
                 "3d": ("generate_3d",),
                 "upscale": (
                     "upscale", "upscale_video", "remove_background"),

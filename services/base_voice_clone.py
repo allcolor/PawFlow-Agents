@@ -23,10 +23,10 @@ decide whether to do a two-step flow behind the scenes.
 
 from abc import abstractmethod
 
-from core.base_service import BaseService
+from services.base_tts import BaseTTSService
 
 
-class BaseVoiceCloneService(BaseService):
+class BaseVoiceCloneService(BaseTTSService):
     """Abstract base for all voice-cloning TTS services.
 
     Implementations MUST override `clone_speak`. They SHOULD override
@@ -63,6 +63,18 @@ class BaseVoiceCloneService(BaseService):
         """
         ...
 
+    def speak(self, text: str, voice: str = "", language: str = "",
+              **kwargs) -> dict:
+        """TTS-compatible alias for cloned-voice synthesis.
+
+        ``voice`` maps to provider voice_id for persistent-voice providers.
+        Zero-shot providers receive reference audio through kwargs, same as
+        the existing ``clone_speak`` path.
+        """
+        if voice and "voice_id" not in kwargs:
+            kwargs["voice_id"] = voice
+        return self.clone_speak(text=text, language=language, **kwargs)
+
     def ensure_voice_id(self, reference_audio_url: str,
                         reference_text: str = "",
                         name: str = "",
@@ -78,6 +90,18 @@ class BaseVoiceCloneService(BaseService):
         """
         return ""
 
+    def create_voice(self, name: str, reference_audio_url: str,
+                     reference_text: str = "", language: str = "",
+                     **kwargs) -> dict:
+        """Create a provider voice when supported by the provider."""
+        voice_id = self.ensure_voice_id(
+            reference_audio_url=reference_audio_url,
+            reference_text=reference_text,
+            name=name,
+            **kwargs,
+        )
+        return {"voice_id": voice_id or ""}
+
     def delete_voice_id(self, voice_id: str) -> bool:
         """Optional: delete a voice_id on the provider (cleanup cascade).
 
@@ -85,3 +109,6 @@ class BaseVoiceCloneService(BaseService):
         default to True (nothing to delete).
         """
         return True
+
+    def delete_voice(self, voice_id: str, **kwargs) -> bool:
+        return self.delete_voice_id(voice_id)

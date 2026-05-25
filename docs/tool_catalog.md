@@ -107,7 +107,7 @@ pages before image results before video results.
 | `speech_to_video` | Generate speaking video from face image + audio. |
 | `train_image_model` | Train/fine-tune an image model/LoRA. |
 | `clone_voice` | Register/reuse a voice clone. |
-| `speak` | Synthesize speech using a voice clone. |
+| `speak` | Synthesize speech through the active TTS provider using a registered voice alias or provider-native voice. |
 | `delete_voice` | Delete voice clone state and cached renders. |
 
 ## Memory and Cognitive Tools

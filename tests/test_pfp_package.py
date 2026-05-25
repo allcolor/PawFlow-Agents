@@ -3605,6 +3605,8 @@ def test_tool_relay_wires_media_handlers_to_operation_specific_resolvers(tmp_pat
         "upscale", ("remove_background",))
     assert handlers["delete_voice"]._service_resolver.pfp_test_call == (
         "voice", ("delete_voice_id",))
+    assert handlers["speak"]._service_resolver.pfp_test_call == (
+        "tts", ("speak",))
     assert handlers["get_image_model_info"]._service_resolver.pfp_test_call == (
         "image", ("get_model_info",))
 

@@ -168,7 +168,7 @@ class AgentToolConfigMixin:
                     "lipsync": (self._make_lipsync_resolver, ("lipsync",)),
                     "train_image_model": (self._make_trainer_resolver, ("train",)),
                     "clone_voice": (self._make_voice_clone_resolver, ("clone_speak",)),
-                    "speak": (self._make_voice_clone_resolver, ("clone_speak",)),
+                    "speak": (self._make_tts_resolver, ("speak",)),
                     "delete_voice": (self._make_voice_clone_resolver, ("delete_voice_id",)),
                 }[h.name]
                 h.set_service_resolver(_maker(

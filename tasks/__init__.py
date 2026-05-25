@@ -23,6 +23,7 @@ def _register_all_services():
     _registered_types = set(ServiceFactory.list_types())
     if ("pixazoImageGeneration" in _registered_types
             and "codexImageGeneration" in _registered_types
+            and "supertonicTTS" in _registered_types
             and "summarizer" in _registered_types
             and "ccInteractiveEvents" in _registered_types):
         return  # All modules already registered
@@ -81,6 +82,7 @@ def _register_all_services():
     import services.pixazo_audio_service       # noqa: F401
     import services.wavespeed_audio_service    # noqa: F401
     import services.suno_audio_service         # noqa: F401  — sunoapi.org wrapper
+    import services.supertonic_tts_service     # noqa: F401  — local Supertonic TTS
 
     # Voice-cloning TTS services
     import services.fish_audio_voice_clone_service  # noqa: F401

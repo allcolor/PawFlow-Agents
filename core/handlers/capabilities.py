@@ -888,10 +888,11 @@ class SpeakHandler(_CapabilityHandlerBase):
     @property
     def description(self) -> str:
         return (
-            "Synthesize text using a previously registered voice clone. "
-            "Pass `voice` (the name returned by `clone_voice`) and `text`. "
-            "Returns a downloadable audio URL suitable for `lipsync` / "
-            "`speech_to_video`. Identical (voice, text, language) inputs "
+            "Synthesize speech through the active TTS provider. `voice` may "
+            "be either a PawFlow voice registered by `clone_voice` or a "
+            "provider-native voice name/id such as Supertonic F1, WaveSpeed "
+            "Vivian, or an ElevenLabs voice id. Returns a downloadable audio "
+            "URL suitable for `lipsync` / `speech_to_video`. Identical inputs "
             "hit a cache and skip the provider call entirely."
         )
 
@@ -900,13 +901,17 @@ class SpeakHandler(_CapabilityHandlerBase):
         return {
             "type": "object",
             "properties": {
-                "voice": {"type": "string", "description": "Name of a voice clone registered via `clone_voice` (owned by the current user)."},
+                "voice": {"type": "string", "description": "PawFlow voice alias registered via `clone_voice`, or provider-native voice name/id."},
                 "text": {"type": "string", "description": "Text to synthesize."},
                 "language": {"type": "string", "description": "BCP-47 language tag. Provider may ignore if irrelevant."},
+                "service": {"type": "string", "description": "Optional TTS service id override."},
+                "audio_service": {"type": "string", "description": "Alias for service; optional TTS service id override."},
+                "voice_service": {"type": "string", "description": "Alias for service; optional TTS service id override."},
+                "model": {"type": "string", "description": "Provider model override when supported."},
                 "destination": {"type": "string"},
                 "path": {"type": "string"},
             },
-            "required": ["voice", "text"],
+            "required": ["text"],
         }
 
     def execute(self, arguments: Dict[str, Any]) -> str:
@@ -917,21 +922,32 @@ class SpeakHandler(_CapabilityHandlerBase):
         voice = (arguments.get("voice") or "").strip()
         text = arguments.get("text") or ""
         language = arguments.get("language") or ""
-        if not voice or not text:
-            return "Error: `voice` and `text` are required"
+        if not text:
+            return "Error: `text` is required"
 
         from core import voice_clone_cache as _cache
 
-        entry = _cache.get_by_name(self._user_id, voice)
-        if not entry:
-            return (f"Error: unknown voice clone {voice!r}. Register one "
-                    f"first with `clone_voice`.")
-
         provider = _provider_identity(svc)
-        if entry.get("provider") and entry["provider"] != provider:
+        entry = _cache.get_by_name(self._user_id, voice) if voice else None
+        if entry and entry.get("provider") and entry["provider"] != provider:
             return (f"Error: voice clone {voice!r} was created with provider "
                     f"{entry['provider']}, but the active voice-clone service "
                     f"is {provider}. Switch services to re-use this voice.")
+
+        if not entry:
+            # Zero-shot voice-clone providers require a registered PawFlow
+            # voice because every synthesis needs reference audio. Providers
+            # with native voice ids/names opt in via SUPPORTS_NATIVE_TTS_VOICES,
+            # and audio TTS providers expose text_to_speech/speak directly.
+            is_clone_provider = hasattr(svc, "clone_speak")
+            supports_native = bool(getattr(svc, "SUPPORTS_NATIVE_TTS_VOICES", False))
+            has_direct_tts = hasattr(svc, "text_to_speech") or not is_clone_provider
+            if voice and is_clone_provider and not supports_native and not has_direct_tts:
+                return (f"Error: unknown voice clone {voice!r}. Register it first "
+                        f"with `clone_voice`, or select a TTS provider that "
+                        f"supports provider-native voices.")
+            return self._speak_native_voice(
+                svc, provider, voice, text, language, arguments, _cache)
 
         ref_hash = entry.get("ref_audio_hash") or ""
         cache_key = _cache.tts_cache_key(
@@ -1055,6 +1071,92 @@ class SpeakHandler(_CapabilityHandlerBase):
             return f"Error storing synthesized audio: {e}"
 
         _cache.touch(self._user_id, voice)
+        url = f"fs://filestore/{fid}/{filename}"
+        return f"Speech synthesized: {url}\nfile_id: {fid}"
+
+    def _speak_native_voice(self, svc, provider: str, voice: str, text: str,
+                            language: str, arguments: Dict[str, Any],
+                            cache) -> str:
+        """Synthesize with a provider-native voice through BaseTTSService."""
+        if not hasattr(svc, "speak"):
+            return f"Error: provider {provider} does not support speak()"
+
+        import hashlib
+        import json
+
+        kwargs = {k: v for k, v in arguments.items()
+                  if k not in ("destination", "path", "text", "voice",
+                               "language", *_SERVICE_ARG_NAMES)}
+        provider_version = _provider_version(svc)
+        sig = json.dumps({
+            "provider": provider,
+            "version": provider_version,
+            "voice": voice,
+            "params": kwargs,
+        }, sort_keys=True, default=str)
+        voice_key = hashlib.sha256(sig.encode("utf-8")).hexdigest()
+        cache_key = cache.tts_cache_key(
+            voice_key, text, language=language, provider=provider)
+        cached_fid = cache.tts_find(
+            self._user_id, self._conversation_id, cache_key)
+        if cached_fid:
+            from core.file_store import FileStore
+            meta = FileStore.instance().get_metadata(cached_fid) or {}
+            filename = meta.get("filename", "speech.mp3")
+            url = f"fs://filestore/{cached_fid}/{filename}"
+            return (f"Speech synthesized (cached): {url}\n"
+                    f"file_id: {cached_fid}")
+
+        try:
+            r = svc.speak(text=text, voice=voice, language=language, **kwargs)
+        except Exception as e:
+            return f"Error synthesizing speech: {e}"
+
+        audio_bytes = r.get("audio_bytes") or r.get("bytes") or b""
+        audio_path = r.get("audio_path") or r.get("path") or ""
+        if not audio_bytes and not audio_path:
+            return "Error: provider returned no audio"
+        content_type = r.get("content_type", "audio/mpeg")
+        ext = {
+            "audio/mpeg": "mp3", "audio/mp3": "mp3",
+            "audio/wav": "wav", "audio/x-wav": "wav",
+            "audio/ogg": "ogg", "audio/L16": "pcm",
+            "audio/flac": "flac",
+        }.get(content_type.split(";")[0].strip(), "mp3")
+        safe_voice = "".join(c if c.isalnum() or c in ("-", "_") else "_"
+                              for c in (voice or "speech"))[:40] or "speech"
+        filename = arguments.get("path") or f"{safe_voice}_{int(time.time())}.{ext}"
+        conv = self._conversation_id or "_voice_cache"
+        try:
+            if audio_path:
+                try:
+                    fid = cache.tts_store_file(
+                        user_id=self._user_id,
+                        conversation_id=conv,
+                        cache_key=cache_key,
+                        filename=filename,
+                        source_path=str(audio_path),
+                        content_type=content_type,
+                        ref_audio_hash="",
+                    )
+                finally:
+                    if r.get("_delete_media_path"):
+                        try:
+                            os.unlink(str(audio_path))
+                        except OSError:
+                            pass
+            else:
+                fid = cache.tts_store(
+                    user_id=self._user_id,
+                    conversation_id=conv,
+                    cache_key=cache_key,
+                    filename=filename,
+                    audio_bytes=audio_bytes,
+                    content_type=content_type,
+                    ref_audio_hash="",
+                )
+        except Exception as e:
+            return f"Error storing synthesized audio: {e}"
         url = f"fs://filestore/{fid}/{filename}"
         return f"Speech synthesized: {url}\nfile_id: {fid}"
 

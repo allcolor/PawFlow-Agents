@@ -94,6 +94,7 @@ class ElevenLabsVoiceCloneService(BaseVoiceCloneService):
         "`eleven_multilingual_v2` model. Quota-bounded by your plan "
         "(Starter: 10 voices, Creator: 30, Pro: 160)."
     )
+    SUPPORTS_NATIVE_TTS_VOICES = True
 
     def get_parameter_schema(self) -> dict:
         return {

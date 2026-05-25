@@ -696,9 +696,10 @@ class AudioGenerationHandler(ToolHandler):
     @property
     def description(self) -> str:
         return (
-            "Generate audio or music from a text prompt. "
+            "Generate audio, music, or text-to-speech from a text prompt. "
             "Returns a download URL for the generated audio file. "
-            "Supports music generation (with lyrics or instrumental) and sound effects."
+            "Supports music generation, sound effects, and TTS services such "
+            "as local Supertonic."
         )
 
     @property
@@ -745,6 +746,26 @@ class AudioGenerationHandler(ToolHandler):
                 "model": {
                     "type": "string",
                     "description": "Override the active audio model for this call (e.g. 'lyria-2', 'minimax-music', 'eleven-v3-alpha-954', 'chatterbox-text-to-speech').",
+                },
+                "voice": {
+                    "type": "string",
+                    "description": "Voice name for TTS services, e.g. Supertonic M1-M5/F1-F5.",
+                },
+                "lang": {
+                    "type": "string",
+                    "description": "Language code for TTS services, e.g. fr, en, ja, ko, or na.",
+                },
+                "steps": {
+                    "type": "integer",
+                    "description": "Quality steps for TTS services that expose denoising/inference steps.",
+                },
+                "speed": {
+                    "type": "number",
+                    "description": "Speech speed for TTS services.",
+                },
+                "response_format": {
+                    "type": "string",
+                    "description": "Requested audio format for TTS services, e.g. wav, flac, or ogg.",
                 },
                 "callback_url": {
                     "type": "string",

@@ -8,6 +8,12 @@ function listServices$(serviceType) {
   return action$('list_services', payload);
 }
 
+function notifyServiceConfigurationChanged() {
+  if (typeof refreshConversationTTSServices === 'function') {
+    try { refreshConversationTTSServices(); } catch (_err) {}
+  }
+}
+
 function cmdServiceList() {
   listServices$().subscribe(data => {
     if (data.error) { addMsg('error', data.error); return; }
@@ -31,6 +37,7 @@ function cmdServiceAction(action, extra) {
   return rxjs.firstValueFrom(action$(action, { ...extra }).pipe(
     rxjs.tap(data => {
       if (data.error) { addMsg('error', data.error); return; }
+      notifyServiceConfigurationChanged();
       if (data.installed) addMsg('system', t('serviceInstalled', { id: data.id, type: data.type }));
       else if (data.uninstalled) addMsg('system', t('serviceUninstalled', { id: data.id }));
       else if (data.enabled) addMsg('system', t('serviceEnabled', { id: data.id }));
@@ -3531,7 +3538,7 @@ function showServiceMenu(e, serviceId, scope, enabled) {
   item(enabled ? '\u23F8 ' + t('blocked') : '\u25B6 ' + t('enabled'), () => {
     action$('toggle_service', { service_id: serviceId, scope, enabled: !enabled, conversation_id: conversationId }).subscribe(d => {
       if (d.error) addMsg('error', d.error);
-      else loadResources();
+      else { notifyServiceConfigurationChanged(); loadResources(); }
     });
   });
   if (_canEditScope(scope)) {
@@ -3542,7 +3549,7 @@ function showServiceMenu(e, serviceId, scope, enabled) {
       if (!confirm(t('deleteServiceConfirm', { id: serviceId }))) return;
       action$('delete_service', { service_id: serviceId, scope, conversation_id: conversationId }).subscribe(d => {
         if (d.error) addMsg('error', d.error);
-        else { addMsg('system', t('serviceDeleted', { id: serviceId })); loadResources(); }
+        else { addMsg('system', t('serviceDeleted', { id: serviceId })); notifyServiceConfigurationChanged(); loadResources(); }
       });
     }, true);
   }
@@ -3588,6 +3595,7 @@ function _renderSchemaFields(schema, values, readonly) {
   const dis = readonly ? ' disabled' : '';
   const roS = readonly ? 'opacity:0.7;cursor:not-allowed;' : '';
   for (const [pname, pdef] of Object.entries(schema)) {
+    if (pdef.internal || pdef.server_only || pdef.hidden || pdef.type === 'hidden') continue;
     const val = (values && values[pname] != null) ? values[pname] : (pdef.default != null ? pdef.default : '');
     const escaped = typeof val === 'string' ? val.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') : val;
     const label = escapeHtml(pdef.label || pname);
@@ -3677,6 +3685,7 @@ async function _populateServiceRefs(container) {
 function _collectSchemaValues(schema) {
   const config = {};
   for (const [pname, pdef] of Object.entries(schema)) {
+    if (pdef.internal || pdef.server_only || pdef.hidden || pdef.type === 'hidden') continue;
     const el = document.getElementById('svc-p-' + pname);
     if (!el) continue;
     const wrapper = el.closest('.svc-field');
@@ -4277,6 +4286,7 @@ async function _submitServiceInstall(loginAfterInstall) {
     }
     addMsg('system', t('serviceInstalledSuccessfully', { service: name }));
     document.getElementById('resourceEditorOverlay').remove();
+    notifyServiceConfigurationChanged();
     loadResources();
     if (loginAfterInstall) {
       fireAction('rclone_server_login', { service_id: name, scope });
@@ -4378,6 +4388,7 @@ async function _submitServiceEdit(serviceId, scope) {
     if (data.error) { addMsg('error', data.error); btn.disabled = false; btn.textContent = t('contextSave'); return; }
     addMsg('system', t('serviceUpdated', { service: serviceId }));
     document.getElementById('resourceEditorOverlay').remove();
+    notifyServiceConfigurationChanged();
     loadResources();
   } catch (e) { addMsg('error', e.message); btn.disabled = false; btn.textContent = t('contextSave'); }
 }

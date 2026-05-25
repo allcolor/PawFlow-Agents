@@ -43,6 +43,9 @@ jinja2>=3.1.0
 apscheduler>=3.10.0
 diff-match-patch>=20230501
 
+# Local TTS
+supertonic[serve]>=0.1.0
+
 # Web scraping (agent tools — optional but useful)
 beautifulsoup4>=4.12.0
 playwright>=1.50.0

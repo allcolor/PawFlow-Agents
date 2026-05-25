@@ -11,11 +11,12 @@ from typing import Any, Dict
 from core import ServiceFactory, ServiceError
 from services._pixazo_base import _PixazoBaseService
 from services.base_audio_generation import BaseAudioGenerationService
+from services.base_tts import BaseTTSService
 
 logger = logging.getLogger(__name__)
 
 
-class PixazoAudioService(_PixazoBaseService, BaseAudioGenerationService):
+class PixazoAudioService(_PixazoBaseService, BaseAudioGenerationService, BaseTTSService):
     TYPE = "pixazoAudioGeneration"
     VERSION = "3.0.0"
     NAME = "Pixazo Audio Generation"
@@ -68,6 +69,17 @@ class PixazoAudioService(_PixazoBaseService, BaseAudioGenerationService):
         return {"audio_bytes": r["bytes"],
                 "content_type": r["content_type"],
                 "source_url": r["source_url"]}
+
+    def speak(self, text: str, voice: str = "", language: str = "",
+              model: str = "", **kwargs) -> dict:
+        if language and "language" not in kwargs:
+            kwargs["language"] = language
+        return self.text_to_speech(
+            text=text,
+            voice=voice,
+            model=model,
+            **kwargs,
+        )
 
     def _pick_op(self, candidates, *, model_id: str = "") -> str:
         """Return the first op in `candidates` declared by the active model."""

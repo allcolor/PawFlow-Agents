@@ -5,11 +5,14 @@ from pathlib import Path
 
 MESSAGES_JS = Path("tasks/io/chat_ui/messages.js").read_text(encoding="utf-8")
 CONVERSATIONS_JS = Path("tasks/io/chat_ui/conversations.js").read_text(encoding="utf-8")
+RESOURCES_JS = Path("tasks/io/chat_ui/resources.js").read_text(encoding="utf-8")
 SSE_JS = Path("tasks/io/chat_ui/sse.js").read_text(encoding="utf-8")
+CONVERSATION_TTS_JS = Path("tasks/io/chat_ui/conversation_tts.js").read_text(encoding="utf-8")
 STATE_JS = Path("tasks/io/chat_ui/state.js").read_text(encoding="utf-8")
 TEMPLATE_HTML = Path("tasks/io/chat_ui/template.html").read_text(encoding="utf-8")
 AGENT_CORE = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
 TASK_MANAGEMENT = Path("core/handlers/task_management.py").read_text(encoding="utf-8")
+MEDIA_ACTIONS = Path("tasks/ai/actions/media.py").read_text(encoding="utf-8")
 
 
 def test_add_msg_inserts_by_message_timestamp():
@@ -92,6 +95,34 @@ def test_view_menu_grouping_toggles_set_conversation_parameter_and_reload():
     assert "value: next ? 'true' : 'false'" in CONVERSATIONS_JS
     assert "resumeConv(conversationId, true)" in CONVERSATIONS_JS
     assert "wrap.style.display = conversationId ? 'inline-flex' : 'none'" in CONVERSATIONS_JS
+
+
+def test_live_conversation_tts_button_and_sse_hooks_are_wired():
+    serve_src = Path("tasks/io/serve_chat_ui.py").read_text(encoding="utf-8")
+    assert '"conversation_tts.js"' in serve_src
+    assert 'id="speakToggleBtn"' in TEMPLATE_HTML
+    assert 'id="speakToggleBtn"' in TEMPLATE_HTML and 'style="display:none"' in TEMPLATE_HTML
+    assert 'onclick="toggleConversationTTS()"' in TEMPLATE_HTML
+    assert "function toggleConversationTTS()" in CONVERSATION_TTS_JS
+    assert "action$('list_tts_services'" in CONVERSATION_TTS_JS
+    assert 'action == "list_tts_services"' in MEDIA_ACTIONS
+    assert "from services.base_tts import BaseTTSService" in MEDIA_ACTIONS
+    assert "action$('tts_synthesize'" in CONVERSATION_TTS_JS
+    assert "btn.style.display = _convTtsServices.length ? 'inline-flex' : 'none';" in CONVERSATION_TTS_JS
+    assert "if (_convTtsServices.length > 1) _convTtsShowServiceDialog();" in CONVERSATION_TTS_JS
+    assert "function _convTtsShowServiceDialog()" in CONVERSATION_TTS_JS
+    assert "setTimeout(function()" not in CONVERSATION_TTS_JS
+    assert "setInterval" not in CONVERSATION_TTS_JS
+    assert "function notifyServiceConfigurationChanged()" in RESOURCES_JS
+    assert "notifyServiceConfigurationChanged(); loadResources();" in RESOURCES_JS
+    assert "opts.silent" not in CONVERSATION_TTS_JS
+    assert "{ silent: true }" in CONVERSATION_TTS_JS
+    assert "conversationTTSOnToken(data)" in SSE_JS
+    assert "conversationTTSOnMessage(data)" in SSE_JS
+    assert "conversationTTSOnDone(Object.assign" in SSE_JS
+    assert "document.querySelectorAll('#messages [data-msgid]')" in CONVERSATION_TTS_JS
+    assert "src.type && src.type !== 'agent'" not in CONVERSATION_TTS_JS
+    assert "['agent_delegate', 'tool', 'tool_call', 'tool_result', 'system', 'user'].includes(src.type)" in CONVERSATION_TTS_JS
 
 
 def test_autoscroll_only_stops_on_user_scroll_intent():

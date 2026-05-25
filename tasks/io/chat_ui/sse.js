@@ -231,6 +231,9 @@ function connectSSE(cid, onReady, opts) {
         source: data.source, msg_id: data.msg_id, ts: data.ts,
         task_id: data.task_id || '', task_iteration: data.task_iteration,
       });
+      if (typeof conversationTTSOnMessage === 'function') {
+        try { conversationTTSOnMessage(data); } catch (_ttsErr) {}
+      }
       if (data.task_id && el) {
         const tb = _getTaskBlock(data.task_id, data.task_iteration, data.agent_name || (data.source && data.source.name) || '');
         if (tb) tb.content.appendChild(el);
@@ -421,6 +424,9 @@ function connectSSE(cid, onReady, opts) {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
     const agent = data.agent_name || streamingAgent || '';
+    if (typeof conversationTTSOnToken === 'function') {
+      try { conversationTTSOnToken(data); } catch (_ttsErr) {}
+    }
     // Finalize thinking block when first text token arrives
     finalizeThinking(agent, 'token');
     streamingAgent = agent;  // legacy global
@@ -1432,6 +1438,9 @@ function connectSSE(cid, onReady, opts) {
     }
     if (finalText && !anyExists && !data.force_stopped) {
       addMsg('assistant', finalText, extra);
+    }
+    if (typeof conversationTTSOnDone === 'function') {
+      try { conversationTTSOnDone(Object.assign({}, data, extra, {response: finalText})); } catch (_ttsErr) {}
     }
     // Update metadata on existing element (replace estimated with real values)
     if (existingEl) {

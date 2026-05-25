@@ -289,6 +289,10 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
                       white-space: nowrap; height: 44px; }
 .input-row button:hover { background: #c73a52; }
 .input-row button:disabled { background: #3a3a5a; cursor: not-allowed; }
+.speak-toggle-btn { width: 32px; height: 32px; display: inline-flex; align-items: center; justify-content: center;
+                    background: #0f3460; color: #e0e0e0; border: 1px solid #e94560; border-radius: 6px;
+                    cursor: pointer; font-size: 16px; line-height: 1; }
+.speak-toggle-btn:hover, .speak-toggle-btn.active { background: #e94560; color: white; }
 #stopBtn { background: #cc3333; padding: 10px 14px; font-size: 16px; min-width: 44px; }
 #stopBtn:hover { background: #aa2222; }
 .btn-attach { background: #0f3460 !important; padding: 10px 12px !important; font-size: 18px !important; }
@@ -599,6 +603,7 @@ if (typeof hljs !== 'undefined') {
     <select id="languageSelect" onchange="setLanguage(this.value)" title="Language" aria-label="Language" data-i18n-title="languageTitle" data-i18n-aria-label="languageTitle"
             style="background:var(--pf-user);color:var(--pf-text);border:1px solid var(--pf-accent-2);border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;display:none;max-width:120px">
     </select>
+    <button class="speak-toggle-btn" id="speakToggleBtn" onclick="toggleConversationTTS()" title="Speak agent messages live" data-i18n-title="liveSpeechStartTitle" style="display:none">&#x1F50A;</button>
     <div class="view-menu-wrap" id="viewMenuWrap">
       <button id="viewMenuToggle" class="tech-group-toggle" type="button" aria-haspopup="true" aria-expanded="false"
               aria-label="View options" title="View options"

@@ -6,12 +6,13 @@ from typing import Any, Dict
 from core import ServiceFactory, ServiceError
 from services._wavespeed_base import _WaveSpeedBaseService
 from services.base_audio_generation import BaseAudioGenerationService
+from services.base_tts import BaseTTSService
 
 
 logger = logging.getLogger(__name__)
 
 
-class WaveSpeedAudioService(_WaveSpeedBaseService, BaseAudioGenerationService):
+class WaveSpeedAudioService(_WaveSpeedBaseService, BaseAudioGenerationService, BaseTTSService):
     TYPE = "wavespeedAudioGeneration"
     VERSION = "1.0.0"
     NAME = "WaveSpeedAI Audio Generation"
@@ -61,6 +62,16 @@ class WaveSpeedAudioService(_WaveSpeedBaseService, BaseAudioGenerationService):
         self._add_supported(body, op, "enable_sync_mode", False)
         self._add_kwargs(body, kwargs)
         return self._audio_result("text_to_speech", body, model)
+
+    def speak(self, text: str, voice: str = "", language: str = "",
+              model: str = "", **kwargs) -> dict:
+        return self.text_to_speech(
+            text=text,
+            voice=voice,
+            model=model,
+            language=language or kwargs.pop("lang", "auto"),
+            **kwargs,
+        )
 
 
 ServiceFactory.register(WaveSpeedAudioService)

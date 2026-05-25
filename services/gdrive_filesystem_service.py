@@ -373,6 +373,7 @@ class GoogleDriveService(BaseService):
     VERSION = "1.0.0"
     NAME = "Google Drive"
     DESCRIPTION = "Access Google Drive files via REST API"
+    CATEGORY = "filesystem"
     ICON = "cloud"
 
     def get_parameter_schema(self) -> Dict[str, Any]:
@@ -402,7 +403,8 @@ class GoogleDriveService(BaseService):
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
-        self._user_id: str = ""
+        self._user_id: str = str(
+            self.config.get("_scope_id") if self.config.get("_scope") == "user" else "")
 
     def set_user_id(self, user_id: str):
         """Set the authenticated user ID (injected at runtime)."""

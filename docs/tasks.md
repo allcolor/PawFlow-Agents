@@ -246,7 +246,7 @@ For a fuller agent-facing catalog, including internal/control tools, see
 | `tool.speech_to_video` | Speech-to-video from image + audio (Wan 2.2 S2V). Requires `image_url` + `audio_url`. |
 | `tool.train_image_model` | Train/fine-tune an image model or LoRA where supported. |
 | `tool.clone_voice` | Register or reuse a voice clone from a reference audio sample. |
-| `tool.speak` | Synthesize speech with a registered voice clone. |
+| `tool.speak` | Synthesize speech through the active TTS provider with a registered voice alias or provider-native voice. |
 | `tool.delete_voice` | Delete a voice clone and cached renderings. |
 | `tool.get_image_model_info` | Get info about available image models |
 | `tool.remember` | Store a memory in the agent's memory |

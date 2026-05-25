@@ -40,6 +40,7 @@ _JS_MODULES = [
     "tabs.js",
     "terminal.js",
     "audio.js",
+    "conversation_tts.js",
 ]
 
 _html_cache: str = ""

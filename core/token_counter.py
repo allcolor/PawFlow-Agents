@@ -21,7 +21,7 @@ _encoding = tiktoken.get_encoding("cl100k_base")
 
 def count_tokens(text: str, multiplier: float = 1.0) -> int:
     """Count tokens precisely and scale by `multiplier`."""
-    raw = len(_encoding.encode(text))
+    raw = len(_encoding.encode(text, disallowed_special=()))
     if multiplier and multiplier != 1.0:
         return int(raw * multiplier)
     return raw

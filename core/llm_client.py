@@ -24,6 +24,7 @@ from core.llm_providers import (
     LLMAnthropicMixin,
     LLMClaudeCodeMixin,
     LLMClaudeCodeInteractiveMixin,
+    LLMAntigravityInteractiveMixin,
     LLMCodexAppServerMixin,
     LLMGeminiMixin,
 )
@@ -35,6 +36,7 @@ _BUILTIN_MODEL_DEFAULTS = {
     "anthropic": "claude-opus-4-7",
     "claude-code": "claude-opus-4-7",
     "claude-code-interactive": "claude-opus-4-7",
+    "antigravity-interactive": "gemini-3.5-flash",
     "codex-app-server": "gpt-5.5",
     "gemini": "gemini-3.1-pro",
 }
@@ -371,6 +373,7 @@ class LLMClient(
     LLMAnthropicMixin,
     LLMClaudeCodeMixin,
     LLMClaudeCodeInteractiveMixin,
+    LLMAntigravityInteractiveMixin,
     LLMCodexAppServerMixin,
     LLMGeminiMixin,
 ):
@@ -387,7 +390,7 @@ class LLMClient(
         max_retries: Number of retries on transient errors
     """
 
-    PROVIDERS = ("openai", "anthropic", "claude-code", "claude-code-interactive", "codex-app-server", "gemini")
+    PROVIDERS = ("openai", "anthropic", "claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "gemini")
 
     DEFAULT_URLS = {
         "openai": "https://api.openai.com",
@@ -399,6 +402,7 @@ class LLMClient(
     _LIVE_PREEMPT_SUPPORT = {
         "claude-code": True,
         "claude-code-interactive": True,
+        "antigravity-interactive": True,
         "codex-app-server": True,
         "gemini": True,
     }
@@ -524,7 +528,7 @@ class LLMClient(
         configured = self._cfg("default_model", "")
         if configured:
             return configured
-        if self.provider in ("claude-code", "claude-code-interactive", "codex-app-server", "gemini"):
+        if self.provider in ("claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "gemini"):
             return ""
         return self.DEFAULT_MODELS.get(self.provider, "")
 
@@ -800,6 +804,8 @@ class LLMClient(
             fn = getattr(self, "_cc_send_user_message", None)
         elif self.provider == "claude-code-interactive":
             fn = getattr(self, "_cci_send_user_message", None)
+        elif self.provider == "antigravity-interactive":
+            fn = getattr(self, "_agi_send_user_message", None)
         elif self.provider == "codex-app-server":
             fn = getattr(self, "_codex_app_send_user_message", None)
         elif self.provider == "gemini":
@@ -808,7 +814,7 @@ class LLMClient(
             return False
         if fn is None:
             return False
-        if self.provider in ("claude-code-interactive", "codex-app-server"):
+        if self.provider in ("claude-code-interactive", "antigravity-interactive", "codex-app-server"):
             return fn(text, attachments, **kwargs)
         return fn(text, attachments)
 
@@ -857,7 +863,7 @@ class LLMClient(
         Returns:
             LLMResponse with content and/or tool_calls populated.
         """
-        if not self.api_key and self.provider not in ("claude-code", "claude-code-interactive", "codex-app-server", "gemini"):
+        if not self.api_key and self.provider not in ("claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "gemini"):
             raise LLMClientError("api_key is required")
         if self.provider not in self.PROVIDERS:
             raise LLMClientError(
@@ -888,6 +894,15 @@ class LLMClient(
                 )
             elif self.provider == "claude-code-interactive":
                 result = self._stream_claude_code_interactive(
+                    messages, mdl, temperature, max_tokens, tools,
+                    call_user_id=call_user_id,
+                    call_conversation_id=call_conversation_id,
+                    call_agent_name=call_agent_name,
+                    call_event_cid=call_event_cid,
+                    call_ephemeral_stream=call_ephemeral_stream,
+                )
+            elif self.provider == "antigravity-interactive":
+                result = self._stream_antigravity_interactive(
                     messages, mdl, temperature, max_tokens, tools,
                     call_user_id=call_user_id,
                     call_conversation_id=call_conversation_id,
@@ -1046,6 +1061,11 @@ class LLMClient(
                 self.cancel_claude_code_interactive(force=True)
             except Exception:
                 logger.debug("Claude Code interactive abort failed", exc_info=True)
+        if getattr(self, "provider", "") == "antigravity-interactive":
+            try:
+                self.cancel_antigravity_interactive(force=True)
+            except Exception:
+                logger.debug("Antigravity interactive abort failed", exc_info=True)
         conn = getattr(self, "_active_http_conn", None)
         if conn is not None:
             try:
@@ -1087,7 +1107,7 @@ class LLMClient(
 
         Supports both OpenAI and Anthropic streaming.
         """
-        if not self.api_key and self.provider not in ("claude-code", "claude-code-interactive", "codex-app-server", "gemini"):
+        if not self.api_key and self.provider not in ("claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "gemini"):
             raise LLMClientError("api_key is required")
 
         model = model or self.default_model
@@ -1111,6 +1131,17 @@ class LLMClient(
                                                   call_ephemeral_stream=call_ephemeral_stream)
             elif self.provider == "claude-code-interactive":
                 result = self._stream_claude_code_interactive(
+                    messages, mdl, temperature, max_tokens, tools, callback,
+                    thinking_callback=thinking_callback,
+                    turn_callback=turn_callback,
+                    block_callback=block_callback,
+                    call_user_id=call_user_id,
+                    call_conversation_id=call_conversation_id,
+                    call_agent_name=call_agent_name,
+                    call_event_cid=call_event_cid,
+                    call_ephemeral_stream=call_ephemeral_stream)
+            elif self.provider == "antigravity-interactive":
+                result = self._stream_antigravity_interactive(
                     messages, mdl, temperature, max_tokens, tools, callback,
                     thinking_callback=thinking_callback,
                     turn_callback=turn_callback,

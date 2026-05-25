@@ -15,9 +15,10 @@ RUN curl -fsSL "https://downloads.rclone.org/rclone-${DOWNLOAD_RCLONE_VERSION}-l
     && rclone version \
     && rm -rf /tmp/rclone.zip /tmp/rclone-dist
 
-# Install agent CLIs (Claude Code + Codex + Gemini) — single image hosts all three;
+# Install agent CLIs (Claude Code + Codex + Gemini + Antigravity) — single image hosts them;
 # the pool decides which binary to exec per-spawn so they share base layers + caches.
-RUN npm install -g @anthropic-ai/claude-code @openai/codex @google/gemini-cli
+RUN npm install -g @anthropic-ai/claude-code @openai/codex @google/gemini-cli \
+    && curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir /usr/local/bin
 
 # Create non-root user (Claude Code refuses --dangerously-skip-permissions as root)
 # node:22-slim has UID 1000 as 'node' — rename to 'pawflow' for consistency
@@ -58,8 +59,8 @@ RUN mkdir -p /usr/local/share/applications && \
     printf '[Desktop Entry]\nType=Application\nName=Chromium\nExec=/usr/local/bin/open-browser %%U\nMimeType=text/html;x-scheme-handler/http;x-scheme-handler/https;\n' \
     > /usr/local/share/applications/chromium.desktop
 
-# Python deps for MCP bridge
-RUN pip3 install --break-system-packages --no-cache-dir json-repair
+# Python deps for MCP bridge and observer proxies
+RUN pip3 install --break-system-packages --no-cache-dir json-repair h2
 
 # MCP bridge + PawFlow SDK are NOT baked — the CC pool spawn in
 # core/claude_code_pool.py dev-mounts them onto /opt/pawflow/*.py from

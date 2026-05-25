@@ -374,8 +374,8 @@ def test_gemini_acp_permission_result_cancels_without_allow_option():
 
 def test_agent_core_passes_live_block_callback_to_acp_providers():
     src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
-    assert 'block_callback=_cli_block_callback if _client_provider in ("claude-code-interactive", "codex-app-server", "gemini") else None' in src
-    assert 'turn_callback=_claude_code_turn_callback if _client_provider in ("claude-code", "claude-code-interactive", "codex-app-server", "gemini") else None' in src
+    assert 'block_callback=_cli_block_callback if _client_provider in ("claude-code-interactive", "antigravity-interactive", "codex-app-server", "gemini") else None' in src
+    assert 'turn_callback=_claude_code_turn_callback if _client_provider in ("claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "gemini") else None' in src
 
 
 

@@ -144,6 +144,26 @@ function _pickCCInteractiveTerminal(sessions) {
   });
 }
 
+function _agentLlmService(agentName) {
+  const name = String(agentName || '').toLowerCase();
+  const data = (typeof _lastResourcesData !== 'undefined' && _lastResourcesData) ? _lastResourcesData : null;
+  const agents = (data && Array.isArray(data.agents)) ? data.agents : [];
+  const agent = agents.find(a => String(a.name || '').toLowerCase() === name);
+  return agent && agent.llm_service ? String(agent.llm_service) : '';
+}
+
+function _llmProviderForService(serviceId) {
+  const id = String(serviceId || '');
+  const data = (typeof _lastResourcesData !== 'undefined' && _lastResourcesData) ? _lastResourcesData : null;
+  const services = (data && Array.isArray(data.services)) ? data.services : [];
+  const svc = services.find(s => String(s.service_id || '') === id);
+  return svc && svc.provider ? String(svc.provider) : '';
+}
+
+function _agentLlmProvider(agentName) {
+  return _llmProviderForService(_agentLlmService(agentName));
+}
+
 /** /terminal command */
 async function cmdTerminal(text, parts) {
   const sub = (parts[1] || '').toLowerCase();
@@ -191,7 +211,8 @@ async function cmdTerminal(text, parts) {
 
   addMsg('system', t('openingTerminalOn', { relay: relayId, mode: localMode ? ' (' + t('local') + ')' : '' }));
 
-  action$('open_terminal', { relay_id: relayId, cols: 120, rows: 30, local: localMode }).subscribe({
+  const termSize = _estimateTerminalSize();
+  action$('open_terminal', { relay_id: relayId, cols: termSize.cols, rows: termSize.rows, local: localMode }).subscribe({
     next: async (resp) => {
       if (resp.error) {
         addMsg('system', '\u26a0 ' + resp.error);
@@ -219,34 +240,37 @@ async function cmdTerminal(text, parts) {
   return true;
 }
 
-/** Open the live tmux session for the selected Claude Code interactive agent. */
-async function cmdCCInteractiveTerminal(agentName) {
-  let session = null;
-  if (!agentName) {
-    try {
-      const sessions = await _listCCInteractiveTerminals();
-      if (!sessions.length) {
-        addMsg('system', t('ccInteractiveTerminalNoLive'));
-        return true;
-      }
-      session = await _pickCCInteractiveTerminal(sessions);
-      if (!session) return true;
-    } catch (e) {
-      addMsg('system', t('failedToOpenTerminal', { error: e.message }));
-      return true;
-    }
-  }
-  const targetAgent = agentName || (session && session.agent_name) || '';
+/** Open the live tmux session for the selected interactive agent. */
+async function cmdAgentTmux(agentName) {
+  const targetAgent = agentName || (typeof selectedAgent !== 'undefined' ? selectedAgent : '') || '';
   if (!targetAgent) {
     addMsg('system', t('ccInteractiveTerminalNoAgent'));
     return true;
   }
+  const serviceId = _agentLlmService(targetAgent);
+  const provider = _llmProviderForService(serviceId);
+  if (provider === 'antigravity-interactive') {
+    return _openAntigravityAgentTmux(targetAgent, serviceId);
+  }
+  if (provider !== 'claude-code-interactive') {
+    addMsg('system', t('ccInteractiveTerminalNoLive'));
+    return true;
+  }
+  return _openCCInteractiveAgentTmux(targetAgent, serviceId);
+}
+
+async function cmdCCInteractiveTerminal(agentName) {
+  return cmdAgentTmux(agentName);
+}
+
+async function _openCCInteractiveAgentTmux(targetAgent, serviceId) {
+  const termSize = _estimateTerminalSize();
   addMsg('system', t('openingCCInteractiveTerminal', { agent: targetAgent }));
   action$('open_cc_interactive_terminal', {
     agent_name: targetAgent,
-    service_id: session && session.service_id ? session.service_id : '',
-    cols: 120,
-    rows: 30,
+    service_id: serviceId || '',
+    cols: termSize.cols,
+    rows: termSize.rows,
   }).subscribe({
     next: async (resp) => {
       if (resp.error) {
@@ -272,6 +296,112 @@ async function cmdCCInteractiveTerminal(agentName) {
   return true;
 }
 
+async function _openAntigravityAgentTmux(targetAgent, serviceId) {
+  const termSize = _estimateTerminalSize();
+  addMsg('system', t('openingCCInteractiveTerminal', { agent: targetAgent }));
+  action$('open_antigravity_interactive_terminal', {
+    agent_name: targetAgent,
+    service_id: serviceId || '',
+    cols: termSize.cols,
+    rows: termSize.rows,
+  }).subscribe({
+    next: async (resp) => {
+      if (resp.error) {
+        addMsg('system', '\u26a0 ' + resp.error);
+        return;
+      }
+      const sessionId = resp.session_id;
+      const token = resp.token || '';
+      if (!token) {
+        addMsg('system', t('terminalMissingToken'));
+        return;
+      }
+      await _loadXterm();
+      const tabId = addTerminalTab(sessionId, resp.relay_id || ('agy:' + targetAgent));
+      const panel = document.getElementById('tabContent_' + tabId);
+      const container = panel.querySelector('.xterm-container');
+      _initXterm(container, sessionId, token);
+    },
+    error: (e) => {
+      addMsg('system', t('failedToOpenTerminal', { error: e.message }));
+    },
+  });
+  return true;
+}
+
+function _terminalInputB64(data) {
+  const bytes = new TextEncoder().encode(data);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
+}
+
+function _sendTerminalInput(ws, data) {
+  if (!data || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: 'terminal_input', data: _terminalInputB64(data) }));
+}
+
+function _copyTerminalSelection(term) {
+  const selected = term.getSelection ? term.getSelection() : '';
+  if (!selected) return false;
+  if (!navigator.clipboard || !navigator.clipboard.writeText) {
+    const textarea = document.createElement('textarea');
+    textarea.value = selected;
+    textarea.style.position = 'fixed';
+    textarea.style.left = '-9999px';
+    document.body.appendChild(textarea);
+    textarea.select();
+    try { document.execCommand('copy'); } finally { textarea.remove(); }
+    addMsg('system', t('copiedCharsToClipboard', { n: selected.length }));
+    return true;
+  }
+  navigator.clipboard.writeText(selected).then(() => {
+    addMsg('system', t('copiedCharsToClipboard', { n: selected.length }));
+  }).catch(e => addMsg('error', t('copyFailed', { error: e.message })));
+  return true;
+}
+
+function _pasteClipboardToTerminal(ws) {
+  if (!navigator.clipboard || !navigator.clipboard.readText) {
+    addMsg('error', t('pasteFailed', { error: 'Clipboard API unavailable' }));
+    return;
+  }
+  navigator.clipboard.readText().then(text => {
+    _sendTerminalInput(ws, text || '');
+  }).catch(e => addMsg('error', t('pasteFailed', { error: e.message })));
+}
+
+function _estimateTerminalSize() {
+  const main = document.querySelector('.main') || document.body;
+  const probe = document.createElement('div');
+  probe.style.cssText = 'position:absolute;visibility:hidden;left:-9999px;top:-9999px;font:13px Menlo, Monaco, "Courier New", monospace;white-space:pre;';
+  probe.textContent = 'W'.repeat(80);
+  document.body.appendChild(probe);
+  const charWidth = Math.max(1, probe.getBoundingClientRect().width / 80);
+  const lineHeight = Math.max(1, probe.getBoundingClientRect().height || 16);
+  probe.remove();
+  const rect = main.getBoundingClientRect();
+  const header = main.querySelector('.header');
+  const headerHeight = header ? header.getBoundingClientRect().height : 0;
+  return {
+    cols: Math.max(80, Math.floor((rect.width - 16) / charWidth)),
+    rows: Math.max(24, Math.floor((rect.height - headerHeight - 16) / lineHeight)),
+  };
+}
+
+function _fitAndNotifyTerminal(container) {
+  if (!container || !container._xterm || !container._fitAddon) return;
+  try { container._fitAddon.fit(); } catch (e) {}
+  const ws = container._ws;
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({
+      type: 'terminal_resize',
+      cols: container._xterm.cols,
+      rows: container._xterm.rows,
+    }));
+  }
+}
+
 /** Initialize xterm.js inside a container element. */
 function _initXterm(container, sessionId, token) {
   const term = new window.Terminal({
@@ -286,7 +416,8 @@ function _initXterm(container, sessionId, token) {
   const fitAddon = new window.FitAddon.FitAddon();
   term.loadAddon(fitAddon);
   term.open(container);
-  setTimeout(() => { fitAddon.fit(); term.focus(); }, 50);
+  setTimeout(() => { _fitAndNotifyTerminal(container); term.focus(); }, 50);
+  setTimeout(() => { _fitAndNotifyTerminal(container); }, 250);
 
   // Store refs on the container for cleanup
   container._xterm = term;
@@ -294,7 +425,7 @@ function _initXterm(container, sessionId, token) {
 
   // Resize observer
   const ro = new ResizeObserver(() => {
-    try { fitAddon.fit(); } catch(e) {}
+    _fitAndNotifyTerminal(container);
   });
   ro.observe(container);
   container._resizeObserver = ro;
@@ -303,6 +434,39 @@ function _initXterm(container, sessionId, token) {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const ws = new WebSocket(proto + '//' + location.host + '/terminal/' + sessionId + '/' + token);
   container._ws = ws;
+
+  term.attachCustomKeyEventHandler((ev) => {
+    const key = (ev.key || '').toLowerCase();
+    const accel = ev.ctrlKey || ev.metaKey;
+    if (ev.type === 'keydown' && accel && ev.shiftKey && key === 'c') {
+      _copyTerminalSelection(term);
+      return false;
+    }
+    if (ev.type === 'keydown' && accel && ev.shiftKey && key === 'v') {
+      _pasteClipboardToTerminal(ws);
+      return false;
+    }
+    return true;
+  });
+
+  container.addEventListener('paste', (ev) => {
+    const text = ev.clipboardData && ev.clipboardData.getData('text/plain');
+    if (text) {
+      ev.preventDefault();
+      _sendTerminalInput(ws, text);
+    }
+  });
+
+  container.addEventListener('contextmenu', (ev) => {
+    if (_copyTerminalSelection(term)) {
+      ev.preventDefault();
+      return;
+    }
+    if (navigator.clipboard && navigator.clipboard.readText) {
+      ev.preventDefault();
+      _pasteClipboardToTerminal(ws);
+    }
+  });
 
   ws.onopen = () => {
     ws.send(JSON.stringify({ type: 'terminal_resize', cols: term.cols, rows: term.rows }));
@@ -324,9 +488,7 @@ function _initXterm(container, sessionId, token) {
   };
 
   term.onData((data) => {
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'terminal_input', data: btoa(data) }));
-    }
+    _sendTerminalInput(ws, data);
   });
 
   term.onResize(({ cols, rows }) => {

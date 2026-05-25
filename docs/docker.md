@@ -180,7 +180,7 @@ bash docker/claude-code/build.sh
 ```
 
 This creates `pawflow-claude-code:latest` (~500MB) with:
-- Node.js 22 + Claude Code CLI
+- Node.js 22 + Claude Code, Codex, Gemini, and Antigravity (`agy`) CLIs
 - Python 3 + MCP bridge
 - Git
 

@@ -16,6 +16,7 @@ function activeAgentKey(agentName, taskId) {
 // list_resources (load-time) and from SSE message_meta/done (real-time).
 // Keyed by lowercase agent instance name.
 window._contextUsage = window._contextUsage || {};
+window._contextUsageHydrating = window._contextUsageHydrating || false;
 
 // Unified gauge renderer — used by active-agents panel, header badge, and
 // Resource Panel Agents section. `usage` is {used, max, pct} from the server.
@@ -101,12 +102,15 @@ function setContextUsage(agentName, usage) {
 
 function hydrateContextUsage() {
   if (!conversationId || typeof action$ !== 'function') return;
+  if (window._contextUsageHydrating) return;
+  window._contextUsageHydrating = true;
   action$('list_context_usage', { conversation_id: conversationId }).subscribe(data => {
+    window._contextUsageHydrating = false;
     const usageMap = (data && data.context_usage) || {};
     Object.keys(usageMap).forEach(agentName => {
       setContextUsage(agentName, usageMap[agentName]);
     });
-  });
+  }, () => { window._contextUsageHydrating = false; });
 }
 
 function _refreshGaugeSurfaces(key) {

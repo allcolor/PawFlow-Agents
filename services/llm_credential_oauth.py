@@ -27,6 +27,9 @@ _SHORT_PROVIDER = {
     "codex-app-server": "codex",
     "codex": "codex",
     "gemini": "gemini",
+    "antigravity-interactive": "gemini",
+    "antigravity": "gemini",
+    "agy": "gemini",
 }
 _PROVIDER_BY_SHORT = {
     "cc": "claude-code",

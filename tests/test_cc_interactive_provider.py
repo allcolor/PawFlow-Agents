@@ -919,11 +919,12 @@ def test_cc_interactive_interrupt_turn_sends_only_stop_transport():
     from pathlib import Path
 
     agent_core = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
-    cci_start = agent_core.index('if _client_provider == "claude-code-interactive":')
+    cci_start = agent_core.index('if _client_provider in ("claude-code-interactive", "antigravity-interactive")')
     cci_end = agent_core.index('logger.info(f"[agent:{conversation_id[:8]}] interrupted', cci_start)
     cci_branch = agent_core[cci_start:cci_end]
 
     assert "interrupt_claude_code_interactive" in cci_branch
+    assert "interrupt_antigravity_interactive" in cci_branch
     assert "SOFT_INTERRUPT_USER_COMMAND" in cci_branch
     assert "_compact(" not in cci_branch
     assert "_with_provider_system_prompt" not in cci_branch

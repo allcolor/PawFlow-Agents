@@ -21,7 +21,8 @@ def test_llm_service_references_external_credential_provider():
     assert schema["credential_service_id"]["type"] == "service_ref"
     assert schema["credential_service_id"]["service_type"] == "llmCredentialOAuthProvider"
     assert schema["credential_service_id"]["provider_aliases"] == {
-        "claude-code-interactive": "claude-code"
+        "claude-code-interactive": "claude-code",
+        "antigravity-interactive": "gemini",
     }
     assert LLMConnectionService({}).get_service_actions() == []
 
@@ -87,6 +88,32 @@ def test_claude_code_interactive_reuses_claude_code_credentials(monkeypatch):
 
     assert resolve_credential_service_id("claude-code-interactive", llm.service_id) == cred.service_id
     assert resolve_credential_service_id("claude-code-interactive", cred.service_id) == cred.service_id
+
+
+def test_antigravity_interactive_reuses_gemini_credentials(monkeypatch):
+    assert normalize_provider("antigravity-interactive") == "gemini"
+    llm = _sdef(
+        "antigravity_interactive_llm_service",
+        "llmConnection",
+        {"provider": "antigravity-interactive", "credential_service_id": "gemini_oauth_credentials"},
+    )
+    cred = _sdef(
+        "gemini_oauth_credentials",
+        "llmCredentialOAuthProvider",
+        {"provider": "gemini"},
+    )
+    by_id = {llm.service_id: llm, cred.service_id: cred}
+    monkeypatch.setattr(
+        "services.llm_credential_oauth.get_service_def",
+        lambda service_id, user_id="", conv_id="": by_id.get(service_id),
+    )
+    monkeypatch.setattr(
+        "services.llm_credential_oauth._all_service_defs",
+        lambda user_id="", conv_id="": list(by_id.values()),
+    )
+
+    assert resolve_credential_service_id("antigravity-interactive", llm.service_id) == cred.service_id
+    assert resolve_credential_service_id("antigravity-interactive", cred.service_id) == cred.service_id
 
 
 def test_service_registry_has_startup_migration_for_legacy_llm_oauth():

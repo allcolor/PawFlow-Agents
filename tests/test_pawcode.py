@@ -402,6 +402,12 @@ class TestTokenCounter:
         result = count_tokens("")
         assert result == 0
 
+    def test_count_tokens_treats_special_markers_as_text(self):
+        from core.token_counter import count_tokens
+        result = count_tokens("literal <|endoftext|> marker")
+        assert isinstance(result, int)
+        assert result > 0
+
     def test_count_messages_tokens(self):
         from core.token_counter import count_messages_tokens
         messages = [

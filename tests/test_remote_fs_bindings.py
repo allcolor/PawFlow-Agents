@@ -336,3 +336,10 @@ def test_agent_login_image_installs_rclone_and_copies_login_script():
     assert "/workspace/rclone" not in script
     assert "/tmp/pawflow-rclone-login" in script
     assert "rclone_config_body.txt" in script
+
+
+def test_agent_login_image_installs_antigravity_cli():
+    src = Path("docker/claude-code/Dockerfile").read_text(encoding="utf-8")
+
+    assert "https://antigravity.google/cli/install.sh" in src
+    assert "bash -s -- --dir /usr/local/bin" in src

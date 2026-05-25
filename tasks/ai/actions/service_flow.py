@@ -2685,7 +2685,12 @@ finally:
                 owner_user_id=user_id,
                 conversation_id=conversation_id,
                 login_session_id=flowfile.get_attribute("auth.session_id") or "",
-                server_pipe_command=cmd)
+                server_pipe_command=cmd,
+                server_pipe_resize_command=(docker_cmd() + [
+                    "exec", "--user", "1000:1000", state.name,
+                    "tmux", "resize-window", "-t", "pawflow",
+                    "-x", "{cols}", "-y", "{rows}",
+                ]))
 
             _owner = "_terminal_proxy"
             http_svc = None
@@ -2712,6 +2717,183 @@ finally:
                 "token": _term_token,
                 "relay_id": f"cc:{agent_name}",
                 "container": state.name,
+            }).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+        return [flowfile]
+
+    if action in {"open_antigravity_interactive_terminal", "start_antigravity_observer"}:
+        agent_name = body.get("agent_name", "") or body.get("agent", "")
+        conversation_id = body.get("conversation_id", "") or flowfile.get_attribute("http.conversation_id") or ""
+        service_id = body.get("service_id", "") or ""
+        model = body.get("model", "") or ""
+        if not agent_name:
+            flowfile.set_content(json.dumps({"error": "Missing agent_name"}).encode())
+            return [flowfile]
+        if not conversation_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+            return [flowfile]
+        try:
+            import uuid
+            from core.antigravity_observer_pool import AntigravityObserverPool
+            from core.docker_utils import docker_cmd
+            from services.terminal_proxy import register_terminal, terminal_ws_handler
+
+            if not service_id:
+                try:
+                    from core.conv_agent_config import get_agent_config
+                    service_id = (get_agent_config(conversation_id, agent_name).get("llm_service") or "")
+                except Exception:
+                    service_id = ""
+            pool = AntigravityObserverPool.instance()
+            state = pool.find_session(
+                user_id=user_id,
+                conversation_id=conversation_id,
+                agent_name=agent_name,
+                service_id=service_id,
+            )
+            if not state and service_id:
+                state = pool.find_session(
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    agent_name=agent_name,
+                    service_id="",
+                )
+            if not state:
+                flowfile.set_content(json.dumps({
+                    "error": f"No live Antigravity tmux session for agent '{agent_name}'"
+                }).encode())
+                return [flowfile]
+
+            session_id = f"agy_term_{uuid.uuid4().hex[:12]}"
+            cols = int(body.get("cols", 120) or 120)
+            rows = int(body.get("rows", 30) or 30)
+            bridge_script = r'''
+import fcntl
+import os
+import pty
+import select
+import signal
+import struct
+import subprocess
+import sys
+import termios
+import time
+
+rows = int(os.environ.get("PAWFLOW_TERM_ROWS", "30") or "30")
+cols = int(os.environ.get("PAWFLOW_TERM_COLS", "120") or "120")
+tmux_session = os.environ.get("PAWFLOW_TMUX_SESSION", "pawflow-agy")
+master, slave = pty.openpty()
+try:
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+except Exception:
+    pass
+env = dict(os.environ)
+env.setdefault("TERM", "xterm-256color")
+for option in (("mouse", "on"), ("history-limit", "50000")):
+    try:
+        subprocess.run(["tmux", "set-option", "-g", *option],
+                       capture_output=True, timeout=2)
+    except Exception:
+        pass
+proc = subprocess.Popen(
+    ["tmux", "attach-session", "-t", tmux_session],
+    stdin=slave,
+    stdout=slave,
+    stderr=slave,
+    close_fds=True,
+    start_new_session=True,
+    env=env,
+)
+os.close(slave)
+time.sleep(0.1)
+try:
+    os.write(master, b"\x0c")
+except Exception:
+    pass
+stdin_fd = sys.stdin.fileno()
+stdout = sys.stdout.buffer
+try:
+    while True:
+        if proc.poll() is not None:
+            try:
+                data = os.read(master, 65536)
+                if data:
+                    stdout.write(data)
+                    stdout.flush()
+            except OSError:
+                pass
+            break
+        readable, _, _ = select.select([stdin_fd, master], [], [], 0.2)
+        if master in readable:
+            data = os.read(master, 65536)
+            if not data:
+                break
+            stdout.write(data)
+            stdout.flush()
+        if stdin_fd in readable:
+            data = os.read(stdin_fd, 65536)
+            if not data:
+                break
+            os.write(master, data)
+finally:
+    try:
+        if proc.poll() is None:
+            os.killpg(proc.pid, signal.SIGTERM)
+    except Exception:
+        pass
+    try:
+        os.close(master)
+    except Exception:
+        pass
+'''
+            cmd = docker_cmd() + [
+                "exec", "-i", "--user", "1000:1000",
+                "-e", f"PAWFLOW_TERM_COLS={cols}",
+                "-e", f"PAWFLOW_TERM_ROWS={rows}",
+                "-e", "PAWFLOW_TMUX_SESSION=pawflow-agy",
+                "-e", "TERM=xterm-256color",
+                state.name,
+                "python3", "-c", bridge_script,
+            ]
+            _term_token = register_terminal(
+                session_id, "__server__", relay_service=None,
+                owner_user_id=user_id,
+                conversation_id=conversation_id,
+                login_session_id=flowfile.get_attribute("auth.session_id") or "",
+                server_pipe_command=cmd,
+                server_pipe_resize_command=(docker_cmd() + [
+                    "exec", "--user", "1000:1000", state.name,
+                    "tmux", "resize-window", "-t", "pawflow-agy",
+                    "-x", "{cols}", "-y", "{rows}",
+                ]))
+
+            _owner = "_terminal_proxy"
+            http_svc = None
+            from core.service_registry import ServiceRegistry
+            greg = ServiceRegistry.get_instance()
+            for _sid, _sdef in greg.get_all("global", "").items():
+                if getattr(_sdef, "service_type", "") == "httpListener":
+                    http_svc = greg.get_live_instance("global", "", _sid)
+                    if http_svc:
+                        break
+            if http_svc:
+                existing = [r for r in http_svc.get_routes() if r.get("owner") == _owner]
+                if not existing:
+                    http_svc.register_route(
+                        "GET", "/terminal/{session_id}/{token}",
+                        _owner,
+                        callback=lambda req: None,
+                        ws_handler=terminal_ws_handler,
+                    )
+
+            flowfile.set_content(json.dumps({
+                "ok": True,
+                "session_id": session_id,
+                "token": _term_token,
+                "relay_id": f"agy:{agent_name}",
+                "container": state.name,
+                "log_path": state.log_path,
             }).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())

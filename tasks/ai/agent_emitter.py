@@ -471,7 +471,7 @@ class StreamEmitter(AgentEmitter):
                 raise AgentCancelled()
             _emitter._last_token_time = time.time()
             if (not poll_silent and text and
-                    _emitter._provider == "claude-code-interactive"):
+                    _emitter._provider in ("claude-code-interactive", "antigravity-interactive")):
                 # Transient preview only. The durable thinking_content event
                 # is emitted later by ConversationWriter from the flushed
                 # block-level LLMMessage.

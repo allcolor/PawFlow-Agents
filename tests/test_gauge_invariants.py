@@ -518,6 +518,15 @@ def test_terminal_frontend_keeps_scrollback_and_cci_tmux_mouse():
 
     assert "scrollback: 10000" in terminal_src
     assert "fastScrollModifier" in terminal_src
+    assert "attachCustomKeyEventHandler" in terminal_src
+    assert "_copyTerminalSelection(term)" in terminal_src
+    assert "_pasteClipboardToTerminal(ws)" in terminal_src
+    assert "container.addEventListener('paste'" in terminal_src
+    assert "function _estimateTerminalSize()" in terminal_src
+    assert "cols: termSize.cols" in terminal_src
+    assert "rows: termSize.rows" in terminal_src
+    assert "_fitAndNotifyTerminal(container)" in terminal_src
+    assert "container._fitAddon.fit()" in terminal_src
     assert '("mouse", "on")' in service_flow_src
     assert '("history-limit", "50000")' in service_flow_src
     assert '["tmux", "set-option", "-g", *option]' in service_flow_src

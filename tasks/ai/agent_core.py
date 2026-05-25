@@ -630,7 +630,7 @@ class AgentCoreMixin:
                     reason, used, trigger_tokens, trigger_fraction * 100)
                 if _client_provider in (
                     "claude-code", "claude-code-interactive",
-                    "codex-app-server", "gemini"):
+                    "antigravity-interactive", "codex-app-server", "gemini"):
                     # Stateful CLI/live providers must not be killed from a
                     # streaming callback. Propagate the threshold crossing to
                     # the normal provider-compact path: it tears down the old
@@ -1396,10 +1396,10 @@ class AgentCoreMixin:
                     def _run_interrupt_turn():
                         nonlocal response_content, total_tokens_in, total_tokens_out
                         nonlocal total_cache_read, total_cache_write, final_model
-                        if _client_provider == "claude-code-interactive":
+                        if _client_provider in ("claude-code-interactive", "antigravity-interactive"):
                             logger.info(
-                                "[agent:%s] interrupted — sending CCI STOP via tmux only",
-                                conversation_id[:8])
+                                "[agent:%s] interrupted — sending %s STOP via tmux only",
+                                conversation_id[:8], _client_provider)
                             try:
                                 _turn_cb = _claude_code_turn_callback
                             except NameError:
@@ -1408,7 +1408,11 @@ class AgentCoreMixin:
                                 _block_cb = _cli_block_callback
                             except NameError:
                                 _block_cb = None
-                            _irpt_resp = client.interrupt_claude_code_interactive(
+                            if _client_provider == "antigravity-interactive":
+                                _interrupt_fn = client.interrupt_antigravity_interactive
+                            else:
+                                _interrupt_fn = client.interrupt_claude_code_interactive
+                            _irpt_resp = _interrupt_fn(
                                 SOFT_INTERRUPT_USER_COMMAND,
                                 user_id=user_id,
                                 conversation_id=conversation_id,
@@ -1590,7 +1594,7 @@ class AgentCoreMixin:
                     # the concatenation of pieces already on disk.
                     _is_claude_code = _client_provider in (
                         "claude-code", "claude-code-interactive",
-                        "codex-app-server", "gemini")
+                        "antigravity-interactive", "codex-app-server", "gemini")
 
                     _cc_turn_count = [0]
 
@@ -1937,8 +1941,8 @@ class AgentCoreMixin:
                                 callback=emitter.get_token_callback(ps),
                                 thinking_budget=_tb,
                                 thinking_callback=emitter.get_thinking_callback(ps) if _tb > 0 else None,
-                                turn_callback=_claude_code_turn_callback if _client_provider in ("claude-code", "claude-code-interactive", "codex-app-server", "gemini") else None,
-                                block_callback=_cli_block_callback if _client_provider in ("claude-code-interactive", "codex-app-server", "gemini") else None,
+                                turn_callback=_claude_code_turn_callback if _client_provider in ("claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "gemini") else None,
+                                block_callback=_cli_block_callback if _client_provider in ("claude-code-interactive", "antigravity-interactive", "codex-app-server", "gemini") else None,
                                 **_call_kwargs)
                         return client.complete(
                             messages=msgs, model=model or None,
@@ -2727,8 +2731,8 @@ class AgentCoreMixin:
             # turn_callback again returns empty.)
             _is_cli_provider = (
                 ctx.get("_is_claude_code")
-                or ctx.get("active_llm_provider") in ("claude-code-interactive", "codex-app-server", "gemini")
-                or getattr(client, "provider", "") in ("claude-code-interactive", "codex-app-server", "gemini")
+                or ctx.get("active_llm_provider") in ("claude-code-interactive", "antigravity-interactive", "codex-app-server", "gemini")
+                or getattr(client, "provider", "") in ("claude-code-interactive", "antigravity-interactive", "codex-app-server", "gemini")
             )
             if not response_content and not _fatal_error and not _is_cli_provider:
                 logger.warning(f"[agent:{conversation_id[:8]}] empty response — forcing synthesis")

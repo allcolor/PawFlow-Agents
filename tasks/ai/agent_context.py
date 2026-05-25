@@ -437,11 +437,13 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
         )
         _is_claude_code = (_provider_name == "claude-code")
         _is_claude_code_interactive = (_provider_name == "claude-code-interactive")
+        _is_antigravity_interactive = (_provider_name == "antigravity-interactive")
         _is_gemini_acp = (_provider_name == "gemini")
         _is_codex_app_server = (_provider_name == "codex-app-server")
         _is_cli_provider = (
             _is_claude_code or _is_claude_code_interactive
-            or _is_gemini_acp or _is_codex_app_server)
+            or _is_antigravity_interactive or _is_gemini_acp
+            or _is_codex_app_server)
 
         # CLI session detection (2 states):
         #   True  -> provider has prior CLI state; resume can send only delta
@@ -472,6 +474,15 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                     except Exception:
                         _cli_has_session = False
                         _claude_has_session = False
+                elif _is_antigravity_interactive:
+                    try:
+                        from core.antigravity_observer_pool import AntigravityObserverPool
+                        _svc_id = getattr(resolved_svc, "service_id", "") or ""
+                        _state = AntigravityObserverPool.instance().find_session(
+                            _user_id_for_svc, conversation_id, _agent_key, _svc_id)
+                        _cli_has_session = bool(_state)
+                    except Exception:
+                        _cli_has_session = False
                 elif _is_gemini_acp:
                     _session_key = f"gemini_acp_session:{_agent_key}"
                     _session_ver_key = f"gemini_acp_session_version:{_agent_key}"

@@ -92,7 +92,7 @@ class LLMConnectionService(BaseService):
                 f"Unknown provider '{self.provider}'. "
                 f"Supported: {', '.join(self.PROVIDERS)}"
             )
-        if self.provider in ("claude-code", "claude-code-interactive", "codex-app-server", "gemini"):
+        if self.provider in ("claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "gemini"):
             # CLI providers — binary auto-detected at runtime, OAuth pool is
             # the default credential source, api_key is an optional fallback.
             pass
@@ -348,7 +348,10 @@ class LLMConnectionService(BaseService):
                 "type": "service_ref",
                 "service_type": "llmCredentialOAuthProvider",
                 "provider_field": "provider",
-                "provider_aliases": {"claude-code-interactive": "claude-code"},
+                "provider_aliases": {
+                    "claude-code-interactive": "claude-code",
+                    "antigravity-interactive": "gemini",
+                },
                 "default": "",
                 "description": "OAuth credential provider service used when api_key is empty",
             },
@@ -566,6 +569,24 @@ class LLMConnectionService(BaseService):
                     "docker_cpu_limit": {"visible": True},
                     "docker_memory_limit": {"visible": True},
                     "effort":        {"visible": True},
+                    "extra_body":    {"visible": False},
+                }
+            },
+            {
+                "when": {"provider": ["antigravity-interactive"]},
+                "set": {
+                    "api_key":       {"visible": True, "description": "Google AI Studio key (empty = Gemini OAuth credential service)"},
+                    "credential_service_id": {"visible": True},
+                    "base_url":      {"visible": False},
+                    "max_retries":   {"visible": False},
+                    "fallback_model": {"visible": False},
+                    "supports_vision": {"visible": False},
+                    "max_concurrent": {"visible": False},
+                    "timeout":       {"default": 0},
+                    "docker_image":  {"visible": True},
+                    "docker_cpu_limit": {"visible": True},
+                    "docker_memory_limit": {"visible": True},
+                    "effort":        {"visible": False},
                     "extra_body":    {"visible": False},
                 }
             },

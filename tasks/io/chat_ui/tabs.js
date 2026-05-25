@@ -20,7 +20,13 @@ function switchTab(tabId) {
   if (tabId.startsWith('term-')) {
     const container = document.querySelector(`#tabContent_${tabId} .xterm-container`);
     if (container && container._xterm) {
-      setTimeout(() => container._xterm.focus(), 50);
+      setTimeout(() => {
+        if (typeof _fitAndNotifyTerminal === 'function') _fitAndNotifyTerminal(container);
+        else if (container._fitAddon) {
+          try { container._fitAddon.fit(); } catch (e) {}
+        }
+        container._xterm.focus();
+      }, 50);
     }
   }
   if (window._pawflowExtRuntime) {
@@ -61,7 +67,7 @@ function addTerminalTab(sessionId, relayId) {
   // Terminal fills entire panel
   const termContainer = document.createElement('div');
   termContainer.className = 'xterm-container';
-  termContainer.style.cssText = 'flex:1;overflow:hidden;padding:4px;';
+  termContainer.style.cssText = 'flex:1 1 auto;min-width:0;min-height:0;width:100%;height:100%;overflow:hidden;padding:4px;';
   panel.appendChild(termContainer);
 
   document.querySelector('.main').appendChild(panel);

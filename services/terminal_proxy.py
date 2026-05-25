@@ -300,7 +300,7 @@ def _server_pipe_ws_loop(client_sock, session_id: str, sess: dict):
                     proc.stdin.write(data)
                     proc.stdin.flush()
             elif msg_type == "terminal_resize":
-                pass
+                _resize_server_pipe_terminal(sess, msg.get("cols", 80), msg.get("rows", 24))
     except Exception as exc:
         if "Connection" not in str(exc):
             logger.warning("Server terminal proxy error: %s", exc)
@@ -323,6 +323,25 @@ def _server_pipe_ws_loop(client_sock, session_id: str, sess: dict):
             client_sock.close()
         except Exception:
             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+
+
+def _resize_server_pipe_terminal(sess: dict, cols, rows) -> None:
+    cmd = sess.get("server_pipe_resize_command") or []
+    if not cmd:
+        return
+    try:
+        safe_cols = max(20, min(500, int(cols or 80)))
+        safe_rows = max(5, min(200, int(rows or 24)))
+    except (TypeError, ValueError):
+        safe_cols, safe_rows = 80, 24
+    rendered = [
+        str(part).format(cols=safe_cols, rows=safe_rows)
+        for part in cmd
+    ]
+    try:
+        subprocess.run(rendered, capture_output=True, timeout=3)  # nosec B603
+    except Exception:
+        logger.debug("Server terminal resize failed", exc_info=True)
 
 
 def _send_command_to_relay(relay_service, cmd: dict):

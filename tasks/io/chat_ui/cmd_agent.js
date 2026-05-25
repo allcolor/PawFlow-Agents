@@ -217,6 +217,8 @@ function updateActiveAgentBadge() {
     const usage = (window._contextUsage || {})[(agent || '').toLowerCase()];
     if (usage && typeof renderCtxGauge === 'function') {
       gaugeHtml = '<span style="margin-left:8px;">' + renderCtxGauge(usage, {width: 50}) + '</span>';
+    } else if (agent && typeof hydrateContextUsage === 'function') {
+      hydrateContextUsage();
     }
   } catch (e) {}
   badge.innerHTML = escapeHtml(label) + gaugeHtml;

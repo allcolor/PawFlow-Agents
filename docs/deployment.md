@@ -145,7 +145,7 @@ Translation: /workspace/data/claude_sessions/abc/
 
 | Image | Size | Contents |
 |-------|------|----------|
-| `pawflow-claude-code:latest` | ~500MB | Node.js 22, Claude CLI, Python 3, MCP bridge, Git |
+| `pawflow-claude-code:latest` | ~500MB | Node.js 22, Claude, Codex, Gemini, and Antigravity (`agy`) CLIs, Python 3, MCP bridge, Git |
 | `pawflow-relay-dev:latest` | ~3-4GB | Python, Node, Rust, Go, C/C++, Java, C#, Ruby, PHP, Perl, Lua, Zig |
 | `python:3.12-slim` | ~150MB | Python only |
 | `node:22-slim` | ~200MB | Node.js + npm |

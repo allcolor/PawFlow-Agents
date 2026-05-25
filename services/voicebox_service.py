@@ -410,6 +410,7 @@ class VoiceboxService(BaseVoiceCloneService, BaseSTTService):
                 check=False,
             ).returncode == 0
         except Exception:
+            logger.debug("Voicebox WSL command failed", exc_info=True)
             return False
 
     def _ensure_checkout_wsl(self, target: tuple[str, str], reporter=None):

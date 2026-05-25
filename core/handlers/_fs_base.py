@@ -694,15 +694,35 @@ class BaseFsHandler(ToolHandler):
             output_lines.append(line_text)
             output_chars += len(line_text)
 
-        has_more = end < total_lines
-        header = f"[{fname}: {total_lines} lines, {total_chars:,} chars"
-        if start > 0 or has_more:
-            header += f", showing lines {start + 1}-{min(end, total_lines)}"
-        if has_more:
-            header += (f" — use offset={end + 1} to read next page"
-                       f" (MUST paginate, max {_max_page} chars/page)")
-        header += "]"
-        return header + "\n" + "".join(output_lines)
+        page_end = min(start + len(output_lines), total_lines)
+
+        def build_header(current_end: int) -> str:
+            has_more = current_end < total_lines
+            header = f"[{fname}: {total_lines} lines, {total_chars:,} chars"
+            if start > 0 or has_more:
+                header += f", showing lines {start + 1}-{min(current_end, total_lines)}"
+            if has_more:
+                header += (f" — use offset={current_end + 1} to read next page"
+                           f" (MUST paginate, max {_max_page} chars/page)")
+            return header + "]"
+
+        header = build_header(page_end)
+        body = "".join(output_lines)
+        result = header + "\n" + body
+
+        # The registry applies the same character cap to final tool results.
+        # Keep the formatted page, including metadata header, below that cap so
+        # paginated reads do not get stored again as a separate tool result.
+        while len(result) > _max_page and len(output_lines) > 1:
+            output_lines.pop()
+            page_end -= 1
+            header = build_header(page_end)
+            body = "".join(output_lines)
+            result = header + "\n" + body
+        if len(result) > _max_page and output_lines:
+            body_budget = max(0, _max_page - len(header) - 1)
+            result = header + "\n" + body[:body_budget]
+        return result
 
     def _format_outline_read(self, fname: str, text: str) -> str:
         """Return a compact source outline with function/class bodies stubbed."""

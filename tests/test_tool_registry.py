@@ -942,6 +942,46 @@ class TestMetaToolAliases(unittest.TestCase):
         assert "..." in out
         assert "return y" not in out
 
+    def test_read_text_page_includes_header_in_tool_cap(self):
+        from core.handlers.read import ReadHandler
+
+        handler = ReadHandler()
+        text = "\n".join("x" * 100 for _ in range(1000))
+
+        out = handler._format_text_read("large.txt", text)
+
+        assert len(out) <= handler._tool_result_max_chars
+        assert "MUST paginate" in out
+
+    def test_filestore_read_large_page_does_not_create_new_tool_result(self):
+        from core.file_store import FileStore
+        from core.handlers.read import ReadHandler
+
+        old_instance = FileStore._instance
+        with tempfile.TemporaryDirectory() as tmp:
+            try:
+                store = FileStore(base_dir=str(Path(tmp) / "filestore"))
+                FileStore._instance = store
+                content = "\n".join("x" * 100 for _ in range(1000)).encode()
+                fid = store.store(
+                    "large.txt", content, "text/plain",
+                    user_id="user-1", conversation_id="conv-1",
+                )
+
+                handler = ReadHandler()
+                handler.set_user_id("user-1")
+                handler.set_conversation_id("conv-1")
+                reg = ToolRegistry()
+                reg.register(handler)
+
+                result = reg.execute("read", {"path": fid, "source": "filestore"})
+
+                assert len(result) <= handler._tool_result_max_chars
+                assert "[Result cleared" not in result
+                assert store.count() == 1
+            finally:
+                FileStore._instance = old_instance
+
 
     def test_relay_list_dir_action_supports_recursive_limit(self):
         from tools.fs_actions import action_list_dir

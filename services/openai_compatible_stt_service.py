@@ -3,8 +3,11 @@
 import json
 import logging
 import mimetypes
+import ipaddress
+import socket
 import uuid
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Dict
 
@@ -12,6 +15,61 @@ from core import ServiceFactory, ServiceError
 from services.base_stt import BaseSTTService
 
 logger = logging.getLogger(__name__)
+
+
+_CONVRELAY_HOSTS = {"${convrelay}", "convrelay"}
+
+
+def _truthy(value) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _is_private_address(value: str) -> bool:
+    try:
+        addr = ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    return (
+        addr.is_loopback
+        or addr.is_private
+        or addr.is_link_local
+        or addr.is_multicast
+        or addr.is_reserved
+        or addr.is_unspecified
+    )
+
+
+def _validate_provider_base_url(base_url: str, *, allow_private: bool = False) -> str:
+    parsed = urllib.parse.urlparse(base_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ServiceError(f"invalid OpenAI-compatible STT base_url: {base_url!r}")
+    host = (parsed.hostname or "").strip().lower()
+    if not host:
+        raise ServiceError(f"invalid OpenAI-compatible STT base_url: {base_url!r}")
+    if host in _CONVRELAY_HOSTS:
+        return base_url.rstrip("/")
+    if allow_private:
+        return base_url.rstrip("/")
+    if host == "localhost" or host.endswith(".localhost") or _is_private_address(host):
+        raise ServiceError(
+            "OpenAI-compatible STT base_url targets a private/local network address. "
+            "Use a relay URL such as https://${convrelay}/localhost:1234/v1, or set "
+            "allow_private_base_url=true only for a trusted endpoint."
+        )
+    try:
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except socket.gaierror as exc:
+        raise ServiceError(f"OpenAI-compatible STT base_url host could not be resolved: {host}") from exc
+    for info in infos:
+        address = info[4][0]
+        if _is_private_address(address):
+            raise ServiceError(
+                "OpenAI-compatible STT base_url resolves to a private/local network address. "
+                "Use https://${convrelay}/... for relay-routed local services, or set "
+                "allow_private_base_url=true only for a trusted endpoint."
+            )
+    return base_url.rstrip("/")
 
 
 def _multipart(fields: Dict[str, str], files: Dict[str, tuple[str, bytes, str]]) -> tuple[bytes, str]:
@@ -56,6 +114,10 @@ class OpenAICompatibleSTTService(BaseSTTService):
                 "type": "string", "required": False, "sensitive": True,
                 "description": "Bearer token. Leave empty for trusted local/relay endpoints.",
             },
+            "allow_private_base_url": {
+                "type": "boolean", "required": False, "default": False,
+                "description": "Allow direct private/loopback base_url targets. Prefer https://${convrelay}/... for local relay endpoints.",
+            },
             "model": {
                 "type": "string", "required": False,
                 "default": "gpt-4o-mini-transcribe",
@@ -77,7 +139,9 @@ class OpenAICompatibleSTTService(BaseSTTService):
 
     def __init__(self, config):
         super().__init__(config)
-        self.base_url = str(self.config.get("base_url") or "https://api.openai.com/v1").rstrip("/")
+        raw_base_url = str(self.config.get("base_url") or "https://api.openai.com/v1")
+        self.allow_private_base_url = _truthy(self.config.get("allow_private_base_url", False))
+        self.base_url = raw_base_url.rstrip("/")
         self.api_key = str(self.config.get("api_key") or "")
         self.model = str(self.config.get("model") or "gpt-4o-mini-transcribe")
         self.language = str(self.config.get("language") or "")
@@ -85,8 +149,8 @@ class OpenAICompatibleSTTService(BaseSTTService):
         self.timeout = int(self.config.get("timeout") or 120)
 
     def _create_connection(self):
-        if not self.base_url.startswith(("http://", "https://")):
-            raise ServiceError(f"invalid OpenAI-compatible STT base_url: {self.base_url!r}")
+        self.base_url = _validate_provider_base_url(
+            self.base_url, allow_private=self.allow_private_base_url)
         return {"ready": True, "base_url": self.base_url}
 
     def _close_connection(self):

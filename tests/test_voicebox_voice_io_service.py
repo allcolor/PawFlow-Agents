@@ -248,6 +248,34 @@ def test_voicebox_auto_install_checks_out_pinned_ref(monkeypatch, tmp_path):
     ]
 
 
+def test_voicebox_prepare_install_preloads_model_with_reporter(monkeypatch, tmp_path):
+    svc = VoiceboxService({
+        "install_dir": str(tmp_path / "voicebox"),
+        "preload_stt_model": True,
+        "auto_start": True,
+    })
+    calls = []
+    steps = []
+
+    class Reporter:
+        def step(self, phase, message="", status="running", progress=None, **_extra):
+            steps.append((phase, message, status, progress))
+
+    monkeypatch.setattr(svc, "get_install_requirements", lambda: [])
+    monkeypatch.setattr(svc, "_ensure_checkout", lambda reporter=None: calls.append("checkout"))
+    monkeypatch.setattr(svc, "_server_ready", lambda: False)
+    monkeypatch.setattr(svc, "_start_server", lambda: calls.append("start"))
+    monkeypatch.setattr(svc, "_preload_stt_model", lambda reporter=None: calls.append("preload"))
+    monkeypatch.setattr(svc, "_close_connection", lambda: calls.append("close"))
+
+    result = svc.prepare_install(Reporter())
+
+    assert result["prepared"] is True
+    assert calls == ["checkout", "start", "preload", "close"]
+    assert ("checking_requirements", "Checking Voicebox requirements", "running", None) in steps
+    assert (svc.install_dir / ".pawflow_install.json").exists()
+
+
 def test_voicebox_auto_install_repairs_partial_no_checkout_repo(monkeypatch, tmp_path):
     commands = []
     repo = tmp_path / "voicebox"

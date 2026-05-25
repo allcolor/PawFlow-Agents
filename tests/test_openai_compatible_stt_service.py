@@ -57,3 +57,32 @@ def test_openai_compatible_stt_requires_valid_base_url():
     with pytest.raises(ServiceError, match="invalid OpenAI-compatible STT base_url"):
         svc.connect()
 
+
+def test_openai_compatible_stt_blocks_private_base_url_by_default():
+    svc = OpenAICompatibleSTTService({"base_url": "http://169.254.169.254/latest"})
+
+    with pytest.raises(ServiceError, match="private/local network"):
+        svc.connect()
+
+
+def test_openai_compatible_stt_allows_private_base_url_with_explicit_opt_in():
+    svc = OpenAICompatibleSTTService({
+        "base_url": "http://127.0.0.1:1234/v1",
+        "allow_private_base_url": True,
+    })
+
+    svc.connect()
+
+    assert svc.base_url == "http://127.0.0.1:1234/v1"
+
+
+def test_openai_compatible_stt_blocks_public_host_resolving_private(monkeypatch):
+    def fake_getaddrinfo(*_args, **_kwargs):
+        return [(None, None, None, "", ("10.0.0.5", 443))]
+
+    monkeypatch.setattr("socket.getaddrinfo", fake_getaddrinfo)
+    svc = OpenAICompatibleSTTService({"base_url": "https://stt.example.test/v1"})
+
+    with pytest.raises(ServiceError, match="resolves to a private/local"):
+        svc.connect()
+

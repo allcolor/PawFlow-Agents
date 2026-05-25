@@ -281,6 +281,8 @@ class ToolRelayClient:
 # ── MCP stdio server ────────────────────────────────────────────
 
 _respond_lock = threading.Lock()
+_active_call_threads = set()
+_active_call_threads_lock = threading.Lock()
 
 
 def _respond(req_id, result=None, error=None):
@@ -292,6 +294,28 @@ def _respond(req_id, result=None, error=None):
     with _respond_lock:
         sys.stdout.write(json.dumps(resp) + "\n")
         sys.stdout.flush()
+
+
+def _track_tool_call_thread(thread: threading.Thread) -> None:
+    with _active_call_threads_lock:
+        _active_call_threads.add(thread)
+
+
+def _untrack_tool_call_thread(thread: threading.Thread) -> None:
+    with _active_call_threads_lock:
+        _active_call_threads.discard(thread)
+
+
+def _wait_for_active_tool_calls() -> None:
+    while True:
+        with _active_call_threads_lock:
+            threads = [t for t in _active_call_threads if t.is_alive()]
+            _active_call_threads.intersection_update(threads)
+        if not threads:
+            return
+        _log(f"Waiting for {len(threads)} active MCP tool call(s) before shutdown")
+        for thread in threads:
+            thread.join(timeout=0.5)
 
 
 _log_file = None
@@ -695,15 +719,26 @@ def main():
         elif method == "tools/list":
             _respond(req_id, {"tools": mcp_tools})
         elif method == "tools/call":
-            threading.Thread(
-                target=_handle_tool_call, args=(req_id, params, line),
-                daemon=True, name=f"mcp-call-{req_id}").start()
+            def _run_tool_call():
+                thread = threading.current_thread()
+                try:
+                    _handle_tool_call(req_id, params, line)
+                finally:
+                    _untrack_tool_call_thread(thread)
+
+            thread = threading.Thread(
+                target=_run_tool_call,
+                daemon=False,
+                name=f"mcp-call-{req_id}")
+            _track_tool_call_thread(thread)
+            thread.start()
             continue
         else:
             _respond(req_id, None,
                      error={"code": -32601, "message": f"Unknown method: {method}"})
 
     # Cleanup
+    _wait_for_active_tool_calls()
     if client:
         client.close()
 

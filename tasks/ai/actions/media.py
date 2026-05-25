@@ -5,6 +5,10 @@ import logging
 import time
 import threading
 import base64
+import os
+import shutil
+import subprocess  # nosec B404 - ffmpeg conversion uses fixed argv without shell.
+import tempfile
 from typing import Dict, Any, List, Optional
 
 from core import FlowFile
@@ -12,6 +16,40 @@ from core.llm_client import LLMMessage, LLMClient
 from core.tool_registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
+
+
+def _convert_stt_audio_to_wav(audio_bytes: bytes, mime_type: str, filename: str) -> tuple[bytes, str, str]:
+    marker = f"{mime_type} {filename}".lower()
+    if "wav" in marker or "wave" in marker:
+        return audio_bytes, mime_type or "audio/wav", filename or "recording.wav"
+    if not any(kind in marker for kind in ("webm", "ogg", "opus")):
+        return audio_bytes, mime_type, filename
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        logger.warning("[STT] ffmpeg unavailable; forwarding browser audio without conversion mime=%s filename=%s", mime_type, filename)
+        return audio_bytes, mime_type, filename
+    src = dst = ""
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".webm") as in_fh:
+            src = in_fh.name
+            in_fh.write(audio_bytes)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as out_fh:
+            dst = out_fh.name
+        subprocess.check_call([  # nosec B603 - fixed ffmpeg argv, temp files are local and shell=False.
+            ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
+            "-i", src, "-ac", "1", "-ar", "16000", dst,
+        ])
+        with open(dst, "rb") as fh:
+            converted = fh.read()
+        logger.info("[STT] converted browser audio to wav: %d -> %d bytes", len(audio_bytes), len(converted))
+        return converted, "audio/wav", "speech.wav"
+    finally:
+        for path in (src, dst):
+            if path:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
 
 
 def _handle_media(self, action, body, store, user_id, flowfile):
@@ -35,6 +73,19 @@ def _handle_media(self, action, body, store, user_id, flowfile):
         if not audio_bytes:
             flowfile.set_content(json.dumps({"error": "empty audio"}).encode())
             return [flowfile]
+        mime_type = body.get("mime_type", "") or "audio/webm"
+        filename = body.get("filename", "recording.webm") or "recording.webm"
+        try:
+            audio_bytes, mime_type, filename = _convert_stt_audio_to_wav(audio_bytes, mime_type, filename)
+        except Exception as exc:
+            logger.exception("[STT] audio conversion failed")
+            flowfile.set_content(json.dumps({"error": f"audio conversion failed: {exc}"}).encode())
+            return [flowfile]
+        logger.info(
+            "[STT] transcribe requested: service=%s bytes=%d mime=%s filename=%s conv=%s",
+            service_name or "<auto>", len(audio_bytes), mime_type, filename,
+            conv_id[:8] if conv_id else "",
+        )
 
         if service_name:
             try:
@@ -59,11 +110,17 @@ def _handle_media(self, action, body, store, user_id, flowfile):
                     agent_name=agent_name)
             result = svc.transcribe(
                 audio_bytes=audio_bytes,
-                mime_type=body.get("mime_type", "") or "audio/webm",
-                filename=body.get("filename", "recording.webm") or "recording.webm",
+                mime_type=mime_type,
+                filename=filename,
                 language=body.get("language", "") or "",
                 prompt=body.get("prompt", "") or "",
                 model=body.get("model", "") or "",
+            )
+            logger.info(
+                "[STT] transcribe completed: service=%s chars=%d duration=%s conv=%s",
+                service_name or getattr(svc, "NAME", "<auto>"),
+                len(str(result.get("text", "") or "")), result.get("duration", 0),
+                conv_id[:8] if conv_id else "",
             )
             flowfile.set_content(json.dumps({
                 "ok": True,

@@ -7,6 +7,12 @@ var _convSttServicesLoaded = false;
 var _convSttRefreshInFlight = false;
 var _convSttStartAfterRefresh = false;
 var _convSttMediaRecorder = null;
+var _convSttStream = null;
+var _convSttAudioContext = null;
+var _convSttSource = null;
+var _convSttProcessor = null;
+var _convSttWavChunks = [];
+var _convSttWavSampleRate = 0;
 var _convSttChunks = [];
 var _convSttRecording = false;
 var _convSttInputWasEmpty = true;
@@ -113,7 +119,7 @@ function toggleConversationSTT() {
 
 async function _convSttStartRecording() {
   if (_convSttRecording) return;
-  if (!navigator.mediaDevices || !window.MediaRecorder) {
+  if (!navigator.mediaDevices) {
     addMsg('error', 'Browser microphone recording is not available');
     return;
   }
@@ -127,6 +133,28 @@ async function _convSttStartRecording() {
     addMsg('error', 'Microphone permission denied: ' + (err && err.message ? err.message : err));
     return;
   }
+  if (window.MediaRecorder) {
+    _convSttStartMediaRecorder(stream);
+    return;
+  }
+  if (!_convSttStartWavRecorder(stream)) {
+    stream.getTracks().forEach(track => track.stop());
+    addMsg('error', 'Browser microphone recording is not available');
+  }
+}
+
+function _convSttStopRecording() {
+  if (!_convSttRecording) return;
+  if (_convSttProcessor || _convSttAudioContext) {
+    _convSttStopWavRecorder();
+    return;
+  }
+  if (_convSttMediaRecorder) {
+    try { _convSttMediaRecorder.stop(); } catch (_err) {}
+  }
+}
+
+function _convSttStartMediaRecorder(stream) {
   _convSttChunks = [];
   _convSttMediaRecorder = new MediaRecorder(stream);
   _convSttMediaRecorder.ondataavailable = function(e) {
@@ -143,9 +171,90 @@ async function _convSttStartRecording() {
   _convSttUpdateButton();
 }
 
-function _convSttStopRecording() {
-  if (!_convSttMediaRecorder || !_convSttRecording) return;
-  try { _convSttMediaRecorder.stop(); } catch (_err) {}
+function _convSttStartWavRecorder(stream) {
+  const AudioCtx = window.AudioContext || window.webkitAudioContext;
+  if (!AudioCtx) return false;
+  _convSttStream = stream;
+  _convSttWavChunks = [];
+  _convSttAudioContext = new AudioCtx();
+  _convSttWavSampleRate = _convSttAudioContext.sampleRate || 48000;
+  if (_convSttAudioContext.state === 'suspended' && _convSttAudioContext.resume) {
+    _convSttAudioContext.resume().catch(function() {});
+  }
+  _convSttSource = _convSttAudioContext.createMediaStreamSource(stream);
+  _convSttProcessor = _convSttAudioContext.createScriptProcessor(4096, 1, 1);
+  _convSttProcessor.onaudioprocess = function(e) {
+    if (!_convSttRecording) return;
+    const input = e.inputBuffer.getChannelData(0);
+    _convSttWavChunks.push(new Float32Array(input));
+  };
+  _convSttSource.connect(_convSttProcessor);
+  _convSttProcessor.connect(_convSttAudioContext.destination);
+  _convSttRecording = true;
+  _convSttUpdateButton();
+  return true;
+}
+
+function _convSttStopWavRecorder() {
+  const chunks = _convSttWavChunks.slice();
+  const sampleRate = _convSttWavSampleRate || 48000;
+  if (_convSttProcessor) {
+    try { _convSttProcessor.disconnect(); } catch (_err) {}
+    _convSttProcessor.onaudioprocess = null;
+  }
+  if (_convSttSource) {
+    try { _convSttSource.disconnect(); } catch (_err) {}
+  }
+  if (_convSttStream) {
+    _convSttStream.getTracks().forEach(track => track.stop());
+  }
+  if (_convSttAudioContext) {
+    try { _convSttAudioContext.close(); } catch (_err) {}
+  }
+  _convSttStream = null;
+  _convSttAudioContext = null;
+  _convSttSource = null;
+  _convSttProcessor = null;
+  _convSttRecording = false;
+  _convSttUpdateButton();
+  if (!chunks.length) {
+    addMsg('error', 'No microphone audio was captured');
+    return;
+  }
+  _convSttTranscribeBlob(_convSttEncodeWav(chunks, sampleRate));
+}
+
+function _convSttEncodeWav(chunks, sampleRate) {
+  let length = 0;
+  chunks.forEach(chunk => { length += chunk.length; });
+  const dataSize = length * 2;
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+  function writeString(offset, value) {
+    for (let i = 0; i < value.length; i++) view.setUint8(offset + i, value.charCodeAt(i));
+  }
+  writeString(0, 'RIFF');
+  view.setUint32(4, 36 + dataSize, true);
+  writeString(8, 'WAVE');
+  writeString(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeString(36, 'data');
+  view.setUint32(40, dataSize, true);
+  let offset = 44;
+  chunks.forEach(chunk => {
+    for (let i = 0; i < chunk.length; i++) {
+      const sample = Math.max(-1, Math.min(1, chunk[i]));
+      view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+      offset += 2;
+    }
+  });
+  return new Blob([buffer], { type: 'audio/wav' });
 }
 
 function _convSttBlobToBase64(blob) {
@@ -158,15 +267,24 @@ function _convSttBlobToBase64(blob) {
 }
 
 async function _convSttTranscribeBlob(blob) {
-  if (!blob || !blob.size) return;
+  if (!blob || !blob.size) {
+    addMsg('error', 'No microphone audio was captured');
+    return;
+  }
   const cfg = _convSttConfig();
-  const b64 = await _convSttBlobToBase64(blob);
+  let b64 = '';
+  try {
+    b64 = await _convSttBlobToBase64(blob);
+  } catch (err) {
+    addMsg('error', 'Microphone audio encoding failed: ' + (err && err.message ? err.message : err));
+    return;
+  }
   action$('stt_transcribe', {
     conversation_id: conversationId,
     service: cfg.service,
     audio_b64: b64,
     mime_type: blob.type || 'audio/webm',
-    filename: 'speech.webm',
+    filename: blob.type === 'audio/wav' ? 'speech.wav' : 'speech.webm',
     language: cfg.language,
   }, { silent: true }).subscribe(result => {
     if (!result || result.error) {
@@ -174,7 +292,10 @@ async function _convSttTranscribeBlob(blob) {
       return;
     }
     const text = String(result.text || '').trim();
-    if (!text) return;
+    if (!text) {
+      addMsg('error', 'Speech transcription returned no text');
+      return;
+    }
     const input = document.getElementById('input');
     if (!input) return;
     const current = String(input.value || '').trim();
@@ -183,6 +304,8 @@ async function _convSttTranscribeBlob(blob) {
     input.style.height = 'auto';
     input.style.height = Math.min(input.scrollHeight, 160) + 'px';
     if (cfg.autoSend && _convSttInputWasEmpty && typeof send === 'function') send();
+  }, err => {
+    addMsg('error', 'Speech transcription request failed: ' + (err && err.message ? err.message : err));
   });
 }
 

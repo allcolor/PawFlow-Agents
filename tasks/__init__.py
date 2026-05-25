@@ -24,6 +24,8 @@ def _register_all_services():
     if ("pixazoImageGeneration" in _registered_types
             and "codexImageGeneration" in _registered_types
             and "supertonicTTS" in _registered_types
+            and "voicebox" in _registered_types
+            and "luxTTS" in _registered_types
             and "summarizer" in _registered_types
             and "ccInteractiveEvents" in _registered_types):
         return  # All modules already registered
@@ -83,6 +85,8 @@ def _register_all_services():
     import services.wavespeed_audio_service    # noqa: F401
     import services.suno_audio_service         # noqa: F401  — sunoapi.org wrapper
     import services.supertonic_tts_service     # noqa: F401  — local Supertonic TTS
+    import services.voicebox_service           # noqa: F401  — local Voicebox voice I/O
+    import services.luxtts_service             # noqa: F401  — local LuxTTS voice clone
 
     # Voice-cloning TTS services
     import services.fish_audio_voice_clone_service  # noqa: F401

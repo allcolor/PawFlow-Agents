@@ -58,6 +58,7 @@ Example chain:
 | `clone_voice` | Register or reuse a provider voice from a reference sample when the selected TTS provider supports voice creation. |
 | `speak` | Synthesize speech through the active TTS provider using either a registered PawFlow voice alias or a provider-native voice name/id. |
 | `delete_voice` | Remove local voice clone state, cached TTS renders, and provider voice id where applicable. |
+| `stt_transcribe` | UI action that transcribes browser microphone audio through the active STT provider. |
 
 `speak` is the single text-to-speech entry point. Supertonic, Pixazo, WaveSpeed,
 ElevenLabs, Fish Audio, and other compatible providers all expose speech through
@@ -75,6 +76,13 @@ remembered in local storage as `pawflow_tts_service`; optional advanced override
 for provider-native voice/language remain available as `pawflow_tts_voice` and
 `pawflow_tts_language`, otherwise the selected service's configured defaults are
 used.
+
+The webchat input also includes a microphone button when an STT provider is
+configured. The browser records audio with `MediaRecorder`, sends it to the
+silent UI action `stt_transcribe`, writes the returned transcript into the chat
+input, and auto-sends only when the input was empty when recording started. The
+selected STT service is remembered as `pawflow_stt_service`; optional advanced
+overrides are `pawflow_stt_language` and `pawflow_stt_auto_send`.
 
 ## 3D, Try-On, Training
 
@@ -105,6 +113,8 @@ Supported service families include:
 - `soraVideoGeneration`
 - `sunoAudioGeneration`
 - `supertonicTTS`
+- `voicebox`
+- `luxTTS`
 - `pixazoImageGeneration`
 - `pixazoVideoGeneration`
 - `pixazoAudioGeneration`
@@ -147,6 +157,32 @@ language="fr")`. `generate_audio` also works with `prompt` as the spoken text
 for compatibility with audio-generation flows. Supertonic's open-weight local
 package does not create voice styles directly from raw audio; custom voices
 require a Voice Builder JSON imported into the managed Supertonic daemon.
+
+### Voicebox Local Voice I/O Service
+
+`voicebox` bridges a managed local Voicebox server (default
+`http://127.0.0.1:17493`) as a PawFlow STT, TTS, and voice-clone provider. It
+uses Voicebox's `/transcribe` endpoint for browser dictation and `/speak` for
+speech generation. Configure `client_id`, `stt_model`, and `default_profile` to
+match Voicebox's local profile and MCP/client bindings.
+
+Like Supertonic, the service starts lazily on first use. With `auto_start=true`
+it first probes the local API, then opens the installed macOS Voicebox app when
+available, then starts a backend from `install_dir`, and with `auto_install=true`
+it can clone/setup `jamiepine/voicebox` into `data/runtime/voicebox` before
+starting `backend.main:app` through the checkout's virtualenv. `start_command`
+can override the managed command for packaged deployments. Voicebox voice
+cloning is profile-based: PawFlow can speak through existing Voicebox profiles
+by name/id, while profile creation and sample management remain in Voicebox.
+
+### LuxTTS Local Voice Clone Service
+
+`luxTTS` exposes LuxTTS as a local zero-shot TTS and voice-clone service. For
+plain `speak`, configure `prompt_audio` as the default voice reference. For
+PawFlow `clone_voice`/`speak` flows, LuxTTS receives the registered reference
+audio on each synthesis call and returns WAV audio. Configure `model_id`,
+`device`, `threads`, `num_steps`, `t_shift`, `speed`, `rms`, and `ref_duration`.
+The Python LuxTTS dependencies must be installed in the runtime environment.
 
 ### Codex CLI Image Service
 

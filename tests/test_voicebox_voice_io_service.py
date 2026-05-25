@@ -1,0 +1,121 @@
+import json
+import types
+
+from services.voicebox_service import VoiceboxService
+
+
+class _Resp:
+    def __init__(self, body, content_type="application/json"):
+        self._body = body
+        self.headers = {"Content-Type": content_type}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def read(self):
+        return self._body
+
+
+def test_voicebox_transcribe_posts_multipart(monkeypatch):
+    captured = {}
+
+    def fake_urlopen(req, timeout=0):
+        if req.get_method() == "GET":
+            return _Resp(b'{"ok":true}')
+        captured["url"] = req.full_url
+        captured["headers"] = dict(req.header_items())
+        captured["body"] = req.data
+        return _Resp(json.dumps({"text": "bonjour", "language": "fr"}).encode())
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    svc = VoiceboxService({"base_url": "http://127.0.0.1:17493", "client_id": "test"})
+
+    out = svc.transcribe(
+        audio_bytes=b"audio", mime_type="audio/webm", language="fr",
+        filename="speech.webm")
+
+    assert out["text"] == "bonjour"
+    assert captured["url"].endswith("/transcribe")
+    assert captured["headers"]["X-voicebox-client-id"] == "test"
+    assert b'name="audio"; filename="speech.webm"' in captured["body"]
+    assert b'name="language"' in captured["body"]
+
+
+def test_voicebox_speak_posts_json_and_returns_audio(monkeypatch):
+    captured = {}
+
+    def fake_urlopen(req, timeout=0):
+        if req.get_method() == "GET":
+            return _Resp(b'{"ok":true}')
+        captured["url"] = req.full_url
+        captured["body"] = json.loads(req.data.decode())
+        return _Resp(b"mp3", "audio/mpeg")
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    svc = VoiceboxService({"default_profile": "Morgan"})
+
+    out = svc.speak(text="hello")
+
+    assert out["audio_bytes"] == b"mp3"
+    assert out["content_type"] == "audio/mpeg"
+    assert captured["url"].endswith("/speak")
+    assert captured["body"]["profile"] == "Morgan"
+
+
+def test_luxtts_clone_speak_uses_reference_bytes(monkeypatch):
+    from services.luxtts_service import LuxTTSService
+
+    calls = {}
+
+    class _Array:
+        def squeeze(self):
+            return [0.0, 0.1]
+
+    class _Wav:
+        def detach(self):
+            return self
+        def cpu(self):
+            return self
+        def numpy(self):
+            return _Array()
+
+    class _Model:
+        def encode_prompt(self, path, duration=0, rms=0):
+            calls["path"] = path
+            calls["duration"] = duration
+            calls["rms"] = rms
+            return "encoded"
+        def generate_speech(self, text, encoded, **kwargs):
+            calls["text"] = text
+            calls["encoded"] = encoded
+            calls["kwargs"] = kwargs
+            return _Wav()
+
+    def fake_write(out, arr, rate, format="WAV"):
+        out.write(b"RIFFaudio")
+
+    monkeypatch.setitem(__import__("sys").modules, "soundfile", types.SimpleNamespace(write=fake_write))
+    svc = LuxTTSService({"num_steps": 4})
+    svc._load_model = lambda: _Model()
+
+    out = svc.clone_speak(text="hello", reference_audio_bytes=b"wav")
+
+    assert out["audio_bytes"] == b"RIFFaudio"
+    assert out["content_type"] == "audio/wav"
+    assert calls["text"] == "hello"
+    assert calls["encoded"] == "encoded"
+    assert calls["kwargs"]["num_steps"] == 4
+
+
+def test_voice_io_services_are_registered():
+    import tasks
+    from core import ServiceFactory
+
+    tasks._register_all_services()
+    types = set(ServiceFactory.list_types())
+    assert "voicebox" in types
+    assert "luxTTS" in types
+

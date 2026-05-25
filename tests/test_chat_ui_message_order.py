@@ -100,7 +100,9 @@ def test_view_menu_grouping_toggles_set_conversation_parameter_and_reload():
 def test_live_conversation_tts_button_and_sse_hooks_are_wired():
     serve_src = Path("tasks/io/serve_chat_ui.py").read_text(encoding="utf-8")
     assert '"conversation_tts.js"' in serve_src
+    assert '"conversation_stt.js"' in serve_src
     assert 'id="speakToggleBtn"' in TEMPLATE_HTML
+    assert 'id="speechInputBtn"' in TEMPLATE_HTML
     assert 'id="speakToggleBtn"' in TEMPLATE_HTML and 'style="display:none"' in TEMPLATE_HTML
     assert 'onclick="toggleConversationTTS()"' in TEMPLATE_HTML
     assert "function toggleConversationTTS()" in CONVERSATION_TTS_JS
@@ -108,6 +110,13 @@ def test_live_conversation_tts_button_and_sse_hooks_are_wired():
     assert 'action == "list_tts_services"' in MEDIA_ACTIONS
     assert "from services.base_tts import BaseTTSService" in MEDIA_ACTIONS
     assert "action$('tts_synthesize'" in CONVERSATION_TTS_JS
+    conversation_stt_js = Path("tasks/io/chat_ui/conversation_stt.js").read_text(encoding="utf-8")
+    assert "function toggleConversationSTT()" in conversation_stt_js
+    assert "action$('list_stt_services'" in conversation_stt_js
+    assert "action$('stt_transcribe'" in conversation_stt_js
+    assert 'action == "list_stt_services"' in MEDIA_ACTIONS
+    assert 'action == "stt_transcribe"' in MEDIA_ACTIONS
+    assert "from services.base_stt import BaseSTTService" in MEDIA_ACTIONS
     assert "btn.style.display = _convTtsServices.length ? 'inline-flex' : 'none';" in CONVERSATION_TTS_JS
     assert "if (_convTtsServices.length > 1) _convTtsShowServiceDialog();" in CONVERSATION_TTS_JS
     assert "function _convTtsShowServiceDialog()" in CONVERSATION_TTS_JS

@@ -4,6 +4,7 @@ import json
 import logging
 import time
 import threading
+import base64
 from typing import Dict, Any, List, Optional
 
 from core import FlowFile
@@ -15,6 +16,65 @@ logger = logging.getLogger(__name__)
 
 def _handle_media(self, action, body, store, user_id, flowfile):
     """Handle media actions. Returns [flowfile] or None."""
+
+    if action == "stt_transcribe":
+        conv_id = body.get("conversation_id", "")
+        agent_name = body.get("agent_name", "") or "agent"
+        service_name = body.get("service") or body.get("stt_service") or ""
+        audio_b64 = body.get("audio_b64") or ""
+        if not audio_b64:
+            flowfile.set_content(json.dumps({"error": "audio_b64 required"}).encode())
+            return [flowfile]
+        try:
+            if "," in audio_b64 and audio_b64.split(",", 1)[0].startswith("data:"):
+                audio_b64 = audio_b64.split(",", 1)[1]
+            audio_bytes = base64.b64decode(audio_b64)
+        except Exception as exc:
+            flowfile.set_content(json.dumps({"error": f"invalid audio_b64: {exc}"}).encode())
+            return [flowfile]
+        if not audio_bytes:
+            flowfile.set_content(json.dumps({"error": "empty audio"}).encode())
+            return [flowfile]
+
+        if service_name:
+            try:
+                from core.service_registry import ServiceRegistry
+                svc = ServiceRegistry.get_instance().resolve(
+                    service_name, user_id=user_id, conv_id=conv_id)
+                err = "" if svc else f"STT service '{service_name}' not found or not connected"
+            except Exception as exc:
+                svc = None
+                err = f"STT service '{service_name}' failed to resolve: {exc}"
+        else:
+            resolver = self._make_stt_resolver(
+                user_id, conv_id, agent_name, ("transcribe",))
+            svc, err = resolver()
+        if not svc:
+            flowfile.set_content(json.dumps({"error": err or "no STT service available"}).encode())
+            return [flowfile]
+        try:
+            if hasattr(svc, "set_runtime_context"):
+                svc.set_runtime_context(
+                    user_id=user_id, conversation_id=conv_id,
+                    agent_name=agent_name)
+            result = svc.transcribe(
+                audio_bytes=audio_bytes,
+                mime_type=body.get("mime_type", "") or "audio/webm",
+                filename=body.get("filename", "recording.webm") or "recording.webm",
+                language=body.get("language", "") or "",
+                prompt=body.get("prompt", "") or "",
+                model=body.get("model", "") or "",
+            )
+            flowfile.set_content(json.dumps({
+                "ok": True,
+                "text": result.get("text", ""),
+                "language": result.get("language", ""),
+                "duration": result.get("duration", 0),
+                "segments": result.get("segments", []),
+            }, ensure_ascii=False).encode())
+        except Exception as exc:
+            flowfile.set_content(json.dumps({"error": str(exc)}).encode())
+        return [flowfile]
 
     if action == "tts_synthesize":
         from core.handlers.capabilities import SpeakHandler
@@ -34,8 +94,8 @@ def _handle_media(self, action, body, store, user_id, flowfile):
         try:
             from core.expression import resolve_value
             file_base_url = resolve_value(file_base_url) or ""
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("TTS file_base_url resolution failed: %s", exc)
         if file_base_url:
             handler.set_base_url(file_base_url)
         handler.set_user_id(user_id)
@@ -67,8 +127,8 @@ def _handle_media(self, action, body, store, user_id, flowfile):
                     from core.file_store import FileStore
                     meta = FileStore.instance().get_metadata(file_id) or {}
                     filename = meta.get("filename", filename)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("TTS FileStore metadata lookup failed: %s", exc)
         if not file_id:
             flowfile.set_content(json.dumps({"error": "no audio file returned"}).encode())
             return [flowfile]
@@ -143,6 +203,21 @@ def _handle_media(self, action, body, store, user_id, flowfile):
         services = self._discover_media_services(
             user_id, BaseTTSService, conv_id)
         prefs = store.get_extra(conv_id, "audio_services") or {} if conv_id else {}
+        result = [{
+            "id": sid, "type": stype, "scope": scope,
+            "selected_for": [
+                k for k, v in prefs.items() if v == sid
+            ],
+        } for sid, stype, scope in services]
+        flowfile.set_content(json.dumps(result, ensure_ascii=False).encode())
+        return [flowfile]
+
+    if action == "list_stt_services":
+        from services.base_stt import BaseSTTService
+        conv_id = body.get("conversation_id", "")
+        services = self._discover_media_services(
+            user_id, BaseSTTService, conv_id)
+        prefs = store.get_extra(conv_id, "stt_services") or {} if conv_id else {}
         result = [{
             "id": sid, "type": stype, "scope": scope,
             "selected_for": [

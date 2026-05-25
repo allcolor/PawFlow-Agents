@@ -41,6 +41,7 @@ _JS_MODULES = [
     "terminal.js",
     "audio.js",
     "conversation_tts.js",
+    "conversation_stt.js",
 ]
 
 _html_cache: str = ""

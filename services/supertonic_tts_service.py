@@ -9,7 +9,7 @@ PawFlow service starts the daemon when needed, then calls its native
 import json
 import logging
 import os
-import subprocess
+import subprocess  # nosec B404 - managed local daemon uses explicit argv with shell=False.
 import sys
 import threading
 import time
@@ -188,7 +188,7 @@ class SupertonicTTSService(BaseAudioGenerationService, BaseTTSService):
         env = os.environ.copy()
         logger.info("[SUPERTONIC] starting managed daemon: %s", " ".join(cmd))
         try:
-            return subprocess.Popen(
+            return subprocess.Popen(  # nosec B603 - argv is constructed locally and shell=False is the default.
                 cmd,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,

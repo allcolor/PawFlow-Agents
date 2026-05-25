@@ -567,6 +567,15 @@ class AgentUtilsMixin:
             "text-to-speech", "/audioservice", required_methods,
         )
 
+    def _make_stt_resolver(self, user_id, conversation_id, agent_name,
+                           required_methods=("transcribe",)):
+        from services.base_stt import BaseSTTService
+        return self._make_media_resolver(
+            user_id, conversation_id, agent_name,
+            BaseSTTService, "stt_services",
+            "speech-to-text", "/sttservice", required_methods,
+        )
+
     def _make_3d_resolver(self, user_id, conversation_id, agent_name,
                           required_methods=("generate_3d",)):
         from services.base_capabilities import BaseImage3DService

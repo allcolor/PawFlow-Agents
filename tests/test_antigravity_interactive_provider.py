@@ -252,7 +252,7 @@ def test_antigravity_proxy_emits_tool_result_from_request_function_response(monk
     assert deltas[-1]["tool_results"] == [{
         "tool_use_id": deltas[-1]["tool_results"][0]["tool_use_id"],
         "name": "list_dir",
-        "content": json.dumps({"content": "a.py\nb.py"}, ensure_ascii=False, default=str),
+        "content": "a.py\nb.py",
     }]
 
 
@@ -285,8 +285,24 @@ def test_antigravity_proxy_emits_tool_result_after_large_request_prefix(monkeypa
     assert summaries[-1]["observed_body_bytes"] == len(body)
     deltas = [event for event in events if event.get("type") == "ag_text_delta"]
     assert deltas[-1]["tool_results"][0]["name"] == "view_file"
-    assert deltas[-1]["tool_results"][0]["content"] == json.dumps(
-        {"content": "late result"}, ensure_ascii=False, default=str)
+    assert deltas[-1]["tool_results"][0]["content"] == "late result"
+
+
+def test_antigravity_proxy_unwraps_call_mcp_tool_function_call(monkeypatch):
+    from tools import ag_observer_proxy
+
+    events = []
+    monkeypatch.setattr(ag_observer_proxy, "_event", events.append)
+    chunk = b'data: {"response":{"candidates":[{"content":{"parts":[{"functionCall":{"name":"call_mcp_tool","args":{"ServerName":"pawflow","ToolName":"get_tool_schema","Arguments":{"tool_name":"bash"}}}}]}}]}}\n\n'
+    resp = ag_observer_proxy.HTTP1Observer("conn1", "upstream_to_client")
+    resp.feed(
+        b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n"
+        + f"{len(chunk):x}\r\n".encode() + chunk + b"\r\n0\r\n\r\n"
+    )
+
+    deltas = [event for event in events if event.get("type") == "ag_text_delta"]
+    assert deltas[-1]["tool_calls"][0]["name"] == "pawflow/get_tool_schema"
+    assert deltas[-1]["tool_calls"][0]["arguments"] == {"tool_name": "bash"}
 
 
 def test_antigravity_initial_context_uses_ag_file(tmp_path):
@@ -299,7 +315,13 @@ def test_antigravity_initial_context_uses_ag_file(tmp_path):
         "u", "conv", initial_context=True, agent_name="agent")
 
     assert ".pawflow_ag/initial_context.md" in prompt
+    assert "Latest turn to answer now:" in prompt
+    assert "hello" in prompt
     assert (tmp_path / ".pawflow_ag" / "initial_context.md").is_file()
+    initial_context = (tmp_path / ".pawflow_ag" / "initial_context.md").read_text(
+        encoding="utf-8")
+    assert "## Latest User Request" in initial_context
+    assert "hello" in initial_context
 
 
 def test_antigravity_pool_types_multiline_prompts_with_shift_enter(monkeypatch):

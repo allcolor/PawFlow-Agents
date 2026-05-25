@@ -34,6 +34,14 @@ terminal-visible answers still appear in chat. Antigravity also emits
 `finishReason=STOP` after internal tool steps; PawFlow treats those as
 intermediate stops while waiting for the follow-up model text.
 
+Unlike Claude Code interactive, Antigravity does not provide a verified
+`UserPromptSubmit` hook surface in the settings files PawFlow writes for `agy`.
+Manual prompts are therefore detected from observed Antigravity request bodies.
+Prompts pasted by PawFlow itself are marked before tmux submission and ignored by
+the manual-ingest path, either by exact prompt hash or by the same pending-ignore
+fallback used when the observed request text differs from the submitted tmux
+prompt.
+
 ## Provider
 
 Configure an LLM service with provider `antigravity-interactive`. It reuses the

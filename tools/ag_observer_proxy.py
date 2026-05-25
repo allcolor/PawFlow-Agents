@@ -529,6 +529,45 @@ def _stable_tool_id(prefix: str, value) -> str:
     return f"{prefix}_{hashlib.sha256(raw.encode('utf-8')).hexdigest()[:16]}"
 
 
+def _json_dict(value) -> dict:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except (TypeError, ValueError):
+            return {"value": value}
+    return value if isinstance(value, dict) else {}
+
+
+def _normalize_tool_call(name: str, args: dict) -> tuple[str, dict]:
+    raw_name = str(name or "")
+    payload = args if isinstance(args, dict) else {}
+    if raw_name != "call_mcp_tool":
+        return raw_name, payload
+    server_name = str(
+        payload.get("ServerName") or payload.get("serverName")
+        or payload.get("server_name") or "")
+    tool_name = str(
+        payload.get("ToolName") or payload.get("toolName")
+        or payload.get("tool_name") or raw_name)
+    inner = (
+        payload.get("Arguments") if "Arguments" in payload
+        else payload.get("arguments", payload.get("Parameters", payload.get("parameters", {})))
+    )
+    display_name = f"{server_name}/{tool_name}" if server_name and tool_name else tool_name
+    return display_name, _json_dict(inner)
+
+
+def _tool_result_content(response) -> str:
+    if isinstance(response, dict):
+        for key in ("output", "content", "result"):
+            if key in response:
+                value = response.get(key)
+                return value if isinstance(value, str) else json.dumps(
+                    value, ensure_ascii=False, default=str)
+    return response if isinstance(response, str) else json.dumps(
+        response, ensure_ascii=False, default=str)
+
+
 def _extract_tool_calls(value) -> list[dict]:
     out = []
     if isinstance(value, dict):
@@ -537,13 +576,8 @@ def _extract_tool_calls(value) -> list[dict]:
             if isinstance(call, dict):
                 name = call.get("name") or call.get("tool") or ""
                 args = call.get("args") or call.get("arguments") or call.get("input") or {}
-                if isinstance(args, str):
-                    try:
-                        args = json.loads(args)
-                    except Exception:
-                        args = {"value": args}
-                if not isinstance(args, dict):
-                    args = {}
+                args = _json_dict(args)
+                name, args = _normalize_tool_call(str(name or ""), args)
                 out.append({
                     "id": str(call.get("id") or call.get("tool_call_id") or _stable_tool_id("ag_tool", call)),
                     "name": str(name or ""),
@@ -564,10 +598,12 @@ def _extract_tool_results(value) -> list[dict]:
             result = value.get(key)
             if isinstance(result, dict):
                 response = result.get("response") or result.get("result") or result.get("content") or ""
+                name, _args = _normalize_tool_call(
+                    str(result.get("name") or result.get("tool") or ""), result)
                 out.append({
                     "tool_use_id": str(result.get("id") or result.get("tool_call_id") or _stable_tool_id("ag_tool", result)),
-                    "name": str(result.get("name") or result.get("tool") or ""),
-                    "content": response if isinstance(response, str) else json.dumps(response, ensure_ascii=False, default=str),
+                    "name": str(name or ""),
+                    "content": _tool_result_content(response),
                 })
         for item in value.values():
             out.extend(_extract_tool_results(item))

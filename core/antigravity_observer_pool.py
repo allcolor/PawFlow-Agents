@@ -55,6 +55,7 @@ class AntigravityObserverSession:
     manual_ingest_thread: Optional[threading.Thread] = None
     manual_ingest_seen_requests: set = field(default_factory=set)
     injected_prompt_hashes: dict = field(default_factory=dict)
+    pending_injected_prompt_ignores: list[float] = field(default_factory=list)
 
     @property
     def agent_name(self) -> str:
@@ -616,27 +617,59 @@ class AntigravityObserverPool:
 
     @staticmethod
     def _prompt_hash(text: str) -> str:
-        return hashlib.sha256((text or "").strip().encode("utf-8")).hexdigest()
+        return hashlib.sha256((text or "").rstrip("\r\n").encode("utf-8")).hexdigest()
 
     def _remember_injected_prompt(self, state: AntigravityObserverSession, text: str) -> None:
-        digest = self._prompt_hash(text)
-        if digest:
-            state.injected_prompt_hashes[digest] = time.time()
+        if not text:
+            return
+        now = time.time()
+        cutoff = now - 300.0
+        state.injected_prompt_hashes = {
+            digest: ts for digest, ts in state.injected_prompt_hashes.items()
+            if float(ts or 0) >= cutoff
+        }
+        state.pending_injected_prompt_ignores = [
+            ts for ts in state.pending_injected_prompt_ignores
+            if float(ts or 0) >= cutoff
+        ]
+        state.injected_prompt_hashes[self._prompt_hash(text)] = now
+        state.pending_injected_prompt_ignores.append(now)
 
     def _consume_injected_prompt(self, state: AntigravityObserverSession, text: str) -> bool:
         now = time.time()
+        cutoff = now - 300.0
         state.injected_prompt_hashes = {
             digest: ts for digest, ts in state.injected_prompt_hashes.items()
-            if now - float(ts or 0) < 300.0
+            if float(ts or 0) >= cutoff
         }
-        digest = self._prompt_hash(text)
+        state.pending_injected_prompt_ignores = [
+            ts for ts in state.pending_injected_prompt_ignores
+            if float(ts or 0) >= cutoff
+        ]
+        digest = self._prompt_hash(text) if text else ""
         if digest and digest in state.injected_prompt_hashes:
             state.injected_prompt_hashes.pop(digest, None)
+            if state.pending_injected_prompt_ignores:
+                state.pending_injected_prompt_ignores.pop(0)
             logger.info(
                 "[antigravity-interactive] ignored PawFlow-injected prompt in manual ingest container=%s",
                 state.name)
             return True
+        if state.pending_injected_prompt_ignores:
+            state.pending_injected_prompt_ignores.pop(0)
+            self._pop_oldest_injected_prompt(state)
+            logger.info(
+                "[antigravity-interactive] ignored pending PawFlow-injected prompt in manual ingest container=%s",
+                state.name)
+            return True
         return False
+
+    @staticmethod
+    def _pop_oldest_injected_prompt(state: AntigravityObserverSession) -> None:
+        if not state.injected_prompt_hashes:
+            return
+        oldest = min(state.injected_prompt_hashes, key=state.injected_prompt_hashes.get)
+        state.injected_prompt_hashes.pop(oldest, None)
 
     @staticmethod
     def _is_provider_context_prompt(text: str) -> bool:

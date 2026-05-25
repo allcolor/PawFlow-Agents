@@ -452,6 +452,29 @@ def test_observer_manual_ingest_skips_pawflow_injected_prompt(tmp_path):
     assert pool._consume_injected_prompt(state, prompt) is False
 
 
+def test_observer_manual_ingest_skips_pending_injected_prompt_when_proxy_text_differs(tmp_path):
+    from core.antigravity_observer_pool import AntigravityObserverPool, AntigravityObserverSession
+
+    state = AntigravityObserverSession(
+        key=("alice", "conv", "gemini", "agy_service"),
+        name="container",
+        workdir=str(tmp_path),
+        container_workdir="/cc_sessions/conv/gemini",
+        log_path=str(tmp_path / "observer.jsonl"),
+    )
+    pool = AntigravityObserverPool()
+    prompt = (
+        "PawFlow cold-session bootstrap.\n\n"
+        "Latest turn to answer now:\n"
+        "<message role=\"user\">\nreview the last commits\n</message>\n"
+    )
+
+    pool._remember_injected_prompt(state, prompt)
+
+    assert pool._consume_injected_prompt(state, "review the last commits") is True
+    assert pool._consume_injected_prompt(state, "manual follow-up") is False
+
+
 def test_observer_manual_ingest_skips_antigravity_provider_context_prompt(tmp_path):
     from core.antigravity_observer_pool import AntigravityObserverPool, AntigravityObserverSession
 

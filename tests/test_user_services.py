@@ -581,6 +581,47 @@ class TestAgentServiceActions:
         assert sdef is not None
         assert sdef.config == {"host": "localhost", "port": "5432"}
 
+    def test_service_install_runs_prepare_install_before_connect(self):
+        from core import ServiceFactory
+        from core.base_service import BaseService
+        from tasks.ai.actions.service_flow import _handle_service_flow
+
+        calls = []
+
+        class PrepareInstallTestService(BaseService):
+            TYPE = "prepareInstallTestService"
+
+            def get_parameter_schema(self):
+                return {}
+
+            def prepare_install(self, reporter=None):
+                calls.append(("prepare", dict(self.config)))
+                if reporter:
+                    reporter.step("validating", "prepared")
+                return {"ok": True}
+
+            def _create_connection(self):
+                calls.append(("connect", dict(self.config)))
+                return {"ok": True}
+
+            def _close_connection(self):
+                pass
+
+        ServiceFactory.register(PrepareInstallTestService)
+        ff = self._make_flowfile({
+            "action": "service_install",
+            "service_type": "prepareInstallTestService",
+            "service_name": "prepared",
+            "config": {"x": "1"},
+        })
+
+        result = _handle_service_flow(None, "service_install", json.loads(ff.get_content()), None, "testuser", ff)
+        data = json.loads(result[0].get_content())
+
+        assert data["installed"] is True
+        assert data["install_prepared"] == {"ok": True}
+        assert [name for name, _cfg in calls] == ["prepare", "connect"]
+
     def test_service_install_respects_explicit_global_scope_with_conversation_id(self):
         from tasks.ai.actions.service_flow import _handle_service_flow
 

@@ -24,6 +24,12 @@ from pathlib import Path
 from typing import Any, Dict
 
 from core import ServiceFactory, ServiceError
+from core.service_install import (
+    assert_requirements,
+    executable_requirement,
+    python_venv_requirement,
+    write_install_state,
+)
 from services.base_stt import BaseSTTService
 from services.base_voice_clone import BaseVoiceCloneService
 
@@ -125,6 +131,14 @@ class VoiceboxService(BaseVoiceCloneService, BaseSTTService):
                 "type": "integer", "required": False, "default": 180,
                 "description": "Seconds to wait for Voicebox to become reachable.",
             },
+            "preload_stt_model": {
+                "type": "boolean", "required": False, "default": True,
+                "description": "Download the configured Whisper STT model during service installation.",
+            },
+            "preload_timeout": {
+                "type": "integer", "required": False, "default": 1800,
+                "description": "Seconds to wait for model preloading during service installation.",
+            },
             "timeout": {
                 "type": "integer", "required": False, "default": 180,
                 "description": "HTTP timeout in seconds.",
@@ -148,7 +162,60 @@ class VoiceboxService(BaseVoiceCloneService, BaseSTTService):
         self.repo_ref = str(config.get("repo_ref") or _VOICEBOX_DEFAULT_REPO_REF)
         self.start_command = str(config.get("start_command") or "").strip()
         self.startup_timeout = int(config.get("startup_timeout") or 180)
+        self.preload_stt_model = str(config.get("preload_stt_model", True)).lower() not in {"0", "false", "no"}
+        self.preload_timeout = int(config.get("preload_timeout") or 1800)
         self._managed_proc = None
+
+    def get_install_requirements(self):
+        if self.start_command:
+            return []
+        wsl_target = _wsl_unc_to_linux_path(self.install_dir)
+        if wsl_target:
+            distro, _linux_repo = wsl_target
+            reqs = [executable_requirement("wsl.exe", install_name="wsl.exe")]
+            if reqs[0]["ok"] and not self._wsl_command_succeeds(
+                    distro, "command -v git >/dev/null && command -v python3 >/dev/null && python3 -m venv --help >/dev/null"):
+                reqs.append({
+                    "name": "WSL git/python3-venv",
+                    "type": "wsl_packages",
+                    "required": True,
+                    "ok": False,
+                    "detail": "install git, python3, python3-venv inside the WSL distro",
+                    "install": {"ubuntu": "sudo apt install -y git python3 python3-venv"},
+                })
+            return reqs
+        return [
+            executable_requirement("git"),
+            python_venv_requirement(),
+            executable_requirement("ffmpeg", required=False),
+        ]
+
+    def prepare_install(self, reporter=None):
+        if reporter:
+            reporter.step("checking_requirements", "Checking Voicebox requirements")
+        reqs = self.get_install_requirements()
+        assert_requirements(reqs)
+        if reporter:
+            reporter.step("preparing_runtime", "Preparing Voicebox checkout and Python environment")
+        if not self.start_command:
+            self._ensure_checkout(reporter=reporter)
+        if self.preload_stt_model and self.auto_start:
+            try:
+                if reporter:
+                    reporter.step("starting", "Starting Voicebox for model preload")
+                if not self._server_ready():
+                    self._start_server()
+                self._preload_stt_model(reporter)
+            finally:
+                self._close_connection()
+        write_install_state(self.install_dir / ".pawflow_install.json", {
+            "service_type": self.TYPE,
+            "repo_url": self.repo_url,
+            "repo_ref": self.repo_ref,
+            "stt_model": self.stt_model,
+            "preload_stt_model": self.preload_stt_model,
+        })
+        return {"prepared": True, "requirements": reqs, "install_dir": str(self.install_dir)}
 
     def _create_connection(self):
         self._validate_endpoint()
@@ -204,13 +271,10 @@ class VoiceboxService(BaseVoiceCloneService, BaseSTTService):
         if self._try_open_desktop_app():
             return
         cmd, cwd = self._resolve_start_command()
-        if not cmd and self.auto_install:
-            self._ensure_checkout()
-            cmd, cwd = self._resolve_start_command()
         if not cmd:
             raise ServiceError(
-                "Voicebox is not installed and no start_command is configured. "
-                "Set start_command or allow auto_install with install_dir.")
+                "Voicebox runtime is not prepared and no start_command is configured. "
+                "Run /service install for this service again, or set start_command to an existing backend.")
         logger.info("[VOICEBOX] starting managed backend: %s", " ".join(cmd))
         env = os.environ.copy()
         env.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
@@ -280,14 +344,16 @@ class VoiceboxService(BaseVoiceCloneService, BaseSTTService):
             return [exe, "--host", host, "--port", port], None
         return [], None
 
-    def _ensure_checkout(self):
+    def _ensure_checkout(self, reporter=None):
         repo = self.install_dir
         wsl_target = _wsl_unc_to_linux_path(repo)
         if wsl_target:
-            self._ensure_checkout_wsl(wsl_target)
+            self._ensure_checkout_wsl(wsl_target, reporter=reporter)
             return
         git = shutil.which("git")
         if not repo.exists():
+            if reporter:
+                reporter.step("cloning", "Cloning Voicebox repository")
             repo.parent.mkdir(parents=True, exist_ok=True)
             if not git:
                 raise ServiceError("git is required to auto-install Voicebox")
@@ -301,6 +367,8 @@ class VoiceboxService(BaseVoiceCloneService, BaseSTTService):
             if not git:
                 raise ServiceError("git is required to finish the Voicebox checkout")
             checkout_ref = self.repo_ref or "HEAD"
+            if reporter:
+                reporter.step("checkout", f"Checking out Voicebox ref {checkout_ref}")
             subprocess.check_call([  # nosec B603 - managed checkout argv without shell; safe.directory is scoped to this git process.
                 git, "-c", "safe.directory=*", "-C", str(repo),
                 "checkout", "--detach", checkout_ref,
@@ -310,13 +378,19 @@ class VoiceboxService(BaseVoiceCloneService, BaseSTTService):
             return
         just = shutil.which("just")
         if just:
+            if reporter:
+                reporter.step("installing_python_requirements", "Running Voicebox just setup-python")
             subprocess.check_call([just, "setup-python"], cwd=str(repo))  # nosec B603 - local setup tool argv without shell.
             return
         backend = repo / "backend"
         if not backend.exists():
             raise ServiceError(f"Voicebox checkout is incomplete: {repo}")
         system_python = sys.executable or shutil.which("python3") or shutil.which("python")
+        if reporter:
+            reporter.step("creating_venv", "Creating Voicebox Python virtual environment")
         subprocess.check_call([system_python, "-m", "venv", str(backend / "venv")])  # nosec B603 - Python argv without shell.
+        if reporter:
+            reporter.step("installing_python_requirements", "Installing Voicebox Python requirements")
         subprocess.check_call([str(python), "-m", "pip", "install", "--upgrade", "pip", "-q"])  # nosec B603 - venv pip argv without shell.
         subprocess.check_call([str(python), "-m", "pip", "install", "-r", str(backend / "requirements.txt")])  # nosec B603 - requirements path is inside managed checkout.
 
@@ -338,11 +412,13 @@ class VoiceboxService(BaseVoiceCloneService, BaseSTTService):
         except Exception:
             return False
 
-    def _ensure_checkout_wsl(self, target: tuple[str, str]):
+    def _ensure_checkout_wsl(self, target: tuple[str, str], reporter=None):
         repo = self.install_dir
         distro, linux_repo = target
         linux_parent = linux_repo.rstrip("/").rsplit("/", 1)[0] or "/"
         if not repo.exists():
+            if reporter:
+                reporter.step("cloning", "Cloning Voicebox repository inside WSL")
             subprocess.check_call(self._wsl_argv(  # nosec B603 - wsl.exe argv is fixed; script arguments are shell-quoted.
                 distro,
                 " && ".join([
@@ -356,6 +432,8 @@ class VoiceboxService(BaseVoiceCloneService, BaseSTTService):
             if not (repo / ".git").exists():
                 raise ServiceError(f"Voicebox checkout is incomplete: {repo}")
             checkout_ref = self.repo_ref or "HEAD"
+            if reporter:
+                reporter.step("checkout", f"Checking out Voicebox ref {checkout_ref} inside WSL")
             subprocess.check_call(self._wsl_argv(  # nosec B603 - wsl.exe argv is fixed; script arguments are shell-quoted.
                 distro,
                 f"git -C {shlex.quote(linux_repo)} checkout --detach {shlex.quote(checkout_ref)}",
@@ -368,6 +446,8 @@ class VoiceboxService(BaseVoiceCloneService, BaseSTTService):
             return
         if not backend.exists():
             raise ServiceError(f"Voicebox checkout is incomplete: {repo}")
+        if reporter:
+            reporter.step("installing_python_requirements", "Installing Voicebox Python requirements inside WSL")
         subprocess.check_call(self._wsl_argv(  # nosec B603 - wsl.exe argv is fixed; script arguments are shell-quoted.
             distro,
             "\n".join([
@@ -399,6 +479,45 @@ class VoiceboxService(BaseVoiceCloneService, BaseSTTService):
             time.sleep(0.5)
         raise ServiceError(
             f"Voicebox did not become ready at {self.base_url} within {self.startup_timeout}s")
+
+    def _voicebox_model_name(self) -> str:
+        model = self._normalize_stt_model(self.stt_model)
+        return model if model.startswith("whisper-") else f"whisper-{model}"
+
+    def _model_downloaded(self, model_name: str) -> bool:
+        try:
+            data = self._request("GET", "/models/status", accept_json=True)
+        except Exception:
+            return False
+        for item in data.get("models", []) if isinstance(data, dict) else []:
+            if item.get("model_name") == model_name:
+                return bool(item.get("downloaded")) and not bool(item.get("downloading"))
+        return False
+
+    def _preload_stt_model(self, reporter=None):
+        model_name = self._voicebox_model_name()
+        if self._model_downloaded(model_name):
+            if reporter:
+                reporter.step("downloading_models", f"Voicebox model {model_name} is already cached", progress=1.0)
+            return
+        if reporter:
+            reporter.step("downloading_models", f"Downloading Voicebox model {model_name}", progress=0.0)
+        body = json.dumps({"model_name": model_name}).encode("utf-8")
+        self._request(
+            "POST", "/models/download", body,
+            {"Content-Type": "application/json"}, accept_json=True)
+        deadline = time.time() + self.preload_timeout
+        while time.time() < deadline:
+            if self._model_downloaded(model_name):
+                if reporter:
+                    reporter.step("downloading_models", f"Voicebox model {model_name} downloaded", progress=1.0)
+                return
+            detail = self._active_download_detail(model_name)
+            if reporter:
+                reporter.step("downloading_models", f"Downloading Voicebox model {model_name}{detail}")
+            time.sleep(2)
+        raise ServiceError(
+            f"Voicebox model {model_name} did not finish downloading within {self.preload_timeout}s")
 
     def _headers(self, extra: Dict[str, str] = None) -> Dict[str, str]:
         headers = {"User-Agent": "PawFlow-Agent/1.0"}

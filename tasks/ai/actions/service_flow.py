@@ -96,6 +96,7 @@ _SERVICE_CATEGORY_BY_TYPE = {
     "wavespeedVideoGeneration": "video",
     "sunoAudioGeneration": "audio",
     "supertonicTTS": "audio",
+    "openaiCompatibleSTT": "audio",
     "wavespeedAudioGeneration": "audio",
     "elevenLabsVoiceClone": "voice",
     "fishAudioVoiceClone": "voice",
@@ -688,6 +689,28 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             else:
                 scope_id = user_id
                 scope = "user"
+            from core import ServiceFactory
+            from core.service_install import ServiceInstallReporter
+            svc_cls = ServiceFactory.get(svc_type)
+            prepare_result = None
+            reporter = ServiceInstallReporter(
+                conversation_id=conv_id,
+                service_id=svc_name,
+                service_type=svc_type,
+            )
+            if hasattr(svc_cls, "prepare_install"):
+                reporter.step("queued", "Preparing service installation")
+                try:
+                    prepare_svc = svc_cls(config)
+                    prepare_result = prepare_svc.prepare_install(reporter)
+                    reporter.step("ready", "Service installation is prepared", "ready", progress=1.0)
+                except Exception as exc:
+                    reporter.step("failed", str(exc), "failed")
+                    flowfile.set_content(json.dumps({
+                        "error": str(exc),
+                        "install_prepared": False,
+                    }, ensure_ascii=False).encode())
+                    return [flowfile]
             reg.install(scope, scope_id, service_id=svc_name,
                         service_type=svc_type, config=config,
                         description=description)
@@ -699,6 +722,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 return [flowfile]
             flowfile.set_content(json.dumps({
                 "installed": True, "id": svc_name, "type": svc_type,
+                "install_prepared": prepare_result,
             }, ensure_ascii=False).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())

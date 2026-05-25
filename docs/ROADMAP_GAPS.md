@@ -45,6 +45,10 @@ Ordered by priority within each category. Dependencies noted.
   2. Send to server for transcription
   3. Inject as user message
 
+- **A2c. Additional STT providers:**
+  1. Keep `openaiCompatibleSTT` as the default generic integration path for OpenAI, Groq, and local OpenAI-compatible endpoints.
+  2. Add provider-specific services only when their features are needed: Deepgram for realtime/streaming, AssemblyAI for Universal Streaming workflows, Gladia for multilingual/EU live workflows, and Speechmatics for enterprise transcription.
+
 - **A2c. VS Code plugin:**
   1. VS Code has no native mic API — use webview with getUserMedia
   2. Same flow as webchat

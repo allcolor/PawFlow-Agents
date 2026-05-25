@@ -125,6 +125,34 @@ def test_supertonic_connection_starts_managed_daemon(monkeypatch):
     assert conn["process"].args[3:6] == ["serve", "--host", "127.0.0.1"]
 
 
+def test_supertonic_prepare_install_creates_managed_runtime(monkeypatch, tmp_path):
+    svc = SupertonicTTSService({
+        "install_dir": str(tmp_path / "supertonic3"),
+        "package_spec": "supertonic-test",
+    })
+    commands = []
+
+    monkeypatch.setattr(
+        "services.supertonic_tts_service.python_venv_requirement",
+        lambda: {"name": "python3-venv", "required": True, "ok": True},
+    )
+
+    def fake_run_checked(cmd, **_kwargs):
+        commands.append(list(cmd))
+        if cmd[1:3] == ["-m", "venv"]:
+            svc._venv_python().parent.mkdir(parents=True, exist_ok=True)
+            svc._venv_python().write_text("", encoding="utf-8")
+
+    monkeypatch.setattr("services.supertonic_tts_service.run_checked", fake_run_checked)
+
+    result = svc.prepare_install()
+
+    assert result["prepared"] is True
+    assert commands[0][1:3] == ["-m", "venv"]
+    assert commands[-1][-1] == "supertonic-test"
+    assert (tmp_path / "supertonic3" / ".pawflow_install.json").is_file()
+
+
 def test_supertonic_schema_does_not_expose_executable_override():
     schema = SupertonicTTSService({}).get_parameter_schema()
     assert "python_executable" not in schema

@@ -205,6 +205,7 @@ def test_voice_io_services_are_registered():
     tasks._register_all_services()
     types = set(ServiceFactory.list_types())
     assert "voicebox" in types
+    assert "openaiCompatibleSTT" in types
     assert "luxTTS" in types
 
 

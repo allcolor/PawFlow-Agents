@@ -84,6 +84,20 @@ input, and auto-sends only when the input was empty when recording started. The
 selected STT service is remembered as `pawflow_stt_service`; optional advanced
 overrides are `pawflow_stt_language` and `pawflow_stt_auto_send`.
 
+`openaiCompatibleSTT` is the generic HTTP transcription provider for OpenAI-style
+`POST /audio/transcriptions` endpoints. It supports OpenAI, Groq, local
+whisper.cpp/OpenAI-compatible servers, and relay-routed local URLs such as
+`https://${convrelay}/localhost:1234/v1`. `api_key` is optional so trusted local
+or relay endpoints can be used without bearer authentication.
+
+Heavy local services can implement a `prepare_install(reporter)` hook. During
+`/service install`, PawFlow runs this hook before registering the service and
+publishes `service_install_progress` events to the webchat so users see the
+current phase. Voicebox uses the hook to check `git`, Python `venv`, WSL package
+availability when applicable, prepare its checkout/venv, and optionally preload
+the configured Whisper STT model. Supertonic uses the same hook to prepare a
+managed Python runtime before first use.
+
 ## 3D, Try-On, Training
 
 | Tool | Purpose |
@@ -113,6 +127,7 @@ Supported service families include:
 - `soraVideoGeneration`
 - `sunoAudioGeneration`
 - `supertonicTTS`
+- `openaiCompatibleSTT`
 - `voicebox`
 - `luxTTS`
 - `pixazoImageGeneration`

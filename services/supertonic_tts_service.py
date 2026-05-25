@@ -9,6 +9,8 @@ PawFlow service starts the daemon when needed, then calls its native
 import json
 import logging
 import os
+import shlex
+import shutil
 import subprocess  # nosec B404 - managed local daemon uses explicit argv with shell=False.
 import sys
 import threading
@@ -16,9 +18,17 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from pathlib import Path
 from typing import Any, Dict
 
 from core import ServiceFactory, ServiceError, safe_float
+from core.service_install import (
+    assert_requirements,
+    executable_requirement,
+    python_venv_requirement,
+    run_checked,
+    write_install_state,
+)
 from services.base_audio_generation import BaseAudioGenerationService
 from services.base_tts import BaseTTSService
 
@@ -52,6 +62,30 @@ class SupertonicTTSService(BaseAudioGenerationService, BaseTTSService):
             "auto_start": {
                 "type": "boolean", "required": False, "default": True,
                 "description": "Start the local Supertonic daemon automatically when the service connects.",
+            },
+            "auto_install": {
+                "type": "boolean", "required": False, "default": True,
+                "description": "Prepare a managed Supertonic runtime during service installation.",
+            },
+            "install_dir": {
+                "type": "string", "required": False, "default": "data/runtime/supertonic3",
+                "description": "Managed Supertonic runtime directory.",
+            },
+            "package_spec": {
+                "type": "string", "required": False, "default": "supertonic",
+                "description": "pip package spec installed into the managed runtime when repo_url is empty.",
+            },
+            "repo_url": {
+                "type": "string", "required": False, "default": "",
+                "description": "Optional Supertonic repository URL to install instead of package_spec.",
+            },
+            "repo_ref": {
+                "type": "string", "required": False, "default": "",
+                "description": "Optional git ref for repo_url installs.",
+            },
+            "start_command": {
+                "type": "string", "required": False, "default": "",
+                "description": "Optional explicit command to start the Supertonic daemon.",
             },
             "startup_timeout": {
                 "type": "integer", "required": False, "default": 60,
@@ -95,9 +129,41 @@ class SupertonicTTSService(BaseAudioGenerationService, BaseTTSService):
         self.response_format = self._format(self.config.get("response_format") or "wav")
         self.timeout = int(self.config.get("timeout") or 120)
         self.auto_start = str(self.config.get("auto_start", True)).lower() not in {"0", "false", "no"}
+        self.auto_install = str(self.config.get("auto_install", True)).lower() not in {"0", "false", "no"}
+        install_dir = Path(str(self.config.get("install_dir") or "data/runtime/supertonic3")).expanduser()
+        if not install_dir.is_absolute():
+            install_dir = Path.cwd() / install_dir
+        self.install_dir = install_dir
+        self.package_spec = str(self.config.get("package_spec") or "supertonic")
+        self.repo_url = str(self.config.get("repo_url") or "").strip()
+        self.repo_ref = str(self.config.get("repo_ref") or "").strip()
+        self.start_command = str(self.config.get("start_command") or "").strip()
         self.startup_timeout = int(self.config.get("startup_timeout") or 60)
         self._managed_proc = None
         self._connect_lock = threading.Lock()
+
+    def get_install_requirements(self):
+        if self.start_command or not self.auto_install:
+            return []
+        reqs = [python_venv_requirement()]
+        if self.repo_url:
+            reqs.append(executable_requirement("git"))
+        return reqs
+
+    def prepare_install(self, reporter=None):
+        if reporter:
+            reporter.step("checking_requirements", "Checking Supertonic requirements")
+        reqs = self.get_install_requirements()
+        assert_requirements(reqs)
+        if self.auto_install and not self.start_command:
+            self._ensure_runtime(reporter)
+        write_install_state(self.install_dir / ".pawflow_install.json", {
+            "service_type": self.TYPE,
+            "package_spec": self.package_spec,
+            "repo_url": self.repo_url,
+            "repo_ref": self.repo_ref,
+        })
+        return {"prepared": True, "requirements": reqs, "install_dir": str(self.install_dir)}
 
     def connect(self):
         """Register the service without starting the heavy local daemon.
@@ -130,6 +196,51 @@ class SupertonicTTSService(BaseAudioGenerationService, BaseTTSService):
         self._wait_ready(proc)
         self._managed_proc = proc
         return {"base_url": self.base_url, "managed": True, "process": proc}
+
+    def _venv_python(self) -> Path:
+        return self.install_dir / "venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+
+    def _resolve_start_command(self):
+        if self.start_command:
+            return shlex.split(self.start_command)
+        venv_python = self._venv_python()
+        python = str(venv_python) if venv_python.exists() else sys.executable
+        return [
+            python,
+            "-c",
+            "from supertonic.cli import main; raise SystemExit(main())",
+            "serve",
+        ]
+
+    def _ensure_runtime(self, reporter=None):
+        python = self._venv_python()
+        if python.exists():
+            if reporter:
+                reporter.step("validating", "Supertonic managed runtime already exists")
+            return
+        self.install_dir.mkdir(parents=True, exist_ok=True)
+        if reporter:
+            reporter.step("creating_venv", "Creating Supertonic Python virtual environment")
+        system_python = sys.executable or shutil.which("python3") or shutil.which("python")
+        run_checked([system_python, "-m", "venv", str(self.install_dir / "venv")], reporter=reporter, phase="creating_venv")
+        run_checked([str(python), "-m", "pip", "install", "--upgrade", "pip", "-q"], reporter=reporter, phase="installing_python_requirements")
+        if self.repo_url:
+            git = shutil.which("git")
+            if not git:
+                raise ServiceError("git is required to install Supertonic from repo_url")
+            src = self.install_dir / "src" / "supertonic3"
+            if not src.exists():
+                if reporter:
+                    reporter.step("cloning", "Cloning Supertonic repository")
+                src.parent.mkdir(parents=True, exist_ok=True)
+                run_checked([git, "clone", "--no-checkout", self.repo_url, str(src)], reporter=reporter, phase="cloning")
+            if self.repo_ref:
+                if reporter:
+                    reporter.step("checkout", f"Checking out Supertonic ref {self.repo_ref}")
+                run_checked([git, "-c", "safe.directory=*", "-C", str(src), "checkout", "--detach", self.repo_ref], reporter=reporter, phase="checkout")
+            run_checked([str(python), "-m", "pip", "install", "-e", str(src)], reporter=reporter, phase="installing_python_requirements")
+        else:
+            run_checked([str(python), "-m", "pip", "install", self.package_spec], reporter=reporter, phase="installing_python_requirements")
 
     def ensure_connected(self):
         with self._connect_lock:
@@ -177,14 +288,7 @@ class SupertonicTTSService(BaseAudioGenerationService, BaseTTSService):
     def _start_server(self, parsed) -> subprocess.Popen:
         host = parsed.hostname or "127.0.0.1"
         port = parsed.port or (443 if parsed.scheme == "https" else 7788)
-        cmd = [
-            sys.executable,
-            "-c",
-            "from supertonic.cli import main; raise SystemExit(main())",
-            "serve",
-            "--host", host,
-            "--port", str(port),
-        ]
+        cmd = self._resolve_start_command() + ["--host", host, "--port", str(port)]
         env = os.environ.copy()
         logger.info("[SUPERTONIC] starting managed daemon: %s", " ".join(cmd))
         try:

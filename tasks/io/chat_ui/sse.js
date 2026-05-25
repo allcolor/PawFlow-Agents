@@ -70,11 +70,38 @@ function connectSSE(cid, onReady, opts) {
   // ── Task block grouping ─────────────────────────────────────────
   const _taskBlocks = {};
   const _pendingToolResults = {};
+  const _serviceInstallProgress = {};
 
   function _resultText(value) {
     if (typeof value === 'string') return value;
     try { return JSON.stringify(value, null, 2); }
     catch (_err) { return String(value || ''); }
+  }
+
+  function _serviceInstallLabel(data) {
+    const status = data.status || 'running';
+    const icon = status === 'ready' ? '\u2713' : status === 'failed' ? '\u2715' : '\u23f3';
+    const name = data.service_id || data.service_type || 'service';
+    const type = data.service_type && data.service_type !== name ? ' (' + data.service_type + ')' : '';
+    const phase = data.phase ? ' - ' + data.phase.replace(/_/g, ' ') : '';
+    const msg = data.message ? ': ' + data.message : '';
+    return icon + ' Installing ' + name + type + phase + msg;
+  }
+
+  function _upsertServiceInstallProgress(data) {
+    const key = (data.service_type || 'service') + ':' + (data.service_id || 'default');
+    let row = _serviceInstallProgress[key];
+    const text = _serviceInstallLabel(data);
+    if (!row || !row.isConnected) {
+      row = addMsg('system', text, { source: { type: 'system', name: 'service-install' } });
+      _serviceInstallProgress[key] = row;
+    } else {
+      row.textContent = text;
+    }
+    if (data.status === 'ready' || data.status === 'failed') {
+      setTimeout(() => { delete _serviceInstallProgress[key]; }, 5000);
+    }
+    scrollBottom();
   }
 
   function _attachPendingToolResult(tcEl, tcId) {
@@ -275,6 +302,14 @@ function connectSSE(cid, onReady, opts) {
         n.onclick = () => { window.focus(); n.close(); };
       } catch (_err) { /* Notification quota or API unavailable */ }
     }
+  });
+
+  eventSource.addEventListener('service_install_progress', (e) => {
+    lastSSEActivity = Date.now();
+    let data = {};
+    try { data = e.data ? JSON.parse(e.data) : {}; } catch (_err) { return; }
+    _upsertServiceInstallProgress(data);
+    document.getElementById('status').textContent = _serviceInstallLabel(data);
   });
 
   eventSource.addEventListener('thinking', (e) => {

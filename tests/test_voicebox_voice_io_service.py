@@ -200,7 +200,7 @@ def test_voicebox_speak_uses_async_speak_for_known_profile(monkeypatch):
             return _Resp(json.dumps([{"id": "p1", "name": "Siwis"}]).encode())
         if req.get_method() == "POST" and req.full_url.endswith("/speak"):
             body = json.loads(req.data.decode())
-            assert body["profile"] == "Siwis"
+            assert body["profile"] == "p1"
             assert body["language"] == "fr"
             return _Resp(json.dumps({
                 "id": "gen1",
@@ -226,6 +226,33 @@ def test_voicebox_speak_uses_async_speak_for_known_profile(monkeypatch):
     assert out["audio_bytes"] == b"RIFFaudio"
     assert out["content_type"] == "audio/wav"
     assert any(url.endswith("/speak") for _method, url, _data in calls)
+
+
+def test_voicebox_speak_resolves_preset_voice_id_to_profile(monkeypatch):
+    captured = {}
+
+    def fake_urlopen(req, timeout=0):
+        if req.get_method() == "GET" and req.full_url.endswith("/health"):
+            return _Resp(b'{"ok":true}')
+        if req.get_method() == "GET" and req.full_url.endswith("/profiles"):
+            return _Resp(json.dumps([{
+                "id": "p-siwis",
+                "name": "Siwis",
+                "preset_voice_id": "ff_siwis",
+            }]).encode())
+        if req.get_method() == "POST" and req.full_url.endswith("/speak"):
+            captured["body"] = json.loads(req.data.decode())
+            return _Resp(b"mp3", "audio/mpeg")
+        raise AssertionError(req.full_url)
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    svc = VoiceboxService({"default_profile": "ff_siwis"})
+
+    out = svc.speak(text="bonjour", language="fr")
+
+    assert out["audio_bytes"] == b"mp3"
+    assert captured["body"]["profile"] == "p-siwis"
+    assert captured["body"]["language"] == "fr"
 
 
 def test_voicebox_speak_waits_for_async_speak_audio(monkeypatch):
@@ -317,7 +344,7 @@ def test_voicebox_speak_auto_creates_preset_default_profile(monkeypatch):
             return _Resp(json.dumps({"id": "siwis-id", **created}).encode())
         if req.get_method() == "POST" and req.full_url.endswith("/speak"):
             body = json.loads(req.data.decode())
-            assert body["profile"] == "Siwis"
+            assert body["profile"] == "siwis-id"
             return _Resp(json.dumps({
                 "id": "gen-siwis",
                 "profile_id": "siwis-id",

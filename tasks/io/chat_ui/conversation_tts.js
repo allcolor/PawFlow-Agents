@@ -36,6 +36,12 @@ function _convTtsConfig() {
   return cfg;
 }
 
+function _convTtsReportError(message) {
+  const text = message || 'Speech synthesis failed';
+  console.warn('[conversation-tts] ' + text);
+  if (typeof addMsg === 'function') addMsg('error', text);
+}
+
 function _convTtsUpdateButton() {
   const btn = document.getElementById('speakToggleBtn');
   if (!btn) return;
@@ -369,7 +375,7 @@ function _convTtsSynthesizeNext() {
     _convTtsSynthInFlight = Math.max(0, _convTtsSynthInFlight - 1);
     if (!_convTtsEnabled) return;
     if (!result || result.error || !result.url) {
-      console.warn('[conversation-tts] synth failed', result && result.error);
+      _convTtsReportError(result && result.error ? result.error : 'Speech synthesis returned no audio');
       _convTtsPendingAudio[seq] = '';
       _convTtsPlayNext();
       _convTtsPump();
@@ -383,7 +389,7 @@ function _convTtsSynthesizeNext() {
     settled = true;
     clearTimeout(timeout);
     _convTtsSynthInFlight = Math.max(0, _convTtsSynthInFlight - 1);
-    console.warn('[conversation-tts] synth request failed', err);
+    _convTtsReportError('Speech synthesis request failed: ' + (err && err.message ? err.message : err));
     _convTtsPendingAudio[seq] = '';
     _convTtsPlayNext();
     _convTtsPump();
@@ -472,14 +478,14 @@ function _convTtsSpeakSegmentsOnce(segments, runId) {
       return;
     }
     if (!result || result.error || !result.url) {
-      console.warn('[conversation-tts] message synth failed', result && result.error);
+      _convTtsReportError(result && result.error ? result.error : 'Speech synthesis returned no audio');
       return;
     }
     _convTtsPlayOneShot({ url: result.url, file_id: result.file_id || '' }, runId, () => {
       _convTtsSpeakSegmentsOnce(segments, runId);
     });
   }, err => {
-    console.warn('[conversation-tts] message synth request failed', err);
+    _convTtsReportError('Speech synthesis request failed: ' + (err && err.message ? err.message : err));
   });
 }
 

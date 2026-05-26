@@ -176,6 +176,10 @@ def _handle_media(self, action, body, store, user_id, flowfile):
             args["_tts_storage_ttl"] = max(60, ttl)
         result = handler.execute(args)
         if result.startswith("Error:"):
+            logger.warning(
+                "[TTS] synthesize failed: service=%s voice=%s conv=%s error=%s",
+                body.get("service", ""), body.get("voice", ""),
+                conv_id[:8] if conv_id else "", result)
             flowfile.set_content(json.dumps({"error": result}).encode())
             return [flowfile]
 
@@ -196,6 +200,10 @@ def _handle_media(self, action, body, store, user_id, flowfile):
                 except Exception as exc:
                     logger.debug("TTS FileStore metadata lookup failed: %s", exc)
         if not file_id:
+            logger.warning(
+                "[TTS] synthesize returned no audio file: service=%s voice=%s conv=%s result=%s",
+                body.get("service", ""), body.get("voice", ""),
+                conv_id[:8] if conv_id else "", result)
             flowfile.set_content(json.dumps({"error": "no audio file returned"}).encode())
             return [flowfile]
         url = "/files/" + file_id + "/" + filename

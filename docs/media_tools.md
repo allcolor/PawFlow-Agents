@@ -239,9 +239,10 @@ override the managed command for packaged deployments. Voicebox voice cloning is
 profile-based: PawFlow can speak through Voicebox profiles by name/id. Preset
 profiles can be created or updated directly from the service edit form with the
 `profile_*` fields and the `Save Voicebox profile` action; if `default_profile`
-names a known preset such as Kokoro `Siwis`, PawFlow creates the matching
-Voicebox preset profile automatically on first speech. Cloned-profile sample
-management remains in Voicebox. When the service is disabled or disconnected
+names a known preset such as Kokoro `Siwis` or its `preset_voice_id` such as
+`ff_siwis`, PawFlow resolves or creates the matching Voicebox preset profile
+before first speech. Cloned-profile sample management remains in Voicebox. When
+the service is disabled or disconnected
 and `auto_start=true` targets a loopback endpoint, PawFlow calls Voicebox's
 `/shutdown` endpoint so a subsequent enable starts a fresh backend process from
 the current managed checkout instead of reusing stale imported code.

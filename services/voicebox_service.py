@@ -871,6 +871,9 @@ class VoiceboxService(BaseVoiceCloneService, BaseSTTService):
             if profile_name in {str(item.get("id") or ""), str(item.get("name") or "")}:
                 existing_id = str(item.get("id") or "")
                 break
+            if preset_voice_id and preset_voice_id == str(item.get("preset_voice_id") or ""):
+                existing_id = str(item.get("id") or "")
+                break
         path = f"/profiles/{urllib.parse.quote(existing_id)}" if existing_id else "/profiles"
         method = "PUT" if existing_id else "POST"
         return self._request(
@@ -887,10 +890,15 @@ class VoiceboxService(BaseVoiceCloneService, BaseSTTService):
                 continue
             if value in {str(item.get("id") or ""), str(item.get("name") or "")}:
                 return str(item.get("id") or "")
+            if value == str(item.get("preset_voice_id") or ""):
+                return str(item.get("id") or "")
         try:
             created = self.save_preset_profile(name=value)
         except Exception:
-            return ""
+            try:
+                created = self.save_preset_profile(voice_id=value)
+            except Exception:
+                return ""
         return str(created.get("id") or "") if isinstance(created, dict) else ""
 
     def _wait_for_generation_audio(self, generation_id: str) -> dict:
@@ -1005,7 +1013,9 @@ class VoiceboxService(BaseVoiceCloneService, BaseSTTService):
             if value is not None and value != "":
                 payload[key] = value
         if not personality and payload.get("profile"):
-            self._resolve_profile_id(str(payload["profile"]))
+            profile_id = self._resolve_profile_id(str(payload["profile"]))
+            if profile_id:
+                payload["profile"] = profile_id
         active_error = self._active_download_error(str(payload.get("engine") or ""))
         if active_error:
             raise ServiceError(

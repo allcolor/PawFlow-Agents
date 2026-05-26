@@ -9,9 +9,21 @@ import logging
 import urllib.request
 
 from core import ServiceFactory, ServiceError
+from core.relay_proxy_url import resolve_relay_aware_url
 from services.base_image_generation import BaseImageGenerationService
 
 logger = logging.getLogger(__name__)
+
+
+def _truthy(value) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _raw_config(config: dict, key: str, default=""):
+    try:
+        return dict.__getitem__(config, key)
+    except KeyError:
+        return default
 
 
 class OpenAIImageService(BaseImageGenerationService):
@@ -29,7 +41,11 @@ class OpenAIImageService(BaseImageGenerationService):
             "base_url": {
                 "type": "string", "required": False,
                 "default": "https://api.openai.com/v1",
-                "description": "API base URL (for proxies/compatible endpoints)",
+                "description": "API base URL. Use http://${conv.relay}/host:port/v1 for relay-routed compatible endpoints.",
+            },
+            "allow_private_base_url": {
+                "type": "boolean", "required": False, "default": False,
+                "description": "Allow direct private/loopback base_url targets. Prefer relay URLs for local endpoints.",
             },
             "model": {
                 "type": "string", "required": False,
@@ -45,14 +61,42 @@ class OpenAIImageService(BaseImageGenerationService):
     def __init__(self, config):
         super().__init__(config)
         self.api_key = self.config.get("api_key", "")
-        self.base_url = self.config.get("base_url", "https://api.openai.com/v1").rstrip("/")
+        self.base_url = str(_raw_config(self.config, "base_url", "https://api.openai.com/v1") or "https://api.openai.com/v1").rstrip("/")
+        self._raw_base_url = self.base_url
+        self.allow_private_base_url = _truthy(self.config.get("allow_private_base_url", False))
+        self._runtime_user_id = ""
+        self._runtime_conversation_id = ""
+        self._runtime_agent_name = ""
         self.model = self.config.get("model", "gpt-image-1")
         self.timeout = int(self.config.get("timeout", 120))
+
+    def set_runtime_context(self, user_id: str = "", conversation_id: str = "",
+                            agent_name: str = "", **_: object):
+        self._runtime_user_id = user_id or ""
+        self._runtime_conversation_id = conversation_id or ""
+        self._runtime_agent_name = agent_name or ""
+
+    def _effective_base_url(self) -> str:
+        return resolve_relay_aware_url(
+            self._raw_base_url,
+            user_id=self._runtime_user_id,
+            conversation_id=self._runtime_conversation_id,
+            agent_name=self._runtime_agent_name,
+            allow_private=self.allow_private_base_url,
+            service_name="OpenAI image",
+            transform_relay=True,
+        )
 
     def _create_connection(self):
         if not self.api_key:
             raise ServiceError("api_key is required for OpenAI Image service")
-        return {"ready": True}
+        self.base_url = resolve_relay_aware_url(
+            self._raw_base_url,
+            allow_private=self.allow_private_base_url,
+            service_name="OpenAI image",
+            transform_relay=False,
+        )
+        return {"ready": True, "base_url": self.base_url}
 
     def _close_connection(self):
         pass
@@ -85,7 +129,7 @@ class OpenAIImageService(BaseImageGenerationService):
 
         data = json.dumps(body).encode("utf-8")
         req = urllib.request.Request(
-            f"{self.base_url}/images/generations",
+            f"{self._effective_base_url()}/images/generations",
             data=data,
             headers={
                 "Authorization": f"Bearer {self.api_key}",

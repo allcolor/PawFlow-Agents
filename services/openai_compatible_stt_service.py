@@ -70,7 +70,7 @@ class OpenAICompatibleSTTService(BaseSTTService):
             },
             "allow_private_base_url": {
                 "type": "boolean", "required": False, "default": False,
-                "description": "Allow direct private/loopback base_url targets. Prefer https://${conv.relay}/host:port for local relay endpoints.",
+                "description": "Allow direct private/loopback base_url targets. Prefer http://${conv.relay}/host:port for local relay endpoints.",
             },
             "model": {
                 "type": "string", "required": False,

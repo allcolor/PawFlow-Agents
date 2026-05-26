@@ -96,6 +96,7 @@ _SERVICE_CATEGORY_BY_TYPE = {
     "wavespeedVideoGeneration": "video",
     "sunoAudioGeneration": "audio",
     "supertonicTTS": "audio",
+    "voxcpmTTS": "audio",
     "openaiCompatibleSTT": "audio",
     "wavespeedAudioGeneration": "audio",
     "elevenLabsVoiceClone": "voice",

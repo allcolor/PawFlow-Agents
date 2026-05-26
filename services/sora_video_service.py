@@ -10,9 +10,21 @@ import time
 import urllib.request
 
 from core import ServiceFactory, ServiceError
+from core.relay_proxy_url import resolve_relay_aware_url
 from services.base_video_generation import BaseVideoGenerationService
 
 logger = logging.getLogger(__name__)
+
+
+def _truthy(value) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _raw_config(config: dict, key: str, default=""):
+    try:
+        return dict.__getitem__(config, key)
+    except KeyError:
+        return default
 
 
 class SoraVideoService(BaseVideoGenerationService):
@@ -30,7 +42,11 @@ class SoraVideoService(BaseVideoGenerationService):
             "base_url": {
                 "type": "string", "required": False,
                 "default": "https://api.openai.com/v1",
-                "description": "API base URL (for proxies/compatible endpoints)",
+                "description": "API base URL. Use http://${conv.relay}/host:port/v1 for relay-routed compatible endpoints.",
+            },
+            "allow_private_base_url": {
+                "type": "boolean", "required": False, "default": False,
+                "description": "Allow direct private/loopback base_url targets. Prefer relay URLs for local endpoints.",
             },
             "model": {
                 "type": "string", "required": False,
@@ -50,22 +66,50 @@ class SoraVideoService(BaseVideoGenerationService):
     def __init__(self, config):
         super().__init__(config)
         self.api_key = self.config.get("api_key", "")
-        self.base_url = self.config.get("base_url", "https://api.openai.com/v1").rstrip("/")
+        self.base_url = str(_raw_config(self.config, "base_url", "https://api.openai.com/v1") or "https://api.openai.com/v1").rstrip("/")
+        self._raw_base_url = self.base_url
+        self.allow_private_base_url = _truthy(self.config.get("allow_private_base_url", False))
+        self._runtime_user_id = ""
+        self._runtime_conversation_id = ""
+        self._runtime_agent_name = ""
         self.model = self.config.get("model", "sora-2")
         self.timeout = int(self.config.get("timeout", 600))
         self.poll_interval = int(self.config.get("poll_interval", 5))
 
+    def set_runtime_context(self, user_id: str = "", conversation_id: str = "",
+                            agent_name: str = "", **_: object):
+        self._runtime_user_id = user_id or ""
+        self._runtime_conversation_id = conversation_id or ""
+        self._runtime_agent_name = agent_name or ""
+
+    def _effective_base_url(self) -> str:
+        return resolve_relay_aware_url(
+            self._raw_base_url,
+            user_id=self._runtime_user_id,
+            conversation_id=self._runtime_conversation_id,
+            agent_name=self._runtime_agent_name,
+            allow_private=self.allow_private_base_url,
+            service_name="Sora",
+            transform_relay=True,
+        )
+
     def _create_connection(self):
         if not self.api_key:
             raise ServiceError("api_key is required for Sora service")
-        return {"ready": True}
+        self.base_url = resolve_relay_aware_url(
+            self._raw_base_url,
+            allow_private=self.allow_private_base_url,
+            service_name="Sora",
+            transform_relay=False,
+        )
+        return {"ready": True, "base_url": self.base_url}
 
     def _close_connection(self):
         pass
 
     def _api_request(self, method, path, body=None):
         """Make an authenticated request to OpenAI API."""
-        url = f"{self.base_url}{path}"
+        url = f"{self._effective_base_url()}{path}"
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",

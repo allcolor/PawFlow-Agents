@@ -99,12 +99,40 @@ function copyMsgId(btn) {
   });
 }
 
+function setPromptTextForRestart(text) {
+  const input = document.getElementById('input');
+  if (!input) return;
+  input.value = text || '';
+  savedDraft = input.value;
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  input.focus();
+}
+
+function restartTargetForUserMessage(msg) {
+  const messages = Array.from(document.querySelectorAll('#messages .msg[data-msgid]'));
+  const idx = messages.indexOf(msg);
+  if (idx <= 0) return { restart_index: 0 };
+  const prev = messages[idx - 1];
+  return prev && prev.dataset.msgid ? { msg_id: prev.dataset.msgid } : { restart_index: 0 };
+}
+
+function restartParamsForMessage(msg) {
+  if (!msg || !msg.dataset.msgid) return null;
+  return msg.dataset.messageRole === 'user'
+    ? restartTargetForUserMessage(msg)
+    : { msg_id: msg.dataset.msgid };
+}
+
 function restartFromMsg(btn) {
   const msg = btn.closest('.msg');
   if (!msg || !msg.dataset.msgid || !conversationId) return;
   if (!confirm(t('restartFromHereConfirm'))) return;
+  const isUserMessage = msg.dataset.messageRole === 'user';
+  const restartParams = restartParamsForMessage(msg);
+  if (!restartParams) return;
+  if (isUserMessage) setPromptTextForRestart(messageTextForAction(msg));
   showContextOp(t('contextRestarting'));
-  action$('restart_from', { msg_id: msg.dataset.msgid }).subscribe(data => {
+  action$('restart_from', restartParams).subscribe(data => {
     if (data.error) {
       hideContextOp();
       addMsg('error', data.error);

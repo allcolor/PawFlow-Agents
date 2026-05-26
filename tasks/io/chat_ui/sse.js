@@ -1145,7 +1145,11 @@ function connectSSE(cid, onReady, opts) {
     } else if (data.stage === 'done') {
       hideContextOp();
       if (data.operation === 'restart_from') {
+        const restartPromptText = data.restart_prompt_text || data.prompt_text || '';
         if (conversationId) resumeConv(conversationId, true);
+        if (restartPromptText && typeof setPromptTextForRestart === 'function') {
+          setTimeout(() => setPromptTextForRestart(restartPromptText), 100);
+        }
         return;
       }
       if (data.operation === 'git_prune') {

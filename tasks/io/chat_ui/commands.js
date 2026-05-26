@@ -646,6 +646,7 @@ function parseQuotedArgs(text) {
 // ── Command aliases ─────────────────────────────────────────────
 const _CMD_ALIASES = {
   '/restart': '/restart_from',
+  '/restart-from': '/restart_from',
   '/set_llm_service': '/llm',
   '/detach': '/clear-files',
   '/add-var': '/add-variable',

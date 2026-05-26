@@ -245,12 +245,28 @@ def test_message_actions_can_copy_id_and_restart_from_msg_id():
     assert "navigator.clipboard.writeText(msg.dataset.msgid)" in attachments_js
     assert "function restartFromMsg(btn)" in attachments_js
     assert "confirm(t('restartFromHereConfirm'))" in attachments_js
-    assert "action$('restart_from', { msg_id: msg.dataset.msgid })" in attachments_js
+    assert "function restartTargetForUserMessage(msg)" in attachments_js
+    assert "function restartParamsForMessage(msg)" in attachments_js
+    assert "msg.dataset.messageRole === 'user'" in attachments_js
+    assert "setPromptTextForRestart(messageTextForAction(msg))" in attachments_js
+    assert "action$('restart_from', restartParams)" in attachments_js
+
+
+def test_restart_from_slash_msg_id_uses_visible_user_message_semantics():
+    cmd_context_js = Path("tasks/io/chat_ui/cmd_context.js").read_text(encoding="utf-8")
+    commands_js = Path("tasks/io/chat_ui/commands.js").read_text(encoding="utf-8")
+    assert "'/restart-from': '/restart_from'" in commands_js
+    assert "messages.find(el => el.dataset.msgid === restartTarget)" in cmd_context_js
+    assert "msg.dataset.messageRole === 'user'" in cmd_context_js
+    assert "restartParamsForMessage(msg)" in cmd_context_js
+    assert "setPromptTextForRestart(restartPromptText)" in cmd_context_js
 
 
 def test_restart_from_done_reloads_truncated_conversation():
     assert "data.operation === 'restart_from'" in SSE_JS
     assert "resumeConv(conversationId, true)" in SSE_JS
+    assert "data.restart_prompt_text" in SSE_JS
+    assert "setPromptTextForRestart(restartPromptText)" in SSE_JS
 
 
 def test_live_tool_events_keep_chat_scrolled():

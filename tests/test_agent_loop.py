@@ -1173,6 +1173,29 @@ class TestAgentLoopPersistentContext(unittest.TestCase):
                 store, "testuser", ff_msg)
         assert json.loads(result[0].get_content())["status"] == "accepted"
         assert [m["msg_id"] for m in store.load("cx5", user_id="testuser")] == ["a1", "b2"]
+
+        store.save("cx5", [
+            {"role": "user", "content": "a", "msg_id": "a1"},
+            {"role": "assistant", "content": "b", "msg_id": "b2"},
+            {"role": "user", "content": "c", "msg_id": "c3"},
+        ], user_id="testuser")
+        ff_user_msg = FlowFile(content=json.dumps({
+            "action": "restart_from",
+            "conversation_id": "cx5",
+            "msg_id": "c3",
+        }).encode())
+        with patch.object(task, "_run_bg_context_op", side_effect=_run_sync):
+            result = _handle_context_ops(
+                task, "restart_from",
+                {"conversation_id": "cx5", "msg_id": "c3"},
+                store, "testuser", ff_user_msg)
+        user_data = json.loads(result[0].get_content())
+        assert user_data["status"] == "accepted"
+        assert user_data["result"]["restart_index"] == 2
+        assert user_data["result"]["restart_original_msg_id"] == "c3"
+        assert user_data["result"]["restart_prompt_text"] == "c"
+        assert [m["msg_id"] for m in store.load("cx5", user_id="testuser")] == ["a1", "b2"]
+
         store.save_agent_context("cx5", "assistant", [
             {"role": "user", "content": "a", "msg_id": "a1"},
         ])

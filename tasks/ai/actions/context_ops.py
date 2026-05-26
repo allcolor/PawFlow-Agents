@@ -1383,6 +1383,8 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             flowfile.set_attribute("http.response.status", "404")
             return [flowfile]
 
+        restart_prompt_text = ""
+        restart_original_msg_id = ""
         if _rf_target:
             _rf_idx = next(
                 (i for i, m in enumerate(_rf_msgs)
@@ -1395,7 +1397,23 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
                 }).encode())
                 flowfile.set_attribute("http.response.status", "404")
                 return [flowfile]
-            keep_count = _rf_idx + 1
+            _target_msg = _rf_msgs[_rf_idx]
+            if isinstance(_target_msg, dict) and _target_msg.get("role") == "user":
+                restart_original_msg_id = _rf_target
+                _content = _target_msg.get("content", "")
+                if isinstance(_content, str):
+                    restart_prompt_text = _content
+                elif isinstance(_content, list):
+                    restart_prompt_text = "\n".join(
+                        str(part.get("text", ""))
+                        for part in _content
+                        if isinstance(part, dict) and part.get("type") == "text"
+                    ).strip()
+                else:
+                    restart_prompt_text = str(_content or "")
+                keep_count = _rf_idx
+            else:
+                keep_count = _rf_idx + 1
         else:
             if _rf_index_raw is None:
                 flowfile.set_content(json.dumps({
@@ -1474,6 +1492,8 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
                 "kept_messages": len(kept_msgs),
                 "deleted_contexts": deleted_contexts,
                 "msg_id": _rf_target or None,
+                "restart_original_msg_id": restart_original_msg_id or None,
+                "restart_prompt_text": restart_prompt_text,
                 "restart_index": keep_count,
                 "agent": "shared",
             }

@@ -12,11 +12,21 @@ function cmdRestartFrom(text, parts) {
   if (!conversationId) { addMsg('system', t('noConv')); return true; }
   if (!restartTarget) { addMsg('system', 'Usage: /restart_from <index|msg_id>'); return true; }
   showContextOp(t('contextRestarting'));
-  const restartParams = /^\d+$/.test(restartTarget)
+  let restartPromptText = '';
+  let restartParams = /^\d+$/.test(restartTarget)
     ? { restart_index: parseInt(restartTarget, 10) }
     : { msg_id: restartTarget };
+  if (!/^\d+$/.test(restartTarget)) {
+    const messages = Array.from(document.querySelectorAll('#messages .msg[data-msgid]'));
+    const msg = messages.find(el => el.dataset.msgid === restartTarget);
+    if (msg && msg.dataset.messageRole === 'user' && typeof restartParamsForMessage === 'function') {
+      restartParams = restartParamsForMessage(msg) || restartParams;
+      if (typeof messageTextForAction === 'function') restartPromptText = messageTextForAction(msg);
+    }
+  }
   action$('restart_from', restartParams).subscribe(data => {
     if (data.error) addMsg('error', data.error);
+    else if (restartPromptText && typeof setPromptTextForRestart === 'function') setPromptTextForRestart(restartPromptText);
   });
   return true;
 }

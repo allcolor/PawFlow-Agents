@@ -49,8 +49,9 @@ ENV CI=true
 COPY auth_login.sh /opt/pawflow/auth_login.sh
 COPY codex_auth_login.sh /opt/pawflow/codex_auth_login.sh
 COPY gemini_auth_login.sh /opt/pawflow/gemini_auth_login.sh
+COPY agy_auth_login.sh /opt/pawflow/agy_auth_login.sh
 COPY rclone_auth_login.sh /opt/pawflow/rclone_auth_login.sh
-RUN chmod +x /opt/pawflow/auth_login.sh /opt/pawflow/codex_auth_login.sh /opt/pawflow/gemini_auth_login.sh /opt/pawflow/rclone_auth_login.sh
+RUN chmod +x /opt/pawflow/auth_login.sh /opt/pawflow/codex_auth_login.sh /opt/pawflow/gemini_auth_login.sh /opt/pawflow/agy_auth_login.sh /opt/pawflow/rclone_auth_login.sh
 
 # Browser wrapper for Claude Code auth login (Chromium with Docker-safe flags)
 RUN printf '#!/bin/bash\nexec chromium --no-sandbox --disable-gpu --disable-dev-shm-usage --disable-software-rasterizer --window-size=1280,800 "$@"\n' \

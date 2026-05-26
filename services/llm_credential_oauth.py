@@ -246,10 +246,18 @@ class LLMCredentialOAuthProviderService(BaseService):
             },
             {
                 "id": "gemini_server_login",
-                "label": "Login via server",
+                "label": "Login via server (Gemini CLI)",
                 "icon": "",
                 "when": {"provider": ["gemini"]},
                 "server_action": "gemini_server_login",
+                "flow": "gemini_login_server",
+            },
+            {
+                "id": "agy_server_login",
+                "label": "Login via server (Agy)",
+                "icon": "",
+                "when": {"provider": ["gemini"]},
+                "server_action": "agy_server_login",
                 "flow": "gemini_login_server",
             },
             {

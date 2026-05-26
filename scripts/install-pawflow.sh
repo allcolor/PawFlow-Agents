@@ -20,6 +20,7 @@ REPO_URL="$(printenv PAWFLOW_REPO_URL || true)"
 INSTALL_DIR="$(printenv PAWFLOW_INSTALL_DIR || true)"
 PORT="$(printenv PAWFLOW_PORT || true)"
 HOST="$(printenv PAWFLOW_HOST || true)"
+HOST_SET=0
 PAWFLOW_HOME="$(printenv PAWFLOW_HOME || true)"
 VERSION="$(printenv PAWFLOW_VERSION || true)"
 SERVER_MODE="$(printenv PAWFLOW_SERVER_MODE || true)"
@@ -32,6 +33,7 @@ if [[ -z "$IMAGE_REPO" ]]; then IMAGE_REPO="ghcr.io/allcolor/pawflow"; fi
 if [[ -z "$REPO_URL" ]]; then REPO_URL="https://github.com/allcolor/PawFlow-Agents.git"; fi
 if [[ -z "$INSTALL_DIR" ]]; then INSTALL_DIR="$HOME/pawflow-src"; fi
 if [[ -z "$PORT" ]]; then PORT="9090"; fi
+if [[ -n "$HOST" ]]; then HOST_SET=1; fi
 if [[ -z "$HOST" ]]; then HOST="0.0.0.0"; fi
 if [[ -z "$PAWFLOW_HOME" ]]; then PAWFLOW_HOME="$HOME/pawflow"; fi
 if [[ -z "$SERVER_MODE" ]]; then SERVER_MODE="auto"; fi
@@ -50,7 +52,7 @@ while [[ $# -gt 0 ]]; do
     --repo) REPO_URL="$2"; shift 2 ;;
     --dir) INSTALL_DIR="$2"; shift 2 ;;
     --port) PORT="$2"; shift 2 ;;
-    --host) HOST="$2"; shift 2 ;;
+    --host) HOST="$2"; HOST_SET=1; shift 2 ;;
     --home) PAWFLOW_HOME="$2"; shift 2 ;;
     --platform) DOCKER_PLATFORM="$2"; shift 2 ;;
     --native) START_TARGET="native"; shift ;;
@@ -70,7 +72,7 @@ Options:
   --repo URL         Git repository to clone when the script is not run from a checkout.
   --dir PATH         Source checkout directory for cloned installs.
   --port PORT        Host/server port (default: 9090).
-  --host HOST        Server bind host (default: 0.0.0.0).
+  --host HOST        Server bind host. Container default is 0.0.0.0; native default is 127.0.0.1.
   --home PATH        Persistent PawFlow home (default: ~/pawflow).
   --platform VALUE   Docker build platform, for example linux/amd64.
   --native           Start PawFlow natively in a Python venv after building runtime images.
@@ -204,8 +206,17 @@ seed_native_data() {
 }
 
 run_native_server() {
-  local py venv_python
+  local py venv_python bootstrap_gateway_key bootstrap_gateway_label native_host
   py="$(find_python)"
+  native_host="$HOST"
+  if [[ "$HOST_SET" == "0" ]]; then native_host="127.0.0.1"; fi
+  bootstrap_gateway_key="$(printenv PAWFLOW_BOOTSTRAP_GATEWAY_KEY || true)"
+  if [[ -z "$bootstrap_gateway_key" ]]; then
+    bootstrap_gateway_key="RoyBetty"
+    bootstrap_gateway_label="RoyBetty"
+  else
+    bootstrap_gateway_label="custom value from PAWFLOW_BOOTSTRAP_GATEWAY_KEY"
+  fi
   if [[ -z "$VENV_DIR" ]]; then VENV_DIR="$REPO_DIR/.venv-pawflow"; fi
   if [[ ! -d "$VENV_DIR" ]]; then
     echo "Creating native PawFlow virtualenv: $VENV_DIR"
@@ -227,13 +238,13 @@ URL:
   https://localhost:$PORT
 
 Initial bootstrap Private Gateway key:
-  RoyBetty
+  $bootstrap_gateway_label
 
 MSG
   cd "$REPO_DIR"
   PAWFLOW_DATA_DIR="$PAWFLOW_HOME/data" \
-  PAWFLOW_BOOTSTRAP_GATEWAY_KEY="${PAWFLOW_BOOTSTRAP_GATEWAY_KEY}" \
-  "$venv_python" "$REPO_DIR/cli.py" start --host "$HOST" --port "$PORT"
+  PAWFLOW_BOOTSTRAP_GATEWAY_KEY="$bootstrap_gateway_key" \
+  "$venv_python" "$REPO_DIR/cli.py" start --host "$native_host" --port "$PORT"
 }
 
 HOST_OS="$(detect_host)"
@@ -247,7 +258,11 @@ if ! docker info >/dev/null 2>&1; then
 fi
 
 if [[ -z "$IMAGE" ]]; then
-  IMAGE="$IMAGE_REPO:${VERSION}"
+  if [[ -n "$VERSION" ]]; then
+    IMAGE="$IMAGE_REPO:$VERSION"
+  else
+    IMAGE="$IMAGE_REPO:latest"
+  fi
 fi
 
 REPO_DIR="$(ensure_checkout)"

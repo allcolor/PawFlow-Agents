@@ -1,4 +1,254 @@
 {
-  "latest": "1.0.0",
-  "versions": ["1.0.0"]
+  "id": "pawflow-installer",
+  "name": "pawflow_installer",
+  "version": "1.0.0",
+  "description": "First-run bootstrap wizard for a new PawFlow server. Configures gateway, auth, LLM services, summarizer, variables, secrets, CLI credential pools, and final flow deployment.",
+  "parameters": {
+    "port": 9090,
+    "bootstrap_gateway_key": "RoyBetty",
+    "bootstrap_gateway_secret_ref": "privategateway.bootstrap",
+    "private_gateway_service_id": "_bootstrap_private_gateway",
+    "ssl_certfile": "data/system/ssl/bootstrap.crt",
+    "ssl_keyfile": "data/system/ssl/bootstrap.key"
+  },
+  "services": {
+    "http_listener": {
+      "type": "httpListener",
+      "parameters": {
+        "host": "0.0.0.0",
+        "port": "${port}",
+        "request_timeout": 60.0,
+        "ssl_certfile": "${ssl_certfile}",
+        "ssl_keyfile": "${ssl_keyfile}",
+        "private_gateway_service_id": "${private_gateway_service_id}"
+      }
+    }
+  },
+  "tasks": {
+    "http_in": {
+      "type": "httpReceiver",
+      "parameters": {
+        "service_id": "http_listener",
+        "routes": [
+          {
+            "method": "GET",
+            "pattern": "/install",
+            "relationship": "GET:/install",
+            "public": true
+          },
+          {
+            "method": "GET",
+            "pattern": "/install/api",
+            "relationship": "GET:/install/api",
+            "public": true
+          },
+          {
+            "method": "POST",
+            "pattern": "/install/api/finalize",
+            "relationship": "POST:/install/api/finalize",
+            "public": true
+          },
+          {
+            "method": "POST",
+            "pattern": "/install/api/llm-credential/prepare",
+            "relationship": "POST:/install/api/llm-credential/prepare",
+            "public": true
+          },
+          {
+            "method": "POST",
+            "pattern": "/install/api/llm-credential/paste",
+            "relationship": "POST:/install/api/llm-credential/paste",
+            "public": true
+          },
+          {
+            "method": "POST",
+            "pattern": "/install/api/llm-credential/server-login",
+            "relationship": "POST:/install/api/llm-credential/server-login",
+            "public": true
+          },
+          {
+            "method": "POST",
+            "pattern": "/install/api/llm-credential/server-login/status",
+            "relationship": "POST:/install/api/llm-credential/server-login/status",
+            "public": true
+          },
+          {
+            "method": "POST",
+            "pattern": "/install/api/llm-credential/server-login/cleanup",
+            "relationship": "POST:/install/api/llm-credential/server-login/cleanup",
+            "public": true
+          }
+        ]
+      }
+    },
+    "route_install": {
+      "type": "routeOnAttribute",
+      "parameters": {
+        "routes": {
+          "api_status": {
+            "attribute": "http.path",
+            "operator": "equals",
+            "value": "/install/api"
+          },
+          "api_finalize": {
+            "attribute": "http.path",
+            "operator": "equals",
+            "value": "/install/api/finalize"
+          },
+          "llm_credential_prepare": {
+            "attribute": "http.path",
+            "operator": "equals",
+            "value": "/install/api/llm-credential/prepare"
+          },
+          "llm_credential_paste": {
+            "attribute": "http.path",
+            "operator": "equals",
+            "value": "/install/api/llm-credential/paste"
+          },
+          "llm_credential_server_login": {
+            "attribute": "http.path",
+            "operator": "equals",
+            "value": "/install/api/llm-credential/server-login"
+          },
+          "llm_credential_server_login_status": {
+            "attribute": "http.path",
+            "operator": "equals",
+            "value": "/install/api/llm-credential/server-login/status"
+          },
+          "llm_credential_server_login_cleanup": {
+            "attribute": "http.path",
+            "operator": "equals",
+            "value": "/install/api/llm-credential/server-login/cleanup"
+          }
+        },
+        "default_relationship": "ui"
+      }
+    },
+    "install_ui": {
+      "type": "generateFlowFile",
+      "parameters": {
+        "content_type": "text/html; charset=utf-8",
+        "content": "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>PawFlow Installer</title><style>:root{color-scheme:dark;--bg:#0d1020;--panel:#12172a;--line:#26304a;--field:#0b1020;--text:#e6edf7;--muted:#9aa7bd;--green:#1e8f4d;--amber:#ffcf66;--danger:#ff7a7a}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,system-ui,sans-serif}.wrap{max-width:1120px;margin:0 auto;padding:36px 24px}.badge{display:inline-block;background:var(--green);color:white;border-radius:6px;padding:4px 8px;font-size:12px}.panel{border:1px solid var(--line);background:var(--panel);border-radius:8px;padding:22px;margin-top:18px}.layout{display:grid;grid-template-columns:minmax(220px,280px) 1fr;gap:18px}.steps{display:grid;gap:8px;align-content:start}.step{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:6px;padding:10px;background:#0f1424;color:var(--muted);text-align:left}.step.current{border-color:var(--green);color:var(--text)}.step.done{color:#9ff0bd}.num{display:inline-grid;place-items:center;width:22px;height:22px;border-radius:999px;background:#1b2440;font-size:12px}.step.done .num,.step.current .num{background:var(--green);color:white}.formgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}.muted{color:var(--muted)}.warn{color:var(--amber)}.error{color:var(--danger);min-height:1.2em}label{display:block;margin:12px 0 6px}input,select{width:100%;background:var(--field);color:var(--text);border:1px solid #394764;border-radius:6px;padding:10px}input[type=checkbox]{width:auto}button{background:var(--green);color:white;border:0;border-radius:6px;padding:10px 14px;font-weight:700}button.secondary{background:#25304a}button:disabled{opacity:.45}.actions{display:flex;gap:10px;justify-content:flex-end;margin-top:18px}.screen{display:none}.screen.active{display:block}pre{white-space:pre-wrap;background:var(--field);border:1px solid var(--line);border-radius:6px;padding:12px;max-height:260px;overflow:auto}.kv{display:grid;grid-template-columns:190px 1fr;gap:8px;margin-top:12px}.kv div{padding:8px;border-bottom:1px solid var(--line)}.pill{display:inline-block;border:1px solid var(--line);border-radius:999px;padding:4px 8px;margin:4px 4px 0 0;color:var(--muted)}@media(max-width:820px){.layout{grid-template-columns:1fr}.steps{grid-template-columns:1fr 1fr}.step{font-size:13px}.kv{grid-template-columns:1fr}}</style></head><body><main class=\"wrap\"><span class=\"badge\">bootstrap HTTPS</span><h1>PawFlow Installer</h1><p class=\"muted\">Complete each step in order. The last step applies the configuration and opens the first conversation.</p><section class=\"panel\"><div class=\"layout\"><nav class=\"steps\" id=\"steps\"></nav><form id=\"wizard\"><section class=\"screen active\" data-step=\"0\"><h2>Admin User</h2><div class=\"formgrid\"><div><label>Admin username</label><input name=\"admin_username\" value=\"admin\" required></div><div><label>Admin password</label><input name=\"admin_password\" type=\"password\" autocomplete=\"new-password\" minlength=\"12\" required></div></div><p class=\"muted\">The admin account is created before normal auth is enabled.</p></section><section class=\"screen\" data-step=\"1\"><h2>OAuth Configuration</h2><div class=\"formgrid\"><div><label>Auth provider</label><select name=\"auth_provider\"><option value=\"builtin\">Builtin</option><option value=\"google\">Google</option></select></div><div><label>Google client id</label><input name=\"oauth_google_client_id\" autocomplete=\"off\" placeholder=\"Optional\"></div><div><label>Google client secret</label><input name=\"oauth_google_client_secret\" type=\"password\" autocomplete=\"off\" placeholder=\"Optional\"></div><div><label><input name=\"link_admin_google\" type=\"checkbox\" value=\"1\"> Link admin after Google login</label></div></div><p class=\"muted\">Builtin auth is always enabled for first install. External providers can be completed after the admin session exists.</p></section><section class=\"screen\" data-step=\"2\"><h2>Private Gateway</h2><p class=\"warn\">Initial gateway key: RoyBetty. Finalization must replace it.</p><div class=\"formgrid\"><div><label>Current bootstrap key</label><input name=\"bootstrap_gateway_key\" autocomplete=\"off\" required></div><div><label>New Private Gateway key</label><input name=\"new_gateway_key\" autocomplete=\"new-password\" minlength=\"16\" required></div><div><label>Gateway skin</label><select name=\"gateway_skin\" id=\"gateway_skin\"><option value=\"matrix\">Matrix</option></select></div></div><p class=\"muted\">Skins are loaded from the installed private gateway skin repository.</p></section><section class=\"screen\" data-step=\"3\"><h2>LLM Service</h2><div class=\"formgrid\"><div><label>LLM service id</label><input name=\"llm_service_id\" value=\"codex_appserver_llm_service\" required></div><div><label>LLM provider</label><select name=\"llm_provider\"><option value=\"codex-app-server\">codex-app-server</option><option value=\"claude-code\">claude-code</option><option value=\"gemini\">gemini</option><option value=\"antigravity-interactive\">antigravity-interactive</option><option value=\"openai\">openai</option><option value=\"anthropic\">anthropic</option></select></div><div><label>LLM model</label><input name=\"llm_model\" value=\"gpt-5.5\" required></div><div><label>LLM API key</label><input name=\"llm_api_key\" type=\"password\" autocomplete=\"off\" placeholder=\"Use API key when this provider supports it\"></div><div><label>Credential pool</label><input name=\"credential_service_id\" id=\"credential_service_id\" readonly placeholder=\"Create pool when using CLI OAuth\"></div><div><label>LLM service scope</label><select name=\"llm_service_scope\"><option value=\"global\">Global</option><option value=\"user\">Admin user</option></select></div><div><label>Credential pool scope</label><select name=\"credential_pool_scope\"><option value=\"global\">Global</option><option value=\"user\">Admin user</option></select></div><div><label>Summarizer scope</label><select name=\"summarizer_service_scope\"><option value=\"global\">Global</option><option value=\"user\">Admin user</option></select></div><div id=\"gemini_login_cli_wrap\" style=\"display:none\"><label>Gemini pool server login</label><select name=\"login_cli\" id=\"login_cli\"><option value=\"gemini\">Gemini CLI</option><option value=\"agy\">Agy / Antigravity</option></select></div></div><div class=\"actions\" style=\"justify-content:flex-start\"><button type=\"button\" class=\"secondary\" id=\"prepare_pool\">Create login pool</button><button type=\"button\" class=\"secondary\" id=\"server_login\">Login via server</button></div><pre id=\"credential_help\" style=\"display:none\"></pre><label id=\"credential_label\" style=\"display:none\">Paste credentials JSON</label><textarea id=\"credential_json\" style=\"display:none;width:100%;min-height:120px;background:var(--field);color:var(--text);border:1px solid #394764;border-radius:6px;padding:10px\"></textarea><div class=\"actions\" id=\"credential_actions\" style=\"display:none;justify-content:flex-start\"><button type=\"button\" class=\"secondary\" id=\"save_credentials\">Save pasted credentials</button></div><p class=\"muted\">If you provide an API key, no OAuth pool is created. If you click Create login pool, the pool is created immediately in the selected scope and linked to this LLM service by credential_service_id. Server login is available before any relay exists; Gemini pools can use either Gemini CLI or Agy/Antigravity.</p></section><section class=\"screen\" data-step=\"4\"><h2>Summarizer</h2><p>The summarizer service will use the selected LLM service.</p><div class=\"kv\"><div>Service</div><div>summarizer_service</div><div>LLM service</div><div data-review=\"llm_service_id\"></div></div></section><section class=\"screen\" data-step=\"5\"><h2>Runtime Flow</h2><p>PawFlow will deploy <strong>default.pawflow_agent:1.0.0</strong> as <strong>pawflow-agent</strong> and start its executor.</p><div class=\"kv\"><div>Gateway</div><div>_private_gateway</div><div>Auth</div><div>_auth_gateway</div></div></section><section class=\"screen\" data-step=\"6\"><h2>First Conversation</h2><p>The installer will create the first active conversation.</p><div class=\"kv\"><div>Title</div><div>Welcome to PawFlow</div><div>Selected agent</div><div>assistant</div><div>LLM service</div><div data-review=\"llm_service_id\"></div></div></section><section class=\"screen\" data-step=\"7\"><h2>Relay Profiles</h2><p>The installer keeps server and client relay image profiles explicit.</p><div class=\"kv\"><div>Server full</div><div>server-full / pawflow-relay-dev</div><div>Server minimal</div><div>server-minimal / pawflow-relay-minimal</div><div>Client default</div><div>client-minimal</div></div></section><section class=\"screen\" data-step=\"8\"><h2>Smoke Tests</h2><p>After finalization, verify gateway, login, chat, API, SSE, LLM, summarizer, executor, and first conversation.</p><pre id=\"state\">Loading installer state...</pre></section><section class=\"screen\" data-step=\"9\"><h2>Finalize</h2><p>Finalization writes services, deploys the main flow, starts the executor, creates the first conversation, disables the bootstrap gateway, and redirects to chat.</p><div class=\"kv\" id=\"review\"></div></section><p class=\"error\" id=\"error\"></p><div class=\"actions\"><button type=\"button\" class=\"secondary\" id=\"back\">Back</button><button type=\"button\" id=\"next\">Next</button><button type=\"submit\" id=\"finalize\" style=\"display:none\">Finalize installation</button></div></form></div></section></main><script>const names=['Admin User','OAuth Configuration','Private Gateway','LLM Service','Summarizer','Runtime Flow','First Conversation','Relay Profiles','Smoke Tests','Finalize'];let step=0;let status=null;const form=document.getElementById('wizard');const screens=[...document.querySelectorAll('.screen')];const steps=document.getElementById('steps');const err=document.getElementById('error');function field(name){return form.elements[name]}function values(){return Object.fromEntries(new FormData(form))}function drawSteps(){steps.innerHTML=names.map((n,i)=>`<div class=\"step ${i===step?'current'} ${i<step?'done'}\"><span class=\"num\">${i+1}</span><span>${n}</span></div>`).join('')}function show(){screens.forEach((s,i)=>s.classList.toggle('active',i===step));document.getElementById('back').disabled=step===0;document.getElementById('next').style.display=step===names.length-1?'none':'';document.getElementById('finalize').style.display=step===names.length-1?'':'none';err.textContent='';drawSteps();renderReview()}function requireFields(list){for(const name of list){const el=field(name);if(!el.checkValidity()){el.reportValidity();return false}}return true}function validate(){if(step===0&&!requireFields(['admin_username','admin_password']))return false;if(step===2){if(!requireFields(['bootstrap_gateway_key','new_gateway_key','gateway_skin']))return false;if(field('new_gateway_key').value===field('bootstrap_gateway_key').value||field('new_gateway_key').value==='RoyBetty'){err.textContent='New gateway key must replace the bootstrap key.';return false}}if(step===3&&!requireFields(['llm_service_id','llm_provider','llm_model']))return false;return true}function renderReview(){document.querySelectorAll('[data-review]').forEach(el=>{el.textContent=field(el.dataset.review)?.value||''});const v=values();document.getElementById('review').innerHTML=['admin_username','auth_provider','gateway_skin','llm_service_id','llm_service_scope','credential_pool_scope','summarizer_service_scope','llm_provider','llm_model'].map(k=>`<div>${k}</div><div>${v[k]||''}</div>`).join('')}function loadSkins(skins){const select=document.getElementById('gateway_skin');if(!Array.isArray(skins)||!skins.length)return;select.innerHTML=skins.map(s=>`<option value=\"${String(s.name).replaceAll('&','&amp;').replaceAll('\"','&quot;')}\">${String(s.title||s.name).replaceAll('&','&amp;').replaceAll('<','&lt;')}</option>`).join('');select.value=skins.some(s=>s.name==='matrix')?'matrix':skins[0].name}function updateLoginCliVisibility(){const p=field('llm_provider')?.value||'';document.getElementById('gemini_login_cli_wrap').style.display=(p==='gemini'||p==='antigravity-interactive')?'block':'none'}async function preparePool(){if(!validate())return;const v=values();if(v.llm_api_key){err.textContent='API key is set; no OAuth pool is needed.';return}const r=await fetch('/install/api/llm-credential/prepare',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(v)});const data=await r.json();if(!r.ok||data.error){err.textContent=data.error||'Pool creation failed';return}field('credential_service_id').value=data.service_id;const help=document.getElementById('credential_help');help.style.display='block';help.textContent=data.message||'';document.getElementById('credential_label').style.display='block';document.getElementById('credential_json').style.display='block';document.getElementById('credential_actions').style.display='flex'}async function serverLoginStatus(sessionId){const v=values();v.session_id=sessionId;const r=await fetch('/install/api/llm-credential/server-login/status',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(v)});const data=await r.json();if(!r.ok||data.error){err.textContent=data.error||'Server login failed';return}if(data.ok){document.getElementById('credential_help').style.display='block';document.getElementById('credential_help').textContent=data.message||'Credentials saved.';return}setTimeout(()=>serverLoginStatus(sessionId),2500)}async function startServerLogin(){if(!validate())return;const v=values();if(!v.credential_service_id){err.textContent='Create a login pool first.';return}const r=await fetch('/install/api/llm-credential/server-login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(v)});const data=await r.json();if(!r.ok||data.error){err.textContent=data.error||'Server login failed';return}err.textContent='';if(data.vnc_url)window.open(data.vnc_url,'_blank','noopener');document.getElementById('credential_help').style.display='block';document.getElementById('credential_help').textContent=data.message||'Server login started.';if(data.session_id)serverLoginStatus(data.session_id)}async function saveCredentials(){const v=values();v.credentials=document.getElementById('credential_json').value;const r=await fetch('/install/api/llm-credential/paste',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(v)});const data=await r.json();if(!r.ok||data.error){err.textContent=data.error||'Credential save failed';return}err.textContent='';document.getElementById('credential_help').textContent='Credentials saved for '+data.service_id}async function refresh(){const r=await fetch('/install/api',{cache:'no-store'});status=await r.json();loadSkins(status.private_gateway_skins);document.getElementById('state').textContent=JSON.stringify(status,null,2)}document.getElementById('prepare_pool').addEventListener('click',preparePool);document.getElementById('server_login').addEventListener('click',startServerLogin);document.getElementById('save_credentials').addEventListener('click',saveCredentials);field('llm_provider').addEventListener('change',updateLoginCliVisibility);document.getElementById('back').addEventListener('click',()=>{if(step>0){step--;show()}});document.getElementById('next').addEventListener('click',()=>{if(validate()&&step<names.length-1){step++;show()}});form.addEventListener('submit',async e=>{e.preventDefault();if(!validate())return;const r=await fetch('/install/api/finalize',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(values())});const data=await r.json();document.getElementById('state').textContent=JSON.stringify(data,null,2);if(!r.ok||data.error){err.textContent=data.error||'Finalization failed';return}if(data.install_complete){window.location.href='/chat'}});updateLoginCliVisibility();show();refresh().then(()=>{updateLoginCliVisibility();show()}).catch(e=>{document.getElementById('state').textContent=String(e)});</script></body></html>"
+      }
+    },
+    "install_api": {
+      "type": "installBootstrap",
+      "parameters": {}
+    },
+    "send_html": {
+      "type": "handleHTTPResponse",
+      "parameters": {
+        "service_id": "http_listener",
+        "content_type": "text/html; charset=utf-8"
+      }
+    },
+    "send_json": {
+      "type": "handleHTTPResponse",
+      "parameters": {
+        "service_id": "http_listener",
+        "content_type": "application/json"
+      }
+    }
+  },
+  "relations": [
+    {
+      "from": "http_in",
+      "to": "route_install",
+      "type": "GET:/install"
+    },
+    {
+      "from": "http_in",
+      "to": "route_install",
+      "type": "GET:/install/api"
+    },
+    {
+      "from": "http_in",
+      "to": "route_install",
+      "type": "POST:/install/api/finalize"
+    },
+    {
+      "from": "route_install",
+      "to": "install_ui",
+      "type": "ui"
+    },
+    {
+      "from": "install_ui",
+      "to": "send_html",
+      "type": "success"
+    },
+    {
+      "from": "install_api",
+      "to": "send_json",
+      "type": "success"
+    },
+    {
+      "from": "route_install",
+      "to": "install_api",
+      "type": "api_status"
+    },
+    {
+      "from": "route_install",
+      "to": "install_api",
+      "type": "api_finalize"
+    },
+    {
+      "from": "http_in",
+      "to": "route_install",
+      "type": "POST:/install/api/llm-credential/prepare"
+    },
+    {
+      "from": "http_in",
+      "to": "route_install",
+      "type": "POST:/install/api/llm-credential/paste"
+    },
+    {
+      "from": "route_install",
+      "to": "install_api",
+      "type": "llm_credential_prepare"
+    },
+    {
+      "from": "route_install",
+      "to": "install_api",
+      "type": "llm_credential_paste"
+    },
+    {
+      "from": "http_in",
+      "to": "route_install",
+      "type": "POST:/install/api/llm-credential/server-login"
+    },
+    {
+      "from": "route_install",
+      "to": "install_api",
+      "type": "llm_credential_server_login"
+    },
+    {
+      "from": "http_in",
+      "to": "route_install",
+      "type": "POST:/install/api/llm-credential/server-login/status"
+    },
+    {
+      "from": "route_install",
+      "to": "install_api",
+      "type": "llm_credential_server_login_status"
+    },
+    {
+      "from": "http_in",
+      "to": "route_install",
+      "type": "POST:/install/api/llm-credential/server-login/cleanup"
+    },
+    {
+      "from": "route_install",
+      "to": "install_api",
+      "type": "llm_credential_server_login_cleanup"
+    }
+  ],
+  "entries": [
+    "http_in"
+  ],
+  "exits": [
+    "send_html",
+    "send_json"
+  ],
+  "fqn": "default.pawflow_installer:1.0.0",
+  "package": "default"
 }

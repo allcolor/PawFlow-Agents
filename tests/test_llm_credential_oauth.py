@@ -33,6 +33,7 @@ def test_credential_provider_exposes_login_and_pool_actions():
     assert "credential_pool_manage" in ids
     assert "codex_login" in ids
     assert "gemini_login" in ids
+    assert "agy_server_login" in ids
     assert "claude_code_login" in ids
     manage = next(a for a in actions if a["id"] == "credential_pool_manage")
     assert manage["flow"] == "credential_table"

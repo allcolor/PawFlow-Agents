@@ -148,6 +148,8 @@ def _public_draft(draft: Dict[str, Any]) -> Dict[str, Any]:
 
 def get_install_status() -> Dict[str, Any]:
     """Return installer state without exposing bootstrap or gateway secrets."""
+    from core.private_gateway_skins import list_skins
+
     state = _load_state()
     checks = dict(state.get("checks") or {})
     draft = _public_draft(dict(state.get("draft") or {}))
@@ -158,6 +160,14 @@ def get_install_status() -> Dict[str, Any]:
         "completed_steps": list(state.get("completed_steps") or []),
         "steps": list(INSTALL_STEPS),
         "client_relay_images": dict(CLIENT_RELAY_IMAGES),
+        "private_gateway_skins": [
+            {
+                "name": str(skin.get("name") or ""),
+                "title": str(skin.get("title") or skin.get("name") or ""),
+                "description": str(skin.get("description") or ""),
+            }
+            for skin in list_skins()
+        ],
         "checks": checks,
         "draft": draft,
     }
@@ -214,7 +224,40 @@ def _install_bootstrap_private_gateway(secret_ref: str) -> str:
     return BOOTSTRAP_PRIVATE_GATEWAY_SERVICE_ID
 
 
-def _install_final_private_gateway(secret_ref: str) -> str:
+def _validate_gateway_skin(skin: str) -> str:
+    from core.private_gateway_skins import DEFAULT_SKIN, resolve_skin
+
+    selected = (skin or DEFAULT_SKIN).strip()
+    if not selected:
+        selected = DEFAULT_SKIN
+    if resolve_skin(selected) is None:
+        raise ValueError(f"unknown private gateway skin: {selected}")
+    return selected
+
+
+def _expected_bootstrap_key() -> str:
+    return os.environ.get(
+        "PAWFLOW_BOOTSTRAP_GATEWAY_KEY",
+        DEFAULT_BOOTSTRAP_GATEWAY_KEY,
+    )
+
+
+def _require_bootstrap_key(payload: Dict[str, Any]) -> None:
+    provided_key = str(
+        payload.get("bootstrap_gateway_key")
+        or payload.get("current_gateway_key")
+        or ""
+    )
+    if provided_key != _expected_bootstrap_key():
+        raise PermissionError("invalid bootstrap gateway key")
+
+
+def require_bootstrap_key(payload: Dict[str, Any]) -> None:
+    """Public bootstrap authorization helper for install HTTP endpoints."""
+    _require_bootstrap_key(payload)
+
+
+def _install_final_private_gateway(secret_ref: str, skin: str) -> str:
     """Install the persistent Private Gateway used by the normal PawFlow flow."""
     from tasks import _register_all_services
     from core.service_registry import ServiceRegistry, SCOPE_GLOBAL
@@ -228,7 +271,7 @@ def _install_final_private_gateway(secret_ref: str) -> str:
         config={
             "enabled": True,
             "secret_refs": secret_ref,
-            "skin": "matrix",
+            "skin": skin,
         },
         description="Persistent private gateway for PawFlow",
         enabled=True,
@@ -283,9 +326,195 @@ def _install_auth_gateway() -> str:
     return AUTH_GATEWAY_SERVICE_ID
 
 
-def _install_llm_and_summarizer(payload: Dict[str, Any]) -> tuple[str, str]:
+def _install_llm_credential_pool(provider: str) -> str:
+    return _install_llm_credential_pool_for_scope(provider, "global", "")
+
+
+def _normalize_install_scope(scope: str) -> str:
+    selected = (scope or "global").strip().lower()
+    if selected not in {"global", "user"}:
+        raise ValueError("install service scope must be 'global' or 'user'")
+    return selected
+
+
+def _install_scope_id(scope: str, admin_username: str = "") -> str:
+    return "" if scope == "global" else admin_username
+
+
+def _service_scopes(payload: Dict[str, Any]) -> tuple[str, str, str]:
+    default_scope = _normalize_install_scope(str(payload.get("service_scope") or "global"))
+    llm_scope = _normalize_install_scope(str(payload.get("llm_service_scope") or default_scope))
+    credential_scope = _normalize_install_scope(str(
+        payload.get("credential_pool_scope") or payload.get("llm_credential_scope") or llm_scope))
+    summarizer_scope = _normalize_install_scope(str(payload.get("summarizer_service_scope") or llm_scope))
+    return llm_scope, credential_scope, summarizer_scope
+
+
+def _install_llm_credential_pool_for_scope(provider: str, scope: str,
+                                           admin_username: str) -> str:
     from tasks import _register_all_services
-    from core.service_registry import ServiceRegistry, SCOPE_GLOBAL
+    from core.service_registry import ServiceRegistry
+    from services.llm_credential_oauth import (
+        PROVIDERS as CREDENTIAL_PROVIDERS,
+        default_credential_service_id,
+        normalize_provider,
+    )
+
+    credential_provider = normalize_provider(provider)
+    if credential_provider not in CREDENTIAL_PROVIDERS:
+        return ""
+    service_id = default_credential_service_id(credential_provider)
+    if not service_id:
+        return ""
+
+    _register_all_services()
+    ServiceRegistry.get_instance().install(
+        scope=scope,
+        scope_id=_install_scope_id(scope, admin_username),
+        service_id=service_id,
+        service_type="llmCredentialOAuthProvider",
+        config={
+            "provider": credential_provider,
+            "label": f"{credential_provider} OAuth credentials",
+        },
+        description="OAuth credential pool for CLI-backed LLM providers",
+        enabled=True,
+    )
+    return service_id
+
+
+def prepare_llm_credential_pool(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Create the CLI OAuth credential pool before final LLM installation."""
+    from services.llm_credential_oauth import normalize_provider
+
+    _require_bootstrap_key(payload)
+    admin_username = str(payload.get("admin_username") or "admin").strip() or "admin"
+    provider = normalize_provider(str(payload.get("llm_provider") or ""))
+    _llm_scope, credential_scope, _summarizer_scope = _service_scopes(payload)
+    service_id = _install_llm_credential_pool_for_scope(provider, credential_scope, admin_username)
+    if not service_id:
+        raise ValueError("selected LLM provider does not use an OAuth credential pool")
+
+    state = _load_state()
+    state.setdefault("version", 1)
+    state["install_complete"] = False
+    state["updated_at"] = time.time()
+    state.setdefault("draft", {})
+    state["draft"].setdefault("llm_services", {})
+    state["draft"]["llm_services"].update({
+        "credential_provider": provider,
+        "credential_service_id": service_id,
+        "credential_pool_scope": credential_scope,
+    })
+    state.setdefault("checks", {})["llm_credential_pool"] = True
+    _write_state(state)
+    return {
+        "ok": True,
+        "provider": provider,
+        "service_id": service_id,
+        "scope": credential_scope,
+        "flow": "paste_credentials",
+        "message": _credential_paste_instructions(provider),
+    }
+
+
+def _credential_paste_instructions(provider: str) -> str:
+    if provider == "claude-code":
+        return (
+            "Run this on your machine:\n\n"
+            "  claude auth login\n\n"
+            "Then paste the content of ~/.claude/.credentials.json."
+        )
+    if provider == "codex-app-server":
+        return (
+            "Run this on your machine:\n\n"
+            "  codex login\n\n"
+            "Then paste the content of ~/.codex/auth.json."
+        )
+    if provider == "gemini":
+        return (
+            "Run this on your machine:\n\n"
+            "  gemini\n\n"
+            "Then paste the content of ~/.gemini/oauth_creds.json."
+        )
+    raise ValueError(f"selected LLM provider does not support paste login: {provider}")
+
+
+def save_llm_credential(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Persist pasted CLI OAuth credentials into the prepared credential pool."""
+    from core.service_registry import ServiceRegistry
+    from services.llm_credential_oauth import normalize_provider
+
+    _require_bootstrap_key(payload)
+    admin_username = str(payload.get("admin_username") or "admin").strip() or "admin"
+    provider = normalize_provider(str(payload.get("llm_provider") or ""))
+    service_id = str(payload.get("credential_service_id") or "").strip()
+    _llm_scope, credential_scope, _summarizer_scope = _service_scopes(payload)
+    credentials = str(payload.get("credentials") or "").strip()
+    if not service_id:
+        raise ValueError("credential_service_id is required")
+    if not credentials:
+        raise ValueError("credentials are required")
+
+    sdef = ServiceRegistry.get_instance().get_definition(
+        credential_scope, _install_scope_id(credential_scope, admin_username), service_id)
+    if sdef is None or sdef.service_type != "llmCredentialOAuthProvider":
+        raise ValueError(f"credential service not found: {service_id}")
+    configured_provider = normalize_provider((sdef.config or {}).get("provider", ""))
+    if configured_provider != provider:
+        raise ValueError(
+            f"credential service provider mismatch: expected {configured_provider}, got {provider}")
+
+    if provider == "claude-code":
+        parsed = json.loads(credentials)
+        oauth = parsed.get("claudeAiOauth", {})
+        access_token = oauth.get("accessToken", "")
+        refresh_token = oauth.get("refreshToken", "")
+        expires_at = oauth.get("expiresAt", 0)
+        if not access_token:
+            raise ValueError("invalid Claude credentials: no accessToken found")
+        from core.llm_providers.claude_code_session import add_credential_to_pool
+        add_credential_to_pool(access_token, refresh_token, expires_at, service_id=service_id)
+    elif provider == "codex-app-server":
+        from core.llm_providers.codex_session import add_credential_to_pool, parse_auth_json
+        parsed = parse_auth_json(credentials)
+        access_token = parsed.get("access_token", "")
+        if not access_token:
+            raise ValueError("invalid Codex credentials: no access_token found")
+        add_credential_to_pool(
+            access_token,
+            parsed.get("refresh_token", ""),
+            parsed.get("expires_at", 0),
+            account=parsed.get("account", ""),
+            service_id=service_id,
+            id_token=parsed.get("id_token", ""),
+        )
+    elif provider == "gemini":
+        from core.llm_providers.gemini_session import add_credential_to_pool, parse_oauth_creds_json
+        parsed = parse_oauth_creds_json(credentials)
+        access_token = parsed.get("access_token", "")
+        if not access_token:
+            raise ValueError("invalid Gemini credentials: no access_token found")
+        add_credential_to_pool(
+            access_token,
+            parsed.get("refresh_token", ""),
+            parsed.get("expires_at", 0),
+            account=parsed.get("account", ""),
+            service_id=service_id,
+        )
+    else:
+        raise ValueError(f"selected LLM provider does not support paste login: {provider}")
+
+    state = _load_state()
+    state.setdefault("checks", {})["llm_credential_login"] = True
+    state["updated_at"] = time.time()
+    _write_state(state)
+    return {"ok": True, "service_id": service_id, "provider": provider}
+
+
+def _install_llm_and_summarizer(payload: Dict[str, Any]) -> tuple[str, str, str]:
+    from tasks import _register_all_services
+    from core.service_registry import ServiceRegistry
 
     _register_all_services()
     provider = str(payload.get("llm_provider") or "").strip()
@@ -297,7 +526,10 @@ def _install_llm_and_summarizer(payload: Dict[str, Any]) -> tuple[str, str]:
         raise ValueError("llm_service_id is required")
     if not model:
         raise ValueError("llm_model is required")
+    admin_username = str(payload.get("admin_username") or "admin").strip() or "admin"
+    llm_scope, credential_scope, summarizer_scope = _service_scopes(payload)
 
+    credential_service_id = ""
     llm_config: Dict[str, Any] = {
         "provider": provider,
         "default_model": model,
@@ -311,11 +543,16 @@ def _install_llm_and_summarizer(payload: Dict[str, Any]) -> tuple[str, str]:
         secret_ref = f"llm.{llm_service_id}.api_key"
         _store_global_secret(secret_ref, api_key)
         llm_config["api_key"] = "${" + secret_ref + "}"
+    else:
+        credential_service_id = _install_llm_credential_pool_for_scope(
+            provider, credential_scope, admin_username)
+        if credential_service_id:
+            llm_config["credential_service_id"] = credential_service_id
 
     reg = ServiceRegistry.get_instance()
     reg.install(
-        scope=SCOPE_GLOBAL,
-        scope_id="",
+        scope=llm_scope,
+        scope_id=_install_scope_id(llm_scope, admin_username),
         service_id=llm_service_id,
         service_type="llmConnection",
         config=llm_config,
@@ -323,15 +560,15 @@ def _install_llm_and_summarizer(payload: Dict[str, Any]) -> tuple[str, str]:
         enabled=True,
     )
     reg.install(
-        scope=SCOPE_GLOBAL,
-        scope_id="",
+        scope=summarizer_scope,
+        scope_id=_install_scope_id(summarizer_scope, admin_username),
         service_id=SUMMARIZER_SERVICE_ID,
         service_type="summarizer",
         config={"llm_service": llm_service_id},
         description="Summarizer service for conversation compaction",
         enabled=True,
     )
-    return llm_service_id, SUMMARIZER_SERVICE_ID
+    return llm_service_id, SUMMARIZER_SERVICE_ID, credential_service_id
 
 
 def _deploy_main_flow(private_gateway_service_id: str) -> str:
@@ -442,17 +679,8 @@ def finalize_install(payload: Dict[str, Any]) -> Dict[str, Any]:
     if state.get("install_complete"):
         return get_install_status()
 
-    expected_key = os.environ.get(
-        "PAWFLOW_BOOTSTRAP_GATEWAY_KEY",
-        DEFAULT_BOOTSTRAP_GATEWAY_KEY,
-    )
-    provided_key = str(
-        payload.get("bootstrap_gateway_key")
-        or payload.get("current_gateway_key")
-        or ""
-    )
-    if provided_key != expected_key:
-        raise PermissionError("invalid bootstrap gateway key")
+    _require_bootstrap_key(payload)
+    expected_key = _expected_bootstrap_key()
 
     new_key = str(
         payload.get("new_gateway_key")
@@ -480,14 +708,16 @@ def finalize_install(payload: Dict[str, Any]) -> Dict[str, Any]:
         raise ValueError("llm_service_id is required")
     if not str(payload.get("llm_model") or "").strip():
         raise ValueError("llm_model is required")
+    llm_scope, credential_scope, summarizer_scope = _service_scopes(payload)
     if not MAIN_TEMPLATE.exists():
         raise ValueError(f"main PawFlow flow template is missing: {MAIN_TEMPLATE}")
+    gateway_skin = _validate_gateway_skin(str(payload.get("gateway_skin") or ""))
 
     final_secret_ref = _store_global_secret(FINAL_GATEWAY_SECRET_REF, new_key)
-    final_gateway_service_id = _install_final_private_gateway(final_secret_ref)
+    final_gateway_service_id = _install_final_private_gateway(final_secret_ref, gateway_skin)
     admin_user = _configure_admin_user(payload)
     auth_gateway_service_id = _install_auth_gateway()
-    llm_service_id, summarizer_service_id = _install_llm_and_summarizer(payload)
+    llm_service_id, summarizer_service_id, credential_service_id = _install_llm_and_summarizer(payload)
     main_instance_id = _deploy_main_flow(final_gateway_service_id)
     _start_main_flow_executor(main_instance_id)
     first_conversation_id = _create_first_conversation(admin_user, llm_service_id)
@@ -512,6 +742,7 @@ def finalize_install(payload: Dict[str, Any]) -> Dict[str, Any]:
     checks["auth_gateway"] = True
     checks["admin_user"] = True
     checks["llm_service"] = True
+    checks["llm_credential_pool"] = bool(credential_service_id)
     checks["summarizer_service"] = True
     checks["main_flow_deployed"] = True
     checks["first_conversation"] = True
@@ -521,11 +752,20 @@ def finalize_install(payload: Dict[str, Any]) -> Dict[str, Any]:
     gateway = draft.setdefault("gateway", {})
     gateway["service_id"] = final_gateway_service_id
     gateway["secret_ref"] = final_secret_ref
+    gateway["skin"] = gateway_skin
     gateway["key_sha256"] = hashlib.sha256(new_key.encode("utf-8")).hexdigest()
     gateway["replaced_at"] = now
     draft["auth"] = {"service_id": auth_gateway_service_id, "admin_user": admin_user}
-    draft["llm_services"] = {"primary": llm_service_id}
-    draft["summarizer_service"] = {"service_id": summarizer_service_id}
+    draft["llm_services"] = {
+        "primary": llm_service_id,
+        "scope": llm_scope,
+        "credential_service_id": credential_service_id,
+        "credential_pool_scope": credential_scope if credential_service_id else "",
+    }
+    draft["summarizer_service"] = {
+        "service_id": summarizer_service_id,
+        "scope": summarizer_scope,
+    }
     draft["flows"] = {"main_instance_id": main_instance_id}
     draft["conversation"] = {
         "conversation_id": first_conversation_id,
@@ -561,6 +801,13 @@ def ensure_install_bootstrap(port: int = 9090) -> bool:
     if os.environ.get("PAWFLOW_BOOTSTRAP_DISABLED", "").lower() in {"1", "true", "yes"}:
         logger.info("Install bootstrap disabled by PAWFLOW_BOOTSTRAP_DISABLED")
         return False
+
+    if os.environ.get("PAWFLOW_BOOTSTRAP_RESET", "").lower() in {"1", "true", "yes"}:
+        logger.warning("Resetting install bootstrap state by PAWFLOW_BOOTSTRAP_RESET")
+        try:
+            INSTALL_STATE_FILE.unlink(missing_ok=True)
+        except Exception:
+            logger.warning("Failed to remove install bootstrap state during reset", exc_info=True)
 
     state = _load_state()
     if state.get("install_complete"):

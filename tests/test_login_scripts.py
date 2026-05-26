@@ -34,9 +34,19 @@ def test_gemini_server_login_forces_google_oauth_auth_type():
 
 
 def test_all_server_login_scripts_keep_a_visible_tty():
-    for name in ("auth_login.sh", "codex_auth_login.sh", "gemini_auth_login.sh"):
+    for name in ("auth_login.sh", "codex_auth_login.sh", "gemini_auth_login.sh", "agy_auth_login.sh"):
         script = (ROOT / "docker" / "claude-code" / name).read_text(encoding="utf-8")
         assert "xterm" in script
+
+
+def test_agy_server_login_writes_gemini_oauth_credentials():
+    script = (ROOT / "docker" / "claude-code" / "agy_auth_login.sh").read_text(
+        encoding="utf-8")
+
+    assert "agy --dangerously-skip-permissions" in script
+    assert "oauth_creds.json" in script
+    assert "google_accounts.json" in script
+    assert "GOOGLE_GENAI_USE_GCA" in script
 
 
 def test_gemini_server_login_mounts_current_script():
@@ -44,6 +54,9 @@ def test_gemini_server_login_mounts_current_script():
         encoding="utf-8"
     )
 
-    assert "gemini_auth_login.sh:ro" in service_flow
+    assert "gemini_auth_login.sh" in service_flow
+    assert "agy_auth_login.sh" in service_flow
+    assert ":/opt/pawflow/{script_name}:ro" in service_flow
+    assert "agy_server_login" in service_flow
     assert "to_host_path" in service_flow
     assert "translate_path" in service_flow

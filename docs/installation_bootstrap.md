@@ -61,7 +61,10 @@ local runtime image required before the first web installer opens:
 - `pawflow-relay-dev:latest` for full server relay workspaces
 
 After the builds, it creates persistent volumes under `~/pawflow`, starts
-`pawflow-server`, and exposes port `9090`. The Docker entrypoint seeds missing
+`pawflow-server`, and publishes port `9090` on `127.0.0.1` by default. Set
+`PAWFLOW_PUBLISH_HOST=0.0.0.0` only when the bootstrap endpoint must be reachable
+from another host and `PAWFLOW_BOOTSTRAP_GATEWAY_KEY` has been replaced with a
+strong temporary value. The Docker entrypoint seeds missing
 repository/config defaults from the image into the persistent bind mounts before
 the server starts, so an empty `~/pawflow/data` directory still contains the
 installer flow templates after startup.
@@ -144,8 +147,9 @@ must fail loudly instead of falling back to plain HTTP.
 
 The installer template is stored at
 `data/repository/flows/global/default/pawflow_installer/versions/1.0.0.json`.
-It defines `/install`, dynamic status at `GET /install/api`, and finalization at
-`POST /install/api/finalize`. These routes sit behind the bootstrap
+It defines `/install`, dynamic status at `GET /install/api`, credential-pool
+prepare/paste/server-login endpoints under `POST /install/api/llm-credential/*`,
+and finalization at `POST /install/api/finalize`. These routes sit behind the bootstrap
 `privateGateway` service. Finalization requires the current bootstrap key,
 rejects keeping `RoyBetty`, requires an admin password, stores only a SHA-256
 digest of the replacement gateway key, writes the final key as encrypted secret
@@ -158,42 +162,58 @@ and marks the installer deployment stopped for restart-safe restoration.
 
 ## Wizard Steps
 
-1. Private Gateway
+1. Admin user
+   - create or update the local admin user
+   - reject admin passwords shorter than 12 characters
+   - optionally link the admin to an external provider after that provider is configured
+
+2. Authentication and OAuth
+   - internal auth
+   - optional OAuth provider configuration such as Google
+
+3. Private Gateway
    - configure final gateway key
+   - select one of the installed private gateway skins
    - reject `RoyBetty` as a final key
    - persist only `privategateway.main` plus a digest in install state
 
-2. Authentication
-   - internal auth
-   - create or update the local admin user
-   - reject admin passwords shorter than 12 characters
-
-3. LLM service
+4. LLM service and CLI credential pools
    - create the selected LLM service ID
    - the wizard requires an explicit service ID, provider, and model
+   - choose the scope for the LLM service, credential pool, and summarizer;
+     `user` means the admin user created in the first wizard step
    - store an optional API key as encrypted secret `llm.<service_id>.api_key`
+   - for CLI-backed providers without an API key, create the matching
+     `llmCredentialOAuthProvider` service first and set the LLM service
+     `credential_service_id` immediately
+   - Gemini credential pools can be populated through either Gemini CLI or
+     Agy/Antigravity server login; both write the same Gemini OAuth pool
+   - do not create a credential pool for API-backed providers, or for CLI-backed
+     providers when the user supplies an API key instead of OAuth login
+   - relay login is not available during first install because no user relay
+     exists yet; only server-side login and copy/paste login flows are valid
    - assign this explicit service to the starter conversation agent
 
-4. Summarizer service
+5. Summarizer service
    - create `summarizer_service`
    - point it to the selected LLM service
    - use this summarizer for no-tool package and skill review
 
-5. Main flow and conversation
+6. Main flow and conversation
    - deploy `default.pawflow_agent:1.0.0` as `pawflow-agent`
    - pass the final Private Gateway service explicitly to the listener
    - create a starter conversation for the admin user
    - add `assistant` to `conv_agents` with the selected LLM service
    - set `active_resources.agent=assistant`
 
-6. Variables and secrets
+7. Variables and secrets
    - gateway material and optional provider API keys are stored through the
      encrypted secret store
    - installer state stores only secret IDs/references and non-secret digests
    - additional variables and secrets remain configurable from the normal
      system settings and services UI after installation
 
-7. Relay image profiles
+8. Relay image profiles
    - server workspace relays use the official `server-full` relay image profile
    - server execution relays use the official `server-minimal` relay image profile and are selected explicitly as relay parameter values by deployed flows
    - client relays are configured later by the user from selectable capabilities
@@ -201,7 +221,7 @@ and marks the installer deployment stopped for restart-safe restoration.
    - always include the required PawFlow relay base with Python runtime, FUSE mounts, and `/workspace`/`/cc_sessions`/`/filestore` mountpoints
    - generate a Dockerfile, build script, run/register script, and manifest from `config/relay_image_catalog.json`
 
-8. Final review and smoke tests
+9. Final review and smoke tests
    - gateway final key works
    - login works
    - `/chat` responds
@@ -212,7 +232,7 @@ and marks the installer deployment stopped for restart-safe restoration.
    - configured variables resolve
    - configured secret references resolve without leaking values
 
-9. Finalize
+10. Finalize
    - write final config
    - deploy `PawFlow Agent`
    - mark `install_complete=true`
@@ -281,4 +301,6 @@ hide it. Recovery should be possible through a local-only mechanism such as:
 PAWFLOW_BOOTSTRAP_RESET=1 docker restart pawflow-server
 ```
 
-or a future local admin command.
+This removes the installer state file on restart and redeploys the bootstrap
+installer if the server is not already finalized. It does not delete user data or
+secrets; remove corrupted files manually only when recovery requires it.

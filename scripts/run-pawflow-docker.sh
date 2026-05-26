@@ -10,6 +10,7 @@
 #   PAWFLOW_CONTAINER   Container name (default: pawflow-server)
 #   PAWFLOW_PORT        Host/server port (default: 9090)
 #   PAWFLOW_HOST        Bind host inside container (default: 0.0.0.0)
+#   PAWFLOW_PUBLISH_HOST Host interface for Docker port publishing (default: 127.0.0.1)
 #   PAWFLOW_EXTRA_ARGS  Extra args appended to `python cli.py start`
 #
 # The first PawFlow bootstrap gateway key is RoyBetty. The installer wizard
@@ -22,6 +23,7 @@ PAWFLOW_HOME="$(printenv PAWFLOW_HOME || true)"
 CONTAINER="$(printenv PAWFLOW_CONTAINER || true)"
 PORT="$(printenv PAWFLOW_PORT || true)"
 HOST="$(printenv PAWFLOW_HOST || true)"
+PUBLISH_HOST="$(printenv PAWFLOW_PUBLISH_HOST || true)"
 EXTRA_ARGS="$(printenv PAWFLOW_EXTRA_ARGS || true)"
 BOOTSTRAP_GATEWAY_KEY="$(printenv PAWFLOW_BOOTSTRAP_GATEWAY_KEY || true)"
 if [[ -z "$IMAGE" ]]; then IMAGE="ghcr.io/allcolor/pawflow:latest"; fi
@@ -29,7 +31,13 @@ if [[ -z "$PAWFLOW_HOME" ]]; then PAWFLOW_HOME="$HOME/pawflow"; fi
 if [[ -z "$CONTAINER" ]]; then CONTAINER="pawflow-server"; fi
 if [[ -z "$PORT" ]]; then PORT="9090"; fi
 if [[ -z "$HOST" ]]; then HOST="0.0.0.0"; fi
-if [[ -z "$BOOTSTRAP_GATEWAY_KEY" ]]; then BOOTSTRAP_GATEWAY_KEY="RoyBetty"; fi
+if [[ -z "$PUBLISH_HOST" ]]; then PUBLISH_HOST="127.0.0.1"; fi
+if [[ -z "$BOOTSTRAP_GATEWAY_KEY" ]]; then
+  BOOTSTRAP_GATEWAY_KEY="RoyBetty"
+  BOOTSTRAP_GATEWAY_LABEL="RoyBetty"
+else
+  BOOTSTRAP_GATEWAY_LABEL="custom value from PAWFLOW_BOOTSTRAP_GATEWAY_KEY"
+fi
 DOCKER_ARGS=()
 
 while [[ $# -gt 0 ]]; do
@@ -71,7 +79,7 @@ echo "Starting $CONTAINER from $IMAGE"
 docker run -d \
   --name "$CONTAINER" \
   --restart unless-stopped \
-  -p "$PORT:$PORT" \
+  -p "$PUBLISH_HOST:$PORT:$PORT" \
   "${DOCKER_ARGS[@]}" \
   -v "$PAWFLOW_HOME/data:/app/data" \
   -v "$PAWFLOW_HOME/config:/app/config" \
@@ -92,7 +100,7 @@ The first run uses a self-signed bootstrap certificate, so your browser will
 warn until the installer configures final certificates.
 
 Initial bootstrap Private Gateway key:
-  RoyBetty
+  $BOOTSTRAP_GATEWAY_LABEL
 
 Follow logs:
   docker logs -f $CONTAINER

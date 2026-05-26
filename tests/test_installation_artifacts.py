@@ -54,12 +54,15 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     run_src = run.read_text(encoding="utf-8")
     assert "printenv PAWFLOW_IMAGE" in run_src
     assert "printenv PAWFLOW_HOME" in run_src
+    assert "PAWFLOW_PUBLISH_HOST" in run_src
+    assert 'PUBLISH_HOST="127.0.0.1"' in run_src
     assert "PAWFLOW_BOOTSTRAP_GATEWAY_KEY" in run_src
     assert "BOOTSTRAP_GATEWAY_KEY" in run_src
     assert "RoyBetty" in run_src
     assert "--help|-h" in run_src
     assert "/var/run/docker.sock:/var/run/docker.sock" in run_src
     assert "--group-add" in run_src
+    assert '-p "$PUBLISH_HOST:$PORT:$PORT"' in run_src
     assert "$PAWFLOW_HOME/data:/app/data" in run_src
     assert "$PAWFLOW_HOME/certs:/app/certs" in run_src
 
@@ -89,6 +92,9 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert "-m venv" in install_src
     assert "SERVER_MODE=\"auto\"" in install_src
     assert "START_TARGET=\"container\"" in install_src
+    assert 'HOST="0.0.0.0"' in install_src
+    assert 'native_host="127.0.0.1"' in install_src
+    assert 'IMAGE="$IMAGE_REPO:latest"' in install_src
     assert "ghcr.io/allcolor/pawflow" in install_src
     assert "docker pull \"${pull_args[@]}\" \"$IMAGE\"" in install_src
     assert "Prebuilt PawFlow server image unavailable" in install_src
@@ -103,6 +109,8 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert "pawflow-relay-dev:latest" in install_src
     assert "windows-shell" in install_src
     assert "Native Windows shells are not supported" not in install_src
+    assert 'printenv PAWFLOW_BOOTSTRAP_GATEWAY_KEY' in install_src
+    assert 'PAWFLOW_BOOTSTRAP_GATEWAY_KEY="$bootstrap_gateway_key"' in install_src
 
     build_src = build.read_text(encoding="utf-8")
     assert "printenv PAWFLOW_IMAGE" in build_src
@@ -189,6 +197,8 @@ def test_install_docs_and_agent_prompt_capture_bootstrap_contract():
     assert "Summarizer service" in doc
     assert "Variables and secrets" in doc
     assert "bootstrap self-signed TLS certificate" in doc
+    assert "PAWFLOW_PUBLISH_HOST=0.0.0.0" in doc
+    assert "PAWFLOW_BOOTSTRAP_RESET=1" in doc
     assert "Let's Encrypt" in doc
     assert "ZeroSSL" in doc
     assert "summarizer_service" in doc
@@ -302,6 +312,11 @@ def test_pawflow_installer_flow_template_exists():
     patterns = {route["pattern"] for route in routes}
     assert "/install" in patterns
     assert "/install/api" in patterns
+    assert "/install/api/llm-credential/prepare" in patterns
+    assert "/install/api/llm-credential/paste" in patterns
+    assert "/install/api/llm-credential/server-login" in patterns
+    assert "/install/api/llm-credential/server-login/status" in patterns
+    assert "/install/api/llm-credential/server-login/cleanup" in patterns
     assert "/install/api/finalize" in patterns
     route_relationships = {
         route.get("relationship") or f"{route.get('method', 'GET').upper()}:{route.get('pattern', '/')}"
@@ -316,16 +331,48 @@ def test_pawflow_installer_flow_template_exists():
 
     assert flow["tasks"]["install_api"]["type"] == "installBootstrap"
     route_names = set(flow["tasks"]["route_install"]["parameters"]["routes"])
-    assert {"api_status", "api_finalize"}.issubset(route_names)
+    assert {
+        "api_status",
+        "api_finalize",
+        "llm_credential_prepare",
+        "llm_credential_paste",
+        "llm_credential_server_login",
+        "llm_credential_server_login_status",
+        "llm_credential_server_login_cleanup",
+    }.issubset(route_names)
 
     ui_content = flow["tasks"]["install_ui"]["parameters"]["content"]
+    assert "Admin User" in ui_content
+    assert "OAuth Configuration" in ui_content
+    assert "Private Gateway" in ui_content
     assert "fetch('/install/api'" in ui_content
+    assert "fetch('/install/api/llm-credential/prepare'" in ui_content
+    assert "fetch('/install/api/llm-credential/paste'" in ui_content
+    assert "fetch('/install/api/llm-credential/server-login'" in ui_content
+    assert "fetch('/install/api/llm-credential/server-login/status'" in ui_content
     assert "fetch('/install/api/finalize'" in ui_content
+    assert "private_gateway_skins" in ui_content
+    assert "gateway_skin" in ui_content
     assert "new_gateway_key" in ui_content
     assert "admin_password" in ui_content
     assert "llm_service_id" in ui_content
+    assert "credential_service_id" in ui_content
+    assert "llm_service_scope" in ui_content
+    assert "credential_pool_scope" in ui_content
+    assert "summarizer_service_scope" in ui_content
+    assert "Agy / Antigravity" in ui_content
+    assert "antigravity-interactive" in ui_content
+    assert "Create login pool" in ui_content
+    assert "Login via server" in ui_content
     assert "codex_appserver_llm_service" in ui_content
     assert "window.location.href='/chat'" in ui_content
+
+
+def test_install_bootstrap_reset_is_implemented():
+    src = Path("core/install_bootstrap.py").read_text(encoding="utf-8")
+
+    assert "PAWFLOW_BOOTSTRAP_RESET" in src
+    assert "INSTALL_STATE_FILE.unlink" in src
 
 
 def test_pawflow_agent_auth_routes_cover_login_forms():

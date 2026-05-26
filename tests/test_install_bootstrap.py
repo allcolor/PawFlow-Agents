@@ -30,6 +30,19 @@ def _write_main_template(path):
     }), encoding="utf-8")
 
 
+def _write_gateway_skin(repository_dir, name="matrix"):
+    skin_dir = repository_dir / "private_gateway_skin" / "global" / name
+    skin_dir.mkdir(parents=True, exist_ok=True)
+    skin_dir.joinpath("skin.json").write_text(json.dumps({
+        "name": name,
+        "title": name.title(),
+    }), encoding="utf-8")
+    skin_dir.joinpath("template.html").write_text(
+        "<html>{{ next_url }} {{ error }} {{ cooldown }}</html>",
+        encoding="utf-8",
+    )
+
+
 def _stub_cert_generation(tmp_path, monkeypatch):
     cert = tmp_path / "ssl" / "bootstrap.crt"
     key = tmp_path / "ssl" / "bootstrap.key"
@@ -128,6 +141,40 @@ def test_existing_deployments_skip_bootstrap_without_state(tmp_path, monkeypatch
         assert reg.get(ib.INSTALLER_INSTANCE_ID) is None
     finally:
         DeploymentRegistry.reset()
+
+
+def test_bootstrap_reset_removes_state_and_redeploys_installer(tmp_path, monkeypatch):
+    DeploymentRegistry.reset()
+    ServiceRegistry.reset()
+    dep_dir = tmp_path / "deployments"
+    runtime_dir = tmp_path / "runtime"
+    system_dir = tmp_path / "system"
+    state_file = tmp_path / "install_state.json"
+    template = tmp_path / "repository" / "flows" / "global" / "default" / "pawflow_installer" / "versions" / "1.0.0.json"
+    _write_installer_template(template)
+    state_file.write_text(json.dumps({"install_complete": False, "current_step": "llm_services"}), encoding="utf-8")
+
+    monkeypatch.setattr(_paths, "DEPLOYMENTS_DIR", dep_dir)
+    monkeypatch.setattr(_paths, "RUNTIME_DIR", runtime_dir)
+    monkeypatch.setattr(_paths, "SYSTEM_DIR", system_dir)
+    monkeypatch.setattr(_paths, "GLOBAL_SECRETS_FILE", system_dir / "global_secrets.json")
+    monkeypatch.setattr(_paths, "SECRET_KEY_FILE", system_dir / "secret.key")
+    monkeypatch.setattr(ib, "INSTALL_STATE_FILE", state_file)
+    monkeypatch.setattr(ib, "INSTALLER_TEMPLATE", template)
+    _stub_cert_generation(tmp_path, monkeypatch)
+    monkeypatch.delenv("PAWFLOW_BOOTSTRAP_DISABLED", raising=False)
+    monkeypatch.setenv("PAWFLOW_BOOTSTRAP_RESET", "1")
+
+    try:
+        assert ib.ensure_install_bootstrap(port=9090) is True
+        state = json.loads(state_file.read_text(encoding="utf-8"))
+        assert state["install_complete"] is False
+        assert state["current_step"] == "server"
+        assert state["installer_instance_id"] == ib.INSTALLER_INSTANCE_ID
+    finally:
+        monkeypatch.delenv("PAWFLOW_BOOTSTRAP_RESET", raising=False)
+        DeploymentRegistry.reset()
+        ServiceRegistry.reset()
 
 
 def test_install_status_only_exposes_public_draft_sections(tmp_path, monkeypatch):
@@ -251,6 +298,7 @@ def test_finalize_install_persists_complete_state_without_cleartext_key(tmp_path
     main_template = tmp_path / "main.json"
     _write_installer_template(template)
     _write_main_template(main_template)
+    _write_gateway_skin(repository_dir)
 
     monkeypatch.setattr(_paths, "DEPLOYMENTS_DIR", dep_dir)
     monkeypatch.setattr(_paths, "RUNTIME_DIR", runtime_dir)
@@ -327,6 +375,7 @@ def test_finalize_install_persists_complete_state_without_cleartext_key(tmp_path
         assert state["checks"]["gateway_replaced"] is True
         assert state["checks"]["admin_user"] is True
         assert state["checks"]["llm_service"] is True
+        assert state["checks"]["llm_credential_pool"] is True
         assert state["checks"]["summarizer_service"] is True
         assert state["checks"]["main_flow_deployed"] is True
         assert state["checks"]["first_conversation"] is True
@@ -334,7 +383,9 @@ def test_finalize_install_persists_complete_state_without_cleartext_key(tmp_path
             new_key.encode("utf-8")
         ).hexdigest()
         assert state["draft"]["gateway"]["service_id"] == ib.FINAL_PRIVATE_GATEWAY_SERVICE_ID
+        assert state["draft"]["gateway"]["skin"] == "matrix"
         assert state["draft"]["llm_services"]["primary"] == "review_llm"
+        assert state["draft"]["llm_services"]["credential_service_id"] == "codex_oauth_credentials"
         assert state["draft"]["summarizer_service"]["service_id"] == ib.SUMMARIZER_SERVICE_ID
         assert state["draft"]["flows"]["main_instance_id"] == ib.MAIN_INSTANCE_ID
         assert state["draft"]["conversation"]["agent"] == ib.FIRST_RUN_AGENT
@@ -350,10 +401,17 @@ def test_finalize_install_persists_complete_state_without_cleartext_key(tmp_path
             SCOPE_GLOBAL, "", ib.FINAL_PRIVATE_GATEWAY_SERVICE_ID)
         assert final_gateway is not None
         assert final_gateway.config["secret_refs"] == ib.FINAL_GATEWAY_SECRET_REF
+        assert final_gateway.config["skin"] == "matrix"
+        credential_pool = ServiceRegistry.get_instance().get_definition(
+            SCOPE_GLOBAL, "", "codex_oauth_credentials")
+        assert credential_pool is not None
+        assert credential_pool.service_type == "llmCredentialOAuthProvider"
+        assert credential_pool.config["provider"] == "codex-app-server"
         llm = ServiceRegistry.get_instance().get_definition(
             SCOPE_GLOBAL, "", "review_llm")
         assert llm is not None
         assert llm.config["provider"] == "codex-app-server"
+        assert llm.config["credential_service_id"] == "codex_oauth_credentials"
         summarizer = ServiceRegistry.get_instance().get_definition(
             SCOPE_GLOBAL, "", ib.SUMMARIZER_SERVICE_ID)
         assert summarizer is not None
@@ -371,6 +429,132 @@ def test_finalize_install_persists_complete_state_without_cleartext_key(tmp_path
         ResourceStore.reset()
         SecurityManager._instance = None
         DeploymentRegistry.reset()
+        ServiceRegistry.reset()
+
+
+def test_finalize_install_with_api_key_does_not_create_llm_credential_pool(tmp_path, monkeypatch):
+    DeploymentRegistry.reset()
+    ServiceRegistry.reset()
+    dep_dir = tmp_path / "deployments"
+    runtime_dir = tmp_path / "runtime"
+    system_dir = tmp_path / "system"
+    repository_dir = tmp_path / "repository"
+    state_file = tmp_path / "install_state.json"
+    template = tmp_path / "installer.json"
+    main_template = tmp_path / "main.json"
+    _write_installer_template(template)
+    _write_main_template(main_template)
+    _write_gateway_skin(repository_dir)
+
+    monkeypatch.setattr(_paths, "DEPLOYMENTS_DIR", dep_dir)
+    monkeypatch.setattr(_paths, "RUNTIME_DIR", runtime_dir)
+    monkeypatch.setattr(_paths, "CONVERSATIONS_DIR", runtime_dir / "conversations")
+    monkeypatch.setattr(_paths, "SYSTEM_DIR", system_dir)
+    monkeypatch.setattr(_paths, "REPOSITORY_DIR", repository_dir)
+    monkeypatch.setattr(_paths, "GLOBAL_SECRETS_FILE", system_dir / "global_secrets.json")
+    monkeypatch.setattr(_paths, "SECRET_KEY_FILE", system_dir / "secret.key")
+    monkeypatch.setattr(_paths, "USERS_FILE", system_dir / "users.json")
+    monkeypatch.setattr(_paths, "SESSIONS_FILE", system_dir / "sessions.json")
+    monkeypatch.setattr(_paths, "SECURITY_FILE", system_dir / "security.json")
+    monkeypatch.setattr(ib, "INSTALL_STATE_FILE", state_file)
+    monkeypatch.setattr(ib, "MAIN_TEMPLATE", main_template)
+    monkeypatch.setenv("PAWFLOW_BOOTSTRAP_GATEWAY_KEY", "RoyBetty")
+
+    try:
+        from core.conversation_store import ConversationStore
+        from core.executor_registry import ExecutorRegistry
+        from core.resource_store import ResourceStore
+        from core.security import SecurityManager
+        ConversationStore.reset()
+        ExecutorRegistry._instance = None
+        ResourceStore.reset()
+        SecurityManager._instance = None
+
+        def fake_restore(self, instance_id, flow_path, *args, **kwargs):
+            self._executors[instance_id] = object()
+            return True
+
+        monkeypatch.setattr(ExecutorRegistry, "_restore_instance", fake_restore)
+
+        reg = DeploymentRegistry.get_instance()
+        reg.deploy(str(template), instance_id=ib.INSTALLER_INSTANCE_ID, source="bootstrap")
+        reg.update_status(ib.INSTALLER_INSTANCE_ID, "running")
+        state_file.write_text(json.dumps({
+            "install_complete": False,
+            "installer_instance_id": ib.INSTALLER_INSTANCE_ID,
+            "completed_steps": ["server"],
+            "checks": {},
+            "draft": {},
+        }), encoding="utf-8")
+
+        status = ib.finalize_install({
+            "bootstrap_gateway_key": "RoyBetty",
+            "new_gateway_key": "new-gateway-key-123",
+            "admin_password": "admin-password-123",
+            "llm_service_id": "review_llm",
+            "llm_provider": "codex-app-server",
+            "llm_model": "gpt-5.5",
+            "llm_api_key": "api-key-123",
+        })
+
+        assert status["install_complete"] is True
+        state = json.loads(state_file.read_text(encoding="utf-8"))
+        assert state["checks"]["llm_credential_pool"] is False
+        assert state["draft"]["llm_services"]["credential_service_id"] == ""
+        assert ServiceRegistry.get_instance().get_definition(
+            SCOPE_GLOBAL, "", "codex_oauth_credentials") is None
+        llm = ServiceRegistry.get_instance().get_definition(
+            SCOPE_GLOBAL, "", "review_llm")
+        assert "credential_service_id" not in llm.config
+    finally:
+        from core.conversation_store import ConversationStore
+        from core.executor_registry import ExecutorRegistry
+        from core.resource_store import ResourceStore
+        from core.security import SecurityManager
+        ConversationStore.reset()
+        ExecutorRegistry._instance = None
+        ResourceStore.reset()
+        SecurityManager._instance = None
+        DeploymentRegistry.reset()
+        ServiceRegistry.reset()
+
+
+def test_install_llm_pool_and_summarizer_support_user_scope(tmp_path, monkeypatch):
+    ServiceRegistry.reset()
+    system_dir = tmp_path / "system"
+    monkeypatch.setattr(_paths, "GLOBAL_SECRETS_FILE", system_dir / "global_secrets.json")
+    monkeypatch.setattr(_paths, "SECRET_KEY_FILE", system_dir / "secret.key")
+
+    try:
+        from tasks import _register_all_services
+        _register_all_services()
+
+        llm_service_id, summarizer_service_id, credential_service_id = ib._install_llm_and_summarizer({
+            "admin_username": "alice",
+            "llm_service_id": "alice_llm",
+            "llm_provider": "gemini",
+            "llm_model": "gemini-2.5-pro",
+            "llm_service_scope": "user",
+            "credential_pool_scope": "user",
+            "summarizer_service_scope": "user",
+        })
+
+        reg = ServiceRegistry.get_instance()
+        assert llm_service_id == "alice_llm"
+        assert summarizer_service_id == ib.SUMMARIZER_SERVICE_ID
+        assert credential_service_id == "gemini_oauth_credentials"
+        assert reg.get_definition(SCOPE_GLOBAL, "", "alice_llm") is None
+        assert reg.get_definition(SCOPE_GLOBAL, "", ib.SUMMARIZER_SERVICE_ID) is None
+        llm = reg.get_definition("user", "alice", "alice_llm")
+        pool = reg.get_definition("user", "alice", "gemini_oauth_credentials")
+        summarizer = reg.get_definition("user", "alice", ib.SUMMARIZER_SERVICE_ID)
+        assert llm is not None
+        assert llm.config["credential_service_id"] == "gemini_oauth_credentials"
+        assert pool is not None
+        assert pool.config["provider"] == "gemini"
+        assert summarizer is not None
+        assert summarizer.config["llm_service"] == "alice_llm"
+    finally:
         ServiceRegistry.reset()
 
 

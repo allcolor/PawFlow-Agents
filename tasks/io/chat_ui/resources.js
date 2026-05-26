@@ -3880,7 +3880,7 @@ function cmdClaudeLoginCredentials(text, parts) {
   return true;
 }
 
-// `cli` is one of: 'claude' | 'codex' | 'gemini' | 'rclone' — picks the right server
+// `cli` is one of: 'claude' | 'codex' | 'gemini' | 'agy' | 'rclone' — picks the right server
 // status/cleanup actions (each CLI has its own dedicated namespace).
 // `token` is the capability token issued by the backend at session
 // register time; without it the iframe URL will 401/403 — leaving it
@@ -3892,18 +3892,21 @@ function _openVncLoginDialog(sessionId, serviceId, token, triggerBtn, cli, scope
     'claude': 'claude_code_server_login_status',
     'codex':  'codex_server_login_status',
     'gemini': 'gemini_server_login_status',
+    'agy':    'agy_server_login_status',
     'rclone': 'rclone_server_login_status',
   }[cli] || 'claude_code_server_login_status';
   const _cleanupAction = {
     'claude': 'claude_code_server_login_cleanup',
     'codex':  'codex_server_login_cleanup',
     'gemini': 'gemini_server_login_cleanup',
+    'agy':    'agy_server_login_cleanup',
     'rclone': 'rclone_server_login_cleanup',
   }[cli] || 'claude_code_server_login_cleanup';
   const _title = {
     'claude': 'Claude Code Login',
     'codex':  'Codex Login',
     'gemini': 'Gemini Login',
+    'agy':    'Antigravity Login',
     'rclone': 'Rclone Login',
   }[cli] || t('loginTitle');
 

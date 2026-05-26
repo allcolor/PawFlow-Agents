@@ -182,7 +182,10 @@ def _credential_provider_for_service(service_id: str, user_id: str = "") -> str:
     from services.llm_credential_oauth import normalize_provider
     from core.service_registry import ServiceRegistry
     reg = ServiceRegistry.get_instance()
-    for scope, sid in (("global", ""), ("user", user_id)):
+    scopes = [("global", "")]
+    if user_id:
+        scopes.insert(0, ("user", user_id))
+    for scope, sid in scopes:
         sdef = reg.get_definition(scope, sid, service_id)
         if not sdef:
             continue
@@ -1555,6 +1558,10 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
 
         flowfile.set_content(json.dumps({
             "ok": True, "message": "Starting login container...",
+            "session_id": session_id,
+            "token": _vnc_token,
+            "cli": "claude",
+            "vnc_url": f"/vnc/{session_id}/{_vnc_token}/vnc.html",
         }).encode())
         return [flowfile]
 
@@ -3626,12 +3633,13 @@ finally:
     if action == "codex_server_login":
         service_id = body.get("service_id", "")
         conversation_id = body.get("conversation_id", "")
+        scope_arg = body.get("scope", "")
         if not service_id:
             flowfile.set_content(json.dumps({"error": "Missing service_id"}).encode())
             return [flowfile]
         try:
-            from core.service_registry import ServiceRegistry
-            sdef = ServiceRegistry.get_instance().resolve_definition(service_id)
+            sdef = _resolve_service_definition_for_action(
+                service_id, user_id, conversation_id, scope_arg)
             if not sdef:
                 flowfile.set_content(json.dumps({"error": f"Service '{service_id}' not found"}).encode())
                 return [flowfile]
@@ -3747,6 +3755,10 @@ finally:
         threading.Thread(target=_bg_setup, daemon=True, name=f"codex-login-{session_id}").start()
         flowfile.set_content(json.dumps({
             "ok": True, "message": "Starting codex login container...",
+            "session_id": session_id,
+            "token": _vnc_token,
+            "cli": "codex",
+            "vnc_url": f"/vnc/{session_id}/{_vnc_token}/vnc.html",
         }).encode())
         return [flowfile]
 
@@ -3844,12 +3856,14 @@ finally:
         }).encode())
         return [flowfile]
 
-    # ── Gemini login via server (noVNC) ─────────────────────────────
-    # Mirror of claude_code_server_login but drives the gemini OAuth dance
-    # (first interactive launch with selectedAuthType=oauth-personal triggers
-    # the Google OAuth browser flow). Independent action namespace.
+    # ── Gemini-compatible login via server (noVNC) ───────────────────
+    # Gemini CLI and Antigravity both produce the Gemini OAuth credential files.
+    # They share the same status/cleanup path and encrypted gemini pool.
 
-    if action == "gemini_server_login":
+    if action in {"gemini_server_login", "agy_server_login"}:
+        login_cli = "agy" if action == "agy_server_login" else "gemini"
+        login_label = "Antigravity" if login_cli == "agy" else "Gemini"
+        script_name = "agy_auth_login.sh" if login_cli == "agy" else "gemini_auth_login.sh"
         service_id = body.get("service_id", "")
         conversation_id = body.get("conversation_id", "")
         if not service_id:
@@ -3873,10 +3887,10 @@ finally:
             from pawflow_relay.utils import find_free_port as _find_free_port
             session_id = _uuid.uuid4().hex[:12]
             free_port = _find_free_port()
-            container_name = f"pawflow-gemini-login-{session_id}"
+            container_name = f"pawflow-{login_cli}-login-{session_id}"
             volume_name = f"pawflow_ws_{conversation_id}" if conversation_id else f"pawflow_login_{session_id}"
             image = "pawflow-claude-code:latest"
-            logger.info("[gemini-login] Creating session %s (port %d)", session_id, free_port)
+            logger.info("[%s-login] Creating session %s (port %d)", login_cli, session_id, free_port)
             from services.vnc_proxy import register_session, vnc_ws_proxy, vnc_http_proxy
             _vnc_token = register_session(
                 session_id, free_port,
@@ -3886,7 +3900,7 @@ finally:
                 user_id=user_id, volume=volume_name,
                 launch_time=time.time(), ready=False)
         except Exception as e:
-            logger.error("[gemini-login] Setup failed: %s", e, exc_info=True)
+            logger.error("[%s-login] Setup failed: %s", login_cli, e, exc_info=True)
             flowfile.set_content(json.dumps({"error": f"Login setup failed: {e}"}).encode())
             return [flowfile]
 
@@ -3902,12 +3916,12 @@ finally:
                 _project_root = _os.path.dirname(_os.path.dirname(
                     _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))
                 _script_src = _os.path.join(
-                    _project_root, "docker", "claude-code", "gemini_auth_login.sh")
+                    _project_root, "docker", "claude-code", script_name)
                 _script_mount = []
                 if _os.path.exists(_script_src):
                     _script_mount = [
                         "-v",
-                        f"{_translate_path(_to_host_path(_script_src))}:/opt/pawflow/gemini_auth_login.sh:ro",
+                        f"{_translate_path(_to_host_path(_script_src))}:/opt/pawflow/{script_name}:ro",
                     ]
                 docker_cmd = _docker_cmd() + [
                     "run", "--rm", "--detach",
@@ -3919,18 +3933,18 @@ finally:
                     *_script_mount,
                     "--entrypoint", "bash",
                     image,
-                    "/opt/pawflow/gemini_auth_login.sh",
+                    f"/opt/pawflow/{script_name}",
                 ]
-                logger.info("[gemini-login] Starting container %s on port %d", container_name, free_port)
+                logger.info("[%s-login] Starting container %s on port %d", login_cli, container_name, free_port)
                 result = _sp.run(docker_cmd, capture_output=True, text=True, timeout=30)  # nosec B603
                 if result.returncode != 0:
-                    logger.error("[gemini-login] Docker failed: %s", result.stderr[:300])
+                    logger.error("[%s-login] Docker failed: %s", login_cli, result.stderr[:300])
                     from services.vnc_proxy import update_session_error
                     update_session_error(session_id, f"Docker failed: {result.stderr[:200]}")
                     _publish_command_result(_conv_id, {"error": f"Docker failed: {result.stderr[:200]}"})
                     return
             except Exception as e:
-                logger.error("[gemini-login] Docker error: %s", e)
+                logger.error("[%s-login] Docker error: %s", login_cli, e)
                 from services.vnc_proxy import update_session_error
                 update_session_error(session_id, str(e))
                 _publish_command_result(_conv_id, {"error": f"Login failed: {e}"})
@@ -3940,7 +3954,7 @@ finally:
             for _attempt in range(15):
                 try:
                     urllib.request.urlopen(f"http://127.0.0.1:{free_port}/", timeout=2)  # nosec B310 - local noVNC readiness probe.
-                    logger.info("[gemini-login] noVNC ready on port %d", free_port)
+                    logger.info("[%s-login] noVNC ready on port %d", login_cli, free_port)
                     break
                 except Exception:
                     time.sleep(1)
@@ -3968,9 +3982,9 @@ finally:
                         svc.register_route("GET", "/vnc/{session_id}/{token}/{path+}",
                                            _vnc_owner, callback=vnc_http_proxy)
                 else:
-                    logger.warning("[gemini-login] HTTPListenerService NOT FOUND")
+                    logger.warning("[%s-login] HTTPListenerService NOT FOUND", login_cli)
             except Exception as e:
-                logger.warning("[gemini-login] Route registration failed: %s", e)
+                logger.warning("[%s-login] Route registration failed: %s", login_cli, e)
 
             from services.vnc_proxy import update_session_ready
             update_session_ready(session_id)
@@ -3979,17 +3993,21 @@ finally:
                 conversation_id, "vnc_login_ready", {
                     "session_id": session_id, "service_id": service_id,
                     "token": _vnc_token,
-                    "cli": "gemini",
+                    "cli": login_cli,
                 })
 
         _conv_id = conversation_id
-        threading.Thread(target=_bg_setup_gemini, daemon=True, name=f"gemini-login-{session_id}").start()
+        threading.Thread(target=_bg_setup_gemini, daemon=True, name=f"{login_cli}-login-{session_id}").start()
         flowfile.set_content(json.dumps({
-            "ok": True, "message": "Starting gemini login container...",
+            "ok": True, "message": f"Starting {login_label} login container...",
+            "session_id": session_id,
+            "token": _vnc_token,
+            "cli": login_cli,
+            "vnc_url": f"/vnc/{session_id}/{_vnc_token}/vnc.html",
         }).encode())
         return [flowfile]
 
-    if action == "gemini_server_login_cleanup":
+    if action in {"gemini_server_login_cleanup", "agy_server_login_cleanup"}:
         session_id = body.get("session_id", "")
         from services.vnc_proxy import _sessions as _vnc_sessions, unregister_session
         session = _vnc_sessions.get(session_id)
@@ -4005,7 +4023,8 @@ finally:
         flowfile.set_content(json.dumps({"ok": True}).encode())
         return [flowfile]
 
-    if action == "gemini_server_login_status":
+    if action in {"gemini_server_login_status", "agy_server_login_status"}:
+        login_label = "Antigravity" if action == "agy_server_login_status" else "Gemini"
         session_id = body.get("session_id", "")
         service_id = body.get("service_id", "")
         from services.vnc_proxy import _sessions as _vnc_sessions, unregister_session
@@ -4028,7 +4047,7 @@ finally:
         if time.time() - launch_time > 180:
             _sp.run(_docker_cmd() + ["rm", "-f", container], capture_output=True, timeout=10)  # nosec B603
             unregister_session(session_id)
-            flowfile.set_content(json.dumps({"error": "Gemini login timed out (3 min)"}).encode())
+            flowfile.set_content(json.dumps({"error": f"{login_label} login timed out (3 min)"}).encode())
             return [flowfile]
 
         try:
@@ -4090,7 +4109,7 @@ finally:
             flowfile.set_content(json.dumps({"error": "No access_token in gemini oauth_creds.json"}).encode())
             return [flowfile]
         flowfile.set_content(json.dumps({
-            "ok": True, "message": "Gemini credentials saved!",
+            "ok": True, "message": f"{login_label} credentials saved!",
         }).encode())
         return [flowfile]
 

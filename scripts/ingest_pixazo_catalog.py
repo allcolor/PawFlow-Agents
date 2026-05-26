@@ -182,7 +182,7 @@ def _category_for(section_title: str, endpoint: str) -> str:
             "videotask", "to-video", "tovideo", "videogeneration",
             "i2v", "t2v", "frame2video", "video-edit", "edit-video",
             "lucy-edit-video", "veo", "runway", "kling", "wan-video",
-            "wan-2-", "sora-video", "p-video", "pika-video",
+            "wan-2-", "p-video", "pika-video",
             "luma-dream-machine", "hailuo", "kandinsky", "vidu",
             "ltx", "mochi", "pixverse", "veed", "topaz", "ai-model-api",
             "byteplus", "seedance", "genflare")):

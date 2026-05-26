@@ -380,23 +380,6 @@
         }
       }
     },
-    "sora-video": {
-      "label": "Sora (OpenAI)",
-      "category": "video",
-      "operations": {
-        "text_to_video": {
-          "endpoint": "/sora-video/v1/video/generate",
-          "convention": "polling_url",
-          "id_field": "id"
-        },
-        "image_to_video": {
-          "endpoint": "/sora-video/v1/video/i2v/generate",
-          "convention": "polling_url",
-          "id_field": "id",
-          "input_field": "image_url"
-        }
-      }
-    },
     "p-video": {
       "label": "P Video (Pruna AI)",
       "category": "video",

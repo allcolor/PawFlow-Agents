@@ -513,7 +513,7 @@ class VideoGenerationHandler(ToolHandler):
                     "description": (
                         "Override the active video model for this call. "
                         "For i2v try: 'kling-3-0-image-to-video-standard', "
-                        "'sora-video', 'luma-dream-machine-ray-2-flash-image-to-video', "
+                        "'luma-dream-machine-ray-2-flash-image-to-video', "
                         "'wan-2-6-image-to-video-477'. "
                         "For video-edit: 'seedance-2-0-fast', 'seedance-2-0', "
                         "'kling-o1-edit-video-video-to-video-634'."
@@ -652,7 +652,7 @@ class VideoGenerationHandler(ToolHandler):
                     return ("Error: the active video service does not support "
                             "image_to_video. Use a model with an image_to_video "
                             "operation (e.g. 'kling-3-0-image-to-video-standard', "
-                            "'sora-video', 'seedance-2-0-fast').")
+                            "'seedance-2-0-fast').")
             else:
                 # Text-to-video mode (default)
                 result = service.generate(**gen_args)

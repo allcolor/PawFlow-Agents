@@ -24,9 +24,9 @@ class PixazoVideoService(_PixazoBaseService, BaseVideoGenerationService):
     VERSION = "3.0.0"
     NAME = "Pixazo Video Generation"
     DESCRIPTION = (
-        "Generate videos via the Pixazo gateway (Sora, Runway, Kling, "
-        "Veo, Pika, Luma, Seedance, …). Any model declared in "
-        "pixazo_catalog.json under category=video is supported."
+        "Generate videos via the Pixazo gateway (Runway, Kling, Veo, Pika, "
+        "Luma, Seedance, ...). Any model declared in pixazo_catalog.json "
+        "under category=video is supported."
     )
     CATEGORY = "video"
 
@@ -41,11 +41,6 @@ class PixazoVideoService(_PixazoBaseService, BaseVideoGenerationService):
             body["negative_prompt"] = negative_prompt
         if duration:
             body["duration"] = int(duration)
-            # Pixazo's Sora gateway has the field typed `string` in its
-            # Go struct (despite the docs claiming integer) and rejects
-            # numbers with `cannot unmarshal number into ... type string`.
-            # Most other providers accept either, so a stringified value
-            # is the lowest-friction common denominator.
             body["seconds"] = str(int(duration))
         if width and height:
             body["width"] = int(width)
@@ -69,7 +64,7 @@ class PixazoVideoService(_PixazoBaseService, BaseVideoGenerationService):
         body: Dict[str, Any] = {"prompt": prompt, input_field: image_url}
         if duration:
             body["duration"] = int(duration)
-            body["seconds"] = str(int(duration))  # Sora wants string
+            body["seconds"] = str(int(duration))
         for k, v in kwargs.items():
             if k not in body and k not in ("destination", "path", "service", "model"):
                 body[k] = v

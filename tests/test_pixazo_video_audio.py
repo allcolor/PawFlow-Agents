@@ -14,7 +14,7 @@ from services.pixazo_audio_service import PixazoAudioService
 from services._pixazo_base import models_for_category
 
 
-def _video(model: str = "sora-video") -> PixazoVideoService:
+def _video(model: str = "p-video") -> PixazoVideoService:
     s = PixazoVideoService({"api_key": "k", "model": model, "poll_interval": 0})
     s._create_connection = lambda: {"ready": True}
     return s
@@ -31,7 +31,7 @@ def _audio(model: str = "minimax-music") -> PixazoAudioService:
 
 def test_video_category_contains_known_models():
     models = models_for_category("video")
-    assert "sora-video" in models
+    assert "p-video" in models
     assert "runway" in models
     assert "kling-video" in models
     assert "veo" in models
@@ -51,7 +51,7 @@ def test_video_rejects_image_model():
 
 
 def test_audio_rejects_video_model():
-    s = _audio("sora-video")  # sora-video is category=video
+    s = _audio("p-video")  # p-video is category=video
     with pytest.raises(Exception, match="category"):
         s._model()
 
@@ -60,12 +60,12 @@ def test_audio_rejects_video_model():
 
 
 def test_video_text_to_video_polling_url_dispatch():
-    """Sora: POST /video/generate → polling_url → GET it until ready.
+    """P Video: POST generate → polling_url → GET it until ready.
 
     Pixazo's gateway returns the absolute polling URL on every async
     generate; per-model poll endpoints don't exist.
     """
-    s = _video("sora-video")
+    s = _video("p-video")
     calls = []
 
     def _fake_post(ep, body):
@@ -82,12 +82,12 @@ def test_video_text_to_video_polling_url_dispatch():
     assert out["video_bytes"] == b"MP4"
     assert out["source_url"] == "https://cdn/v.mp4"
     assert len(calls) == 1  # generate POST only — poll is GET
-    assert calls[0][0].endswith("/video/generate")
+    assert calls[0][0].endswith("/p-video/generateTextToVideoRequest")
 
 
 def test_video_image_to_video_uses_input_field():
-    """Sora image_to_video: image_url goes into the body under the configured input_field."""
-    s = _video("sora-video")
+    """Image-to-video sends image_url under the configured input_field."""
+    s = _video("kling-3-0-image-to-video-standard")
     captured = {}
 
     def _fake_post(ep, body):

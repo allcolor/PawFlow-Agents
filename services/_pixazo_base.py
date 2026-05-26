@@ -408,8 +408,8 @@ class _PixazoBaseService(BaseService):
 
         Supported shapes:
 
-        - ``flat`` (default): pass through unchanged. Suits Sora, Veo,
-          Runway, Kling, most image gens.
+        - ``flat`` (default): pass through unchanged. Suits Veo, Runway,
+          Kling, most image gens.
         - ``content_array``: collapse `prompt` / `image_url` /
           `video_url` / `audio_url` into an OpenAI-style multimodal
           ``content`` array. Suits Seedance and any provider that
@@ -637,7 +637,7 @@ class _PixazoBaseService(BaseService):
                 data = self._get_url(polling_url)
             elif prediction_endpoint:
                 # Some models expose status on a separate endpoint with
-                # a different id field (Runway, FireRed, Sora).
+                # a different id field (Runway, FireRed).
                 data = self._post(prediction_endpoint, {
                     id_field: request_id,
                     "request_id": request_id,

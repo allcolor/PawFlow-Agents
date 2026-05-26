@@ -1203,12 +1203,14 @@ class TestStreamingFlowStructure(unittest.TestCase):
         assert {"from": "route_after_auth", "to": "agent_events", "type": "sse"} in relations
         assert {"from": "agent_events", "to": "send_response", "type": "success"} in relations
 
-    def test_seven_routes_from_http_in(self):
+    def test_routes_from_http_in_have_relations(self):
         path = _paths.REPOSITORY_DIR / "flows" / "global" / "default" / "pawflow_agent" / "versions" / "1.0.0.json"
         data = json.loads(path.read_text(encoding="utf-8"))
-        froms = [r["from"] for r in data["relations"]]
-        # api, ui, sse, chat, files, fs, login, callback, logout, chat/js, chat/ext
-        assert froms.count("http_in") == 11
+        routes = data["tasks"]["http_in"]["parameters"]["routes"]
+        relation_keys = {(rel["from"], rel["type"]) for rel in data["relations"]}
+        for route in routes:
+            relationship = route.get("relationship") or f"{route.get('method', 'GET').upper()}:{route.get('pattern', '/')}"
+            assert ("http_in", relationship) in relation_keys
 
     def test_chat_ui_has_sse_path(self):
         path = _paths.REPOSITORY_DIR / "flows" / "global" / "default" / "pawflow_agent" / "versions" / "1.0.0.json"

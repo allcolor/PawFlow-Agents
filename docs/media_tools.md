@@ -171,7 +171,6 @@ Supported service families include:
 - `grokImageGeneration`
 - `grokVideoGeneration`
 - `klingVideoGeneration`
-- `soraVideoGeneration`
 - `sunoAudioGeneration`
 - `supertonicTTS`
 - `openaiCompatibleSTT`

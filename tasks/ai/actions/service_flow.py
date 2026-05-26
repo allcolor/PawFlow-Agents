@@ -92,7 +92,6 @@ _SERVICE_CATEGORY_BY_TYPE = {
     "wavespeedImageGeneration": "image",
     "grokVideoGeneration": "video",
     "klingVideoGeneration": "video",
-    "soraVideoGeneration": "video",
     "wavespeedVideoGeneration": "video",
     "sunoAudioGeneration": "audio",
     "supertonicTTS": "audio",

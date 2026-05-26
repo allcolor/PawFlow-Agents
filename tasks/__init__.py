@@ -80,7 +80,6 @@ def _register_all_services():
     import services.pixazo_video_service      # noqa: F401
     import services.wavespeed_video_service   # noqa: F401
     import services.grok_video_service        # noqa: F401
-    import services.sora_video_service        # noqa: F401
 
     # Audio generation services
     import services.pixazo_audio_service       # noqa: F401

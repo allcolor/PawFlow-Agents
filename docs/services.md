@@ -86,7 +86,6 @@ run, so read/search-style calls do not restat or decrypt secrets repeatedly.
 | `grokImageGeneration` | Grok/xAI-backed image generation. |
 | `grokVideoGeneration` | Grok/xAI-backed video generation. |
 | `klingVideoGeneration` | Kling video generation. |
-| `soraVideoGeneration` | Sora video generation. |
 | `sunoAudioGeneration` | Suno audio/music generation. |
 | `pixazoImageGeneration` | Pixazo image catalog dispatch. |
 | `pixazoVideoGeneration` | Pixazo video catalog dispatch. |

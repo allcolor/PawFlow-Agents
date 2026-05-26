@@ -437,10 +437,14 @@ class TestAgentFlowStructure(unittest.TestCase):
         assert "/api/agent" in patterns
         assert "/chat" in patterns
         assert "/files/{file_id}" in patterns
+        assert "/auth/login/builtin" in patterns
+        assert "/auth/login/{provider}" in patterns
 
         # Check relations
-        froms = [r["from"] for r in data["relations"]]
-        assert froms.count("http_in") == 11  # api, ui, sse, chat, files, fs, login, callback, logout, chat/js, chat/ext
+        relation_keys = {(rel["from"], rel["type"]) for rel in data["relations"]}
+        for route in routes:
+            relationship = route.get("relationship") or f"{route.get('method', 'GET').upper()}:{route.get('pattern', '/')}"
+            assert ("http_in", relationship) in relation_keys
 
     def test_flow_has_conversation_store(self):
         path = _paths.REPOSITORY_DIR / "flows" / "global" / "default" / "pawflow_agent" / "versions" / "1.0.0.json"

@@ -25,6 +25,7 @@ def _register_all_services():
             and "codexImageGeneration" in _registered_types
             and "supertonicTTS" in _registered_types
             and "voicebox" in _registered_types
+            and "voxcpmTTS" in _registered_types
             and "openaiCompatibleSTT" in _registered_types
             and "luxTTS" in _registered_types
             and "summarizer" in _registered_types
@@ -87,6 +88,7 @@ def _register_all_services():
     import services.suno_audio_service         # noqa: F401  — sunoapi.org wrapper
     import services.supertonic_tts_service     # noqa: F401  — local Supertonic TTS
     import services.voicebox_service           # noqa: F401  — local Voicebox voice I/O
+    import services.voxcpm_tts_service         # noqa: F401  — external VoxCPM TTS
     import services.openai_compatible_stt_service  # noqa: F401  — OpenAI-compatible STT
     import services.luxtts_service             # noqa: F401  — local LuxTTS voice clone
 

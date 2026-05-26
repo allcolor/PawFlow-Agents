@@ -61,8 +61,8 @@ Example chain:
 | `stt_transcribe` | UI action that transcribes browser microphone audio through the active STT provider. |
 
 `speak` is the single text-to-speech entry point. Supertonic, Pixazo, WaveSpeed,
-ElevenLabs, Fish Audio, and other compatible providers all expose speech through
-the same tool. Use `clone_voice` only when the provider needs or supports a
+VoxCPM, ElevenLabs, Fish Audio, and other compatible providers all expose speech
+through the same tool. Use `clone_voice` only when the provider needs or supports a
 stored voice resource; only clone voices when the user has explicit rights to use
 the speaker's voice.
 
@@ -119,6 +119,16 @@ standard expression shortcut for the conversation default relay, so
 route creation path. The URL scheme is the protocol used by the relay to reach
 the target service; the protocol used to enter PawFlow's `/relay-proxy/...`
 listener comes from the HTTP listener configuration.
+
+`voxcpmTTS` is an external VoxCPM client. PawFlow does not install, start, or
+stop VoxCPM; the user runs their own VoxCPM runtime on the PawFlow server or on
+a relay machine. The default `api_mode=openai` calls vLLM-Omni's
+OpenAI-compatible `POST /v1/audio/speech` endpoint with `model`, `input`,
+`voice`, and `response_format`. The response may be raw audio bytes
+(`audio/wav` recommended) or JSON containing `audio_base64` and optional
+`content_type`. Use `api_mode=cli` for VoxCPM voice cloning; it runs the
+official `voxcpm design` and `voxcpm clone` commands and returns the generated
+audio to the same PawFlow `speak` / `clone_voice` persistence layer.
 
 Heavy local services can implement a `prepare_install(reporter)` hook. During
 `/service install`, PawFlow runs this hook before registering the service and

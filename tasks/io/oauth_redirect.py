@@ -147,8 +147,10 @@ class OAuthRedirectTask(BaseTask):
         flowfile.set_content(b"")
         flowfile.set_attribute("http.response.status", "302")
         flowfile.set_attribute("http.response.header.Location", "/chat")
+        cookie_name = self.config.get("cookie_name", "pawflow_token")
+        cookie_max_age = int(self.config.get("cookie_max_age", 86400))
         flowfile.set_attribute("http.response.header.Set-Cookie",
-                               f"session={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400")
+                               f"{cookie_name}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={cookie_max_age}")
         return [flowfile]
 
     def _handle_oauth_redirect(self, flowfile, auth_svc, provider_name, ip):

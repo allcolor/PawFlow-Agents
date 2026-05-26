@@ -109,6 +109,18 @@
             "public": true
           },
           {
+            "method": "POST",
+            "pattern": "/auth/login/builtin",
+            "relationship": "POST:/auth/login/builtin",
+            "public": true
+          },
+          {
+            "method": "GET",
+            "pattern": "/auth/login/{provider}",
+            "relationship": "GET:/auth/login/provider",
+            "public": true
+          },
+          {
             "method": "GET",
             "pattern": "/auth/callback",
             "relationship": "GET:/auth/callback",
@@ -362,6 +374,16 @@
       "from": "http_in",
       "to": "oauth_login",
       "type": "GET:/auth/login"
+    },
+    {
+      "from": "http_in",
+      "to": "oauth_login",
+      "type": "POST:/auth/login/builtin"
+    },
+    {
+      "from": "http_in",
+      "to": "oauth_login",
+      "type": "GET:/auth/login/provider"
     },
     {
       "from": "http_in",

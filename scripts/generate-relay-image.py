@@ -259,7 +259,10 @@ def _write_scripts(out_dir: Path, image_name: str, manifest: dict[str, Any]) -> 
         "set -euo pipefail\n"
         "SCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\n"
         f"IMAGE={image_expansion}\n"
-        "docker build -t \"$IMAGE\" \"$SCRIPT_DIR\"\n",
+        "PLATFORM=\"${PAWFLOW_DOCKER_PLATFORM}\"\n"
+        "BUILD_ARGS=()\n"
+        "if [[ -n \"$PLATFORM\" ]]; then BUILD_ARGS+=(--platform \"$PLATFORM\"); fi\n"
+        "docker build \"${BUILD_ARGS[@]}\" -t \"$IMAGE\" \"$SCRIPT_DIR\"\n",
         encoding="utf-8",
     )
     run_args = " ".join(shlex.quote(arg) for arg in manifest.get("runtime_docker_args", []))

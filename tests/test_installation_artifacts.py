@@ -74,14 +74,51 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert "doctor-pawflow.sh" in install_src
     assert "--skip-doctor" in install_src
     assert "--source" in install_src
+    assert "--from-source" in install_src
+    assert "--version" in install_src
+    assert "--pull-server" in install_src
+    assert "--platform" in install_src
+    assert "--native" in install_src
+    assert "--container" in install_src
+    assert "--no-start" in install_src
+    assert "PAWFLOW_VERSION" in install_src
+    assert "PAWFLOW_DOCKER_PLATFORM" in install_src
+    assert "PAWFLOW_START_TARGET" in install_src
+    assert "PAWFLOW_DATA_DIR" in install_src
+    assert "python -m venv" not in install_src
+    assert "-m venv" in install_src
+    assert "SERVER_MODE=\"auto\"" in install_src
+    assert "START_TARGET=\"container\"" in install_src
+    assert "ghcr.io/allcolor/pawflow" in install_src
+    assert "docker pull \"${pull_args[@]}\" \"$IMAGE\"" in install_src
+    assert "Prebuilt PawFlow server image unavailable" in install_src
+    assert "refs/tags/$VERSION" in install_src
+    assert "checkout main" in install_src
     assert "git clone" in install_src
-    assert "docker pull" in install_src
+    assert "docker/claude-code/build.sh" in install_src
+    assert "scripts/build-server-minimal-relay.sh" in install_src
+    assert "docker/relay-dev/build.sh" in install_src
+    assert "pawflow-claude-code:latest" in install_src
+    assert "pawflow-relay-minimal:latest" in install_src
+    assert "pawflow-relay-dev:latest" in install_src
+    assert "windows-shell" in install_src
+    assert "Native Windows shells are not supported" not in install_src
 
     build_src = build.read_text(encoding="utf-8")
     assert "printenv PAWFLOW_IMAGE" in build_src
+    assert "PAWFLOW_DOCKER_PLATFORM" in build_src
+    assert "--platform" in build_src
+
+    claude_build_src = Path("docker/claude-code/build.sh").read_text(encoding="utf-8")
+    relay_dev_build_src = Path("docker/relay-dev/build.sh").read_text(encoding="utf-8")
+    generator_src = Path("scripts/generate-relay-image.py").read_text(encoding="utf-8")
+    assert "PAWFLOW_DOCKER_PLATFORM" in claude_build_src
+    assert "PAWFLOW_DOCKER_PLATFORM" in relay_dev_build_src
+    assert "PAWFLOW_DOCKER_PLATFORM" in generator_src
 
     minimal_relay_src = build_server_minimal_relay.read_text(encoding="utf-8")
     assert "PAWFLOW_SERVER_MINIMAL_RELAY_IMAGE" in minimal_relay_src
+    assert "PAWFLOW_PYTHON" in minimal_relay_src
     assert "pawflow-relay-minimal:latest" in minimal_relay_src
     assert "--profile server-minimal" in minimal_relay_src
     assert "ghcr.io/allcolor/pawflow:latest" in build_src
@@ -90,6 +127,7 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert "printenv PAWFLOW_PORT" in doctor_src
     assert "wsl.exe --status" in doctor_src
     assert "Docker Desktop" in doctor_src
+    assert "Native Windows install can continue" in doctor_src
     assert "docker info" in doctor_src
     assert "/var/run/docker.sock" in doctor_src
     assert "--require-socket" in doctor_src
@@ -101,9 +139,11 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert "wsl.exe --list --verbose" in doctor_ps1_src
     assert "wsl --install" in doctor_ps1_src
     assert "Docker Desktop" in doctor_ps1_src
+    assert "native Windows" in doctor_ps1_src
     assert "Linux containers" in doctor_ps1_src
     assert "docker info >/dev/null 2>&1" in doctor_ps1_src
     assert "Docker daemon reachable from WSL" in doctor_ps1_src
+    assert "Native Windows install can continue" in doctor_ps1_src
     assert "Windows docker CLI exists but daemon is not reachable" not in doctor_ps1_src
     assert "test -S /var/run/docker.sock" in doctor_ps1_src
     assert "Get-NetTCPConnection" in doctor_ps1_src
@@ -153,11 +193,26 @@ def test_install_docs_and_agent_prompt_capture_bootstrap_contract():
     assert "ZeroSSL" in doc
     assert "summarizer_service" in doc
     assert "secret IDs" in doc
+    assert "Complete from-scratch install" in doc
+    assert "--version VERSION" in doc
+    assert "--from-source" in doc
+    assert "--native" in doc
+    assert "prebuilt" in doc
+    assert "pawflow-claude-code:latest" in doc
+    assert "pawflow-relay-minimal:latest" in doc
+    assert "pawflow-relay-dev:latest" in doc
 
     assert "docker info" in prompt
     assert "doctor-pawflow.sh" in prompt
     assert "doctor-pawflow.ps1" in prompt
-    assert "docker pull ghcr.io/allcolor/pawflow:latest" in prompt
+    assert "bash scripts/install-pawflow.sh" in prompt
+    assert "--version VERSION" in prompt
+    assert "--from-source" in prompt
+    assert "--native" in prompt
+    assert "prebuilt" in prompt
+    assert "pawflow-claude-code:latest" in prompt
+    assert "pawflow-relay-minimal:latest" in prompt
+    assert "pawflow-relay-dev:latest" in prompt
     assert "https://localhost:9090" in prompt
     assert "self-signed bootstrap certificate" in prompt
     assert "Do not configure relays" in prompt
@@ -179,7 +234,15 @@ def test_docker_docs_explain_wsl_vhdx_compaction():
     doc = Path("docs/docker.md").read_text(encoding="utf-8")
 
     assert "Complete install scenarios" in doc
-    assert "Fresh published-image install" in doc
+    assert "Fresh complete install" in doc
+    assert "Versioned install" in doc
+    assert "Native server install" in doc
+    assert "--from-source --version" in doc
+    assert "--native" in doc
+    assert "PAWFLOW_DOCKER_PLATFORM" in doc
+    assert "pawflow-claude-code:latest" in doc
+    assert "pawflow-relay-minimal:latest" in doc
+    assert "pawflow-relay-dev:latest" in doc
     assert "Restart before finalization" in doc
     assert "Restart after finalization" in doc
     assert "Docker socket unavailable" in doc
@@ -240,6 +303,16 @@ def test_pawflow_installer_flow_template_exists():
     assert "/install" in patterns
     assert "/install/api" in patterns
     assert "/install/api/finalize" in patterns
+    route_relationships = {
+        route.get("relationship") or f"{route.get('method', 'GET').upper()}:{route.get('pattern', '/')}"
+        for route in routes
+    }
+    relation_keys = {
+        (rel["from"], rel["type"])
+        for rel in flow["relations"]
+    }
+    for relationship in route_relationships:
+        assert ("http_in", relationship) in relation_keys
 
     assert flow["tasks"]["install_api"]["type"] == "installBootstrap"
     route_names = set(flow["tasks"]["route_install"]["parameters"]["routes"])
@@ -252,6 +325,26 @@ def test_pawflow_installer_flow_template_exists():
     assert "admin_password" in ui_content
     assert "llm_service_id" in ui_content
     assert "codex_appserver_llm_service" in ui_content
+    assert "window.location.href='/chat'" in ui_content
+
+
+def test_pawflow_agent_auth_routes_cover_login_forms():
+    template = Path("data/repository/flows/global/default/pawflow_agent/versions/1.0.0.json")
+    flow = json.loads(template.read_text(encoding="utf-8"))
+
+    routes = flow["tasks"]["http_in"]["parameters"]["routes"]
+    route_keys = {(route["method"], route["pattern"]) for route in routes}
+    assert ("GET", "/auth/login") in route_keys
+    assert ("POST", "/auth/login/builtin") in route_keys
+    assert ("GET", "/auth/login/{provider}") in route_keys
+
+    relation_keys = {
+        (rel["from"], rel["type"])
+        for rel in flow["relations"]
+    }
+    for route in routes:
+        relationship = route.get("relationship") or f"{route.get('method', 'GET').upper()}:{route.get('pattern', '/')}"
+        assert ("http_in", relationship) in relation_keys
 
 
 def test_server_relay_uses_embedded_code_by_default():

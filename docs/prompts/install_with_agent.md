@@ -16,8 +16,10 @@ Safety rules:
 - Do not delete existing PawFlow data without explicit confirmation.
 - Do not print secrets, tokens, OAuth client secrets, or private keys.
 - Do not configure relays during this install; server workspace relays are spawned later by PawFlow and client relays are configured from webchat.
-- Prefer the published Docker image when available.
-- If building from source, clone the official repository and build locally.
+- Use the complete PawFlow installer so the server, CLI LLM, minimal relay, and full relay images are all prepared before first start.
+- If the user provides a version, pass it as `--version VERSION`; otherwise install latest.
+- Use `--from-source` only when the user explicitly wants source build semantics. With a version, it must checkout that exact git tag; without a version, it must checkout `main`.
+- On Windows, use Docker Desktop Linux containers. Run the Bash installer from native Git Bash/native Bash or from WSL2 with Docker Desktop WSL integration.
 - Use Docker volumes or bind mounts for persistent data.
 
 Prerequisites to check first:
@@ -27,39 +29,27 @@ Prerequisites to check first:
 4. Verify the selected port is available. Default port: 9090.
 5. Verify internet access to GitHub and the Docker registry.
 6. Prefer running `bash scripts/doctor-pawflow.sh` when this repository is available; follow its OS-specific remediation instructions.
-7. On Windows, PawFlow requires WSL2 plus Docker Desktop with WSL integration. Run `powershell -ExecutionPolicy Bypass -File scripts/doctor-pawflow.ps1` only as a host prerequisite check; if it reports missing WSL2 or Docker Desktop WSL integration, stop and ask the user to install/enable them, then run the install commands inside WSL.
+7. On Windows, run `powershell -ExecutionPolicy Bypass -File scripts/doctor-pawflow.ps1` as a host prerequisite check. Docker Desktop Linux containers are required. WSL2 integration is required only when installing from WSL.
 
-Install path A: published image, preferred
-1. Create persistent directories:
-   - ~/pawflow/data
-   - ~/pawflow/config
-   - ~/pawflow/certs
-   - ~/pawflow/logs
-2. Pull the image:
-   docker pull ghcr.io/allcolor/pawflow:latest
-3. Run the container:
-   docker run -d \
-     --name pawflow-server \
-     --restart unless-stopped \
-     -p 9090:9090 \
-     -v "$HOME/pawflow/data:/app/data" \
-     -v "$HOME/pawflow/config:/app/config" \
-     -v "$HOME/pawflow/certs:/app/certs" \
-     -v "$HOME/pawflow/logs:/app/logs" \
-     -e PAWFLOW_BOOTSTRAP_GATEWAY_KEY=RoyBetty \
-     ghcr.io/allcolor/pawflow:latest \
-     python cli.py start --host 0.0.0.0 --port 9090
-
-Install path B: build from source
-1. Clone or update the repository:
+Install path: complete from-scratch bootstrap
+1. Clone or update the repository if needed:
    git clone https://github.com/allcolor/PawFlow-Agents.git ~/pawflow-src
    cd ~/pawflow-src
-2. Run the host prerequisite doctor:
-   bash scripts/doctor-pawflow.sh --source
-3. Build the server image:
-   bash scripts/build-pawflow-docker.sh
-4. Run the server:
-   bash scripts/run-pawflow-docker.sh
+2. Run the installer:
+   bash scripts/install-pawflow.sh
+3. Confirm the installer first tries the prebuilt PawFlow server image, then builds from source only if needed, and builds these local runtime images before starting the server:
+   - ghcr.io/allcolor/pawflow:latest, or ghcr.io/allcolor/pawflow:VERSION when a version is requested
+   - pawflow-claude-code:latest
+   - pawflow-relay-minimal:latest
+   - pawflow-relay-dev:latest
+4. If the user requested source mode, use:
+   bash scripts/install-pawflow.sh --from-source
+   or:
+   bash scripts/install-pawflow.sh --from-source --version VERSION
+5. If the user requested a native PawFlow server instead of a server container, use:
+   bash scripts/install-pawflow.sh --native
+6. If release testing must require a pulled server image while still building local runtime images, use:
+   bash scripts/install-pawflow.sh --pull-server
 
 After starting:
 1. Follow logs:

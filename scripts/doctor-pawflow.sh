@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Validate host prerequisites for installing PawFlow Server in Docker.
+# Validate host prerequisites for installing PawFlow and its Docker runtimes.
 
 set -euo pipefail
 
@@ -19,7 +19,7 @@ while [[ $# -gt 0 ]]; do
       cat <<'HELP'
 Usage: bash scripts/doctor-pawflow.sh [--port 9090] [--source] [--require-socket]
 
-Checks host prerequisites for running PawFlow Server in Docker.
+Checks host prerequisites for running PawFlow and its Docker runtimes.
 - --source         Also require git for building from source.
 - --require-socket Treat missing /var/run/docker.sock as a failure.
 HELP
@@ -60,7 +60,7 @@ case "$OS" in
     info "macOS install help: install Docker Desktop from https://www.docker.com/products/docker-desktop/ and start it before running PawFlow."
     ;;
   windows-shell)
-    info "Windows install help: prefer running this installer inside WSL2. Install WSL with 'wsl --install', install Docker Desktop, and enable WSL integration."
+    info "Windows install help: use Docker Desktop with Linux containers. Run the Bash installer from Git Bash/native Bash or from WSL2. WSL integration is required only for WSL-based installs."
     ;;
   *)
     warn "Unknown OS. Docker must be installed and reachable; source mode also needs git."
@@ -91,7 +91,7 @@ if [[ "$OS" == "wsl" || "$OS" == "windows-shell" ]]; then
   elif [[ "$OS" == "wsl" ]]; then
     warn "wsl.exe not visible from PATH. Docker can still work, but Windows-side WSL diagnostics are unavailable."
   else
-    fail "WSL is not visible. Install WSL2 and rerun from the Linux distro shell."
+    warn "WSL is not visible. Native Windows install can continue if Docker Desktop is reachable from this shell."
   fi
 fi
 
@@ -130,10 +130,15 @@ else
   fi
 fi
 
+PYTHON_FOR_PROBE=""
 if has_cmd python3; then
-  ok "python3 found (optional for Docker image install)"
+  PYTHON_FOR_PROBE="python3"
+  ok "python3 found"
+elif has_cmd python; then
+  PYTHON_FOR_PROBE="python"
+  ok "python found"
 else
-  warn "python3 not found on host. Not required for image install, but useful for source/debug workflows."
+  warn "python not found on host. Required for native server installs and relay image generation."
 fi
 
 if has_cmd nc; then
@@ -142,8 +147,8 @@ if has_cmd nc; then
   else
     ok "Port $PORT appears available"
   fi
-elif has_cmd python3; then
-  if python3 - "$PORT" <<'PY'
+elif [[ -n "$PYTHON_FOR_PROBE" ]]; then
+  if "$PYTHON_FOR_PROBE" - "$PORT" <<'PY'
 import socket, sys
 port = int(sys.argv[1])
 s = socket.socket()
@@ -160,7 +165,7 @@ PY
     fail "Port $PORT is already in use on 127.0.0.1. Choose another port with --port or stop the conflicting service."
   fi
 else
-  warn "Cannot check port $PORT because neither nc nor python3 is available."
+  warn "Cannot check port $PORT because neither nc nor python is available."
 fi
 
 if has_cmd docker; then

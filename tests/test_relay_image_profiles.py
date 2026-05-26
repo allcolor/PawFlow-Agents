@@ -121,7 +121,8 @@ def test_generator_resolves_implied_features_and_writes_installer_artifacts(tmp_
 
     build_script = (out_dir / "build.sh").read_text(encoding="utf-8")
     assert "SCRIPT_DIR=" in build_script
-    assert 'docker build -t "$IMAGE" "$SCRIPT_DIR"' in build_script
+    assert "PAWFLOW_DOCKER_PLATFORM" in build_script
+    assert 'docker build "${BUILD_ARGS[@]}" -t "$IMAGE" "$SCRIPT_DIR"' in build_script
 
 
 def test_server_minimal_build_script_targets_runtime_default_image():

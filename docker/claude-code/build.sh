@@ -12,7 +12,10 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PLATFORM="$(printenv PAWFLOW_DOCKER_PLATFORM || true)"
+BUILD_ARGS=()
+if [[ -n "$PLATFORM" ]]; then BUILD_ARGS+=(--platform "$PLATFORM"); fi
 
-docker build -t pawflow-claude-code:latest "$SCRIPT_DIR"
+docker build "${BUILD_ARGS[@]}" -t pawflow-claude-code:latest "$SCRIPT_DIR"
 
 echo "Built pawflow-claude-code:latest"

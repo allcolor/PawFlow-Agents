@@ -358,6 +358,36 @@ def _deploy_main_flow(private_gateway_service_id: str) -> str:
     return MAIN_INSTANCE_ID
 
 
+def _start_main_flow_executor(instance_id: str) -> None:
+    """Start the main PawFlow executor immediately after bootstrap finalization."""
+    from core.deployment_registry import DeploymentRegistry
+    from core.executor_registry import ExecutorRegistry
+
+    executors = ExecutorRegistry.get_instance()
+    if executors.get(instance_id) is not None:
+        return
+
+    inst = DeploymentRegistry.get_instance().get(instance_id)
+    if inst is None:
+        raise RuntimeError(f"main PawFlow deployment is missing: {instance_id}")
+    ok = executors._restore_instance(
+        instance_id,
+        inst.flow_path,
+        inst.max_workers,
+        inst.max_retries,
+        flow_fqn=getattr(inst, "flow_fqn", "") or "",
+        flow_scope=getattr(inst, "flow_scope", "") or "",
+        parameters=inst.parameters,
+        service_overrides=inst.service_overrides,
+        service_configs=inst.service_configs,
+        owner=inst.owner or "",
+        conversation_id=inst.conversation_id or "",
+        agent_name=getattr(inst, "agent_name", "") or "",
+    )
+    if not ok:
+        raise RuntimeError(f"failed to start main PawFlow executor: {instance_id}")
+
+
 def _create_first_conversation(admin_user: str, llm_service_id: str) -> str:
     from core.conversation_store import ConversationStore
     from core.conv_agent_config import add_agent_to_conv
@@ -459,6 +489,7 @@ def finalize_install(payload: Dict[str, Any]) -> Dict[str, Any]:
     auth_gateway_service_id = _install_auth_gateway()
     llm_service_id, summarizer_service_id = _install_llm_and_summarizer(payload)
     main_instance_id = _deploy_main_flow(final_gateway_service_id)
+    _start_main_flow_executor(main_instance_id)
     first_conversation_id = _create_first_conversation(admin_user, llm_service_id)
 
     now = time.time()

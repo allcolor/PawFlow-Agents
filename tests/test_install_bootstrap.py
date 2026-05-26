@@ -268,15 +268,30 @@ def test_finalize_install_persists_complete_state_without_cleartext_key(tmp_path
 
     try:
         from core.conversation_store import ConversationStore
+        from core.executor_registry import ExecutorRegistry
         from core.resource_store import ResourceStore
         from core.security import SecurityManager
         ConversationStore.reset()
+        ExecutorRegistry._instance = None
         ResourceStore.reset()
         SecurityManager._instance = None
+
+        restored = {}
+
+        def fake_restore(self, instance_id, flow_path, *args, **kwargs):
+            restored["instance_id"] = instance_id
+            restored["flow_path"] = flow_path
+            restored["parameters"] = kwargs.get("parameters")
+            self._executors[instance_id] = object()
+            return True
+
+        monkeypatch.setattr(ExecutorRegistry, "_restore_instance", fake_restore)
 
         reg = DeploymentRegistry.get_instance()
         reg.deploy(str(template), instance_id=ib.INSTALLER_INSTANCE_ID, source="bootstrap")
         reg.update_status(ib.INSTALLER_INSTANCE_ID, "running")
+        from tasks import _register_all_services
+        _register_all_services()
         ServiceRegistry.get_instance().install(
             SCOPE_GLOBAL,
             "",
@@ -323,6 +338,8 @@ def test_finalize_install_persists_complete_state_without_cleartext_key(tmp_path
         assert state["draft"]["summarizer_service"]["service_id"] == ib.SUMMARIZER_SERVICE_ID
         assert state["draft"]["flows"]["main_instance_id"] == ib.MAIN_INSTANCE_ID
         assert state["draft"]["conversation"]["agent"] == ib.FIRST_RUN_AGENT
+        assert restored["instance_id"] == ib.MAIN_INSTANCE_ID
+        assert restored["parameters"] == {"private_gateway_service_id": ib.FINAL_PRIVATE_GATEWAY_SERVICE_ID}
         assert reg.get(ib.MAIN_INSTANCE_ID).status == "running"
         assert reg.get(ib.INSTALLER_INSTANCE_ID).status == "stopped"
         sdef = ServiceRegistry.get_instance().get_definition(
@@ -346,9 +363,11 @@ def test_finalize_install_persists_complete_state_without_cleartext_key(tmp_path
         assert "admin-password-123" not in system_dir.joinpath("users.json").read_text(encoding="utf-8")
     finally:
         from core.conversation_store import ConversationStore
+        from core.executor_registry import ExecutorRegistry
         from core.resource_store import ResourceStore
         from core.security import SecurityManager
         ConversationStore.reset()
+        ExecutorRegistry._instance = None
         ResourceStore.reset()
         SecurityManager._instance = None
         DeploymentRegistry.reset()

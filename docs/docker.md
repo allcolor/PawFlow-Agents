@@ -15,15 +15,28 @@ PawFlow supports running agent code in Docker containers for isolation and secur
 The recommended first install path is to run the PawFlow server from a Docker
 image, then complete the bootstrap wizard in the browser.
 
-### Pull and run the published image
+### Complete from-scratch install
 
 ```bash
 bash scripts/doctor-pawflow.sh
 bash scripts/install-pawflow.sh
 ```
 
-This pulls `ghcr.io/allcolor/pawflow:latest`, creates persistent directories
-under `~/pawflow`, starts `pawflow-server`, and exposes `https://localhost:9090`.
+This is the recommended Linux, macOS, Windows-native Docker Desktop, and WSL2
+install path. It first tries the prebuilt server image
+(`ghcr.io/allcolor/pawflow:latest`, or
+`ghcr.io/allcolor/pawflow:VERSION` when `--version VERSION` is set). If that
+image is unavailable, it builds the server image from source. It always builds
+the shared CLI LLM image (`pawflow-claude-code:latest` for Claude Code, Codex,
+Gemini, and Antigravity), the protected minimal server relay image
+(`pawflow-relay-minimal:latest`), and the full server relay image
+(`pawflow-relay-dev:latest`). It then creates persistent directories under
+`~/pawflow`, starts `pawflow-server`, and exposes `https://localhost:9090`.
+On macOS, the installer defaults Docker builds to `linux/amd64` unless
+`PAWFLOW_DOCKER_PLATFORM` or `--platform` is set.
+Use `bash scripts/install-pawflow.sh --native` when the PawFlow server itself
+should run on the host instead of in the server Docker container. Native mode
+still builds the CLI LLM and relay images.
 When `/var/run/docker.sock` is available on the host, the run script mounts it
 into the PawFlow container so PawFlow can spawn server-side workspace relay
 containers after installation.
@@ -57,15 +70,19 @@ gateway, admin user, selected LLM service, `summarizer_service`,
 the `pawflow-agent` deployment, and a starter conversation with the `assistant`
 agent selected.
 
-### Build from source
+### Versioned and source installs
 
 ```bash
-bash scripts/doctor-pawflow.sh --source
-bash scripts/install-pawflow.sh --source
+bash scripts/install-pawflow.sh --version 1.0.0
+bash scripts/install-pawflow.sh --from-source --version 1.0.0
+bash scripts/install-pawflow.sh --from-source
 ```
 
-This checks out the PawFlow repository, builds the server image locally, and
-starts the same persistent container layout.
+`--version VERSION` first tries the prebuilt `ghcr.io/allcolor/pawflow:VERSION`
+server image. `--from-source --version VERSION` checks out the exact git tag and
+fails if it is missing. `--from-source` without a version checks out `main`.
+All modes still build the local CLI LLM, minimal relay, and full relay images
+from the repository Docker contexts.
 
 The doctor script validates host prerequisites before install. It detects
 Linux, macOS, Windows shells, and WSL, checks Docker CLI/daemon access, WSL
@@ -73,17 +90,18 @@ health where applicable, source-install Git availability, Docker socket access
 for first-run image builds, selected port availability, and prints OS-specific
 installation instructions for missing prerequisites.
 
-On Windows, PawFlow requires WSL2 and Docker Desktop with WSL integration. The
-PowerShell doctor is only a host prerequisite checker before entering WSL:
+On Windows, PawFlow supports native Windows Bash with Docker Desktop Linux
+containers and WSL2 with Docker Desktop WSL integration. The PowerShell doctor
+is a host prerequisite checker for both paths:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/doctor-pawflow.ps1
 ```
 
-It validates WSL2, Docker Desktop, Linux-container mode, WSL Docker daemon
-access, and port availability, then explains how to install or enable the
-missing pieces. After those requirements are satisfied, run the Linux install
-commands from inside the WSL distro.
+It validates Docker Desktop, Linux-container mode, optional WSL2/WSL Docker
+daemon access, and port availability, then explains how to install or enable the
+missing pieces. After those requirements are satisfied, run the Bash installer
+from Git Bash/native Bash or from inside the WSL distro.
 
 ### Agent-assisted install prompt
 
@@ -101,8 +119,11 @@ configure relays; relay onboarding happens later from the webchat.
 
 These are the supported Docker install scenarios and their expected outcomes.
 
-1. Fresh published-image install on Linux or WSL
+1. Fresh complete install on Linux, macOS, Windows native, or WSL
    - Run `bash scripts/doctor-pawflow.sh`, then `bash scripts/install-pawflow.sh`.
+   - The installer first tries `ghcr.io/allcolor/pawflow:latest`, then builds it from source if needed, and builds
+     `pawflow-claude-code:latest`, `pawflow-relay-minimal:latest`, and
+     `pawflow-relay-dev:latest` before starting the server.
    - The container starts as root only long enough to seed missing defaults and
      fix persistent directory ownership, then runs PawFlow as UID/GID `1000`.
    - An empty `~/pawflow/data` receives `data/repository`, so the installer flow
@@ -115,16 +136,24 @@ These are the supported Docker install scenarios and their expected outcomes.
      conversation with `assistant` are created; `_bootstrap_private_gateway` is
      disabled and the installer deployment is stopped.
 
-2. Fresh source build install
-   - Run `bash scripts/doctor-pawflow.sh --source`, then
-     `bash scripts/install-pawflow.sh --source`.
-   - The script clones the repository, builds the PawFlow server image, starts
-     the same persistent layout, and follows the same browser finalization flow
-     as the published image.
-   - Expected result: source-built server behavior matches the published image,
-     including repository/config seeding and UID/GID `1000` runtime ownership.
+2. Versioned install
+   - Run `bash scripts/install-pawflow.sh --version VERSION`.
+   - The script first pulls `ghcr.io/allcolor/pawflow:VERSION`; if unavailable,
+     it checks out git tag `VERSION`, builds the server, builds the CLI LLM and
+     relay images, starts the same persistent layout, and follows the same
+     browser finalization flow.
+   - Expected result: all local runtime images match the requested PawFlow
+     version when the tag exists.
 
-3. Restart before finalization
+3. Native server install
+   - Run `bash scripts/install-pawflow.sh --native`.
+   - The script prepares the same Docker runtime images, creates a local Python
+     virtualenv, seeds `~/pawflow/data/repository` when missing, and starts
+     PawFlow with `PAWFLOW_DATA_DIR=~/pawflow/data`.
+   - Expected result: the web installer and first conversation path are the same
+     as the container install, but `pawflow-server` is not a Docker container.
+
+4. Restart before finalization
    - Restart `pawflow-server` while the installer is still incomplete.
    - The entrypoint seeds only missing files and does not overwrite existing
      user data. The install state remains incomplete and the installer flow is

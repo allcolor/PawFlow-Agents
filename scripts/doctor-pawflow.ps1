@@ -1,6 +1,6 @@
 <#
-Validate Windows host prerequisites for installing PawFlow Server.
-Run from PowerShell before the Bash installer when WSL is not available yet.
+Validate Windows host prerequisites for installing PawFlow and its Docker runtimes.
+Run from PowerShell before the Bash installer when using native Windows or WSL.
 #>
 
 param(
@@ -36,7 +36,7 @@ function Wsl-Command-Output($command) {
 }
 
 Info "Detected host: Windows / PowerShell"
-Info "Recommended install path: WSL2 + Docker Desktop with WSL integration enabled, then run bash scripts/install-pawflow.sh inside the WSL distro."
+Info "Supported install paths: native Windows with Docker Desktop Linux containers, or WSL2 with Docker Desktop WSL integration."
 
 if (Has-Command "wsl.exe") {
     Ok "wsl.exe found"
@@ -66,7 +66,7 @@ if (Has-Command "wsl.exe") {
         Warn "Could not inspect WSL distro versions. Run: wsl --list --verbose"
     }
 } else {
-    Fail "WSL is not installed. Install it with: wsl --install ; reboot if requested; then install Ubuntu from Microsoft Store if needed."
+    Warn "WSL is not installed. Native Windows install can continue if Docker Desktop is reachable from this shell. Install WSL only for WSL-based installs."
 }
 
 $DockerReachable = $false
@@ -88,17 +88,17 @@ if (Wsl-Command-Ok "docker info >/dev/null 2>&1") {
                 Warn "Docker may not be using Linux containers. Switch Docker Desktop to Linux containers."
             }
         } else {
-            Fail "Docker command exists but daemon is not reachable from Windows or WSL. Start Docker Desktop and enable WSL integration for your distro."
+            Fail "Docker command exists but daemon is not reachable from Windows or WSL. Start Docker Desktop. Enable WSL integration only for WSL-based installs."
         }
     } catch {
-        Fail "Docker command exists but 'docker info' failed and WSL Docker is not reachable. Start Docker Desktop and verify WSL integration."
+        Fail "Docker command exists but 'docker info' failed and WSL Docker is not reachable. Start Docker Desktop."
     }
 } else {
-    Fail "Docker CLI not found in native PowerShell or WSL. Install Docker Desktop for Windows and enable WSL integration."
+    Fail "Docker CLI not found in native PowerShell or WSL. Install Docker Desktop for Windows."
 }
 
 if (-not $DockerReachable) {
-    Fail "Docker daemon is not reachable from Windows or WSL. Start Docker Desktop and enable WSL integration for your distro."
+    Fail "Docker daemon is not reachable from Windows or WSL. Start Docker Desktop."
 }
 
 $dockerDesktopPath = Join-Path $env:ProgramFiles "Docker\Docker\Docker Desktop.exe"
@@ -198,4 +198,4 @@ if ($Failures -gt 0) {
 }
 
 Write-Host ""
-Ok "Doctor passed with $Warnings warning(s). Next: open WSL and run bash scripts/install-pawflow.sh."
+Ok "Doctor passed with $Warnings warning(s). Next: run bash scripts/install-pawflow.sh from Git Bash/native Bash or from WSL."

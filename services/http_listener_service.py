@@ -1449,6 +1449,7 @@ class HTTPListenerService(BaseService):
 
     def __init__(self, config: Dict[str, Any]):
         if hasattr(self, '_port'):
+            self._update_runtime_config(config or {})
             return  # already initialized (singleton)
         super().__init__(config)
         self._host = self.config.get("host", "0.0.0.0")  # nosec B104 - listener bind is explicit configuration.
@@ -1475,6 +1476,18 @@ class HTTPListenerService(BaseService):
         # Register singleton
         with _instances_lock:
             _instances[self._port] = self
+
+    def _update_runtime_config(self, config: Dict[str, Any]) -> None:
+        """Apply load-bearing config when another flow reuses this port."""
+        if not isinstance(config, dict):
+            return
+        self.config.update(config)
+        self._request_timeout = float(self.config.get("request_timeout", self._request_timeout))
+        self._max_dispatch_threads = self.config.get("max_dispatch_threads", self._max_dispatch_threads)
+        self._header_read_timeout = self.config.get("header_read_timeout", self._header_read_timeout)
+        self._private_gateway_service_id = self.config.get("private_gateway_service_id", self._private_gateway_service_id)
+        if self._server is not None:
+            self._server._private_gateway = self._resolve_private_gateway()
 
     def get_parameter_schema(self) -> Dict[str, Any]:
         return {

@@ -21,8 +21,11 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+PLATFORM="$(printenv PAWFLOW_DOCKER_PLATFORM || true)"
+BUILD_ARGS=()
+if [[ -n "$PLATFORM" ]]; then BUILD_ARGS+=(--platform "$PLATFORM"); fi
 
-docker build -f "$SCRIPT_DIR/Dockerfile" -t pawflow-relay-dev:latest "$REPO_DIR"
+docker build "${BUILD_ARGS[@]}" -f "$SCRIPT_DIR/Dockerfile" -t pawflow-relay-dev:latest "$REPO_DIR"
 
 echo ""
 echo "Built pawflow-relay-dev:latest"

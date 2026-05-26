@@ -9,6 +9,7 @@
 #   PAWFLOW_SERVER_MINIMAL_RELAY_IMAGE  Image tag to build (default: pawflow-relay-minimal:latest)
 #   PAWFLOW_SERVER_MINIMAL_RELAY_OUT    Generated build directory (default: docker/relay-generated/server-minimal)
 #   PAWFLOW_RELAY_GENERATE_ONLY         Set to 1 to generate files without docker build
+#   PAWFLOW_PYTHON                      Python executable for generator (default: python3)
 
 set -euo pipefail
 
@@ -17,9 +18,11 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 IMAGE="$(printenv PAWFLOW_SERVER_MINIMAL_RELAY_IMAGE || true)"
 OUT_DIR="$(printenv PAWFLOW_SERVER_MINIMAL_RELAY_OUT || true)"
 GENERATE_ONLY="$(printenv PAWFLOW_RELAY_GENERATE_ONLY || true)"
+PYTHON_BIN="$(printenv PAWFLOW_PYTHON || true)"
 
 if [[ -z "$IMAGE" ]]; then IMAGE="pawflow-relay-minimal:latest"; fi
 if [[ -z "$OUT_DIR" ]]; then OUT_DIR="$REPO_DIR/docker/relay-generated/server-minimal"; fi
+if [[ -z "$PYTHON_BIN" ]]; then PYTHON_BIN="python3"; fi
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -36,7 +39,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 echo "Generating server minimal relay image context: $OUT_DIR"
-python3 "$REPO_DIR/scripts/generate-relay-image.py" \
+"$PYTHON_BIN" "$REPO_DIR/scripts/generate-relay-image.py" \
   --profile server-minimal \
   --out "$OUT_DIR" \
   --image "$IMAGE"

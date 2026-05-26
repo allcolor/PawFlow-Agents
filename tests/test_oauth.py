@@ -224,6 +224,35 @@ class TestOAuthRedirectTask(unittest.TestCase):
         results = task.execute(ff)
         assert results[0].get_attribute("http.response.status") == "500"
 
+    def test_builtin_login_sets_pawflow_token_cookie(self):
+        from types import SimpleNamespace
+        from tasks.io.oauth_redirect import OAuthRedirectTask
+        from core.security import SecurityManager
+
+        class FakeAuth:
+            def authenticate_builtin(self, username, password, ip=""):
+                assert username == "admin"
+                assert password == "admin-password-123"
+                return SimpleNamespace(success=True, username="admin")
+
+        class FakeSecurity:
+            def get_user(self, username):
+                return SimpleNamespace(username=username)
+
+            def _create_session(self, user):
+                return SimpleNamespace(session_id="session-123")
+
+        task = OAuthRedirectTask({})
+        ff = FlowFile(content=b"username=admin&password=admin-password-123")
+        monkey = patch.object(SecurityManager, "get_instance", return_value=FakeSecurity())
+        with monkey:
+            results = task._handle_builtin_login(ff, FakeAuth(), "127.0.0.1")
+
+        assert results[0].get_attribute("http.response.status") == "302"
+        cookie = results[0].get_attribute("http.response.header.Set-Cookie")
+        assert cookie.startswith("pawflow_token=session-123;")
+        assert "session=" not in cookie
+
 
 # ── OAuthCallbackTask ──────────────────────────────────────────────
 

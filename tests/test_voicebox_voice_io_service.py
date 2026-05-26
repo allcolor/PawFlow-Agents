@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from core import ServiceError
+from services import http_listener_service as _hl_mod
 from services.voicebox_service import VoiceboxService
 
 
@@ -23,6 +24,11 @@ class _Resp:
 
     def read(self):
         return self._body
+
+
+class _Listener:
+    is_ssl = False
+    public_hostname = ""
 
 
 def test_voicebox_transcribe_posts_multipart(monkeypatch):
@@ -48,6 +54,36 @@ def test_voicebox_transcribe_posts_multipart(monkeypatch):
     assert captured["headers"]["X-voicebox-client-id"] == "test"
     assert b'name="file"; filename="speech.webm"' in captured["body"]
     assert b'name="language"' in captured["body"]
+
+
+def test_voicebox_external_relay_url_uses_proxy_route(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(_hl_mod, "_instances", {9090: _Listener()})
+    monkeypatch.setattr("core.relay_proxy_auth.issue_token", lambda user_id, relay_id: "tok")
+    monkeypatch.setattr("core.relay_proxy_url.get_host_ip", lambda: "10.0.0.2")
+    monkeypatch.setattr("core.relay_bindings.get_default", lambda cid, agent="": "relay1")
+
+    def fake_urlopen(req, timeout=0):
+        captured["url"] = req.full_url
+        captured["body"] = req.data
+        return _Resp(b"MP3", "audio/mpeg")
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    svc = VoiceboxService({
+        "base_url": "http://${conv.relay}/localhost:17493",
+        "auto_start": False,
+        "default_profile": "Siwis",
+    })
+    svc.set_runtime_context(user_id="alice", conversation_id="conv1")
+    monkeypatch.setattr(svc, "ensure_connected", lambda: None)
+    monkeypatch.setattr(svc, "_resolve_profile_id", lambda profile: "p1")
+    monkeypatch.setattr(svc, "_active_download_error", lambda model_name="": "")
+
+    out = svc.speak("Bonjour")
+
+    assert out["audio_bytes"] == b"MP3"
+    assert captured["url"] == "http://10.0.0.2:9090/relay-proxy/relay1/tok/localhost:17493/speak"
+    assert b"Bonjour" in captured["body"]
 
 
 def test_voicebox_transcribe_normalizes_whisper_model_names(monkeypatch):

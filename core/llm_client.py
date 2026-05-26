@@ -577,13 +577,11 @@ class LLMClient(
             _raw = _raw_template or ""
         if not _raw:
             _raw = self.DEFAULT_URLS.get(self.provider, "")
-        # Relay-proxy format: http(s)://<relay_id>:<host>:<port>/path
+        # Relay-proxy format: http(s)://<relay_id>/<host>:<port>/path.
         # Transform to a PawFlow-exposed proxy URL with an ephemeral token.
         try:
-            from core.llm_providers.claude_code_session import (
-                _maybe_transform_relay_proxy_url,
-            )
-            _proxy = _maybe_transform_relay_proxy_url(_raw, user_id=_uid)
+            from core.relay_proxy_url import maybe_transform_relay_proxy_url
+            _proxy = maybe_transform_relay_proxy_url(_raw, user_id=_uid)
             if _proxy:
                 return _proxy
         except Exception:

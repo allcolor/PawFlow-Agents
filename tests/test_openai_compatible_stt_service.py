@@ -5,6 +5,7 @@ import json
 import pytest
 
 from core import ServiceError
+from services import http_listener_service as _hl_mod
 from services.openai_compatible_stt_service import OpenAICompatibleSTTService
 
 
@@ -23,8 +24,17 @@ class _Resp:
         return self._body
 
 
+class _Listener:
+    is_ssl = False
+    public_hostname = ""
+
+
 def test_openai_compatible_stt_posts_openai_transcription_multipart(monkeypatch):
     captured = {}
+
+    monkeypatch.setattr(_hl_mod, "_instances", {9090: _Listener()})
+    monkeypatch.setattr("core.relay_proxy_auth.issue_token", lambda user_id, relay_id: "tok")
+    monkeypatch.setattr("core.relay_proxy_url.get_host_ip", lambda: "10.0.0.2")
 
     def fake_urlopen(req, timeout=0):
         captured["url"] = req.full_url
@@ -34,17 +44,19 @@ def test_openai_compatible_stt_posts_openai_transcription_multipart(monkeypatch)
 
     monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
     svc = OpenAICompatibleSTTService({
-        "base_url": "https://${convrelay}/localhost:1234/v1",
+        "base_url": "https://${conv.relay}/localhost:1234/v1",
         "api_key": "",
         "model": "whisper-large-v3-turbo",
     })
+    svc.set_runtime_context(user_id="alice", conversation_id="conv1")
+    monkeypatch.setattr("core.relay_bindings.get_default", lambda cid, agent="": "relay1")
 
     result = svc.transcribe(
         audio_bytes=b"audio", mime_type="audio/webm", language="fr",
         filename="speech.webm")
 
     assert result["text"] == "bonjour"
-    assert captured["url"] == "https://${convrelay}/localhost:1234/v1/audio/transcriptions"
+    assert captured["url"] == "http://10.0.0.2:9090/relay-proxy/relay1/tok/s/localhost:1234/v1/audio/transcriptions"
     assert "Authorization" not in captured["headers"]
     assert b'name="file"; filename="speech.webm"' in captured["body"]
     assert b'name="model"' in captured["body"]

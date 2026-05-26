@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 from core import ServiceFactory, ServiceError
+from core.relay_proxy_url import is_relay_proxy_url, resolve_relay_aware_url
 from core.service_install import (
     assert_requirements,
     executable_requirement,
@@ -37,6 +38,13 @@ logger = logging.getLogger(__name__)
 
 _VOICEBOX_DEFAULT_REPO_URL = "https://github.com/jamiepine/voicebox.git"
 _VOICEBOX_DEFAULT_REPO_REF = "b35b90961d5bc83a8b4e96e8b6ccde2a03152ff9"
+
+
+def _raw_config(config: dict, key: str, default=""):
+    try:
+        return dict.__getitem__(config, key)
+    except KeyError:
+        return default
 
 
 def _multipart(fields: Dict[str, str], files: Dict[str, tuple[str, bytes, str]]) -> tuple[bytes, str]:
@@ -87,7 +95,11 @@ class VoiceboxService(BaseVoiceCloneService, BaseSTTService):
             "base_url": {
                 "type": "string", "required": False,
                 "default": "http://127.0.0.1:17493",
-                "description": "Voicebox local HTTP API base URL.",
+                "description": "Voicebox HTTP API base URL. Use http://${conv.relay}/localhost:17493 for a relay-routed user endpoint.",
+            },
+            "allow_private_base_url": {
+                "type": "boolean", "required": False, "default": False,
+                "description": "Allow direct private/loopback base_url targets when auto_start is false. Prefer relay URLs for user-local endpoints.",
             },
             "client_id": {
                 "type": "string", "required": False, "default": "pawflow",
@@ -200,7 +212,14 @@ class VoiceboxService(BaseVoiceCloneService, BaseSTTService):
 
     def __init__(self, config):
         super().__init__(config)
-        self.base_url = str(config.get("base_url") or "http://127.0.0.1:17493").rstrip("/")
+        self.base_url = str(
+            _raw_config(self.config, "base_url", "http://127.0.0.1:17493") or "http://127.0.0.1:17493").rstrip("/")
+        self._raw_base_url = self.base_url
+        self.allow_private_base_url = str(
+            config.get("allow_private_base_url", False)).lower() in {"1", "true", "yes", "on"}
+        self._runtime_user_id = ""
+        self._runtime_conversation_id = ""
+        self._runtime_agent_name = ""
         self.client_id = str(config.get("client_id") or "pawflow")
         self.stt_model = self._normalize_stt_model(str(config.get("stt_model") or "turbo"))
         self.default_profile = str(config.get("default_profile") or "")
@@ -218,6 +237,23 @@ class VoiceboxService(BaseVoiceCloneService, BaseSTTService):
         self.preload_stt_model = str(config.get("preload_stt_model", True)).lower() not in {"0", "false", "no"}
         self.preload_timeout = int(config.get("preload_timeout") or 1800)
         self._managed_proc = None
+
+    def set_runtime_context(self, user_id: str = "", conversation_id: str = "",
+                            agent_name: str = "", **_: object):
+        self._runtime_user_id = user_id or ""
+        self._runtime_conversation_id = conversation_id or ""
+        self._runtime_agent_name = agent_name or ""
+
+    def _effective_base_url(self) -> str:
+        return resolve_relay_aware_url(
+            self._raw_base_url,
+            user_id=self._runtime_user_id,
+            conversation_id=self._runtime_conversation_id,
+            agent_name=self._runtime_agent_name,
+            allow_private=self.allow_private_base_url or self.auto_start,
+            service_name="Voicebox",
+            transform_relay=True,
+        )
 
     def get_install_requirements(self):
         if self.start_command:
@@ -310,9 +346,16 @@ class VoiceboxService(BaseVoiceCloneService, BaseSTTService):
             logger.debug("Voicebox backend shutdown request failed", exc_info=True)
 
     def _validate_endpoint(self):
+        resolved = resolve_relay_aware_url(
+            self._raw_base_url,
+            allow_private=self.allow_private_base_url or self.auto_start,
+            service_name="Voicebox",
+            transform_relay=False,
+        )
+        self.base_url = resolved
+        if self.auto_start and is_relay_proxy_url(resolved):
+            raise ServiceError("auto_start requires a loopback Voicebox base_url")
         parsed = urllib.parse.urlparse(self.base_url)
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            raise ServiceError(f"invalid Voicebox base_url: {self.base_url!r}")
         if self.auto_start and parsed.hostname not in {"127.0.0.1", "localhost", "::1"}:
             raise ServiceError("auto_start requires a loopback Voicebox base_url")
         return parsed
@@ -324,9 +367,13 @@ class VoiceboxService(BaseVoiceCloneService, BaseSTTService):
         return value or "turbo"
 
     def _server_ready(self) -> bool:
+        try:
+            base_url = self._effective_base_url()
+        except Exception:
+            return False
         for path in ("/health", "/profiles"):
             req = urllib.request.Request(
-                self.base_url + path, headers=self._headers(), method="GET")
+                base_url + path, headers=self._headers(), method="GET")
             try:
                 with urllib.request.urlopen(req, timeout=min(3, self.timeout)) as resp:  # nosec B310 - configured local Voicebox URL.
                     if getattr(resp, "status", 200) < 500:
@@ -647,7 +694,7 @@ class VoiceboxService(BaseVoiceCloneService, BaseSTTService):
     def _request(self, method: str, path: str, data: bytes = None,
                  headers: Dict[str, str] = None, accept_json: bool = False,
                  allow_404: bool = False):
-        url = self.base_url + path
+        url = self._effective_base_url() + path
         req = urllib.request.Request(
             url, data=data, headers=self._headers(headers), method=method)
         try:

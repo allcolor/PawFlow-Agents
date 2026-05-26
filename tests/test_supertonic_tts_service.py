@@ -8,7 +8,28 @@ from core import ServiceError
 from core import voice_clone_cache as _cache
 from core.handlers.capabilities import SpeakHandler
 from core.handlers.media import AudioGenerationHandler
+from services import http_listener_service as _hl_mod
 from services.supertonic_tts_service import SupertonicTTSService
+
+
+class _Resp:
+    def __init__(self, body, content_type="audio/wav"):
+        self._body = body
+        self.headers = {"Content-Type": content_type}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def read(self):
+        return self._body
+
+
+class _Listener:
+    is_ssl = False
+    public_hostname = ""
 
 
 def test_supertonic_generate_posts_native_tts_payload(monkeypatch):
@@ -64,6 +85,33 @@ def test_supertonic_generate_allows_per_call_tts_overrides(monkeypatch):
     assert captured["speed"] == 1.25
     assert captured["response_format"] == "ogg"
     assert captured["max_chunk_length"] == 120
+
+
+def test_supertonic_external_relay_url_uses_proxy_route(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(_hl_mod, "_instances", {9090: _Listener()})
+    monkeypatch.setattr("core.relay_proxy_auth.issue_token", lambda user_id, relay_id: "tok")
+    monkeypatch.setattr("core.relay_proxy_url.get_host_ip", lambda: "10.0.0.2")
+    monkeypatch.setattr("core.relay_bindings.get_default", lambda cid, agent="": "relay1")
+
+    def fake_urlopen(req, timeout=None):
+        captured["url"] = req.full_url
+        captured["body"] = req.data
+        return _Resp(b"WAV", "audio/wav")
+
+    monkeypatch.setattr("services.supertonic_tts_service.urllib.request.urlopen", fake_urlopen)
+    svc = SupertonicTTSService({
+        "base_url": "http://${conv.relay}/localhost:7788",
+        "auto_start": False,
+    })
+    svc.set_runtime_context(user_id="alice", conversation_id="conv1")
+    monkeypatch.setattr(svc, "ensure_connected", lambda: None)
+
+    out = svc.generate(prompt="Hello")
+
+    assert out["audio_bytes"] == b"WAV"
+    assert captured["url"] == "http://10.0.0.2:9090/relay-proxy/relay1/tok/localhost:7788/v1/tts"
+    assert b"Hello" in captured["body"]
 
 
 def test_supertonic_rejects_unsupported_format():

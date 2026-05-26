@@ -102,13 +102,23 @@ unlinked after conversion/transcription.
 `openaiCompatibleSTT` is the generic HTTP transcription provider for OpenAI-style
 `POST /audio/transcriptions` endpoints. It supports OpenAI, Groq, local
 whisper.cpp/OpenAI-compatible servers, and relay-routed local URLs such as
-`https://${convrelay}/localhost:1234/v1`. `api_key` is optional so trusted local
+`http://${conv.relay}/localhost:1234/v1`. `api_key` is optional so trusted local
 or relay endpoints can be used without bearer authentication. Direct private,
 loopback, link-local, multicast, reserved, or unresolved DNS targets are blocked
 by default to avoid server-side request forgery from service configuration. Use
-the `${convrelay}` URL form for local relay endpoints; set
+the `${conv.relay}` URL form for local relay endpoints; set
 `allow_private_base_url=true` only when the endpoint is trusted and must be
 reached directly from the PawFlow server.
+
+Relay-aware provider URLs use one standard shape everywhere:
+`http(s)://<relay_id>/<host>:<port>/<path>`. The first path segment containing
+`host:port` marks the URL as a PawFlow relay URL. `${conv.relay}` is only the
+standard expression shortcut for the conversation default relay, so
+`http://${conv.relay}/localhost:7788` and
+`http://fs_quentin.anciaux_f4a302e1/localhost:7788` follow the same parser and
+route creation path. The URL scheme is the protocol used by the relay to reach
+the target service; the protocol used to enter PawFlow's `/relay-proxy/...`
+listener comes from the HTTP listener configuration.
 
 Heavy local services can implement a `prepare_install(reporter)` hook. During
 `/service install`, PawFlow runs this hook before registering the service and

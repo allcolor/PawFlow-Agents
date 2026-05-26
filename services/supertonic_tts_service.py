@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 from core import ServiceFactory, ServiceError, safe_float
+from core.relay_proxy_url import is_relay_proxy_url, resolve_relay_aware_url
 from core.service_install import (
     assert_requirements,
     executable_requirement,
@@ -42,6 +43,13 @@ _CONTENT_TYPES = {
 }
 
 
+def _raw_config(config: dict, key: str, default=""):
+    try:
+        return dict.__getitem__(config, key)
+    except KeyError:
+        return default
+
+
 class SupertonicTTSService(BaseAudioGenerationService, BaseTTSService):
     TYPE = "supertonicTTS"
     VERSION = "1.0.0"
@@ -57,7 +65,11 @@ class SupertonicTTSService(BaseAudioGenerationService, BaseTTSService):
             "base_url": {
                 "type": "string", "required": False,
                 "default": "http://127.0.0.1:7788",
-                "description": "Managed local Supertonic server base URL.",
+                "description": "Supertonic server base URL. Use http://${conv.relay}/localhost:7788 for a relay-routed user endpoint.",
+            },
+            "allow_private_base_url": {
+                "type": "boolean", "required": False, "default": False,
+                "description": "Allow direct private/loopback base_url targets when auto_start is false. Prefer relay URLs for user-local endpoints.",
             },
             "auto_start": {
                 "type": "boolean", "required": False, "default": True,
@@ -121,7 +133,13 @@ class SupertonicTTSService(BaseAudioGenerationService, BaseTTSService):
     def __init__(self, config):
         super().__init__(config)
         self.base_url = str(
-            self.config.get("base_url") or "http://127.0.0.1:7788").rstrip("/")
+            _raw_config(self.config, "base_url", "http://127.0.0.1:7788") or "http://127.0.0.1:7788").rstrip("/")
+        self._raw_base_url = self.base_url
+        self.allow_private_base_url = str(
+            self.config.get("allow_private_base_url", False)).lower() in {"1", "true", "yes", "on"}
+        self._runtime_user_id = ""
+        self._runtime_conversation_id = ""
+        self._runtime_agent_name = ""
         self.voice = str(self.config.get("voice") or "M1")
         self.lang = str(self.config.get("lang") or self.config.get("language") or "na")
         self.steps = int(self.config.get("steps") or self.config.get("total_steps") or 8)
@@ -141,6 +159,23 @@ class SupertonicTTSService(BaseAudioGenerationService, BaseTTSService):
         self.startup_timeout = int(self.config.get("startup_timeout") or 60)
         self._managed_proc = None
         self._connect_lock = threading.Lock()
+
+    def set_runtime_context(self, user_id: str = "", conversation_id: str = "",
+                            agent_name: str = "", **_: object):
+        self._runtime_user_id = user_id or ""
+        self._runtime_conversation_id = conversation_id or ""
+        self._runtime_agent_name = agent_name or ""
+
+    def _effective_base_url(self) -> str:
+        return resolve_relay_aware_url(
+            self._raw_base_url,
+            user_id=self._runtime_user_id,
+            conversation_id=self._runtime_conversation_id,
+            agent_name=self._runtime_agent_name,
+            allow_private=self.allow_private_base_url or self.auto_start,
+            service_name="Supertonic",
+            transform_relay=True,
+        )
 
     def get_install_requirements(self):
         if self.start_command or not self.auto_install:
@@ -179,9 +214,16 @@ class SupertonicTTSService(BaseAudioGenerationService, BaseTTSService):
         self._log_connection("Connected lazily")
 
     def _validate_endpoint(self):
+        resolved = resolve_relay_aware_url(
+            self._raw_base_url,
+            allow_private=self.allow_private_base_url or self.auto_start,
+            service_name="Supertonic",
+            transform_relay=False,
+        )
+        self.base_url = resolved
+        if self.auto_start and is_relay_proxy_url(resolved):
+            raise ServiceError("auto_start requires a loopback Supertonic base_url")
         parsed = urllib.parse.urlparse(self.base_url)
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            raise ServiceError(f"invalid Supertonic base_url: {self.base_url!r}")
         if parsed.hostname not in {"127.0.0.1", "localhost", "::1"} and self.auto_start:
             raise ServiceError("auto_start requires a loopback Supertonic base_url")
         return parsed
@@ -264,8 +306,12 @@ class SupertonicTTSService(BaseAudioGenerationService, BaseTTSService):
             proc.wait(timeout=5)
 
     def _server_ready(self) -> bool:
+        try:
+            base_url = self._effective_base_url()
+        except Exception:
+            return False
         probe = urllib.request.Request(
-            self.base_url + "/v1/tts",
+            base_url + "/v1/tts",
             data=json.dumps({
                 "text": "ping",
                 "voice": self.voice,
@@ -335,7 +381,7 @@ class SupertonicTTSService(BaseAudioGenerationService, BaseTTSService):
         return fmt
 
     def _post_tts(self, body: Dict[str, Any]) -> tuple[bytes, str]:
-        url = f"{self.base_url}/v1/tts"
+        url = f"{self._effective_base_url()}/v1/tts"
         payload = json.dumps(body).encode("utf-8")
         req = urllib.request.Request(
             url,
@@ -357,7 +403,7 @@ class SupertonicTTSService(BaseAudioGenerationService, BaseTTSService):
             raise ServiceError(
                 f"Supertonic API error POST /v1/tts ({exc.code}): {detail}") from exc
         except urllib.error.URLError as exc:
-            raise ServiceError(f"Supertonic server unavailable at {self.base_url}: {exc}") from exc
+            raise ServiceError(f"Supertonic server unavailable at {url}: {exc}") from exc
 
     def generate(self, prompt: str = "", text: str = "", voice: str = "",
                  lang: str = "", language: str = "", steps: int = 0,

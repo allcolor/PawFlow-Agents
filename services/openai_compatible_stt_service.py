@@ -3,73 +3,27 @@
 import json
 import logging
 import mimetypes
-import ipaddress
-import socket
 import uuid
 import urllib.error
-import urllib.parse
 import urllib.request
 from typing import Dict
 
 from core import ServiceFactory, ServiceError
+from core.relay_proxy_url import resolve_relay_aware_url
 from services.base_stt import BaseSTTService
 
 logger = logging.getLogger(__name__)
-
-
-_CONVRELAY_HOSTS = {"${convrelay}", "convrelay"}
 
 
 def _truthy(value) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _is_private_address(value: str) -> bool:
+def _raw_config(config: dict, key: str, default=""):
     try:
-        addr = ipaddress.ip_address(value)
-    except ValueError:
-        return False
-    return (
-        addr.is_loopback
-        or addr.is_private
-        or addr.is_link_local
-        or addr.is_multicast
-        or addr.is_reserved
-        or addr.is_unspecified
-    )
-
-
-def _validate_provider_base_url(base_url: str, *, allow_private: bool = False) -> str:
-    parsed = urllib.parse.urlparse(base_url)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise ServiceError(f"invalid OpenAI-compatible STT base_url: {base_url!r}")
-    host = (parsed.hostname or "").strip().lower()
-    if not host:
-        raise ServiceError(f"invalid OpenAI-compatible STT base_url: {base_url!r}")
-    if host in _CONVRELAY_HOSTS:
-        return base_url.rstrip("/")
-    if allow_private:
-        return base_url.rstrip("/")
-    if host == "localhost" or host.endswith(".localhost") or _is_private_address(host):
-        raise ServiceError(
-            "OpenAI-compatible STT base_url targets a private/local network address. "
-            "Use a relay URL such as https://${convrelay}/localhost:1234/v1, or set "
-            "allow_private_base_url=true only for a trusted endpoint."
-        )
-    try:
-        port = parsed.port or (443 if parsed.scheme == "https" else 80)
-        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
-    except socket.gaierror as exc:
-        raise ServiceError(f"OpenAI-compatible STT base_url host could not be resolved: {host}") from exc
-    for info in infos:
-        address = info[4][0]
-        if _is_private_address(address):
-            raise ServiceError(
-                "OpenAI-compatible STT base_url resolves to a private/local network address. "
-                "Use https://${convrelay}/... for relay-routed local services, or set "
-                "allow_private_base_url=true only for a trusted endpoint."
-            )
-    return base_url.rstrip("/")
+        return dict.__getitem__(config, key)
+    except KeyError:
+        return default
 
 
 def _multipart(fields: Dict[str, str], files: Dict[str, tuple[str, bytes, str]]) -> tuple[bytes, str]:
@@ -108,7 +62,7 @@ class OpenAICompatibleSTTService(BaseSTTService):
             "base_url": {
                 "type": "string", "required": False,
                 "default": "https://api.openai.com/v1",
-                "description": "OpenAI-compatible API base URL, e.g. https://${convrelay}/localhost:1234/v1.",
+                "description": "OpenAI-compatible API base URL, e.g. http://${conv.relay}/localhost:1234/v1.",
             },
             "api_key": {
                 "type": "string", "required": False, "sensitive": True,
@@ -116,7 +70,7 @@ class OpenAICompatibleSTTService(BaseSTTService):
             },
             "allow_private_base_url": {
                 "type": "boolean", "required": False, "default": False,
-                "description": "Allow direct private/loopback base_url targets. Prefer https://${convrelay}/... for local relay endpoints.",
+                "description": "Allow direct private/loopback base_url targets. Prefer https://${conv.relay}/host:port for local relay endpoints.",
             },
             "model": {
                 "type": "string", "required": False,
@@ -139,18 +93,43 @@ class OpenAICompatibleSTTService(BaseSTTService):
 
     def __init__(self, config):
         super().__init__(config)
-        raw_base_url = str(self.config.get("base_url") or "https://api.openai.com/v1")
+        raw_base_url = str(_raw_config(self.config, "base_url", "https://api.openai.com/v1") or "https://api.openai.com/v1")
         self.allow_private_base_url = _truthy(self.config.get("allow_private_base_url", False))
         self.base_url = raw_base_url.rstrip("/")
+        self._raw_base_url = self.base_url
+        self._runtime_user_id = ""
+        self._runtime_conversation_id = ""
+        self._runtime_agent_name = ""
         self.api_key = str(self.config.get("api_key") or "")
         self.model = str(self.config.get("model") or "gpt-4o-mini-transcribe")
         self.language = str(self.config.get("language") or "")
         self.response_format = str(self.config.get("response_format") or "json")
         self.timeout = int(self.config.get("timeout") or 120)
 
+    def set_runtime_context(self, user_id: str = "", conversation_id: str = "",
+                            agent_name: str = "", **_: object):
+        self._runtime_user_id = user_id or ""
+        self._runtime_conversation_id = conversation_id or ""
+        self._runtime_agent_name = agent_name or ""
+
+    def _effective_base_url(self) -> str:
+        return resolve_relay_aware_url(
+            self._raw_base_url,
+            user_id=self._runtime_user_id,
+            conversation_id=self._runtime_conversation_id,
+            agent_name=self._runtime_agent_name,
+            allow_private=self.allow_private_base_url,
+            service_name="OpenAI-compatible STT",
+            transform_relay=True,
+        )
+
     def _create_connection(self):
-        self.base_url = _validate_provider_base_url(
-            self.base_url, allow_private=self.allow_private_base_url)
+        self.base_url = resolve_relay_aware_url(
+            self._raw_base_url,
+            allow_private=self.allow_private_base_url,
+            service_name="OpenAI-compatible STT",
+            transform_relay=False,
+        )
         return {"ready": True, "base_url": self.base_url}
 
     def _close_connection(self):
@@ -183,8 +162,9 @@ class OpenAICompatibleSTTService(BaseSTTService):
         }
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
+        base_url = self._effective_base_url()
         req = urllib.request.Request(
-            f"{self.base_url}/audio/transcriptions",
+            f"{base_url}/audio/transcriptions",
             data=body,
             headers=headers,
             method="POST",
@@ -197,7 +177,7 @@ class OpenAICompatibleSTTService(BaseSTTService):
             raise ServiceError(
                 f"OpenAI-compatible STT error POST /audio/transcriptions ({exc.code}): {detail}") from exc
         except urllib.error.URLError as exc:
-            raise ServiceError(f"OpenAI-compatible STT unavailable at {self.base_url}: {exc}") from exc
+            raise ServiceError(f"OpenAI-compatible STT unavailable at {base_url}: {exc}") from exc
 
         text = raw.decode("utf-8", errors="replace")
         result = {"text": text}

@@ -9,7 +9,7 @@ import logging
 import os
 from typing import Optional
 
-from core.docker_utils import docker_cmd as _docker_cmd, to_host_path, get_host_ip
+from core.docker_utils import docker_cmd as _docker_cmd, to_host_path
 
 logger = logging.getLogger(__name__)
 
@@ -29,93 +29,9 @@ class OAuthRejectedError(Exception):
 
 
 def _maybe_transform_relay_proxy_url(url: str, user_id: str = "") -> Optional[str]:
-    """Detect the relay-proxy format and transform to a PawFlow proxy URL.
-
-    Input format:  http(s)://<relay_id>:<host>:<port>/path
-    Output format: <pawflow_scheme>://<pawflow_host>:<pawflow_port>/relay-proxy/<relay_id>/<token>/[s/]<host>:<port>/path
-
-    An ephemeral token bound to (user_id, relay_id) is minted and injected
-    into the URL — the CC container has no HTTP session and cannot carry
-    auth cookies. The token, not the relay_id, is the actual credential;
-    the route handler rejects external IPs even if the URL leaks.
-
-    The 's/' prefix in the path indicates the target uses HTTPS.
-    Returns None if the URL is not a relay-proxy URL.
-    """
-    import re
-    m = re.match(
-        r'^(https?)://([A-Za-z0-9_.\-]+):([A-Za-z0-9_.\-]+):(\d+)(/.*)?$', url)
-    if not m:
-        return None
-    target_scheme = m.group(1)
-    relay_id = m.group(2)
-    target_host = m.group(3)
-    target_port = int(m.group(4))
-    target_path = m.group(5) or '/'
-
-    # Locate the PawFlow HTTP listener to expose the proxy route
-    try:
-        from services import http_listener_service as _hl_mod
-        instances = getattr(_hl_mod, "_instances", None) or {}
-        if not instances:
-            logger.warning("No HTTP listener running — cannot build relay-proxy URL")
-            return None
-        # Prefer the public listener (highest port that's not internal :19895)
-        _public = [(p, lst) for p, lst in instances.items() if p != 19895]
-        if _public:
-            _port, _listener = _public[0]
-        else:
-            _port, _listener = next(iter(instances.items()))
-        # Mirror the listener's scheme: HTTPS when SSL is configured,
-        # HTTP otherwise. For HTTPS, prefer the hostname the cert was
-        # issued for (via listener.public_hostname) over the bare LAN
-        # IP. Previously we used get_host_ip() which returns the LAN IP,
-        # producing URLs like `https://10.13.13.13:9090/…` that hit the
-        # listener OK at the TCP layer but caused the upstream HTTP
-        # path (TLS cert CN mismatch, Node fetch bailing out on an IP
-        # target with self-signed cert, or some middleware routing by
-        # Host) to bail silently with "API returned an empty or
-        # malformed response (HTTP 200)". Using the cert's hostname
-        # sidesteps CN validation entirely — the container resolves
-        # the hostname to the same LAN IP via its own DNS/hosts, but
-        # the cert matches. For plain HTTP we keep the LAN IP (no cert
-        # to match) since a custom hostname would require container-
-        # side DNS setup we don't manage.
-        _is_ssl = bool(getattr(_listener, "is_ssl", False))
-        _scheme = "https" if _is_ssl else "http"
-    except Exception as e:
-        logger.warning("HTTP listener lookup failed: %s", e)
-        return None
-
-    if not user_id:
-        logger.warning("Cannot issue proxy token without user_id")
-        return None
-    try:
-        from core.relay_proxy_auth import issue_token
-        _token = issue_token(user_id, relay_id)
-    except Exception as e:
-        logger.warning("Proxy token issue failed: %s", e)
-        return None
-
-    if _is_ssl:
-        _host = (getattr(_listener, "public_hostname", "") or "").strip()
-        if not _host:
-            # No hostname found on the cert — fall back to LAN IP. The
-            # container will need NODE_TLS_REJECT_UNAUTHORIZED=0 to
-            # accept the CN/SAN mismatch (set in _claude_code_env).
-            _host = get_host_ip()
-            logger.warning(
-                "relay-proxy URL using LAN IP %s with HTTPS: cert CN "
-                "validation will be skipped in the container. Configure "
-                "`public_hostname` on the HTTP listener (or a matching "
-                "SNI cert) so the container can verify normally.",
-                _host)
-    else:
-        _host = get_host_ip()
-    _target = f"{target_host}:{target_port}"
-    _path = target_path
-    _s_prefix = "s/" if target_scheme == "https" else ""
-    return f"{_scheme}://{_host}:{_port}/relay-proxy/{relay_id}/{_token}/{_s_prefix}{_target}{_path}"
+    """Backward-compatible wrapper around the central relay URL helper."""
+    from core.relay_proxy_url import maybe_transform_relay_proxy_url
+    return maybe_transform_relay_proxy_url(url, user_id=user_id)
 
 
 def _find_cc_service_id(service_id: str = "") -> str:

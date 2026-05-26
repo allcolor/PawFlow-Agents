@@ -628,6 +628,7 @@ function addMsg(role, text, extra) {
   if (role === 'user' || role === 'assistant') {
     actionsHtml = '<span class="msg-actions">'
       + '<button onclick="setReplyTo(this)" title="' + escapeHtml(t('reply')) + '">\u21A9</button>'
+      + (role === 'assistant' ? '<button onclick="speakMsg(this)" title="' + escapeHtml(t('readMessage')) + '">\u{1F50A}</button>' : '')
       + '<button onclick="copyMsg(this)" title="' + escapeHtml(t('copy')) + '">\u{1F4CB}</button>'
       + '<button onclick="copyMsgId(this)" title="' + escapeHtml(t('copyMsgId')) + '">ID</button>'
       + '<button onclick="restartFromMsg(this)" title="' + escapeHtml(t('restartFromHere')) + '">\u21BA</button>'

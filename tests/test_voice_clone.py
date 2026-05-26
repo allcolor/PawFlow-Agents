@@ -228,6 +228,20 @@ def test_tts_store_and_find_round_trip():
     # Same key, same user → cache hit returns our fid.
     got = _cache.tts_find(uid, conv, key)
     assert got == fid
+    assert _cache.tts_find(uid, conv, key, include_transient=False) == fid
+
+    transient_key = _cache.tts_cache_key(
+        "hh", "Hello transient", provider="fishAudioVoiceClone")
+    transient_fid = _cache.tts_store(
+        user_id=uid, conversation_id=conv,
+        cache_key=transient_key,
+        filename="hello-transient.mp3", audio_bytes=b"RENDERED",
+        content_type="audio/mpeg",
+        ttl=120,
+    )
+    assert _cache.tts_find(uid, conv, transient_key) == transient_fid
+    assert _cache.tts_find(
+        uid, conv, transient_key, include_transient=False) is None
 
     # Different user → miss.
     assert _cache.tts_find("u_other", conv, key) is None

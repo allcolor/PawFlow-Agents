@@ -106,6 +106,8 @@ def test_live_conversation_tts_button_and_sse_hooks_are_wired():
     assert 'id="speakToggleBtn"' in TEMPLATE_HTML and 'style="display:none"' in TEMPLATE_HTML
     assert 'onclick="toggleConversationTTS()"' in TEMPLATE_HTML
     assert "function toggleConversationTTS()" in CONVERSATION_TTS_JS
+    assert "function conversationTTSSpeakText(text)" in CONVERSATION_TTS_JS
+    assert "function _convTtsChooseService(afterSelect)" in CONVERSATION_TTS_JS
     assert "action$('list_tts_services'" in CONVERSATION_TTS_JS
     assert 'action == "list_tts_services"' in MEDIA_ACTIONS
     assert "from services.base_tts import BaseTTSService" in MEDIA_ACTIONS
@@ -126,6 +128,24 @@ def test_live_conversation_tts_button_and_sse_hooks_are_wired():
     assert "notifyServiceConfigurationChanged(); loadResources();" in RESOURCES_JS
     assert "opts.silent" not in CONVERSATION_TTS_JS
     assert "{ silent: true }" in CONVERSATION_TTS_JS
+    assert """action$('tts_synthesize', {
+    conversation_id: conversationId,
+    text: text,
+    service: cfg.service,
+    voice: cfg.voice,
+    language: cfg.language,
+    transient: true,
+    transient_ttl: 300,""" in CONVERSATION_TTS_JS
+    assert "function _convTtsDeleteFile(fileId)" in CONVERSATION_TTS_JS
+    assert "action$('tts_delete'" in CONVERSATION_TTS_JS
+    assert "_convTtsDeleteFile(item.file_id)" in CONVERSATION_TTS_JS
+    assert "conversationTTSSpeakText(messageTextForAction(msg))" in Path("tasks/io/chat_ui/attachments.js").read_text(encoding="utf-8")
+    assert "speakMsg(this)" in MESSAGES_JS
+    assert "readMessage" in MESSAGES_JS
+    assert "speakMsg(this)" in SSE_JS
+    assert 'args["_tts_storage_ttl"]' in MEDIA_ACTIONS
+    assert 'action == "tts_delete"' in MEDIA_ACTIONS
+    assert 'entry.get("ttl", 0) > 0' in MEDIA_ACTIONS
     assert "conversationTTSOnToken(data)" in SSE_JS
     assert "conversationTTSOnMessage(data)" in SSE_JS
     assert "conversationTTSOnDone(Object.assign" in SSE_JS

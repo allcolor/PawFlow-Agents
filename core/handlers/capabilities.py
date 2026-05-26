@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 _SERVICE_ARG_NAMES = (
     "service", "image_service", "video_service", "audio_service", "voice_service")
+_INTERNAL_TTS_ARG_NAMES = ("_tts_storage_ttl", "transient", "transient_ttl", "ttl")
 
 
 def _resolve_filestore_url(url: str, base_url: str, service=None) -> str:
@@ -926,6 +927,7 @@ class SpeakHandler(_CapabilityHandlerBase):
             return "Error: `text` is required"
 
         from core import voice_clone_cache as _cache
+        storage_ttl = self._storage_ttl(arguments)
 
         provider = _provider_identity(svc)
         entry = _cache.get_by_name(self._user_id, voice) if voice else None
@@ -955,7 +957,8 @@ class SpeakHandler(_CapabilityHandlerBase):
 
         # Cache hit — return existing FileStore entry.
         cached_fid = _cache.tts_find(
-            self._user_id, self._conversation_id, cache_key)
+            self._user_id, self._conversation_id, cache_key,
+            include_transient=storage_ttl > 0)
         if cached_fid:
             from core.file_store import FileStore
             meta = FileStore.instance().get_metadata(cached_fid) or {}
@@ -1050,6 +1053,7 @@ class SpeakHandler(_CapabilityHandlerBase):
                         source_path=str(audio_path),
                         content_type=content_type,
                         ref_audio_hash=ref_hash,
+                        ttl=storage_ttl,
                     )
                 finally:
                     if r.get("_delete_media_path"):
@@ -1066,6 +1070,7 @@ class SpeakHandler(_CapabilityHandlerBase):
                     audio_bytes=audio_bytes,
                     content_type=content_type,
                     ref_audio_hash=ref_hash,
+                    ttl=storage_ttl,
                 )
         except Exception as e:
             return f"Error storing synthesized audio: {e}"
@@ -1073,6 +1078,13 @@ class SpeakHandler(_CapabilityHandlerBase):
         _cache.touch(self._user_id, voice)
         url = f"fs://filestore/{fid}/{filename}"
         return f"Speech synthesized: {url}\nfile_id: {fid}"
+
+    @staticmethod
+    def _storage_ttl(arguments: Dict[str, Any]) -> int:
+        try:
+            return max(0, int(arguments.get("_tts_storage_ttl") or 0))
+        except (TypeError, ValueError):
+            return 0
 
     def _speak_native_voice(self, svc, provider: str, voice: str, text: str,
                             language: str, arguments: Dict[str, Any],
@@ -1086,7 +1098,9 @@ class SpeakHandler(_CapabilityHandlerBase):
 
         kwargs = {k: v for k, v in arguments.items()
                   if k not in ("destination", "path", "text", "voice",
-                               "language", *_SERVICE_ARG_NAMES)}
+                               "language", *_SERVICE_ARG_NAMES,
+                               *_INTERNAL_TTS_ARG_NAMES)}
+        storage_ttl = self._storage_ttl(arguments)
         provider_version = _provider_version(svc)
         sig = json.dumps({
             "provider": provider,
@@ -1098,7 +1112,8 @@ class SpeakHandler(_CapabilityHandlerBase):
         cache_key = cache.tts_cache_key(
             voice_key, text, language=language, provider=provider)
         cached_fid = cache.tts_find(
-            self._user_id, self._conversation_id, cache_key)
+            self._user_id, self._conversation_id, cache_key,
+            include_transient=storage_ttl > 0)
         if cached_fid:
             from core.file_store import FileStore
             meta = FileStore.instance().get_metadata(cached_fid) or {}
@@ -1138,6 +1153,7 @@ class SpeakHandler(_CapabilityHandlerBase):
                         source_path=str(audio_path),
                         content_type=content_type,
                         ref_audio_hash="",
+                        ttl=storage_ttl,
                     )
                 finally:
                     if r.get("_delete_media_path"):
@@ -1154,6 +1170,7 @@ class SpeakHandler(_CapabilityHandlerBase):
                     audio_bytes=audio_bytes,
                     content_type=content_type,
                     ref_audio_hash="",
+                    ttl=storage_ttl,
                 )
         except Exception as e:
             return f"Error storing synthesized audio: {e}"

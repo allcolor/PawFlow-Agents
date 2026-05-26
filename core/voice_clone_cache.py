@@ -203,7 +203,8 @@ def tts_cache_key(ref_audio_hash: str, text: str, language: str = "",
     return h.hexdigest()
 
 
-def tts_find(user_id: str, conversation_id: str, cache_key: str) -> Optional[str]:
+def tts_find(user_id: str, conversation_id: str, cache_key: str,
+             include_transient: bool = True) -> Optional[str]:
     """Look up a cached rendered TTS audio file for this user.
 
     Returns the FileStore file_id or None. Only entries owned by this user
@@ -218,9 +219,13 @@ def tts_find(user_id: str, conversation_id: str, cache_key: str) -> Optional[str
         for entry in store.list_by_category(_TTS_CATEGORY):
             if entry.get("user_id") != user_id:
                 continue
+            if not include_transient and entry.get("ttl", 0) > 0:
+                continue
             if entry.get("voice_cache_key") == cache_key:
                 # list_by_category returns 'id', not 'file_id'
-                return entry.get("id") or entry.get("file_id")
+                fid = entry.get("id") or entry.get("file_id")
+                if fid and store.get_disk_path(fid, user_id=user_id) is not None:
+                    return fid
     except Exception as e:
         logger.debug("voice_clone_cache.tts_find: %s", e)
     return None
@@ -230,7 +235,8 @@ def tts_store(user_id: str, conversation_id: str,
               cache_key: str,
               filename: str, audio_bytes: bytes,
               content_type: str = "audio/mpeg",
-              ref_audio_hash: str = "") -> str:
+              ref_audio_hash: str = "",
+              ttl: int = 0) -> str:
     """Cache a rendered TTS audio file. Returns the FileStore file_id.
 
     `ref_audio_hash` is stored alongside so `cascade_delete` can purge
@@ -247,7 +253,7 @@ def tts_store(user_id: str, conversation_id: str,
         content_type=content_type,
         conversation_id=conversation_id,
         user_id=user_id,
-        ttl=0,
+        ttl=max(0, int(ttl or 0)),
         category=_TTS_CATEGORY,
     )
     # Tag the entry with the cache key so `tts_find` can lookup by key,
@@ -263,7 +269,8 @@ def tts_store_file(user_id: str, conversation_id: str,
                    cache_key: str,
                    filename: str, source_path: str,
                    content_type: str = "audio/mpeg",
-                   ref_audio_hash: str = "") -> str:
+                   ref_audio_hash: str = "",
+                   ttl: int = 0) -> str:
     """Cache a rendered TTS audio file from a local path. Returns file_id."""
     if not user_id or not conversation_id:
         raise ValueError("tts_store_file: user_id and conversation_id required")
@@ -275,7 +282,7 @@ def tts_store_file(user_id: str, conversation_id: str,
         content_type=content_type,
         conversation_id=conversation_id,
         user_id=user_id,
-        ttl=0,
+        ttl=max(0, int(ttl or 0)),
         category=_TTS_CATEGORY,
     )
     try:

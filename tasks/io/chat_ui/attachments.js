@@ -65,7 +65,15 @@ document.getElementById('input').addEventListener('paste', (e) => {
 function copyMsg(btn) {
   const msg = btn.closest('.msg');
   if (!msg) return;
-  // Get text content only (strip badges, time, actions, meta)
+  const text = messageTextForAction(msg);
+  navigator.clipboard.writeText(text).then(() => {
+    btn.textContent = '\u2705';
+    setTimeout(() => { btn.textContent = '\u{1F4CB}'; }, 1500);
+  });
+}
+
+function messageTextForAction(msg) {
+  if (!msg) return '';
   const clone = msg.cloneNode(true);
   for (const sel of ['.msg-actions', '.source-badge', '.msg-time', '.msg-meta']) {
     const el = clone.querySelector(sel);
@@ -73,11 +81,13 @@ function copyMsg(btn) {
   }
   let text = (clone.textContent || clone.innerText).trim();
   // Strip target badge prefix like "[→ assistant] " or "[btw → agent] "
-  text = text.replace(/^\[(btw\s*)?\u2192\s*[^\]]+\]\s*/, '');
-  navigator.clipboard.writeText(text).then(() => {
-    btn.textContent = '\u2705';
-    setTimeout(() => { btn.textContent = '\u{1F4CB}'; }, 1500);
-  });
+  return text.replace(/^\[(btw\s*)?\u2192\s*[^\]]+\]\s*/, '');
+}
+
+function speakMsg(btn) {
+  const msg = btn.closest('.msg');
+  if (!msg || typeof conversationTTSSpeakText !== 'function') return;
+  conversationTTSSpeakText(messageTextForAction(msg));
 }
 
 function copyMsgId(btn) {

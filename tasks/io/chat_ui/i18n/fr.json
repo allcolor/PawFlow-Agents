@@ -854,6 +854,7 @@
   "renameVoiceClone": "Renommer le clone vocal",
   "renameVoicePrompt": "Renommer le clone vocal \"{name}\" en :",
   "renamedTo": "Renommé en : {title}",
+  "readMessage": "Lire ce message",
   "reply": "Répondre",
   "reset": "Réinitialiser",
   "resetToPending": "Remettre en attente",

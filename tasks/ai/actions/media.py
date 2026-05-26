@@ -165,6 +165,15 @@ def _handle_media(self, action, body, store, user_id, flowfile):
 
         args = {k: v for k, v in body.items()
                 if k not in {"action", "conversation_id", "_call_id", "_reply_conversation_id"}}
+        transient = body.get("transient", True)
+        if transient is not False:
+            try:
+                ttl = int(body.get("transient_ttl") or body.get("ttl")
+                          or self.config.get("tts_transient_ttl")
+                          or os.environ.get("PAWFLOW_WEBCHAT_TTS_TTL_SECONDS", "300"))
+            except (TypeError, ValueError):
+                ttl = 300
+            args["_tts_storage_ttl"] = max(60, ttl)
         result = handler.execute(args)
         if result.startswith("Error:"):
             flowfile.set_content(json.dumps({"error": result}).encode())
@@ -197,6 +206,26 @@ def _handle_media(self, action, body, store, user_id, flowfile):
             "filename": filename,
             "provider_result": result,
         }, ensure_ascii=False).encode())
+        return [flowfile]
+
+    if action == "tts_delete":
+        file_id = body.get("file_id", "") or ""
+        if not file_id:
+            flowfile.set_content(json.dumps({"ok": False, "error": "file_id required"}).encode())
+            return [flowfile]
+        try:
+            from core.file_store import FileStore
+            store = FileStore.instance()
+            allowed = any(
+                (entry.get("id") or entry.get("file_id")) == file_id
+                and entry.get("user_id") == user_id
+                and entry.get("ttl", 0) > 0
+                for entry in store.list_by_category("voice_clone_tts")
+            )
+            deleted = store.delete(file_id, user_id=user_id) if allowed else False
+            flowfile.set_content(json.dumps({"ok": True, "deleted": deleted}).encode())
+        except Exception as exc:
+            flowfile.set_content(json.dumps({"ok": False, "error": str(exc)}).encode())
         return [flowfile]
 
     if action == "tts_warmup":

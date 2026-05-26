@@ -854,6 +854,7 @@
   "renameVoiceClone": "Renombrar clon de voz",
   "renameVoicePrompt": "Renombrar clon de voz \"{name}\" a:",
   "renamedTo": "Renombrado a: {title}",
+  "readMessage": "Leer este mensaje",
   "reply": "Responder",
   "reset": "Restablecer",
   "resetToPending": "Restablecer a pendiente",

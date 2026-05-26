@@ -511,6 +511,7 @@ function connectSSE(cid, onReady, opts) {
       else s.el.insertAdjacentHTML('beforeend',
           '<span class="msg-actions">'
           + '<button onclick="setReplyTo(this)" title="' + escapeHtml(t('reply')) + '">\u21A9</button>'
+          + '<button onclick="speakMsg(this)" title="' + escapeHtml(t('readMessage')) + '">\uD83D\uDD0A</button>'
           + '<button onclick="copyMsg(this)" title="' + escapeHtml(t('copy')) + '">\uD83D\uDCCB</button>'
           + '<button onclick="deleteMsg(this)" title="' + escapeHtml(t('delete')) + '">\uD83D\uDDD1</button>'
           + '</span>');

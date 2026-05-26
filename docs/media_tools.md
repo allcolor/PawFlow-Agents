@@ -77,12 +77,27 @@ for provider-native voice/language remain available as `pawflow_tts_voice` and
 `pawflow_tts_language`, otherwise the selected service's configured defaults are
 used.
 
+Webchat playback audio is transient. `tts_synthesize` passes an internal storage
+TTL to `speak`, and the browser calls `tts_delete` as soon as playback ends,
+fails, is skipped, or live speech is stopped. The TTL is only a short fallback
+for interrupted browser sessions; it is not the normal cleanup path.
+Agent-facing `speak` calls remain durable by default because their URLs are
+often reused by media tools such as `lipsync` and `speech_to_video`.
+
+Assistant messages also expose a per-message read button. It uses the same TTS
+service picker as live speech when several TTS services are configured, then
+synthesizes only that message and deletes the transient audio after playback.
+
 The webchat input also includes a microphone button when an STT provider is
 configured. The browser records audio with `MediaRecorder`, sends it to the
 silent UI action `stt_transcribe`, writes the returned transcript into the chat
 input, and auto-sends only when the input was empty when recording started. The
 selected STT service is remembered as `pawflow_stt_service`; optional advanced
 overrides are `pawflow_stt_language` and `pawflow_stt_auto_send`.
+
+Webchat STT audio is not persisted to FileStore. The browser sends the captured
+blob directly as base64, and any server-side conversion files are temporary and
+unlinked after conversion/transcription.
 
 `openaiCompatibleSTT` is the generic HTTP transcription provider for OpenAI-style
 `POST /audio/transcriptions` endpoints. It supports OpenAI, Groq, local

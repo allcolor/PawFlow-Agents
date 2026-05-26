@@ -218,3 +218,36 @@ def test_speak_handler_uses_native_tts_provider_voice(monkeypatch):
     }]
     assert "Speech synthesized" in result
     assert "tts123" in result
+
+
+def test_speak_handler_keeps_transient_ttl_out_of_provider_payload(monkeypatch):
+    handler = SpeakHandler()
+    handler.set_user_id("u_super_transient")
+    handler.set_conversation_id("c_super_transient")
+    svc = SupertonicTTSService({})
+    calls = []
+    stored = {}
+    svc.speak = lambda **kwargs: calls.append(kwargs) or {  # type: ignore[method-assign]
+        "audio_bytes": b"WAV", "content_type": "audio/wav"}
+    handler.set_service_resolver(lambda: (svc, None))
+    monkeypatch.setattr(_cache, "tts_find", lambda *a, **k: None)
+    monkeypatch.setattr(_cache, "tts_store", lambda **kwargs: stored.update(kwargs) or "tts123")
+
+    result = handler.execute({
+        "text": "Bonjour",
+        "voice": "F2",
+        "language": "fr",
+        "response_format": "wav",
+        "transient": True,
+        "transient_ttl": 3600,
+        "_tts_storage_ttl": 1800,
+    })
+
+    assert calls == [{
+        "text": "Bonjour",
+        "voice": "F2",
+        "language": "fr",
+        "response_format": "wav",
+    }]
+    assert stored["ttl"] == 1800
+    assert "Speech synthesized" in result

@@ -4057,6 +4057,12 @@ async function _executeServiceAction(actionId, serviceId, flow, serverAction, sc
   const _cli = _flowToCli(flow);
   const payload = { service_id: serviceId };
   if (scope) payload.scope = scope;
+  const panel = document.querySelector('#resourceEditorOverlay > div');
+  if (panel && panel.dataset && panel.dataset.schema) {
+    try {
+      payload.config = _collectSchemaValues(JSON.parse(panel.dataset.schema || '{}'));
+    } catch (_) {}
+  }
   if (flow === 'credential_table') {
     try { await _renderCredentialPoolTable(serviceId, btn); }
     catch (e) { addMsg('error', t('actionFailed', { error: e.message })); }

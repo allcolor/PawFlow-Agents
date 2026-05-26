@@ -153,6 +153,226 @@ def test_voicebox_speak_posts_json_and_returns_audio(monkeypatch):
     assert captured["body"]["profile"] == "Morgan"
 
 
+def test_voicebox_speak_uses_async_speak_for_known_profile(monkeypatch):
+    calls = []
+
+    def fake_urlopen(req, timeout=0):
+        calls.append((req.get_method(), req.full_url, req.data))
+        if req.get_method() == "GET" and req.full_url.endswith("/health"):
+            return _Resp(b'{"ok":true}')
+        if req.get_method() == "GET" and req.full_url.endswith("/profiles"):
+            return _Resp(json.dumps([{"id": "p1", "name": "Siwis"}]).encode())
+        if req.get_method() == "POST" and req.full_url.endswith("/speak"):
+            body = json.loads(req.data.decode())
+            assert body["profile"] == "Siwis"
+            assert body["language"] == "fr"
+            return _Resp(json.dumps({
+                "id": "gen1",
+                "profile_id": "p1",
+                "status": "generating",
+            }).encode())
+        if req.get_method() == "GET" and req.full_url.endswith("/history/gen1"):
+            return _Resp(json.dumps({
+                "id": "gen1",
+                "status": "completed",
+                "audio_path": "audio/gen1.wav",
+            }).encode())
+        if req.get_method() == "GET" and req.full_url.endswith("/audio/gen1"):
+            return _Resp(b"RIFFaudio", "audio/wav")
+        raise AssertionError(req.full_url)
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    monkeypatch.setattr("time.sleep", lambda _seconds: None)
+    svc = VoiceboxService({"default_profile": "Siwis"})
+
+    out = svc.speak(text="bonjour", language="fr")
+
+    assert out["audio_bytes"] == b"RIFFaudio"
+    assert out["content_type"] == "audio/wav"
+    assert any(url.endswith("/speak") for _method, url, _data in calls)
+
+
+def test_voicebox_speak_waits_for_async_speak_audio(monkeypatch):
+    history_calls = 0
+
+    def fake_urlopen(req, timeout=0):
+        nonlocal history_calls
+        if req.get_method() == "GET" and req.full_url.endswith("/health"):
+            return _Resp(b'{"ok":true}')
+        if req.get_method() == "POST" and req.full_url.endswith("/speak"):
+            return _Resp(json.dumps({
+                "id": "gen1",
+                "profile_id": "p1",
+                "status": "generating",
+            }).encode())
+        if req.get_method() == "GET" and req.full_url.endswith("/history/gen1"):
+            history_calls += 1
+            status = "completed" if history_calls > 1 else "generating"
+            return _Resp(json.dumps({
+                "id": "gen1",
+                "status": status,
+                "audio_path": "audio/gen1.wav" if status == "completed" else "",
+            }).encode())
+        if req.get_method() == "GET" and req.full_url.endswith("/audio/gen1"):
+            return _Resp(b"RIFFasync", "audio/wav")
+        raise AssertionError(req.full_url)
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    monkeypatch.setattr("time.sleep", lambda _seconds: None)
+    svc = VoiceboxService({"timeout": 3})
+
+    out = svc.speak(text="bonjour")
+
+    assert out["audio_bytes"] == b"RIFFasync"
+    assert out["content_type"] == "audio/wav"
+
+
+def test_voicebox_speak_reads_local_audio_when_audio_endpoint_cannot_resolve_path(monkeypatch, tmp_path):
+    generation_id = "gen-local"
+    audio_path = tmp_path / "voicebox" / "data" / "generations" / f"{generation_id}.wav"
+    audio_path.parent.mkdir(parents=True)
+    audio_path.write_bytes(b"RIFFlocal")
+
+    def fake_urlopen(req, timeout=0):
+        if req.get_method() == "GET" and req.full_url.endswith("/health"):
+            return _Resp(b'{"ok":true}')
+        if req.get_method() == "POST" and req.full_url.endswith("/speak"):
+            return _Resp(json.dumps({"id": generation_id, "status": "generating"}).encode())
+        if req.get_method() == "GET" and req.full_url.endswith(f"/history/{generation_id}"):
+            return _Resp(json.dumps({
+                "id": generation_id,
+                "status": "completed",
+                "audio_path": "runtime/voicebox/data/generations/gen-local.wav",
+            }).encode())
+        if req.get_method() == "GET" and req.full_url.endswith(f"/audio/{generation_id}"):
+            raise AssertionError("local audio should be read before /audio fallback")
+        raise AssertionError(req.full_url)
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    monkeypatch.setattr("time.sleep", lambda _seconds: None)
+    svc = VoiceboxService({"install_dir": str(tmp_path / "voicebox")})
+
+    out = svc.speak(text="bonjour")
+
+    assert out["audio_bytes"] == b"RIFFlocal"
+    assert out["content_type"] == "audio/x-wav"
+
+
+def test_voicebox_speak_auto_creates_preset_default_profile(monkeypatch):
+    created = {}
+
+    def fake_urlopen(req, timeout=0):
+        if req.get_method() == "GET" and req.full_url.endswith("/health"):
+            return _Resp(b'{"ok":true}')
+        if req.get_method() == "GET" and req.full_url.endswith("/profiles"):
+            return _Resp(b"[]")
+        if req.get_method() == "GET" and req.full_url.endswith("/profiles/presets/kokoro"):
+            return _Resp(json.dumps({
+                "engine": "kokoro",
+                "voices": [{
+                    "voice_id": "ff_siwis",
+                    "name": "Siwis",
+                    "gender": "female",
+                    "language": "fr",
+                }],
+            }).encode())
+        if req.get_method() == "POST" and req.full_url.endswith("/profiles"):
+            created.update(json.loads(req.data.decode()))
+            return _Resp(json.dumps({"id": "siwis-id", **created}).encode())
+        if req.get_method() == "POST" and req.full_url.endswith("/speak"):
+            body = json.loads(req.data.decode())
+            assert body["profile"] == "Siwis"
+            return _Resp(json.dumps({
+                "id": "gen-siwis",
+                "profile_id": "siwis-id",
+                "status": "generating",
+            }).encode())
+        if req.get_method() == "GET" and req.full_url.endswith("/history/gen-siwis"):
+            return _Resp(json.dumps({
+                "id": "gen-siwis",
+                "status": "completed",
+                "audio_path": "audio/gen-siwis.wav",
+            }).encode())
+        if req.get_method() == "GET" and req.full_url.endswith("/audio/gen-siwis"):
+            return _Resp(b"RIFFsiwis", "audio/wav")
+        raise AssertionError(req.full_url)
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    monkeypatch.setattr("time.sleep", lambda _seconds: None)
+    svc = VoiceboxService({"default_profile": "Siwis"})
+
+    out = svc.speak(text="bonjour", language="fr")
+
+    assert out["audio_bytes"] == b"RIFFsiwis"
+    assert created["voice_type"] == "preset"
+    assert created["preset_engine"] == "kokoro"
+    assert created["preset_voice_id"] == "ff_siwis"
+    assert created["language"] == "fr"
+
+
+def test_voicebox_service_exposes_profile_actions():
+    action_ids = {item["id"] for item in VoiceboxService({}).get_service_actions()}
+
+    assert "voicebox_profiles_list" in action_ids
+    assert "voicebox_preset_voices_list" in action_ids
+    assert "voicebox_profile_save" in action_ids
+    assert "voicebox_tasks_clear" in action_ids
+
+
+def test_voicebox_managed_checkout_patch_silences_tqdm(tmp_path):
+    progress = tmp_path / "voicebox" / "backend" / "utils" / "hf_progress.py"
+    progress.parent.mkdir(parents=True)
+    progress.write_text(
+        """
+filtered_kwargs["disable"] = False
+kwargs["disable"] = False
+def update(self, n=1):
+                result = super().update(n)
+
+                # Report progress
+def patched_update(tqdm_self, n=1):
+                        result = tracker._hf_tqdm_original_update(tqdm_self, n)
+
+                        # Track this progress
+""".strip(),
+        encoding="utf-8",
+    )
+    svc = VoiceboxService({"install_dir": str(tmp_path / "voicebox")})
+
+    svc._patch_managed_checkout()
+
+    patched = progress.read_text(encoding="utf-8")
+    assert 'filtered_kwargs["disable"] = True' in patched
+    assert 'kwargs["disable"] = True' in patched
+    assert "except BrokenPipeError" in patched
+    assert "tqdm_self.n = before + n" in patched
+
+
+def test_voicebox_close_connection_shuts_down_existing_loopback_backend(monkeypatch):
+    calls = []
+
+    def fake_urlopen(req, timeout=0):
+        calls.append((req.get_method(), req.full_url, timeout))
+        return _Resp(b'{"message":"Shutting down..."}')
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    svc = VoiceboxService({"base_url": "http://127.0.0.1:17493", "auto_start": True})
+
+    svc._close_connection()
+
+    assert calls == [("POST", "http://127.0.0.1:17493/shutdown", 5)]
+
+
+def test_voicebox_close_connection_does_not_shutdown_external_backend(monkeypatch):
+    calls = []
+    monkeypatch.setattr("urllib.request.urlopen", lambda *_args, **_kwargs: calls.append("urlopen"))
+    svc = VoiceboxService({"base_url": "http://voicebox.example.test:17493", "auto_start": False})
+
+    svc._close_connection()
+
+    assert calls == []
+
+
 def test_luxtts_clone_speak_uses_reference_bytes(monkeypatch):
     from services.luxtts_service import LuxTTSService
 
@@ -357,7 +577,7 @@ def test_voicebox_auto_install_uses_wsl_for_wsl_unc_checkout(monkeypatch):
 
     svc._ensure_checkout()
 
-    assert len(commands) == 3
+    assert len(commands) == 4
     assert all(cmd[:6] == [
         "C:/Windows/System32/wsl.exe", "-d", "Ubuntu-24.04", "--", "bash", "-lc",
     ] for cmd, _ in commands)
@@ -365,6 +585,8 @@ def test_voicebox_auto_install_uses_wsl_for_wsl_unc_checkout(monkeypatch):
     assert "git clone --no-checkout" in commands[0][0][-1]
     assert "git -C" in commands[1][0][-1]
     assert "python3 -m venv backend/venv" in commands[2][0][-1]
+    assert "backend/utils/hf_progress.py" in commands[3][0][-1]
+    assert "BrokenPipeError" in commands[3][0][-1]
     flattened = "\n".join(cmd[-1] for cmd, _ in commands)
     assert "python3.BAT" not in flattened
     assert "data\\runtime\\voicebox" not in flattened

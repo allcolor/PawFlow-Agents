@@ -1065,6 +1065,73 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
         return [flowfile]
 
+    if action in {"voicebox_profiles_list", "voicebox_preset_voices_list", "voicebox_profile_save", "voicebox_tasks_clear"}:
+        sid = body.get("service_id", "")
+        scope = _normalize_service_scope(body.get("scope", "global"))
+        conv_id = body.get("conversation_id", "") or flowfile.get_attribute("http.conversation_id") or ""
+        config = body.get("config", {}) if isinstance(body.get("config", {}), dict) else {}
+        if not sid:
+            flowfile.set_content(json.dumps({"error": "Missing service_id"}).encode())
+            return [flowfile]
+        if scope == "global" and not _is_admin(flowfile):
+            flowfile.set_content(json.dumps({"error": "Requires admin role for global scope"}).encode())
+            flowfile.set_attribute("http.response.status", "403")
+            return [flowfile]
+        try:
+            from core.service_registry import ServiceRegistry
+            reg = ServiceRegistry.get_instance()
+            svc = reg.resolve(sid, user_id=user_id, conv_id=conv_id)
+            if not svc or getattr(svc, "TYPE", "") != "voicebox":
+                flowfile.set_content(json.dumps({"error": f"Voicebox service '{sid}' not found"}).encode())
+                return [flowfile]
+            if action == "voicebox_profiles_list":
+                profiles = svc.list_profiles()
+                lines = [
+                    f"- {p.get('name')} ({p.get('id')}) — {p.get('voice_type')}"
+                    for p in profiles if isinstance(p, dict)
+                ]
+                flowfile.set_content(json.dumps({
+                    "profiles": profiles,
+                    "message": "Voicebox profiles:\n" + ("\n".join(lines) if lines else "(none)"),
+                }, ensure_ascii=False).encode())
+                return [flowfile]
+            if action == "voicebox_preset_voices_list":
+                engine = config.get("profile_engine") or body.get("engine") or "kokoro"
+                voices = svc.list_preset_voices(engine)
+                lines = [
+                    f"- {v.get('name')} = {v.get('voice_id')} ({v.get('language')}, {v.get('gender')})"
+                    for v in voices if isinstance(v, dict)
+                ]
+                flowfile.set_content(json.dumps({
+                    "voices": voices,
+                    "message": f"Voicebox preset voices for {engine}:\n" + ("\n".join(lines) if lines else "(none)"),
+                }, ensure_ascii=False).encode())
+                return [flowfile]
+            if action == "voicebox_tasks_clear":
+                result = svc.clear_tasks()
+                flowfile.set_content(json.dumps({
+                    "ok": True,
+                    "result": result,
+                    "message": result.get("message", "Voicebox task state cleared") if isinstance(result, dict) else "Voicebox task state cleared",
+                }, ensure_ascii=False).encode())
+                return [flowfile]
+            result = svc.save_preset_profile(
+                name=config.get("profile_name") or config.get("default_profile") or body.get("profile_name") or "",
+                engine=config.get("profile_engine") or body.get("engine") or "kokoro",
+                voice_id=config.get("profile_voice_id") or body.get("voice_id") or "",
+                language=config.get("profile_language") or body.get("language") or "",
+                description=config.get("profile_description") or body.get("description") or "",
+                personality=config.get("profile_personality") or body.get("personality") or "",
+            )
+            flowfile.set_content(json.dumps({
+                "ok": True,
+                "profile": result,
+                "message": f"Voicebox profile saved: {result.get('name', '')} ({result.get('id', '')})",
+            }, ensure_ascii=False).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}, ensure_ascii=False).encode())
+        return [flowfile]
+
     if action == "update_service":
         sid = body.get("service_id", "")
         scope = _normalize_service_scope(body.get("scope", "global"))

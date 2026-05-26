@@ -101,6 +101,31 @@ class VoiceboxService(BaseVoiceCloneService, BaseSTTService):
                 "type": "string", "required": False, "default": "",
                 "description": "Default Voicebox profile name or id for speech.",
             },
+            "profile_name": {
+                "type": "string", "required": False, "default": "",
+                "description": "Voicebox profile name to create or update with the Save Voicebox profile action.",
+            },
+            "profile_engine": {
+                "type": "select", "required": False, "default": "kokoro",
+                "options": ["kokoro", "qwen_custom_voice"],
+                "description": "Preset engine used by the Save Voicebox profile action.",
+            },
+            "profile_voice_id": {
+                "type": "string", "required": False, "default": "",
+                "description": "Preset voice id, for example ff_siwis or Ryan. Leave empty to match profile_name against the preset catalog.",
+            },
+            "profile_language": {
+                "type": "string", "required": False, "default": "",
+                "description": "Optional language code for the Voicebox profile. If empty, the preset catalog language is used.",
+            },
+            "profile_description": {
+                "type": "textarea", "required": False, "default": "",
+                "description": "Optional description for the Voicebox profile.",
+            },
+            "profile_personality": {
+                "type": "textarea", "required": False, "default": "",
+                "description": "Optional Voicebox personality prompt for this profile.",
+            },
             "auto_start": {
                 "type": "boolean", "required": False, "default": True,
                 "description": "Start the local Voicebox backend automatically when needed.",
@@ -144,6 +169,34 @@ class VoiceboxService(BaseVoiceCloneService, BaseSTTService):
                 "description": "HTTP timeout in seconds.",
             },
         }
+
+    def get_service_actions(self) -> list:
+        return [
+            {
+                "id": "voicebox_profiles_list",
+                "label": "List Voicebox profiles",
+                "server_action": "voicebox_profiles_list",
+                "flow": "simple",
+            },
+            {
+                "id": "voicebox_preset_voices_list",
+                "label": "List preset voices",
+                "server_action": "voicebox_preset_voices_list",
+                "flow": "simple",
+            },
+            {
+                "id": "voicebox_profile_save",
+                "label": "Save Voicebox profile",
+                "server_action": "voicebox_profile_save",
+                "flow": "simple",
+            },
+            {
+                "id": "voicebox_tasks_clear",
+                "label": "Clear Voicebox tasks",
+                "server_action": "voicebox_tasks_clear",
+                "flow": "confirm",
+            },
+        ]
 
     def __init__(self, config):
         super().__init__(config)
@@ -229,14 +282,32 @@ class VoiceboxService(BaseVoiceCloneService, BaseSTTService):
     def _close_connection(self):
         proc = self._managed_proc
         self._managed_proc = None
+        self._shutdown_backend()
         if not proc or proc.poll() is not None:
             return
-        proc.terminate()
         try:
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait(timeout=5)
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=5)
+
+    def _shutdown_backend(self):
+        if not self.auto_start:
+            return
+        parsed = urllib.parse.urlparse(self.base_url)
+        if parsed.hostname not in {"127.0.0.1", "localhost", "::1"}:
+            return
+        req = urllib.request.Request(
+            self.base_url + "/shutdown", headers=self._headers(), method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=min(5, self.timeout)) as resp:  # nosec B310 - configured loopback Voicebox URL.
+                resp.read()
+        except Exception:
+            logger.debug("Voicebox backend shutdown request failed", exc_info=True)
 
     def _validate_endpoint(self):
         parsed = urllib.parse.urlparse(self.base_url)
@@ -283,8 +354,8 @@ class VoiceboxService(BaseVoiceCloneService, BaseSTTService):
             cwd=str(cwd) if cwd else None,
             env=env,
             stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
         self._wait_ready(self._managed_proc)
@@ -375,12 +446,14 @@ class VoiceboxService(BaseVoiceCloneService, BaseSTTService):
             ])
         python = repo / "backend" / "venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
         if python.exists():
+            self._patch_managed_checkout()
             return
         just = shutil.which("just")
         if just:
             if reporter:
                 reporter.step("installing_python_requirements", "Running Voicebox just setup-python")
             subprocess.check_call([just, "setup-python"], cwd=str(repo))  # nosec B603 - local setup tool argv without shell.
+            self._patch_managed_checkout()
             return
         backend = repo / "backend"
         if not backend.exists():
@@ -393,6 +466,47 @@ class VoiceboxService(BaseVoiceCloneService, BaseSTTService):
             reporter.step("installing_python_requirements", "Installing Voicebox Python requirements")
         subprocess.check_call([str(python), "-m", "pip", "install", "--upgrade", "pip", "-q"])  # nosec B603 - venv pip argv without shell.
         subprocess.check_call([str(python), "-m", "pip", "install", "-r", str(backend / "requirements.txt")])  # nosec B603 - requirements path is inside managed checkout.
+        self._patch_managed_checkout()
+
+    def _patch_managed_checkout(self):
+        """Apply local hardening patches to the managed Voicebox checkout."""
+        progress = self.install_dir / "backend" / "utils" / "hf_progress.py"
+        if progress.exists():
+            text = progress.read_text(encoding="utf-8")
+            updated = text.replace(
+                'filtered_kwargs["disable"] = False',
+                'filtered_kwargs["disable"] = True')
+            updated = updated.replace(
+                'kwargs["disable"] = False',
+                'kwargs["disable"] = True')
+            updated = updated.replace(
+                'result = super().update(n)\n\n                # Report progress',
+                'try:\n                    result = super().update(n)\n                except BrokenPipeError:\n                    result = None\n\n                # Report progress')
+            updated = updated.replace(
+                'result = tracker._hf_tqdm_original_update(tqdm_self, n)\n\n                        # Track this progress',
+                'before = getattr(tqdm_self, "n", 0)\n                        try:\n                            result = tracker._hf_tqdm_original_update(tqdm_self, n)\n                        except BrokenPipeError:\n                            try:\n                                tqdm_self.n = before + n\n                            except Exception:\n                                pass\n                            result = None\n\n                        # Track this progress')
+            if updated != text:
+                progress.write_text(updated, encoding="utf-8")
+
+    def _patch_managed_checkout_wsl(self, target: tuple[str, str]):
+        distro, linux_repo = target
+        script = "\n".join([
+            "set -e",
+            f"cd {shlex.quote(linux_repo)}",
+            "python3 - <<'PY'",
+            "from pathlib import Path",
+            "p = Path('backend/utils/hf_progress.py')",
+            "if p.exists():",
+            "    text = p.read_text(encoding='utf-8')",
+            "    updated = text.replace('filtered_kwargs[\"disable\"] = False', 'filtered_kwargs[\"disable\"] = True')",
+            "    updated = updated.replace('kwargs[\"disable\"] = False', 'kwargs[\"disable\"] = True')",
+            "    updated = updated.replace('result = super().update(n)\\n\\n                # Report progress', 'try:\\n                    result = super().update(n)\\n                except BrokenPipeError:\\n                    result = None\\n\\n                # Report progress')",
+            "    updated = updated.replace('result = tracker._hf_tqdm_original_update(tqdm_self, n)\\n\\n                        # Track this progress', 'before = getattr(tqdm_self, \"n\", 0)\\n                        try:\\n                            result = tracker._hf_tqdm_original_update(tqdm_self, n)\\n                        except BrokenPipeError:\\n                            try:\\n                                tqdm_self.n = before + n\\n                            except Exception:\\n                                pass\\n                            result = None\\n\\n                        # Track this progress')",
+            "    if updated != text:",
+            "        p.write_text(updated, encoding='utf-8')",
+            "PY",
+        ])
+        subprocess.check_call(self._wsl_argv(distro, script))  # nosec B603 - fixed wsl argv; script applies deterministic local patch.
 
     def _wsl_argv(self, distro: str, script: str) -> list[str]:
         wsl = shutil.which("wsl.exe") or shutil.which("wsl")
@@ -444,6 +558,7 @@ class VoiceboxService(BaseVoiceCloneService, BaseSTTService):
                 distro,
                 f"test -x {shlex.quote(linux_python)} && "
                 f"{shlex.quote(linux_python)} -m pip --version >/dev/null"):
+            self._patch_managed_checkout_wsl(target)
             return
         if not backend.exists():
             raise ServiceError(f"Voicebox checkout is incomplete: {repo}")
@@ -463,6 +578,7 @@ class VoiceboxService(BaseVoiceCloneService, BaseSTTService):
                 "fi",
             ]),
         ))
+        self._patch_managed_checkout_wsl(target)
 
     def _wait_ready(self, proc):
         deadline = time.time() + self.startup_timeout
@@ -584,6 +700,25 @@ class VoiceboxService(BaseVoiceCloneService, BaseSTTService):
             return " (" + ", ".join(parts) + ")" if parts else ""
         return ""
 
+    def _active_download_error(self, model_name: str = "") -> str:
+        try:
+            tasks = self._request("GET", "/tasks/active", accept_json=True)
+        except Exception:
+            return ""
+        downloads = tasks.get("downloads", []) if isinstance(tasks, dict) else []
+        wanted = str(model_name or "")
+        for item in downloads:
+            if not isinstance(item, dict) or (wanted and item.get("model_name") != wanted):
+                continue
+            error = item.get("error")
+            if error:
+                return f"{item.get('model_name') or 'model'} download failed: {error}"
+        return ""
+
+    def clear_tasks(self) -> dict:
+        self.ensure_connected()
+        return self._request("POST", "/tasks/clear", accept_json=True)
+
     def transcribe(self, audio_bytes: bytes = b"", audio_path: str = "",
                    mime_type: str = "", language: str = "",
                    prompt: str = "", model: str = "", **kwargs) -> dict:
@@ -625,6 +760,185 @@ class VoiceboxService(BaseVoiceCloneService, BaseSTTService):
             "provider_result": data,
         }
 
+    def list_profiles(self) -> list[dict]:
+        self.ensure_connected()
+        profiles = self._request("GET", "/profiles", accept_json=True)
+        return profiles if isinstance(profiles, list) else []
+
+    def list_preset_voices(self, engine: str = "kokoro") -> list[dict]:
+        self.ensure_connected()
+        data = self._request(
+            "GET", f"/profiles/presets/{urllib.parse.quote(str(engine or 'kokoro'))}",
+            accept_json=True, allow_404=True)
+        voices = data.get("voices", []) if isinstance(data, dict) else []
+        return voices if isinstance(voices, list) else []
+
+    def _preset_voice_for_profile(self, name: str, engine: str = "kokoro",
+                                  voice_id: str = "") -> dict:
+        wanted_name = str(name or "").strip().lower()
+        wanted_id = str(voice_id or "").strip().lower()
+        if not wanted_name and not wanted_id:
+            return {}
+        for item in self.list_preset_voices(engine):
+            if not isinstance(item, dict):
+                continue
+            item_id = str(item.get("voice_id") or "")
+            item_name = str(item.get("name") or "")
+            if wanted_id and wanted_id == item_id.lower():
+                return item
+            if wanted_name and wanted_name == item_name.lower():
+                return item
+        return {}
+
+    def save_preset_profile(self, name: str = "", engine: str = "kokoro",
+                            voice_id: str = "", language: str = "",
+                            description: str = "", personality: str = "") -> dict:
+        self.ensure_connected()
+        profile_name = str(name or "").strip()
+        preset_engine = str(engine or "kokoro").strip() or "kokoro"
+        preset = self._preset_voice_for_profile(profile_name, preset_engine, voice_id)
+        preset_voice_id = str(voice_id or preset.get("voice_id") or "").strip()
+        if not profile_name:
+            profile_name = str(preset.get("name") or preset_voice_id).strip()
+        if not profile_name:
+            raise ServiceError("profile_name is required")
+        if not preset_voice_id:
+            raise ServiceError(
+                f"No preset voice matched {profile_name!r} for engine {preset_engine!r}")
+        profile_language = str(language or preset.get("language") or "en").strip() or "en"
+        body = {
+            "name": profile_name,
+            "description": description or f"{preset_engine} preset voice {preset_voice_id}",
+            "language": profile_language,
+            "voice_type": "preset",
+            "preset_engine": preset_engine,
+            "preset_voice_id": preset_voice_id,
+            "default_engine": preset_engine,
+        }
+        if personality:
+            body["personality"] = personality
+        existing_id = ""
+        for item in self.list_profiles():
+            if not isinstance(item, dict):
+                continue
+            if profile_name in {str(item.get("id") or ""), str(item.get("name") or "")}:
+                existing_id = str(item.get("id") or "")
+                break
+        path = f"/profiles/{urllib.parse.quote(existing_id)}" if existing_id else "/profiles"
+        method = "PUT" if existing_id else "POST"
+        return self._request(
+            method, path, json.dumps(body).encode("utf-8"),
+            {"Content-Type": "application/json"}, accept_json=True)
+
+    def _resolve_profile_id(self, profile: str) -> str:
+        """Resolve a Voicebox profile name/id to its internal profile id."""
+        value = str(profile or "").strip()
+        if not value:
+            return ""
+        for item in self.list_profiles():
+            if not isinstance(item, dict):
+                continue
+            if value in {str(item.get("id") or ""), str(item.get("name") or "")}:
+                return str(item.get("id") or "")
+        try:
+            created = self.save_preset_profile(name=value)
+        except Exception:
+            return ""
+        return str(created.get("id") or "") if isinstance(created, dict) else ""
+
+    def _wait_for_generation_audio(self, generation_id: str) -> dict:
+        deadline = time.time() + self.timeout
+        last_status = ""
+        while time.time() < deadline:
+            gen = self._request(
+                "GET", f"/history/{urllib.parse.quote(generation_id)}",
+                accept_json=True, allow_404=True)
+            if isinstance(gen, dict) and gen:
+                last_status = str(gen.get("status") or "")
+                if last_status == "failed":
+                    raise ServiceError(gen.get("error") or "Voicebox generation failed")
+                if last_status == "completed" and gen.get("audio_path"):
+                    local_audio = self._read_local_generation_audio(gen)
+                    if local_audio:
+                        return local_audio
+                    audio_bytes, content_type = self._request(
+                        "GET", f"/audio/{urllib.parse.quote(generation_id)}",
+                        accept_json=False)
+                    if not audio_bytes:
+                        raise ServiceError("Voicebox returned empty audio")
+                    return {
+                        "audio_bytes": audio_bytes,
+                        "content_type": content_type or "audio/wav",
+                        "source_url": "",
+                    }
+            time.sleep(1)
+        detail = self._active_download_detail("")
+        raise ServiceError(
+            f"Voicebox generation {generation_id} did not finish within {self.timeout}s"
+            + (f"; last status: {last_status}" if last_status else "")
+            + detail)
+
+    def _read_local_generation_audio(self, gen: dict) -> dict:
+        raw = str(gen.get("audio_path") or "").strip()
+        if not raw:
+            return {}
+        path = Path(raw)
+        candidates = []
+        if path.is_absolute():
+            candidates.append(path)
+        else:
+            candidates.extend([
+                Path.cwd() / path,
+                Path.cwd() / "data" / path,
+                self.install_dir / path,
+            ])
+            for prefix in ("runtime/voicebox/", "data/runtime/voicebox/"):
+                if raw.startswith(prefix):
+                    candidates.append(self.install_dir / raw[len(prefix):])
+        for candidate in candidates:
+            try:
+                if candidate.exists() and candidate.is_file():
+                    content_type = mimetypes.guess_type(candidate.name)[0] or "audio/wav"
+                    return {
+                        "audio_bytes": candidate.read_bytes(),
+                        "content_type": content_type,
+                        "source_url": "",
+                    }
+            except OSError:
+                logger.debug("Could not read Voicebox audio file %s", candidate, exc_info=True)
+        return {}
+
+    def _stream_speech(self, payload: Dict[str, Any], profile_id: str) -> dict:
+        stream_payload: Dict[str, Any] = {
+            "profile_id": profile_id,
+            "text": payload["text"],
+            "language": payload.get("language") or "en",
+        }
+        for source_key, target_key in (
+                ("engine", "engine"),
+                ("model_size", "model_size"),
+                ("seed", "seed"),
+                ("instruct", "instruct"),
+                ("max_chunk_chars", "max_chunk_chars"),
+                ("crossfade_ms", "crossfade_ms"),
+                ("normalize", "normalize"),
+                ("effects_chain", "effects_chain")):
+            value = payload.get(source_key)
+            if value is not None and value != "":
+                stream_payload[target_key] = value
+        body = json.dumps(stream_payload).encode("utf-8")
+        audio_bytes, content_type = self._request(
+            "POST", "/generate/stream", body,
+            {"Content-Type": "application/json", "Accept": "audio/*"},
+            accept_json=False)
+        if not audio_bytes:
+            raise ServiceError("Voicebox returned empty audio")
+        return {
+            "audio_bytes": audio_bytes,
+            "content_type": content_type or "audio/wav",
+            "source_url": "",
+        }
+
     def speak(self, text: str, voice: str = "", language: str = "",
               profile: str = "", personality: bool = False, **kwargs) -> dict:
         if not text:
@@ -643,6 +957,12 @@ class VoiceboxService(BaseVoiceCloneService, BaseSTTService):
                 continue
             if value is not None and value != "":
                 payload[key] = value
+        if not personality and payload.get("profile"):
+            self._resolve_profile_id(str(payload["profile"]))
+        active_error = self._active_download_error(str(payload.get("engine") or ""))
+        if active_error:
+            raise ServiceError(
+                f"Voicebox {active_error}. Clear Voicebox tasks and retry the model download.")
         body = json.dumps(payload).encode("utf-8")
         audio_bytes, content_type = self._request(
             "POST", "/speak", body,
@@ -662,6 +982,10 @@ class VoiceboxService(BaseVoiceCloneService, BaseSTTService):
                 with urllib.request.urlopen(url, timeout=self.timeout) as resp:  # nosec B310 - provider-returned local/file URL.
                     audio_bytes = resp.read()
                     content_type = resp.headers.get("Content-Type", "audio/mpeg")
+            elif data.get("id") and str(data.get("status") or "") in {"generating", "loading_model", "completed"}:
+                return self._wait_for_generation_audio(str(data["id"]))
+            elif data.get("profile_id") and not personality:
+                return self._stream_speech(payload, str(data["profile_id"]))
             else:
                 raise ServiceError("Voicebox /speak returned JSON without audio")
         if not audio_bytes:

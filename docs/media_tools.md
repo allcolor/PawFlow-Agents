@@ -204,9 +204,9 @@ require a Voice Builder JSON imported into the managed Supertonic daemon.
 
 `voicebox` bridges a managed local Voicebox server (default
 `http://127.0.0.1:17493`) as a PawFlow STT, TTS, and voice-clone provider. It
-uses Voicebox's `/transcribe` endpoint for browser dictation and `/speak` for
-speech generation. Configure `client_id`, `stt_model`, and `default_profile` to
-match Voicebox's local profile and MCP/client bindings.
+uses Voicebox's `/transcribe` endpoint for browser dictation and Voicebox's TTS
+endpoints for speech generation. Configure `client_id`, `stt_model`, and
+`default_profile` to match Voicebox's local profile and MCP/client bindings.
 
 Like Supertonic, the service starts lazily on first use. With `auto_start=true`
 it first probes the local API, then opens the installed macOS Voicebox app when
@@ -217,8 +217,15 @@ it can clone/setup Voicebox into `data/runtime/voicebox` before starting
 the pinned `repo_ref` commit before running dependency setup, so default installs
 are reproducible instead of tracking upstream `HEAD`. `start_command` can
 override the managed command for packaged deployments. Voicebox voice cloning is
-profile-based: PawFlow can speak through existing Voicebox profiles by name/id,
-while profile creation and sample management remain in Voicebox.
+profile-based: PawFlow can speak through Voicebox profiles by name/id. Preset
+profiles can be created or updated directly from the service edit form with the
+`profile_*` fields and the `Save Voicebox profile` action; if `default_profile`
+names a known preset such as Kokoro `Siwis`, PawFlow creates the matching
+Voicebox preset profile automatically on first speech. Cloned-profile sample
+management remains in Voicebox. When the service is disabled or disconnected
+and `auto_start=true` targets a loopback endpoint, PawFlow calls Voicebox's
+`/shutdown` endpoint so a subsequent enable starts a fresh backend process from
+the current managed checkout instead of reusing stale imported code.
 
 ### LuxTTS Local Voice Clone Service
 

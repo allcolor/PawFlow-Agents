@@ -32,6 +32,15 @@ from core.base_service import BaseService
 logger = logging.getLogger(__name__)
 
 
+def _invalidate_tool_relay_registry_cache() -> None:
+    """Drop MCP tool registries when relay availability changes."""
+    try:
+        from services.tool_relay_service import ToolRelayService
+        ToolRelayService.clear_registry_cache()
+    except Exception:
+        logger.debug("Tool relay registry cache invalidation failed", exc_info=True)
+
+
 def _short_args(args: dict) -> str:
     """Compact dict repr for logging — caps long values, hides bulky bytes.
 
@@ -793,6 +802,7 @@ class RelayService(BaseService):
                                       "tasks": relay_tasks})
             count = len(self._relay_pool)
         logger.info("Relay pool: %d connection(s) for '%s'", count, self._service_id)
+        _invalidate_tool_relay_registry_cache()
         self.push_remote_fs_manifest()
         # Notify all SSE clients to refresh resources (relay status changed)
         try:
@@ -882,6 +892,7 @@ class RelayService(BaseService):
         logger.info(
             "Relay pool cleared for '%s': removed=%d alive=%d pending_cancelled=%d",
             self._service_id, len(removed), alive, cancelled_pending)
+        _invalidate_tool_relay_registry_cache()
         # Notify SSE clients
         try:
             from core.conversation_event_bus import ConversationEventBus

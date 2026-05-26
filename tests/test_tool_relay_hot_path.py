@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 
+from services.filesystem_service import RelayService
 from services.tool_relay_service import ToolRelayService
 
 
@@ -42,6 +43,31 @@ def test_registry_cache_hit_does_not_list_tools():
 
     try:
         assert svc._get_registry("alice", "conv1", "assistant") is registry
+    finally:
+        ToolRelayService.clear_registry_cache()
+
+
+def test_relay_connection_change_clears_tool_registry_cache():
+    key = ("tool-relay", "alice", "conv1", "assistant", "")
+    ToolRelayService.clear_registry_cache()
+    relay = RelayService({"_service_id": "fs1"})
+
+    try:
+        with ToolRelayService._registry_cache_lock:
+            ToolRelayService._registry_cache[key] = object()
+            ToolRelayService._registry_cache_tool_counts[key] = 1
+
+        relay._set_relay(object(), object(), object(), object())
+        assert ToolRelayService._registry_cache == {}
+        assert ToolRelayService._registry_cache_tool_counts == {}
+
+        with ToolRelayService._registry_cache_lock:
+            ToolRelayService._registry_cache[key] = object()
+            ToolRelayService._registry_cache_tool_counts[key] = 1
+
+        relay._clear_relay()
+        assert ToolRelayService._registry_cache == {}
+        assert ToolRelayService._registry_cache_tool_counts == {}
     finally:
         ToolRelayService.clear_registry_cache()
 

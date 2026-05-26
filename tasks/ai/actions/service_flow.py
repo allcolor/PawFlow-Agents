@@ -167,6 +167,17 @@ def _service_started_for_listing(reg, scope: str, scope_id: str, sid: str,
     return reg.is_connected(scope, scope_id, sid)
 
 
+def _service_install_state_for_listing(scope: str, scope_id: str,
+                                       service_id: str) -> Dict[str, Any]:
+    try:
+        from core.service_install import read_install_state
+        state = read_install_state(scope, scope_id, service_id)
+        return {k: v for k, v in state.items() if k not in {"scope_id"}}
+    except Exception:
+        logger.debug("Service install state lookup failed", exc_info=True)
+        return {"status": "unknown"}
+
+
 def _credential_provider_for_service(service_id: str, user_id: str = "") -> str:
     from services.llm_credential_oauth import normalize_provider
     from core.service_registry import ServiceRegistry
@@ -529,6 +540,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                     "description": sdef.description,
                     "scope": "global",
                     "provider": (sdef.config or {}).get("provider", ""),
+                    "install_state": _service_install_state_for_listing("global", "", sid),
                 })
             for sid, sdef in sorted(reg.get_all("user", user_id).items()):
                 if filter_type and sdef.service_type != filter_type:
@@ -546,6 +558,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                     "description": sdef.description,
                     "scope": "user",
                     "provider": (sdef.config or {}).get("provider", ""),
+                    "install_state": _service_install_state_for_listing("user", user_id, sid),
                 }
                 svc = reg.get_live_instance_cached("user", user_id, sid) if sdef.enabled else None
                 if svc and hasattr(svc, '_relay_info') and svc._relay_info:
@@ -573,6 +586,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                         "description": sdef.description,
                         "scope": "conv",
                         "provider": (sdef.config or {}).get("provider", ""),
+                        "install_state": _service_install_state_for_listing("conv", conv_id, sid),
                     })
             flowfile.set_content(json.dumps({
                 "services": services,
@@ -624,6 +638,51 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
             flowfile.set_attribute("http.response.status", "404")
+        return [flowfile]
+
+    if action in {"service_install_status", "service_install_log", "service_install_cancel"}:
+        try:
+            svc_name = body.get("service_name", "") or body.get("service_id", "")
+            conv_id = body.get("conversation_id", "") or flowfile.get_attribute("http.conversation_id") or ""
+            scope = _normalize_service_scope(body.get("scope", "") or ("conv" if conv_id else "user"))
+            if scope == "global" and not _is_admin(flowfile):
+                flowfile.set_content(json.dumps({"error": "Requires admin role for global scope"}).encode())
+                flowfile.set_attribute("http.response.status", "403")
+                return [flowfile]
+            scope_id = _service_scope_id(scope, user_id, conv_id)
+            if not svc_name:
+                flowfile.set_content(json.dumps({"error": "service_name is required"}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            from core.service_install import (
+                read_install_state, read_install_log, request_install_cancel,
+            )
+            if action == "service_install_status":
+                payload = {"install_state": read_install_state(scope, scope_id, svc_name)}
+            elif action == "service_install_log":
+                limit = int(body.get("limit", 200) or 200)
+                payload = read_install_log(scope, scope_id, svc_name, limit=limit)
+                payload["install_state"] = read_install_state(scope, scope_id, svc_name)
+                if str(body.get("download", "")).lower() in {"1", "true", "yes", "on"}:
+                    if not conv_id:
+                        payload["download_error"] = "conversation_id is required to export install logs"
+                    else:
+                        from core.file_store import FileStore
+                        filename = f"service_install_{svc_name}.json"
+                        fid = FileStore.instance().store(
+                            filename,
+                            json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8"),
+                            "application/json",
+                            conversation_id=conv_id,
+                            user_id=user_id,
+                            category="service_install_log",
+                        )
+                        payload["download_url"] = f"fs://filestore/{fid}/{filename}"
+            else:
+                payload = {"install_state": request_install_cancel(scope, scope_id, svc_name)}
+            flowfile.set_content(json.dumps(payload, ensure_ascii=False).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}, ensure_ascii=False).encode())
         return [flowfile]
 
     if action == "service_install":
@@ -690,39 +749,58 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 scope_id = user_id
                 scope = "user"
             from core import ServiceFactory
-            from core.service_install import ServiceInstallReporter
+            from core.service_install import (
+                ServiceInstallReporter,
+                read_install_state,
+                service_install_session,
+                update_install_state,
+            )
             svc_cls = ServiceFactory.get(svc_type)
             prepare_result = None
             reporter = ServiceInstallReporter(
                 conversation_id=conv_id,
                 service_id=svc_name,
                 service_type=svc_type,
+                scope=scope,
+                scope_id=scope_id,
             )
-            if hasattr(svc_cls, "prepare_install"):
-                reporter.step("queued", "Preparing service installation")
-                try:
-                    prepare_svc = svc_cls(config)
-                    prepare_result = prepare_svc.prepare_install(reporter)
-                    reporter.step("ready", "Service installation is prepared", "ready", progress=1.0)
-                except Exception as exc:
+            try:
+                with service_install_session(scope, scope_id, svc_name, svc_type):
+                    reporter.step("queued", "Preparing service installation", progress=0.0)
+                    if hasattr(svc_cls, "prepare_install"):
+                        prepare_svc = svc_cls(config)
+                        prepare_result = prepare_svc.prepare_install(reporter)
+                    reporter.step("registering", "Registering service", progress=0.95)
+                    reg.install(scope, scope_id, service_id=svc_name,
+                                service_type=svc_type, config=config,
+                                description=description)
+                    if _service_requires_connected_state(svc_type) and not reg.is_connected(scope, scope_id, svc_name):
+                        reg.uninstall(scope, scope_id, svc_name)
+                        raise RuntimeError(
+                            f"Service '{svc_name}' did not start. Check server logs for the provider error.")
+                    reporter.step("ready", "Service installation is ready", "ready", progress=1.0)
+                    update_install_state(
+                        scope, scope_id, svc_name,
+                        status="ready",
+                        service_type=svc_type,
+                        phase="ready",
+                        message="Service installation is ready",
+                        progress=1.0,
+                        result=prepare_result,
+                    )
+            except Exception as exc:
+                if "already running" not in str(exc):
                     reporter.step("failed", str(exc), "failed")
-                    flowfile.set_content(json.dumps({
-                        "error": str(exc),
-                        "install_prepared": False,
-                    }, ensure_ascii=False).encode())
-                    return [flowfile]
-            reg.install(scope, scope_id, service_id=svc_name,
-                        service_type=svc_type, config=config,
-                        description=description)
-            if _service_requires_connected_state(svc_type) and not reg.is_connected(scope, scope_id, svc_name):
-                reg.uninstall(scope, scope_id, svc_name)
                 flowfile.set_content(json.dumps({
-                    "error": f"Service '{svc_name}' did not start. Check server logs for the provider error.",
-                }).encode())
+                    "error": str(exc),
+                    "install_prepared": False,
+                    "install_state": read_install_state(scope, scope_id, svc_name),
+                }, ensure_ascii=False).encode())
                 return [flowfile]
             flowfile.set_content(json.dumps({
                 "installed": True, "id": svc_name, "type": svc_type,
                 "install_prepared": prepare_result,
+                "install_state": read_install_state(scope, scope_id, svc_name),
             }, ensure_ascii=False).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())

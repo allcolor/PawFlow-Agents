@@ -101,7 +101,14 @@ publishes `service_install_progress` events to the webchat so users see the
 current phase. Voicebox uses the hook to check `git`, Python `venv`, WSL package
 availability when applicable, prepare its checkout/venv, and optionally preload
 the configured Whisper STT model. Supertonic uses the same hook to prepare a
-managed Python runtime before first use.
+managed Python runtime before first use. PawFlow persists the latest install
+state for each service (`not_installed`, `installing`, `ready`, `failed`, or
+`cancelled`), includes it in `list_services`, writes a JSONL install log, rejects
+duplicate concurrent installs for the same service, and exposes
+`service_install_status`, `service_install_log`, and best-effort
+`service_install_cancel` actions for UI retry/debug flows. Pass `download=true`
+to `service_install_log` from a conversation context to export the log as a
+FileStore JSON artifact.
 
 ## 3D, Try-On, Training
 

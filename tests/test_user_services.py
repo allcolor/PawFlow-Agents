@@ -620,7 +620,119 @@ class TestAgentServiceActions:
 
         assert data["installed"] is True
         assert data["install_prepared"] == {"ok": True}
+        assert data["install_state"]["status"] == "ready"
+        assert data["install_state"]["phase"] == "ready"
         assert [name for name, _cfg in calls] == ["prepare", "connect"]
+
+    def test_service_install_rejects_concurrent_prepare_install(self):
+        from core import ServiceFactory
+        from core.base_service import BaseService
+        from core.service_install import update_install_state
+        from tasks.ai.actions.service_flow import _handle_service_flow
+
+        calls = []
+
+        class BusyPrepareInstallTestService(BaseService):
+            TYPE = "busyPrepareInstallTestService"
+
+            def get_parameter_schema(self):
+                return {}
+
+            def prepare_install(self, reporter=None):
+                calls.append("prepare")
+                return {"ok": True}
+
+            def _create_connection(self):
+                return {"ok": True}
+
+            def _close_connection(self):
+                pass
+
+        ServiceFactory.register(BusyPrepareInstallTestService)
+        update_install_state(
+            "user", "testuser", "busy",
+            status="installing",
+            service_type="busyPrepareInstallTestService",
+            phase="downloading_models",
+            message="Download in progress",
+        )
+        ff = self._make_flowfile({
+            "action": "service_install",
+            "service_type": "busyPrepareInstallTestService",
+            "service_name": "busy",
+        })
+
+        result = _handle_service_flow(None, "service_install", json.loads(ff.get_content()), None, "testuser", ff)
+        data = json.loads(result[0].get_content())
+
+        assert "already running" in data["error"]
+        assert data["install_state"]["status"] == "installing"
+        assert data["install_state"]["phase"] == "downloading_models"
+        assert calls == []
+
+    def test_service_install_status_log_and_cancel_actions(self):
+        from core.file_store import FileStore
+        from core.service_install import append_install_log, update_install_state
+        from tasks.ai.actions.service_flow import _handle_service_flow
+
+        update_install_state(
+            "user", "testuser", "svc1",
+            status="installing",
+            service_type="voicebox",
+            phase="creating_venv",
+            message="Creating venv",
+        )
+        append_install_log("user", "testuser", "svc1", {
+            "status": "running",
+            "phase": "creating_venv",
+            "message": "Creating venv",
+        })
+
+        status_ff = self._make_flowfile({
+            "action": "service_install_status",
+            "service_name": "svc1",
+        })
+        status_result = _handle_service_flow(None, "service_install_status", json.loads(status_ff.get_content()), None, "testuser", status_ff)
+        status_data = json.loads(status_result[0].get_content())
+        assert status_data["install_state"]["status"] == "installing"
+
+        log_ff = self._make_flowfile({
+            "action": "service_install_log",
+            "service_name": "svc1",
+            "scope": "user",
+            "conversation_id": "conv1",
+            "download": True,
+        })
+        log_result = _handle_service_flow(None, "service_install_log", json.loads(log_ff.get_content()), None, "testuser", log_ff)
+        log_data = json.loads(log_result[0].get_content())
+        assert log_data["log"][-1]["phase"] == "creating_venv"
+        assert log_data["download_url"].startswith("fs://filestore/")
+        fid = log_data["download_url"].split("/", 4)[3]
+        assert FileStore.instance().get(fid, user_id="testuser") is not None
+
+        cancel_ff = self._make_flowfile({
+            "action": "service_install_cancel",
+            "service_name": "svc1",
+        })
+        cancel_result = _handle_service_flow(None, "service_install_cancel", json.loads(cancel_ff.get_content()), None, "testuser", cancel_ff)
+        cancel_data = json.loads(cancel_result[0].get_content())
+        assert cancel_data["install_state"]["status"] == "cancelled"
+        assert cancel_data["install_state"]["phase"] == "cancelled"
+
+    def test_service_install_status_global_requires_admin(self):
+        from tasks.ai.actions.service_flow import _handle_service_flow
+
+        ff = self._make_flowfile({
+            "action": "service_install_status",
+            "service_name": "global-svc",
+            "scope": "global",
+        })
+
+        result = _handle_service_flow(None, "service_install_status", json.loads(ff.get_content()), None, "testuser", ff)
+        data = json.loads(result[0].get_content())
+
+        assert data["error"] == "Requires admin role for global scope"
+        assert result[0].get_attribute("http.response.status") == "403"
 
     def test_service_install_respects_explicit_global_scope_with_conversation_id(self):
         from tasks.ai.actions.service_flow import _handle_service_flow

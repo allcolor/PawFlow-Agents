@@ -84,8 +84,9 @@ function connectSSE(cid, onReady, opts) {
     const name = data.service_id || data.service_type || 'service';
     const type = data.service_type && data.service_type !== name ? ' (' + data.service_type + ')' : '';
     const phase = data.phase ? ' - ' + data.phase.replace(/_/g, ' ') : '';
+    const pct = typeof data.progress === 'number' ? ' [' + Math.round(data.progress * 100) + '%]' : '';
     const msg = data.message ? ': ' + data.message : '';
-    return icon + ' Installing ' + name + type + phase + msg;
+    return icon + ' Installing ' + name + type + phase + pct + msg;
   }
 
   function _upsertServiceInstallProgress(data) {

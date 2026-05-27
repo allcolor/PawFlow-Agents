@@ -1726,7 +1726,6 @@ def test_executor_restore_loads_user_scoped_flow_fqn(tmp_path, monkeypatch):
     ok = registry._restore_instance(
         "inst1", "/missing/template.json",
         flow_fqn="community.pkg.restore:1.0.0",
-        flow_scope="user",
         owner="alice",
         conversation_id="conv1",
         agent_name="agentA",
@@ -1736,7 +1735,43 @@ def test_executor_restore_loads_user_scoped_flow_fqn(tmp_path, monkeypatch):
     assert ok is True
     assert executor is not None
     assert executor._flow.id == "restore"
+    assert executor._flow.source_dir.endswith(
+        "repository/flows/users/alice/community/pkg/restore/versions")
     assert executor._runtime_context["user_id"] == "alice"
+
+
+def test_executor_restore_preserves_flow_path_source_dir(tmp_path, monkeypatch):
+    from core.executor_registry import ExecutorRegistry
+    from engine.continuous_executor import ContinuousFlowExecutor
+    from tasks import register_all_tasks
+
+    register_all_tasks()
+    asset_dir = tmp_path / "assets"
+    asset_dir.mkdir()
+    (asset_dir / "install.html").write_text("<h1>Install</h1>", encoding="utf-8")
+    flow_path = tmp_path / "1.0.0.json"
+    flow_path.write_text(json.dumps({
+        "id": "installer",
+        "name": "Installer",
+        "version": "1.0.0",
+        "tasks": {
+            "ui": {
+                "type": "generateFlowFile",
+                "parameters": {"content_file": "install.html"},
+            },
+        },
+        "relations": [],
+    }), encoding="utf-8")
+    monkeypatch.setattr(ContinuousFlowExecutor, "start", lambda self: None)
+
+    registry = ExecutorRegistry()
+    ok = registry._restore_instance("inst-file", str(flow_path))
+
+    executor = registry.get("inst-file")
+    assert ok is True
+    assert executor is not None
+    assert executor._flow.source_dir == str(tmp_path.resolve())
+    assert executor._flow.tasks["ui"]._flow_source_dir == str(tmp_path.resolve())
 
 
 def test_execute_flow_propagates_runtime_context_to_subflow(tmp_path, monkeypatch):

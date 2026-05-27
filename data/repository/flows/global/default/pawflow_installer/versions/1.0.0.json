@@ -32,6 +32,12 @@
         "routes": [
           {
             "method": "GET",
+            "pattern": "/",
+            "relationship": "GET:/",
+            "public": true
+          },
+          {
+            "method": "GET",
             "pattern": "/install",
             "relationship": "GET:/install",
             "public": true
@@ -148,9 +154,26 @@
         "service_id": "http_listener",
         "content_type": "application/json"
       }
+    },
+    "redirect_to_install": {
+      "type": "handleHTTPResponse",
+      "parameters": {
+        "service_id": "http_listener",
+        "status_code": 302,
+        "content_type": "text/plain; charset=utf-8",
+        "headers": {
+          "Location": "/install",
+          "Cache-Control": "no-store"
+        }
+      }
     }
   },
   "relations": [
+    {
+      "from": "http_in",
+      "to": "redirect_to_install",
+      "type": "GET:/"
+    },
     {
       "from": "http_in",
       "to": "route_install",
@@ -247,7 +270,8 @@
   ],
   "exits": [
     "send_html",
-    "send_json"
+    "send_json",
+    "redirect_to_install"
   ],
   "fqn": "default.pawflow_installer:1.0.0",
   "package": "default"

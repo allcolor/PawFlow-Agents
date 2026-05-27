@@ -315,6 +315,7 @@ def test_pawflow_installer_flow_template_exists():
 
     routes = flow["tasks"]["http_in"]["parameters"]["routes"]
     patterns = {route["pattern"] for route in routes}
+    assert "/" in patterns
     assert "/install" in patterns
     assert "/install/api" in patterns
     assert "/install/api/llm-credential/prepare" in patterns
@@ -323,6 +324,15 @@ def test_pawflow_installer_flow_template_exists():
     assert "/install/api/llm-credential/server-login/status" in patterns
     assert "/install/api/llm-credential/server-login/cleanup" in patterns
     assert "/install/api/finalize" in patterns
+
+    redirect = flow["tasks"]["redirect_to_install"]["parameters"]
+    assert redirect["status_code"] == 302
+    assert redirect["headers"]["Location"] == "/install"
+    assert {
+        "from": "http_in",
+        "to": "redirect_to_install",
+        "type": "GET:/",
+    } in flow["relations"]
     route_relationships = {
         route.get("relationship") or f"{route.get('method', 'GET').upper()}:{route.get('pattern', '/')}"
         for route in routes

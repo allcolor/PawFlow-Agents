@@ -150,10 +150,13 @@ The installer template is stored at
 The browser UI is a separate flow asset at
 `data/repository/flows/global/default/pawflow_installer/versions/assets/install.html`,
 referenced by the installer flow through `generateFlowFile.content_file`. The
-template defines `/install`, dynamic status at `GET /install/api`, credential-pool
-prepare/paste/server-login endpoints under `POST /install/api/llm-credential/*`,
-and finalization at `POST /install/api/finalize`. These routes sit behind the bootstrap
-`privateGateway` service. Finalization requires the current bootstrap key,
+template defines a public `GET /` redirect to `/install`, `/install`, dynamic
+status at `GET /install/api`, credential-pool prepare/paste/server-login
+endpoints under `POST /install/api/llm-credential/*`, and finalization at
+`POST /install/api/finalize`. These routes sit behind the bootstrap
+`privateGateway` service. The deployed executor preserves the flow version
+directory as the asset source directory so `install.html` resolves after process
+restore. Finalization requires the current bootstrap key,
 rejects keeping `RoyBetty`, requires an admin password, stores only a SHA-256
 digest of the replacement gateway key, writes the final key as encrypted secret
 `privategateway.main`, creates the persistent `_private_gateway`, resolves the

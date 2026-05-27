@@ -62,6 +62,44 @@ def _apply_service_bindings(flow, service_overrides=None, service_configs=None):
             flow.services[flow_service_id] = live
 
 
+def _flow_source_dir(flow_path: str = "", flow_fqn: str = "",
+                     flow_scope: str = "global", owner: str = "",
+                     conversation_id: str = "") -> str:
+    """Resolve the directory that contains a deployed flow definition."""
+    if flow_path and Path(flow_path).exists():
+        return str(Path(flow_path).resolve().parent)
+    if not flow_fqn:
+        return ""
+    try:
+        from core.paths import flow_version_file, parse_flow_fqn
+        package, flowname, version = parse_flow_fqn(flow_fqn)
+        if not version:
+            return ""
+        candidates = []
+        if flow_scope:
+            candidates.append(flow_scope)
+        if conversation_id:
+            candidates.append("conv")
+        if owner:
+            candidates.append("user")
+        candidates.append("global")
+        seen = set()
+        for scope in candidates:
+            if scope in seen:
+                continue
+            seen.add(scope)
+            path = flow_version_file(
+                package, flowname, version, scope,
+                owner if scope in {"user", "conv"} else "",
+                conversation_id if scope == "conv" else "",
+            )
+            if path.exists():
+                return str(path.resolve().parent)
+    except Exception:
+        logger.debug("Flow source directory lookup failed", exc_info=True)
+    return ""
+
+
 class ExecutorRegistry:
     """Thread-safe global registry for continuous executors.
 
@@ -277,6 +315,11 @@ class ExecutorRegistry:
                 logger.info("[startup-timing] %s flow file load: %.1fms",
                             instance_id, (time.monotonic() - _t0) * 1000)
             clean = {k: v for k, v in raw.items() if not k.startswith("_")}
+            source_dir = _flow_source_dir(
+                flow_path, flow_fqn, flow_scope,
+                owner, conversation_id)
+            if source_dir:
+                clean["_source_dir"] = source_dir
             from engine.parser import FlowParser
             _t0 = time.monotonic()
             flow = FlowParser.parse(clean)

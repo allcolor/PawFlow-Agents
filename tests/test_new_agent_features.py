@@ -613,7 +613,7 @@ class TestFlowManagerHandler(unittest.TestCase):
         repo = _Repo()
         with patch("core.repository.ScopedRepository.instance", return_value=repo), \
                 patch("engine.parser.FlowParser.parse", return_value=MagicMock(services={})), \
-                patch("engine.continuous_executor.ContinuousFlowExecutor", _Executor):
+                patch("core.executor_registry.ContinuousFlowExecutor", _Executor):
             result = h.execute({"action": "start", "flow_id": "flow1"})
 
         self.assertIn("started", result)

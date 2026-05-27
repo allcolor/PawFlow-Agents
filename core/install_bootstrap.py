@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import os
+import shutil
 import subprocess  # nosec B404
 import threading
 import time
@@ -35,6 +36,12 @@ BOOTSTRAP_CERT_FILE = _paths.SSL_DIR / "bootstrap.crt"
 BOOTSTRAP_KEY_FILE = _paths.SSL_DIR / "bootstrap.key"
 FINAL_CERT_FILE = _paths.SSL_DIR / "server.crt"
 FINAL_KEY_FILE = _paths.SSL_DIR / "server.key"
+DEFAULT_INSTALLER_FLOW_DIR = Path(
+    os.environ.get(
+        "PAWFLOW_DEFAULT_INSTALLER_FLOW_DIR",
+        "/app/default-data/repository/flows/global/default/pawflow_installer",
+    )
+)
 INSTALL_STEPS = [
     "server",
     "certificates",
@@ -58,6 +65,30 @@ CLIENT_RELAY_IMAGES = {
     "default_client_profile": "client-minimal",
     "advanced_features": True,
 }
+
+
+def _refresh_installer_template_from_default_data() -> bool:
+    """Refresh the system installer flow from the image defaults if present."""
+    if not DEFAULT_INSTALLER_FLOW_DIR.is_dir():
+        return False
+    installer_dir = INSTALLER_TEMPLATE.parent.parent
+    if DEFAULT_INSTALLER_FLOW_DIR.resolve() == installer_dir.resolve():
+        return False
+    if not (DEFAULT_INSTALLER_FLOW_DIR / "versions" / "1.0.0.json").is_file():
+        logger.warning(
+            "Default installer flow missing version file: %s",
+            DEFAULT_INSTALLER_FLOW_DIR,
+        )
+        return False
+    tmp_dir = installer_dir.with_name(f"{installer_dir.name}.refreshing")
+    if tmp_dir.exists():
+        shutil.rmtree(tmp_dir)
+    shutil.copytree(DEFAULT_INSTALLER_FLOW_DIR, tmp_dir)
+    if installer_dir.exists():
+        shutil.rmtree(installer_dir)
+    tmp_dir.replace(installer_dir)
+    logger.info("Refreshed bootstrap installer template from %s", DEFAULT_INSTALLER_FLOW_DIR)
+    return True
 
 
 def _generate_self_signed_cert(cert_file: Path, key_file: Path, *,
@@ -1363,6 +1394,8 @@ def ensure_install_bootstrap(port: int = 9090) -> bool:
             len(non_installer),
         )
         return False
+
+    _refresh_installer_template_from_default_data()
 
     if not INSTALLER_TEMPLATE.exists():
         logger.error("Install bootstrap template missing: %s", INSTALLER_TEMPLATE)

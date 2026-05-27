@@ -187,6 +187,56 @@ def test_bootstrap_reset_removes_state_and_redeploys_installer(tmp_path, monkeyp
         ServiceRegistry.reset()
 
 
+def test_bootstrap_refreshes_installer_template_from_default_data(tmp_path, monkeypatch):
+    DeploymentRegistry.reset()
+    ServiceRegistry.reset()
+    dep_dir = tmp_path / "deployments"
+    runtime_dir = tmp_path / "runtime"
+    system_dir = tmp_path / "system"
+    state_file = tmp_path / "install_state.json"
+    persistent_template = tmp_path / "data" / "repository" / "flows" / "global" / "default" / "pawflow_installer" / "versions" / "1.0.0.json"
+    default_flow_dir = tmp_path / "default-data" / "repository" / "flows" / "global" / "default" / "pawflow_installer"
+    default_template = default_flow_dir / "versions" / "1.0.0.json"
+    _write_installer_template(persistent_template)
+    default_template.parent.mkdir(parents=True, exist_ok=True)
+    default_template.write_text(json.dumps({
+        "id": "pawflow-installer",
+        "name": "pawflow_installer",
+        "version": "1.0.0",
+        "tasks": {
+            "redirect_to_install": {
+                "type": "handleHTTPResponse",
+                "parameters": {"status_code": 302},
+            }
+        },
+        "relations": [{"from": "http_in", "to": "redirect_to_install", "type": "GET:/"}],
+    }), encoding="utf-8")
+    (default_template.parent / "assets").mkdir()
+    (default_template.parent / "assets" / "install.html").write_text("new", encoding="utf-8")
+
+    monkeypatch.setattr(_paths, "DEPLOYMENTS_DIR", dep_dir)
+    monkeypatch.setattr(_paths, "RUNTIME_DIR", runtime_dir)
+    monkeypatch.setattr(_paths, "SYSTEM_DIR", system_dir)
+    monkeypatch.setattr(_paths, "GLOBAL_SECRETS_FILE", system_dir / "global_secrets.json")
+    monkeypatch.setattr(_paths, "SECRET_KEY_FILE", system_dir / "secret.key")
+    monkeypatch.setattr(ib, "INSTALL_STATE_FILE", state_file)
+    monkeypatch.setattr(ib, "INSTALLER_TEMPLATE", persistent_template)
+    monkeypatch.setattr(ib, "DEFAULT_INSTALLER_FLOW_DIR", default_flow_dir)
+    _stub_cert_generation(tmp_path, monkeypatch)
+    monkeypatch.delenv("PAWFLOW_BOOTSTRAP_DISABLED", raising=False)
+    monkeypatch.setenv("PAWFLOW_BOOTSTRAP_RESET", "1")
+
+    try:
+        assert ib.ensure_install_bootstrap(port=9090) is True
+        refreshed = json.loads(persistent_template.read_text(encoding="utf-8"))
+        assert "redirect_to_install" in refreshed["tasks"]
+        assert (persistent_template.parent / "assets" / "install.html").read_text(encoding="utf-8") == "new"
+    finally:
+        monkeypatch.delenv("PAWFLOW_BOOTSTRAP_RESET", raising=False)
+        DeploymentRegistry.reset()
+        ServiceRegistry.reset()
+
+
 def test_install_status_only_exposes_public_draft_sections(tmp_path, monkeypatch):
     state_file = tmp_path / "install_state.json"
     monkeypatch.setattr(ib, "INSTALL_STATE_FILE", state_file)

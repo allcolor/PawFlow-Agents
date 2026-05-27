@@ -126,6 +126,7 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert "PAWFLOW_DOCKER_PLATFORM" in claude_build_src
     assert "PAWFLOW_DOCKER_PLATFORM" in relay_dev_build_src
     assert "PAWFLOW_DOCKER_PLATFORM" in generator_src
+    assert 'PAWFLOW_DOCKER_PLATFORM:-' in generator_src
 
     minimal_relay_src = build_server_minimal_relay.read_text(encoding="utf-8")
     assert "PAWFLOW_SERVER_MINIMAL_RELAY_IMAGE" in minimal_relay_src

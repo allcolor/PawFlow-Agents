@@ -259,7 +259,7 @@ def _write_scripts(out_dir: Path, image_name: str, manifest: dict[str, Any]) -> 
         "set -euo pipefail\n"
         "SCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\n"
         f"IMAGE={image_expansion}\n"
-        "PLATFORM=\"${PAWFLOW_DOCKER_PLATFORM}\"\n"
+        "PLATFORM=\"${PAWFLOW_DOCKER_PLATFORM:-}\"\n"
         "BUILD_ARGS=()\n"
         "if [[ -n \"$PLATFORM\" ]]; then BUILD_ARGS+=(--platform \"$PLATFORM\"); fi\n"
         "docker build \"${BUILD_ARGS[@]}\" -t \"$IMAGE\" \"$SCRIPT_DIR\"\n",

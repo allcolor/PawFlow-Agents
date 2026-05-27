@@ -10,6 +10,7 @@ SSE_JS = Path("tasks/io/chat_ui/sse.js").read_text(encoding="utf-8")
 CONVERSATION_TTS_JS = Path("tasks/io/chat_ui/conversation_tts.js").read_text(encoding="utf-8")
 STATE_JS = Path("tasks/io/chat_ui/state.js").read_text(encoding="utf-8")
 TEMPLATE_HTML = Path("tasks/io/chat_ui/template.html").read_text(encoding="utf-8")
+FILE_EXPLORER_JS = Path("tasks/io/chat_ui/file_explorer.js").read_text(encoding="utf-8")
 AGENT_CORE = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
 TASK_MANAGEMENT = Path("core/handlers/task_management.py").read_text(encoding="utf-8")
 MEDIA_ACTIONS = Path("tasks/ai/actions/media.py").read_text(encoding="utf-8")
@@ -21,6 +22,15 @@ def test_add_msg_inserts_by_message_timestamp():
     assert "function _insertMessageChronologically(container, el, sortTs)" in MESSAGES_JS
     assert "childTs > sortTs" in MESSAGES_JS
     assert "_insertMessageChronologically(container, el, _ts)" in MESSAGES_JS
+
+
+def test_chat_bootstrap_auto_resumes_first_conversation_after_login():
+    assert "action$('list_conversations', {})" in FILE_EXPLORER_JS
+    assert "resumeConv(requestedCid);" in FILE_EXPLORER_JS
+    assert "resumeConv(convs[0].conversation_id);" in FILE_EXPLORER_JS
+    assert "action$('load_history', { conversation_id: cid" in CONVERSATIONS_JS
+    assert "connectSSE(cid, () => startSSEHealthTimer(), { noReplay: true });" in CONVERSATIONS_JS
+    assert CONVERSATIONS_JS.index("action$('load_history', { conversation_id: cid") < CONVERSATIONS_JS.index("connectSSE(cid")
 
 
 def test_notification_rows_use_same_ordering_path():

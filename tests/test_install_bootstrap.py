@@ -573,13 +573,129 @@ def test_finalize_install_with_api_key_does_not_create_llm_credential_pool(tmp_p
 
         assert status["install_complete"] is True
         state = json.loads(state_file.read_text(encoding="utf-8"))
-        assert state["checks"]["llm_credential_pool"] is False
+        assert state["checks"]["llm_credential_pool"] is True
         assert state["draft"]["llm_services"]["credential_service_id"] == ""
+        assert state["draft"]["smoke_tests"]["llm_credential_pool"] == {"ok": True, "skipped": True}
         assert ServiceRegistry.get_instance().get_definition(
             SCOPE_GLOBAL, "", "codex_oauth_credentials") is None
         llm = ServiceRegistry.get_instance().get_definition(
             SCOPE_GLOBAL, "", "review_llm")
         assert "credential_service_id" not in llm.config
+    finally:
+        from core.conversation_store import ConversationStore
+        from core.executor_registry import ExecutorRegistry
+        from core.resource_store import ResourceStore
+        from core.security import SecurityManager
+        ConversationStore.reset()
+        ExecutorRegistry._instance = None
+        ResourceStore.reset()
+        SecurityManager._instance = None
+        DeploymentRegistry.reset()
+        ServiceRegistry.reset()
+
+
+def test_finalize_install_rolls_back_runtime_artifacts_when_smoke_checks_fail(tmp_path, monkeypatch):
+    DeploymentRegistry.reset()
+    ServiceRegistry.reset()
+    dep_dir = tmp_path / "deployments"
+    runtime_dir = tmp_path / "runtime"
+    system_dir = tmp_path / "system"
+    repository_dir = tmp_path / "repository"
+    state_file = tmp_path / "install_state.json"
+    template = tmp_path / "installer.json"
+    main_template = tmp_path / "main.json"
+    _write_installer_template(template)
+    _write_main_template(main_template)
+    _write_gateway_skin(repository_dir)
+
+    monkeypatch.setattr(_paths, "DEPLOYMENTS_DIR", dep_dir)
+    monkeypatch.setattr(_paths, "RUNTIME_DIR", runtime_dir)
+    monkeypatch.setattr(_paths, "CONVERSATIONS_DIR", runtime_dir / "conversations")
+    monkeypatch.setattr(_paths, "SYSTEM_DIR", system_dir)
+    monkeypatch.setattr(_paths, "REPOSITORY_DIR", repository_dir)
+    monkeypatch.setattr(_paths, "GLOBAL_SECRETS_FILE", system_dir / "global_secrets.json")
+    monkeypatch.setattr(_paths, "SECRET_KEY_FILE", system_dir / "secret.key")
+    monkeypatch.setattr(_paths, "USERS_FILE", system_dir / "users.json")
+    monkeypatch.setattr(_paths, "SESSIONS_FILE", system_dir / "sessions.json")
+    monkeypatch.setattr(_paths, "SECURITY_FILE", system_dir / "security.json")
+    monkeypatch.setattr(ib, "INSTALL_STATE_FILE", state_file)
+    monkeypatch.setattr(ib, "MAIN_TEMPLATE", main_template)
+    monkeypatch.setenv("PAWFLOW_BOOTSTRAP_GATEWAY_KEY", "RoyBetty")
+
+    try:
+        from core.conversation_store import ConversationStore
+        from core.executor_registry import ExecutorRegistry
+        from core.resource_store import ResourceStore
+        from core.security import SecurityManager
+        ConversationStore.reset()
+        ExecutorRegistry._instance = None
+        ResourceStore.reset()
+        SecurityManager._instance = None
+
+        class _Executor:
+            def stop(self):
+                pass
+
+        def fake_restore(self, instance_id, flow_path, *args, **kwargs):
+            self._executors[instance_id] = _Executor()
+            return True
+
+        def fail_smoke_checks(**kwargs):
+            raise RuntimeError("forced smoke failure")
+
+        monkeypatch.setattr(ExecutorRegistry, "_restore_instance", fake_restore)
+        monkeypatch.setattr(ib, "_run_install_smoke_checks", fail_smoke_checks)
+
+        from core.security import SecurityManager, Role
+        sm = SecurityManager.get_instance()
+        sm.create_user("bootstrap_admin", "old-admin-password-123", Role.ADMIN)
+        users_before = _paths.USERS_FILE.read_bytes()
+        _paths.GLOBAL_SECRETS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _paths.GLOBAL_SECRETS_FILE.write_text(
+            json.dumps({"existing.secret": "kept"}), encoding="utf-8")
+        secrets_before = _paths.GLOBAL_SECRETS_FILE.read_bytes()
+
+        reg = DeploymentRegistry.get_instance()
+        reg.deploy(str(template), instance_id=ib.INSTALLER_INSTANCE_ID, source="bootstrap")
+        reg.update_status(ib.INSTALLER_INSTANCE_ID, "running")
+        state_file.write_text(json.dumps({
+            "install_complete": False,
+            "installer_instance_id": ib.INSTALLER_INSTANCE_ID,
+            "completed_steps": ["server"],
+            "checks": {},
+            "draft": {},
+        }), encoding="utf-8")
+
+        try:
+            ib.finalize_install({
+                "bootstrap_gateway_key": "RoyBetty",
+                "new_gateway_key": "new-gateway-key-123",
+                "admin_username": "rollback_admin",
+                "admin_password": "admin-password-123",
+                "llm_service_id": "review_llm",
+                "llm_provider": "codex-app-server",
+                "llm_model": "gpt-5.5",
+                "llm_api_key": "api-key-123",
+                "oauth_google_client_id": "google-id",
+                "oauth_google_client_secret": "google-secret",
+            })
+            assert False, "smoke check failure should abort finalization"
+        except RuntimeError as exc:
+            assert "forced smoke failure" in str(exc)
+
+        state = json.loads(state_file.read_text(encoding="utf-8"))
+        assert state["install_complete"] is False
+        assert reg.get(ib.MAIN_INSTANCE_ID) is None
+        assert ExecutorRegistry.get_instance().get(ib.MAIN_INSTANCE_ID) is None
+        svc = ServiceRegistry.get_instance()
+        assert svc.get_definition(SCOPE_GLOBAL, "", ib.FINAL_PRIVATE_GATEWAY_SERVICE_ID) is None
+        assert svc.get_definition(SCOPE_GLOBAL, "", ib.AUTH_GATEWAY_SERVICE_ID) is None
+        assert svc.get_definition(SCOPE_GLOBAL, "", "review_llm") is None
+        assert svc.get_definition(SCOPE_GLOBAL, "", ib.SUMMARIZER_SERVICE_ID) is None
+        secrets_raw = json.loads(_paths.GLOBAL_SECRETS_FILE.read_text(encoding="utf-8"))
+        assert ib.FINAL_GATEWAY_SECRET_REF not in secrets_raw
+        assert _paths.GLOBAL_SECRETS_FILE.read_bytes() == secrets_before
+        assert _paths.USERS_FILE.read_bytes() == users_before
     finally:
         from core.conversation_store import ConversationStore
         from core.executor_registry import ExecutorRegistry
@@ -683,6 +799,18 @@ def test_auth_gateway_config_supports_multiple_providers_and_admin_links(tmp_pat
     assert "github-secret" not in secret_file
 
 
+def test_auth_gateway_config_rejects_selected_generic_without_required_fields(tmp_path, monkeypatch):
+    system_dir = tmp_path / "system"
+    monkeypatch.setattr(_paths, "GLOBAL_SECRETS_FILE", system_dir / "global_secrets.json")
+    monkeypatch.setattr(_paths, "SECRET_KEY_FILE", system_dir / "secret.key")
+
+    try:
+        ib._build_auth_gateway_config({"auth_providers": "generic"}, "admin")
+        assert False, "selected generic provider should require full OAuth config"
+    except ValueError as exc:
+        assert "generic OAuth requires" in str(exc)
+
+
 def test_auth_gateway_config_links_custom_generic_provider_from_generic_admin_field(tmp_path, monkeypatch):
     system_dir = tmp_path / "system"
     monkeypatch.setattr(_paths, "GLOBAL_SECRETS_FILE", system_dir / "global_secrets.json")
@@ -756,6 +884,24 @@ def test_install_bootstrap_task_rejects_mutating_endpoints_after_completion(monk
 
     assert out.get_attribute("http.response.status") == "410"
     assert payload == {"error": "installer is already finalized"}
+
+
+def test_install_bootstrap_task_returns_json_for_unexpected_finalize_errors(monkeypatch):
+    monkeypatch.setattr(ib_task, "is_install_complete", lambda: False)
+
+    def fail_finalize(_payload):
+        raise RuntimeError("forced finalize failure")
+
+    monkeypatch.setattr(ib_task, "finalize_install", fail_finalize)
+    ff = FlowFile(content=json.dumps({"bootstrap_gateway_key": "RoyBetty"}).encode("utf-8"))
+    ff.set_attribute("http.method", "POST")
+    ff.set_attribute("http.path", "/install/api/finalize")
+
+    out = ib_task.InstallBootstrapTask({}).execute(ff)[0]
+    payload = json.loads(out.get_content().decode("utf-8"))
+
+    assert out.get_attribute("http.response.status") == "500"
+    assert payload == {"error": "forced finalize failure"}
 
 
 def test_bootstrap_cert_generation_reuses_existing_files(tmp_path, monkeypatch):

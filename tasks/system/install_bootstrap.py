@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, Dict, List
 
 from core import FlowFile, TaskFactory
@@ -15,6 +16,9 @@ from core.install_bootstrap import (
     require_bootstrap_key,
     save_llm_credential,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 class InstallBootstrapTask(BaseTask):
@@ -65,6 +69,10 @@ class InstallBootstrapTask(BaseTask):
         except ValueError as exc:
             status = 400
             payload = {"error": str(exc)}
+        except Exception as exc:
+            logger.exception("Install bootstrap endpoint failed")
+            status = 500
+            payload = {"error": str(exc) or exc.__class__.__name__}
 
         flowfile.set_content(json.dumps(payload).encode("utf-8"))
         flowfile.set_attribute("mime.type", "application/json")

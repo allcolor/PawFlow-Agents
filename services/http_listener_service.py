@@ -272,7 +272,7 @@ class RouteEntry:
     owner_id: str        # flow_id or task_id that registered this route
     callback: Any        # callable(PendingRequest) -> None
     ws_handler: Any = None  # callable(socket, path_params) for WebSocket upgrades
-    public: bool = False    # if True: skip session auth + private gateway
+    public: bool = False    # if True: skip session auth; gateway still applies
     private_only: bool = False  # if True: only accept private-IP clients
 
 
@@ -293,8 +293,9 @@ class RouteRegistry:
                  private_only: bool = False) -> RouteEntry:
         """Register a route.  Raises RouteConflictError on overlap.
 
-        public=True skips session auth and private gateway checks (use for
-        login pages, callbacks, proxy endpoints with their own token auth).
+        public=True skips session auth (use for login pages, callbacks, proxy
+        endpoints with their own token auth). Private gateway still applies
+        unless the route is also private_only.
         private_only=True rejects non-RFC1918 clients even if public=True
         (use for proxy endpoints leaked URLs must not allow external abuse).
         """
@@ -1481,13 +1482,30 @@ class HTTPListenerService(BaseService):
         """Apply load-bearing config when another flow reuses this port."""
         if not isinstance(config, dict):
             return
+        old_ssl = (
+            self._ssl_certfile,
+            self._ssl_keyfile,
+            self._ssl_keyfile_password,
+        )
         self.config.update(config)
         self._request_timeout = float(self.config.get("request_timeout", self._request_timeout))
         self._max_dispatch_threads = self.config.get("max_dispatch_threads", self._max_dispatch_threads)
         self._header_read_timeout = self.config.get("header_read_timeout", self._header_read_timeout)
         self._private_gateway_service_id = self.config.get("private_gateway_service_id", self._private_gateway_service_id)
+        self._ssl_certfile = self.config.get("ssl_certfile", self._ssl_certfile)
+        self._ssl_keyfile = self.config.get("ssl_keyfile", self._ssl_keyfile)
+        self._ssl_keyfile_password = self.config.get("ssl_keyfile_password", self._ssl_keyfile_password)
         if self._server is not None:
             self._server._private_gateway = self._resolve_private_gateway()
+            new_ssl = (
+                self._ssl_certfile,
+                self._ssl_keyfile,
+                self._ssl_keyfile_password,
+            )
+            if new_ssl != old_ssl:
+                self._default_ssl_ctx = self._build_ssl_context()
+                self._server._ssl_ctx = self._default_ssl_ctx
+                self._server._sni_certs = self._sni_certs
 
     def get_parameter_schema(self) -> Dict[str, Any]:
         return {
@@ -1710,9 +1728,9 @@ class HTTPListenerService(BaseService):
             ws_handler: Optional WebSocket handler callable(socket, path_params, meta).
                         If set, WebSocket upgrade requests on this route are accepted
                         and the handler is called with the raw socket after handshake.
-            public: if True, session auth and private-gateway checks are skipped
-                    for this route — the callback is responsible for its own auth
-                    (login pages, OAuth callbacks, proxy endpoints with tokens…).
+            public: if True, session auth is skipped for this route; the
+                    callback is responsible for its own auth. Private gateway
+                    still applies unless private_only is also true.
             private_only: if True, only clients with private IPs (RFC 1918 /
                     localhost) are accepted — even if the route is public.
         """

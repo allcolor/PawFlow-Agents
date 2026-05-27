@@ -64,7 +64,7 @@ while [[ $# -gt 0 ]]; do
       cat <<'HELP'
 
 Options:
-  --version VERSION  Install this PawFlow version. Prebuilt image tag uses this value; source builds checkout the matching git tag.
+  --version VERSION  Install this PawFlow version. Checkout this git tag before building runtime images; prebuilt server image tag uses this value.
   --from-source      Build the server from source. With --version, checkout that exact git tag; without it, checkout main.
   --pull-server      Require pulling the server image. Fails if the image is not available.
   --image TAG        Full server image tag to build, pull, or run.
@@ -166,7 +166,7 @@ prepare_checkout_ref() {
     return 0
   fi
 
-  if [[ "$SERVER_MODE" != "source" ]]; then
+  if [[ "$SERVER_MODE" != "source" && -z "$VERSION" ]]; then
     return 0
   fi
 

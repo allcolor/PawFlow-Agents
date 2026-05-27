@@ -1102,6 +1102,40 @@ class TestSharedPort:
         finally:
             svc_a.disconnect()
 
+    def test_singleton_runtime_config_updates_tls_context(self, monkeypatch):
+        """Reusing a port with final TLS config updates new connections."""
+        svc_a = HTTPListenerService({
+            "host": "127.0.0.1",
+            "port": 19898,
+            "ssl_certfile": "bootstrap.crt",
+            "ssl_keyfile": "bootstrap.key",
+        })
+        fake_server = type("FakeServer", (), {})()
+        fake_server._ssl_ctx = "ctx:bootstrap.crt"
+        fake_server._sni_certs = {}
+        fake_server._private_gateway = None
+        svc_a._server = fake_server
+
+        def fake_build_ssl_context(self):
+            return f"ctx:{self._ssl_certfile}:{self._ssl_keyfile}"
+
+        monkeypatch.setattr(HTTPListenerService, "_build_ssl_context", fake_build_ssl_context)
+        monkeypatch.setattr(HTTPListenerService, "_resolve_private_gateway", lambda self: "gateway")
+
+        svc_b = HTTPListenerService({
+            "host": "127.0.0.1",
+            "port": 19898,
+            "ssl_certfile": "final.crt",
+            "ssl_keyfile": "final.key",
+            "private_gateway_service_id": "_private_gateway",
+        })
+
+        assert svc_b is svc_a
+        assert svc_a._ssl_certfile == "final.crt"
+        assert svc_a._ssl_keyfile == "final.key"
+        assert fake_server._ssl_ctx == "ctx:final.crt:final.key"
+        assert fake_server._private_gateway == "gateway"
+
 
 # ---------------------------------------------------------------------------
 # BaseTask.has_pending_input tests

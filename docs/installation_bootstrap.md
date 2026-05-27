@@ -48,11 +48,10 @@ When run from a checkout, the installer uses that checkout. When run as a
 downloaded standalone script, it clones
 `https://github.com/allcolor/PawFlow-Agents.git` into `~/pawflow-src`. Without a
 version, it first tries the prebuilt `ghcr.io/allcolor/pawflow:latest` server
-image. With `--version VERSION`, it first tries
-`ghcr.io/allcolor/pawflow:VERSION`. In the default auto mode, a versioned
-prebuilt image is tried before any git tag checkout is required. If the prebuilt
-server image is unavailable, the installer checks out the matching git tag and
-builds the server image from source. It always builds every
+image. With `--version VERSION`, it checks out the matching git tag before
+building local runtime images, then first tries `ghcr.io/allcolor/pawflow:VERSION`.
+If the prebuilt server image is unavailable, the installer builds the server
+image from that same source tag. It always builds every
 local runtime image required before the first web installer opens:
 
 - `ghcr.io/allcolor/pawflow:latest`, `ghcr.io/allcolor/pawflow:VERSION`, or
@@ -163,6 +162,9 @@ final listener certificate configuration, creates `_auth_gateway`, creates the s
 `pawflow-agent`, creates a starter conversation with the `assistant` agent
 selected, writes `install_complete=true`, disables `_bootstrap_private_gateway`,
 and marks the installer deployment stopped for restart-safe restoration.
+If finalization fails before completion, the installer returns a JSON error and
+restores the pre-finalization system user/session/security, final certificate,
+and global-secret files after removing runtime artifacts it created.
 
 ## Wizard Steps
 

@@ -253,6 +253,47 @@ def _store_bootstrap_gateway_secret(bootstrap_key: str) -> str:
     return BOOTSTRAP_GATEWAY_SECRET_REF
 
 
+def _delete_global_secret(secret_ref: str) -> None:
+    """Best-effort removal for secrets written by a failed finalization."""
+    from core.config_store import ConfigStore
+
+    if not _paths.GLOBAL_SECRETS_FILE.exists():
+        return
+    raw = ConfigStore.load_secrets_raw(_paths.GLOBAL_SECRETS_FILE)
+    if secret_ref not in raw:
+        return
+    raw.pop(secret_ref, None)
+    _paths.GLOBAL_SECRETS_FILE.write_text(
+        json.dumps(raw, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def _snapshot_file_state(paths: list[Path]) -> Dict[Path, bytes | None]:
+    """Capture exact file contents before finalization mutates system state."""
+    snapshot: Dict[Path, bytes | None] = {}
+    for path in paths:
+        try:
+            snapshot[path] = path.read_bytes() if path.exists() else None
+        except Exception:
+            logger.warning("Install finalization could not snapshot %s", path, exc_info=True)
+            snapshot[path] = None
+    return snapshot
+
+
+def _restore_file_state(snapshot: Dict[Path, bytes | None]) -> None:
+    """Restore files captured before a failed finalization attempt."""
+    for path, content in snapshot.items():
+        try:
+            if content is None:
+                path.unlink(missing_ok=True)
+            else:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(content)
+        except Exception:
+            logger.warning("Install finalization rollback could not restore %s", path, exc_info=True)
+
+
 def _install_bootstrap_private_gateway(secret_ref: str) -> str:
     """Install the global privateGateway used only by the first-run installer."""
     from tasks import _register_all_services
@@ -443,7 +484,9 @@ def _build_auth_gateway_config(payload: Dict[str, Any], admin_username: str) -> 
     generic_authorize = _payload_value(payload, "auth_generic_authorize_url", "oauth_generic_authorize_url")
     generic_token = _payload_value(payload, "auth_generic_token_url", "oauth_generic_token_url")
     generic_userinfo = _payload_value(payload, "auth_generic_userinfo_url", "oauth_generic_userinfo_url")
-    if generic_name or generic_authorize or generic_token or generic_userinfo:
+    if str(payload.get("auth_generic_enabled") or "").lower() in {"1", "true", "yes", "on"}:
+        selected.add(generic_name or "generic")
+    if "generic" in selected or generic_name or generic_authorize or generic_token or generic_userinfo:
         provider_name = generic_name or "generic"
         generic_provider_name = provider_name
         selected.add(provider_name)
@@ -924,6 +967,45 @@ def _stop_installer_executor_soon(delay: float = 1.0) -> None:
     timer.start()
 
 
+def _rollback_failed_finalization(
+    *,
+    llm_service_id: str = "",
+    llm_scope: str = "global",
+    summarizer_scope: str = "global",
+    admin_user: str = "admin",
+    first_conversation_id: str = "",
+) -> None:
+    """Remove runtime artifacts created by a finalization that did not pass checks."""
+    try:
+        from core.deployment_registry import DeploymentRegistry
+        DeploymentRegistry.get_instance().undeploy(MAIN_INSTANCE_ID)
+    except Exception:
+        logger.warning("Install finalization rollback failed to undeploy main flow", exc_info=True)
+
+    try:
+        if first_conversation_id:
+            from core.conversation_store import ConversationStore
+            ConversationStore.instance().delete(first_conversation_id, user_id=admin_user)
+    except Exception:
+        logger.warning("Install finalization rollback failed to delete first conversation", exc_info=True)
+
+    try:
+        from core.service_registry import ServiceRegistry, SCOPE_GLOBAL
+        reg = ServiceRegistry.get_instance()
+        for service_id in (FINAL_PRIVATE_GATEWAY_SERVICE_ID, AUTH_GATEWAY_SERVICE_ID):
+            reg.uninstall(SCOPE_GLOBAL, "", service_id)
+        if llm_service_id:
+            reg.uninstall(llm_scope, _install_scope_id(llm_scope, admin_user), llm_service_id)
+        reg.uninstall(summarizer_scope, _install_scope_id(summarizer_scope, admin_user), SUMMARIZER_SERVICE_ID)
+    except Exception:
+        logger.warning("Install finalization rollback failed to uninstall services", exc_info=True)
+
+    try:
+        _delete_global_secret(FINAL_GATEWAY_SECRET_REF)
+    except Exception:
+        logger.warning("Install finalization rollback failed to delete final gateway secret", exc_info=True)
+
+
 def _create_first_conversation(admin_user: str, llm_service_id: str) -> str:
     from core.conversation_store import ConversationStore
     from core.conv_agent_config import add_agent_to_conv
@@ -1112,32 +1194,57 @@ def finalize_install(payload: Dict[str, Any]) -> Dict[str, Any]:
     llm_scope, credential_scope, summarizer_scope = _service_scopes(payload)
     if not MAIN_TEMPLATE.exists():
         raise ValueError(f"main PawFlow flow template is missing: {MAIN_TEMPLATE}")
-    prevalidated_credential_service_id = _validate_llm_auth_ready(payload)
-    if prevalidated_credential_service_id and not str(payload.get("credential_service_id") or "").strip():
-        payload = dict(payload)
-        payload["credential_service_id"] = prevalidated_credential_service_id
-    gateway_skin = _validate_gateway_skin(str(payload.get("gateway_skin") or ""))
-    tls_config = _final_tls_config(payload)
-    auth_config = _build_auth_gateway_config(payload, admin_username)
+    system_snapshot = _snapshot_file_state([
+        _paths.GLOBAL_SECRETS_FILE,
+        _paths.USERS_FILE,
+        _paths.SESSIONS_FILE,
+        _paths.SECURITY_FILE,
+        FINAL_CERT_FILE,
+        FINAL_KEY_FILE,
+    ])
 
-    final_secret_ref = _store_global_secret(FINAL_GATEWAY_SECRET_REF, new_key)
-    final_gateway_service_id = _install_final_private_gateway(final_secret_ref, gateway_skin)
-    admin_user = _configure_admin_user(payload)
-    auth_gateway_service_id = _install_auth_gateway(auth_config)
-    llm_service_id, summarizer_service_id, credential_service_id = _install_llm_and_summarizer(payload)
-    main_instance_id = _deploy_main_flow(final_gateway_service_id, tls_config, auth_config)
-    _start_main_flow_executor(main_instance_id)
-    first_conversation_id = _create_first_conversation(admin_user, llm_service_id)
-    smoke_checks = _run_install_smoke_checks(
-        admin_user=admin_user,
-        llm_service_id=llm_service_id,
-        summarizer_service_id=summarizer_service_id,
-        credential_service_id=credential_service_id,
-        provider=str(payload.get("llm_provider") or ""),
-        main_instance_id=main_instance_id,
-        first_conversation_id=first_conversation_id,
-        auth_config=auth_config,
-    )
+    admin_user = str(admin_username)
+    llm_service_id = str(payload.get("llm_service_id") or "").strip()
+    first_conversation_id = ""
+    runtime_artifacts_created = False
+    try:
+        prevalidated_credential_service_id = _validate_llm_auth_ready(payload)
+        if prevalidated_credential_service_id and not str(payload.get("credential_service_id") or "").strip():
+            payload = dict(payload)
+            payload["credential_service_id"] = prevalidated_credential_service_id
+        gateway_skin = _validate_gateway_skin(str(payload.get("gateway_skin") or ""))
+        tls_config = _final_tls_config(payload)
+        auth_config = _build_auth_gateway_config(payload, admin_username)
+        final_secret_ref = _store_global_secret(FINAL_GATEWAY_SECRET_REF, new_key)
+        final_gateway_service_id = _install_final_private_gateway(final_secret_ref, gateway_skin)
+        runtime_artifacts_created = True
+        admin_user = _configure_admin_user(payload)
+        auth_gateway_service_id = _install_auth_gateway(auth_config)
+        llm_service_id, summarizer_service_id, credential_service_id = _install_llm_and_summarizer(payload)
+        main_instance_id = _deploy_main_flow(final_gateway_service_id, tls_config, auth_config)
+        _start_main_flow_executor(main_instance_id)
+        first_conversation_id = _create_first_conversation(admin_user, llm_service_id)
+        smoke_checks = _run_install_smoke_checks(
+            admin_user=admin_user,
+            llm_service_id=llm_service_id,
+            summarizer_service_id=summarizer_service_id,
+            credential_service_id=credential_service_id,
+            provider=str(payload.get("llm_provider") or ""),
+            main_instance_id=main_instance_id,
+            first_conversation_id=first_conversation_id,
+            auth_config=auth_config,
+        )
+    except Exception:
+        if runtime_artifacts_created or first_conversation_id:
+            _rollback_failed_finalization(
+                llm_service_id=llm_service_id,
+                llm_scope=llm_scope,
+                summarizer_scope=summarizer_scope,
+                admin_user=admin_user,
+                first_conversation_id=first_conversation_id,
+            )
+        _restore_file_state(system_snapshot)
+        raise
 
     now = time.time()
     state.setdefault("version", 1)
@@ -1159,7 +1266,7 @@ def finalize_install(payload: Dict[str, Any]) -> Dict[str, Any]:
     checks["auth_gateway"] = True
     checks["admin_user"] = True
     checks["llm_service"] = True
-    checks["llm_credential_pool"] = bool(credential_service_id)
+    checks["llm_credential_pool"] = True
     checks["summarizer_service"] = True
     checks["summarizer_llm_resolution"] = True
     checks["main_flow_deployed"] = True

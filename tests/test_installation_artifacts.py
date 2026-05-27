@@ -79,6 +79,7 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert "--source" in install_src
     assert "--from-source" in install_src
     assert "--version" in install_src
+    assert "Checkout this git tag before building runtime images" in install_src
     assert "--pull-server" in install_src
     assert "--platform" in install_src
     assert "--native" in install_src
@@ -99,6 +100,7 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert "docker pull \"${pull_args[@]}\" \"$IMAGE\"" in install_src
     assert "Prebuilt PawFlow server image unavailable" in install_src
     assert 'SERVER_MODE="source" prepare_checkout_ref "$REPO_DIR"' in install_src
+    assert '[[ "$SERVER_MODE" != "source" && -z "$VERSION" ]]' in install_src
     assert "refs/tags/$VERSION" in install_src
     assert "checkout main" in install_src
     assert "git clone" in install_src
@@ -209,6 +211,7 @@ def test_install_docs_and_agent_prompt_capture_bootstrap_contract():
     assert "--from-source" in doc
     assert "--native" in doc
     assert "prebuilt" in doc
+    assert "checks out the matching git tag before" in doc
     assert "pawflow-claude-code:latest" in doc
     assert "pawflow-relay-minimal:latest" in doc
     assert "pawflow-relay-dev:latest" in doc

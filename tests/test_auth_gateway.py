@@ -278,6 +278,43 @@ class TestAuthGatewayService(unittest.TestCase):
         result = gw.authenticate_builtin("gw_test", "wrong")
         self.assertFalse(result.success)
 
+    def test_admin_link_claim_maps_oauth_identity_to_existing_admin(self):
+        from core.identity_service import IdentityService
+        from core.security import SecurityManager, Role
+        from services.auth_gateway_service import AuthGatewayService
+
+        IdentityService.reset()
+        SecurityManager._instance = None
+        sm = SecurityManager.get_instance()
+        try:
+            sm.create_user("linked_admin", "admin-password-123", Role.ADMIN)
+            gw = AuthGatewayService({
+                "providers": {},
+                "admin_links": {
+                    "google": {
+                        "username": "linked_admin",
+                        "claim": "email",
+                        "value": "admin@example.com",
+                    }
+                },
+            })
+            result = AuthResult(
+                success=True,
+                provider="google",
+                user_id="google-123",
+                email="admin@example.com",
+                username="external-admin",
+            )
+
+            user = gw._find_existing_user(sm, result)
+
+            self.assertIsNotNone(user)
+            self.assertEqual(user.username, "linked_admin")
+            self.assertEqual(IdentityService.instance().resolve("google", "google-123"), "linked_admin")
+        finally:
+            IdentityService.reset()
+            SecurityManager._instance = None
+
 
 class TestIdentityServiceResolve(unittest.TestCase):
     """Test IdentityService.resolve for account linking."""

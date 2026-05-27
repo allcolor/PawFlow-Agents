@@ -328,13 +328,32 @@ class AuthGatewayService(BaseService):
             if user:
                 return user
 
-        # 2. Search by username (OAuth username or derived)
+        # 2. Installer/admin-configured link by provider claim.
+        admin_link = (self.config.get("admin_links", {}) or {}).get(auth_result.provider)
+        if isinstance(admin_link, dict):
+            claim = str(admin_link.get("claim") or "user_id")
+            expected = str(admin_link.get("value") or "").strip().lower()
+            actual = ""
+            if claim == "user_id":
+                actual = auth_result.user_id
+            elif claim == "email":
+                actual = auth_result.email
+            else:
+                actual = str((auth_result.claims or {}).get(claim) or "")
+            if expected and actual.strip().lower() == expected:
+                linked_username = str(admin_link.get("username") or "").strip()
+                user = sm.get_user(linked_username) if linked_username else None
+                if user:
+                    ids.link(linked_username, auth_result.provider, auth_result.user_id)
+                    return user
+
+        # 3. Search by username (OAuth username or derived)
         if auth_result.username:
             user = sm.get_user(auth_result.username)
             if user:
                 return user
 
-        # 3. Search by email
+        # 4. Search by email
         if auth_result.email:
             for udict in sm.list_users():
                 if udict.get("email", "").lower() == auth_result.email.lower():

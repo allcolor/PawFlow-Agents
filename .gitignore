@@ -43,6 +43,15 @@ data/system/
 
 # Stale/external top-level dirs
 flows/
+!data/repository/flows/
+!data/repository/flows/global/
+!data/repository/flows/global/default/
+!data/repository/flows/global/default/pawflow_installer/
+!data/repository/flows/global/default/pawflow_installer/assets/
+!data/repository/flows/global/default/pawflow_installer/assets/install.html
+!data/repository/flows/global/default/pawflow_installer/versions/
+!data/repository/flows/global/default/pawflow_installer/versions/assets/
+!data/repository/flows/global/default/pawflow_installer/versions/assets/install.html
 projects/
 checkpoints/
 templates/

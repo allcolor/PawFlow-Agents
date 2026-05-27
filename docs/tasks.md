@@ -27,7 +27,7 @@ code duplication.
 | `cronTrigger` | Generate a FlowFile on a CRON schedule |
 | `executeScript` | Execute a Python script on FlowFile content |
 | `fail` | Explicitly fail a FlowFile |
-| `generateFlowFile` | Generate new FlowFiles with configurable content |
+| `generateFlowFile` | Generate new FlowFiles from inline content or a flow asset file |
 | `hashContent` | Hash the content of a FlowFile |
 | `listFiles` | List files in a directory with filtering and tracking |
 | `log` | Log a message with formatting |

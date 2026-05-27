@@ -10,6 +10,7 @@ from core.base_task import BaseTask
 from core.install_bootstrap import (
     finalize_install,
     get_install_status,
+    is_install_complete,
     prepare_llm_credential_pool,
     require_bootstrap_key,
     save_llm_credential,
@@ -31,7 +32,13 @@ class InstallBootstrapTask(BaseTask):
         path = flowfile.get_attribute("http.path") or ""
 
         try:
-            if method == "GET" and path == "/install/api":
+            if is_install_complete() and not (
+                (method == "GET" and path == "/install/api")
+                or (method == "POST" and path == "/install/api/finalize")
+            ):
+                status = 410
+                payload = {"error": "installer is already finalized"}
+            elif method == "GET" and path == "/install/api":
                 status = 200
                 payload = get_install_status()
             elif method == "POST" and path == "/install/api/llm-credential/prepare":

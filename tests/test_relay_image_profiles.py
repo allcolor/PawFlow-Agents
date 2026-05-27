@@ -148,4 +148,5 @@ def test_installer_api_advertises_relay_image_profile_step():
     assert api_content["client_relay_images"]["server_profile"] == "server-full"
     assert api_content["client_relay_images"]["server_minimal_profile"] == "server-minimal"
     assert api_content["client_relay_images"]["advanced_features"] is True
-    assert "Relay image profiles" in flow["tasks"]["install_ui"]["parameters"]["content"]
+    ui_asset = ROOT / "data/repository/flows/global/default/pawflow_installer/versions/assets/install.html"
+    assert "Relay image profiles" in ui_asset.read_text(encoding="utf-8")

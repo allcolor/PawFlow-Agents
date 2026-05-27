@@ -64,7 +64,7 @@ while [[ $# -gt 0 ]]; do
       cat <<'HELP'
 
 Options:
-  --version VERSION  Install this PawFlow version. Server image tag and git tag use this exact value.
+  --version VERSION  Install this PawFlow version. Prebuilt image tag uses this value; source builds checkout the matching git tag.
   --from-source      Build the server from source. With --version, checkout that exact git tag; without it, checkout main.
   --pull-server      Require pulling the server image. Fails if the image is not available.
   --image TAG        Full server image tag to build, pull, or run.
@@ -159,10 +159,14 @@ ensure_checkout() {
 prepare_checkout_ref() {
   local repo_dir="$1"
   if [[ ! -d "$repo_dir/.git" ]]; then
-    if [[ "$SERVER_MODE" == "source" || -n "$VERSION" ]]; then
+    if [[ "$SERVER_MODE" == "source" ]]; then
       echo "Source checkout is not a git repository, so the requested ref cannot be selected: $repo_dir" >&2
       exit 1
     fi
+    return 0
+  fi
+
+  if [[ "$SERVER_MODE" != "source" ]]; then
     return 0
   fi
 
@@ -177,12 +181,10 @@ prepare_checkout_ref() {
     return 0
   fi
 
-  if [[ "$SERVER_MODE" == "source" ]]; then
-    echo "Selecting PawFlow source branch: main" >&2
-    git -C "$repo_dir" fetch origin main >&2
-    git -C "$repo_dir" checkout main >&2
-    git -C "$repo_dir" pull --ff-only origin main >&2
-  fi
+  echo "Selecting PawFlow source branch: main" >&2
+  git -C "$repo_dir" fetch origin main >&2
+  git -C "$repo_dir" checkout main >&2
+  git -C "$repo_dir" pull --ff-only origin main >&2
 }
 
 build_server_image() {
@@ -297,6 +299,7 @@ elif [[ "$SERVER_MODE" == "auto" ]]; then
     echo "Using prebuilt PawFlow server image: $IMAGE"
   else
     echo "Prebuilt PawFlow server image unavailable, building from source: $IMAGE"
+    SERVER_MODE="source" prepare_checkout_ref "$REPO_DIR"
     build_server_image
   fi
 else

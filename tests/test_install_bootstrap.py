@@ -1,10 +1,13 @@
 import hashlib
 import json
+import time
+from pathlib import Path
 
 from core.deployment_registry import DeploymentRegistry
 from core.service_registry import ServiceRegistry, SCOPE_GLOBAL
-from core import install_bootstrap as ib
+from core import FlowFile, install_bootstrap as ib
 import core.paths as _paths
+from tasks.system import install_bootstrap as ib_task
 
 
 def _write_installer_template(path):
@@ -46,14 +49,21 @@ def _write_gateway_skin(repository_dir, name="matrix"):
 def _stub_cert_generation(tmp_path, monkeypatch):
     cert = tmp_path / "ssl" / "bootstrap.crt"
     key = tmp_path / "ssl" / "bootstrap.key"
+    final_cert = tmp_path / "ssl" / "server.crt"
+    final_key = tmp_path / "ssl" / "server.key"
 
     def fake_run(cmd, check, capture_output, text, timeout):
-        cert.parent.mkdir(parents=True, exist_ok=True)
-        cert.write_text("CERT", encoding="utf-8")
-        key.write_text("KEY", encoding="utf-8")
+        out = Path(cmd[cmd.index("-out") + 1])
+        keyout = Path(cmd[cmd.index("-keyout") + 1])
+        out.parent.mkdir(parents=True, exist_ok=True)
+        keyout.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text("CERT", encoding="utf-8")
+        keyout.write_text("KEY", encoding="utf-8")
 
     monkeypatch.setattr(ib, "BOOTSTRAP_CERT_FILE", cert)
     monkeypatch.setattr(ib, "BOOTSTRAP_KEY_FILE", key)
+    monkeypatch.setattr(ib, "FINAL_CERT_FILE", final_cert)
+    monkeypatch.setattr(ib, "FINAL_KEY_FILE", final_key)
     monkeypatch.setattr(ib.subprocess, "run", fake_run)
     return cert, key
 
@@ -286,6 +296,45 @@ def test_finalize_install_validates_main_template_before_persistent_writes(tmp_p
         ServiceRegistry.reset()
 
 
+def test_finalize_install_requires_valid_cli_oauth_before_persistent_writes(tmp_path, monkeypatch):
+    ServiceRegistry.reset()
+    state_file = tmp_path / "install_state.json"
+    system_dir = tmp_path / "system"
+    main_template = tmp_path / "main.json"
+    _write_main_template(main_template)
+    monkeypatch.setattr(ib, "INSTALL_STATE_FILE", state_file)
+    monkeypatch.setattr(ib, "MAIN_TEMPLATE", main_template)
+    monkeypatch.setattr(_paths, "GLOBAL_SECRETS_FILE", system_dir / "global_secrets.json")
+    monkeypatch.setattr(_paths, "SECRET_KEY_FILE", system_dir / "secret.key")
+    monkeypatch.setenv("PAWFLOW_BOOTSTRAP_GATEWAY_KEY", "RoyBetty")
+    state_file.write_text(json.dumps({
+        "install_complete": False,
+        "installer_instance_id": ib.INSTALLER_INSTANCE_ID,
+        "checks": {},
+        "draft": {},
+    }), encoding="utf-8")
+
+    try:
+        try:
+            ib.finalize_install({
+                "bootstrap_gateway_key": "RoyBetty",
+                "new_gateway_key": "new-gateway-key-123",
+                "admin_password": "admin-password-123",
+                "llm_service_id": "review_llm",
+                "llm_provider": "codex-app-server",
+                "llm_model": "gpt-5.5",
+            })
+            assert False, "missing OAuth credentials should fail before persistence"
+        except ValueError as exc:
+            assert "has no valid OAuth credential" in str(exc)
+
+        assert not _paths.GLOBAL_SECRETS_FILE.exists()
+        assert ServiceRegistry.get_instance().get_definition(
+            SCOPE_GLOBAL, "", ib.FINAL_PRIVATE_GATEWAY_SERVICE_ID) is None
+    finally:
+        ServiceRegistry.reset()
+
+
 def test_finalize_install_persists_complete_state_without_cleartext_key(tmp_path, monkeypatch):
     DeploymentRegistry.reset()
     ServiceRegistry.reset()
@@ -330,6 +379,7 @@ def test_finalize_install_persists_complete_state_without_cleartext_key(tmp_path
             restored["instance_id"] = instance_id
             restored["flow_path"] = flow_path
             restored["parameters"] = kwargs.get("parameters")
+            restored["service_configs"] = kwargs.get("service_configs")
             self._executors[instance_id] = object()
             return True
 
@@ -348,6 +398,16 @@ def test_finalize_install_persists_complete_state_without_cleartext_key(tmp_path
             {"enabled": True, "secret_refs": ib.BOOTSTRAP_GATEWAY_SECRET_REF},
             enabled=True,
         )
+        ib._install_llm_credential_pool_for_scope("codex-app-server", "global", "admin")
+        from core.llm_providers.codex_session import add_credential_to_pool
+        add_credential_to_pool(
+            "access-token",
+            "refresh-token",
+            int((time.time() + 3600) * 1000),
+            account="admin@example.com",
+            service_id="codex_oauth_credentials",
+            id_token="id-token",
+        )
         state_file.write_text(json.dumps({
             "install_complete": False,
             "installer_instance_id": ib.INSTALLER_INSTANCE_ID,
@@ -364,6 +424,7 @@ def test_finalize_install_persists_complete_state_without_cleartext_key(tmp_path
             "llm_service_id": "review_llm",
             "llm_provider": "codex-app-server",
             "llm_model": "gpt-5.5",
+            "credential_service_id": "codex_oauth_credentials",
         })
 
         assert status["install_complete"] is True
@@ -377,20 +438,29 @@ def test_finalize_install_persists_complete_state_without_cleartext_key(tmp_path
         assert state["checks"]["llm_service"] is True
         assert state["checks"]["llm_credential_pool"] is True
         assert state["checks"]["summarizer_service"] is True
+        assert state["checks"]["summarizer_llm_resolution"] is True
         assert state["checks"]["main_flow_deployed"] is True
+        assert state["checks"]["main_flow_executor"] is True
         assert state["checks"]["first_conversation"] is True
+        assert state["checks"]["smoke_tests"] is True
         assert state["draft"]["gateway"]["key_sha256"] == hashlib.sha256(
             new_key.encode("utf-8")
         ).hexdigest()
         assert state["draft"]["gateway"]["service_id"] == ib.FINAL_PRIVATE_GATEWAY_SERVICE_ID
         assert state["draft"]["gateway"]["skin"] == "matrix"
+        assert state["draft"]["server"]["ssl_mode"] == "self_signed"
         assert state["draft"]["llm_services"]["primary"] == "review_llm"
         assert state["draft"]["llm_services"]["credential_service_id"] == "codex_oauth_credentials"
         assert state["draft"]["summarizer_service"]["service_id"] == ib.SUMMARIZER_SERVICE_ID
         assert state["draft"]["flows"]["main_instance_id"] == ib.MAIN_INSTANCE_ID
         assert state["draft"]["conversation"]["agent"] == ib.FIRST_RUN_AGENT
+        assert state["draft"]["smoke_tests"]["llm_credential_pool"]["valid_count"] == 1
+        assert state["draft"]["smoke_tests"]["main_flow_executor"]["ok"] is True
         assert restored["instance_id"] == ib.MAIN_INSTANCE_ID
         assert restored["parameters"] == {"private_gateway_service_id": ib.FINAL_PRIVATE_GATEWAY_SERVICE_ID}
+        assert restored["service_configs"]["http_listener"]["private_gateway_service_id"] == ib.FINAL_PRIVATE_GATEWAY_SERVICE_ID
+        assert restored["service_configs"]["http_listener"]["ssl_certfile"].endswith("server.crt")
+        assert restored["service_configs"]["auth"]["providers"] == {"builtin": {"enabled": True}}
         assert reg.get(ib.MAIN_INSTANCE_ID).status == "running"
         assert reg.get(ib.INSTALLER_INSTANCE_ID).status == "stopped"
         sdef = ServiceRegistry.get_instance().get_definition(
@@ -402,6 +472,10 @@ def test_finalize_install_persists_complete_state_without_cleartext_key(tmp_path
         assert final_gateway is not None
         assert final_gateway.config["secret_refs"] == ib.FINAL_GATEWAY_SECRET_REF
         assert final_gateway.config["skin"] == "matrix"
+        auth = ServiceRegistry.get_instance().get_definition(
+            SCOPE_GLOBAL, "", ib.AUTH_GATEWAY_SERVICE_ID)
+        assert auth is not None
+        assert auth.config["providers"] == {"builtin": {"enabled": True}}
         credential_pool = ServiceRegistry.get_instance().get_definition(
             SCOPE_GLOBAL, "", "codex_oauth_credentials")
         assert credential_pool is not None
@@ -556,6 +630,132 @@ def test_install_llm_pool_and_summarizer_support_user_scope(tmp_path, monkeypatc
         assert summarizer.config["llm_service"] == "alice_llm"
     finally:
         ServiceRegistry.reset()
+
+
+def test_final_tls_config_accepts_provided_cert_files(tmp_path):
+    cert = tmp_path / "server.crt"
+    key = tmp_path / "server.key"
+
+    params = ib._final_tls_config({
+        "ssl_mode": "provided",
+        "ssl_certfile": str(cert),
+        "ssl_keyfile": str(key),
+    })
+
+    assert params == {
+        "ssl_mode": "provided",
+        "ssl_certfile": str(cert),
+        "ssl_keyfile": str(key),
+    }
+
+
+def test_auth_gateway_config_supports_multiple_providers_and_admin_links(tmp_path, monkeypatch):
+    system_dir = tmp_path / "system"
+    monkeypatch.setattr(_paths, "GLOBAL_SECRETS_FILE", system_dir / "global_secrets.json")
+    monkeypatch.setattr(_paths, "SECRET_KEY_FILE", system_dir / "secret.key")
+
+    config = ib._build_auth_gateway_config({
+        "auth_providers": "google,github",
+        "oauth_google_client_id": "google-id",
+        "oauth_google_client_secret": "google-secret",
+        "admin_google_email": "admin@example.com",
+        "oauth_github_client_id": "github-id",
+        "oauth_github_client_secret": "github-secret",
+        "admin_github_id": "12345",
+    }, "admin")
+
+    assert set(config["providers"]) == {"builtin", "google", "github"}
+    assert config["providers"]["google"]["client_id"] == "google-id"
+    assert config["providers"]["google"]["client_secret"] == "${auth.google.client_secret}"
+    assert config["providers"]["github"]["client_secret"] == "${auth.github.client_secret}"
+    assert config["admin_links"]["google"] == {
+        "username": "admin",
+        "claim": "email",
+        "value": "admin@example.com",
+    }
+    assert config["admin_links"]["github"] == {
+        "username": "admin",
+        "claim": "user_id",
+        "value": "12345",
+    }
+    secret_file = _paths.GLOBAL_SECRETS_FILE.read_text(encoding="utf-8")
+    assert "google-secret" not in secret_file
+    assert "github-secret" not in secret_file
+
+
+def test_auth_gateway_config_links_custom_generic_provider_from_generic_admin_field(tmp_path, monkeypatch):
+    system_dir = tmp_path / "system"
+    monkeypatch.setattr(_paths, "GLOBAL_SECRETS_FILE", system_dir / "global_secrets.json")
+    monkeypatch.setattr(_paths, "SECRET_KEY_FILE", system_dir / "secret.key")
+
+    config = ib._build_auth_gateway_config({
+        "oauth_generic_name": "keycloak",
+        "oauth_generic_client_id": "kc-id",
+        "oauth_generic_client_secret": "kc-secret",
+        "oauth_generic_authorize_url": "https://idp.example/auth",
+        "oauth_generic_token_url": "https://idp.example/token",
+        "oauth_generic_userinfo_url": "https://idp.example/userinfo",
+        "admin_generic_email": "admin@example.com",
+    }, "admin")
+
+    assert "keycloak" in config["providers"]
+    assert config["admin_links"]["keycloak"] == {
+        "username": "admin",
+        "claim": "email",
+        "value": "admin@example.com",
+    }
+
+
+def test_stop_installer_executor_soon_unregisters_running_executor(monkeypatch):
+    calls = []
+
+    class _Executor:
+        def stop(self):
+            calls.append("stop")
+
+    class _Registry:
+        @staticmethod
+        def get_instance():
+            return _Registry()
+
+        def get(self, instance_id):
+            assert instance_id == ib.INSTALLER_INSTANCE_ID
+            return _Executor()
+
+        def unregister(self, instance_id):
+            assert instance_id == ib.INSTALLER_INSTANCE_ID
+            calls.append("unregister")
+
+    class _Timer:
+        def __init__(self, delay, fn):
+            self.delay = delay
+            self.fn = fn
+            self.daemon = False
+
+        def start(self):
+            calls.append(("delay", self.delay, self.daemon))
+            self.fn()
+
+    monkeypatch.setattr(ib.threading, "Timer", _Timer)
+    monkeypatch.setattr("core.executor_registry.ExecutorRegistry", _Registry)
+
+    ib._stop_installer_executor_soon(delay=0.25)
+
+    assert calls == [("delay", 0.25, True), "stop", "unregister"]
+
+
+def test_install_bootstrap_task_rejects_mutating_endpoints_after_completion(monkeypatch):
+    monkeypatch.setattr(ib_task, "is_install_complete", lambda: True)
+
+    ff = FlowFile(content=json.dumps({"bootstrap_gateway_key": "RoyBetty"}).encode("utf-8"))
+    ff.set_attribute("http.method", "POST")
+    ff.set_attribute("http.path", "/install/api/llm-credential/prepare")
+
+    out = ib_task.InstallBootstrapTask({}).execute(ff)[0]
+    payload = json.loads(out.get_content().decode("utf-8"))
+
+    assert out.get_attribute("http.response.status") == "410"
+    assert payload == {"error": "installer is already finalized"}
 
 
 def test_bootstrap_cert_generation_reuses_existing_files(tmp_path, monkeypatch):

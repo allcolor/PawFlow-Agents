@@ -27,6 +27,7 @@ class GenerateFlowFileTask(BaseTask):
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
         self.content = self.config.get('content', '')
+        self.content_file = self.config.get('content_file', '')
         self.content_type = self.config.get('content_type', 'text/plain')
         self.count = self.config.get('count', 1)
         self.encoding = self.config.get('encoding', 'utf-8')
@@ -49,7 +50,10 @@ class GenerateFlowFileTask(BaseTask):
         with self._lock:
             self._fired = True
 
-        content_bytes = self.content.encode(self.encoding)
+        if self.content_file:
+            content_bytes = self.get_asset(str(self.content_file))
+        else:
+            content_bytes = self.content.encode(self.encoding)
 
         generated_files = []
         for i in range(self.count):
@@ -76,6 +80,12 @@ class GenerateFlowFileTask(BaseTask):
                 'type': 'string',
                 'required': False,
                 'description': 'Content to write into generated FlowFiles',
+                'default': ''
+            },
+            'content_file': {
+                'type': 'string',
+                'required': False,
+                'description': 'Flow asset file to load as generated FlowFile content',
                 'default': ''
             },
             'content_type': {

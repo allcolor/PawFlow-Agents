@@ -98,6 +98,7 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert "ghcr.io/allcolor/pawflow" in install_src
     assert "docker pull \"${pull_args[@]}\" \"$IMAGE\"" in install_src
     assert "Prebuilt PawFlow server image unavailable" in install_src
+    assert 'SERVER_MODE="source" prepare_checkout_ref "$REPO_DIR"' in install_src
     assert "refs/tags/$VERSION" in install_src
     assert "checkout main" in install_src
     assert "git clone" in install_src
@@ -199,8 +200,8 @@ def test_install_docs_and_agent_prompt_capture_bootstrap_contract():
     assert "bootstrap self-signed TLS certificate" in doc
     assert "PAWFLOW_PUBLISH_HOST=0.0.0.0" in doc
     assert "PAWFLOW_BOOTSTRAP_RESET=1" in doc
-    assert "Let's Encrypt" in doc
-    assert "ZeroSSL" in doc
+    assert "mounted cert/key files" in doc
+    assert "private self-signed" in doc
     assert "summarizer_service" in doc
     assert "secret IDs" in doc
     assert "Complete from-scratch install" in doc
@@ -341,7 +342,11 @@ def test_pawflow_installer_flow_template_exists():
         "llm_credential_server_login_cleanup",
     }.issubset(route_names)
 
-    ui_content = flow["tasks"]["install_ui"]["parameters"]["content"]
+    ui_params = flow["tasks"]["install_ui"]["parameters"]
+    assert ui_params["content_file"] == "install.html"
+    ui_asset = template.parent / "assets" / "install.html"
+    assert ui_asset.exists()
+    ui_content = ui_asset.read_text(encoding="utf-8")
     assert "Admin User" in ui_content
     assert "OAuth Configuration" in ui_content
     assert "Private Gateway" in ui_content
@@ -360,7 +365,15 @@ def test_pawflow_installer_flow_template_exists():
     assert "llm_service_scope" in ui_content
     assert "credential_pool_scope" in ui_content
     assert "summarizer_service_scope" in ui_content
+    assert "External providers" in ui_content
+    assert "Final TLS mode" in ui_content
     assert "Agy / Antigravity" in ui_content
+    assert "Admin Facebook email/id" in ui_content
+    assert "Admin Amazon email/id" in ui_content
+    assert "Admin Telegram id" in ui_content
+    assert "Generic provider name" in ui_content
+    assert "oauth_generic_authorize_url" in ui_content
+    assert "blocking smoke checks" in ui_content
     assert "antigravity-interactive" in ui_content
     assert "Create login pool" in ui_content
     assert "Login via server" in ui_content

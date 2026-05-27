@@ -53,6 +53,23 @@ class TestGenerateFlowFileTask(unittest.TestCase):
         self.assertEqual(results[0].get_attribute('env'), 'prod')
         self.assertEqual(results[0].get_attribute('version'), '2')
 
+    def test_content_file_loads_flow_asset(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            assets = os.path.join(tmp, 'assets')
+            os.makedirs(assets, exist_ok=True)
+            with open(os.path.join(assets, 'install.html'), 'w', encoding='utf-8') as f:
+                f.write('<html>Installer</html>')
+
+            task = GenerateFlowFileTask({
+                'content_file': 'install.html',
+                'content_type': 'text/html; charset=utf-8',
+            })
+            task.set_flow_source_dir(tmp)
+            results = task.execute(FlowFile(content=b"dummy"))
+
+            self.assertEqual(results[0].get_content(), b'<html>Installer</html>')
+            self.assertEqual(results[0].get_attribute('mime.type'), 'text/html; charset=utf-8')
+
 
 class TestHashContentTask(unittest.TestCase):
 

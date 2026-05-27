@@ -166,6 +166,8 @@ one is available. Use `task_def` only for agent/task-definition resources; use
 - `GET /install/api` returns the persisted install state without exposing secret values.
 - `POST /install/api/finalize` requires the current bootstrap gateway key and a replacement gateway key.
 - The replacement gateway key is stored only as a SHA-256 digest in `install_state.json`.
+- Finalization installs the final runtime listener TLS config from either generated self-signed certificates or mounted cert/key files.
+- Finalization installs builtin auth plus any configured external AuthGateway providers, and can pre-bind the admin account to matching OAuth identities.
 - Successful finalization writes `install_complete=true` and marks the installer deployment stopped for the next restart.
 
 **Parameters**: none.

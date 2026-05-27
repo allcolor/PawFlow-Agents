@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import subprocess  # nosec B404
+import threading
 import time
 from pathlib import Path
 from typing import Any, Dict
@@ -32,6 +33,8 @@ SUMMARIZER_SERVICE_ID = "summarizer_service"
 FIRST_RUN_AGENT = "assistant"
 BOOTSTRAP_CERT_FILE = _paths.SSL_DIR / "bootstrap.crt"
 BOOTSTRAP_KEY_FILE = _paths.SSL_DIR / "bootstrap.key"
+FINAL_CERT_FILE = _paths.SSL_DIR / "server.crt"
+FINAL_KEY_FILE = _paths.SSL_DIR / "server.key"
 INSTALL_STEPS = [
     "server",
     "certificates",
@@ -57,21 +60,15 @@ CLIENT_RELAY_IMAGES = {
 }
 
 
-def ensure_bootstrap_self_signed_cert() -> Dict[str, str]:
-    """Create the first-run self-signed TLS certificate if missing."""
-    if BOOTSTRAP_CERT_FILE.exists() and BOOTSTRAP_KEY_FILE.exists():
-        return {
-            "ssl_certfile": str(BOOTSTRAP_CERT_FILE),
-            "ssl_keyfile": str(BOOTSTRAP_KEY_FILE),
-            "ssl_mode": "self_signed",
-        }
-
+def _generate_self_signed_cert(cert_file: Path, key_file: Path, *,
+                               hosts_env: str, default_hosts: str,
+                               days: int) -> None:
+    """Generate a self-signed TLS certificate with SubjectAltName entries."""
+    cert_file.parent.mkdir(parents=True, exist_ok=True)
     _paths.SSL_DIR.mkdir(parents=True, exist_ok=True)
     hosts = [
         h.strip()
-        for h in os.environ.get(
-            "PAWFLOW_BOOTSTRAP_CERT_HOSTS", "localhost,127.0.0.1"
-        ).split(",")
+        for h in os.environ.get(hosts_env, default_hosts).split(",")
         if h.strip()
     ]
     san_parts = []
@@ -83,16 +80,34 @@ def ensure_bootstrap_self_signed_cert() -> Dict[str, str]:
 
     cmd = [
         "openssl", "req", "-x509", "-newkey", "rsa:2048",
-        "-sha256", "-days", "30", "-nodes",
-        "-keyout", str(BOOTSTRAP_KEY_FILE),
-        "-out", str(BOOTSTRAP_CERT_FILE),
+        "-sha256", "-days", str(days), "-nodes",
+        "-keyout", str(key_file),
+        "-out", str(cert_file),
         "-subj", "/CN=localhost",
         "-addext", "subjectAltName=" + ",".join(san_parts),
     ]
+    subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=30)  # nosec B603
+    key_file.chmod(0o600)
+    cert_file.chmod(0o644)
+
+
+def ensure_bootstrap_self_signed_cert() -> Dict[str, str]:
+    """Create the first-run self-signed TLS certificate if missing."""
+    if BOOTSTRAP_CERT_FILE.exists() and BOOTSTRAP_KEY_FILE.exists():
+        return {
+            "ssl_certfile": str(BOOTSTRAP_CERT_FILE),
+            "ssl_keyfile": str(BOOTSTRAP_KEY_FILE),
+            "ssl_mode": "self_signed",
+        }
+
     try:
-        subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=30)  # nosec B603
-        BOOTSTRAP_KEY_FILE.chmod(0o600)
-        BOOTSTRAP_CERT_FILE.chmod(0o644)
+        _generate_self_signed_cert(
+            BOOTSTRAP_CERT_FILE,
+            BOOTSTRAP_KEY_FILE,
+            hosts_env="PAWFLOW_BOOTSTRAP_CERT_HOSTS",
+            default_hosts="localhost,127.0.0.1",
+            days=30,
+        )
     except Exception as exc:
         raise RuntimeError(
             "Failed to generate bootstrap self-signed certificate. "
@@ -105,6 +120,42 @@ def ensure_bootstrap_self_signed_cert() -> Dict[str, str]:
         "ssl_keyfile": str(BOOTSTRAP_KEY_FILE),
         "ssl_mode": "self_signed",
     }
+
+
+def _final_tls_config(payload: Dict[str, Any]) -> Dict[str, str]:
+    """Resolve the TLS certificate used by the installed runtime listener."""
+    mode = str(
+        payload.get("final_ssl_mode")
+        or payload.get("ssl_mode")
+        or "self_signed"
+    ).strip().lower()
+    if mode in {"self-signed", "generate_self_signed", "private_self_signed"}:
+        mode = "self_signed"
+    if mode in {"provided", "custom"}:
+        certfile = str(payload.get("final_ssl_certfile") or payload.get("ssl_certfile") or "").strip()
+        keyfile = str(payload.get("final_ssl_keyfile") or payload.get("ssl_keyfile") or "").strip()
+        if not certfile or not keyfile:
+            raise ValueError("ssl_certfile and ssl_keyfile are required for provided TLS certificates")
+        return {"ssl_mode": "provided", "ssl_certfile": certfile, "ssl_keyfile": keyfile}
+    if mode in {"self_signed", ""}:
+        certfile = Path(str(payload.get("final_ssl_certfile") or FINAL_CERT_FILE))
+        keyfile = Path(str(payload.get("final_ssl_keyfile") or FINAL_KEY_FILE))
+        if not certfile.exists() or not keyfile.exists():
+            try:
+                _generate_self_signed_cert(
+                    certfile,
+                    keyfile,
+                    hosts_env="PAWFLOW_FINAL_CERT_HOSTS",
+                    default_hosts="localhost,127.0.0.1",
+                    days=3650,
+                )
+            except Exception as exc:
+                raise RuntimeError(
+                    "Failed to generate final self-signed certificate. "
+                    "Install openssl or provide final TLS certificates."
+                ) from exc
+        return {"ssl_mode": "self_signed", "ssl_certfile": str(certfile), "ssl_keyfile": str(keyfile)}
+    raise ValueError("ssl_mode must be 'self_signed' or 'provided'")
 
 
 def _load_state() -> Dict[str, Any]:
@@ -306,7 +357,155 @@ def _configure_admin_user(payload: Dict[str, Any]) -> str:
     return username
 
 
-def _install_auth_gateway() -> str:
+def _parse_csv_or_list(value: Any) -> list[str]:
+    if isinstance(value, (list, tuple, set)):
+        raw_items = value
+    else:
+        raw_items = str(value or "").replace(";", ",").split(",")
+    return [str(item).strip() for item in raw_items if str(item).strip()]
+
+
+def _payload_value(payload: Dict[str, Any], *names: str) -> str:
+    for name in names:
+        value = payload.get(name)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return ""
+
+
+def _provider_secret(payload: Dict[str, Any], provider: str, field: str) -> str:
+    value = _payload_value(
+        payload,
+        f"auth_{provider}_{field}",
+        f"oauth_{provider}_{field}",
+        f"{provider}_{field}",
+    )
+    if not value:
+        return ""
+    secret_ref = f"auth.{provider}.{field}"
+    _store_global_secret(secret_ref, value)
+    return "${" + secret_ref + "}"
+
+
+def _build_auth_gateway_config(payload: Dict[str, Any], admin_username: str) -> Dict[str, Any]:
+    """Build the final AuthGateway provider config from installer input."""
+    providers: Dict[str, Dict[str, Any]] = {"builtin": {"enabled": True}}
+    selected = set(_parse_csv_or_list(payload.get("auth_providers")))
+    generic_provider_name = ""
+    auth_provider = str(payload.get("auth_provider") or "builtin").strip()
+    if auth_provider and auth_provider != "builtin":
+        selected.add(auth_provider)
+
+    known_oauth = ["google", "github", "microsoft", "x", "facebook", "amazon"]
+    for provider in known_oauth:
+        if str(payload.get(f"auth_{provider}_enabled") or "").lower() in {"1", "true", "yes", "on"}:
+            selected.add(provider)
+        client_id = _payload_value(
+            payload,
+            f"auth_{provider}_client_id",
+            f"oauth_{provider}_client_id",
+            f"{provider}_client_id",
+        )
+        client_secret = _provider_secret(payload, provider, "client_secret")
+        if client_id or client_secret:
+            selected.add(provider)
+        if provider not in selected:
+            continue
+        if not client_id or not client_secret:
+            raise ValueError(f"{provider} OAuth client_id and client_secret are required")
+        providers[provider] = {
+            "enabled": True,
+            "client_id": client_id,
+            "client_secret": client_secret,
+        }
+
+    telegram_token = _provider_secret(payload, "telegram", "bot_token")
+    telegram_username = _payload_value(
+        payload,
+        "auth_telegram_bot_username",
+        "oauth_telegram_bot_username",
+        "telegram_bot_username",
+    )
+    if str(payload.get("auth_telegram_enabled") or "").lower() in {"1", "true", "yes", "on"}:
+        selected.add("telegram")
+    if telegram_token or telegram_username:
+        selected.add("telegram")
+    if "telegram" in selected:
+        if not telegram_token or not telegram_username:
+            raise ValueError("telegram bot_token and bot_username are required")
+        providers["telegram"] = {
+            "enabled": True,
+            "bot_token": telegram_token,
+            "bot_username": telegram_username,
+        }
+
+    generic_name = _payload_value(payload, "auth_generic_name", "oauth_generic_name")
+    generic_authorize = _payload_value(payload, "auth_generic_authorize_url", "oauth_generic_authorize_url")
+    generic_token = _payload_value(payload, "auth_generic_token_url", "oauth_generic_token_url")
+    generic_userinfo = _payload_value(payload, "auth_generic_userinfo_url", "oauth_generic_userinfo_url")
+    if generic_name or generic_authorize or generic_token or generic_userinfo:
+        provider_name = generic_name or "generic"
+        generic_provider_name = provider_name
+        selected.add(provider_name)
+        client_id = _payload_value(payload, "auth_generic_client_id", "oauth_generic_client_id")
+        client_secret = _provider_secret(payload, "generic", "client_secret")
+        if not all([client_id, client_secret, generic_authorize, generic_token, generic_userinfo]):
+            raise ValueError("generic OAuth requires name, client_id, client_secret, authorize_url, token_url, and userinfo_url")
+        providers[provider_name] = {
+            "enabled": True,
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "authorize_url": generic_authorize,
+            "token_url": generic_token,
+            "userinfo_url": generic_userinfo,
+            "display_name": _payload_value(payload, "auth_generic_display_name", "oauth_generic_display_name") or provider_name,
+            "scope": _payload_value(payload, "auth_generic_scope", "oauth_generic_scope") or "openid email profile",
+        }
+
+    admin_links: Dict[str, Dict[str, str]] = {}
+    for provider in sorted(selected):
+        if provider == "builtin":
+            continue
+        aliases = [provider]
+        if provider == generic_provider_name and provider != "generic":
+            aliases.append("generic")
+        enabled = str(payload.get(f"link_admin_{provider}") or "").lower() in {"1", "true", "yes", "on"}
+        enabled = enabled or any(
+            str(payload.get(f"link_admin_{alias}") or "").lower() in {"1", "true", "yes", "on"}
+            for alias in aliases[1:]
+        )
+        identifier_names = []
+        for alias in aliases:
+            identifier_names.extend([
+                f"admin_{alias}_id",
+                f"admin_{alias}_email",
+                f"link_admin_{alias}_id",
+                f"link_admin_{alias}_email",
+            ])
+        identifier = _payload_value(payload, *identifier_names)
+        if enabled and not identifier:
+            raise ValueError(f"admin_{provider}_email or admin_{provider}_id is required to link admin")
+        if identifier:
+            admin_links[provider] = {
+                "username": admin_username,
+                "claim": "email" if "@" in identifier else "user_id",
+                "value": identifier,
+            }
+    if admin_links:
+        providers_config: Dict[str, Any] = {
+            "providers": providers,
+            "session_ttl": int(payload.get("auth_session_ttl") or 86400),
+            "admin_links": admin_links,
+        }
+    else:
+        providers_config = {
+            "providers": providers,
+            "session_ttl": int(payload.get("auth_session_ttl") or 86400),
+        }
+    return providers_config
+
+
+def _install_auth_gateway(auth_config: Dict[str, Any]) -> str:
     from tasks import _register_all_services
     from core.service_registry import ServiceRegistry, SCOPE_GLOBAL
 
@@ -316,10 +515,7 @@ def _install_auth_gateway() -> str:
         scope_id="",
         service_id=AUTH_GATEWAY_SERVICE_ID,
         service_type="authGateway",
-        config={
-            "providers": {"builtin": {"enabled": True}},
-            "session_ttl": 86400,
-        },
+        config=auth_config,
         description="Builtin authentication for the installed PawFlow server",
         enabled=True,
     )
@@ -383,6 +579,71 @@ def _install_llm_credential_pool_for_scope(provider: str, scope: str,
     return service_id
 
 
+def _credential_module_for_provider(provider: str):
+    from services.llm_credential_oauth import normalize_provider
+
+    provider = normalize_provider(provider)
+    if provider == "claude-code":
+        from core.llm_providers import claude_code_session as mod
+        return mod
+    if provider == "codex-app-server":
+        from core.llm_providers import codex_session as mod
+        return mod
+    if provider == "gemini":
+        from core.llm_providers import gemini_session as mod
+        return mod
+    raise ValueError(f"selected LLM provider does not support OAuth credentials: {provider}")
+
+
+def _credential_entry_valid(credential: Dict[str, Any]) -> bool:
+    if not credential.get("access_token") or not credential.get("refresh_token"):
+        return False
+    try:
+        expires_at = int(credential.get("expires_at") or 0)
+    except (TypeError, ValueError):
+        return False
+    expires_at_s = expires_at / 1000 if expires_at > 1e12 else expires_at
+    return expires_at_s > time.time()
+
+
+def _llm_credential_pool_status(provider: str, service_id: str) -> Dict[str, Any]:
+    if not service_id:
+        return {"service_id": "", "count": 0, "valid_count": 0, "ready": False}
+    mod = _credential_module_for_provider(provider)
+    pool = mod._load_credentials_pool(service_id)
+    valid_count = sum(1 for credential in pool if _credential_entry_valid(credential))
+    return {
+        "service_id": service_id,
+        "count": len(pool),
+        "valid_count": valid_count,
+        "ready": valid_count > 0,
+    }
+
+
+def _validate_llm_auth_ready(payload: Dict[str, Any]) -> str:
+    """Validate that the selected LLM has an API key or usable OAuth pool."""
+    from services.llm_credential_oauth import (
+        PROVIDERS as CREDENTIAL_PROVIDERS,
+        default_credential_service_id,
+        normalize_provider,
+    )
+
+    provider = normalize_provider(str(payload.get("llm_provider") or ""))
+    if str(payload.get("llm_api_key") or "").strip():
+        return ""
+    if provider not in CREDENTIAL_PROVIDERS:
+        raise ValueError(f"llm_api_key is required for provider '{provider}'")
+    service_id = str(payload.get("credential_service_id") or "").strip()
+    service_id = service_id or default_credential_service_id(provider)
+    status = _llm_credential_pool_status(provider, service_id)
+    if not status["ready"]:
+        raise ValueError(
+            f"credential pool '{service_id}' has no valid OAuth credential; "
+            "complete the CLI login before finalizing"
+        )
+    return service_id
+
+
 def prepare_llm_credential_pool(payload: Dict[str, Any]) -> Dict[str, Any]:
     """Create the CLI OAuth credential pool before final LLM installation."""
     from services.llm_credential_oauth import normalize_provider
@@ -406,7 +667,7 @@ def prepare_llm_credential_pool(payload: Dict[str, Any]) -> Dict[str, Any]:
         "credential_service_id": service_id,
         "credential_pool_scope": credential_scope,
     })
-    state.setdefault("checks", {})["llm_credential_pool"] = True
+    state.setdefault("checks", {})["llm_credential_pool"] = False
     _write_state(state)
     return {
         "ok": True,
@@ -506,10 +767,14 @@ def save_llm_credential(payload: Dict[str, Any]) -> Dict[str, Any]:
         raise ValueError(f"selected LLM provider does not support paste login: {provider}")
 
     state = _load_state()
+    pool_status = _llm_credential_pool_status(provider, service_id)
+    if not pool_status["ready"]:
+        raise ValueError("saved credential is not valid; check access_token, refresh_token, and expires_at")
+    state.setdefault("checks", {})["llm_credential_pool"] = True
     state.setdefault("checks", {})["llm_credential_login"] = True
     state["updated_at"] = time.time()
     _write_state(state)
-    return {"ok": True, "service_id": service_id, "provider": provider}
+    return {"ok": True, "service_id": service_id, "provider": provider, "pool": pool_status}
 
 
 def _install_llm_and_summarizer(payload: Dict[str, Any]) -> tuple[str, str, str]:
@@ -544,8 +809,12 @@ def _install_llm_and_summarizer(payload: Dict[str, Any]) -> tuple[str, str, str]
         _store_global_secret(secret_ref, api_key)
         llm_config["api_key"] = "${" + secret_ref + "}"
     else:
+        requested_credential_service_id = str(payload.get("credential_service_id") or "").strip()
         credential_service_id = _install_llm_credential_pool_for_scope(
             provider, credential_scope, admin_username)
+        if requested_credential_service_id and requested_credential_service_id != credential_service_id:
+            raise ValueError(
+                f"credential_service_id must be {credential_service_id} for provider {provider}")
         if credential_service_id:
             llm_config["credential_service_id"] = credential_service_id
 
@@ -571,24 +840,36 @@ def _install_llm_and_summarizer(payload: Dict[str, Any]) -> tuple[str, str, str]
     return llm_service_id, SUMMARIZER_SERVICE_ID, credential_service_id
 
 
-def _deploy_main_flow(private_gateway_service_id: str) -> str:
+def _deploy_main_flow(private_gateway_service_id: str,
+                      tls_config: Dict[str, str],
+                      auth_config: Dict[str, Any]) -> str:
     from core.deployment_registry import DeploymentRegistry
 
     if not MAIN_TEMPLATE.exists():
         raise ValueError(f"main PawFlow flow template is missing: {MAIN_TEMPLATE}")
     reg = DeploymentRegistry.get_instance()
     params = {"private_gateway_service_id": private_gateway_service_id}
+    service_configs = {
+        "http_listener": {
+            "ssl_certfile": tls_config["ssl_certfile"],
+            "ssl_keyfile": tls_config["ssl_keyfile"],
+            "private_gateway_service_id": private_gateway_service_id,
+        },
+        "auth": auth_config,
+    }
     inst = reg.get(MAIN_INSTANCE_ID)
     if inst is None:
         reg.deploy(
             template_path=str(MAIN_TEMPLATE),
             owner=None,
             parameters=params,
+            service_configs=service_configs,
             source="bootstrap",
             instance_id=MAIN_INSTANCE_ID,
         )
     else:
         inst.parameters.update(params)
+        inst.service_configs.update(service_configs)
         inst.source = "bootstrap"
         reg._save_instance(inst)
     reg.update_status(MAIN_INSTANCE_ID, "running")
@@ -623,6 +904,24 @@ def _start_main_flow_executor(instance_id: str) -> None:
     )
     if not ok:
         raise RuntimeError(f"failed to start main PawFlow executor: {instance_id}")
+
+
+def _stop_installer_executor_soon(delay: float = 1.0) -> None:
+    """Stop the installer executor after its final HTTP response can drain."""
+    def _stop() -> None:
+        try:
+            from core.executor_registry import ExecutorRegistry
+            executors = ExecutorRegistry.get_instance()
+            executor = executors.get(INSTALLER_INSTANCE_ID)
+            if executor is not None:
+                executor.stop()
+            executors.unregister(INSTALLER_INSTANCE_ID)
+        except Exception:
+            logger.warning("Install bootstrap finalized but installer executor stop failed", exc_info=True)
+
+    timer = threading.Timer(delay, _stop)
+    timer.daemon = True
+    timer.start()
 
 
 def _create_first_conversation(admin_user: str, llm_service_id: str) -> str:
@@ -668,6 +967,108 @@ def _create_first_conversation(admin_user: str, llm_service_id: str) -> str:
     return conv_id
 
 
+def _run_install_smoke_checks(
+    *,
+    admin_user: str,
+    llm_service_id: str,
+    summarizer_service_id: str,
+    credential_service_id: str,
+    provider: str,
+    main_instance_id: str,
+    first_conversation_id: str,
+    auth_config: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Run final internal smoke checks before marking first-run install complete."""
+    from core.conversation_store import ConversationStore
+    from core.deployment_registry import DeploymentRegistry
+    from core.executor_registry import ExecutorRegistry
+    from core.security import SecurityManager
+    from core.service_registry import ServiceRegistry, SCOPE_GLOBAL
+
+    reg = ServiceRegistry.get_instance()
+    details: Dict[str, Any] = {}
+
+    def record(name: str, ok: bool, **extra: Any) -> None:
+        details[name] = {"ok": bool(ok), **extra}
+
+    final_gateway = reg.get_definition(SCOPE_GLOBAL, "", FINAL_PRIVATE_GATEWAY_SERVICE_ID)
+    record(
+        "final_private_gateway",
+        final_gateway is not None and final_gateway.enabled
+        and (final_gateway.config or {}).get("secret_refs") == FINAL_GATEWAY_SECRET_REF,
+    )
+
+    auth_gateway = reg.get_definition(SCOPE_GLOBAL, "", AUTH_GATEWAY_SERVICE_ID)
+    auth_providers = (auth_config.get("providers") or {}) if isinstance(auth_config, dict) else {}
+    record(
+        "auth_gateway",
+        auth_gateway is not None and auth_gateway.enabled and "builtin" in auth_providers,
+        providers=sorted(auth_providers),
+    )
+
+    record("admin_user", SecurityManager.get_instance().get_user(admin_user) is not None)
+
+    llm_def = reg.resolve_definition(llm_service_id, user_id=admin_user)
+    record(
+        "llm_service",
+        llm_def is not None and llm_def.enabled and llm_def.service_type == "llmConnection",
+        service_id=llm_service_id,
+    )
+
+    if credential_service_id:
+        pool_status = _llm_credential_pool_status(provider, credential_service_id)
+        record("llm_credential_pool", bool(pool_status.get("ready")), **pool_status)
+    else:
+        record("llm_credential_pool", True, skipped=True)
+
+    summarizer_def = reg.resolve_definition(summarizer_service_id, user_id=admin_user)
+    record(
+        "summarizer_service",
+        summarizer_def is not None and summarizer_def.enabled
+        and summarizer_def.service_type == "summarizer"
+        and (summarizer_def.config or {}).get("llm_service") == llm_service_id,
+        service_id=summarizer_service_id,
+    )
+    summarizer = reg.resolve(summarizer_service_id, user_id=admin_user)
+    resolved_llm, _ctx_max, resolved_llm_id = (
+        summarizer.resolve_llm_service(user_id=admin_user)
+        if summarizer and hasattr(summarizer, "resolve_llm_service")
+        else (None, 0, "")
+    )
+    record(
+        "summarizer_llm_resolution",
+        resolved_llm is not None and resolved_llm_id == llm_service_id,
+        llm_service=resolved_llm_id,
+    )
+
+    deployment = DeploymentRegistry.get_instance().get(main_instance_id)
+    record(
+        "main_flow_deployed",
+        deployment is not None and deployment.status == "running",
+        instance_id=main_instance_id,
+    )
+    record(
+        "main_flow_executor",
+        ExecutorRegistry.get_instance().get(main_instance_id) is not None,
+        instance_id=main_instance_id,
+    )
+
+    conv_store = ConversationStore.instance()
+    active_resources = conv_store.get_extra(first_conversation_id, "active_resources", {})
+    record(
+        "first_conversation",
+        conv_store.exists(first_conversation_id)
+        and isinstance(active_resources, dict)
+        and active_resources.get("agent") == FIRST_RUN_AGENT,
+        conversation_id=first_conversation_id,
+    )
+
+    failed = [name for name, item in details.items() if not item.get("ok")]
+    if failed:
+        raise RuntimeError("install smoke checks failed: " + ", ".join(failed))
+    return details
+
+
 def finalize_install(payload: Dict[str, Any]) -> Dict[str, Any]:
     """Finalize first-run bootstrap after replacing the gateway key.
 
@@ -711,16 +1112,32 @@ def finalize_install(payload: Dict[str, Any]) -> Dict[str, Any]:
     llm_scope, credential_scope, summarizer_scope = _service_scopes(payload)
     if not MAIN_TEMPLATE.exists():
         raise ValueError(f"main PawFlow flow template is missing: {MAIN_TEMPLATE}")
+    prevalidated_credential_service_id = _validate_llm_auth_ready(payload)
+    if prevalidated_credential_service_id and not str(payload.get("credential_service_id") or "").strip():
+        payload = dict(payload)
+        payload["credential_service_id"] = prevalidated_credential_service_id
     gateway_skin = _validate_gateway_skin(str(payload.get("gateway_skin") or ""))
+    tls_config = _final_tls_config(payload)
+    auth_config = _build_auth_gateway_config(payload, admin_username)
 
     final_secret_ref = _store_global_secret(FINAL_GATEWAY_SECRET_REF, new_key)
     final_gateway_service_id = _install_final_private_gateway(final_secret_ref, gateway_skin)
     admin_user = _configure_admin_user(payload)
-    auth_gateway_service_id = _install_auth_gateway()
+    auth_gateway_service_id = _install_auth_gateway(auth_config)
     llm_service_id, summarizer_service_id, credential_service_id = _install_llm_and_summarizer(payload)
-    main_instance_id = _deploy_main_flow(final_gateway_service_id)
+    main_instance_id = _deploy_main_flow(final_gateway_service_id, tls_config, auth_config)
     _start_main_flow_executor(main_instance_id)
     first_conversation_id = _create_first_conversation(admin_user, llm_service_id)
+    smoke_checks = _run_install_smoke_checks(
+        admin_user=admin_user,
+        llm_service_id=llm_service_id,
+        summarizer_service_id=summarizer_service_id,
+        credential_service_id=credential_service_id,
+        provider=str(payload.get("llm_provider") or ""),
+        main_instance_id=main_instance_id,
+        first_conversation_id=first_conversation_id,
+        auth_config=auth_config,
+    )
 
     now = time.time()
     state.setdefault("version", 1)
@@ -744,8 +1161,11 @@ def finalize_install(payload: Dict[str, Any]) -> Dict[str, Any]:
     checks["llm_service"] = True
     checks["llm_credential_pool"] = bool(credential_service_id)
     checks["summarizer_service"] = True
+    checks["summarizer_llm_resolution"] = True
     checks["main_flow_deployed"] = True
+    checks["main_flow_executor"] = True
     checks["first_conversation"] = True
+    checks["smoke_tests"] = True
     checks["finalized"] = True
 
     draft = state.setdefault("draft", {})
@@ -755,7 +1175,17 @@ def finalize_install(payload: Dict[str, Any]) -> Dict[str, Any]:
     gateway["skin"] = gateway_skin
     gateway["key_sha256"] = hashlib.sha256(new_key.encode("utf-8")).hexdigest()
     gateway["replaced_at"] = now
-    draft["auth"] = {"service_id": auth_gateway_service_id, "admin_user": admin_user}
+    draft["server"] = {
+        "ssl_mode": tls_config["ssl_mode"],
+        "ssl_certfile": tls_config["ssl_certfile"],
+        "ssl_keyfile": tls_config["ssl_keyfile"],
+    }
+    draft["auth"] = {
+        "service_id": auth_gateway_service_id,
+        "admin_user": admin_user,
+        "providers": sorted(auth_config.get("providers", {})),
+        "admin_links": sorted((auth_config.get("admin_links") or {}).keys()),
+    }
     draft["llm_services"] = {
         "primary": llm_service_id,
         "scope": llm_scope,
@@ -771,6 +1201,7 @@ def finalize_install(payload: Dict[str, Any]) -> Dict[str, Any]:
         "conversation_id": first_conversation_id,
         "agent": FIRST_RUN_AGENT,
     }
+    draft["smoke_tests"] = smoke_checks
 
     _write_state(state)
 
@@ -787,6 +1218,7 @@ def finalize_install(payload: Dict[str, Any]) -> Dict[str, Any]:
     except Exception:
         logger.warning("Install bootstrap finalized but bootstrap gateway disable failed", exc_info=True)
 
+    _stop_installer_executor_soon()
     logger.info("Install bootstrap finalized")
     return get_install_status()
 

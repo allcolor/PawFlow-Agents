@@ -75,6 +75,21 @@ else
   echo "Warning: /var/run/docker.sock not found; first-run bootstrap cannot build CLI/relay images from inside the PawFlow container." >&2
 fi
 
+if ! docker run --rm "${DOCKER_ARGS[@]}" "$IMAGE" sh -lc 'command -v docker >/dev/null 2>&1' >/dev/null 2>&1; then
+  cat >&2 <<MSG
+Server image '$IMAGE' does not contain the Docker CLI.
+
+Server-side login needs the Docker client inside the PawFlow server container
+to use the mounted host Docker socket and start the noVNC login desktop.
+
+Rebuild the server image from the current checkout, then recreate the server:
+  PAWFLOW_IMAGE="$IMAGE" bash scripts/build-pawflow-docker.sh
+  docker rm -f "$CONTAINER"
+  PAWFLOW_IMAGE="$IMAGE" PAWFLOW_PORT="$PORT" PAWFLOW_HOST="$HOST" PAWFLOW_HOME="$PAWFLOW_HOME" bash scripts/run-pawflow-docker.sh
+MSG
+  exit 1
+fi
+
 echo "Starting $CONTAINER from $IMAGE"
 docker run -d \
   --name "$CONTAINER" \

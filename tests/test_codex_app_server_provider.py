@@ -1,12 +1,17 @@
 """Static coverage for the isolated Codex app-server provider."""
 
 import inspect
+import io
 import json
 import os
+import queue
 import time
 
 from core.llm_client import LLMClient
-from core.llm_providers.codex_app_server import LLMCodexAppServerMixin
+from core.llm_providers.codex_app_server import (
+    LLMCodexAppServerMixin,
+    _CodexAppServerProtocolError,
+)
 from services.llm_connection import LLMConnectionService
 
 
@@ -52,6 +57,26 @@ def test_codex_app_server_stdio_is_utf8_and_ascii_safe_json():
     assert 'encoding="utf-8"' in src
     assert 'errors="replace"' in src
     assert "json.dumps(msg, ensure_ascii=True)" in src
+
+
+def test_codex_app_server_initialize_error_includes_stderr():
+    class DeadProc:
+        stdin = io.StringIO()
+        stdout = io.StringIO("")
+
+    stderr = queue.Queue()
+    stderr.put("codex: app-server command failed")
+    client = LLMCodexAppServerMixin()
+
+    try:
+        client._codex_app_initialize(DeadProc(), stderr_lines=stderr)
+    except _CodexAppServerProtocolError as exc:
+        text = str(exc)
+    else:
+        raise AssertionError("initialize should fail when stdout is missing")
+
+    assert "exited before response to initialize" in text
+    assert "codex: app-server command failed" in text
 
 
 def test_codex_app_server_reasoning_is_wired():

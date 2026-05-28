@@ -1964,6 +1964,22 @@ class ConversationStore:
                 state = self._hot_metadata_flush.setdefault(cid, {})
                 state["running"] = False
 
+    def _persist_recomputed_hot_metadata(self, cid: str,
+                                         cached: Dict[str, Any]) -> None:
+        """Persist hot metadata after non-append transcript mutations.
+
+        Appends can update `_meta_msg_count` incrementally. Deletes and
+        rewrites must replace it with the recomputed transcript count, or a
+        fresh page load will show phantom messages from stale metadata.
+        """
+        lock = self._get_extras_lock(cid)
+        with lock:
+            data = self._read_extras(cid)
+            data["_meta_msg_count"] = int(cached.get("msg_count") or 0)
+            data["_meta_preview"] = cached.get("preview", "") or ""
+            data["_meta_updated_at"] = cached.get("updated_at") or 0
+            self._write_extras(cid, data)
+
     def _ensure_loaded(self):
         if self._loaded:
             return
@@ -4085,7 +4101,8 @@ class ConversationStore:
             self._cache.pop(cid, None)
         if removed:
             self._invalidate_ctx_cache(cid)  # clear ALL agent ctx caches
-            self._load_cache(cid)
+            cached = self._reload_cache(cid)
+            self._persist_recomputed_hot_metadata(cid, cached)
             self.invalidate_claude_sessions(cid)
         return removed
 

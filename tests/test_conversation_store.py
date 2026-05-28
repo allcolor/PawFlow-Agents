@@ -695,6 +695,28 @@ class TestMessageCount:
 
         assert store.message_count(cid) == 3
 
+    def test_delete_message_recomputes_persisted_hot_message_count(self, conv):
+        store, cid, uid = conv
+        msg_ids = []
+        for i in range(3):
+            msg = _msg(content=f"m{i}", source={
+                "type": "user", "name": uid, "target_agent": "bot"})
+            store.append_message(cid, msg, user_id=uid)
+            msg_ids.append(msg["msg_id"])
+
+        assert store.message_count(cid) == 3
+        for msg_id in msg_ids:
+            assert store.delete_message(cid, msg_id=msg_id, user_id=uid)
+
+        assert store.message_count(cid) == 0
+        with store._cache_lock:
+            store._cache.pop(cid, None)
+        assert store.message_count(cid) == 0
+        page = store.load_page(cid, limit=10, offset=0, user_id=uid)
+        assert page["messages"] == []
+        assert page["total_count"] == 0
+        assert page["has_more"] is False
+
 
 # ── get_extra / set_extra ────────────────────────────────────────────
 

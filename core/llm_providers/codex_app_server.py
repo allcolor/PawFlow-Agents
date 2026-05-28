@@ -890,7 +890,7 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                             conv_id[:8] or "?", agent_name, thread_id[:12] or "new")
 
                 _phase_t0 = time.monotonic()
-                self._codex_app_initialize(proc)
+                self._codex_app_initialize(proc, stderr_lines=stderr_lines)
                 _init_ms = (time.monotonic() - _phase_t0) * 1000.0
                 if thread_id:
                     try:
@@ -1386,7 +1386,8 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
         proc.stdin.write(json.dumps(msg, ensure_ascii=True) + "\n")
         proc.stdin.flush()
 
-    def _codex_app_request(self, proc, method: str, params: Optional[dict] = None) -> dict:
+    def _codex_app_request(self, proc, method: str, params: Optional[dict] = None,
+                           stderr_lines: Optional[queue.Queue[str]] = None) -> dict:
         from tasks.ai.agent_exceptions import AgentCancelled
 
         if getattr(self, "_abort", None) and self._abort.is_set():
@@ -1401,8 +1402,12 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
             if getattr(self, "_abort", None) and self._abort.is_set():
                 raise AgentCancelled()
             if msg is None:
+                stderr_preview = self._codex_app_stderr_preview(stderr_lines)
+                detail = f"codex app-server exited before response to {method}"
+                if stderr_preview:
+                    detail += f"; stderr:\n{stderr_preview}"
                 raise _CodexAppServerProtocolError(
-                    f"codex app-server exited before response to {method}")
+                    detail)
             if msg.get("id") != req_id:
                 continue
             if msg.get("error"):
@@ -1410,7 +1415,7 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                     f"{method} failed: {msg.get('error')}")
             return msg.get("result") or {}
 
-    def _codex_app_initialize(self, proc) -> None:
+    def _codex_app_initialize(self, proc, stderr_lines: Optional[queue.Queue[str]] = None) -> None:
         self._codex_app_request(proc, "initialize", {
             "clientInfo": {
                 "name": "pawflow_codex_app_server",
@@ -1418,7 +1423,7 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                 "version": "1.0.0a1",
             },
             "capabilities": {"experimentalApi": True},
-        })
+        }, stderr_lines=stderr_lines)
         self._codex_app_send(proc, {"method": "initialized", "params": {}})
 
     def _codex_app_start_thread(self, proc, model: str, container_dir: str) -> dict:
@@ -1502,15 +1507,22 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
         threading.Thread(target=_drain, daemon=True, name="codex-app-stderr").start()
 
     @staticmethod
-    def _codex_app_log_stderr(lines: queue.Queue[str]) -> None:
+    def _codex_app_stderr_preview(lines: Optional[queue.Queue[str]]) -> str:
+        if lines is None:
+            return ""
         buffered = []
         try:
             while len(buffered) < 20:
                 buffered.append(lines.get_nowait())
         except queue.Empty:
             pass
-        if buffered:
-            logger.debug("[codex-app] stderr: %s", "\n".join(buffered[-20:]))
+        return "\n".join(buffered[-20:])
+
+    @staticmethod
+    def _codex_app_log_stderr(lines: queue.Queue[str]) -> None:
+        preview = LLMCodexAppServerMixin._codex_app_stderr_preview(lines)
+        if preview:
+            logger.warning("[codex-app] stderr: %s", preview)
 
     @staticmethod
     def _codex_app_last_user_text(messages) -> str:

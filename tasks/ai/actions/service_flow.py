@@ -899,26 +899,31 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                                 service_type=svc_type, config=config,
                                 description=description)
                     if managed_server_relay:
-                        reporter.step("starting", "Starting managed server relay", progress=0.98)
-                        try:
-                            prepare_result = server_relay_manager.spawn_service_relay(
-                                svc_name,
-                                config["token"],
-                                scope=scope,
-                                scope_id=scope_id,
-                                user_id=user_id,
-                                kind=str(config.get("server_kind") or "workspace"),
-                                internal_token=str(config.get("server_internal_token") or ""),
-                            )
-                            reporter.step("connecting", "Waiting for managed server relay connection", progress=0.99)
-                            if not _wait_for_service_connected(reg, scope, scope_id, svc_name):
-                                raise RuntimeError(
-                                    f"Managed server relay '{svc_name}' container started but did not connect. "
-                                    f"Check Docker logs for {prepare_result.get('container_name', svc_name)}."
+                        live_svc = reg.get_live_instance(scope, scope_id, svc_name)
+                        if not getattr(live_svc, "_managed_container_started", False):
+                            reporter.step("starting", "Starting managed server relay", progress=0.98)
+                            try:
+                                server_relay_manager.spawn_service_relay(
+                                    svc_name,
+                                    config["token"],
+                                    scope=scope,
+                                    scope_id=scope_id,
+                                    user_id=user_id,
+                                    kind=str(config.get("server_kind") or "workspace"),
+                                    internal_token=str(config.get("server_internal_token") or ""),
                                 )
-                        except Exception:
+                                if live_svc is not None:
+                                    setattr(live_svc, "_managed_container_started", True)
+                            except Exception:
+                                reg.uninstall(scope, scope_id, svc_name)
+                                raise
+                        reporter.step("connecting", "Waiting for managed server relay connection", progress=0.99)
+                        if not _wait_for_service_connected(reg, scope, scope_id, svc_name):
                             reg.uninstall(scope, scope_id, svc_name)
-                            raise
+                            raise RuntimeError(
+                                f"Managed server relay '{svc_name}' container started but did not connect. "
+                                f"Check Docker logs for {config.get('server_container_name', svc_name)}."
+                            )
                     if _service_requires_connected_state(svc_type) and not reg.is_connected(scope, scope_id, svc_name):
                         reg.uninstall(scope, scope_id, svc_name)
                         raise RuntimeError(

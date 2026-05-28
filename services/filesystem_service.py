@@ -290,6 +290,7 @@ class RelayService(BaseService):
         # dying and live WS unpredictably.
         self._relay_pool: List[Dict] = []  # [{"reader", "writer", "loop"}]
         self._relay_pool_lock = threading.Lock()
+        self._managed_container_started = False
 
         # Pending requests: {request_id: (Event, result_holder)}
         self._pending: Dict[str, tuple] = {}
@@ -382,6 +383,35 @@ class RelayService(BaseService):
         self._connection = listener
         self._initialized = True
         logger.info('RelayService %s registered on main listener path %s', self._service_id, route)
+        if self.config.get("server_managed"):
+            self._start_managed_server_relay()
+
+    def _start_managed_server_relay(self):
+        token = str(self.config.get("token") or "")
+        if not token:
+            logger.warning("RelayService %s: managed relay has no token; cannot start container", self._service_id)
+            return
+        scope = str(self.config.get("server_scope") or self.config.get("_scope") or "user")
+        scope_id = str(self.config.get("server_scope_id") or self.config.get("_scope_id") or "")
+        user_id = str(self.config.get("server_user_id") or "")
+        if not user_id and scope == "user":
+            user_id = scope_id
+        try:
+            from core.server_relay_manager import ServerRelayManager
+            ServerRelayManager.get_instance().spawn_service_relay(
+                self._service_id,
+                token,
+                scope=scope,
+                scope_id=scope_id,
+                user_id=user_id,
+                kind=str(self.config.get("server_kind") or "workspace"),
+                internal_token=str(self.config.get("server_internal_token") or ""),
+            )
+            self._managed_container_started = True
+        except Exception as e:
+            logger.error("RelayService %s: failed to start managed relay container: %s",
+                         self._service_id, e, exc_info=True)
+            raise
 
     def is_connected(self) -> bool:
         with self._relay_pool_lock:

@@ -427,6 +427,9 @@ class ServerRelayManager:
             "server_workspace_host_dir": _relay_runtime_host_dir(runtime_dir),
             "server_home_volume": f"pawflow_home_{relay_id}",
             "server_internal_token": mint_token(),
+            "server_scope": scope,
+            "server_scope_id": scope_id,
+            "server_user_id": user_id,
         }
 
     def spawn_service_relay(

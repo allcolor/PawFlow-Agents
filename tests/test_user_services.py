@@ -834,6 +834,9 @@ class TestAgentServiceActions:
                     "server_workspace_host_dir": f"/host/data/runtime/relay/{user_id}",
                     "server_home_volume": f"pawflow_home_{relay_id}",
                     "server_internal_token": "internal-token",
+                    "server_scope": scope,
+                    "server_scope_id": scope_id,
+                    "server_user_id": user_id,
                 }
 
             def spawn_service_relay(self, relay_id, token, *, scope, scope_id, user_id, kind="workspace", internal_token=""):
@@ -880,6 +883,9 @@ class TestAgentServiceActions:
         assert sdef.config["server_workspace_dir"] == "data/runtime/relay/testuser"
         assert sdef.config["server_home_volume"] == "pawflow_home_MyWorkspace"
         assert sdef.config["server_internal_token"] == "internal-token"
+        assert sdef.config["server_scope"] == "user"
+        assert sdef.config["server_scope_id"] == "testuser"
+        assert sdef.config["server_user_id"] == "testuser"
         assert connected == {"MyWorkspace"}
         assert calls == [{
             "relay_id": "MyWorkspace",

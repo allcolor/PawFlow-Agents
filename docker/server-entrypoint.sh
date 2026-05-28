@@ -24,6 +24,16 @@ if [[ "$(id -u)" == "0" ]]; then
     echo "WARN  Could not chown PawFlow bind mounts; container user may not be able to write persistent data." >&2
   fi
 
+  if [[ -S /var/run/docker.sock ]]; then
+    docker_gid="$(stat -c '%g' /var/run/docker.sock)"
+    docker_group="$(getent group "${docker_gid}" | cut -d: -f1 || true)"
+    if [[ -z "${docker_group}" ]]; then
+      docker_group="pawflow-docker"
+      groupadd -g "${docker_gid}" "${docker_group}"
+    fi
+    usermod -aG "${docker_group}" pawflow
+  fi
+
   exec gosu pawflow "$@"
 fi
 

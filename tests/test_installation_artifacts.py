@@ -27,6 +27,9 @@ def test_server_dockerfile_supports_bootstrap_docker_builds():
     assert "seed_missing_tree /app/default-data/repository /app/data/repository" in entrypoint
     assert "seed_missing_tree /app/default-config /app/config" in entrypoint
     assert "chown -R pawflow:pawflow" in entrypoint
+    assert "/var/run/docker.sock" in entrypoint
+    assert "stat -c '%g' /var/run/docker.sock" in entrypoint
+    assert "usermod -aG" in entrypoint
     assert "exec gosu pawflow" in entrypoint
 
     relay_dev = Path("docker/relay-dev/Dockerfile").read_text(encoding="utf-8")

@@ -265,8 +265,8 @@ class RelayService(BaseService):
 
     TYPE = "relay"
     VERSION = "2.0.0"
-    NAME = "Filesystem (Relay)"
-    DESCRIPTION = "Remote filesystem access via WebSocket relay"
+    NAME = "Relay"
+    DESCRIPTION = "Managed server relay or standalone WebSocket relay client"
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)

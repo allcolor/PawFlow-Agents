@@ -173,6 +173,7 @@ _SERVICE_CATEGORY_BY_TYPE = {
     "discordBot": "messaging",
     "slackBot": "messaging",
     "whatsappCloud": "messaging",
+    "relay": "network",
     "httpClientService": "network",
     "httpListener": "network",
     "toolRelay": "network",
@@ -220,6 +221,16 @@ def _service_requires_connected_state(service_type: str) -> bool:
     except Exception as exc:
         logger.debug("Service connected-state detection failed: %s", exc)
     return False
+
+
+def _wait_for_service_connected(reg, scope: str, scope_id: str, service_id: str,
+                                timeout_seconds: float = 30.0) -> bool:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        if reg.is_connected(scope, scope_id, service_id):
+            return True
+        time.sleep(0.5)
+    return reg.is_connected(scope, scope_id, service_id)
 
 
 def _validate_required_service_config(svc_cls, config: Dict[str, Any]) -> None:
@@ -898,6 +909,12 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                                 user_id=user_id,
                                 kind=str(config.get("server_kind") or "workspace"),
                             )
+                            reporter.step("connecting", "Waiting for managed server relay connection", progress=0.99)
+                            if not _wait_for_service_connected(reg, scope, scope_id, svc_name):
+                                raise RuntimeError(
+                                    f"Managed server relay '{svc_name}' container started but did not connect. "
+                                    f"Check Docker logs for {prepare_result.get('container_name', svc_name)}."
+                                )
                         except Exception:
                             reg.uninstall(scope, scope_id, svc_name)
                             raise

@@ -78,6 +78,10 @@ def _truthy(value: str) -> bool:
 
 
 from core.docker_utils import docker_cmd, get_host_ip, to_host_path
+
+
+def _loopback_publish(host_port: int, container_port: int) -> str:
+    return f"127.0.0.1:{host_port}:{container_port}"
 from pawflow_relay.utils import find_free_port
 
 
@@ -326,6 +330,7 @@ class ServerRelayManager:
             "--env", f"PAWFLOW_RELAY_ID={relay_id}",
             "--env", f"PAWFLOW_RELAY_DIR={relay_workspace}",
             "--env", "PAWFLOW_RELAY_ALLOW_EXEC=1",
+            "--env", "PAWFLOW_RELAY_INSECURE=1",
             "--env", "PAWFLOW_SERVER_MOUNT=/cc_sessions",
             "--env", "PAWFLOW_FILESTORE_MOUNT=/filestore",
             "--env", "PAWFLOW_SKILLS_MOUNT=/skills",
@@ -335,8 +340,8 @@ class ServerRelayManager:
         ]
         if kind_cfg["publish_desktop"]:
             docker_run_args.extend([
-                "--publish", f"{desktop_host_port}:6080",
-                "--publish", f"{audio_host_port}:6180",
+                "--publish", _loopback_publish(desktop_host_port, 6080),
+                "--publish", _loopback_publish(audio_host_port, 6180),
                 "--env", "PAWFLOW_DESKTOP_NOVNC_PORT=6080",
             ])
 
@@ -502,6 +507,7 @@ class ServerRelayManager:
             "--env", f"PAWFLOW_RELAY_ID={relay_id}",
             "--env", f"PAWFLOW_RELAY_DIR={relay_workspace}",
             "--env", "PAWFLOW_RELAY_ALLOW_EXEC=1",
+            "--env", "PAWFLOW_RELAY_INSECURE=1",
             "--env", "PAWFLOW_SERVER_MOUNT=/cc_sessions",
             "--env", "PAWFLOW_FILESTORE_MOUNT=/filestore",
             "--env", "PAWFLOW_SKILLS_MOUNT=/skills",
@@ -511,8 +517,8 @@ class ServerRelayManager:
         ]
         if kind_cfg["publish_desktop"]:
             docker_run_args.extend([
-                "--publish", f"{desktop_host_port}:6080",
-                "--publish", f"{audio_host_port}:6180",
+                "--publish", _loopback_publish(desktop_host_port, 6080),
+                "--publish", _loopback_publish(audio_host_port, 6180),
                 "--env", "PAWFLOW_DESKTOP_NOVNC_PORT=6080",
             ])
         docker_run_args.extend([

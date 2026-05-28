@@ -811,9 +811,11 @@ class TestAgentServiceActions:
 
         result = _handle_service_flow(None, "list_service_types", json.loads(ff.get_content()), None, "testuser", ff)
         data = json.loads(result[0].get_content())
+        by_type = {item["type"]: item for item in data["service_types"]}
 
-        assert "filesystem" not in {item["type"] for item in data["service_types"]}
-        assert "relay" in {item["type"] for item in data["service_types"]}
+        assert "filesystem" not in by_type
+        assert by_type["relay"]["category"] == "network"
+        assert by_type["relay"]["name"] == "Relay"
 
     def test_service_install_relay_without_token_spawns_managed_server_relay(self, monkeypatch):
         from tasks.ai.actions.service_flow import _handle_service_flow
@@ -845,6 +847,16 @@ class TestAgentServiceActions:
                 return {"relay_id": relay_id, "workspace_dir": f"data/runtime/relay/{user_id}"}
 
         monkeypatch.setattr("core.server_relay_manager.ServerRelayManager", FakeServerRelayManager)
+        connected = set()
+        original_is_connected = self.reg.is_connected
+
+        def is_connected(scope, scope_id, service_id):
+            if service_id == "MyWorkspace" and calls:
+                connected.add(service_id)
+                return True
+            return original_is_connected(scope, scope_id, service_id)
+
+        monkeypatch.setattr(self.reg, "is_connected", is_connected)
         ff = self._make_flowfile({
             "action": "service_install",
             "service_type": "relay",
@@ -865,6 +877,7 @@ class TestAgentServiceActions:
         assert sdef.config["server_container_name"] == "pawflow-relay-srv-MyWorkspace"
         assert sdef.config["server_workspace_dir"] == "data/runtime/relay/testuser"
         assert sdef.config["server_home_volume"] == "pawflow_home_MyWorkspace"
+        assert connected == {"MyWorkspace"}
         assert calls == [{
             "relay_id": "MyWorkspace",
             "token": sdef.config["token"],

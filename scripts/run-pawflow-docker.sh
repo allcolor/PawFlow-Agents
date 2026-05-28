@@ -12,6 +12,7 @@
 #   PAWFLOW_HOST        Bind host inside container (default: 0.0.0.0)
 #   PAWFLOW_PUBLISH_HOST Host interface for Docker port publishing (default: 127.0.0.1)
 #   PAWFLOW_EXTRA_ARGS  Extra args appended to `python cli.py start`
+#   PAWFLOW_BOOTSTRAP_RESET Reset first-run installer state before startup
 #
 # The first PawFlow bootstrap gateway key is RoyBetty. The installer wizard
 # must force the user to replace it before finalization.
@@ -26,6 +27,7 @@ HOST="$(printenv PAWFLOW_HOST || true)"
 PUBLISH_HOST="$(printenv PAWFLOW_PUBLISH_HOST || true)"
 EXTRA_ARGS="$(printenv PAWFLOW_EXTRA_ARGS || true)"
 BOOTSTRAP_GATEWAY_KEY="$(printenv PAWFLOW_BOOTSTRAP_GATEWAY_KEY || true)"
+BOOTSTRAP_RESET="$(printenv PAWFLOW_BOOTSTRAP_RESET || true)"
 if [[ -z "$IMAGE" ]]; then IMAGE="ghcr.io/allcolor/pawflow:latest"; fi
 if [[ -z "$PAWFLOW_HOME" ]]; then PAWFLOW_HOME="$HOME/pawflow"; fi
 if [[ -z "$CONTAINER" ]]; then CONTAINER="pawflow-server"; fi
@@ -123,6 +125,7 @@ docker run -d \
   -v "$PAWFLOW_HOME/certs:/app/certs" \
   -v "$PAWFLOW_HOME/logs:/app/logs" \
   -e PAWFLOW_BOOTSTRAP_GATEWAY_KEY="$BOOTSTRAP_GATEWAY_KEY" \
+  -e PAWFLOW_BOOTSTRAP_RESET="$BOOTSTRAP_RESET" \
   "$IMAGE" \
   python cli.py start --host "$HOST" --port "$PORT" $EXTRA_ARGS
 

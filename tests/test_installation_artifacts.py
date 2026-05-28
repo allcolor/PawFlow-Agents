@@ -59,7 +59,9 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert "PAWFLOW_PUBLISH_HOST" in run_src
     assert 'PUBLISH_HOST="127.0.0.1"' in run_src
     assert "PAWFLOW_BOOTSTRAP_GATEWAY_KEY" in run_src
+    assert "PAWFLOW_BOOTSTRAP_RESET" in run_src
     assert "BOOTSTRAP_GATEWAY_KEY" in run_src
+    assert "BOOTSTRAP_RESET" in run_src
     assert "RoyBetty" in run_src
     assert "--help|-h" in run_src
     assert "/var/run/docker.sock:/var/run/docker.sock" in run_src

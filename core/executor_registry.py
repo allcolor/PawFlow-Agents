@@ -320,6 +320,11 @@ class ExecutorRegistry:
                 owner, conversation_id)
             if source_dir:
                 clean["_source_dir"] = source_dir
+            if parameters:
+                clean["parameters"] = {
+                    **(clean.get("parameters") or {}),
+                    **parameters,
+                }
             from engine.parser import FlowParser
             _t0 = time.monotonic()
             flow = FlowParser.parse(clean)

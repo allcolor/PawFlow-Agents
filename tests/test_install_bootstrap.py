@@ -275,6 +275,58 @@ def test_bootstrap_refreshes_installer_template_from_default_data(tmp_path, monk
         ServiceRegistry.reset()
 
 
+def test_refreshed_installer_template_redeploys_existing_installer(tmp_path, monkeypatch):
+    DeploymentRegistry.reset()
+    ServiceRegistry.reset()
+    dep_dir = tmp_path / "deployments"
+    runtime_dir = tmp_path / "runtime"
+    system_dir = tmp_path / "system"
+    state_file = tmp_path / "install_state.json"
+    persistent_template = tmp_path / "data" / "repository" / "flows" / "global" / "default" / "pawflow_installer" / "versions" / "1.0.0.json"
+    default_flow_dir = tmp_path / "default-data" / "repository" / "flows" / "global" / "default" / "pawflow_installer"
+    default_template = default_flow_dir / "versions" / "1.0.0.json"
+    _write_installer_template(persistent_template)
+
+    monkeypatch.setattr(_paths, "DEPLOYMENTS_DIR", dep_dir)
+    monkeypatch.setattr(_paths, "RUNTIME_DIR", runtime_dir)
+    monkeypatch.setattr(_paths, "SYSTEM_DIR", system_dir)
+    monkeypatch.setattr(_paths, "GLOBAL_SECRETS_FILE", system_dir / "global_secrets.json")
+    monkeypatch.setattr(_paths, "SECRET_KEY_FILE", system_dir / "secret.key")
+    monkeypatch.setattr(ib, "INSTALL_STATE_FILE", state_file)
+    monkeypatch.setattr(ib, "INSTALLER_TEMPLATE", persistent_template)
+    monkeypatch.setattr(ib, "DEFAULT_INSTALLER_FLOW_DIR", default_flow_dir)
+    _stub_cert_generation(tmp_path, monkeypatch)
+    monkeypatch.delenv("PAWFLOW_BOOTSTRAP_DISABLED", raising=False)
+    monkeypatch.delenv("PAWFLOW_BOOTSTRAP_RESET", raising=False)
+
+    try:
+        assert ib.ensure_install_bootstrap(port=9090) is True
+        first = DeploymentRegistry.get_instance().get(ib.INSTALLER_INSTANCE_ID)
+        assert first is not None
+        first_created = first.created_at
+
+        default_template.parent.mkdir(parents=True, exist_ok=True)
+        default_template.write_text(json.dumps({
+            "id": "pawflow-installer",
+            "name": "pawflow_installer",
+            "version": "1.0.0",
+            "tasks": {"fresh": {"type": "generateFlowFile", "parameters": {}}},
+            "relations": [],
+        }), encoding="utf-8")
+        time.sleep(0.01)
+
+        assert ib.ensure_install_bootstrap(port=19990) is True
+        second = DeploymentRegistry.get_instance().get(ib.INSTALLER_INSTANCE_ID)
+        assert second is not None
+        assert second.created_at > first_created
+        assert second.parameters["port"] == 19990
+        refreshed = json.loads(persistent_template.read_text(encoding="utf-8"))
+        assert "fresh" in refreshed["tasks"]
+    finally:
+        DeploymentRegistry.reset()
+        ServiceRegistry.reset()
+
+
 def test_install_status_only_exposes_public_draft_sections(tmp_path, monkeypatch):
     state_file = tmp_path / "install_state.json"
     monkeypatch.setattr(ib, "INSTALL_STATE_FILE", state_file)

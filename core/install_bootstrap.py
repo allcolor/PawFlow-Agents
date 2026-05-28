@@ -1412,7 +1412,7 @@ def ensure_install_bootstrap(port: int = 9090) -> bool:
         )
         return False
 
-    _refresh_installer_template_from_default_data()
+    template_refreshed = _refresh_installer_template_from_default_data()
 
     if not INSTALLER_TEMPLATE.exists():
         logger.error("Install bootstrap template missing: %s", INSTALLER_TEMPLATE)
@@ -1431,6 +1431,11 @@ def ensure_install_bootstrap(port: int = 9090) -> bool:
         "private_gateway_service_id": private_gateway_service_id,
         **ssl_params,
     }
+
+    if template_refreshed and INSTALLER_INSTANCE_ID in deployments:
+        logger.info("Redeploying bootstrap installer after template refresh")
+        registry.undeploy(INSTALLER_INSTANCE_ID)
+        deployments = registry.get_all()
 
     if INSTALLER_INSTANCE_ID not in deployments:
         registry.deploy(

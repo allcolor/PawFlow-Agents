@@ -367,8 +367,11 @@ def test_pawflow_installer_flow_template_exists():
     ui_params = flow["tasks"]["install_ui"]["parameters"]
     assert ui_params["content_file"] == "install.html"
     ui_asset = template.parent / "assets" / "install.html"
+    root_asset = template.parent.parent / "assets" / "install.html"
     assert ui_asset.exists()
+    assert root_asset.exists()
     ui_content = ui_asset.read_text(encoding="utf-8")
+    assert root_asset.read_text(encoding="utf-8") == ui_content
     assert "Admin User" in ui_content
     assert "OAuth Configuration" in ui_content
     assert "Private Gateway" in ui_content

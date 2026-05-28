@@ -34,6 +34,7 @@
 </div>
 </div>
 <p class="muted">The admin account is created before normal auth is enabled. Password must be at least 12 characters and include lowercase, uppercase, digit, and symbol characters.</p>
+<p class="error" id="admin_password_error"></p>
 </section>
 <section class="screen" data-step="1">
 <h2>OAuth Configuration</h2>
@@ -262,25 +263,39 @@ function values() { return Object.fromEntries(new FormData(form)); }
 function validAdminPassword(value) {
   return value.length >= 12 && /[a-z]/.test(value) && /[A-Z]/.test(value) && /\d/.test(value) && /[^A-Za-z0-9]/.test(value);
 }
+function setAdminPasswordError(message) {
+  document.getElementById('admin_password_error').textContent = message;
+  err.textContent = message;
+}
 function validateAdminPassword() {
-  if (!requireFields(['admin_username','admin_password','admin_password_confirm'])) return false;
-  const password = field('admin_password').value;
-  const confirm = field('admin_password_confirm').value;
   field('admin_password').setCustomValidity('');
   field('admin_password_confirm').setCustomValidity('');
+  document.getElementById('admin_password_error').textContent = '';
+  if (!requireFields(['admin_username','admin_password','admin_password_confirm'])) {
+    setAdminPasswordError('Fill the admin username, password, and confirmation.');
+    return false;
+  }
+  const password = field('admin_password').value;
+  const confirm = field('admin_password_confirm').value;
   if (password !== confirm) {
-    err.textContent = 'Admin password confirmation must match.';
+    setAdminPasswordError('Admin password confirmation must match.');
     field('admin_password_confirm').setCustomValidity('Admin password confirmation must match.');
     field('admin_password_confirm').reportValidity();
     return false;
   }
   if (!validAdminPassword(password)) {
-    err.textContent = 'Admin password must be at least 12 characters and include lowercase, uppercase, digit, and symbol characters.';
+    setAdminPasswordError('Admin password must be at least 12 characters and include lowercase, uppercase, digit, and symbol characters.');
     field('admin_password').setCustomValidity('Use at least 12 characters with lowercase, uppercase, digit, and symbol characters.');
     field('admin_password').reportValidity();
     return false;
   }
   return true;
+}
+function clearAdminPasswordValidity() {
+  field('admin_password').setCustomValidity('');
+  field('admin_password_confirm').setCustomValidity('');
+  document.getElementById('admin_password_error').textContent = '';
+  err.textContent = '';
 }
 function escapeHtml(value) {
   return String(value || '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;');
@@ -527,13 +542,22 @@ async function refresh() {
 document.getElementById('prepare_pool').addEventListener('click', preparePool);
 document.getElementById('server_login').addEventListener('click', startServerLogin);
 document.getElementById('save_credentials').addEventListener('click', saveCredentials);
-document.getElementById('prepare_pool').addEventListener('click', preparePool);
-document.getElementById('server_login').addEventListener('click', startServerLogin);
-document.getElementById('save_credentials').addEventListener('click', saveCredentials);
 document.getElementById('vnc_close').addEventListener('click', closeVncDialog);
 document.getElementById('add_oauth_provider').addEventListener('click', addOauthProvider);
 document.getElementById('oauth_provider_list').addEventListener('change', handleOauthChange);
 document.getElementById('oauth_provider_list').addEventListener('input', handleOauthChange);
+field('admin_password').addEventListener('input', clearAdminPasswordValidity);
+field('admin_password_confirm').addEventListener('input', clearAdminPasswordValidity);
+field('llm_provider').addEventListener('change', updateLoginCliVisibility);
+document.getElementById('back').addEventListener('click', () => { if (step > 0) { step--; show(); } });
+document.getElementById('next').addEventListener('click', () => {
+  try {
+    if (validate() && step < names.length - 1) { step++; show(); }
+  } catch (e) {
+    err.textContent = 'Installer UI error: ' + (e && e.message ? e.message : String(e));
+    console.error(e);
+  }
+});
 form.addEventListener('submit', async e => {
   e.preventDefault();
   if (!validate()) return;

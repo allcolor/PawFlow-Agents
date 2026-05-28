@@ -52,13 +52,23 @@ def vnc_ws_proxy(client_sock, path_params: dict, meta: dict):
         return
 
     # Connect to noVNC websockify (Docker container or local relay)
-    try:
-        backend_sock = socket.create_connection((target_host, target_port))
-        # No timeout on the socket — VNC relay needs to stay open indefinitely
-    except Exception as e:
-        logger.warning("VNC proxy: cannot connect to %s:%d: %s", target_host, target_port, e)
+    import time
+    backend_sock = None
+    last_error = None
+    deadline = time.time() + 8
+    while time.time() < deadline:
+        try:
+            backend_sock = socket.create_connection((target_host, target_port), timeout=1)
+            break
+        except Exception as e:
+            last_error = e
+            time.sleep(0.2)
+    if backend_sock is None:
+        logger.warning("VNC proxy: cannot connect to %s:%d: %s", target_host, target_port, last_error)
         _ws_close(client_sock, 4002, "Backend unavailable")
         return
+    # No timeout on the socket — VNC relay needs to stay open indefinitely
+    backend_sock.settimeout(None)
 
     # Perform WS handshake with the backend (websockify expects a WS client)
     import base64, hashlib, os
@@ -360,16 +370,29 @@ def vnc_http_proxy(pending_req):
     # Proxy to backend (Docker container or local relay)
     target = f"http://{host}:{port}/{sub_path}"
     try:
-        req = urllib.request.Request(target, method="GET")
-        with urllib.request.urlopen(req, timeout=10) as resp:  # nosec B310 - internal noVNC asset proxy target.
-            body = resp.read()
-            content_type = resp.headers.get("Content-Type", "application/octet-stream")
-            pending_req.complete(200, {
-                "Content-Type": content_type,
-                "Cross-Origin-Resource-Policy": "same-origin",
-                "Cross-Origin-Opener-Policy": "same-origin",
-                "Cross-Origin-Embedder-Policy": "require-corp",
-            }, body)
+        import time
+        last_error = None
+        deadline = time.time() + 8
+        while True:
+            try:
+                req = urllib.request.Request(target, method="GET")
+                with urllib.request.urlopen(req, timeout=2) as resp:  # nosec B310 - internal noVNC asset proxy target.
+                    body = resp.read()
+                    content_type = resp.headers.get("Content-Type", "application/octet-stream")
+                    pending_req.complete(200, {
+                        "Content-Type": content_type,
+                        "Cross-Origin-Resource-Policy": "same-origin",
+                        "Cross-Origin-Opener-Policy": "same-origin",
+                        "Cross-Origin-Embedder-Policy": "require-corp",
+                    }, body)
+                    return
+            except urllib.error.HTTPError:
+                raise
+            except Exception as e:
+                last_error = e
+                if time.time() >= deadline:
+                    raise last_error
+                time.sleep(0.2)
     except urllib.error.HTTPError as e:
         if e.code == 405 and _serve_novnc_local(pending_req, sub_path):
             return

@@ -1604,6 +1604,23 @@ def test_relay_desktop_has_periodic_healthcheck():
     assert "healthcheck failed" in src
 
 
+def test_relay_desktop_waits_for_reachable_novnc():
+    src = Path("pawflow_relay/worker.py").read_text(encoding="utf-8")
+    start_desktop = src[src.index('if action == "start_desktop"'):src.index('if action == "stop_desktop"')]
+
+    assert 'f"0.0.0.0:{_novnc_port}"' in start_desktop
+    assert 'GET /vnc.html HTTP/1.1' in start_desktop
+    assert "noVNC failed to become ready" in start_desktop
+
+
+def test_vnc_proxy_retries_backend_startup_window():
+    src = Path("services/vnc_proxy.py").read_text(encoding="utf-8")
+
+    assert "deadline = time.time() + 8" in src
+    assert "time.sleep(0.2)" in src
+    assert "Backend unavailable" in src
+
+
 def test_bg_bucket_is_independent_from_foreground_agent_state():
     """Background pyramid jobs must not touch foreground agent state.
 

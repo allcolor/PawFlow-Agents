@@ -945,9 +945,27 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 _p_novnc = subprocess.Popen(  # nosec B603, B607
                     ["websockify", "--web", _novnc_web,
                      "--heartbeat", "30",
-                     str(_novnc_port), f"localhost:{_vnc_port}"],
+                     f"0.0.0.0:{_novnc_port}", f"localhost:{_vnc_port}"],
                     stdout=_log_d, stderr=_log_d)
                 _procs.append(_p_novnc)
+
+                _deadline = _time_mod.time() + 8
+                _novnc_ready = False
+                while _time_mod.time() < _deadline:
+                    if _p_novnc.poll() is not None:
+                        break
+                    try:
+                        with socket.create_connection(("127.0.0.1", _novnc_port), timeout=0.5) as _sock:
+                            _sock.sendall(b"GET /vnc.html HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+                            _resp = _sock.recv(64)
+                            if b" 200 " in _resp or b" 301 " in _resp or b" 302 " in _resp:
+                                _novnc_ready = True
+                                break
+                    except Exception:
+                        _time_mod.sleep(0.2)
+                if not _novnc_ready:
+                    _desktop_cleanup("noVNC failed to become ready")
+                    return {"ok": False, "error": "noVNC failed to become ready"}
 
                 _execute_command._desktop_procs = _procs
                 _execute_command._desktop_essential_procs = [_p_xvfb, _p_vnc, _p_novnc]

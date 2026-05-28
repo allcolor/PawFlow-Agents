@@ -709,9 +709,11 @@ class TestMessageCount:
             assert store.delete_message(cid, msg_id=msg_id, user_id=uid)
 
         assert store.message_count(cid) == 0
+        assert store.get_extra_snapshot(cid, "_meta_msg_count", -1) == 0
         with store._cache_lock:
             store._cache.pop(cid, None)
         assert store.message_count(cid) == 0
+        assert store.get_metadata(cid)["message_count"] == 0
         page = store.load_page(cid, limit=10, offset=0, user_id=uid)
         assert page["messages"] == []
         assert page["total_count"] == 0
@@ -737,6 +739,30 @@ class TestMessageCount:
         with store._cache_lock:
             store._cache.pop(cid, None)
         assert store.message_count(cid) == 0
+
+    def test_load_page_repairs_stale_count_when_only_trace_updates_remain(self, conv):
+        store, cid, uid = conv
+        trace_id = uuid.uuid4().hex[:12]
+        store._transcript_log(cid).replace_dicts([
+            store._stamp_line(cid, {
+                "t": "trace_update",
+                "trace_id": trace_id,
+                "entry": {"role": "assistant", "content": "hidden"},
+            })
+        ])
+        extras = store._read_extras(cid)
+        extras["_meta_msg_count"] = 15
+        store._write_extras(cid, extras)
+        with store._cache_lock:
+            store._cache.pop(cid, None)
+
+        page = store.load_page(cid, limit=10, offset=0, user_id=uid)
+
+        assert page["messages"] == []
+        assert page["total_count"] == 0
+        assert page["has_more"] is False
+        assert store.message_count(cid) == 0
+        assert store.get_extra_snapshot(cid, "_meta_msg_count", -1) == 0
 
 
 # ── get_extra / set_extra ────────────────────────────────────────────

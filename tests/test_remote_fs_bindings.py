@@ -343,3 +343,9 @@ def test_agent_login_image_installs_antigravity_cli():
 
     assert "https://antigravity.google/cli/install.sh" in src
     assert "bash -s -- --dir /usr/local/bin" in src
+
+
+def test_agent_cli_image_installs_bubblewrap_for_codex_sandbox():
+    src = Path("docker/claude-code/Dockerfile").read_text(encoding="utf-8")
+
+    assert " bubblewrap " in src

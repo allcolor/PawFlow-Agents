@@ -1611,6 +1611,10 @@ class ConversationStore:
             c["updated_at"] = max(c["updated_at"], line.get("ts", 0))
         return c
 
+    @staticmethod
+    def _count_message_rows(log: SegmentedJsonl) -> int:
+        return sum(1 for row in log.iter_rows() if row.get("role"))
+
     def _load_cache(self, cid: str) -> dict:
         with self._cache_lock:
             if cid in self._cache:
@@ -1707,8 +1711,8 @@ class ConversationStore:
              "msg_count": int(extras_data.get("_meta_msg_count") or 0),
              "agents": set(), "extra_keys": set(extras_data.keys()),
              "extras": extras_data, "preview": extras_data.get("_meta_preview", "")}
-        if not c["msg_count"] and log.exists():
-            c["msg_count"] = max(0, log.total_rows())
+        if "_meta_msg_count" not in extras_data and log.exists():
+            c["msg_count"] = self._count_message_rows(log)
         if latest:
             c["updated_at"] = max(float(c.get("updated_at") or 0), self._cache_ts(latest))
         if "title" in extras_data:
@@ -1979,6 +1983,14 @@ class ConversationStore:
             data["_meta_preview"] = cached.get("preview", "") or ""
             data["_meta_updated_at"] = cached.get("updated_at") or 0
             self._write_extras(cid, data)
+        with self._cache_lock:
+            current = self._cache.get(cid)
+            if current is not None:
+                current["msg_count"] = int(cached.get("msg_count") or 0)
+                current["preview"] = cached.get("preview", "") or ""
+                current["updated_at"] = cached.get("updated_at") or 0
+                current["extras"] = dict(data)
+                current["extra_keys"] = set(data.keys())
 
     def _ensure_loaded(self):
         if self._loaded:

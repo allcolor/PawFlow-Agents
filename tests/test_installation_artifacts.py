@@ -64,6 +64,8 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert "--group-add" in run_src
     assert "command -v docker" in run_src
     assert "does not contain the Docker CLI" in run_src
+    assert "--entrypoint sh" in run_src
+    assert "cannot reach the mounted host Docker daemon" in run_src
     assert '-p "$PUBLISH_HOST:$PORT:$PORT"' in run_src
     assert "$PAWFLOW_HOME/data:/app/data" in run_src
     assert "$PAWFLOW_HOME/certs:/app/certs" in run_src

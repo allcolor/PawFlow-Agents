@@ -75,7 +75,8 @@ else
   echo "Warning: /var/run/docker.sock not found; first-run bootstrap cannot build CLI/relay images from inside the PawFlow container." >&2
 fi
 
-if ! docker run --rm "${DOCKER_ARGS[@]}" "$IMAGE" sh -lc 'command -v docker >/dev/null 2>&1' >/dev/null 2>&1; then
+DOCKER_CLI_CHECK="$(docker run --rm --entrypoint sh "$IMAGE" -lc 'command -v docker && docker --version' 2>&1 || true)"
+if [[ "$DOCKER_CLI_CHECK" != *"Docker version"* ]]; then
   cat >&2 <<MSG
 Server image '$IMAGE' does not contain the Docker CLI.
 
@@ -86,8 +87,29 @@ Rebuild the server image from the current checkout, then recreate the server:
   PAWFLOW_IMAGE="$IMAGE" bash scripts/build-pawflow-docker.sh
   docker rm -f "$CONTAINER"
   PAWFLOW_IMAGE="$IMAGE" PAWFLOW_PORT="$PORT" PAWFLOW_HOST="$HOST" PAWFLOW_HOME="$PAWFLOW_HOME" bash scripts/run-pawflow-docker.sh
+
+Docker CLI check output:
+$DOCKER_CLI_CHECK
 MSG
   exit 1
+fi
+
+if [[ -S /var/run/docker.sock ]]; then
+  DOCKER_SOCKET_CHECK="$(docker run --rm "${DOCKER_ARGS[@]}" --entrypoint sh "$IMAGE" -lc 'docker version >/dev/null' 2>&1 || true)"
+  if [[ -n "$DOCKER_SOCKET_CHECK" ]]; then
+    cat >&2 <<MSG
+Server image '$IMAGE' contains the Docker CLI, but the PawFlow server container
+cannot reach the mounted host Docker daemon.
+
+Server-side login needs both:
+  - /var/run/docker.sock mounted into the PawFlow container
+  - permission for the container user to use that socket
+
+Docker daemon check output:
+$DOCKER_SOCKET_CHECK
+MSG
+    exit 1
+  fi
 fi
 
 echo "Starting $CONTAINER from $IMAGE"

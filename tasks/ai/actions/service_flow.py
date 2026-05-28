@@ -2740,80 +2740,6 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         except Exception:
             return ""
 
-    def _get_desktop_host_port(relay_id):
-        """Get the published host port for desktop noVNC.
-
-        Same pattern as Claude login: find the container, docker port 6080.
-        """
-        import subprocess  # nosec B404
-        from core.docker_utils import docker_cmd as _dkr_cmd
-
-        # 1) Server relay: container name in conversation metadata
-        try:
-            from core.server_relay_manager import ServerRelayManager
-            for entry in ServerRelayManager.get_instance().list_all():
-                if entry.get("relay_id") == relay_id:
-                    # Stored at spawn time
-                    hp = entry.get("desktop_host_port", 0)
-                    if hp:
-                        return hp
-                    # Fallback: docker port on the container
-                    cname = entry.get("container_name", "")
-                    if cname:
-                        r = subprocess.run(  # nosec B603
-                            _dkr_cmd() + ["port", cname, "6080"],
-                            capture_output=True, text=True, timeout=5)
-                        if r.returncode == 0:
-                            return int(r.stdout.strip().split(":")[-1])
-        except Exception:
-            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-
-        # 2) Any relay: get container_id from relay info, then docker port
-        svc = _find_relay_svc(relay_id)
-        if svc:
-            container_id = getattr(svc, '_relay_info', {}).get('container_id', '')
-            if container_id:
-                try:
-                    r = subprocess.run(  # nosec B603
-                        _dkr_cmd() + ["port", container_id, "6080"],
-                        capture_output=True, text=True, timeout=5)
-                    if r.returncode == 0:
-                        return int(r.stdout.strip().split(":")[-1])
-                except Exception:
-                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-        return 0
-
-    def _get_container_port(relay_id, container_port):
-        """Get the published host port for a given container port."""
-        import subprocess  # nosec B404
-        from core.docker_utils import docker_cmd as _dkr_cmd
-        try:
-            from core.server_relay_manager import ServerRelayManager
-            for entry in ServerRelayManager.get_instance().list_all():
-                if entry.get("relay_id") == relay_id:
-                    cname = entry.get("container_name", "")
-                    if cname:
-                        r = subprocess.run(  # nosec B603
-                            _dkr_cmd() + ["port", cname, str(container_port)],
-                            capture_output=True, text=True, timeout=5)
-                        if r.returncode == 0:
-                            return int(r.stdout.strip().split(":")[-1])
-        except Exception:
-            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-        svc = _find_relay_svc(relay_id)
-        if svc:
-            cid = getattr(svc, '_relay_info', {}).get('container_id', '')
-            if cid:
-                try:
-                    r = subprocess.run(  # nosec B603
-                        _dkr_cmd() + ["port", cid, str(container_port)],
-                        capture_output=True, text=True, timeout=5)
-                    if r.returncode == 0:
-                        return int(r.stdout.strip().split(":")[-1])
-                except Exception:
-                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-        return 0
-
     def _get_server_relay_container_ip(relay_id):
         """Return the Docker-network IP for a managed server relay container."""
         import subprocess  # nosec B404
@@ -2839,13 +2765,11 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         return ""
 
-    def _server_relay_proxy_target(relay_id, container_port, published_host_port=0):
+    def _server_relay_proxy_target(relay_id, container_port):
         """Return host/port the server container should use for relay desktop ports."""
         container_ip = _get_server_relay_container_ip(relay_id)
         if container_ip:
             return container_ip, container_port
-        if published_host_port:
-            return _docker_published_host(), published_host_port
         return "", 0
 
     if action == "open_terminal":
@@ -3404,9 +3328,9 @@ finally:
                         }).encode())
                         return [flowfile]
                 else:
-                    _hp = _get_desktop_host_port(relay_id)
-                    _backend_host, _backend_port = _server_relay_proxy_target(relay_id, 6080, _hp)
-                    logger.info("[open_desktop] already running, host_port=%s for %s", _hp, relay_id)
+                    _backend_host, _backend_port = _server_relay_proxy_target(relay_id, 6080)
+                    logger.info("[open_desktop] already running, backend=%s:%s for %s",
+                                _backend_host, _backend_port, relay_id)
                     if _backend_port:
                         _sid = f"{_session_prefix}_{relay_id}"
                         from services.vnc_proxy import register_session
@@ -3420,18 +3344,7 @@ finally:
                         _audio_token = ""  # nosec B105
                         try:
                             from services.audio_proxy import register_audio_source
-                            _ahp = 0
-                            try:
-                                from core.server_relay_manager import ServerRelayManager
-                                for _entry in ServerRelayManager.get_instance().list_all():
-                                    if _entry.get("relay_id") == relay_id:
-                                        _ahp = _entry.get("audio_host_port", 0)
-                                        break
-                            except Exception:
-                                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-                            if not _ahp:
-                                _ahp = _get_container_port(relay_id, 6180)
-                            _audio_host, _audio_port = _server_relay_proxy_target(relay_id, 6180, _ahp)
+                            _audio_host, _audio_port = _server_relay_proxy_target(relay_id, 6180)
                             if _audio_port:
                                 _audio_token = register_audio_source(_sid, _audio_host, _audio_port,
                                                                      owner_user_id=user_id,
@@ -3472,12 +3385,8 @@ finally:
                     login_session_id=_login_sid,
                     host=_relay_addr)
             else:
-                # Docker: get the published host port
-                host_port = _get_desktop_host_port(relay_id)
-                if not host_port:
-                    flowfile.set_content(json.dumps({"error": "Desktop started but host port not found"}).encode())
-                    return [flowfile]
-                backend_host, backend_port = _server_relay_proxy_target(relay_id, 6080, host_port)
+                # Managed relay container: proxy directly over Docker network.
+                backend_host, backend_port = _server_relay_proxy_target(relay_id, 6080)
                 if not backend_port:
                     flowfile.set_content(json.dumps({"error": "Desktop started but backend port not found"}).encode())
                     return [flowfile]
@@ -3503,19 +3412,7 @@ finally:
                                                              owner_user_id=user_id,
                                                              login_session_id=_login_sid)
                 else:
-                    # Docker: get audio_host_port from relay metadata, fallback to docker port 6180
-                    _audio_host_port = 0
-                    try:
-                        from core.server_relay_manager import ServerRelayManager
-                        for _entry in ServerRelayManager.get_instance().list_all():
-                            if _entry.get("relay_id") == relay_id:
-                                _audio_host_port = _entry.get("audio_host_port", 0)
-                                break
-                    except Exception:
-                        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-                    if not _audio_host_port:
-                        _audio_host_port = _get_container_port(relay_id, 6180)
-                    _audio_host, _audio_port = _server_relay_proxy_target(relay_id, 6180, _audio_host_port)
+                    _audio_host, _audio_port = _server_relay_proxy_target(relay_id, 6180)
                     if _audio_port:
                         _audio_token = register_audio_source(session_id, _audio_host, _audio_port,
                                                              owner_user_id=user_id,

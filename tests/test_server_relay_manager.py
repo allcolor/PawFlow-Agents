@@ -36,9 +36,13 @@ def test_server_workspace_relay_keeps_existing_identity_and_desktop():
     assert cfg["publish_desktop"] is True
 
 
-def test_server_relay_desktop_publish_binds_loopback_only():
-    assert srm._loopback_publish(57477, 6080) == "127.0.0.1:57477:6080"
-    assert srm._loopback_publish(49207, 6180) == "127.0.0.1:49207:6180"
+def test_server_relay_desktop_is_not_published_on_host():
+    src = srm.Path(srm.__file__).read_text(encoding="utf-8")
+
+    assert '"--publish"' not in src
+    assert '"PAWFLOW_DESKTOP_NOVNC_PORT=6080"' in src
+    assert "desktop_host_port" not in src
+    assert "audio_host_port" not in src
 
 
 def test_server_workspace_allocates_runtime_path(monkeypatch, tmp_path):

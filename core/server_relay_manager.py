@@ -80,11 +80,6 @@ def _truthy(value: str) -> bool:
 from core.docker_utils import docker_cmd, get_host_ip, to_host_path
 
 
-def _loopback_publish(host_port: int, container_port: int) -> str:
-    return f"127.0.0.1:{host_port}:{container_port}"
-from pawflow_relay.utils import find_free_port
-
-
 def _validate_kind(kind: str) -> str:
     if kind not in {_KIND_WORKSPACE, _KIND_MINIMAL}:
         raise ValueError(f"Unknown server relay kind: {kind}")
@@ -235,9 +230,6 @@ class ServerRelayManager:
             logger.info("Dead %s found for conv %s — re-spawning", kind_cfg["label"], conv_id)
             self._cleanup_container(existing.get("container_id", ""), remove=True)
 
-        # VNC / audio host ports are real Docker publish ports — must be free.
-        desktop_host_port = find_free_port() if kind_cfg["publish_desktop"] else None
-        audio_host_port = find_free_port() if kind_cfg["publish_desktop"] else None
         token = secrets.token_urlsafe(32)
         from core.internal_auth import mint_token
         internal_token = mint_token()
@@ -343,8 +335,6 @@ class ServerRelayManager:
         ]
         if kind_cfg["publish_desktop"]:
             docker_run_args.extend([
-                "--publish", _loopback_publish(desktop_host_port, 6080),
-                "--publish", _loopback_publish(audio_host_port, 6180),
                 "--env", "PAWFLOW_DESKTOP_NOVNC_PORT=6080",
             ])
 
@@ -390,10 +380,6 @@ class ServerRelayManager:
             "memory": relay_memory,
             "internal_token": internal_token,
         }
-        if desktop_host_port is not None:
-            metadata["desktop_host_port"] = desktop_host_port
-        if audio_host_port is not None:
-            metadata["audio_host_port"] = audio_host_port
         store.set_extra(conv_id, metadata_key, metadata)
         # Auto-link this relay to the conversation
         try:
@@ -452,8 +438,6 @@ class ServerRelayManager:
             from core.internal_auth import mint_token
             internal_token = mint_token()
 
-        desktop_host_port = find_free_port() if kind_cfg["publish_desktop"] else None
-        audio_host_port = find_free_port() if kind_cfg["publish_desktop"] else None
         path = f"/ws/relay/{relay_id}"
         container_name = _relay_container_name(relay_id, kind)
         home_volume = f"pawflow_home_{relay_id}"
@@ -529,8 +513,6 @@ class ServerRelayManager:
         ]
         if kind_cfg["publish_desktop"]:
             docker_run_args.extend([
-                "--publish", _loopback_publish(desktop_host_port, 6080),
-                "--publish", _loopback_publish(audio_host_port, 6180),
                 "--env", "PAWFLOW_DESKTOP_NOVNC_PORT=6080",
             ])
         docker_run_args.extend([
@@ -566,10 +548,6 @@ class ServerRelayManager:
             "memory": relay_memory,
             "internal_token": internal_token,
         }
-        if desktop_host_port is not None:
-            metadata["desktop_host_port"] = desktop_host_port
-        if audio_host_port is not None:
-            metadata["audio_host_port"] = audio_host_port
         logger.info("Managed server relay service spawned: %s", relay_id)
         return metadata
 

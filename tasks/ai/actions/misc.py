@@ -582,7 +582,12 @@ def _handle_misc(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "Usage: /relay link <relay_id> [agent]"}).encode())
             return [flowfile]
         from core.relay_bindings import link_relay
-        added = link_relay(conv_id, relay_id, agent=agent)
+        try:
+            added = link_relay(conv_id, relay_id, agent=agent, user_id=user_id)
+        except ValueError as exc:
+            flowfile.set_content(json.dumps({"error": str(exc)}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
         scope = f"agent `{agent}`" if agent else "conversation"
         if added:
             flowfile.set_content(json.dumps({

@@ -107,8 +107,10 @@ def get_default(cid: str, agent: str = "") -> Optional[str]:
     return None
 
 
-def link_relay(cid: str, relay_id: str, agent: str = "") -> bool:
+def link_relay(cid: str, relay_id: str, agent: str = "", user_id: str = "") -> bool:
     """Link a relay to a conversation (optionally to a specific agent)."""
+    if user_id:
+        _assert_relay_service(relay_id, user_id=user_id)
     scope = agent if agent else _CONV
     b = get_bindings(cid)
     linked = b.setdefault("linked", {})
@@ -216,7 +218,7 @@ def list_available_relays(user_id: str = "") -> List[Dict[str, Any]]:
         reg = ServiceRegistry.get_instance()
         all_defs = reg.resolve_all(user_id=user_id)
         for sid, sdef in all_defs.items():
-            if sdef.service_type not in ("filesystem", "relay"):
+            if sdef.service_type != "relay":
                 continue
             connected = reg.is_connected(sdef.scope, sdef.scope_id, sid)
             svc = reg.get_live_instance_cached(sdef.scope, sdef.scope_id, sid)
@@ -233,6 +235,18 @@ def list_available_relays(user_id: str = "") -> List[Dict[str, Any]]:
     except Exception:
         logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
     return relays
+
+
+def _assert_relay_service(relay_id: str, *, user_id: str = "") -> None:
+    try:
+        from core.service_registry import ServiceRegistry
+        reg = ServiceRegistry.get_instance()
+        matches = [sdef for sid, sdef in reg.resolve_all(user_id=user_id).items() if sid == relay_id]
+    except Exception:
+        logger.debug("Relay service validation failed", exc_info=True)
+        matches = []
+    if not matches or not any(sdef.service_type == "relay" for sdef in matches):
+        raise ValueError(f"Relay service '{relay_id}' not found")
 
 
 def resolve_relay(cid: str, relay_param: Optional[str] = None,

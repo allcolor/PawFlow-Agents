@@ -203,6 +203,8 @@ def _service_type_sort_key(service: Dict[str, Any]):
 
 
 def _service_requires_connected_state(service_type: str) -> bool:
+    if service_type == "filesystem":
+        return True
     try:
         from core import ServiceFactory
         from services.base_tts import BaseTTSService
@@ -212,6 +214,25 @@ def _service_requires_connected_state(service_type: str) -> bool:
     except Exception as exc:
         logger.debug("Service connected-state detection failed: %s", exc)
     return False
+
+
+def _validate_required_service_config(svc_cls, config: Dict[str, Any]) -> None:
+    try:
+        instance = object.__new__(svc_cls)
+        instance.config = {}
+        schema = instance.get_parameter_schema()
+    except Exception as exc:
+        logger.debug("Service schema validation skipped: %s", exc)
+        return
+    missing = []
+    for name, spec in (schema or {}).items():
+        if not isinstance(spec, dict) or not spec.get("required"):
+            continue
+        value = (config or {}).get(name)
+        if value is None or (isinstance(value, str) and not value.strip()):
+            missing.append(name)
+    if missing:
+        raise ValueError("Missing required service config: " + ", ".join(missing))
 
 
 def _service_started_for_listing(reg, scope: str, scope_id: str, sid: str,
@@ -815,6 +836,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 update_install_state,
             )
             svc_cls = ServiceFactory.get(svc_type)
+            _validate_required_service_config(svc_cls, config)
             prepare_result = None
             reporter = ServiceInstallReporter(
                 conversation_id=conv_id,

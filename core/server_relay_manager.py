@@ -328,7 +328,7 @@ class ServerRelayManager:
         # Auto-link this relay to the conversation
         try:
             from core.relay_bindings import link_relay
-            link_relay(conv_id, relay_id)
+            link_relay(conv_id, relay_id, user_id=user_id)
         except Exception as e:
             logger.warning("Failed to auto-link relay %s to conv %s: %s", relay_id, conv_id, e)
         logger.info("%s spawned for conv %s: %s", kind_cfg["label"], conv_id, relay_id)

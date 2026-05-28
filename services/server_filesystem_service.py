@@ -191,7 +191,8 @@ class ServerFilesystemService(BaseService):
     def search(self, path, pattern, recursive=True): return self._get_connection().search(path, pattern, recursive)
     def grep(self, path, regex, recursive=True): return self._get_connection().grep(path, regex, recursive)
     def find_replace(self, path, pattern, replacement, multiline=False): return self._get_connection().find_replace(path, pattern, replacement, multiline=multiline)
-def get_parameter_schema(self) -> Dict[str, Any]:
+
+    def get_parameter_schema(self) -> Dict[str, Any]:
         return {
             "root": {"type": "string", "required": True, "description": "Absolute path to root directory"},
             "mode": {"type": "select", "required": False, "default": "read", "options": ["read", "readwrite", "full"], "description": "Permission mode"},

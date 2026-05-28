@@ -787,6 +787,44 @@ class TestAgentServiceActions:
         data = json.loads(result[0].get_content())
         assert "error" in data
 
+    def test_server_filesystem_schema_requires_root(self):
+        from core import ServiceFactory
+
+        svc_cls = ServiceFactory.get("filesystem")
+        schema = svc_cls({"root": str(Path.cwd())}).get_parameter_schema()
+
+        assert schema["root"]["required"] is True
+
+    def test_service_install_rejects_filesystem_without_root(self):
+        from tasks.ai.actions.service_flow import _handle_service_flow
+
+        ff = self._make_flowfile({
+            "action": "service_install",
+            "service_type": "filesystem",
+            "service_name": "workspace",
+            "config": {},
+        })
+
+        result = _handle_service_flow(None, "service_install", json.loads(ff.get_content()), None, "testuser", ff)
+        data = json.loads(result[0].get_content())
+
+        assert data["error"] == "Missing required service config: root"
+        assert self.reg.get_definition("user", "testuser", "workspace") is None
+
+    def test_filesystem_services_are_not_relays(self):
+        from core.relay_bindings import link_relay, list_available_relays
+
+        self.reg.install(
+            "user", "testuser", "workspace", "filesystem",
+            config={"root": str(Path.cwd())}, enabled=False)
+        self.reg.install(
+            "user", "testuser", "relay1", "relay",
+            config={"token": "token"}, enabled=False)
+
+        assert [r["relay_id"] for r in list_available_relays(user_id="testuser")] == ["relay1"]
+        with pytest.raises(ValueError, match="Relay service 'workspace' not found"):
+            link_relay("conv1", "workspace", user_id="testuser")
+
     def test_service_uninstall(self):
         self.reg.install(self.SCOPE, "testuser", "mydb", SVC_TYPE)
         from tasks.ai.agent_loop import AgentLoopTask

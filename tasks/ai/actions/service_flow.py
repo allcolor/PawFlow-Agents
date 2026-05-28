@@ -13,6 +13,62 @@ from core.tool_registry import ToolRegistry
 logger = logging.getLogger(__name__)
 
 
+def _docker_published_host() -> str:
+    """Host address this container can use to reach Docker-published ports."""
+    import os as _os
+    import socket as _socket
+    override = _os.environ.get("PAWFLOW_DOCKER_PUBLISHED_HOST", "").strip()
+    if override:
+        return override
+    if _os.path.exists("/.dockerenv"):
+        try:
+            with open("/proc/net/route", "r", encoding="utf-8") as f:
+                for line in f.readlines()[1:]:
+                    parts = line.split()
+                    if len(parts) >= 3 and parts[1] == "00000000":
+                        gateway = int(parts[2], 16).to_bytes(4, "little")
+                        return _socket.inet_ntoa(gateway)
+        except Exception:
+            logger.debug("Docker gateway lookup failed", exc_info=True)
+        try:
+            return _socket.gethostbyname("host.docker.internal")
+        except Exception:
+            logger.debug("host.docker.internal lookup failed", exc_info=True)
+    return "127.0.0.1"
+
+
+def _ensure_vnc_routes(flowfile: FlowFile) -> None:
+    """Ensure /vnc/ and /audio/ routes exist on the request's HTTP listener."""
+    _req_port = flowfile.get_attribute("http.listener.port") or ""
+    if not _req_port:
+        logger.warning("[vnc] No http.listener.port on flowfile — cannot target listener")
+        return
+    try:
+        from services.vnc_proxy import vnc_ws_proxy, vnc_http_proxy
+        from services.audio_proxy import audio_ws_proxy
+        from services.http_listener_service import _instances
+        _http_svc = _instances.get(int(_req_port))
+        if not _http_svc:
+            logger.warning("[vnc] No live listener on port %s (instances: %s)",
+                           _req_port, list(_instances.keys()))
+            return
+        _vnc_owner = "_vnc_proxy"
+        _http_svc.register_route("GET", "/vnc/{session_id}/{token}/websockify",
+                                 _vnc_owner, callback=lambda req: None,
+                                 ws_handler=vnc_ws_proxy, public=True, private_only=True)
+        _http_svc.register_route("GET", "/vnc/{session_id}/{token}/{path+}",
+                                 _vnc_owner, callback=vnc_http_proxy, public=True, private_only=True)
+        logger.info("[vnc] Registered VNC routes on port %s", _req_port)
+        _audio_exists = [r for r in _http_svc.get_routes()
+                         if r.get("pattern", "").startswith("/audio/")]
+        if not _audio_exists:
+            _http_svc.register_route("GET", "/audio/{session_id}/{token}/stream",
+                                     _vnc_owner, callback=lambda req: None,
+                                     ws_handler=audio_ws_proxy)
+    except Exception as e:
+        logger.warning("[vnc] Route registration failed: %s", e)
+
+
 def _publish_command_result(conversation_id: str, result: dict):
     """Publish a command result via SSE (background thread → frontend)."""
     from core.conversation_event_bus import ConversationEventBus
@@ -1513,7 +1569,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 except Exception:
                     time.sleep(1)
 
-            _ensure_vnc_routes()
+            _ensure_vnc_routes(flowfile)
 
 
             # Mark session as ready and notify frontend to open dialog
@@ -2549,42 +2605,6 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         ureg = ServiceRegistry.get_instance()
         return ureg.get_live_instance("user", user_id, relay_id) if user_id else None
 
-    def _ensure_vnc_routes():
-        """Ensure /vnc/ and /audio/ HTTP+WS routes exist on the HTTP listener.
-
-        Same registration as claude_code_server_login — idempotent.
-        """
-        # Routes must land on the HTTP listener that served THIS request,
-        # not any random listener (admin vs chat can run on different ports).
-        # http.listener.port is set by httpReceiver when the request comes in.
-        _req_port = flowfile.get_attribute("http.listener.port") or ""
-        if not _req_port:
-            logger.warning("[vnc] No http.listener.port on flowfile — cannot target listener")
-            return
-        try:
-            from services.vnc_proxy import vnc_ws_proxy, vnc_http_proxy
-            from services.audio_proxy import audio_ws_proxy
-            from services.http_listener_service import _instances
-            _http_svc = _instances.get(int(_req_port))
-            if not _http_svc:
-                logger.warning("[vnc] No live listener on port %s (instances: %s)",
-                               _req_port, list(_instances.keys()))
-                return
-            _vnc_owner = "_vnc_proxy"
-            _http_svc.register_route("GET", "/vnc/{session_id}/{token}/websockify",
-                                         _vnc_owner, callback=lambda req: None,
-                                         ws_handler=vnc_ws_proxy, public=True, private_only=True)
-            _http_svc.register_route("GET", "/vnc/{session_id}/{token}/{path+}",
-                                         _vnc_owner, callback=vnc_http_proxy, public=True, private_only=True)
-            logger.info("[vnc] Registered VNC routes on port %s", _req_port)
-            _audio_exists = [r for r in _http_svc.get_routes()
-                             if r.get("pattern", "").startswith("/audio/")]
-            if not _audio_exists:
-                _http_svc.register_route("GET", "/audio/{session_id}/{token}/stream",
-                                         _vnc_owner, callback=lambda req: None,
-                                         ws_handler=audio_ws_proxy)
-        except Exception as e:
-            logger.warning("[vnc] Route registration failed: %s", e)
 
     def _audio_lookup_token(sid: str) -> str:
         """Return the capability token minted for an audio session, or
@@ -3257,7 +3277,7 @@ finally:
                             _sid, _novnc_port,
                             owner_user_id=user_id,
                             login_session_id=_login_sid)
-                        _ensure_vnc_routes()
+                        _ensure_vnc_routes(flowfile)
                         # Re-register audio for already-running desktop
                         _audio_token = ""  # nosec B105
                         try:
@@ -3288,7 +3308,7 @@ finally:
                             _sid, _hp,
                             owner_user_id=user_id,
                             login_session_id=_login_sid)
-                        _ensure_vnc_routes()
+                        _ensure_vnc_routes(flowfile)
                         # Re-register audio for already-running desktop
                         _audio_token = ""  # nosec B105
                         try:
@@ -3356,7 +3376,7 @@ finally:
                     owner_user_id=user_id,
                     login_session_id=_login_sid)
 
-            _ensure_vnc_routes()
+            _ensure_vnc_routes(flowfile)
 
             # Register audio source if available
             _audio_token = ""  # nosec B105
@@ -3629,6 +3649,7 @@ finally:
             from pawflow_relay.utils import find_free_port as _find_free_port
             session_id = _uuid.uuid4().hex[:12]
             free_port = _find_free_port()
+            backend_host = _docker_published_host()
             container_name = f"pawflow-codex-login-{session_id}"
             volume_name = f"pawflow_ws_{conversation_id}" if conversation_id else f"pawflow_login_{session_id}"
             image = "pawflow-claude-code:latest"
@@ -3640,7 +3661,9 @@ finally:
                 login_session_id=flowfile.get_attribute("auth.session_id") or "",
                 container=container_name, service_id=service_id,
                 user_id=user_id, volume=volume_name,
-                launch_time=time.time(), ready=False)
+                launch_time=time.time(), ready=False,
+                host=backend_host)
+
         except Exception as e:
             logger.error("[codex-login] Setup failed: %s", e, exc_info=True)
             flowfile.set_content(json.dumps({"error": f"Login setup failed: {e}"}).encode())
@@ -3677,15 +3700,24 @@ finally:
                 return
 
             import urllib.request
+            ready = False
+            last_ready_error = None
             for _attempt in range(15):
                 try:
-                    urllib.request.urlopen(f"http://127.0.0.1:{free_port}/", timeout=2)  # nosec B310 - local noVNC readiness probe.
-                    logger.info("[codex-login] noVNC ready on port %d", free_port)
+                    urllib.request.urlopen(f"http://{backend_host}:{free_port}/", timeout=2)  # nosec B310 - internal noVNC readiness probe.
+                    logger.info("[codex-login] noVNC ready on %s:%d", backend_host, free_port)
+                    ready = True
                     break
-                except Exception:
+                except Exception as e:
+                    last_ready_error = e
                     time.sleep(1)
+            if not ready:
+                from services.vnc_proxy import update_session_error
+                update_session_error(session_id, f"noVNC not reachable on {backend_host}:{free_port}: {last_ready_error}")
+                return
 
-            _ensure_vnc_routes()
+            _ensure_vnc_routes(flowfile)
+
 
 
             from services.vnc_proxy import update_session_ready
@@ -3906,7 +3938,7 @@ finally:
                 except Exception:
                     time.sleep(1)
 
-            _ensure_vnc_routes()
+            _ensure_vnc_routes(flowfile)
 
 
             from services.vnc_proxy import update_session_ready
@@ -4147,7 +4179,7 @@ finally:
                 except Exception:
                     time.sleep(1)
 
-            _ensure_vnc_routes()
+            _ensure_vnc_routes(flowfile)
 
 
             from services.vnc_proxy import update_session_ready

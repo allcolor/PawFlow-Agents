@@ -23,8 +23,8 @@ def test_server_dockerfile_supports_bootstrap_docker_builds():
     assert "/app/default-data" in src
     assert "/app/default-config" in src
     assert "server-entrypoint.sh" in src
-    assert "EXPOSE 19990" in src
-    assert '"--port", "19990"' in src
+    assert "PAWFLOW_PORT is required" in src
+    assert '"--port", "19990"' not in src
     assert "EXPOSE 9090" not in src
 
     entrypoint = Path("docker/server-entrypoint.sh").read_text(encoding="utf-8")
@@ -250,7 +250,7 @@ def test_install_docs_and_agent_prompt_capture_bootstrap_contract():
     assert "pawflow-claude-code:latest" in prompt
     assert "pawflow-relay-minimal:latest" in prompt
     assert "pawflow-relay-dev:latest" in prompt
-    assert "https://localhost:19990" in prompt
+    assert "--port PORT" in prompt
     assert "self-signed bootstrap certificate" in prompt
     assert "Do not configure relays" in prompt
     assert "summarizer service" in prompt
@@ -261,24 +261,27 @@ def test_install_docs_and_agent_prompt_capture_bootstrap_contract():
 def test_compose_healthcheck_accepts_bootstrap_tls():
     compose = Path("docker-compose.yml").read_text(encoding="utf-8")
 
-    assert '"19990:19990"' in compose
+    assert '"${PAWFLOW_PORT}:${PAWFLOW_PORT}"' in compose
+    assert "PAWFLOW_PORT=${PAWFLOW_PORT}" in compose
     assert '"9090:9090"' not in compose
-    assert "https://localhost:19990/health" in compose
+    assert "os.environ[\"PAWFLOW_PORT\"]" in compose
+    assert "https://localhost:{port}/health" in compose
     assert "ssl._create_unverified_context" in compose
-    assert "http://localhost:19990/health" in compose
-    assert "ws://pawflow:19990/ws/relay" in compose
+    assert "http://localhost:{port}/health" in compose
+    assert "ws://pawflow:${PAWFLOW_PORT}/ws/relay" in compose
     assert "ws://pawflow:9090/ws/relay" not in compose
 
     cli_src = Path("cli.py").read_text(encoding="utf-8")
-    assert "default=19990" in cli_src
+    assert "required=True" in cli_src
+    assert "default=19990" not in cli_src
     assert "default=9090" not in cli_src
 
     install_script = Path("scripts/install-pawflow.sh").read_text(encoding="utf-8")
     run_script = Path("scripts/run-pawflow-docker.sh").read_text(encoding="utf-8")
     doctor_script = Path("scripts/doctor-pawflow.sh").read_text(encoding="utf-8")
-    assert 'PORT="19990"' in install_script
-    assert 'PORT="19990"' in run_script
-    assert 'PORT="19990"' in doctor_script
+    assert "choose a port with --port PORT or PAWFLOW_PORT=PORT" in install_script
+    assert "PAWFLOW_PORT is required" in run_script
+    assert "choose a port with --port PORT or PAWFLOW_PORT=PORT" in doctor_script
     assert "/var/run/docker.sock:/var/run/docker.sock" in compose
 
 
@@ -321,14 +324,14 @@ def test_startup_urls_match_install_phase():
     from cli import _log_startup_urls
 
     installing_logger = MagicMock()
-    _log_startup_urls(installing_logger, "localhost", 19990, False)
+    _log_startup_urls(installing_logger, "localhost", 12345, False)
     installing_message = installing_logger.info.call_args[0]
-    assert installing_message == ("  Install: %s/install", "https://localhost:19990")
+    assert installing_message == ("  Install: %s/install", "https://localhost:12345")
 
     installed_logger = MagicMock()
-    _log_startup_urls(installed_logger, "localhost", 19990, True)
+    _log_startup_urls(installed_logger, "localhost", 12345, True)
     installed_message = installed_logger.info.call_args[0]
-    assert installed_message == ("  Chat:    %s/chat", "https://localhost:19990")
+    assert installed_message == ("  Chat:    %s/chat", "https://localhost:12345")
 
     src = Path("cli.py").read_text(encoding="utf-8")
     assert "Admin:" not in src

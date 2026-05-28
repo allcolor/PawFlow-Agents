@@ -197,9 +197,9 @@ def _final_listener_port(payload: Dict[str, Any]) -> int:
             if inst is not None:
                 raw_port = inst.parameters.get("port")
         except Exception:
-            logger.warning("Failed to read installer listener port; using default", exc_info=True)
+            logger.warning("Failed to read installer listener port", exc_info=True)
     if raw_port in {None, ""}:
-        raw_port = 19990
+        raise ValueError("listener port is required")
     try:
         port = int(raw_port)
     except (TypeError, ValueError) as exc:
@@ -1168,7 +1168,7 @@ def _deploy_main_flow(private_gateway_service_id: str,
     if not MAIN_TEMPLATE.exists():
         raise ValueError(f"main PawFlow flow template is missing: {MAIN_TEMPLATE}")
     reg = DeploymentRegistry.get_instance()
-    params = {"private_gateway_service_id": private_gateway_service_id}
+    params = {"private_gateway_service_id": private_gateway_service_id, "port": listener_port}
     service_configs = {
         "http_listener": {
             "port": listener_port,
@@ -1669,7 +1669,7 @@ def finalize_install(payload: Dict[str, Any]) -> Dict[str, Any]:
     return get_install_status()
 
 
-def ensure_install_bootstrap(port: int = 19990) -> bool:
+def ensure_install_bootstrap(port: int) -> bool:
     """Deploy the installer flow for a fresh server data volume.
 
     Returns True when the installer deployment was created or refreshed.

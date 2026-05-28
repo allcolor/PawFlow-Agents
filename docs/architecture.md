@@ -297,7 +297,7 @@ pm.uninstall("plugin-id")
 The runtime exposes a listener/UI server:
 
 ```bash
-python cli.py start --host 0.0.0.0 --port 19990
+python cli.py start --host 0.0.0.0 --port PORT
 ```
 
 Important routes:
@@ -362,6 +362,6 @@ UI/runtime integrations use the listener routes above and the PawFlow relay/clie
 
 ## Docker Deployment
 
-PawFlow provides a `Dockerfile` and a `docker-compose.yml` to run the listener/UI on port `19990`, with persistence under `data/` and support for provider/relay containers when Docker is available.
+PawFlow provides a `Dockerfile` and a `docker-compose.yml` to run the listener/UI on port `PORT`, with persistence under `data/` and support for provider/relay containers when Docker is available.
 
 See **[deployment.md](deployment.md)** for the full guide.

@@ -1418,7 +1418,7 @@ class HTTPListenerService(BaseService):
 
     Config:
         host: str = "0.0.0.0"
-        port: int = 19990
+        port: int
         request_timeout: float = 30.0  (seconds before 504)
         ssl_certfile: str = ""  (path to default PEM certificate)
         ssl_keyfile: str = ""   (path to default PEM private key)
@@ -1442,7 +1442,9 @@ class HTTPListenerService(BaseService):
     def __new__(cls, config=None):
         if config is None:
             config = {}
-        port = int(config.get("port", 19990))
+        if "port" not in config or config.get("port") in {None, ""}:
+            raise ValueError("HTTPListenerService requires port")
+        port = int(config.get("port"))
         with _instances_lock:
             if port in _instances:
                 return _instances[port]
@@ -1454,7 +1456,9 @@ class HTTPListenerService(BaseService):
             return  # already initialized (singleton)
         super().__init__(config)
         self._host = self.config.get("host", "0.0.0.0")  # nosec B104 - listener bind is explicit configuration.
-        self._port = int(self.config.get("port", 19990))
+        if "port" not in self.config or self.config.get("port") in {None, ""}:
+            raise ValueError("HTTPListenerService requires port")
+        self._port = int(self.config.get("port"))
         self._request_timeout = float(self.config.get("request_timeout", 120.0))
         self._max_dispatch_threads = self.config.get("max_dispatch_threads")
         self._header_read_timeout = self.config.get("header_read_timeout")
@@ -1510,7 +1514,7 @@ class HTTPListenerService(BaseService):
     def get_parameter_schema(self) -> Dict[str, Any]:
         return {
             "host": {"type": "string", "required": False, "default": "0.0.0.0", "description": "Bind address"},  # nosec B104 - documented listener default.
-            "port": {"type": "integer", "required": True, "default": 19990, "description": "Listen port"},
+            "port": {"type": "integer", "required": True, "description": "Listen port"},
             "request_timeout": {"type": "float", "required": False, "default": 30.0, "description": "Request timeout (seconds)"},
             "max_dispatch_threads": {"type": "integer", "required": False, "default": 128, "description": "Maximum concurrent HTTP/WebSocket dispatch threads"},
             "header_read_timeout": {"type": "float", "required": False, "default": 3.0, "description": "Seconds to wait for request headers before closing slow or half-open clients"},

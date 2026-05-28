@@ -97,7 +97,7 @@ When a Docker relay is started with `--allow-local`, `local=true` operations are
 ### 1. Configure OAuth provider
 
 ```
-/service install oauthProvider gdrive_oauth provider=google_drive,client_id=YOUR_ID,client_secret=YOUR_SECRET,redirect_uri=http://localhost:19990/auth/callback
+/service install oauthProvider gdrive_oauth provider=google_drive,client_id=YOUR_ID,client_secret=YOUR_SECRET,redirect_uri=http://localhost:PORT/auth/callback
 ```
 
 ### 2. Authorize (user clicks the OAuth link in the login flow)
@@ -115,7 +115,7 @@ The `user_id` is automatically injected from the authenticated session. Tokens a
 ### 1. Configure OAuth provider
 
 ```
-/service install oauthProvider onedrive_oauth provider=microsoft_onedrive,client_id=YOUR_ID,client_secret=YOUR_SECRET,redirect_uri=http://localhost:19990/auth/callback
+/service install oauthProvider onedrive_oauth provider=microsoft_onedrive,client_id=YOUR_ID,client_secret=YOUR_SECRET,redirect_uri=http://localhost:PORT/auth/callback
 ```
 
 ### 2. Authorize, then install

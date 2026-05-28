@@ -26,7 +26,7 @@ Prerequisites to check first:
 1. Detect OS and shell.
 2. Verify `docker` exists.
 3. Verify Docker daemon is reachable with `docker info`.
-4. Verify the selected port is available. Default port: 19990.
+4. Verify the selected port is available. The port must be chosen explicitly during install.
 5. Verify internet access to GitHub and the Docker registry.
 6. Prefer running `bash scripts/doctor-pawflow.sh` when this repository is available; follow its OS-specific remediation instructions.
 7. On Windows, run `powershell -ExecutionPolicy Bypass -File scripts/doctor-pawflow.ps1` as a host prerequisite check. Docker Desktop Linux containers are required. WSL2 integration is required only when installing from WSL.
@@ -35,28 +35,28 @@ Install path: complete from-scratch bootstrap
 1. Clone or update the repository if needed:
    git clone https://github.com/allcolor/PawFlow-Agents.git ~/pawflow-src
    cd ~/pawflow-src
-2. Run the installer:
-   bash scripts/install-pawflow.sh
+2. Run the installer with the selected port:
+   bash scripts/install-pawflow.sh --port PORT
 3. Confirm the installer first tries the prebuilt PawFlow server image, then builds from source only if needed, and builds these local runtime images before starting the server:
    - ghcr.io/allcolor/pawflow:latest, or ghcr.io/allcolor/pawflow:VERSION when a version is requested
    - pawflow-claude-code:latest
    - pawflow-relay-minimal:latest
    - pawflow-relay-dev:latest
 4. If the user requested source mode, use:
-   bash scripts/install-pawflow.sh --from-source
+   bash scripts/install-pawflow.sh --from-source --port PORT
    or:
-   bash scripts/install-pawflow.sh --from-source --version VERSION
+   bash scripts/install-pawflow.sh --from-source --version VERSION --port PORT
 5. If the user requested a native PawFlow server instead of a server container, use:
-   bash scripts/install-pawflow.sh --native
+   bash scripts/install-pawflow.sh --native --port PORT
 6. If release testing must require a pulled server image while still building local runtime images, use:
-   bash scripts/install-pawflow.sh --pull-server
+   bash scripts/install-pawflow.sh --pull-server --port PORT
 
 After starting:
 1. Follow logs:
    docker logs -f pawflow-server
 2. Wait until PawFlow reports that the web server is listening.
 3. Open:
-   https://localhost:19990
+   https://localhost:PORT
    The first run uses a self-signed bootstrap certificate; browser trust warnings are expected until the wizard configures final certificates.
 4. Use the initial Private Gateway bootstrap key:
    RoyBetty

@@ -168,8 +168,8 @@ Install on Windows PowerShell:
 
 After installation:
   pawcode --version
-  pawcode auth login --server http://localhost:19990
-  pawcode --server http://localhost:19990 --dir .
+  pawcode auth login --server http://localhost:PORT
+  pawcode --server http://localhost:PORT --dir .
 """
     (layout / "README.txt").write_text(readme, encoding="utf-8")
     write_executable(

@@ -31,7 +31,7 @@ the shared CLI LLM image (`pawflow-claude-code:latest` for Claude Code, Codex,
 Gemini, and Antigravity), the protected minimal server relay image
 (`pawflow-relay-minimal:latest`), and the full server relay image
 (`pawflow-relay-dev:latest`). It then creates persistent directories under
-`~/pawflow`, starts `pawflow-server`, and exposes `https://localhost:19990`.
+`~/pawflow`, starts `pawflow-server`, and exposes the port selected with `--port` / `PAWFLOW_PORT`.
 On macOS, the installer defaults Docker builds to `linux/amd64` unless
 `PAWFLOW_DOCKER_PLATFORM` or `--platform` is set.
 Use `bash scripts/install-pawflow.sh --native` when the PawFlow server itself
@@ -128,7 +128,7 @@ These are the supported Docker install scenarios and their expected outcomes.
      fix persistent directory ownership, then runs PawFlow as UID/GID `1000`.
    - An empty `~/pawflow/data` receives `data/repository`, so the installer flow
      is available even though `/app/data` is a bind mount.
-   - Open `https://localhost:19990/install`, accept the self-signed bootstrap
+   - Open `https://localhost:PORT/install`, accept the self-signed bootstrap
      certificate warning, enter the current gateway key `RoyBetty`, replace it,
      create the admin password, and finalize.
    - Expected result: `_private_gateway`, `_auth_gateway`, the selected

@@ -753,7 +753,10 @@ def test_finalize_install_persists_complete_state_without_cleartext_key(tmp_path
         assert state["draft"]["smoke_tests"]["main_flow_executor"]["ok"] is True
         assert state["draft"]["smoke_tests"]["final_private_gateway_key"]["ok"] is True
         assert restored["instance_id"] == ib.MAIN_INSTANCE_ID
-        assert restored["parameters"] == {"private_gateway_service_id": ib.FINAL_PRIVATE_GATEWAY_SERVICE_ID}
+        assert restored["parameters"] == {
+            "private_gateway_service_id": ib.FINAL_PRIVATE_GATEWAY_SERVICE_ID,
+            "port": 19990,
+        }
         assert restored["service_configs"]["http_listener"]["port"] == 19990
         assert restored["service_configs"]["http_listener"]["private_gateway_service_id"] == ib.FINAL_PRIVATE_GATEWAY_SERVICE_ID
         assert restored["service_configs"]["http_listener"]["ssl_certfile"].endswith("server.crt")
@@ -870,6 +873,7 @@ def test_finalize_install_with_api_key_does_not_create_llm_credential_pool(tmp_p
             "llm_provider": "codex-app-server",
             "llm_model": "gpt-5.5",
             "llm_api_key": "api-key-123",
+            "listener_port": 19990,
         })
 
         assert status["install_complete"] is True
@@ -978,6 +982,7 @@ def test_finalize_install_rolls_back_runtime_artifacts_when_smoke_checks_fail(tm
                 "llm_provider": "codex-app-server",
                 "llm_model": "gpt-5.5",
                 "llm_api_key": "api-key-123",
+                "listener_port": 19990,
                 "oauth_google_client_id": "google-id",
                 "oauth_google_client_secret": "google-secret",
             })

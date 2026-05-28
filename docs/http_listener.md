@@ -12,7 +12,7 @@ HTTP Client                          PawFlow
     │                                  │
     │     ┌─────────────────────────┐  │
     │     │ HTTPListenerService     │  │
-    │     │ (shared, port 9090)     │  │
+    │     │ (shared, port PORT)     │  │
     │     │                        │  │
     │     │  Route Registry:       │  │
     │     │  GET /api/users/{id}   │──┼──► Flow A (httpReceiver)
@@ -35,7 +35,7 @@ Shared service (singleton per port). Starts a threaded HTTP server and dispatche
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | host | string | 0.0.0.0 | Bind address |
-| port | int | 9090 | Listen port |
+| port | int | PORT | Listen port |
 | request_timeout | float | 30.0 | Response wait timeout for flow-backed requests |
 | max_dispatch_threads | int | 128 | Maximum concurrent HTTP/WebSocket dispatch threads; also configurable with `PAWFLOW_HTTP_MAX_DISPATCH_THREADS` |
 | header_read_timeout | float | 3.0 | Seconds to wait for request headers before closing slow or half-open clients; also configurable with `PAWFLOW_HTTP_HEADER_TIMEOUT` |
@@ -134,7 +134,7 @@ Validates Bearer tokens and Basic auth credentials.
   "services": {
     "http_listener": {
       "type": "httpListener",
-      "config": { "port": 9090 }
+      "config": { "port": PORT }
     }
   },
   "tasks": {
@@ -177,7 +177,7 @@ Validates Bearer tokens and Basic auth credentials.
   "services": {
     "http_listener": {
       "type": "httpListener",
-      "config": { "port": 9090 }
+      "config": { "port": PORT }
     },
     "auth": {
       "type": "httpAuthValidator",

@@ -270,7 +270,7 @@ def _write_scripts(out_dir: Path, image_name: str, manifest: dict[str, Any]) -> 
     run.write_text(
         "#!/usr/bin/env bash\n"
         "set -euo pipefail\n"
-        f": {dollar}{{PAWFLOW_SERVER:?Set PAWFLOW_SERVER, for example wss://host:19990/ws/relay}}\n"
+        f": {dollar}{{PAWFLOW_SERVER:?Set PAWFLOW_SERVER, for example wss://host:PORT/ws/relay}}\n"
         f": {dollar}{{PAWFLOW_RELAY_TOKEN:?Set PAWFLOW_RELAY_TOKEN from the PawFlow relay installer}}\n"
         f": {dollar}{{PAWFLOW_RELAY_ID:?Set PAWFLOW_RELAY_ID from the PawFlow relay installer}}\n"
         f"WORKSPACE={workspace_expansion}\n"

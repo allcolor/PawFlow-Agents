@@ -1114,14 +1114,12 @@ class TestResourceConflict:
                                 config={"port": "9090"})
         assert sdef.service_id == "http2"
 
-    def test_default_port_conflict(self):
-        """httpListener with default port (19990) conflicts with explicit 19990."""
-        from core.service_registry import ResourceConflictError
-        self.reg.install(self.SCOPE_GLOBAL, "", "http1", "httpListener",
-                         config={})  # defaults to port 19990
-        with pytest.raises(ResourceConflictError):
-            self.reg.install(self.SCOPE_USER, "alice", "http2", "httpListener",
-                             config={"port": "19990"})
+    def test_http_listener_port_is_required(self):
+        """httpListener has no hidden default port."""
+        from services.http_listener_service import HTTPListenerService
+
+        with pytest.raises(ValueError, match="requires port"):
+            HTTPListenerService({})
 
     def test_file_tracking_conflict(self):
         """Same storage_path for fileTracking = conflict."""

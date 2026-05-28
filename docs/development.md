@@ -223,17 +223,17 @@ Plugin upload is currently managed through the Python plugin APIs above. Add a d
 The public server entrypoint is the PawFlow listener/UI process:
 
 ```bash
-python cli.py start --host 0.0.0.0 --port 19990
+python cli.py start --host 0.0.0.0 --port PORT
 ```
 
 Useful local URLs:
 
 | URL | Description |
 |---|---|
-| `http://localhost:19990/chat` | Web chat UI |
-| `http://localhost:19990/admin` | Admin UI |
-| `ws://localhost:19990/ws/relay` | PawFlow relay WebSocket |
-| `ws://localhost:19990/ws/tools/_tool_relay` | Internal tool relay WebSocket |
+| `http://localhost:PORT/chat` | Web chat UI |
+| `http://localhost:PORT/admin` | Admin UI |
+| `ws://localhost:PORT/ws/relay` | PawFlow relay WebSocket |
+| `ws://localhost:PORT/ws/tools/_tool_relay` | Internal tool relay WebSocket |
 
 Conversation persistence uses `ConversationWriter` as an asynchronous FIFO per
 conversation. Provider callbacks must only enqueue work and return; writer lag

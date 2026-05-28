@@ -2,8 +2,10 @@ services:
   pawflow:
     build: .
     ports:
-      - "19990:19990"
+      - "${PAWFLOW_PORT}:${PAWFLOW_PORT}"
+    command: ["python", "cli.py", "start", "--host", "0.0.0.0", "--port", "${PAWFLOW_PORT}"]
     environment:
+      - PAWFLOW_PORT=${PAWFLOW_PORT}
       - PAWFLOW_SECRET_KEY=${PAWFLOW_SECRET_KEY}
       - PAWFLOW_SECRET_KEY_B64=${PAWFLOW_SECRET_KEY_B64}
       - PAWFLOW_ENV=${PAWFLOW_ENV}
@@ -22,11 +24,13 @@ services:
           python - <<'PY'
           import ssl
           import sys
+          import os
           import urllib.request
 
+          port = os.environ["PAWFLOW_PORT"]
           checks = [
-              ("https://localhost:19990/health", ssl._create_unverified_context()),
-              ("http://localhost:19990/health", None),
+              (f"https://localhost:{port}/health", ssl._create_unverified_context()),
+              (f"http://localhost:{port}/health", None),
           ]
           last = None
           for url, ctx in checks:
@@ -53,7 +57,7 @@ services:
       # if you want to inspect from outside).
       - /var/lib/pawflow/server-fs:/cc_sessions:rshared
     environment:
-      - PAWFLOW_SERVER=ws://pawflow:19990/ws/relay
+      - PAWFLOW_SERVER=ws://pawflow:${PAWFLOW_PORT}/ws/relay
       - PAWFLOW_SERVER_MOUNT=/cc_sessions
     # FUSE in a container needs CAP_SYS_ADMIN, /dev/fuse, and an apparmor
     # profile that doesn't sandbox the mount syscall.

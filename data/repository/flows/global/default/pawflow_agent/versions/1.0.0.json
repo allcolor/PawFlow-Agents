@@ -5,10 +5,11 @@
   "description": "LLM agent with SSE streaming, OAuth2 login, chat UI, multi-turn conversations, file generation, and per-tool permissions. Visit /chat for the web interface.",
   "parameters": {
     "conversation_ttl": 0,
+    "port": "",
     "oauth_provider": "google",
     "oauth_client_id": "",
     "oauth_client_secret": "",
-    "oauth_redirect_uri": "http://localhost:19990/auth/callback",
+    "oauth_redirect_uri": "",
     "oauth_default_role": "operator",
     "private_gateway_service_id": "",
     "poll_interval": 30,
@@ -22,7 +23,7 @@
       "type": "httpListener",
       "parameters": {
         "host": "0.0.0.0",
-        "port": 19990,
+        "port": "${port}",
         "request_timeout": "${http_request_timeout}",
         "private_gateway_service_id": "${private_gateway_service_id}"
       }
@@ -183,7 +184,7 @@
         "timeout": 600,
         "conversation_store": true,
         "conversation_ttl": "${conversation_ttl}",
-        "file_base_url": "http://localhost:19990",
+        "file_base_url": "",
         "streaming": true
       }
     },

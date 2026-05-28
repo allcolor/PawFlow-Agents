@@ -17,7 +17,7 @@ The standalone relay client is exposed as `pawflow-relay` when installed from th
 Add a server profile:
 
 ```bash
-pawflow-relay server add prod https://pawflow.example:9090 --gateway-key RoyBetty
+pawflow-relay server add prod https://pawflow.example:PORT --gateway-key RoyBetty
 ```
 
 Login to the server:
@@ -41,7 +41,7 @@ pawflow-relay start repo
 The legacy direct mode remains available for low-level scripting:
 
 ```bash
-python -m pawflow_relay --server https://pawflow.example:9090 --dir ~/src/project
+python -m pawflow_relay --server https://pawflow.example:PORT --dir ~/src/project
 ```
 
 ## Local State

@@ -48,8 +48,6 @@ RUN groupadd -g 1000 pawflow && useradd -u 1000 -g 1000 -d /app -s /bin/bash paw
     && chmod +x /app/docker/server-entrypoint.sh \
     && chown -R pawflow:pawflow /app /ms-playwright
 
-EXPOSE 19990
-
 # Default: run the PawFlow listener/chat runtime.
 ENTRYPOINT ["/app/docker/server-entrypoint.sh"]
-CMD ["python", "cli.py", "start", "--host", "0.0.0.0", "--port", "19990"]
+CMD ["sh", "-lc", "test -n \"$PAWFLOW_PORT\" || { echo 'PAWFLOW_PORT is required' >&2; exit 2; }; exec python cli.py start --host 0.0.0.0 --port \"$PAWFLOW_PORT\""]

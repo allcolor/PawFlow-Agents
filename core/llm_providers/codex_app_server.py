@@ -463,10 +463,16 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                 text or "", [], state.get("workdir", ""), state.get("container_dir", ""),
             )
             if attachments:
-                # Attachment shapes vary by UI path. Text steering is the main
-                # contract; image steering is handled when attachments already
-                # carry an app-server-compatible path or URL.
-                input_items.extend(self._codex_app_attachment_items(attachments))
+                attachment_items = self._codex_app_attachment_items(
+                    attachments,
+                    user_id=target_user,
+                    conversation_id=target_conv,
+                    workdir=state.get("workdir", ""),
+                    container_dir=state.get("container_dir", ""),
+                )
+                if attachment_items is None:
+                    return False
+                input_items.extend(attachment_items)
             if not input_items:
                 return False
             mark("input_items", t0)
@@ -1524,18 +1530,57 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                 items.append(item)
         return items or [{"type": "text", "text": ""}]
 
-    @staticmethod
-    def _codex_app_attachment_items(attachments: list) -> list:
+    def _codex_app_attachment_items(
+        self, attachments: list, *, user_id: str = "", conversation_id: str = "",
+        workdir: str = "", container_dir: str = ""
+    ) -> Optional[list]:
         items = []
         for attachment in attachments or []:
             if not isinstance(attachment, dict):
                 continue
             url = attachment.get("url") or attachment.get("image_url") or ""
             path = attachment.get("path") or ""
+            file_id = attachment.get("file_id") or ""
             if url:
                 items.append({"type": "image", "url": url})
             elif path:
                 items.append({"type": "localImage", "path": path})
+            elif file_id:
+                if not user_id or not conversation_id:
+                    logger.warning(
+                        "[codex-app] cannot steer FileStore attachment %s without user/conversation scope",
+                        file_id)
+                    return None
+                try:
+                    from core.file_store import FileStore
+                    filename, data, content_type = FileStore.instance().get_required(
+                        file_id, user_id=user_id, conversation_id=conversation_id)
+                    mime = (
+                        attachment.get("mime_type")
+                        or attachment.get("content_type")
+                        or content_type
+                        or mimetypes.guess_type(filename)[0]
+                        or "image/png"
+                    )
+                    item = self._codex_app_image_item({
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": mime,
+                            "data": base64.b64encode(data).decode("ascii"),
+                        },
+                    }, workdir, container_dir)
+                except Exception as exc:
+                    logger.warning(
+                        "[codex-app] failed to resolve steered FileStore attachment %s: %s",
+                        file_id, exc)
+                    return None
+                if not item:
+                    return None
+                items.append(item)
+                logger.info(
+                    "[codex-app] loaded steered FileStore attachment: %s (%d bytes)",
+                    file_id, len(data))
         return items
 
     @staticmethod

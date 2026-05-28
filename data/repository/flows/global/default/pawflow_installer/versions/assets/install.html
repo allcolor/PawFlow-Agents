@@ -233,10 +233,11 @@ const llmParamDefs = [
   ['docker_image','Docker image','text','pawflow-claude-code:latest'], ['docker_cpu_limit','Docker CPU limit','text','2'], ['docker_memory_limit','Docker memory limit','text','2g'], ['effort','Effort','select','medium']
 ];
 const summarizerParamDefs = [
-  ['l1_trigger_msgs','L1 trigger msgs','number',''], ['bucket_target_tokens','Bucket target tokens','number',''], ['header_budget_tokens','Header budget tokens','number',''],
-  ['rollup_trigger_count','Rollup trigger count','number',''], ['tail_reserve_msgs','Tail reserve msgs','number',''], ['tail_token_budget','Tail token budget','number',''],
-  ['token_trigger_fraction','Token trigger fraction','number',''], ['bulk_catchup_multiplier','Bulk catchup multiplier','number',''], ['partial_min_msgs','Partial min msgs','number',''],
-  ['min_input_multiplier','Min input multiplier','number',''], ['chars_per_token','Chars per token','number','']
+  ['l1_trigger_msgs','L1 trigger msgs','number',150], ['bucket_target_tokens','Bucket target tokens','number',2000], ['header_budget_tokens','Header budget tokens','number',5000],
+  ['rollup_trigger_count','Rollup trigger count','number',30], ['tail_reserve_msgs','Tail reserve msgs','number',10], ['tail_token_budget','Tail token budget','number',11000],
+  ['token_trigger_fraction','Token trigger fraction','number',0.7], ['bulk_catchup_multiplier','Bulk catchup multiplier','number',5], ['partial_min_msgs','Partial min msgs','number',5],
+  ['min_input_multiplier','Min input multiplier','number',4], ['chars_per_token','Chars per token','number',3.5], ['overshoot_warn_multiplier','Overshoot warn multiplier','number',1.5],
+  ['header_char_multiplier','Header char multiplier','number',3.0]
 ];
 let llmServices = [{service_id:'codex_appserver_llm_service', scope:'user', credential_scope:'user', config:{provider:'codex-app-server', default_model:'gpt-5.5', supports_vision:true, timeout:0, max_retries:2, tool_result_max_chars:50000, docker_image:'pawflow-claude-code:latest', docker_cpu_limit:'2', docker_memory_limit:'2g', effort:'medium'}}];
 let activeCredentialIndex = 0;
@@ -372,6 +373,13 @@ function handleOauthChange(event) {
 }
 function isCredentialProvider(provider) { return credentialProviders.includes(provider); }
 function credentialProviderFor(provider) { return credentialProviderMap[provider] || provider; }
+function loginCliField(index, provider) {
+  if (provider === 'gemini') return '<div><label>Login CLI</label><select data-llm-login-cli="' + index + '"><option value="gemini">Gemini CLI</option><option value="agy">Agy / Antigravity</option></select></div>';
+  if (provider === 'antigravity-interactive') return '<div><label>Login CLI</label><input value="Agy / Antigravity" disabled><input data-llm-login-cli="' + index + '" type="hidden" value="agy"></div>';
+  if (provider === 'codex-app-server') return '<div><label>Login CLI</label><input value="Codex" disabled></div>';
+  if (provider === 'claude-code') return '<div><label>Login CLI</label><input value="Claude Code" disabled></div>';
+  return '';
+}
 function visibleLlmParam(name, provider) {
   const cli = isCredentialProvider(provider);
   const api = provider === 'openai' || provider === 'anthropic';
@@ -398,7 +406,7 @@ function renderLlmServices() {
     const provider = cfg.provider || 'openai';
     const providerOptions = llmProviderOptions.map(p => '<option value="' + p + '"' + (p === provider ? ' selected' : '') + '>' + p + '</option>').join('');
     const params = llmParamDefs.filter(d => visibleLlmParam(d[0], provider)).map(d => fieldHtml(index, d[0], d[1], d[2], cfg[d[0]] === undefined ? d[3] : cfg[d[0]])).join('');
-    const cred = isCredentialProvider(provider) ? '<div class="panel" style="margin-top:12px"><strong>Credential provider</strong><div class="formgrid"><div><label>Credential service id</label><input data-llm-param="credential_service_id" data-llm-index="' + index + '" value="' + escapeHtml(cfg.credential_service_id || '') + '" placeholder="' + escapeHtml(defaultCredentialIds[provider] || '') + '"></div><div><label>Credential scope</label><select data-llm-cred-scope="' + index + '"><option value="global"' + (svc.credential_scope === 'global' ? ' selected' : '') + '>Global</option><option value="user"' + (svc.credential_scope === 'user' ? ' selected' : '') + '>Admin user</option></select></div><div><label>Login CLI</label><select data-llm-login-cli="' + index + '"><option value="gemini">Gemini CLI</option><option value="agy">Agy / Antigravity</option></select></div></div><div class="actions" style="justify-content:flex-start"><button type="button" class="secondary" data-cred-add="' + index + '">+ Add credential service</button><button type="button" class="secondary" data-cred-login="' + index + '">Login via server</button><button type="button" class="secondary" data-cred-paste="' + index + '">Paste credentials JSON</button></div></div>' : '';
+    const cred = isCredentialProvider(provider) ? '<div class="panel" style="margin-top:12px"><strong>Credential provider</strong><div class="formgrid"><div><label>Credential service id</label><input data-llm-param="credential_service_id" data-llm-index="' + index + '" value="' + escapeHtml(cfg.credential_service_id || '') + '" placeholder="' + escapeHtml(defaultCredentialIds[provider] || '') + '"></div><div><label>Credential scope</label><select data-llm-cred-scope="' + index + '"><option value="global"' + (svc.credential_scope === 'global' ? ' selected' : '') + '>Global</option><option value="user"' + (svc.credential_scope === 'user' ? ' selected' : '') + '>Admin user</option></select></div>' + loginCliField(index, provider) + '</div><div class="actions" style="justify-content:flex-start"><button type="button" class="secondary" data-cred-add="' + index + '">+ Add credential service</button><button type="button" class="secondary" data-cred-login="' + index + '">Login via server</button><button type="button" class="secondary" data-cred-paste="' + index + '">Paste credentials JSON</button></div></div>' : '';
     return '<div class="panel" data-llm-card="' + index + '"><div class="actions" style="margin-top:0"><button type="button" class="secondary" data-llm-remove="' + index + '">Remove</button></div><div class="formgrid"><div><label>Service id</label><input data-llm-id="' + index + '" value="' + escapeHtml(svc.service_id) + '" required></div><div><label>Scope</label><select data-llm-scope="' + index + '"><option value="global"' + (svc.scope === 'global' ? ' selected' : '') + '>Global</option><option value="user"' + (svc.scope === 'user' ? ' selected' : '') + '>Admin user</option></select></div><div><label>Provider</label><select data-llm-provider="' + index + '">' + providerOptions + '</select></div><div><label>Default model</label><input data-llm-param="default_model" data-llm-index="' + index + '" value="' + escapeHtml(cfg.default_model || '') + '" required></div><div><label>API key</label><input data-llm-param="api_key" data-llm-index="' + index + '" type="password" value="' + escapeHtml(cfg.api_key || '') + '"></div></div><div class="formgrid">' + params + '</div>' + cred + '</div>';
   }).join('');
   renderSummarizer();
@@ -541,7 +549,7 @@ function credentialPayload(index) {
     llm_provider: credentialProviderFor(provider),
     credential_service_id: svc.config.credential_service_id || defaultCredentialIds[provider] || '',
     credential_pool_scope: svc.credential_scope || svc.scope || 'global',
-    login_cli: (document.querySelector('[data-llm-login-cli="' + index + '"]') || {}).value || ''
+    login_cli: (document.querySelector('[data-llm-login-cli="' + index + '"]') || {}).value || (provider === 'antigravity-interactive' ? 'agy' : '')
   };
 }
 async function preparePool(index) {
@@ -649,7 +657,7 @@ document.getElementById('llm_services_editor').addEventListener('click', e => {
   const add = e.target.closest('[data-cred-add]');
   const login = e.target.closest('[data-cred-login]');
   const paste = e.target.closest('[data-cred-paste]');
-  if (remove) { collectLlmEditorValues(); if (llmServices.length > 1) llmServices.splice(Number(remove.dataset.llmRemove), 1); renderLlmServices(); return; }
+  if (remove) { collectLlmEditorValues(); llmServices.splice(Number(remove.dataset.llmRemove), 1); renderLlmServices(); return; }
   if (add) { collectLlmEditorValues(); const i = Number(add.dataset.credAdd); llmServices[i].config.credential_service_id = llmServices[i].config.credential_service_id || defaultCredentialIds[llmServices[i].config.provider] || ''; activeCredentialIndex = i; preparePool(i); return; }
   if (login) { activeCredentialIndex = Number(login.dataset.credLogin); startServerLogin(); return; }
   if (paste) { activeCredentialIndex = Number(paste.dataset.credPaste); document.getElementById('credential_label').style.display = 'block'; document.getElementById('credential_json').style.display = 'block'; document.getElementById('credential_actions').style.display = 'flex'; return; }

@@ -552,6 +552,31 @@ def test_gemini_completed_tool_call_emits_result_without_update_event():
     assert 'enqueue_live_mapping=False' in src
 
 
+def test_codex_app_preempt_attachment_items_resolve_filestore_image(tmp_path, monkeypatch):
+    from core.file_store import FileStore
+    from core.llm_providers.codex_app_server import LLMCodexAppServerMixin
+
+    store = FileStore(base_dir=str(tmp_path / "files"))
+    monkeypatch.setattr(FileStore, "_instance", store)
+    file_id = store.store(
+        "image.png", b"image-bytes", "image/png",
+        conversation_id="conv-live", user_id="user-1")
+
+    workdir = tmp_path / "work"
+    items = LLMCodexAppServerMixin()._codex_app_attachment_items(
+        [{"filename": "image.png", "mime_type": "image/png", "file_id": file_id}],
+        user_id="user-1",
+        conversation_id="conv-live",
+        workdir=str(workdir),
+        container_dir="/workspace",
+    )
+
+    assert items and items[0]["type"] == "localImage"
+    assert items[0]["path"].startswith("/workspace/.pawflow_vision/")
+    saved = workdir / ".pawflow_vision" / items[0]["path"].rsplit("/", 1)[-1]
+    assert saved.read_bytes() == b"image-bytes"
+
+
 
 def test_provider_mixins_have_no_method_collisions():
     """Each provider's per-CLI helper methods must NOT collide.

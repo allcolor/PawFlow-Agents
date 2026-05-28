@@ -435,6 +435,7 @@ def test_pawflow_installer_flow_template_exists():
     assert "oauthRows" in ui_content
     assert "validateOauthProviders" in ui_content
     assert "function validate()" in ui_content
+    assert "llmServices.length > 1" not in ui_content
     start_login = ui_content.split("async function startServerLogin()", 1)[1].split("async function saveCredentials()", 1)[0]
     assert "const data = await r.json();" in start_login
     assert "add_oauth_provider" not in start_login
@@ -448,6 +449,10 @@ def test_pawflow_installer_flow_template_exists():
     assert "blocking smoke checks" not in ui_content
     assert "Smoke Tests" not in ui_content
     assert "antigravity-interactive" in ui_content
+    assert "function loginCliField" in ui_content
+    assert "provider === 'codex-app-server'" in ui_content
+    assert "value=\"Codex\" disabled" in ui_content
+    assert "provider === 'gemini'" in ui_content
     assert "+ Add LLM service" in ui_content
     assert "+ Add credential service" in ui_content
     assert "Login via server" in ui_content
@@ -458,6 +463,12 @@ def test_pawflow_installer_flow_template_exists():
     assert "buildFirstConversationPayload" in ui_content
     assert "validateFirstConversation" in ui_content
     assert "Agent params JSON" in ui_content
+    for default_value in ["150", "2000", "5000", "30", "10", "11000", "0.7", "5", "4", "3.5", "1.5", "3.0"]:
+        assert default_value in ui_content
+    assert "header_budget_tokens','Header budget tokens','number',5000" in ui_content
+    assert "tail_token_budget','Tail token budget','number',11000" in ui_content
+    assert "overshoot_warn_multiplier" in ui_content
+    assert "header_char_multiplier" in ui_content
     assert "id=\"vnc_dialog\"" in ui_content
     assert "id=\"vnc_frame\"" in ui_content
     assert "showVncDialog" in ui_content

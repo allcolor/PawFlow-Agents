@@ -62,10 +62,9 @@ local runtime image required before the first web installer opens:
 - `pawflow-relay-dev:latest` for full server relay workspaces
 
 After the builds, it creates persistent volumes under `~/pawflow`, starts
-`pawflow-server`, and publishes the explicitly selected `PAWFLOW_PORT` on `127.0.0.1`. Set
-`PAWFLOW_PUBLISH_HOST=0.0.0.0` only when the bootstrap endpoint must be reachable
-from another host and `PAWFLOW_BOOTSTRAP_GATEWAY_KEY` has been replaced with a
-strong temporary value. The Docker entrypoint seeds missing
+`pawflow-server`, and publishes the explicitly selected `PAWFLOW_PORT` on the same host
+interface as `PAWFLOW_HOST`. Override `PAWFLOW_PUBLISH_HOST` only when Docker port
+publishing must differ from the server bind host. The Docker entrypoint seeds missing
 repository/config defaults from the image into the persistent bind mounts before
 the server starts, so an empty `~/pawflow/data` directory still contains the
 installer flow templates after startup.

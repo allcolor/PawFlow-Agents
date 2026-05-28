@@ -10,7 +10,7 @@
 #   PAWFLOW_CONTAINER   Container name (default: pawflow-server)
 #   PAWFLOW_PORT        Host/server port selected during install (required)
 #   PAWFLOW_HOST        Bind host inside container (default: 0.0.0.0)
-#   PAWFLOW_PUBLISH_HOST Host interface for Docker port publishing (default: 127.0.0.1)
+#   PAWFLOW_PUBLISH_HOST Host interface for Docker port publishing (default: PAWFLOW_HOST)
 #   PAWFLOW_EXTRA_ARGS  Extra args appended to `python cli.py start`
 #   PAWFLOW_BOOTSTRAP_RESET Reset first-run installer state before startup
 #   PAWFLOW_RUN_UID/GID Host uid/gid used by the container process (default: current user)
@@ -35,7 +35,7 @@ if [[ -z "$IMAGE" ]]; then IMAGE="ghcr.io/allcolor/pawflow:latest"; fi
 if [[ -z "$PAWFLOW_HOME" ]]; then PAWFLOW_HOME="$HOME/pawflow"; fi
 if [[ -z "$CONTAINER" ]]; then CONTAINER="pawflow-server"; fi
 if [[ -z "$HOST" ]]; then HOST="0.0.0.0"; fi
-if [[ -z "$PUBLISH_HOST" ]]; then PUBLISH_HOST="127.0.0.1"; fi
+if [[ -z "$PUBLISH_HOST" ]]; then PUBLISH_HOST="$HOST"; fi
 if [[ -z "$BOOTSTRAP_GATEWAY_KEY" ]]; then
   BOOTSTRAP_GATEWAY_KEY="RoyBetty"
   BOOTSTRAP_GATEWAY_LABEL="RoyBetty"

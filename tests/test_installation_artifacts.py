@@ -67,7 +67,7 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert "printenv PAWFLOW_IMAGE" in run_src
     assert "printenv PAWFLOW_HOME" in run_src
     assert "PAWFLOW_PUBLISH_HOST" in run_src
-    assert 'PUBLISH_HOST="127.0.0.1"' in run_src
+    assert 'PUBLISH_HOST="$HOST"' in run_src
     assert "PAWFLOW_BOOTSTRAP_GATEWAY_KEY" in run_src
     assert "PAWFLOW_BOOTSTRAP_RESET" in run_src
     assert "PAWFLOW_RUN_UID" in run_src
@@ -209,6 +209,52 @@ def test_install_script_help_works_without_pawflow_env(tmp_path):
         assert result.returncode == 0, result.stderr
 
 
+def test_run_docker_publish_host_follows_bind_host(tmp_path):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    docker_log = tmp_path / "docker.log"
+    fake_docker = bin_dir / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf '%s\\n' \"$*\" >> \"$DOCKER_LOG\"\n"
+        "if [[ \"$1\" == \"ps\" ]]; then exit 0; fi\n"
+        "if [[ \"$1\" == \"run\" ]]; then\n"
+        "  args=\"$*\"\n"
+        "  if [[ \"$args\" == *\"command -v docker && docker --version\"* ]]; then\n"
+        "    printf '/usr/bin/docker\\nDocker version 27.0.0\\n'\n"
+        "    exit 0\n"
+        "  fi\n"
+        "  if [[ \"$args\" == *\"docker version >/dev/null\"* ]]; then exit 0; fi\n"
+        "  printf 'container-id\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+
+    env = {
+        "DOCKER_LOG": str(docker_log),
+        "HOME": str(tmp_path),
+        "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+        "PAWFLOW_HOME": str(tmp_path / "pawflow-home"),
+        "PAWFLOW_HOST": "0.0.0.0",
+        "PAWFLOW_IMAGE": "test-image",
+        "PAWFLOW_PORT": "12345",
+    }
+    result = subprocess.run(
+        ["bash", "scripts/run-pawflow-docker.sh"],
+        cwd=Path.cwd(),
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=10,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "-p 0.0.0.0:12345:12345" in docker_log.read_text(encoding="utf-8")
+
+
 def test_install_docs_and_agent_prompt_capture_bootstrap_contract():
     doc = Path("docs/installation_bootstrap.md").read_text(encoding="utf-8")
     prompt = Path("docs/prompts/install_with_agent.md").read_text(encoding="utf-8")
@@ -223,7 +269,8 @@ def test_install_docs_and_agent_prompt_capture_bootstrap_contract():
     assert "Summarizer service" in doc
     assert "Variables and secrets" in doc
     assert "bootstrap self-signed TLS certificate" in doc
-    assert "PAWFLOW_PUBLISH_HOST=0.0.0.0" in doc
+    assert "PAWFLOW_PUBLISH_HOST" in doc
+    assert "same host" in doc
     assert "PAWFLOW_BOOTSTRAP_RESET=1" in doc
     assert "mounted cert/key files" in doc
     assert "private self-signed" in doc

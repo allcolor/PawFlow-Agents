@@ -1513,30 +1513,8 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 except Exception:
                     time.sleep(1)
 
-            # Register VNC proxy routes (once, shared by all sessions)
-            try:
-                svc = None
-                try:
-                    from core.service_registry import ServiceRegistry
-                    greg = ServiceRegistry.get_instance()
-                    for _sid, _sdef in greg.get_all("global", "").items():
-                        if getattr(_sdef, "service_type", "") == "httpListener":
-                            svc = greg.get_live_instance("global", "", _sid)
-                            if svc:
-                                break
-                except Exception:
-                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-                if svc:
-                    _vnc_owner = "_vnc_proxy"
-                    svc.register_route("GET", "/vnc/{session_id}/{token}/websockify",
-                                           _vnc_owner, callback=lambda req: None,
-                                           ws_handler=vnc_ws_proxy, public=True, private_only=True)
-                    svc.register_route("GET", "/vnc/{session_id}/{token}/{path+}",
-                                           _vnc_owner, callback=vnc_http_proxy, public=True, private_only=True)
-                else:
-                    logger.warning("[vnc-login] HTTPListenerService NOT FOUND")
-            except Exception as e:
-                logger.warning("[vnc-login] Route registration failed: %s", e)
+            _ensure_vnc_routes()
+
 
             # Mark session as ready and notify frontend to open dialog
             from services.vnc_proxy import update_session_ready
@@ -3707,33 +3685,8 @@ finally:
                 except Exception:
                     time.sleep(1)
 
-            # Register VNC proxy routes (once, shared by all sessions across CLIs).
-            # Without this the iframe URL /vnc/{session_id}/vnc.html 404s and Chrome
-            # shows "refused to connect" — was the codex-only-fails-when-claude-not-
-            # logged-in-first symptom.
-            try:
-                svc = None
-                try:
-                    from core.service_registry import ServiceRegistry
-                    greg = ServiceRegistry.get_instance()
-                    for _sid, _sdef in greg.get_all("global", "").items():
-                        if getattr(_sdef, "service_type", "") == "httpListener":
-                            svc = greg.get_live_instance("global", "", _sid)
-                            if svc:
-                                break
-                except Exception:
-                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-                if svc:
-                    _vnc_owner = "_vnc_proxy"
-                    svc.register_route("GET", "/vnc/{session_id}/{token}/websockify",
-                                           _vnc_owner, callback=lambda req: None,
-                                           ws_handler=vnc_ws_proxy, public=True, private_only=True)
-                    svc.register_route("GET", "/vnc/{session_id}/{token}/{path+}",
-                                           _vnc_owner, callback=vnc_http_proxy, public=True, private_only=True)
-                else:
-                    logger.warning("[codex-login] HTTPListenerService NOT FOUND")
-            except Exception as e:
-                logger.warning("[codex-login] Route registration failed: %s", e)
+            _ensure_vnc_routes()
+
 
             from services.vnc_proxy import update_session_ready
             update_session_ready(session_id)
@@ -3953,30 +3906,8 @@ finally:
                 except Exception:
                     time.sleep(1)
 
-            # Register VNC proxy routes (once, shared by all sessions across CLIs).
-            try:
-                svc = None
-                try:
-                    from core.service_registry import ServiceRegistry
-                    greg = ServiceRegistry.get_instance()
-                    for _sid, _sdef in greg.get_all("global", "").items():
-                        if getattr(_sdef, "service_type", "") == "httpListener":
-                            svc = greg.get_live_instance("global", "", _sid)
-                            if svc:
-                                break
-                except Exception:
-                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-                if svc:
-                    _vnc_owner = "_vnc_proxy"
-                    svc.register_route("GET", "/vnc/{session_id}/{token}/websockify",
-                                           _vnc_owner, callback=lambda req: None,
-                                           ws_handler=vnc_ws_proxy, public=True, private_only=True)
-                    svc.register_route("GET", "/vnc/{session_id}/{token}/{path+}",
-                                           _vnc_owner, callback=vnc_http_proxy, public=True, private_only=True)
-                else:
-                    logger.warning("[%s-login] HTTPListenerService NOT FOUND", login_cli)
-            except Exception as e:
-                logger.warning("[%s-login] Route registration failed: %s", login_cli, e)
+            _ensure_vnc_routes()
+
 
             from services.vnc_proxy import update_session_ready
             update_session_ready(session_id)
@@ -4216,19 +4147,8 @@ finally:
                 except Exception:
                     time.sleep(1)
 
-            try:
-                svc = _find_http_listener()
-                if svc:
-                    _vnc_owner = "_vnc_proxy"
-                    svc.register_route("GET", "/vnc/{session_id}/{token}/websockify",
-                                           _vnc_owner, callback=lambda req: None,
-                                           ws_handler=vnc_ws_proxy, public=True, private_only=True)
-                    svc.register_route("GET", "/vnc/{session_id}/{token}/{path+}",
-                                           _vnc_owner, callback=vnc_http_proxy, public=True, private_only=True)
-                else:
-                    logger.warning("[rclone-login] HTTPListenerService NOT FOUND")
-            except Exception as e:
-                logger.warning("[rclone-login] Route registration failed: %s", e)
+            _ensure_vnc_routes()
+
 
             from services.vnc_proxy import update_session_ready
             update_session_ready(session_id)

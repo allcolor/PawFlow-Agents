@@ -574,7 +574,12 @@ def test_finalize_install_persists_complete_state_without_cleartext_key(tmp_path
         monkeypatch.setattr(ExecutorRegistry, "_restore_instance", fake_restore)
 
         reg = DeploymentRegistry.get_instance()
-        reg.deploy(str(template), instance_id=ib.INSTALLER_INSTANCE_ID, source="bootstrap")
+        reg.deploy(
+            str(template),
+            instance_id=ib.INSTALLER_INSTANCE_ID,
+            source="bootstrap",
+            parameters={"port": 19990},
+        )
         reg.update_status(ib.INSTALLER_INSTANCE_ID, "running")
         from tasks import _register_all_services
         _register_all_services()
@@ -624,6 +629,7 @@ def test_finalize_install_persists_complete_state_without_cleartext_key(tmp_path
         state = json.loads(stored)
         assert state["checks"]["gateway_replaced"] is True
         assert state["checks"]["admin_user"] is True
+        assert state["checks"]["final_private_gateway_key"] is True
         assert state["checks"]["llm_service"] is True
         assert state["checks"]["llm_credential_pool"] is True
         assert state["checks"]["summarizer_service"] is True
@@ -637,6 +643,7 @@ def test_finalize_install_persists_complete_state_without_cleartext_key(tmp_path
         ).hexdigest()
         assert state["draft"]["gateway"]["service_id"] == ib.FINAL_PRIVATE_GATEWAY_SERVICE_ID
         assert state["draft"]["gateway"]["skin"] == "matrix"
+        assert state["draft"]["server"]["port"] == 19990
         assert state["draft"]["server"]["ssl_mode"] == "self_signed"
         assert state["draft"]["llm_services"]["primary"] == "review_llm"
         assert state["draft"]["llm_services"]["credential_service_id"] == "codex_oauth_credentials"
@@ -645,11 +652,16 @@ def test_finalize_install_persists_complete_state_without_cleartext_key(tmp_path
         assert state["draft"]["conversation"]["agent"] == ib.FIRST_RUN_AGENT
         assert state["draft"]["smoke_tests"]["llm_credential_pool"]["valid_count"] == 1
         assert state["draft"]["smoke_tests"]["main_flow_executor"]["ok"] is True
+        assert state["draft"]["smoke_tests"]["final_private_gateway_key"]["ok"] is True
         assert restored["instance_id"] == ib.MAIN_INSTANCE_ID
         assert restored["parameters"] == {"private_gateway_service_id": ib.FINAL_PRIVATE_GATEWAY_SERVICE_ID}
+        assert restored["service_configs"]["http_listener"]["port"] == 19990
         assert restored["service_configs"]["http_listener"]["private_gateway_service_id"] == ib.FINAL_PRIVATE_GATEWAY_SERVICE_ID
         assert restored["service_configs"]["http_listener"]["ssl_certfile"].endswith("server.crt")
         assert restored["service_configs"]["auth"]["providers"] == {"builtin": {"enabled": True}}
+        from services.private_gateway import verify_secret
+        assert verify_secret(new_key, ib.FINAL_GATEWAY_SECRET_REF) is True
+        assert verify_secret("RoyBetty", ib.FINAL_GATEWAY_SECRET_REF) is False
         assert reg.get(ib.MAIN_INSTANCE_ID).status == "running"
         assert reg.get(ib.INSTALLER_INSTANCE_ID).status == "stopped"
         sdef = ServiceRegistry.get_instance().get_definition(

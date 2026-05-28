@@ -189,6 +189,32 @@ def _final_tls_config(payload: Dict[str, Any]) -> Dict[str, str]:
     raise ValueError("ssl_mode must be 'self_signed' or 'provided'")
 
 
+def _final_listener_port(payload: Dict[str, Any]) -> int:
+    """Resolve the listener port that the installed runtime must keep using."""
+    raw_port = (
+        payload.get("listener_port")
+        or payload.get("http_port")
+        or payload.get("port")
+    )
+    if raw_port in {None, ""}:
+        try:
+            from core.deployment_registry import DeploymentRegistry
+            inst = DeploymentRegistry.get_instance().get(INSTALLER_INSTANCE_ID)
+            if inst is not None:
+                raw_port = inst.parameters.get("port")
+        except Exception:
+            logger.warning("Failed to read installer listener port; using default", exc_info=True)
+    if raw_port in {None, ""}:
+        raw_port = 9090
+    try:
+        port = int(raw_port)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("listener port must be an integer") from exc
+    if port < 1 or port > 65535:
+        raise ValueError("listener port must be between 1 and 65535")
+    return port
+
+
 def _load_state() -> Dict[str, Any]:
     if not INSTALL_STATE_FILE.exists():
         return {}
@@ -932,7 +958,8 @@ def _install_llm_and_summarizer(payload: Dict[str, Any]) -> tuple[str, str, str]
 
 def _deploy_main_flow(private_gateway_service_id: str,
                       tls_config: Dict[str, str],
-                      auth_config: Dict[str, Any]) -> str:
+                      auth_config: Dict[str, Any],
+                      listener_port: int) -> str:
     from core.deployment_registry import DeploymentRegistry
 
     if not MAIN_TEMPLATE.exists():
@@ -941,6 +968,7 @@ def _deploy_main_flow(private_gateway_service_id: str,
     params = {"private_gateway_service_id": private_gateway_service_id}
     service_configs = {
         "http_listener": {
+            "port": listener_port,
             "ssl_certfile": tls_config["ssl_certfile"],
             "ssl_keyfile": tls_config["ssl_keyfile"],
             "private_gateway_service_id": private_gateway_service_id,
@@ -1098,6 +1126,7 @@ def _create_first_conversation(admin_user: str, llm_service_id: str) -> str:
 
 def _run_install_smoke_checks(
     *,
+    final_gateway_key: str,
     admin_user: str,
     llm_service_id: str,
     summarizer_service_id: str,
@@ -1126,6 +1155,13 @@ def _run_install_smoke_checks(
         final_gateway is not None and final_gateway.enabled
         and (final_gateway.config or {}).get("secret_refs") == FINAL_GATEWAY_SECRET_REF,
     )
+    try:
+        from services.private_gateway import verify_secret
+        final_gateway_key_ok = verify_secret(final_gateway_key, FINAL_GATEWAY_SECRET_REF)
+    except Exception:
+        logger.warning("Install smoke check failed to verify final gateway key", exc_info=True)
+        final_gateway_key_ok = False
+    record("final_private_gateway_key", final_gateway_key_ok)
 
     auth_gateway = reg.get_definition(SCOPE_GLOBAL, "", AUTH_GATEWAY_SERVICE_ID)
     auth_providers = (auth_config.get("providers") or {}) if isinstance(auth_config, dict) else {}
@@ -1257,6 +1293,7 @@ def finalize_install(payload: Dict[str, Any]) -> Dict[str, Any]:
             payload["credential_service_id"] = prevalidated_credential_service_id
         gateway_skin = _validate_gateway_skin(str(payload.get("gateway_skin") or ""))
         tls_config = _final_tls_config(payload)
+        listener_port = _final_listener_port(payload)
         auth_config = _build_auth_gateway_config(payload, admin_username)
         final_secret_ref = _store_global_secret(FINAL_GATEWAY_SECRET_REF, new_key)
         final_gateway_service_id = _install_final_private_gateway(final_secret_ref, gateway_skin)
@@ -1264,10 +1301,11 @@ def finalize_install(payload: Dict[str, Any]) -> Dict[str, Any]:
         admin_user = _configure_admin_user(payload)
         auth_gateway_service_id = _install_auth_gateway(auth_config)
         llm_service_id, summarizer_service_id, credential_service_id = _install_llm_and_summarizer(payload)
-        main_instance_id = _deploy_main_flow(final_gateway_service_id, tls_config, auth_config)
+        main_instance_id = _deploy_main_flow(final_gateway_service_id, tls_config, auth_config, listener_port)
         _start_main_flow_executor(main_instance_id)
         first_conversation_id = _create_first_conversation(admin_user, llm_service_id)
         smoke_checks = _run_install_smoke_checks(
+            final_gateway_key=new_key,
             admin_user=admin_user,
             llm_service_id=llm_service_id,
             summarizer_service_id=summarizer_service_id,
@@ -1306,6 +1344,7 @@ def finalize_install(payload: Dict[str, Any]) -> Dict[str, Any]:
     checks = state.setdefault("checks", {})
     checks["gateway_replaced"] = True
     checks["final_private_gateway"] = True
+    checks["final_private_gateway_key"] = True
     checks["auth_gateway"] = True
     checks["admin_user"] = True
     checks["llm_service"] = True
@@ -1326,6 +1365,7 @@ def finalize_install(payload: Dict[str, Any]) -> Dict[str, Any]:
     gateway["key_sha256"] = hashlib.sha256(new_key.encode("utf-8")).hexdigest()
     gateway["replaced_at"] = now
     draft["server"] = {
+        "port": listener_port,
         "ssl_mode": tls_config["ssl_mode"],
         "ssl_certfile": tls_config["ssl_certfile"],
         "ssl_keyfile": tls_config["ssl_keyfile"],

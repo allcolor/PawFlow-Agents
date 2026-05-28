@@ -225,6 +225,45 @@ def test_bootstrap_reset_removes_state_and_redeploys_installer(tmp_path, monkeyp
         ServiceRegistry.reset()
 
 
+def test_bootstrap_reset_removes_previous_main_deployment(tmp_path, monkeypatch):
+    DeploymentRegistry.reset()
+    ServiceRegistry.reset()
+    dep_dir = tmp_path / "deployments"
+    runtime_dir = tmp_path / "runtime"
+    system_dir = tmp_path / "system"
+    state_file = tmp_path / "install_state.json"
+    installer_template = tmp_path / "repository" / "flows" / "global" / "default" / "pawflow_installer" / "versions" / "1.0.0.json"
+    main_template = tmp_path / "repository" / "flows" / "global" / "default" / "pawflow_agent" / "versions" / "1.0.0.json"
+    _write_installer_template(installer_template)
+    _write_main_template(main_template)
+    state_file.write_text(json.dumps({"install_complete": True, "current_step": "complete"}), encoding="utf-8")
+
+    monkeypatch.setattr(_paths, "DEPLOYMENTS_DIR", dep_dir)
+    monkeypatch.setattr(_paths, "RUNTIME_DIR", runtime_dir)
+    monkeypatch.setattr(_paths, "SYSTEM_DIR", system_dir)
+    monkeypatch.setattr(_paths, "GLOBAL_SECRETS_FILE", system_dir / "global_secrets.json")
+    monkeypatch.setattr(_paths, "SECRET_KEY_FILE", system_dir / "secret.key")
+    monkeypatch.setattr(ib, "INSTALL_STATE_FILE", state_file)
+    monkeypatch.setattr(ib, "INSTALLER_TEMPLATE", installer_template)
+    _stub_cert_generation(tmp_path, monkeypatch)
+    monkeypatch.delenv("PAWFLOW_BOOTSTRAP_DISABLED", raising=False)
+    monkeypatch.setenv("PAWFLOW_BOOTSTRAP_RESET", "1")
+
+    try:
+        reg = DeploymentRegistry.get_instance()
+        reg.deploy(str(main_template), instance_id=ib.MAIN_INSTANCE_ID, source="bootstrap")
+
+        assert ib.ensure_install_bootstrap(port=19990) is True
+        assert reg.get(ib.MAIN_INSTANCE_ID) is None
+        installer = reg.get(ib.INSTALLER_INSTANCE_ID)
+        assert installer is not None
+        assert installer.parameters["port"] == 19990
+    finally:
+        monkeypatch.delenv("PAWFLOW_BOOTSTRAP_RESET", raising=False)
+        DeploymentRegistry.reset()
+        ServiceRegistry.reset()
+
+
 def test_bootstrap_refreshes_installer_template_from_default_data(tmp_path, monkeypatch):
     DeploymentRegistry.reset()
     ServiceRegistry.reset()

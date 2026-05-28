@@ -1432,9 +1432,11 @@ def ensure_install_bootstrap(port: int = 9090) -> bool:
             logger.warning("Failed to remove install bootstrap state during reset", exc_info=True)
         try:
             from core.deployment_registry import DeploymentRegistry
-            DeploymentRegistry.get_instance().undeploy(INSTALLER_INSTANCE_ID)
+            registry = DeploymentRegistry.get_instance()
+            registry.undeploy(INSTALLER_INSTANCE_ID)
+            registry.undeploy(MAIN_INSTANCE_ID)
         except Exception:
-            logger.warning("Failed to undeploy installer during reset", exc_info=True)
+            logger.warning("Failed to undeploy bootstrap flows during reset", exc_info=True)
 
     state = _load_state()
     if state.get("install_complete"):

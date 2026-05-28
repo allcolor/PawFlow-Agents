@@ -124,6 +124,44 @@ def test_fresh_install_deploys_installer_flow(tmp_path, monkeypatch):
         ServiceRegistry.reset()
 
 
+def test_bootstrap_reset_redeploys_installer_with_current_port(tmp_path, monkeypatch):
+    DeploymentRegistry.reset()
+    ServiceRegistry.reset()
+    dep_dir = tmp_path / "deployments"
+    state_file = tmp_path / "install_state.json"
+    runtime_dir = tmp_path / "runtime"
+    system_dir = tmp_path / "system"
+    template = tmp_path / "repository" / "flows" / "global" / "default" / "pawflow_installer" / "versions" / "1.0.0.json"
+    _write_installer_template(template)
+
+    monkeypatch.setattr(_paths, "DEPLOYMENTS_DIR", dep_dir)
+    monkeypatch.setattr(_paths, "RUNTIME_DIR", runtime_dir)
+    monkeypatch.setattr(_paths, "SYSTEM_DIR", system_dir)
+    monkeypatch.setattr(_paths, "GLOBAL_SECRETS_FILE", system_dir / "global_secrets.json")
+    monkeypatch.setattr(_paths, "SECRET_KEY_FILE", system_dir / "secret.key")
+    monkeypatch.setattr(ib, "INSTALL_STATE_FILE", state_file)
+    monkeypatch.setattr(ib, "INSTALLER_TEMPLATE", template)
+    _stub_cert_generation(tmp_path, monkeypatch)
+    monkeypatch.delenv("PAWFLOW_BOOTSTRAP_DISABLED", raising=False)
+
+    try:
+        assert ib.ensure_install_bootstrap(port=9090) is True
+        first = DeploymentRegistry.get_instance().get(ib.INSTALLER_INSTANCE_ID)
+        assert first is not None
+        first_created = first.created_at
+        assert first.parameters["port"] == 9090
+
+        monkeypatch.setenv("PAWFLOW_BOOTSTRAP_RESET", "1")
+        assert ib.ensure_install_bootstrap(port=19990) is True
+        second = DeploymentRegistry.get_instance().get(ib.INSTALLER_INSTANCE_ID)
+        assert second is not None
+        assert second.parameters["port"] == 19990
+        assert second.created_at >= first_created
+    finally:
+        DeploymentRegistry.reset()
+        ServiceRegistry.reset()
+
+
 def test_existing_deployments_skip_bootstrap_without_state(tmp_path, monkeypatch):
     DeploymentRegistry.reset()
     dep_dir = tmp_path / "deployments"

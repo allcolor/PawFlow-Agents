@@ -126,6 +126,31 @@ def test_cli_provider_unshare_keeps_root_propagation_unchanged():
         assert '"unshare", "-m", "--",' not in src
 
 
+def test_cli_provider_pool_containers_allow_mount_namespace_binds():
+    for path in (
+        "core/claude_code_pool.py",
+        "core/codex_pool.py",
+        "core/gemini_pool.py",
+    ):
+        src = Path(path).read_text(encoding="utf-8")
+        assert '"--cap-add", "SYS_ADMIN"' in src
+        assert '"--security-opt", "apparmor:unconfined"' in src
+        assert '"--security-opt", "seccomp=unconfined"' in src
+
+
+def test_cli_provider_pool_binds_user_slot_from_separate_sessions_source():
+    for path in (
+        "core/claude_code_pool.py",
+        "core/codex_pool.py",
+        "core/gemini_pool.py",
+    ):
+        src = Path(path).read_text(encoding="utf-8")
+        assert ':/cc_sessions_host"' in src
+        assert '"/cc_sessions_host/" + _sd_parts[1]' in src
+        assert ':/cc_sessions"' not in src
+        assert '"/cc_sessions/" + _sd_parts[1]' not in src
+
+
 def test_server_stop_reaps_managed_relay_containers():
     src = Path("cli.py").read_text(encoding="utf-8")
     assert "normal `docker stop pawflow-server`" in src

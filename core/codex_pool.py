@@ -345,7 +345,7 @@ class CodexPool:
 
         # Per-exec mount namespace via `unshare -m`: each docker exec gets
         # its own private view of the filesystem. We bind the user's slot
-        # `/cc_sessions/<user>` over `/cc_sessions` so CC sees its conv
+        # `/cc_sessions_host/<user>` over `/cc_sessions` so CC sees its conv
         # tree at `/cc_sessions/<conv>/<agent>` — the SAME canonical path
         # the user's relay exposes via its server-fs FUSE mount. No path
         # translation needed downstream.
@@ -365,7 +365,7 @@ class CodexPool:
             raise ValueError(
                 f"session_dir must look like /cc_sessions/<user>/<conv>/...; "
                 f"got {session_dir!r}")
-        _user_slot = "/cc_sessions/" + _sd_parts[1]
+        _user_slot = "/cc_sessions_host/" + _sd_parts[1]
         _ns_workdir = "/" + "/".join(_sd_parts[:1] + _sd_parts[2:])
         # _ns_workdir = "/cc_sessions/<conv>/<agent>"
         exec_args = [
@@ -388,7 +388,7 @@ class CodexPool:
         for k, v in (extra_env or {}).items():
             exec_args.extend(["-e", f"{k}={v}"])
         # Build the in-namespace command:
-        #   mount --bind /cc_sessions/<user> /cc_sessions    (private to this ns)
+        #   mount --bind /cc_sessions_host/<user> /cc_sessions (private to this ns)
         #   cd /cc_sessions/<conv>/<agent>
         #   printf "__PF_CODEX_PID=$$" 1>&2                 (bash PID = claude PID
         #                                                     after chained exec)
@@ -620,8 +620,11 @@ class CodexPool:
             "--cpus", self.cpu_limit,
             "--memory", self.memory_limit,
             *workspace_mount_args,
-            # Mount sessions volume (all sessions, shared across all execs)
-            "-v", f"{self._sessions_host_path}:/cc_sessions",
+            # Mount all sessions on a source path distinct from /cc_sessions.
+            # The per-exec namespace then bind-mounts one user slot onto
+            # /cc_sessions. Binding /cc_sessions/<user> over its own parent
+            # fails on some kernels/storage drivers.
+            "-v", f"{self._sessions_host_path}:/cc_sessions_host",
             *_bridge_mounts,
             # Network: allow MCP bridge to reach host tool relay
             "--add-host", "host.docker.internal:host-gateway",
@@ -641,6 +644,8 @@ class CodexPool:
             "--shm-size", "512m",
             "--tmpfs", "/tmp:rw,nosuid,size=512m",  # nosec B108 - Docker tmpfs mount target inside ephemeral container.
             "--cap-add", "SYS_ADMIN",  # needed for mount --bind in exec_codex
+            "--security-opt", "apparmor:unconfined",
+            "--security-opt", "seccomp=unconfined",
             # Override entrypoint: keep alive (full path — PATH may be dirty)
             "--entrypoint", "/usr/bin/sleep",
             self.image,

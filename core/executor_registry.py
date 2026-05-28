@@ -401,7 +401,7 @@ class ExecutorRegistry:
                         instance_id, (time.monotonic() - _restore_t0) * 1000)
             return True
         except Exception as e:
-            logger.error("Failed to restore executor for '%s': %s", instance_id, e)
+            logger.error("Failed to restore executor for '%s': %s", instance_id, e, exc_info=True)
             # Mark as error in deployment registry
             if _get_deployment_registry():
                 _get_deployment_registry().update_status(instance_id, "error", str(e))

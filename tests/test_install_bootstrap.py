@@ -3,6 +3,8 @@ import json
 import time
 from pathlib import Path
 
+import pytest
+
 from core.deployment_registry import DeploymentRegistry
 from core.service_registry import ServiceRegistry, SCOPE_GLOBAL
 from core import FlowFile, install_bootstrap as ib
@@ -454,16 +456,6 @@ def test_finalize_install_requires_replaced_gateway_key(tmp_path, monkeypatch):
 
     try:
         ib.finalize_install({
-            "bootstrap_gateway_key": "wrong",
-            "new_gateway_key": "new-gateway-key-123",
-        })
-        assert False, "invalid bootstrap key should fail"
-    except PermissionError:
-        pass
-
-    try:
-        ib.finalize_install({
-            "bootstrap_gateway_key": "RoyBetty",
             "new_gateway_key": "RoyBetty",
         })
         assert False, "unchanged bootstrap key should fail"
@@ -691,6 +683,26 @@ def test_finalize_install_persists_complete_state_without_cleartext_key(tmp_path
             "llm_provider": "codex-app-server",
             "llm_model": "gpt-5.5",
             "credential_service_id": "codex_oauth_credentials",
+            "first_conversation": json.dumps({
+                "title": "Ops bootstrap",
+                "agents": [
+                    {
+                        "instance_name": "assistant",
+                        "definition": "assistant",
+                        "llm_service": "review_llm",
+                        "params": {"name": "Assistant"},
+                    },
+                    {
+                        "instance_name": "reviewer",
+                        "definition": "assistant",
+                        "llm_service": "review_llm",
+                        "model": "gpt-5.5-review",
+                        "tools": ["read", "grep"],
+                        "max_depth": 50,
+                        "params": {"name": "Reviewer", "role": "review"},
+                    },
+                ],
+            }),
         })
 
         assert status["install_complete"] is True
@@ -721,7 +733,22 @@ def test_finalize_install_persists_complete_state_without_cleartext_key(tmp_path
         assert state["draft"]["llm_services"]["credential_service_id"] == "codex_oauth_credentials"
         assert state["draft"]["summarizer_service"]["service_id"] == ib.SUMMARIZER_SERVICE_ID
         assert state["draft"]["flows"]["main_instance_id"] == ib.MAIN_INSTANCE_ID
-        assert state["draft"]["conversation"]["agent"] == ib.FIRST_RUN_AGENT
+        assert state["draft"]["conversation"]["title"] == "Ops bootstrap"
+        assert [a["instance_name"] for a in state["draft"]["conversation"]["agents"]] == ["assistant", "reviewer"]
+        conv_id = state["draft"]["conversation"]["conversation_id"]
+        conv_store = ConversationStore.instance()
+        assert conv_store.get_extra(conv_id, "title") == "Ops bootstrap"
+        assert conv_store.get_extra(conv_id, "active_resources") == {
+            "agents": ["assistant", "reviewer"],
+            "agent": "assistant",
+        }
+        conv_agents = conv_store.get_extra(conv_id, "conv_agents")
+        assert conv_agents["assistant"]["llm_service"] == "review_llm"
+        assert conv_agents["reviewer"]["definition"] == "assistant"
+        assert conv_agents["reviewer"]["model"] == "gpt-5.5-review"
+        assert conv_agents["reviewer"]["tools"] == ["read", "grep"]
+        assert conv_agents["reviewer"]["max_depth"] == 50
+        assert conv_agents["reviewer"]["params"] == {"name": "Reviewer", "role": "review"}
         assert state["draft"]["smoke_tests"]["llm_credential_pool"]["valid_count"] == 1
         assert state["draft"]["smoke_tests"]["main_flow_executor"]["ok"] is True
         assert state["draft"]["smoke_tests"]["final_private_gateway_key"]["ok"] is True
@@ -1023,9 +1050,72 @@ def test_install_llm_pool_and_summarizer_support_user_scope(tmp_path, monkeypatc
         ServiceRegistry.reset()
 
 
+def test_install_multiple_llm_services_and_linked_summarizer(tmp_path, monkeypatch):
+    ServiceRegistry.reset()
+    system_dir = tmp_path / "system"
+    monkeypatch.setattr(_paths, "GLOBAL_SECRETS_FILE", system_dir / "global_secrets.json")
+    monkeypatch.setattr(_paths, "SECRET_KEY_FILE", system_dir / "secret.key")
+
+    try:
+        from tasks import _register_all_services
+        _register_all_services()
+
+        llm_service_id, summarizer_service_id, credential_service_id = ib._install_llm_and_summarizer({
+            "admin_username": "alice",
+            "llm_services": [
+                {
+                    "service_id": "openai_main",
+                    "scope": "global",
+                    "config": {
+                        "provider": "openai",
+                        "default_model": "gpt-5.1",
+                        "api_key": "secret-key",
+                        "base_url": "https://api.openai.com/v1",
+                    },
+                },
+                {
+                    "service_id": "gemini_cli",
+                    "scope": "user",
+                    "credential_scope": "user",
+                    "config": {
+                        "provider": "gemini",
+                        "default_model": "gemini-2.5-pro",
+                        "credential_service_id": "alice_gemini_creds",
+                    },
+                },
+            ],
+            "summarizer_service": {
+                "service_id": "sum_alice",
+                "scope": "user",
+                "config": {"llm_service": "gemini_cli"},
+            },
+        })
+
+        reg = ServiceRegistry.get_instance()
+        assert llm_service_id == "openai_main"
+        assert summarizer_service_id == "sum_alice"
+        assert credential_service_id == "alice_gemini_creds"
+        openai = reg.get_definition(SCOPE_GLOBAL, "", "openai_main")
+        gemini = reg.get_definition("user", "alice", "gemini_cli")
+        creds = reg.get_definition("user", "alice", "alice_gemini_creds")
+        summarizer = reg.get_definition("user", "alice", "sum_alice")
+        assert openai is not None
+        assert openai.config["api_key"] == "${llm.openai_main.api_key}"
+        assert gemini is not None
+        assert gemini.config["credential_service_id"] == "alice_gemini_creds"
+        assert creds is not None
+        assert creds.config["provider"] == "gemini"
+        assert summarizer is not None
+        assert summarizer.config["llm_service"] == "gemini_cli"
+    finally:
+        ServiceRegistry.reset()
+
+
 def test_final_tls_config_accepts_provided_cert_files(tmp_path):
     cert = tmp_path / "server.crt"
     key = tmp_path / "server.key"
+    cert.write_text("cert", encoding="utf-8")
+    key.write_text("key", encoding="utf-8")
 
     params = ib._final_tls_config({
         "ssl_mode": "provided",
@@ -1038,6 +1128,46 @@ def test_final_tls_config_accepts_provided_cert_files(tmp_path):
         "ssl_certfile": str(cert),
         "ssl_keyfile": str(key),
     }
+
+
+def test_final_tls_config_rejects_missing_provided_cert_files(tmp_path):
+    cert = tmp_path / "missing.crt"
+    key = tmp_path / "missing.key"
+
+    with pytest.raises(ValueError, match="provided TLS certificate files must exist"):
+        ib._final_tls_config({
+            "ssl_certfile": str(cert),
+            "ssl_keyfile": str(key),
+        })
+
+
+def test_final_tls_config_infers_self_signed_when_paths_are_empty(tmp_path, monkeypatch):
+    cert = tmp_path / "server.crt"
+    key = tmp_path / "server.key"
+    monkeypatch.setattr(ib, "FINAL_CERT_FILE", cert)
+    monkeypatch.setattr(ib, "FINAL_KEY_FILE", key)
+
+    def fake_generate(cert_file, key_file, **_kwargs):
+        cert_file.write_text("CERT", encoding="utf-8")
+        key_file.write_text("KEY", encoding="utf-8")
+
+    monkeypatch.setattr(ib, "_generate_self_signed_cert", fake_generate)
+
+    params = ib._final_tls_config({"ssl_mode": "provided"})
+
+    assert params == {
+        "ssl_mode": "self_signed",
+        "ssl_certfile": str(cert),
+        "ssl_keyfile": str(key),
+    }
+
+
+def test_final_tls_config_requires_cert_and_key_together(tmp_path):
+    cert = tmp_path / "server.crt"
+    cert.write_text("CERT", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="must be provided together"):
+        ib._final_tls_config({"ssl_certfile": str(cert)})
 
 
 def test_auth_gateway_config_supports_multiple_providers_and_admin_links(tmp_path, monkeypatch):

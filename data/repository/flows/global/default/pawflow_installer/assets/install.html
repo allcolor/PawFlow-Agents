@@ -64,15 +64,11 @@
 </section>
 <section class="screen" data-step="2">
 <h2>Private Gateway</h2>
-<p class="warn">Initial gateway key: RoyBetty. Finalization must replace it.</p>
+<p class="warn">Finalization replaces the temporary bootstrap gateway with this permanent key.</p>
 <div class="formgrid">
 <div>
-<label>Current bootstrap key</label>
-<input name="bootstrap_gateway_key" autocomplete="off" required>
-</div>
-<div>
 <label>New Private Gateway key</label>
-<input name="new_gateway_key" autocomplete="new-password" minlength="16" required>
+<input name="new_gateway_key" type="password" autocomplete="new-password" minlength="16" required>
 </div>
 <div>
 <label>Gateway skin</label>
@@ -81,150 +77,52 @@
 </select>
 </div>
 <div>
-<label>Final TLS mode</label>
-<select name="ssl_mode">
-<option value="self_signed">Generate private self-signed</option>
-<option value="provided">Use mounted cert/key files</option>
-</select>
-</div>
-<div>
 <label>Final cert file</label>
-<input name="ssl_certfile" autocomplete="off" placeholder="Required when using provided certs">
+<input name="ssl_certfile" autocomplete="off" placeholder="/app/certs/fullchain.pem">
 </div>
 <div>
 <label>Final key file</label>
-<input name="ssl_keyfile" autocomplete="off" placeholder="Required when using provided certs">
+<input name="ssl_keyfile" autocomplete="off" placeholder="/app/certs/privkey.pem">
 </div>
 </div>
-<p class="muted">Skins are loaded from the installed private gateway skin repository. The runtime listener uses the final TLS certificate after bootstrap.</p>
+<p class="muted">Leave cert/key empty to generate a private self-signed certificate. If you mounted files with scripts/run-pawflow-docker.sh, use their container paths under /app/certs.</p>
 </section>
 <section class="screen" data-step="3">
-<h2>LLM Service</h2>
-<div class="formgrid">
-<div>
-<label>LLM service id</label>
-<input name="llm_service_id" value="codex_appserver_llm_service" required>
+<h2>LLM Services</h2>
+<div class="actions" style="justify-content:flex-start;margin:0 0 12px 0">
+<button type="button" id="add_llm_service">+ Add LLM service</button>
 </div>
-<div>
-<label>LLM provider</label>
-<select name="llm_provider">
-<option value="codex-app-server">codex-app-server</option>
-<option value="claude-code">claude-code</option>
-<option value="gemini">gemini</option>
-<option value="antigravity-interactive">antigravity-interactive</option>
-<option value="openai">openai</option>
-<option value="anthropic">anthropic</option>
-</select>
-</div>
-<div>
-<label>LLM model</label>
-<input name="llm_model" value="gpt-5.5" required>
-</div>
-<div>
-<label>LLM API key</label>
-<input name="llm_api_key" type="password" autocomplete="off" placeholder="Use API key when this provider supports it">
-</div>
-<div>
-<label>Credential pool</label>
-<input name="credential_service_id" id="credential_service_id" readonly placeholder="Create pool when using CLI OAuth">
-</div>
-<div>
-<label>LLM service scope</label>
-<select name="llm_service_scope">
-<option value="global">Global</option>
-<option value="user">Admin user</option>
-</select>
-</div>
-<div>
-<label>Credential pool scope</label>
-<select name="credential_pool_scope">
-<option value="global">Global</option>
-<option value="user">Admin user</option>
-</select>
-</div>
-<div>
-<label>Summarizer scope</label>
-<select name="summarizer_service_scope">
-<option value="global">Global</option>
-<option value="user">Admin user</option>
-</select>
-</div>
-<div id="gemini_login_cli_wrap" style="display:none">
-<label>Gemini pool server login</label>
-<select name="login_cli" id="login_cli">
-<option value="gemini">Gemini CLI</option>
-<option value="agy">Agy / Antigravity</option>
-</select>
-</div>
-</div>
-<div class="actions" style="justify-content:flex-start">
-<button type="button" class="secondary" id="prepare_pool">Create login pool</button>
-<button type="button" class="secondary" id="server_login">Login via server</button>
-</div>
-<pre id="credential_help" style="display:none">
-</pre>
+<div id="llm_services_editor"></div>
+<pre id="credential_help" style="display:none"></pre>
 <label id="credential_label" style="display:none">Paste credentials JSON</label>
-<textarea id="credential_json" style="display:none;width:100%;min-height:120px;background:var(--field);color:var(--text);border:1px solid #394764;border-radius:6px;padding:10px">
-</textarea>
+<textarea id="credential_json" style="display:none;width:100%;min-height:120px;background:var(--field);color:var(--text);border:1px solid #394764;border-radius:6px;padding:10px"></textarea>
 <div class="actions" id="credential_actions" style="display:none;justify-content:flex-start">
 <button type="button" class="secondary" id="save_credentials">Save pasted credentials</button>
 </div>
-<p class="muted">If you provide an API key, no OAuth pool is created. If you click Create login pool, the pool is created immediately in the selected scope and linked to this LLM service by credential_service_id. Server login is available before any relay exists; Gemini pools can use either Gemini CLI or Agy/Antigravity.</p>
+<div class="panel">
+<h3 style="margin-top:0">Summarizer service</h3>
+<div class="formgrid">
+<div><label>Summarizer service id</label><input name="summarizer_service_id" value="summarizer_service" required></div>
+<div><label>Scope</label><select name="summarizer_service_scope"><option value="global">Global</option><option value="user">Admin user</option></select></div>
+<div><label>Linked LLM service</label><select name="summarizer_llm_service" id="summarizer_llm_service"></select></div>
+</div>
+<div id="summarizer_params" class="formgrid"></div>
+</div>
 </section>
 <section class="screen" data-step="4">
-<h2>Summarizer</h2>
-<p>The summarizer service will use the selected LLM service.</p>
-<div class="kv">
-<div>Service</div>
-<div>summarizer_service</div>
-<div>LLM service</div>
-<div data-review="llm_service_id">
+<h2>First Conversation</h2>
+<div class="formgrid">
+<div><label>Conversation title</label><input id="first_conversation_title" name="first_conversation_title" value="Welcome to PawFlow" required></div>
 </div>
+<div class="actions" style="justify-content:flex-start;margin:0 0 12px 0">
+<button type="button" id="add_first_agent">+ Add agent</button>
 </div>
+<div id="first_conversation_agents"></div>
 </section>
 <section class="screen" data-step="5">
-<h2>Runtime Flow</h2>
-<p>PawFlow will deploy <strong>default.pawflow_agent:1.0.0</strong> as <strong>pawflow-agent</strong> and start its executor.</p>
-<div class="kv">
-<div>Gateway</div>
-<div>_private_gateway</div>
-<div>Auth</div>
-<div>_auth_gateway</div>
-</div>
-</section>
-<section class="screen" data-step="6">
-<h2>First Conversation</h2>
-<p>The installer will create the first active conversation.</p>
-<div class="kv">
-<div>Title</div>
-<div>Welcome to PawFlow</div>
-<div>Selected agent</div>
-<div>assistant</div>
-<div>LLM service</div>
-<div data-review="llm_service_id">
-</div>
-</div>
-</section>
-<section class="screen" data-step="7">
-<h2>Relay image profiles</h2>
-<p>The installer keeps server and client relay image profiles explicit.</p>
-<div class="kv">
-<div>Server full</div>
-<div>server-full / pawflow-relay-dev</div>
-<div>Server minimal</div>
-<div>server-minimal / pawflow-relay-minimal</div>
-<div>Client default</div>
-<div>client-minimal</div>
-</div>
-</section>
-<section class="screen" data-step="8">
-<h2>Smoke Tests</h2>
-<p>Finalization runs blocking smoke checks for gateway, auth, LLM credentials, summarizer resolution, executor, and first conversation before the install is marked complete.</p>
-<pre id="state">Loading installer state...</pre>
-</section>
-<section class="screen" data-step="9">
 <h2>Finalize</h2>
 <p>Finalization writes services, deploys the main flow, starts the executor, creates the first conversation, disables the bootstrap gateway, and redirects to chat.</p>
+<pre id="state">Loading installer state...</pre>
 <div class="kv" id="review">
 </div>
 </section>
@@ -251,7 +149,7 @@
 </div>
 
 <script>
-const names = ['Admin User','OAuth Configuration','Private Gateway','LLM Service','Summarizer','Runtime Flow','First Conversation','Relay image profiles','Smoke Tests','Finalize'];
+const names = ['Admin User','OAuth Configuration','Private Gateway','LLM Services','First Conversation','Finalize'];
 let step = 0;
 let status = null;
 const form = document.getElementById('wizard');
@@ -259,7 +157,26 @@ const screens = [...document.querySelectorAll('.screen')];
 const steps = document.getElementById('steps');
 const err = document.getElementById('error');
 function field(name) { return form.elements[name]; }
-function values() { return Object.fromEntries(new FormData(form)); }
+function values() {
+  const v = Object.fromEntries(new FormData(form));
+  const llmPayload = buildLlmServicesPayload();
+  const summarizerPayload = buildSummarizerPayload();
+  const firstConversationPayload = buildFirstConversationPayload();
+  v.llm_services = JSON.stringify(llmPayload);
+  v.summarizer_service = JSON.stringify(summarizerPayload);
+  v.first_conversation = JSON.stringify(firstConversationPayload);
+  if (llmPayload.length) {
+    const first = llmPayload[0];
+    v.llm_service_id = first.service_id;
+    v.llm_service_scope = first.scope;
+    v.llm_provider = first.config.provider || '';
+    v.llm_model = first.config.default_model || '';
+    v.llm_api_key = first.config.api_key || '';
+    v.credential_service_id = first.config.credential_service_id || '';
+    v.credential_pool_scope = first.credential_scope || first.scope;
+  }
+  return v;
+}
 function validAdminPassword(value) {
   return value.length >= 12 && /[a-z]/.test(value) && /[A-Z]/.test(value) && /\d/.test(value) && /[^A-Za-z0-9]/.test(value);
 }
@@ -300,6 +217,31 @@ function clearAdminPasswordValidity() {
 function escapeHtml(value) {
   return String(value || '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;');
 }
+const credentialProviders = ['claude-code','codex-app-server','gemini','antigravity-interactive'];
+const credentialProviderMap = {'antigravity-interactive':'gemini'};
+const defaultCredentialIds = {'claude-code':'claude_code_oauth_credentials','codex-app-server':'codex_oauth_credentials','gemini':'gemini_oauth_credentials','antigravity-interactive':'gemini_oauth_credentials'};
+const llmProviderOptions = ['codex-app-server','claude-code','gemini','antigravity-interactive','openai','anthropic'];
+const llmParamDefs = [
+  ['base_url','Base URL','text',''], ['embedding_model','Embedding model','text',''], ['fallback_model','Fallback model','text',''],
+  ['supports_vision','Supports vision','checkbox',true], ['timeout','Timeout seconds','number',0], ['max_retries','Max retries','number',2],
+  ['max_context_size','Max context size','number',0], ['compact_target_tokens','Compact target tokens','number',0], ['compact_threshold_pct','Compact threshold pct','number',0],
+  ['max_iterations','Max iterations','number',0], ['temperature','Temperature','number',0], ['max_consecutive_tool_calls','Max consecutive tool calls','number',0],
+  ['resilience_style','Resilience style','select',''], ['thinking_budget','Thinking budget','number',0], ['max_rounds','Max rounds','number',0],
+  ['tool_result_max_chars','Tool result max chars','number',50000], ['token_multiplier','Token multiplier','number',0], ['max_concurrent','Max concurrent','number',0],
+  ['cost_per_1m_input','Cost per 1M input','text','0'], ['cost_per_1m_output','Cost per 1M output','text','0'], ['cost_per_1m_cache_read','Cost per 1M cache read','text',''],
+  ['cost_per_1m_cache_write','Cost per 1M cache write','text',''], ['extra_body','Extra body JSON','textarea',''],
+  ['docker_image','Docker image','text','pawflow-claude-code:latest'], ['docker_cpu_limit','Docker CPU limit','text','2'], ['docker_memory_limit','Docker memory limit','text','2g'], ['effort','Effort','select','medium']
+];
+const summarizerParamDefs = [
+  ['l1_trigger_msgs','L1 trigger msgs','number',''], ['bucket_target_tokens','Bucket target tokens','number',''], ['header_budget_tokens','Header budget tokens','number',''],
+  ['rollup_trigger_count','Rollup trigger count','number',''], ['tail_reserve_msgs','Tail reserve msgs','number',''], ['tail_token_budget','Tail token budget','number',''],
+  ['token_trigger_fraction','Token trigger fraction','number',''], ['bulk_catchup_multiplier','Bulk catchup multiplier','number',''], ['partial_min_msgs','Partial min msgs','number',''],
+  ['min_input_multiplier','Min input multiplier','number',''], ['chars_per_token','Chars per token','number','']
+];
+let llmServices = [{service_id:'codex_appserver_llm_service', scope:'user', credential_scope:'user', config:{provider:'codex-app-server', default_model:'gpt-5.5', supports_vision:true, timeout:0, max_retries:2, tool_result_max_chars:50000, docker_image:'pawflow-claude-code:latest', docker_cpu_limit:'2', docker_memory_limit:'2g', effort:'medium'}}];
+let activeCredentialIndex = 0;
+let summarizerConfig = {};
+let firstConversation = {title:'Welcome to PawFlow', agents:[{instance_name:'assistant', definition:'assistant', llm_service:'codex_appserver_llm_service', model:'', tools:'', max_depth:1000, params_text:'{\n  "name": "assistant"\n}'}]};
 function drawSteps() {
   steps.innerHTML = names.map((n, i) => {
     const cls = 'step ' + (i === step ? 'current ' : '') + (i < step ? 'done' : '');
@@ -307,6 +249,7 @@ function drawSteps() {
   }).join('');
 }
 function show() {
+  if (step === 4) { collectLlmEditorValues(); renderFirstConversation(); }
   screens.forEach((s, i) => s.classList.toggle('active', i === step));
   document.getElementById('back').disabled = step === 0;
   document.getElementById('next').style.display = step === names.length - 1 ? 'none' : '';
@@ -427,23 +370,160 @@ function handleOauthChange(event) {
     renderOauthProviders();
   }
 }
+function isCredentialProvider(provider) { return credentialProviders.includes(provider); }
+function credentialProviderFor(provider) { return credentialProviderMap[provider] || provider; }
+function visibleLlmParam(name, provider) {
+  const cli = isCredentialProvider(provider);
+  const api = provider === 'openai' || provider === 'anthropic';
+  if (name === 'credential_service_id') return cli;
+  if (['docker_image','docker_cpu_limit','docker_memory_limit'].includes(name)) return cli;
+  if (name === 'effort') return provider === 'claude-code' || provider === 'codex-app-server';
+  if (name === 'extra_body') return provider === 'openai';
+  if (['fallback_model','supports_vision','max_retries','max_concurrent'].includes(name)) return api;
+  if (name === 'base_url') return api || provider === 'claude-code';
+  return true;
+}
+function fieldHtml(index, key, label, type, value) {
+  const safe = escapeHtml(value === undefined ? '' : value);
+  if (type === 'checkbox') return '<label><input data-llm-param="' + key + '" data-llm-index="' + index + '" type="checkbox"' + (value ? ' checked' : '') + '> ' + escapeHtml(label) + '</label>';
+  if (type === 'textarea') return '<div><label>' + escapeHtml(label) + '</label><textarea data-llm-param="' + key + '" data-llm-index="' + index + '" style="width:100%;min-height:76px;background:var(--field);color:var(--text);border:1px solid #394764;border-radius:6px;padding:10px">' + safe + '</textarea></div>';
+  if (type === 'select' && key === 'resilience_style') return '<div><label>' + escapeHtml(label) + '</label><select data-llm-param="' + key + '" data-llm-index="' + index + '"><option value=""></option><option value="cautious"' + (value === 'cautious' ? ' selected' : '') + '>cautious</option><option value="balanced"' + (value === 'balanced' ? ' selected' : '') + '>balanced</option><option value="aggressive"' + (value === 'aggressive' ? ' selected' : '') + '>aggressive</option></select></div>';
+  if (type === 'select' && key === 'effort') return '<div><label>' + escapeHtml(label) + '</label><select data-llm-param="' + key + '" data-llm-index="' + index + '"><option value="low"' + (value === 'low' ? ' selected' : '') + '>low</option><option value="medium"' + (value === 'medium' ? ' selected' : '') + '>medium</option><option value="high"' + (value === 'high' ? ' selected' : '') + '>high</option><option value="max"' + (value === 'max' ? ' selected' : '') + '>max</option></select></div>';
+  return '<div><label>' + escapeHtml(label) + '</label><input data-llm-param="' + key + '" data-llm-index="' + index + '" type="' + type + '" value="' + safe + '"></div>';
+}
+function renderLlmServices() {
+  const editor = document.getElementById('llm_services_editor');
+  editor.innerHTML = llmServices.map((svc, index) => {
+    const cfg = svc.config || {};
+    const provider = cfg.provider || 'openai';
+    const providerOptions = llmProviderOptions.map(p => '<option value="' + p + '"' + (p === provider ? ' selected' : '') + '>' + p + '</option>').join('');
+    const params = llmParamDefs.filter(d => visibleLlmParam(d[0], provider)).map(d => fieldHtml(index, d[0], d[1], d[2], cfg[d[0]] === undefined ? d[3] : cfg[d[0]])).join('');
+    const cred = isCredentialProvider(provider) ? '<div class="panel" style="margin-top:12px"><strong>Credential provider</strong><div class="formgrid"><div><label>Credential service id</label><input data-llm-param="credential_service_id" data-llm-index="' + index + '" value="' + escapeHtml(cfg.credential_service_id || '') + '" placeholder="' + escapeHtml(defaultCredentialIds[provider] || '') + '"></div><div><label>Credential scope</label><select data-llm-cred-scope="' + index + '"><option value="global"' + (svc.credential_scope === 'global' ? ' selected' : '') + '>Global</option><option value="user"' + (svc.credential_scope === 'user' ? ' selected' : '') + '>Admin user</option></select></div><div><label>Login CLI</label><select data-llm-login-cli="' + index + '"><option value="gemini">Gemini CLI</option><option value="agy">Agy / Antigravity</option></select></div></div><div class="actions" style="justify-content:flex-start"><button type="button" class="secondary" data-cred-add="' + index + '">+ Add credential service</button><button type="button" class="secondary" data-cred-login="' + index + '">Login via server</button><button type="button" class="secondary" data-cred-paste="' + index + '">Paste credentials JSON</button></div></div>' : '';
+    return '<div class="panel" data-llm-card="' + index + '"><div class="actions" style="margin-top:0"><button type="button" class="secondary" data-llm-remove="' + index + '">Remove</button></div><div class="formgrid"><div><label>Service id</label><input data-llm-id="' + index + '" value="' + escapeHtml(svc.service_id) + '" required></div><div><label>Scope</label><select data-llm-scope="' + index + '"><option value="global"' + (svc.scope === 'global' ? ' selected' : '') + '>Global</option><option value="user"' + (svc.scope === 'user' ? ' selected' : '') + '>Admin user</option></select></div><div><label>Provider</label><select data-llm-provider="' + index + '">' + providerOptions + '</select></div><div><label>Default model</label><input data-llm-param="default_model" data-llm-index="' + index + '" value="' + escapeHtml(cfg.default_model || '') + '" required></div><div><label>API key</label><input data-llm-param="api_key" data-llm-index="' + index + '" type="password" value="' + escapeHtml(cfg.api_key || '') + '"></div></div><div class="formgrid">' + params + '</div>' + cred + '</div>';
+  }).join('');
+  renderSummarizer();
+  renderFirstConversation();
+}
+function renderSummarizer() {
+  const select = document.getElementById('summarizer_llm_service');
+  if (select) select.innerHTML = llmServices.map(s => '<option value="' + escapeHtml(s.service_id) + '">' + escapeHtml(s.service_id) + '</option>').join('');
+  const params = document.getElementById('summarizer_params');
+  if (params) params.innerHTML = summarizerParamDefs.map(d => '<div><label>' + escapeHtml(d[1]) + '</label><input data-summarizer-param="' + d[0] + '" type="' + d[2] + '" value="' + escapeHtml(summarizerConfig[d[0]] || d[3]) + '"></div>').join('');
+}
+function collectLlmEditorValues() {
+  document.querySelectorAll('[data-llm-id]').forEach(el => { llmServices[Number(el.dataset.llmId)].service_id = el.value.trim(); });
+  document.querySelectorAll('[data-llm-scope]').forEach(el => { llmServices[Number(el.dataset.llmScope)].scope = el.value; });
+  document.querySelectorAll('[data-llm-cred-scope]').forEach(el => { llmServices[Number(el.dataset.llmCredScope)].credential_scope = el.value; });
+  document.querySelectorAll('[data-llm-provider]').forEach(el => { llmServices[Number(el.dataset.llmProvider)].config.provider = el.value; });
+  document.querySelectorAll('[data-llm-param]').forEach(el => { const svc = llmServices[Number(el.dataset.llmIndex)]; svc.config[el.dataset.llmParam] = el.type === 'checkbox' ? el.checked : el.value; });
+  document.querySelectorAll('[data-summarizer-param]').forEach(el => { summarizerConfig[el.dataset.summarizerParam] = el.value; });
+}
+function buildLlmServicesPayload() {
+  collectLlmEditorValues();
+  return llmServices.map(s => {
+    const cfg = Object.assign({}, s.config || {});
+    if (cfg.extra_body) { try { cfg.extra_body = JSON.parse(cfg.extra_body); } catch (_e) {} }
+    Object.keys(cfg).forEach(k => { if (cfg[k] === '' || cfg[k] === null) delete cfg[k]; });
+    return {service_id:s.service_id, scope:s.scope || 'global', credential_scope:s.credential_scope || s.scope || 'global', config:cfg};
+  });
+}
+function buildSummarizerPayload() {
+  collectLlmEditorValues();
+  const cfg = {llm_service: field('summarizer_llm_service')?.value || (llmServices[0] || {}).service_id || ''};
+  Object.keys(summarizerConfig).forEach(k => { if (summarizerConfig[k] !== '') cfg[k] = summarizerConfig[k]; });
+  return {service_id: field('summarizer_service_id')?.value || 'summarizer_service', scope: field('summarizer_service_scope')?.value || 'global', config: cfg};
+}
+function renderFirstConversation() {
+  const llmIds = new Set(llmServices.map(s => s.service_id));
+  firstConversation.agents.forEach(agent => { if (!llmIds.has(agent.llm_service)) agent.llm_service = (llmServices[0] || {}).service_id || ''; });
+  const title = document.getElementById('first_conversation_title');
+  if (title) title.value = firstConversation.title || 'Welcome to PawFlow';
+  const box = document.getElementById('first_conversation_agents');
+  if (!box) return;
+  const llmOptions = llmServices.map(s => '<option value="' + escapeHtml(s.service_id) + '">' + escapeHtml(s.service_id) + '</option>').join('');
+  box.innerHTML = firstConversation.agents.map((agent, index) => {
+    const opts = llmServices.map(s => '<option value="' + escapeHtml(s.service_id) + '"' + (s.service_id === agent.llm_service ? ' selected' : '') + '>' + escapeHtml(s.service_id) + '</option>').join('') || llmOptions;
+    const paramsText = agent.params_text || '{\n  "name": "' + escapeHtml(agent.instance_name || 'assistant') + '"\n}';
+    return '<div class="panel" data-first-agent="' + index + '"><div class="actions" style="margin-top:0"><button type="button" class="secondary" data-first-agent-remove="' + index + '">Remove</button></div><div class="formgrid"><div><label>Instance name</label><input data-first-agent-field="instance_name" data-first-agent-index="' + index + '" value="' + escapeHtml(agent.instance_name || '') + '" required></div><div><label>Definition</label><input data-first-agent-field="definition" data-first-agent-index="' + index + '" value="' + escapeHtml(agent.definition || '') + '" required></div><div><label>LLM service</label><select data-first-agent-field="llm_service" data-first-agent-index="' + index + '">' + opts + '</select></div><div><label>Model override</label><input data-first-agent-field="model" data-first-agent-index="' + index + '" value="' + escapeHtml(agent.model || '') + '"></div><div><label>Max depth</label><input data-first-agent-field="max_depth" data-first-agent-index="' + index + '" type="number" value="' + escapeHtml(agent.max_depth || 1000) + '"></div><div><label>Tools</label><input data-first-agent-field="tools" data-first-agent-index="' + index + '" value="' + escapeHtml(agent.tools || '') + '" placeholder="comma-separated"></div></div><label>Agent params JSON</label><textarea data-first-agent-field="params_text" data-first-agent-index="' + index + '" style="width:100%;min-height:92px;background:var(--field);color:var(--text);border:1px solid #394764;border-radius:6px;padding:10px">' + escapeHtml(paramsText) + '</textarea></div>';
+  }).join('');
+}
+function collectFirstConversationValues() {
+  const title = document.getElementById('first_conversation_title');
+  if (title) firstConversation.title = title.value.trim();
+  document.querySelectorAll('[data-first-agent-field]').forEach(el => {
+    const index = Number(el.dataset.firstAgentIndex);
+    firstConversation.agents[index][el.dataset.firstAgentField] = el.value;
+  });
+}
+function buildFirstConversationPayload() {
+  collectFirstConversationValues();
+  return {
+    title: firstConversation.title || 'Welcome to PawFlow',
+    agents: firstConversation.agents.map(agent => {
+      let params = {};
+      if (String(agent.params_text || '').trim()) params = JSON.parse(agent.params_text);
+      return {
+        instance_name: String(agent.instance_name || '').trim(),
+        definition: String(agent.definition || '').trim(),
+        llm_service: String(agent.llm_service || '').trim(),
+        model: String(agent.model || '').trim(),
+        tools: String(agent.tools || '').split(',').map(s => s.trim()).filter(Boolean),
+        max_depth: Number(agent.max_depth || 1000),
+        params: params
+      };
+    })
+  };
+}
+function validateFirstConversation() {
+  try {
+    const spec = buildFirstConversationPayload();
+    if (!spec.title) { err.textContent = 'Conversation title is required.'; return false; }
+    if (!spec.agents.length) { err.textContent = 'Add at least one conversation agent.'; return false; }
+    const namesSeen = new Set();
+    const llmIds = new Set(llmServices.map(s => s.service_id));
+    for (const agent of spec.agents) {
+      if (!agent.instance_name || !agent.definition || !agent.llm_service) { err.textContent = 'Each conversation agent needs an instance name, definition, and LLM service.'; return false; }
+      if (namesSeen.has(agent.instance_name)) { err.textContent = 'Conversation agent names must be unique.'; return false; }
+      if (!llmIds.has(agent.llm_service)) { err.textContent = 'Each conversation agent must use a configured LLM service.'; return false; }
+      namesSeen.add(agent.instance_name);
+    }
+    return true;
+  } catch (e) {
+    err.textContent = 'Agent params must be valid JSON.';
+    return false;
+  }
+}
+function validateLlmServices() {
+  collectLlmEditorValues();
+  if (!llmServices.length) { err.textContent = 'Add at least one LLM service.'; return false; }
+  const ids = new Set();
+  for (const svc of llmServices) {
+    const cfg = svc.config || {};
+    if (!svc.service_id || !cfg.provider || !cfg.default_model) { err.textContent = 'Each LLM service needs an id, provider, and default model.'; return false; }
+    if (ids.has(svc.service_id)) { err.textContent = 'LLM service ids must be unique.'; return false; }
+    ids.add(svc.service_id);
+    if (isCredentialProvider(cfg.provider) && !cfg.api_key && !cfg.credential_service_id) { err.textContent = 'Add a credential service or API key for ' + svc.service_id + '.'; return false; }
+    if (!isCredentialProvider(cfg.provider) && !cfg.api_key) { err.textContent = 'API key is required for ' + cfg.provider + '.'; return false; }
+  }
+  return true;
+}
 function validate() {
   if (step === 0 && !validateAdminPassword()) return false;
   if (step === 1 && !validateOauthProviders()) return false;
   if (step === 2) {
-    if (!requireFields(['bootstrap_gateway_key','new_gateway_key','gateway_skin'])) return false;
-    if (field('new_gateway_key').value === field('bootstrap_gateway_key').value || field('new_gateway_key').value === 'RoyBetty') {
-      err.textContent = 'New gateway key must replace the bootstrap key.';
-      return false;
-    }
+    if (!requireFields(['new_gateway_key','gateway_skin'])) return false;
+    const hasCert = !!field('ssl_certfile').value.trim();
+    const hasKey = !!field('ssl_keyfile').value.trim();
+    if (hasCert !== hasKey) { err.textContent = 'Final cert file and final key file must be provided together, or both left empty.'; return false; }
+    if (field('new_gateway_key').value === 'RoyBetty') { err.textContent = 'New gateway key must replace the bootstrap key.'; return false; }
   }
-  if (step === 3 && !requireFields(['llm_service_id','llm_provider','llm_model'])) return false;
+  if (step === 3 && (!validateLlmServices() || !field('summarizer_service_id').value || !field('summarizer_llm_service').value)) { err.textContent = err.textContent || 'Configure the summarizer service and linked LLM.'; return false; }
+  if (step === 4 && !validateFirstConversation()) return false;
   return true;
 }
 function renderReview() {
-  document.querySelectorAll('[data-review]').forEach(el => { el.textContent = field(el.dataset.review)?.value || ''; });
   const v = values();
-  document.getElementById('review').innerHTML = ['admin_username','auth_providers','ssl_mode','gateway_skin','llm_service_id','llm_service_scope','credential_pool_scope','summarizer_service_scope','llm_provider','llm_model'].map(k => '<div>' + escapeHtml(k) + '</div><div>' + escapeHtml(v[k] || '') + '</div>').join('');
+  document.getElementById('review').innerHTML = ['admin_username','auth_providers','gateway_skin','ssl_certfile','ssl_keyfile'].map(k => '<div>' + escapeHtml(k) + '</div><div>' + escapeHtml(v[k] || '') + '</div>').join('') + '<div>llm_services</div><div>' + escapeHtml(llmServices.map(s => s.service_id + ' [' + s.scope + ']').join(', ')) + '</div><div>summarizer</div><div>' + escapeHtml((field('summarizer_service_id')?.value || '') + ' -> ' + (field('summarizer_llm_service')?.value || '')) + '</div><div>conversation</div><div>' + escapeHtml(firstConversation.title + ' / ' + firstConversation.agents.map(a => a.instance_name + ' -> ' + a.llm_service).join(', ')) + '</div>';
 }
 function loadSkins(skins) {
   const select = document.getElementById('gateway_skin');
@@ -452,18 +532,26 @@ function loadSkins(skins) {
   select.value = skins.some(s => s.name === 'matrix') ? 'matrix' : skins[0].name;
 
 }
-function updateLoginCliVisibility() {
-  const p = field('llm_provider')?.value || '';
-  document.getElementById('gemini_login_cli_wrap').style.display = (p === 'gemini' || p === 'antigravity-interactive') ? 'block' : 'none';
+function credentialPayload(index) {
+  collectLlmEditorValues();
+  const svc = llmServices[index];
+  const provider = svc.config.provider || '';
+  return {
+    admin_username: field('admin_username')?.value || 'admin',
+    llm_provider: credentialProviderFor(provider),
+    credential_service_id: svc.config.credential_service_id || defaultCredentialIds[provider] || '',
+    credential_pool_scope: svc.credential_scope || svc.scope || 'global',
+    login_cli: (document.querySelector('[data-llm-login-cli="' + index + '"]') || {}).value || ''
+  };
 }
-async function preparePool() {
-  if (!validate()) return;
-  const v = values();
-  if (v.llm_api_key) { err.textContent = 'API key is set; no OAuth pool is needed.'; return; }
-  const r = await fetch('/install/api/llm-credential/prepare', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(v)});
+async function preparePool(index) {
+  const payload = credentialPayload(index);
+  if (!payload.credential_service_id) { err.textContent = 'Credential service id is required.'; return; }
+  const r = await fetch('/install/api/llm-credential/prepare', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
   const data = await r.json();
   if (!r.ok || data.error) { err.textContent = data.error || 'Pool creation failed'; return; }
-  field('credential_service_id').value = data.service_id;
+  llmServices[index].config.credential_service_id = data.service_id;
+  renderLlmServices();
   const help = document.getElementById('credential_help');
   help.style.display = 'block';
   help.textContent = data.message || '';
@@ -495,14 +583,14 @@ async function closeVncDialog() {
   document.getElementById('vnc_frame').setAttribute('src', 'about:blank');
   document.getElementById('vnc_dialog').hidden = true;
   if (!sessionId) return;
-  const v = values();
+  const v = credentialPayload(activeCredentialIndex);
   v.session_id = sessionId;
   try {
     await fetch('/install/api/llm-credential/server-login/cleanup', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(v)});
   } catch (_e) {}
 }
 async function serverLoginStatus(sessionId, vncUrl) {
-  const v = values();
+  const v = credentialPayload(activeCredentialIndex);
   v.session_id = sessionId;
   const r = await fetch('/install/api/llm-credential/server-login/status', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(v)});
   const data = await r.json();
@@ -522,9 +610,8 @@ async function serverLoginStatus(sessionId, vncUrl) {
   setTimeout(() => serverLoginStatus(sessionId, vncUrl), 2500);
 }
 async function startServerLogin() {
-  if (!validate()) return;
-  const v = values();
-  if (!v.credential_service_id) { err.textContent = 'Create a login pool first.'; return; }
+  const v = credentialPayload(activeCredentialIndex);
+  if (!v.credential_service_id) { err.textContent = 'Create a credential service first.'; return; }
   const r = await fetch('/install/api/llm-credential/server-login', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(v)});
   const data = await r.json();
   if (!r.ok || data.error) { err.textContent = data.error || 'Server login failed'; return; }
@@ -535,7 +622,7 @@ async function startServerLogin() {
   if (data.session_id) serverLoginStatus(data.session_id, data.vnc_url || '');
 }
 async function saveCredentials() {
-  const v = values();
+  const v = credentialPayload(activeCredentialIndex);
   v.credentials = document.getElementById('credential_json').value;
   const r = await fetch('/install/api/llm-credential/paste', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(v)});
   const data = await r.json();
@@ -549,16 +636,32 @@ async function refresh() {
   loadSkins(status.private_gateway_skins);
   document.getElementById('state').textContent = JSON.stringify(status, null, 2);
 }
-document.getElementById('prepare_pool').addEventListener('click', preparePool);
-document.getElementById('server_login').addEventListener('click', startServerLogin);
 document.getElementById('save_credentials').addEventListener('click', saveCredentials);
 document.getElementById('vnc_close').addEventListener('click', closeVncDialog);
 document.getElementById('add_oauth_provider').addEventListener('click', addOauthProvider);
 document.getElementById('oauth_provider_list').addEventListener('change', handleOauthChange);
 document.getElementById('oauth_provider_list').addEventListener('input', handleOauthChange);
+document.getElementById('add_llm_service').addEventListener('click', () => { collectLlmEditorValues(); llmServices.push({service_id:'llm_service_' + (llmServices.length + 1), scope:'user', credential_scope:'user', config:{provider:'openai', default_model:'', supports_vision:true, timeout:0, max_retries:2, tool_result_max_chars:50000}}); renderLlmServices(); });
+document.getElementById('llm_services_editor').addEventListener('input', collectLlmEditorValues);
+document.getElementById('llm_services_editor').addEventListener('change', e => { collectLlmEditorValues(); if (e.target.closest('[data-llm-provider]')) renderLlmServices(); });
+document.getElementById('llm_services_editor').addEventListener('click', e => {
+  const remove = e.target.closest('[data-llm-remove]');
+  const add = e.target.closest('[data-cred-add]');
+  const login = e.target.closest('[data-cred-login]');
+  const paste = e.target.closest('[data-cred-paste]');
+  if (remove) { collectLlmEditorValues(); if (llmServices.length > 1) llmServices.splice(Number(remove.dataset.llmRemove), 1); renderLlmServices(); return; }
+  if (add) { collectLlmEditorValues(); const i = Number(add.dataset.credAdd); llmServices[i].config.credential_service_id = llmServices[i].config.credential_service_id || defaultCredentialIds[llmServices[i].config.provider] || ''; activeCredentialIndex = i; preparePool(i); return; }
+  if (login) { activeCredentialIndex = Number(login.dataset.credLogin); startServerLogin(); return; }
+  if (paste) { activeCredentialIndex = Number(paste.dataset.credPaste); document.getElementById('credential_label').style.display = 'block'; document.getElementById('credential_json').style.display = 'block'; document.getElementById('credential_actions').style.display = 'flex'; return; }
+});
+document.getElementById('summarizer_params').addEventListener('input', collectLlmEditorValues);
+document.getElementById('add_first_agent').addEventListener('click', () => { collectFirstConversationValues(); firstConversation.agents.push({instance_name:'agent_' + (firstConversation.agents.length + 1), definition:'assistant', llm_service:(llmServices[0] || {}).service_id || '', model:'', tools:'', max_depth:1000, params_text:'{}'}); renderFirstConversation(); });
+document.getElementById('first_conversation_agents').addEventListener('input', collectFirstConversationValues);
+document.getElementById('first_conversation_agents').addEventListener('change', collectFirstConversationValues);
+document.getElementById('first_conversation_agents').addEventListener('click', e => { const remove = e.target.closest('[data-first-agent-remove]'); if (remove) { collectFirstConversationValues(); if (firstConversation.agents.length > 1) firstConversation.agents.splice(Number(remove.dataset.firstAgentRemove), 1); renderFirstConversation(); } });
+document.getElementById('first_conversation_title').addEventListener('input', collectFirstConversationValues);
 field('admin_password').addEventListener('input', clearAdminPasswordValidity);
 field('admin_password_confirm').addEventListener('input', clearAdminPasswordValidity);
-field('llm_provider').addEventListener('change', updateLoginCliVisibility);
 document.getElementById('back').addEventListener('click', () => { if (step > 0) { step--; show(); } });
 document.getElementById('next').addEventListener('click', () => {
   try {
@@ -577,9 +680,10 @@ form.addEventListener('submit', async e => {
   if (!r.ok || data.error) { err.textContent = data.error || 'Finalization failed'; return; }
   if (data.install_complete) window.location.href='/chat';
 });
-updateLoginCliVisibility();
+renderLlmServices();
+renderFirstConversation();
 show();
-refresh().then(() => { updateLoginCliVisibility(); show(); }).catch(e => { document.getElementById('state').textContent = String(e); });
+refresh().then(() => { renderLlmServices(); renderFirstConversation(); show(); }).catch(e => { document.getElementById('state').textContent = String(e); });
 </script>
 </body>
 </html>

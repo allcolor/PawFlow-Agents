@@ -155,38 +155,32 @@ def ensure_bootstrap_self_signed_cert() -> Dict[str, str]:
 
 def _final_tls_config(payload: Dict[str, Any]) -> Dict[str, str]:
     """Resolve the TLS certificate used by the installed runtime listener."""
-    mode = str(
-        payload.get("final_ssl_mode")
-        or payload.get("ssl_mode")
-        or "self_signed"
-    ).strip().lower()
-    if mode in {"self-signed", "generate_self_signed", "private_self_signed"}:
-        mode = "self_signed"
-    if mode in {"provided", "custom"}:
-        certfile = str(payload.get("final_ssl_certfile") or payload.get("ssl_certfile") or "").strip()
-        keyfile = str(payload.get("final_ssl_keyfile") or payload.get("ssl_keyfile") or "").strip()
+    certfile = str(payload.get("final_ssl_certfile") or payload.get("ssl_certfile") or "").strip()
+    keyfile = str(payload.get("final_ssl_keyfile") or payload.get("ssl_keyfile") or "").strip()
+    if certfile or keyfile:
         if not certfile or not keyfile:
-            raise ValueError("ssl_certfile and ssl_keyfile are required for provided TLS certificates")
+            raise ValueError("ssl_certfile and ssl_keyfile must be provided together")
+        missing = [path for path in (certfile, keyfile) if not Path(path).is_file()]
+        if missing:
+            raise ValueError(
+                "provided TLS certificate files must exist in the PawFlow server container: "
+                + ", ".join(missing))
         return {"ssl_mode": "provided", "ssl_certfile": certfile, "ssl_keyfile": keyfile}
-    if mode in {"self_signed", ""}:
-        certfile = Path(str(payload.get("final_ssl_certfile") or FINAL_CERT_FILE))
-        keyfile = Path(str(payload.get("final_ssl_keyfile") or FINAL_KEY_FILE))
-        if not certfile.exists() or not keyfile.exists():
-            try:
-                _generate_self_signed_cert(
-                    certfile,
-                    keyfile,
-                    hosts_env="PAWFLOW_FINAL_CERT_HOSTS",
-                    default_hosts="localhost,127.0.0.1",
-                    days=3650,
-                )
-            except Exception as exc:
-                raise RuntimeError(
-                    "Failed to generate final self-signed certificate. "
-                    "Install openssl or provide final TLS certificates."
-                ) from exc
-        return {"ssl_mode": "self_signed", "ssl_certfile": str(certfile), "ssl_keyfile": str(keyfile)}
-    raise ValueError("ssl_mode must be 'self_signed' or 'provided'")
+    if not FINAL_CERT_FILE.exists() or not FINAL_KEY_FILE.exists():
+        try:
+            _generate_self_signed_cert(
+                FINAL_CERT_FILE,
+                FINAL_KEY_FILE,
+                hosts_env="PAWFLOW_FINAL_CERT_HOSTS",
+                default_hosts="localhost,127.0.0.1",
+                days=3650,
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                "Failed to generate final self-signed certificate. "
+                "Install openssl or provide final TLS certificates."
+            ) from exc
+    return {"ssl_mode": "self_signed", "ssl_certfile": str(FINAL_CERT_FILE), "ssl_keyfile": str(FINAL_KEY_FILE)}
 
 
 def _final_listener_port(payload: Dict[str, Any]) -> int:
@@ -428,6 +422,12 @@ def _require_bootstrap_key(payload: Dict[str, Any]) -> None:
 def require_bootstrap_key(payload: Dict[str, Any]) -> None:
     """Public bootstrap authorization helper for install HTTP endpoints."""
     _require_bootstrap_key(payload)
+
+
+def _ensure_bootstrap_open() -> None:
+    """Reject late writes after the first-run installer has finalized."""
+    if is_install_complete():
+        raise PermissionError("installer is already finalized")
 
 
 def _install_final_private_gateway(secret_ref: str, skin: str) -> str:
@@ -687,7 +687,8 @@ def _service_scopes(payload: Dict[str, Any]) -> tuple[str, str, str]:
 
 
 def _install_llm_credential_pool_for_scope(provider: str, scope: str,
-                                           admin_username: str) -> str:
+                                           admin_username: str,
+                                           service_id: str = "") -> str:
     from tasks import _register_all_services
     from core.service_registry import ServiceRegistry
     from services.llm_credential_oauth import (
@@ -699,7 +700,7 @@ def _install_llm_credential_pool_for_scope(provider: str, scope: str,
     credential_provider = normalize_provider(provider)
     if credential_provider not in CREDENTIAL_PROVIDERS:
         return ""
-    service_id = default_credential_service_id(credential_provider)
+    service_id = service_id or default_credential_service_id(credential_provider)
     if not service_id:
         return ""
 
@@ -784,15 +785,179 @@ def _validate_llm_auth_ready(payload: Dict[str, Any]) -> str:
     return service_id
 
 
+def _json_field(payload: Dict[str, Any], key: str, default: Any) -> Any:
+    value = payload.get(key, default)
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.startswith("[") or stripped.startswith("{"):
+            try:
+                return json.loads(stripped)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"{key} must be valid JSON") from exc
+    return value
+
+
+def _llm_service_specs(payload: Dict[str, Any]) -> list[Dict[str, Any]]:
+    raw = _json_field(payload, "llm_services", [])
+    if raw:
+        if not isinstance(raw, list):
+            raise ValueError("llm_services must be a list")
+        specs = []
+        for item in raw:
+            if not isinstance(item, dict):
+                raise ValueError("each llm_services item must be an object")
+            config = dict(item.get("config") or {})
+            if "llm_model" in config and "default_model" not in config:
+                config["default_model"] = config.pop("llm_model")
+            specs.append({
+                "service_id": str(item.get("service_id") or item.get("id") or "").strip(),
+                "scope": _normalize_install_scope(str(item.get("scope") or item.get("llm_service_scope") or "global")),
+                "credential_scope": _normalize_install_scope(str(
+                    item.get("credential_scope")
+                    or (item.get("credential_service") or {}).get("scope")
+                    or item.get("credential_pool_scope")
+                    or item.get("scope")
+                    or "global")),
+                "config": config,
+            })
+        return specs
+
+    llm_scope, credential_scope, _summarizer_scope = _service_scopes(payload)
+    return [{
+        "service_id": str(payload.get("llm_service_id") or "").strip(),
+        "scope": llm_scope,
+        "credential_scope": credential_scope,
+        "config": {
+            "provider": str(payload.get("llm_provider") or "").strip(),
+            "default_model": str(payload.get("llm_model") or "").strip(),
+            "api_key": str(payload.get("llm_api_key") or "").strip(),
+            "credential_service_id": str(payload.get("credential_service_id") or "").strip(),
+            "base_url": str(payload.get("llm_base_url") or "").strip(),
+            "timeout": 600,
+        },
+    }]
+
+
+def _summarizer_spec(payload: Dict[str, Any], default_llm_service_id: str) -> Dict[str, Any]:
+    raw = _json_field(payload, "summarizer_service", {})
+    if raw:
+        if not isinstance(raw, dict):
+            raise ValueError("summarizer_service must be an object")
+        config = dict(raw.get("config") or {})
+        llm_service = str(config.get("llm_service") or raw.get("llm_service") or default_llm_service_id).strip()
+        config["llm_service"] = llm_service
+        return {
+            "service_id": str(raw.get("service_id") or SUMMARIZER_SERVICE_ID).strip() or SUMMARIZER_SERVICE_ID,
+            "scope": _normalize_install_scope(str(raw.get("scope") or "global")),
+            "config": config,
+        }
+
+    _llm_scope, _credential_scope, summarizer_scope = _service_scopes(payload)
+    return {
+        "service_id": SUMMARIZER_SERVICE_ID,
+        "scope": summarizer_scope,
+        "config": {"llm_service": default_llm_service_id},
+    }
+
+
+def _list_field(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.startswith("["):
+            parsed = _json_field({"value": stripped}, "value", [])
+            if isinstance(parsed, list):
+                return [str(item).strip() for item in parsed if str(item).strip()]
+        return [part.strip() for part in stripped.split(",") if part.strip()]
+    return []
+
+
+def _first_conversation_spec(payload: Dict[str, Any], default_llm_service_id: str) -> Dict[str, Any]:
+    raw = _json_field(payload, "first_conversation", {})
+    if raw and not isinstance(raw, dict):
+        raise ValueError("first_conversation must be an object")
+    raw = raw or {}
+    title = str(raw.get("title") or "Welcome to PawFlow").strip() or "Welcome to PawFlow"
+    agent_items = raw.get("agents") or []
+    if not agent_items:
+        agent_items = [{
+            "instance_name": FIRST_RUN_AGENT,
+            "definition": FIRST_RUN_AGENT,
+            "llm_service": default_llm_service_id,
+            "params": {"name": FIRST_RUN_AGENT},
+            "max_depth": 1000,
+        }]
+    if not isinstance(agent_items, list):
+        raise ValueError("first_conversation.agents must be a list")
+
+    agents = []
+    seen = set()
+    for item in agent_items:
+        if not isinstance(item, dict):
+            raise ValueError("each first_conversation agent must be an object")
+        instance_name = str(item.get("instance_name") or item.get("name") or "").strip()
+        if not instance_name:
+            raise ValueError("first conversation agent instance_name is required")
+        if instance_name in seen:
+            raise ValueError(f"duplicate first conversation agent: {instance_name}")
+        seen.add(instance_name)
+        definition = str(item.get("definition") or instance_name).strip()
+        llm_service = str(item.get("llm_service") or default_llm_service_id).strip()
+        params = item.get("params") or {}
+        if isinstance(params, str):
+            params = _json_field({"params": params}, "params", {}) if params.strip() else {}
+        if not isinstance(params, dict):
+            raise ValueError(f"params for first conversation agent '{instance_name}' must be an object")
+        params = dict(params)
+        params.setdefault("name", instance_name)
+        try:
+            max_depth = int(item.get("max_depth") or 1000)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"max_depth for first conversation agent '{instance_name}' must be an integer") from exc
+        agents.append({
+            "instance_name": instance_name,
+            "definition": definition,
+            "llm_service": llm_service,
+            "model": str(item.get("model") or "").strip(),
+            "tools": _list_field(item.get("tools") or []),
+            "skills": _list_field(item.get("skills") or []),
+            "max_depth": max_depth,
+            "params": params,
+        })
+    return {"title": title, "agents": agents}
+
+
+def _validate_llm_services_auth_ready(payload: Dict[str, Any]) -> None:
+    from services.llm_credential_oauth import PROVIDERS as CREDENTIAL_PROVIDERS, default_credential_service_id, normalize_provider
+
+    for spec in _llm_service_specs(payload):
+        service_id = spec["service_id"]
+        config = spec["config"]
+        provider = normalize_provider(str(config.get("provider") or ""))
+        if str(config.get("api_key") or "").strip():
+            continue
+        if provider not in CREDENTIAL_PROVIDERS:
+            raise ValueError(f"llm_api_key is required for provider '{provider}'")
+        credential_service_id = str(config.get("credential_service_id") or "").strip() or default_credential_service_id(provider)
+        status = _llm_credential_pool_status(provider, credential_service_id)
+        if not status["ready"]:
+            raise ValueError(
+                f"credential pool '{credential_service_id}' has no valid OAuth credential; "
+                "complete the CLI login before finalizing")
+
+
 def prepare_llm_credential_pool(payload: Dict[str, Any]) -> Dict[str, Any]:
     """Create the CLI OAuth credential pool before final LLM installation."""
     from services.llm_credential_oauth import normalize_provider
 
-    _require_bootstrap_key(payload)
+    _ensure_bootstrap_open()
     admin_username = str(payload.get("admin_username") or "admin").strip() or "admin"
     provider = normalize_provider(str(payload.get("llm_provider") or ""))
     _llm_scope, credential_scope, _summarizer_scope = _service_scopes(payload)
-    service_id = _install_llm_credential_pool_for_scope(provider, credential_scope, admin_username)
+    requested_service_id = str(payload.get("credential_service_id") or "").strip()
+    service_id = _install_llm_credential_pool_for_scope(
+        provider, credential_scope, admin_username, requested_service_id)
     if not service_id:
         raise ValueError("selected LLM provider does not use an OAuth credential pool")
 
@@ -846,7 +1011,7 @@ def save_llm_credential(payload: Dict[str, Any]) -> Dict[str, Any]:
     from core.service_registry import ServiceRegistry
     from services.llm_credential_oauth import normalize_provider
 
-    _require_bootstrap_key(payload)
+    _ensure_bootstrap_open()
     admin_username = str(payload.get("admin_username") or "admin").strip() or "admin"
     provider = normalize_provider(str(payload.get("llm_provider") or ""))
     service_id = str(payload.get("credential_service_id") or "").strip()
@@ -920,64 +1085,78 @@ def save_llm_credential(payload: Dict[str, Any]) -> Dict[str, Any]:
 def _install_llm_and_summarizer(payload: Dict[str, Any]) -> tuple[str, str, str]:
     from tasks import _register_all_services
     from core.service_registry import ServiceRegistry
+    from services.llm_credential_oauth import PROVIDERS as CREDENTIAL_PROVIDERS, normalize_provider
 
     _register_all_services()
-    provider = str(payload.get("llm_provider") or "").strip()
-    model = str(payload.get("llm_model") or "").strip()
-    llm_service_id = str(payload.get("llm_service_id") or "").strip()
-    if not provider:
-        raise ValueError("llm_provider is required")
-    if not llm_service_id:
-        raise ValueError("llm_service_id is required")
-    if not model:
-        raise ValueError("llm_model is required")
     admin_username = str(payload.get("admin_username") or "admin").strip() or "admin"
-    llm_scope, credential_scope, summarizer_scope = _service_scopes(payload)
-
-    credential_service_id = ""
-    llm_config: Dict[str, Any] = {
-        "provider": provider,
-        "default_model": model,
-        "timeout": 600,
-    }
-    base_url = str(payload.get("llm_base_url") or "").strip()
-    if base_url:
-        llm_config["base_url"] = base_url
-    api_key = str(payload.get("llm_api_key") or "").strip()
-    if api_key:
-        secret_ref = f"llm.{llm_service_id}.api_key"
-        _store_global_secret(secret_ref, api_key)
-        llm_config["api_key"] = "${" + secret_ref + "}"
-    else:
-        requested_credential_service_id = str(payload.get("credential_service_id") or "").strip()
-        credential_service_id = _install_llm_credential_pool_for_scope(
-            provider, credential_scope, admin_username)
-        if requested_credential_service_id and requested_credential_service_id != credential_service_id:
-            raise ValueError(
-                f"credential_service_id must be {credential_service_id} for provider {provider}")
-        if credential_service_id:
-            llm_config["credential_service_id"] = credential_service_id
+    specs = _llm_service_specs(payload)
+    if not specs:
+        raise ValueError("at least one LLM service is required")
 
     reg = ServiceRegistry.get_instance()
+    installed_llm_ids = []
+    installed_credential_ids = []
+    seen_ids = set()
+    for spec in specs:
+        llm_service_id = spec["service_id"]
+        if not llm_service_id:
+            raise ValueError("llm_service_id is required")
+        if llm_service_id in seen_ids:
+            raise ValueError(f"duplicate LLM service id: {llm_service_id}")
+        seen_ids.add(llm_service_id)
+        config = dict(spec["config"])
+        provider = normalize_provider(str(config.get("provider") or ""))
+        model = str(config.get("default_model") or "").strip()
+        if not provider:
+            raise ValueError(f"provider is required for LLM service '{llm_service_id}'")
+        if not model:
+            raise ValueError(f"default_model is required for LLM service '{llm_service_id}'")
+        config["provider"] = provider
+        config["default_model"] = model
+        config.setdefault("timeout", 600)
+
+        api_key = str(config.get("api_key") or "").strip()
+        if api_key:
+            secret_ref = f"llm.{llm_service_id}.api_key"
+            _store_global_secret(secret_ref, api_key)
+            config["api_key"] = "${" + secret_ref + "}"
+        else:
+            credential_service_id = str(config.get("credential_service_id") or "").strip()
+            if provider in CREDENTIAL_PROVIDERS:
+                credential_service_id = _install_llm_credential_pool_for_scope(
+                    provider, spec["credential_scope"], admin_username, credential_service_id)
+                if credential_service_id:
+                    config["credential_service_id"] = credential_service_id
+                    installed_credential_ids.append(credential_service_id)
+            else:
+                raise ValueError(f"llm_api_key is required for provider '{provider}'")
+
+        config = {k: v for k, v in config.items() if v not in ("", None)}
+        llm_scope = spec["scope"]
+        reg.install(
+            scope=llm_scope,
+            scope_id=_install_scope_id(llm_scope, admin_username),
+            service_id=llm_service_id,
+            service_type="llmConnection",
+            config=config,
+            description="Installed LLM service from first-run bootstrap",
+            enabled=True,
+        )
+        installed_llm_ids.append(llm_service_id)
+
+    summarizer = _summarizer_spec(payload, installed_llm_ids[0])
+    if summarizer["config"].get("llm_service") not in installed_llm_ids:
+        raise ValueError("summarizer llm_service must reference one of the configured LLM services")
     reg.install(
-        scope=llm_scope,
-        scope_id=_install_scope_id(llm_scope, admin_username),
-        service_id=llm_service_id,
-        service_type="llmConnection",
-        config=llm_config,
-        description="Installed LLM service for the first PawFlow agent and summarizer",
-        enabled=True,
-    )
-    reg.install(
-        scope=summarizer_scope,
-        scope_id=_install_scope_id(summarizer_scope, admin_username),
-        service_id=SUMMARIZER_SERVICE_ID,
+        scope=summarizer["scope"],
+        scope_id=_install_scope_id(summarizer["scope"], admin_username),
+        service_id=summarizer["service_id"],
         service_type="summarizer",
-        config={"llm_service": llm_service_id},
+        config=summarizer["config"],
         description="Summarizer service for conversation compaction",
         enabled=True,
     )
-    return llm_service_id, SUMMARIZER_SERVICE_ID, credential_service_id
+    return installed_llm_ids[0], summarizer["service_id"], (installed_credential_ids[0] if installed_credential_ids else "")
 
 
 def _deploy_main_flow(private_gateway_service_id: str,
@@ -1071,6 +1250,7 @@ def _rollback_failed_finalization(
     llm_service_id: str = "",
     llm_scope: str = "global",
     summarizer_scope: str = "global",
+    service_refs: list[Dict[str, str]] | None = None,
     admin_user: str = "admin",
     first_conversation_id: str = "",
 ) -> None:
@@ -1093,9 +1273,16 @@ def _rollback_failed_finalization(
         reg = ServiceRegistry.get_instance()
         for service_id in (FINAL_PRIVATE_GATEWAY_SERVICE_ID, AUTH_GATEWAY_SERVICE_ID):
             reg.uninstall(SCOPE_GLOBAL, "", service_id)
-        if llm_service_id:
-            reg.uninstall(llm_scope, _install_scope_id(llm_scope, admin_user), llm_service_id)
-        reg.uninstall(summarizer_scope, _install_scope_id(summarizer_scope, admin_user), SUMMARIZER_SERVICE_ID)
+        if service_refs:
+            for ref in service_refs:
+                scope = ref.get("scope") or "global"
+                service_id = ref.get("service_id") or ""
+                if service_id:
+                    reg.uninstall(scope, _install_scope_id(scope, admin_user), service_id)
+        else:
+            if llm_service_id:
+                reg.uninstall(llm_scope, _install_scope_id(llm_scope, admin_user), llm_service_id)
+            reg.uninstall(summarizer_scope, _install_scope_id(summarizer_scope, admin_user), SUMMARIZER_SERVICE_ID)
     except Exception:
         logger.warning("Install finalization rollback failed to uninstall services", exc_info=True)
 
@@ -1105,46 +1292,82 @@ def _rollback_failed_finalization(
         logger.warning("Install finalization rollback failed to delete final gateway secret", exc_info=True)
 
 
-def _create_first_conversation(admin_user: str, llm_service_id: str) -> str:
+def _rollback_service_refs(payload: Dict[str, Any]) -> list[Dict[str, str]]:
+    from services.llm_credential_oauth import PROVIDERS as CREDENTIAL_PROVIDERS, default_credential_service_id, normalize_provider
+
+    refs: list[Dict[str, str]] = []
+    specs = _llm_service_specs(payload)
+    for spec in specs:
+        if spec["service_id"]:
+            refs.append({"scope": spec["scope"], "service_id": spec["service_id"]})
+        config = spec["config"]
+        provider = normalize_provider(str(config.get("provider") or ""))
+        if provider in CREDENTIAL_PROVIDERS and not str(config.get("api_key") or "").strip():
+            cred_id = str(config.get("credential_service_id") or "").strip() or default_credential_service_id(provider)
+            if cred_id:
+                refs.append({"scope": spec["credential_scope"], "service_id": cred_id})
+    if specs:
+        summarizer = _summarizer_spec(payload, specs[0]["service_id"])
+        refs.append({"scope": summarizer["scope"], "service_id": summarizer["service_id"]})
+    return refs
+
+
+def _create_first_conversation(
+    admin_user: str,
+    payload: Dict[str, Any],
+    default_llm_service_id: str,
+    installed_llm_ids: list[str],
+) -> str:
     from core.conversation_store import ConversationStore
     from core.conv_agent_config import add_agent_to_conv
     from core.resource_store import ResourceStore, GLOBAL_USER_ID
 
+    spec = _first_conversation_spec(payload, default_llm_service_id)
     rs = ResourceStore.instance()
-    if rs.get_any("agent", FIRST_RUN_AGENT, admin_user) is None:
-        rs.create(
-            "agent",
-            FIRST_RUN_AGENT,
-            GLOBAL_USER_ID,
-            {
-                "prompt": "You are ${agent.name}, a helpful assistant.",
-                "description": "General-purpose assistant.",
-                "parameters": {
-                    "name": {
-                        "required": True,
-                        "description": "Agent display name",
-                    }
+    for agent in spec["agents"]:
+        definition = agent["definition"]
+        if agent["llm_service"] not in installed_llm_ids:
+            raise ValueError(
+                f"agent '{agent['instance_name']}' references unknown LLM service '{agent['llm_service']}'")
+        if rs.get_any("agent", definition, admin_user) is None:
+            rs.create(
+                "agent",
+                definition,
+                GLOBAL_USER_ID,
+                {
+                    "prompt": "You are ${agent.name}, a helpful assistant.",
+                    "description": "General-purpose assistant.",
+                    "parameters": {
+                        "name": {
+                            "required": True,
+                            "description": "Agent display name",
+                        }
+                    },
                 },
-            },
-        )
+            )
 
     store = ConversationStore.instance()
     conv_id = store.generate_id()
     store.save(conv_id, [], user_id=admin_user)
-    store.set_extra(conv_id, "title", "Welcome to PawFlow")
+    store.set_extra(conv_id, "title", spec["title"])
+    agent_names = [agent["instance_name"] for agent in spec["agents"]]
     store.set_extra(
         conv_id,
         "active_resources",
-        {"agents": [FIRST_RUN_AGENT], "agent": FIRST_RUN_AGENT},
+        {"agents": agent_names, "agent": agent_names[0]},
     )
-    add_agent_to_conv(
-        conv_id,
-        FIRST_RUN_AGENT,
-        llm_service=llm_service_id,
-        definition=FIRST_RUN_AGENT,
-        params={"name": FIRST_RUN_AGENT},
-        max_depth=1000,
-    )
+    for agent in spec["agents"]:
+        add_agent_to_conv(
+            conv_id,
+            agent["instance_name"],
+            llm_service=agent["llm_service"],
+            definition=agent["definition"],
+            params=agent["params"],
+            model=agent["model"],
+            tools=agent["tools"],
+            max_depth=agent["max_depth"],
+            skills=agent["skills"],
+        )
     return conv_id
 
 
@@ -1248,7 +1471,8 @@ def _run_install_smoke_checks(
         "first_conversation",
         conv_store.exists(first_conversation_id)
         and isinstance(active_resources, dict)
-        and active_resources.get("agent") == FIRST_RUN_AGENT,
+        and bool(active_resources.get("agent"))
+        and active_resources.get("agent") in (active_resources.get("agents") or []),
         conversation_id=first_conversation_id,
     )
 
@@ -1269,8 +1493,7 @@ def finalize_install(payload: Dict[str, Any]) -> Dict[str, Any]:
     if state.get("install_complete"):
         return get_install_status()
 
-    _require_bootstrap_key(payload)
-    expected_key = _expected_bootstrap_key()
+    _ensure_bootstrap_open()
 
     new_key = str(
         payload.get("new_gateway_key")
@@ -1279,7 +1502,7 @@ def finalize_install(payload: Dict[str, Any]) -> Dict[str, Any]:
     ).strip()
     if not new_key:
         raise ValueError("new_gateway_key is required")
-    if new_key in {expected_key, DEFAULT_BOOTSTRAP_GATEWAY_KEY}:
+    if new_key in {_expected_bootstrap_key(), DEFAULT_BOOTSTRAP_GATEWAY_KEY}:
         raise ValueError("new_gateway_key must replace the bootstrap key")
     if len(new_key) < 16:
         raise ValueError("new_gateway_key must be at least 16 characters")
@@ -1288,13 +1511,12 @@ def finalize_install(payload: Dict[str, Any]) -> Dict[str, Any]:
     admin_password = _validate_admin_password(payload)
     if not admin_username:
         raise ValueError("admin_username is required")
-    if not str(payload.get("llm_provider") or "").strip():
-        raise ValueError("llm_provider is required")
-    if not str(payload.get("llm_service_id") or "").strip():
-        raise ValueError("llm_service_id is required")
-    if not str(payload.get("llm_model") or "").strip():
-        raise ValueError("llm_model is required")
-    llm_scope, credential_scope, summarizer_scope = _service_scopes(payload)
+    llm_specs = _llm_service_specs(payload)
+    if not llm_specs:
+        raise ValueError("at least one LLM service is required")
+    primary_provider = str((llm_specs[0].get("config") or {}).get("provider") or "")
+    summarizer_plan = _summarizer_spec(payload, llm_specs[0]["service_id"])
+    rollback_refs = _rollback_service_refs(payload)
     if not MAIN_TEMPLATE.exists():
         raise ValueError(f"main PawFlow flow template is missing: {MAIN_TEMPLATE}")
     system_snapshot = _snapshot_file_state([
@@ -1311,10 +1533,7 @@ def finalize_install(payload: Dict[str, Any]) -> Dict[str, Any]:
     first_conversation_id = ""
     runtime_artifacts_created = False
     try:
-        prevalidated_credential_service_id = _validate_llm_auth_ready(payload)
-        if prevalidated_credential_service_id and not str(payload.get("credential_service_id") or "").strip():
-            payload = dict(payload)
-            payload["credential_service_id"] = prevalidated_credential_service_id
+        _validate_llm_services_auth_ready(payload)
         gateway_skin = _validate_gateway_skin(str(payload.get("gateway_skin") or ""))
         tls_config = _final_tls_config(payload)
         listener_port = _final_listener_port(payload)
@@ -1327,14 +1546,19 @@ def finalize_install(payload: Dict[str, Any]) -> Dict[str, Any]:
         llm_service_id, summarizer_service_id, credential_service_id = _install_llm_and_summarizer(payload)
         main_instance_id = _deploy_main_flow(final_gateway_service_id, tls_config, auth_config, listener_port)
         _start_main_flow_executor(main_instance_id)
-        first_conversation_id = _create_first_conversation(admin_user, llm_service_id)
+        first_conversation_id = _create_first_conversation(
+            admin_user,
+            payload,
+            llm_service_id,
+            [spec["service_id"] for spec in llm_specs],
+        )
         smoke_checks = _run_install_smoke_checks(
             final_gateway_key=new_key,
             admin_user=admin_user,
             llm_service_id=llm_service_id,
             summarizer_service_id=summarizer_service_id,
             credential_service_id=credential_service_id,
-            provider=str(payload.get("llm_provider") or ""),
+            provider=primary_provider,
             main_instance_id=main_instance_id,
             first_conversation_id=first_conversation_id,
             auth_config=auth_config,
@@ -1343,8 +1567,7 @@ def finalize_install(payload: Dict[str, Any]) -> Dict[str, Any]:
         if runtime_artifacts_created or first_conversation_id:
             _rollback_failed_finalization(
                 llm_service_id=llm_service_id,
-                llm_scope=llm_scope,
-                summarizer_scope=summarizer_scope,
+                service_refs=rollback_refs,
                 admin_user=admin_user,
                 first_conversation_id=first_conversation_id,
             )
@@ -1402,18 +1625,27 @@ def finalize_install(payload: Dict[str, Any]) -> Dict[str, Any]:
     }
     draft["llm_services"] = {
         "primary": llm_service_id,
-        "scope": llm_scope,
+        "services": [
+            {
+                "service_id": spec["service_id"],
+                "scope": spec["scope"],
+                "provider": (spec.get("config") or {}).get("provider", ""),
+                "credential_service_id": (spec.get("config") or {}).get("credential_service_id", ""),
+                "credential_pool_scope": spec.get("credential_scope", ""),
+            }
+            for spec in llm_specs
+        ],
         "credential_service_id": credential_service_id,
-        "credential_pool_scope": credential_scope if credential_service_id else "",
     }
     draft["summarizer_service"] = {
         "service_id": summarizer_service_id,
-        "scope": summarizer_scope,
+        "scope": summarizer_plan["scope"],
+        "llm_service": summarizer_plan["config"].get("llm_service", ""),
     }
     draft["flows"] = {"main_instance_id": main_instance_id}
     draft["conversation"] = {
         "conversation_id": first_conversation_id,
-        "agent": FIRST_RUN_AGENT,
+        **_first_conversation_spec(payload, llm_service_id),
     }
     draft["smoke_tests"] = smoke_checks
 

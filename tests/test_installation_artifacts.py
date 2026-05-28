@@ -412,6 +412,8 @@ def test_pawflow_installer_flow_template_exists():
     assert "private_gateway_skins" in ui_content
     assert "gateway_skin" in ui_content
     assert "new_gateway_key" in ui_content
+    assert "name=\"bootstrap_gateway_key\"" not in ui_content
+    assert "name=\"new_gateway_key\" type=\"password\"" in ui_content
     assert "admin_password" in ui_content
     assert "admin_password_confirm" in ui_content
     assert "Confirm admin password" in ui_content
@@ -438,12 +440,24 @@ def test_pawflow_installer_flow_template_exists():
     assert "add_oauth_provider" not in start_login
     assert "Each OAuth provider can only be added once" in ui_content
     assert "oauth_generic_authorize_url" in ui_content
-    assert "Final TLS mode" in ui_content
+    assert "Final TLS mode" not in ui_content
+    assert "ssl_mode" not in ui_content
+    assert "hasCert !== hasKey" in ui_content
+    assert "/app/certs/fullchain.pem" in ui_content
     assert "Agy / Antigravity" in ui_content
-    assert "blocking smoke checks" in ui_content
+    assert "blocking smoke checks" not in ui_content
+    assert "Smoke Tests" not in ui_content
     assert "antigravity-interactive" in ui_content
-    assert "Create login pool" in ui_content
+    assert "+ Add LLM service" in ui_content
+    assert "+ Add credential service" in ui_content
     assert "Login via server" in ui_content
+    assert "Paste credentials JSON" in ui_content
+    assert "First Conversation" in ui_content
+    assert "id=\"first_conversation_title\"" in ui_content
+    assert "id=\"add_first_agent\"" in ui_content
+    assert "buildFirstConversationPayload" in ui_content
+    assert "validateFirstConversation" in ui_content
+    assert "Agent params JSON" in ui_content
     assert "id=\"vnc_dialog\"" in ui_content
     assert "id=\"vnc_frame\"" in ui_content
     assert "showVncDialog" in ui_content

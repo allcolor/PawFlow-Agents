@@ -10,6 +10,7 @@ automatically restarted after a server restart.
 Hooks into DeploymentRegistry to track instance status (running/stopped).
 """
 
+import copy
 import json
 import logging
 import threading
@@ -60,6 +61,24 @@ def _apply_service_bindings(flow, service_overrides=None, service_configs=None):
             live = reg.get_live_instance("global", "", ref)
         if live is not None:
             flow.services[flow_service_id] = live
+
+
+def _merge_service_configs(flow_config, service_configs=None):
+    """Merge deployment-local service config into raw flow JSON before parse."""
+    if not service_configs:
+        return
+    services = flow_config.get("services")
+    if not isinstance(services, dict):
+        return
+    for service_id, config in service_configs.items():
+        if not isinstance(config, dict):
+            continue
+        service_def = services.get(service_id)
+        if not isinstance(service_def, dict):
+            continue
+        params = service_def.setdefault("parameters", {})
+        if isinstance(params, dict):
+            params.update(config)
 
 
 def _flow_source_dir(flow_path: str = "", flow_fqn: str = "",
@@ -314,7 +333,7 @@ class ExecutorRegistry:
                     raw = json.load(ff)
                 logger.info("[startup-timing] %s flow file load: %.1fms",
                             instance_id, (time.monotonic() - _t0) * 1000)
-            clean = {k: v for k, v in raw.items() if not k.startswith("_")}
+            clean = {k: copy.deepcopy(v) for k, v in raw.items() if not k.startswith("_")}
             source_dir = _flow_source_dir(
                 flow_path, flow_fqn, flow_scope,
                 owner, conversation_id)
@@ -325,6 +344,7 @@ class ExecutorRegistry:
                     **(clean.get("parameters") or {}),
                     **parameters,
                 }
+            _merge_service_configs(clean, service_configs)
             from engine.parser import FlowParser
             _t0 = time.monotonic()
             flow = FlowParser.parse(clean)

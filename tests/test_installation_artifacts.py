@@ -2,6 +2,7 @@ from pathlib import Path
 import json
 import os
 import subprocess
+from unittest.mock import MagicMock
 
 
 def test_server_dockerfile_supports_bootstrap_docker_builds():
@@ -296,6 +297,23 @@ def test_cli_bootstrap_failure_is_not_silently_ignored():
                 src.index("logger.info(\"Restoring deployed flows")]
     assert "logger.error" in block
     assert "raise" in block
+
+
+def test_startup_urls_match_install_phase():
+    from cli import _log_startup_urls
+
+    installing_logger = MagicMock()
+    _log_startup_urls(installing_logger, "localhost", 19990, False)
+    installing_message = installing_logger.info.call_args[0]
+    assert installing_message == ("  Install: %s/install", "https://localhost:19990")
+
+    installed_logger = MagicMock()
+    _log_startup_urls(installed_logger, "localhost", 19990, True)
+    installed_message = installed_logger.info.call_args[0]
+    assert installed_message == ("  Chat:    %s/chat", "https://localhost:19990")
+
+    src = Path("cli.py").read_text(encoding="utf-8")
+    assert "Admin:" not in src
 
 
 def test_python_package_metadata_includes_cli_and_relay_tools():

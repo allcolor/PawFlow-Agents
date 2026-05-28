@@ -223,6 +223,15 @@ def cmd_info(args):
 
 
 
+def _log_startup_urls(logger, host: str, port: int, install_complete: bool) -> None:
+    """Log only the URL that is valid for the current startup phase."""
+    base_url = f"https://{host}:{port}"
+    if install_complete:
+        logger.info("  Chat:    %s/chat", base_url)
+    else:
+        logger.info("  Install: %s/install", base_url)
+
+
 def cmd_start(args):
     """Start PawFlow server.
 
@@ -266,7 +275,7 @@ def cmd_start(args):
     register_all_tasks()
 
     try:
-        from core.install_bootstrap import ensure_install_bootstrap
+        from core.install_bootstrap import ensure_install_bootstrap, is_install_complete
         ensure_install_bootstrap(port=int(args.port))
     except Exception as _ib_err:
         logger.error("Install bootstrap setup failed: %s", _ib_err, exc_info=True)
@@ -278,8 +287,7 @@ def cmd_start(args):
     er.restore_from_disk()
     n = er.count()
     logger.info(f"PawFlow server ready — {n} flow(s) restored")
-    logger.info(f"  Chat:  http://{args.host}:{args.port}/chat")
-    logger.info(f"  Admin: http://{args.host}:{args.port}/admin")
+    _log_startup_urls(logger, args.host, int(args.port), is_install_complete())
 
     # Startup security report. In production mode
     # (PAWFLOW_ENV=production / PAWFLOW_PUBLIC_MODE=true) this raises

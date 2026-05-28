@@ -18,6 +18,11 @@ class TestExecutorRegistry(unittest.TestCase):
 
     def tearDown(self):
         ExecutorRegistry._instance = None
+        try:
+            from services.http_listener_service import _instances
+            _instances.clear()
+        except Exception:
+            pass
         # Clean up state file
         p = Path("continuous_state.json")
         if p.exists():
@@ -117,6 +122,38 @@ class TestExecutorRegistry(unittest.TestCase):
             assert ok is True
             assert executor is not None
             assert executor._flow.services["http_listener"].config.get("port") == "19990"
+
+    def test_restore_merges_service_configs_before_parse(self):
+        from engine.continuous_executor import ContinuousFlowExecutor
+        from tasks import register_all_tasks
+
+        register_all_tasks()
+        with tempfile.TemporaryDirectory() as td:
+            flow_path = Path(td) / "flow.json"
+            flow_path.write_text(json.dumps({
+                "id": "installer",
+                "name": "Installer",
+                "version": "1.0.0",
+                "services": {
+                    "http_listener": {
+                        "type": "httpListener",
+                        "parameters": {"host": "0.0.0.0", "port": 9090},
+                    },
+                },
+                "tasks": {},
+                "relations": [],
+            }), encoding="utf-8")
+
+            with patch.object(ContinuousFlowExecutor, "start", lambda self: None):
+                ok = self.registry._restore_instance(
+                    "installer", str(flow_path),
+                    service_configs={"http_listener": {"port": 19991}})
+
+            executor = self.registry.get("installer")
+            listener = executor._flow.services["http_listener"]
+            assert ok is True
+            assert listener.config.get("port") == 19991
+            assert listener.port == 19991
 
 
 if __name__ == "__main__":

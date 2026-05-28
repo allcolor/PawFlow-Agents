@@ -151,6 +151,19 @@ def test_cli_provider_pool_binds_user_slot_from_separate_sessions_source():
         assert '"/cc_sessions/" + _sd_parts[1]' not in src
 
 
+def test_cli_provider_pools_run_as_configured_pawflow_uid_gid():
+    for path in (
+        "core/claude_code_pool.py",
+        "core/codex_pool.py",
+        "core/gemini_pool.py",
+    ):
+        src = Path(path).read_text(encoding="utf-8")
+        assert 'self.run_uid = self._numeric_env("PAWFLOW_RUN_UID", "1000")' in src
+        assert 'self.run_gid = self._numeric_env("PAWFLOW_RUN_GID", "1000")' in src
+        assert 'f"{self.run_uid}:{self.run_gid}"' in src
+        assert '--reuid={self.run_uid} --regid={self.run_gid}' in src
+
+
 def test_server_stop_reaps_managed_relay_containers():
     src = Path("cli.py").read_text(encoding="utf-8")
     assert "normal `docker stop pawflow-server`" in src

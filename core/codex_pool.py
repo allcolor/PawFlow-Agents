@@ -156,6 +156,8 @@ class CodexPool:
             "PAWFLOW_CODEX_POOL_IDLE", "300"))
         self.cpu_limit = os.environ.get("PAWFLOW_CODEX_CPU", "2")
         self.memory_limit = os.environ.get("PAWFLOW_CODEX_MEM", "4g")
+        self.run_uid = self._numeric_env("PAWFLOW_RUN_UID", "1000")
+        self.run_gid = self._numeric_env("PAWFLOW_RUN_GID", "1000")
 
         # Kill orphan pool containers from previous PawFlow runs
         self._cleanup_orphans()
@@ -177,6 +179,11 @@ class CodexPool:
         self._sessions_host_path = translate_path(to_host_path(_raw_path))
 
     # ── Public API ─────────────────────────────────────────────────
+
+    @staticmethod
+    def _numeric_env(name: str, default: str) -> str:
+        value = os.environ.get(name, default).strip()
+        return value if value.isdigit() else default
 
     def acquire(self, workspace_mount_args: Optional[List[str]] = None) -> str:
         """Acquire a container for a new CC exec. Returns container name.
@@ -433,7 +440,7 @@ class CodexPool:
             f"cd {shlex.quote(_ns_workdir)} && "
             f"mkdir -p {shlex.quote(_ns_workdir + '/.codex')} && "
             f'printf "__PF_CODEX_PID=%s\\n" "$$" 1>&2 && '
-            f"exec setpriv --reuid=1000 --regid=1000 --clear-groups "
+            f"exec setpriv --reuid={self.run_uid} --regid={self.run_gid} --clear-groups "
             f"-- codex {_codex_quoted}"
         )
         exec_args.extend([
@@ -635,7 +642,7 @@ class CodexPool:
             # response (HTTP 200)".
             *_extra_add_hosts,
             # Run as non-root (Codex requirement)
-            "--user", "1000:1000",
+            "--user", f"{self.run_uid}:{self.run_gid}",
             # Force clean HOME/USER — PATH is set in docker exec, not here
             # (setting PATH here breaks the entrypoint command resolution)
             "-e", "HOME=/home/pawflow",

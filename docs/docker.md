@@ -39,7 +39,9 @@ should run on the host instead of in the server Docker container. Native mode
 still builds the CLI LLM and relay images.
 When `/var/run/docker.sock` is available on the host, the run script mounts it
 into the PawFlow container so PawFlow can spawn server-side workspace relay
-containers after installation.
+containers after installation. It also exports `PAWFLOW_HOST_APP_DIR` from the
+host checkout path so child CLI containers can bind-mount PawFlow's MCP bridge
+files from host-visible paths instead of container-only `/app/...` paths.
 
 The server image keeps repository and config defaults outside the mounted
 runtime directories. On container start, `docker/server-entrypoint.sh` seeds

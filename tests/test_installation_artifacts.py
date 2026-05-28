@@ -72,8 +72,11 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert "PAWFLOW_BOOTSTRAP_RESET" in run_src
     assert "PAWFLOW_RUN_UID" in run_src
     assert "PAWFLOW_RUN_GID" in run_src
+    assert "PAWFLOW_SOURCE_DIR" in run_src
     assert 'RUN_UID="$(id -u)"' in run_src
     assert 'RUN_GID="$(id -g)"' in run_src
+    assert 'PAWFLOW_HOST_APP_DIR="$SOURCE_DIR"' in run_src
+    assert 'PAWFLOW_APP_DIR="/app"' in run_src
     assert "BOOTSTRAP_GATEWAY_KEY" in run_src
     assert "BOOTSTRAP_RESET" in run_src
     assert "RoyBetty" in run_src

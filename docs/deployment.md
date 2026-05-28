@@ -122,10 +122,14 @@ docker run -d \
 
 | Variable | Required | Description |
 |----------|----------|-------------|
+| `PAWFLOW_HOST_APP_DIR` | Yes (server Docker with host docker.sock) | The host checkout path that maps to PawFlow's application tree. Used for CLI MCP bridge bind mounts. |
+| `PAWFLOW_APP_DIR` | No (default: `/app`) | The PawFlow application path inside the server container. |
+| `PAWFLOW_HOST_DATA_DIR` | Yes (server Docker with host docker.sock) | The host data path that maps to `PAWFLOW_DATA_DIR`. Used for CLI session and runtime-data mounts. |
+| `PAWFLOW_DATA_DIR` | No (default: `/app/data`) | The data path inside the PawFlow server container. |
 | `PAWFLOW_HOST_WORKDIR` | Yes (DinD) | The **host** path that maps to the PawFlow container's workdir. Used for child container volume mounts. |
 | `PAWFLOW_WORKDIR` | No (default: `/workspace`) | The path inside the PawFlow container where the workdir is mounted. |
 
-**Why:** When PawFlow spawns a child container (Claude Code, relay), it passes `-v {path}:/workspace` to Docker. In DinD, PawFlow sees `/workspace/data` but the Docker daemon (running on the host) needs the actual host path `/path/to/data`. `PAWFLOW_HOST_WORKDIR` enables this translation.
+**Why:** When PawFlow spawns a child container (Claude Code, Codex, Gemini, relay), it passes host bind mounts to Docker. In DinD, PawFlow sees paths such as `/app/tools/mcp_bridge.py` and `/app/data/runtime`, but the Docker daemon running on the host needs the actual host paths. The `PAWFLOW_HOST_*` variables enable this translation.
 
 ### Volume mount translation example
 

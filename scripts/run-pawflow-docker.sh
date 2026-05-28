@@ -14,6 +14,7 @@
 #   PAWFLOW_EXTRA_ARGS  Extra args appended to `python cli.py start`
 #   PAWFLOW_BOOTSTRAP_RESET Reset first-run installer state before startup
 #   PAWFLOW_RUN_UID/GID Host uid/gid used by the container process (default: current user)
+#   PAWFLOW_SOURCE_DIR   Host checkout path used for CLI bridge bind mounts (default: script parent)
 #
 # The first PawFlow bootstrap gateway key is RoyBetty. The installer wizard
 # must force the user to replace it before finalization.
@@ -31,6 +32,7 @@ BOOTSTRAP_GATEWAY_KEY="$(printenv PAWFLOW_BOOTSTRAP_GATEWAY_KEY || true)"
 BOOTSTRAP_RESET="$(printenv PAWFLOW_BOOTSTRAP_RESET || true)"
 RUN_UID="$(printenv PAWFLOW_RUN_UID || true)"
 RUN_GID="$(printenv PAWFLOW_RUN_GID || true)"
+SOURCE_DIR="$(printenv PAWFLOW_SOURCE_DIR || true)"
 if [[ -z "$IMAGE" ]]; then IMAGE="ghcr.io/allcolor/pawflow:latest"; fi
 if [[ -z "$PAWFLOW_HOME" ]]; then PAWFLOW_HOME="$HOME/pawflow"; fi
 if [[ -z "$CONTAINER" ]]; then CONTAINER="pawflow-server"; fi
@@ -44,6 +46,7 @@ else
 fi
 if [[ -z "$RUN_UID" ]]; then RUN_UID="$(id -u)"; fi
 if [[ -z "$RUN_GID" ]]; then RUN_GID="$(id -g)"; fi
+if [[ -z "$SOURCE_DIR" ]]; then SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"; fi
 DOCKER_ARGS=()
 
 while [[ $# -gt 0 ]]; do
@@ -133,6 +136,8 @@ docker run -d \
   -v "$PAWFLOW_HOME/config:/app/config" \
   -v "$PAWFLOW_HOME/certs:/app/certs" \
   -v "$PAWFLOW_HOME/logs:/app/logs" \
+  -e PAWFLOW_APP_DIR="/app" \
+  -e PAWFLOW_HOST_APP_DIR="$SOURCE_DIR" \
   -e PAWFLOW_DATA_DIR="/app/data" \
   -e PAWFLOW_HOST_DATA_DIR="$PAWFLOW_HOME/data" \
   -e PAWFLOW_RUN_UID="$RUN_UID" \

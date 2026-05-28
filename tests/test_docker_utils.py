@@ -13,14 +13,30 @@ def test_to_host_path_translates_pawflow_data_dir(monkeypatch):
 def test_to_host_path_data_dir_takes_precedence_over_workspace(monkeypatch):
     monkeypatch.setenv("PAWFLOW_DATA_DIR", "/app/data")
     monkeypatch.setenv("PAWFLOW_HOST_DATA_DIR", "/srv/pawflow/data")
+    monkeypatch.setenv("PAWFLOW_APP_DIR", "/app")
+    monkeypatch.setenv("PAWFLOW_HOST_APP_DIR", "/opt/PawFlow")
     monkeypatch.setenv("PAWFLOW_WORKDIR", "/app")
     monkeypatch.setenv("PAWFLOW_HOST_WORKDIR", "/srv/pawflow/app")
 
     assert to_host_path("/app/data/runtime") == "/srv/pawflow/data/runtime"
 
 
+def test_to_host_path_translates_pawflow_app_dir_for_cli_dev_mounts(monkeypatch):
+    monkeypatch.delenv("PAWFLOW_HOST_DATA_DIR", raising=False)
+    monkeypatch.setenv("PAWFLOW_APP_DIR", "/app")
+    monkeypatch.setenv("PAWFLOW_HOST_APP_DIR", "/home/pawflow/PawFlow")
+
+    assert to_host_path(
+        "/app/tools/mcp_bridge.py"
+    ) == "/home/pawflow/PawFlow/tools/mcp_bridge.py"
+    assert to_host_path(
+        "/app/pawflow_relay"
+    ) == "/home/pawflow/PawFlow/pawflow_relay"
+
+
 def test_to_host_path_preserves_existing_workspace_translation(monkeypatch):
     monkeypatch.delenv("PAWFLOW_HOST_DATA_DIR", raising=False)
+    monkeypatch.delenv("PAWFLOW_HOST_APP_DIR", raising=False)
     monkeypatch.setenv("PAWFLOW_WORKDIR", "/workspace")
     monkeypatch.setenv("PAWFLOW_HOST_WORKDIR", "/home/me/project")
 

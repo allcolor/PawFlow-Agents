@@ -67,8 +67,9 @@ def detect_exec_mode() -> str:
 def to_host_path(container_path: str) -> str:
     """Convert a container path to the equivalent host path for volume mounts.
 
-    In Docker-in-Docker, PawFlow sees /workspace but the Docker daemon
-    needs the original host path. Set PAWFLOW_HOST_WORKDIR to enable.
+    In Docker-in-Docker, PawFlow sees container paths but the Docker daemon
+    needs original host paths. Set PAWFLOW_HOST_APP_DIR / PAWFLOW_APP_DIR for
+    PawFlow's own application tree and PAWFLOW_HOST_WORKDIR for user workspaces.
     Runtime data mounted at PAWFLOW_DATA_DIR is translated with
     PAWFLOW_HOST_DATA_DIR so child CLI containers see the same session files
     the PawFlow server just wrote.
@@ -93,6 +94,13 @@ def to_host_path(container_path: str) -> str:
     if host_data_dir:
         data_dir = os.environ.get("PAWFLOW_DATA_DIR", "/app/data")
         translated = _translate_with_root(data_dir, host_data_dir)
+        if translated:
+            return translated
+
+    host_app_dir = os.environ.get("PAWFLOW_HOST_APP_DIR", "").strip()
+    if host_app_dir:
+        app_dir = os.environ.get("PAWFLOW_APP_DIR", "/app")
+        translated = _translate_with_root(app_dir, host_app_dir)
         if translated:
             return translated
 

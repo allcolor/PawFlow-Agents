@@ -32,7 +32,8 @@ def vnc_ws_proxy(client_sock, path_params: dict, meta: dict):
         return
 
     from core.capability_routes import verify_route_ws
-    claims, err = verify_route_ws(meta or {}, "vnc", session_id, token)
+    claims, err = verify_route_ws(
+        meta or {}, "vnc", session_id, token, allow_bearer_only=True)
     if err is not None:
         try:
             client_sock.sendall(err)
@@ -344,7 +345,7 @@ def vnc_http_proxy(pending_req):
 
     from core.capability_routes import verify_route_request
     claims, err = verify_route_request(
-        pending_req, "vnc", session_id, token)
+        pending_req, "vnc", session_id, token, allow_bearer_only=True)
     if err is not None:
         pending_req.complete(
             err["status"], err["headers"], err["body"].encode("utf-8"))

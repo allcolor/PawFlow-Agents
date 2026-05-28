@@ -74,6 +74,7 @@ def verify_route_request(
     token: str,
     *,
     conversation_id: Optional[str] = None,
+    allow_bearer_only: bool = False,
 ) -> Tuple[Optional[_ca.CapabilityClaims], Optional[dict]]:
     """Check a capability token attached to an HTTP `PendingRequest`.
 
@@ -93,11 +94,11 @@ def verify_route_request(
     scope (`""`) is accepted from any conv, by design.
     """
     auth_user = getattr(req, "auth_user_id", "") or ""
-    if not auth_user:
+    if not auth_user and not allow_bearer_only:
         return None, _http_response(401)
     remote = getattr(req, "remote_addr", "") or ""
     return _verify_or_403(
-        token, resource_type, resource_id, auth_user, remote,
+        token, resource_type, resource_id, auth_user or None, remote,
         conversation_id=conversation_id)
 
 
@@ -124,6 +125,7 @@ def verify_route_ws(
     token: str,
     *,
     conversation_id: Optional[str] = None,
+    allow_bearer_only: bool = False,
 ) -> Tuple[Optional[_ca.CapabilityClaims], Optional[bytes]]:
     """WebSocket variant. `meta` is the dict the HTTP listener passes
     to ws_handler (already carries `auth_user_id` etc.). Returns
@@ -138,11 +140,11 @@ def verify_route_ws(
       1011 — Internal Error (rate limited / unknown)
     """
     auth_user = (meta or {}).get("auth_user_id", "") or ""
-    if not auth_user:
+    if not auth_user and not allow_bearer_only:
         return None, _ws_close_frame(1008, "unauthenticated")
     remote = (meta or {}).get("remote_addr", "") or ""
     claims, response = _verify_or_403(
-        token, resource_type, resource_id, auth_user, remote,
+        token, resource_type, resource_id, auth_user or None, remote,
         conversation_id=conversation_id)
     if claims is not None:
         return claims, None
@@ -158,7 +160,7 @@ def _verify_or_403(
     token: str,
     resource_type: str,
     resource_id: str,
-    auth_user: str,
+    auth_user: Optional[str],
     remote_ip: str,
     *,
     conversation_id: Optional[str] = None,

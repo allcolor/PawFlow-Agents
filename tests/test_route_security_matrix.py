@@ -60,6 +60,15 @@ def test_unauthenticated_request_yields_401(cap_db):
     assert err and err["status"] == 401
 
 
+def test_bearer_only_request_accepts_bound_capability(cap_db):
+    tok = cr.mint_route_token("vnc", "sess1", "install-bootstrap")
+    req = _FakePendingReq(remote_addr="10.0.0.1")
+    claims, err = cr.verify_route_request(
+        req, "vnc", "sess1", tok, allow_bearer_only=True)
+    assert err is None
+    assert claims and claims.user_id == "install-bootstrap"
+
+
 def test_owner_request_succeeds(cap_db):
     tok = cr.mint_route_token("vnc", "sess1", "alice")
     req = _FakePendingReq(auth_user_id="alice", remote_addr="10.0.0.1")

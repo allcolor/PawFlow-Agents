@@ -397,6 +397,10 @@ def test_pawflow_installer_flow_template_exists():
     assert "antigravity-interactive" in ui_content
     assert "Create login pool" in ui_content
     assert "Login via server" in ui_content
+    assert "id=\"vnc_dialog\"" in ui_content
+    assert "id=\"vnc_frame\"" in ui_content
+    assert "showVncDialog" in ui_content
+    assert "window.open" not in ui_content
     assert "codex_appserver_llm_service" in ui_content
     assert "window.location.href='/chat'" in ui_content
 
@@ -406,6 +410,13 @@ def test_install_bootstrap_reset_is_implemented():
 
     assert "PAWFLOW_BOOTSTRAP_RESET" in src
     assert "INSTALL_STATE_FILE.unlink" in src
+
+
+def test_vnc_login_routes_skip_session_auth():
+    src = Path("tasks/ai/actions/service_flow.py").read_text(encoding="utf-8")
+
+    assert "ws_handler=vnc_ws_proxy, public=True" in src
+    assert "callback=vnc_http_proxy, public=True" in src
 
 
 def test_pawflow_agent_auth_routes_cover_login_forms():

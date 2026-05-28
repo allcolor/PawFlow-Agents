@@ -210,6 +210,9 @@ and global-secret files after removing runtime artifacts it created.
      providers when the user supplies an API key instead of OAuth login
    - relay login is not available during first install because no user relay
      exists yet; only server-side login and copy/paste login flows are valid
+   - server-side login opens noVNC inside the installer dialog after the
+     login desktop is ready; it must not open a separate browser tab or depend
+     on the final AuthGateway session
    - assign this explicit service to the starter conversation agent
 
 5. Summarizer service

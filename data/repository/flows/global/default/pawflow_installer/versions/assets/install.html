@@ -406,7 +406,7 @@ function handleOauthChange(event) {
     renderOauthProviders();
   }
 }
-function updateLoginCliVisibility() {
+function validate() {
   if (step === 0 && !validateAdminPassword()) return false;
   if (step === 1 && !validateOauthProviders()) return false;
   if (step === 2) {

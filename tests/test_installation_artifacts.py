@@ -400,6 +400,7 @@ def test_pawflow_installer_flow_template_exists():
     assert "oauthProviderSpecs" in ui_content
     assert "oauthRows" in ui_content
     assert "validateOauthProviders" in ui_content
+    assert "function validate()" in ui_content
     assert "Each OAuth provider can only be added once" in ui_content
     assert "oauth_generic_authorize_url" in ui_content
     assert "Final TLS mode" in ui_content

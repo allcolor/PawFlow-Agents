@@ -26,7 +26,7 @@ Prerequisites to check first:
 1. Detect OS and shell.
 2. Verify `docker` exists.
 3. Verify Docker daemon is reachable with `docker info`.
-4. Verify the selected port is available. Default port: 9090.
+4. Verify the selected port is available. Default port: 19990.
 5. Verify internet access to GitHub and the Docker registry.
 6. Prefer running `bash scripts/doctor-pawflow.sh` when this repository is available; follow its OS-specific remediation instructions.
 7. On Windows, run `powershell -ExecutionPolicy Bypass -File scripts/doctor-pawflow.ps1` as a host prerequisite check. Docker Desktop Linux containers are required. WSL2 integration is required only when installing from WSL.
@@ -56,7 +56,7 @@ After starting:
    docker logs -f pawflow-server
 2. Wait until PawFlow reports that the web server is listening.
 3. Open:
-   https://localhost:9090
+   https://localhost:19990
    The first run uses a self-signed bootstrap certificate; browser trust warnings are expected until the wizard configures final certificates.
 4. Use the initial Private Gateway bootstrap key:
    RoyBetty

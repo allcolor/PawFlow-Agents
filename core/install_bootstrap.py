@@ -199,7 +199,7 @@ def _final_listener_port(payload: Dict[str, Any]) -> int:
         except Exception:
             logger.warning("Failed to read installer listener port; using default", exc_info=True)
     if raw_port in {None, ""}:
-        raw_port = 9090
+        raw_port = 19990
     try:
         port = int(raw_port)
     except (TypeError, ValueError) as exc:
@@ -1669,7 +1669,7 @@ def finalize_install(payload: Dict[str, Any]) -> Dict[str, Any]:
     return get_install_status()
 
 
-def ensure_install_bootstrap(port: int = 9090) -> bool:
+def ensure_install_bootstrap(port: int = 19990) -> bool:
     """Deploy the installer flow for a fresh server data volume.
 
     Returns True when the installer deployment was created or refreshed.

@@ -30,7 +30,7 @@ Open the `pawflow-vscode` folder in VS Code and press `F5` to launch an Extensio
 
 | Setting | Purpose |
 |---|---|
-| `pawflow.serverUrl` | PawFlow server URL, default `http://localhost:9090`. |
+| `pawflow.serverUrl` | PawFlow server URL, default `http://localhost:19990`. |
 | `pawflow.pythonPath` | Optional Python interpreter path for Python-backed helper commands. |
 
 ## Shared Runtime

@@ -8,7 +8,7 @@ PawCode is the terminal client for PawFlow. It connects to the same backend and 
 python -m pawflow_cli --dir .
 
 # Or with an explicit server
-PAWFLOW_SERVER=http://localhost:9090 python -m pawflow_cli --dir .
+PAWFLOW_SERVER=http://localhost:19990 python -m pawflow_cli --dir .
 ```
 
 PawCode opens the browser for OAuth login when needed, then connects as a conversation client. Start filesystem access separately with `pawflow-relay` or from the webchat resource panel.

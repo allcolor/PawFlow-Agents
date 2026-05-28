@@ -40,9 +40,9 @@ cd PawFlow-Agents
 pip install -r requirements.txt
 
 # Start the server
-python cli.py start --host 0.0.0.0 --port 9090
+python cli.py start --host 0.0.0.0 --port 19990
 
-# Open the web chat at http://localhost:9090/chat
+# Open the web chat at http://localhost:19990/chat
 ```
 
 ### With Docker
@@ -53,7 +53,7 @@ cd PawFlow-Agents
 
 bash scripts/doctor-pawflow.sh
 bash scripts/install-pawflow.sh
-# Installer available at https://localhost:9090/install
+# Installer available at https://localhost:19990/install
 ```
 
 The Docker installer creates persistent data under `~/pawflow`, starts a
@@ -69,7 +69,7 @@ A drop-in replacement for Claude Code that talks to your PawFlow server:
 
 ```bash
 # Interactive mode
-pawcode --server http://localhost:9090
+pawcode --server http://localhost:19990
 
 # Stream-JSON mode (Claude Code compatible)
 echo '{"type":"user","message":{"role":"user","content":"hello"}}' | \

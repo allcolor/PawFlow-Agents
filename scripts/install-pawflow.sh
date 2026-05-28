@@ -9,7 +9,7 @@
 #   bash scripts/install-pawflow.sh --version 1.0.0
 #   bash scripts/install-pawflow.sh --from-source --version 1.0.0
 #   bash scripts/install-pawflow.sh --native
-#   bash scripts/install-pawflow.sh --dir ~/pawflow-src --port 9090
+#   bash scripts/install-pawflow.sh --dir ~/pawflow-src --port 19990
 #   bash scripts/install-pawflow.sh --pull-server --image ghcr.io/allcolor/pawflow:latest
 
 set -euo pipefail
@@ -32,7 +32,7 @@ VENV_DIR="$(printenv PAWFLOW_VENV_DIR || true)"
 if [[ -z "$IMAGE_REPO" ]]; then IMAGE_REPO="ghcr.io/allcolor/pawflow"; fi
 if [[ -z "$REPO_URL" ]]; then REPO_URL="https://github.com/allcolor/PawFlow-Agents.git"; fi
 if [[ -z "$INSTALL_DIR" ]]; then INSTALL_DIR="$HOME/pawflow-src"; fi
-if [[ -z "$PORT" ]]; then PORT="9090"; fi
+if [[ -z "$PORT" ]]; then PORT="19990"; fi
 if [[ -n "$HOST" ]]; then HOST_SET=1; fi
 if [[ -z "$HOST" ]]; then HOST="0.0.0.0"; fi
 if [[ -z "$PAWFLOW_HOME" ]]; then PAWFLOW_HOME="$HOME/pawflow"; fi
@@ -71,7 +71,7 @@ Options:
   --image-repo REPO  Server image repository when --image is not set (default: ghcr.io/allcolor/pawflow).
   --repo URL         Git repository to clone when the script is not run from a checkout.
   --dir PATH         Source checkout directory for cloned installs.
-  --port PORT        Host/server port (default: 9090).
+  --port PORT        Host/server port (default: 19990).
   --host HOST        Server bind host. Container default is 0.0.0.0; native default is 127.0.0.1.
   --home PATH        Persistent PawFlow home (default: ~/pawflow).
   --platform VALUE   Docker build platform, for example linux/amd64.

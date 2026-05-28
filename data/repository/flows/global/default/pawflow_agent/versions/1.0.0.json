@@ -8,7 +8,7 @@
     "oauth_provider": "google",
     "oauth_client_id": "",
     "oauth_client_secret": "",
-    "oauth_redirect_uri": "http://localhost:9090/auth/callback",
+    "oauth_redirect_uri": "http://localhost:19990/auth/callback",
     "oauth_default_role": "operator",
     "private_gateway_service_id": "",
     "poll_interval": 30,
@@ -22,7 +22,7 @@
       "type": "httpListener",
       "parameters": {
         "host": "0.0.0.0",
-        "port": 9090,
+        "port": 19990,
         "request_timeout": "${http_request_timeout}",
         "private_gateway_service_id": "${private_gateway_service_id}"
       }
@@ -183,7 +183,7 @@
         "timeout": 600,
         "conversation_store": true,
         "conversation_ttl": "${conversation_ttl}",
-        "file_base_url": "http://localhost:9090",
+        "file_base_url": "http://localhost:19990",
         "streaming": true
       }
     },

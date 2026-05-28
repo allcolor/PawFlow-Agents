@@ -235,7 +235,7 @@ def _log_startup_urls(logger, host: str, port: int, install_complete: bool) -> N
 def cmd_start(args):
     """Start PawFlow server.
 
-    The PawFlow server (HTTP :9090, chat, agents) runs in the main process.
+    The PawFlow server (HTTP :19990, chat, agents) runs in the main process.
     Admin GUI is served natively at /admin via the pawflow-admin flow.
     """
     import signal
@@ -695,7 +695,7 @@ def main():
     # start
     start_parser = subparsers.add_parser('start', help='Start PawFlow server')
     start_parser.add_argument('--host', default='localhost', help='Host (default: localhost)')
-    start_parser.add_argument('--port', type=int, default=9090, help='Port (default: 9090)')
+    start_parser.add_argument('--port', type=int, default=19990, help='Port (default: 19990)')
     start_parser.add_argument('--workspace-mount', choices=['off', 'ro', 'rw'], default=None,
                               help='Mount linked relay workspaces into CLI provider containers: off, ro, or rw. Overrides PAWFLOW_CLI_WORKSPACE_MOUNT.')
 

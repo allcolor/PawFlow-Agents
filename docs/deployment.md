@@ -69,7 +69,7 @@ PawFlow runs directly on the host. No containers.
 ### Start
 
 ```bash
-python cli.py start --host 0.0.0.0 --port 9090
+python cli.py start --host 0.0.0.0 --port 19990
 ```
 
 ### Claude Code
@@ -96,7 +96,7 @@ bash docker/claude-code/build.sh   # pawflow-claude-code:latest
 bash docker/relay-dev/build.sh     # pawflow-relay-dev:latest
 
 # Start PawFlow
-python cli.py start --host 0.0.0.0 --port 9090
+python cli.py start --host 0.0.0.0 --port 19990
 ```
 
 Enable containerization per service in the admin panel:
@@ -110,7 +110,7 @@ PawFlow itself runs in a container, with docker.sock mounted to spawn children.
 ```bash
 docker run -d \
   --name pawflow \
-  -p 9090:9090 \
+  -p 19990:19990 \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v /path/to/data:/workspace/data \
   -e PAWFLOW_HOST_WORKDIR=/path/to/data \
@@ -172,7 +172,7 @@ PawFlow runs as one container in a pod/task. Claude Code and relays run as **sid
 |----------|--------|-------------|
 | `PAWFLOW_EXEC_MODE` | PawFlow | Set to `sidecar` (auto-detected in K8s/ECS) |
 | `PAWFLOW_CLAUDE_SIDECAR_URL` | PawFlow | WebSocket URL of Claude Code sidecar (e.g., `ws://localhost:9092`) |
-| `PAWFLOW_TOOL_RELAY_URL` | Claude Code sidecar | Tool relay WebSocket URL on the main PawFlow listener (e.g., `ws://pawflow:9090/ws/tools/_tool_relay`) |
+| `PAWFLOW_TOOL_RELAY_URL` | Claude Code sidecar | Tool relay WebSocket URL on the main PawFlow listener (e.g., `ws://pawflow:19990/ws/tools/_tool_relay`) |
 | `PAWFLOW_TOOL_RELAY_TOKEN` | Claude Code sidecar | Auth token for tool relay |
 
 ### 3a. Kubernetes (EKS / GKE / AKS)
@@ -189,7 +189,7 @@ spec:
         - name: pawflow
           image: pawflow:latest
           ports:
-            - containerPort: 9090
+            - containerPort: 19990
           env:
             - name: PAWFLOW_EXEC_MODE
               value: sidecar
@@ -206,7 +206,7 @@ spec:
             - containerPort: 9092
           env:
             - name: PAWFLOW_TOOL_RELAY_URL
-              value: ws://localhost:9090/ws/tools/_tool_relay
+              value: ws://localhost:19990/ws/tools/_tool_relay
             - name: PAWFLOW_TOOL_RELAY_TOKEN
               valueFrom:
                 secretKeyRef:
@@ -222,7 +222,7 @@ spec:
             - python3
             - /opt/pawflow/pawflow_relay.py
             - --server
-            - ws://localhost:9090/ws/relay
+            - ws://localhost:19990/ws/relay
             - --token
             - $(RELAY_TOKEN)
             - --relay-id
@@ -249,7 +249,7 @@ spec:
     {
       "name": "pawflow",
       "image": "pawflow:latest",
-      "portMappings": [{"containerPort": 9090}],
+      "portMappings": [{"containerPort": 19990}],
       "environment": [
         {"name": "PAWFLOW_EXEC_MODE", "value": "sidecar"},
         {"name": "PAWFLOW_CLAUDE_SIDECAR_URL", "value": "ws://localhost:9092"}
@@ -261,7 +261,7 @@ spec:
       "image": "pawflow-claude-code:latest",
       "command": ["python3", "/opt/pawflow/claude_sidecar.py"],
       "environment": [
-        {"name": "PAWFLOW_TOOL_RELAY_URL", "value": "ws://localhost:9090/ws/tools/_tool_relay"}
+        {"name": "PAWFLOW_TOOL_RELAY_URL", "value": "ws://localhost:19990/ws/tools/_tool_relay"}
       ],
       "mountPoints": [{"sourceVolume": "shared-data", "containerPath": "/workspace/data"}]
     },
@@ -269,7 +269,7 @@ spec:
       "name": "relay",
       "image": "pawflow-relay-dev:latest",
       "command": ["python3", "/opt/pawflow/pawflow_relay.py",
-                   "--server", "ws://localhost:9090/ws/relay",
+                   "--server", "ws://localhost:19990/ws/relay",
                    "--dir", "/workspace", "--allow-exec"],
       "mountPoints": [{"sourceVolume": "shared-data", "containerPath": "/workspace"}]
     }
@@ -285,7 +285,7 @@ services:
   pawflow:
     image: pawflow:latest
     ports:
-      - "9090:9090"
+      - "19990:19990"
     environment:
       PAWFLOW_EXEC_MODE: sidecar
       PAWFLOW_CLAUDE_SIDECAR_URL: ws://claude-code:9092
@@ -296,7 +296,7 @@ services:
     image: pawflow-claude-code:latest
     entrypoint: ["python3", "/opt/pawflow/claude_sidecar.py"]
     environment:
-      PAWFLOW_TOOL_RELAY_URL: ws://pawflow:9090/ws/tools/_tool_relay
+      PAWFLOW_TOOL_RELAY_URL: ws://pawflow:19990/ws/tools/_tool_relay
       PAWFLOW_TOOL_RELAY_TOKEN: ${TOOL_RELAY_TOKEN}
     volumes:
       - pawflow-data:/workspace/data
@@ -307,7 +307,7 @@ services:
       - python3
       - /opt/pawflow/pawflow_relay.py
       - --server
-      - ws://pawflow:9090/ws/relay
+      - ws://pawflow:19990/ws/relay
       - --token
       - ${RELAY_TOKEN}
       - --relay-id

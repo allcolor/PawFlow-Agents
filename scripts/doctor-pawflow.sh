@@ -4,7 +4,7 @@
 set -euo pipefail
 
 PORT="$(printenv PAWFLOW_PORT || true)"
-if [[ -z "$PORT" ]]; then PORT="9090"; fi
+if [[ -z "$PORT" ]]; then PORT="19990"; fi
 SOURCE_MODE=0
 REQUIRE_SOCKET=0
 FAILS=0
@@ -17,7 +17,7 @@ while [[ $# -gt 0 ]]; do
     --require-socket) REQUIRE_SOCKET=1; shift ;;
     --help|-h)
       cat <<'HELP'
-Usage: bash scripts/doctor-pawflow.sh [--port 9090] [--source] [--require-socket]
+Usage: bash scripts/doctor-pawflow.sh [--port 19990] [--source] [--require-socket]
 
 Checks host prerequisites for running PawFlow and its Docker runtimes.
 - --source         Also require git for building from source.

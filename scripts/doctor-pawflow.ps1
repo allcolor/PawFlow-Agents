@@ -4,7 +4,7 @@ Run from PowerShell before the Bash installer when using native Windows or WSL.
 #>
 
 param(
-    [int]$Port = 9090,
+    [int]$Port = 19990,
     [switch]$Source,
     [switch]$RequireSocket
 )

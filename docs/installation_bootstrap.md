@@ -62,7 +62,7 @@ local runtime image required before the first web installer opens:
 - `pawflow-relay-dev:latest` for full server relay workspaces
 
 After the builds, it creates persistent volumes under `~/pawflow`, starts
-`pawflow-server`, and publishes port `9090` on `127.0.0.1` by default. Set
+`pawflow-server`, and publishes port `19990` on `127.0.0.1` by default. Set
 `PAWFLOW_PUBLISH_HOST=0.0.0.0` only when the bootstrap endpoint must be reachable
 from another host and `PAWFLOW_BOOTSTRAP_GATEWAY_KEY` has been replaced with a
 strong temporary value. The Docker entrypoint seeds missing
@@ -85,7 +85,7 @@ Override values with flags or environment variables:
 
 ```bash
 bash scripts/install-pawflow.sh --version 1.0.0
-bash scripts/install-pawflow.sh --image ghcr.io/allcolor/pawflow:latest --port 9090
+bash scripts/install-pawflow.sh --image ghcr.io/allcolor/pawflow:latest --port 19990
 PAWFLOW_HOME=/srv/pawflow PAWFLOW_PORT=9443 bash scripts/run-pawflow-docker.sh
 ```
 

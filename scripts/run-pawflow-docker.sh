@@ -8,7 +8,7 @@
 #   PAWFLOW_IMAGE       Image to run (default: ghcr.io/allcolor/pawflow:latest)
 #   PAWFLOW_HOME        Persistent data directory (default: $HOME/pawflow)
 #   PAWFLOW_CONTAINER   Container name (default: pawflow-server)
-#   PAWFLOW_PORT        Host/server port (default: 9090)
+#   PAWFLOW_PORT        Host/server port (default: 19990)
 #   PAWFLOW_HOST        Bind host inside container (default: 0.0.0.0)
 #   PAWFLOW_PUBLISH_HOST Host interface for Docker port publishing (default: 127.0.0.1)
 #   PAWFLOW_EXTRA_ARGS  Extra args appended to `python cli.py start`
@@ -34,7 +34,7 @@ RUN_GID="$(printenv PAWFLOW_RUN_GID || true)"
 if [[ -z "$IMAGE" ]]; then IMAGE="ghcr.io/allcolor/pawflow:latest"; fi
 if [[ -z "$PAWFLOW_HOME" ]]; then PAWFLOW_HOME="$HOME/pawflow"; fi
 if [[ -z "$CONTAINER" ]]; then CONTAINER="pawflow-server"; fi
-if [[ -z "$PORT" ]]; then PORT="9090"; fi
+if [[ -z "$PORT" ]]; then PORT="19990"; fi
 if [[ -z "$HOST" ]]; then HOST="0.0.0.0"; fi
 if [[ -z "$PUBLISH_HOST" ]]; then PUBLISH_HOST="127.0.0.1"; fi
 if [[ -z "$BOOTSTRAP_GATEWAY_KEY" ]]; then

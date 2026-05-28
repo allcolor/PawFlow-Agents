@@ -102,7 +102,7 @@ _UNIQUE_RESOURCE_KEYS: Dict[str, tuple] = {
 # Required params with no default are NOT listed — if the user omits
 # them, _resource_key() returns None and the service will fail at connect.
 _UNIQUE_RESOURCE_DEFAULTS: Dict[str, Dict[str, str]] = {
-    "httpListener":        {"port": "9090"},
+    "httpListener":        {"port": "19990"},
 
     "distributedMapCache": {"redis_url": "redis://localhost:6379/0", "key_prefix": "pawflow:"},
     "fileTracking":        {"storage_path": "file_tracking.json"},

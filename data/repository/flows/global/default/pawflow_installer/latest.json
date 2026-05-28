@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "description": "First-run bootstrap wizard for a new PawFlow server. Configures gateway, auth, LLM services, summarizer, variables, secrets, CLI credential pools, and final flow deployment.",
   "parameters": {
-    "port": 9090,
+    "port": 19990,
     "bootstrap_gateway_key": "RoyBetty",
     "bootstrap_gateway_secret_ref": "privategateway.bootstrap",
     "private_gateway_service_id": "_bootstrap_private_gateway",

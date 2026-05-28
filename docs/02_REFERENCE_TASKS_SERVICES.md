@@ -688,7 +688,7 @@ scheduler.load_jobs()  # Restore jobs
 The current supported server entrypoint is the PawFlow listener/UI process:
 
 ```bash
-python cli.py start --host 0.0.0.0 --port 9090
+python cli.py start --host 0.0.0.0 --port 19990
 ```
 
 | Route | Description |
@@ -819,7 +819,7 @@ FROM python:3.12-slim
 WORKDIR /app
 COPY . .
 RUN pip install -r requirements.txt
-CMD ["python", "cli.py", "start", "--host", "0.0.0.0", "--port", "9090"]
+CMD ["python", "cli.py", "start", "--host", "0.0.0.0", "--port", "19990"]
 ```
 ```
 

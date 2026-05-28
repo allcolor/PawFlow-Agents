@@ -585,6 +585,8 @@ def test_server_relay_desktop_uses_container_ip_without_published_host():
     open_desktop = src[src.index('if action == "open_desktop"'):src.index('if action == "close_desktop"')]
 
     assert "def _get_server_relay_container_ip" in src
+    assert 'cfg.get("server_container_name")' in src
+    assert 'f"pawflow-relay-srv-{relay_id}"' in src
     assert "_server_relay_proxy_target(relay_id, 6080" in open_desktop
     assert "_server_relay_proxy_target(relay_id, 6180" in open_desktop
     assert "return container_ip, container_port" in src

@@ -2744,14 +2744,31 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         """Return the Docker-network IP for a managed server relay container."""
         import subprocess  # nosec B404
         from core.docker_utils import docker_cmd as _dkr_cmd
+        candidates = []
         try:
             from core.server_relay_manager import ServerRelayManager
             for entry in ServerRelayManager.get_instance().list_all():
                 if entry.get("relay_id") != relay_id:
                     continue
                 cname = entry.get("container_id") or entry.get("container_name") or ""
-                if not cname:
-                    continue
+                if cname:
+                    candidates.append(cname)
+        except Exception:
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+        try:
+            svc = _find_relay_svc(relay_id)
+            cfg = getattr(svc, "config", {}) if svc else {}
+            for cname in (
+                str(cfg.get("server_container_id") or ""),
+                str(cfg.get("server_container_name") or ""),
+                f"pawflow-relay-srv-{relay_id}",
+            ):
+                if cname and cname not in candidates:
+                    candidates.append(cname)
+        except Exception:
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+        for cname in candidates:
+            try:
                 r = subprocess.run(  # nosec B603
                     _dkr_cmd() + [
                         "inspect", "-f",
@@ -2759,10 +2776,10 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                         cname,
                     ],
                     capture_output=True, text=True, timeout=5)
-                if r.returncode == 0:
+                if r.returncode == 0 and r.stdout.strip():
                     return r.stdout.strip()
-        except Exception:
-            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+            except Exception:
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         return ""
 
     def _server_relay_proxy_target(relay_id, container_port):

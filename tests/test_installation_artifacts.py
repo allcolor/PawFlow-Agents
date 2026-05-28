@@ -26,7 +26,10 @@ def test_server_dockerfile_supports_bootstrap_docker_builds():
     entrypoint = Path("docker/server-entrypoint.sh").read_text(encoding="utf-8")
     assert "seed_missing_tree /app/default-data/repository /app/data/repository" in entrypoint
     assert "seed_missing_tree /app/default-config /app/config" in entrypoint
-    assert "chown -R pawflow:pawflow" in entrypoint
+    assert "configure_runtime_user" in entrypoint
+    assert "printenv PAWFLOW_RUN_UID" in entrypoint
+    assert "printenv PAWFLOW_RUN_GID" in entrypoint
+    assert "chown -R pawflow:\"$(id -gn pawflow)\"" in entrypoint
     assert "/var/run/docker.sock" in entrypoint
     assert "stat -c '%g' /var/run/docker.sock" in entrypoint
     assert "usermod -aG" in entrypoint
@@ -63,6 +66,10 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert 'PUBLISH_HOST="127.0.0.1"' in run_src
     assert "PAWFLOW_BOOTSTRAP_GATEWAY_KEY" in run_src
     assert "PAWFLOW_BOOTSTRAP_RESET" in run_src
+    assert "PAWFLOW_RUN_UID" in run_src
+    assert "PAWFLOW_RUN_GID" in run_src
+    assert 'RUN_UID="$(id -u)"' in run_src
+    assert 'RUN_GID="$(id -g)"' in run_src
     assert "BOOTSTRAP_GATEWAY_KEY" in run_src
     assert "BOOTSTRAP_RESET" in run_src
     assert "RoyBetty" in run_src

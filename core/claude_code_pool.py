@@ -435,8 +435,11 @@ class ClaudeCodePool:
             # can't become a session leader without forking); --wait makes
             # the setsid parent block for the child and propagate its exit
             # status so docker exec still sees the real return code.
-            # unshare -m: private mount namespace for the /cc_sessions bind.
-            "setsid", "--wait", "unshare", "-m", "--",
+            # --propagation unchanged: keep the mount namespace but skip
+            # util-linux's default attempt to make / recursively private.
+            # Some VPS/container hosts reject that root propagation change
+            # even when the later targeted /cc_sessions bind mount is allowed.
+            "setsid", "--wait", "unshare", "-m", "--propagation", "unchanged", "--",
             "bash", "-c", _shell_script,
         ])
 

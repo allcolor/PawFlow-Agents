@@ -115,6 +115,17 @@ def test_cli_provider_hostname_aliases_use_docker_add_host_targets():
         assert 'f"{_alias}:{_host_ip}"' not in src
 
 
+def test_cli_provider_unshare_keeps_root_propagation_unchanged():
+    for path in (
+        "core/claude_code_pool.py",
+        "core/codex_pool.py",
+        "core/gemini_pool.py",
+    ):
+        src = Path(path).read_text(encoding="utf-8")
+        assert '"unshare", "-m", "--propagation", "unchanged", "--"' in src
+        assert '"unshare", "-m", "--",' not in src
+
+
 def test_server_stop_reaps_managed_relay_containers():
     src = Path("cli.py").read_text(encoding="utf-8")
     assert "normal `docker stop pawflow-server`" in src

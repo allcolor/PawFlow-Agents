@@ -394,13 +394,16 @@ def test_pawflow_installer_flow_template_exists():
     assert "credential_pool_scope" in ui_content
     assert "summarizer_service_scope" in ui_content
     assert "External providers" in ui_content
+    assert "id=\"auth_providers\"" in ui_content
+    assert "readonly placeholder=\"No external provider selected\"" in ui_content
+    assert "id=\"add_oauth_provider\"" in ui_content
+    assert "oauthProviderSpecs" in ui_content
+    assert "oauthRows" in ui_content
+    assert "validateOauthProviders" in ui_content
+    assert "Each OAuth provider can only be added once" in ui_content
+    assert "oauth_generic_authorize_url" in ui_content
     assert "Final TLS mode" in ui_content
     assert "Agy / Antigravity" in ui_content
-    assert "Admin Facebook email/id" in ui_content
-    assert "Admin Amazon email/id" in ui_content
-    assert "Admin Telegram id" in ui_content
-    assert "Generic provider name" in ui_content
-    assert "oauth_generic_authorize_url" in ui_content
     assert "blocking smoke checks" in ui_content
     assert "antigravity-interactive" in ui_content
     assert "Create login pool" in ui_content

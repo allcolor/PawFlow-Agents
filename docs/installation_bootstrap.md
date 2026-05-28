@@ -183,6 +183,10 @@ and global-secret files after removing runtime artifacts it created.
    - internal auth
    - optional multi-provider OAuth configuration such as Google, GitHub,
      Microsoft, X, Facebook, Amazon, Telegram, or a generic OAuth/OIDC provider
+   - add providers one at a time with the `+ Provider` control; the wizard
+     shows only the fields required for the selected provider type
+   - the provider list is generated from configured provider rows, is not
+     directly editable, and rejects duplicate provider types
    - optional admin pre-linking by explicit provider email or provider user ID
 
 3. Private Gateway

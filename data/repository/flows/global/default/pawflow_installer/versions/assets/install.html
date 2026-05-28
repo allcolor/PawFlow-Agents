@@ -40,133 +40,25 @@
 <div class="formgrid">
 <div>
 <label>External providers</label>
-<input name="auth_providers" autocomplete="off" placeholder="google,github,microsoft,x,facebook,amazon,telegram,generic">
+<input name="auth_providers" id="auth_providers" autocomplete="off" readonly placeholder="No external provider selected">
 </div>
 <div>
 <label>Session TTL seconds</label>
 <input name="auth_session_ttl" type="number" min="300" value="86400">
 </div>
-<div>
-<label>Google client id</label>
-<input name="oauth_google_client_id" autocomplete="off" placeholder="Optional">
 </div>
-<div>
-<label>Google client secret</label>
-<input name="oauth_google_client_secret" type="password" autocomplete="off" placeholder="Optional">
+<div class="actions" style="justify-content:flex-start">
+<button type="button" class="secondary" id="add_oauth_provider">+ Provider</button>
 </div>
-<div>
-<label>Admin Google email/id</label>
-<input name="admin_google_email" autocomplete="off" placeholder="Optional admin link">
-</div>
-<div>
-<label>GitHub client id</label>
-<input name="oauth_github_client_id" autocomplete="off" placeholder="Optional">
-</div>
-<div>
-<label>GitHub client secret</label>
-<input name="oauth_github_client_secret" type="password" autocomplete="off" placeholder="Optional">
-</div>
-<div>
-<label>Admin GitHub email/id</label>
-<input name="admin_github_email" autocomplete="off" placeholder="Optional admin link">
-</div>
-<div>
-<label>Microsoft client id</label>
-<input name="oauth_microsoft_client_id" autocomplete="off" placeholder="Optional">
-</div>
-<div>
-<label>Microsoft client secret</label>
-<input name="oauth_microsoft_client_secret" type="password" autocomplete="off" placeholder="Optional">
-</div>
-<div>
-<label>Admin Microsoft email/id</label>
-<input name="admin_microsoft_email" autocomplete="off" placeholder="Optional admin link">
-</div>
-<div>
-<label>X client id</label>
-<input name="oauth_x_client_id" autocomplete="off" placeholder="Optional">
-</div>
-<div>
-<label>X client secret</label>
-<input name="oauth_x_client_secret" type="password" autocomplete="off" placeholder="Optional">
-</div>
-<div>
-<label>Admin X id</label>
-<input name="admin_x_id" autocomplete="off" placeholder="Optional admin link">
-</div>
-<div>
-<label>Facebook client id</label>
-<input name="oauth_facebook_client_id" autocomplete="off" placeholder="Optional">
-</div>
-<div>
-<label>Facebook client secret</label>
-<input name="oauth_facebook_client_secret" type="password" autocomplete="off" placeholder="Optional">
-</div>
-<div>
-<label>Admin Facebook email/id</label>
-<input name="admin_facebook_email" autocomplete="off" placeholder="Optional admin link">
-</div>
-<div>
-<label>Amazon client id</label>
-<input name="oauth_amazon_client_id" autocomplete="off" placeholder="Optional">
-</div>
-<div>
-<label>Amazon client secret</label>
-<input name="oauth_amazon_client_secret" type="password" autocomplete="off" placeholder="Optional">
-</div>
-<div>
-<label>Admin Amazon email/id</label>
-<input name="admin_amazon_email" autocomplete="off" placeholder="Optional admin link">
-</div>
-<div>
-<label>Telegram bot token</label>
-<input name="oauth_telegram_bot_token" type="password" autocomplete="off" placeholder="Optional">
-</div>
-<div>
-<label>Telegram bot username</label>
-<input name="oauth_telegram_bot_username" autocomplete="off" placeholder="Optional">
-</div>
-<div>
-<label>Admin Telegram id</label>
-<input name="admin_telegram_id" autocomplete="off" placeholder="Optional admin link">
-</div>
-<div>
-<label>Generic provider name</label>
-<input name="oauth_generic_name" autocomplete="off" placeholder="generic">
-</div>
-<div>
-<label>Generic display name</label>
-<input name="oauth_generic_display_name" autocomplete="off" placeholder="Optional">
-</div>
-<div>
-<label>Generic client id</label>
-<input name="oauth_generic_client_id" autocomplete="off" placeholder="Optional">
-</div>
-<div>
-<label>Generic client secret</label>
-<input name="oauth_generic_client_secret" type="password" autocomplete="off" placeholder="Optional">
-</div>
-<div>
-<label>Generic authorize URL</label>
-<input name="oauth_generic_authorize_url" autocomplete="off" placeholder="https://provider.example/oauth/authorize">
-</div>
-<div>
-<label>Generic token URL</label>
-<input name="oauth_generic_token_url" autocomplete="off" placeholder="https://provider.example/oauth/token">
-</div>
-<div>
-<label>Generic userinfo URL</label>
-<input name="oauth_generic_userinfo_url" autocomplete="off" placeholder="https://provider.example/oauth/userinfo">
-</div>
-<div>
-<label>Generic scope</label>
-<input name="oauth_generic_scope" autocomplete="off" placeholder="openid email profile">
-</div>
-<div>
-<label>Admin Generic email/id</label>
-<input name="admin_generic_email" autocomplete="off" placeholder="Optional admin link">
-</div>
-</div>
+<div id="oauth_provider_list"></div>
+<input type="hidden" name="oauth_google_client_id"><input type="hidden" name="oauth_google_client_secret"><input type="hidden" name="admin_google_email">
+<input type="hidden" name="oauth_github_client_id"><input type="hidden" name="oauth_github_client_secret"><input type="hidden" name="admin_github_email">
+<input type="hidden" name="oauth_microsoft_client_id"><input type="hidden" name="oauth_microsoft_client_secret"><input type="hidden" name="admin_microsoft_email">
+<input type="hidden" name="oauth_x_client_id"><input type="hidden" name="oauth_x_client_secret"><input type="hidden" name="admin_x_id">
+<input type="hidden" name="oauth_facebook_client_id"><input type="hidden" name="oauth_facebook_client_secret"><input type="hidden" name="admin_facebook_email">
+<input type="hidden" name="oauth_amazon_client_id"><input type="hidden" name="oauth_amazon_client_secret"><input type="hidden" name="admin_amazon_email">
+<input type="hidden" name="oauth_telegram_bot_token"><input type="hidden" name="oauth_telegram_bot_username"><input type="hidden" name="admin_telegram_id">
+<input type="hidden" name="oauth_generic_name"><input type="hidden" name="oauth_generic_display_name"><input type="hidden" name="oauth_generic_client_id"><input type="hidden" name="oauth_generic_client_secret"><input type="hidden" name="oauth_generic_authorize_url"><input type="hidden" name="oauth_generic_token_url"><input type="hidden" name="oauth_generic_userinfo_url"><input type="hidden" name="oauth_generic_scope"><input type="hidden" name="admin_generic_email">
 <p class="muted">Builtin auth is always enabled. Add one or more provider names and fill that provider's credentials. Admin link fields bind the first admin account to matching OAuth callbacks.</p>
 </section>
 <section class="screen" data-step="2">
@@ -412,8 +304,111 @@ function requireFields(list) {
   }
   return true;
 }
-function validate() {
+function validateOauthProviders() {
+  syncOauthHiddenFields();
+  const seen = new Set();
+  for (const row of oauthRows) {
+    if (!row.provider) {
+      err.textContent = 'Choose a provider type for each OAuth provider.';
+      return false;
+    }
+    if (seen.has(row.provider)) {
+      err.textContent = 'Each OAuth provider can only be added once.';
+      return false;
+    }
+    seen.add(row.provider);
+    const spec = oauthProviderSpecs[row.provider];
+    for (const f of spec.fields) {
+      const value = String(row.values[f.name] || '').trim();
+      if (f.required && !value) {
+        err.textContent = spec.label + ' requires ' + f.label + '.';
+        return false;
+      }
+    }
+  }
+  return true;
+}
+const oauthProviderSpecs = {
+  google: {label:'Google', fields:[{name:'oauth_google_client_id', label:'Client id', required:true}, {name:'oauth_google_client_secret', label:'Client secret', required:true, secret:true}, {name:'admin_google_email', label:'Admin email/id'}]},
+  github: {label:'GitHub', fields:[{name:'oauth_github_client_id', label:'Client id', required:true}, {name:'oauth_github_client_secret', label:'Client secret', required:true, secret:true}, {name:'admin_github_email', label:'Admin email/id'}]},
+  microsoft: {label:'Microsoft', fields:[{name:'oauth_microsoft_client_id', label:'Client id', required:true}, {name:'oauth_microsoft_client_secret', label:'Client secret', required:true, secret:true}, {name:'admin_microsoft_email', label:'Admin email/id'}]},
+  x: {label:'X', fields:[{name:'oauth_x_client_id', label:'Client id', required:true}, {name:'oauth_x_client_secret', label:'Client secret', required:true, secret:true}, {name:'admin_x_id', label:'Admin X id'}]},
+  facebook: {label:'Facebook', fields:[{name:'oauth_facebook_client_id', label:'Client id', required:true}, {name:'oauth_facebook_client_secret', label:'Client secret', required:true, secret:true}, {name:'admin_facebook_email', label:'Admin email/id'}]},
+  amazon: {label:'Amazon', fields:[{name:'oauth_amazon_client_id', label:'Client id', required:true}, {name:'oauth_amazon_client_secret', label:'Client secret', required:true, secret:true}, {name:'admin_amazon_email', label:'Admin email/id'}]},
+  telegram: {label:'Telegram', fields:[{name:'oauth_telegram_bot_token', label:'Bot token', required:true, secret:true}, {name:'oauth_telegram_bot_username', label:'Bot username', required:true}, {name:'admin_telegram_id', label:'Admin Telegram id'}]},
+  generic: {label:'Generic', fields:[{name:'oauth_generic_name', label:'Provider name', required:true}, {name:'oauth_generic_display_name', label:'Display name'}, {name:'oauth_generic_client_id', label:'Client id', required:true}, {name:'oauth_generic_client_secret', label:'Client secret', required:true, secret:true}, {name:'oauth_generic_authorize_url', label:'Authorize URL', required:true}, {name:'oauth_generic_token_url', label:'Token URL', required:true}, {name:'oauth_generic_userinfo_url', label:'Userinfo URL', required:true}, {name:'oauth_generic_scope', label:'Scope', required:true}, {name:'admin_generic_email', label:'Admin email/id'}]},
+};
+let oauthRows = [];
+function syncOauthHiddenFields() {
+  Object.values(oauthProviderSpecs).forEach(spec => spec.fields.forEach(f => { if (field(f.name)) field(f.name).value = ''; }));
+  const providers = [];
+  oauthRows.forEach(row => {
+    if (!row.provider) return;
+    providers.push(row.provider);
+    const spec = oauthProviderSpecs[row.provider];
+    spec.fields.forEach(f => { if (field(f.name)) field(f.name).value = row.values[f.name] || ''; });
+  });
+  field('auth_providers').value = providers.join(',');
+}
+function renderOauthProviders() {
+  syncOauthHiddenFields();
+  const list = document.getElementById('oauth_provider_list');
+  if (!oauthRows.length) { list.innerHTML = '<p class="muted">No external provider configured.</p>'; return; }
+  list.innerHTML = oauthRows.map((row, index) => {
+    const used = new Set(oauthRows.map((r, i) => i === index ? '' : r.provider).filter(Boolean));
+    const options = [''].concat(Object.keys(oauthProviderSpecs)).map(p => {
+      const disabled = p && used.has(p) ? ' disabled' : '';
+      const selected = p === row.provider ? ' selected' : '';
+      const label = p ? oauthProviderSpecs[p].label : 'Choose provider';
+      return '<option value="' + escapeHtml(p) + '"' + selected + disabled + '>' + escapeHtml(label) + '</option>';
+    }).join('');
+    const spec = oauthProviderSpecs[row.provider];
+    const fieldsHtml = spec ? '<div class="formgrid">' + spec.fields.map(f => {
+      const required = f.required ? ' required' : '';
+      const type = f.secret ? 'password' : 'text';
+      const val = row.values[f.name] || '';
+      return '<div><label>' + escapeHtml(f.label) + '</label><input data-oauth-field="' + escapeHtml(f.name) + '" data-oauth-index="' + index + '" type="' + type + '" autocomplete="off" value="' + escapeHtml(val) + '"' + required + '></div>';
+    }).join('') + '</div>' : '';
+    return '<div class="panel oauth-row" data-oauth-index="' + index + '"><div class="formgrid"><div><label>Provider type</label><select data-oauth-provider="' + index + '">' + options + '</select></div><div><label>&nbsp;</label><button type="button" class="secondary" data-oauth-remove="' + index + '">Remove</button></div></div>' + fieldsHtml + '</div>';
+  }).join('');
+}
+function addOauthProvider() {
+  if (oauthRows.length >= Object.keys(oauthProviderSpecs).length) { err.textContent = 'All OAuth providers are already added.'; return; }
+  oauthRows.push({provider:'', values:{}});
+  renderOauthProviders();
+}
+function handleOauthChange(event) {
+  const providerSelect = event.target.closest('[data-oauth-provider]');
+  const fieldInput = event.target.closest('[data-oauth-field]');
+  const removeButton = event.target.closest('[data-oauth-remove]');
+  if (providerSelect) {
+    const index = Number(providerSelect.dataset.oauthProvider);
+    const nextProvider = providerSelect.value;
+    if (nextProvider && oauthRows.some((r, i) => i !== index && r.provider === nextProvider)) {
+      err.textContent = 'Each OAuth provider can only be added once.';
+      providerSelect.value = oauthRows[index].provider || '';
+      return;
+    }
+    oauthRows[index] = {provider: nextProvider, values:{}};
+    err.textContent = '';
+    renderOauthProviders();
+    return;
+  }
+  if (fieldInput) {
+    const index = Number(fieldInput.dataset.oauthIndex);
+    oauthRows[index].values[fieldInput.dataset.oauthField] = fieldInput.value;
+    syncOauthHiddenFields();
+    return;
+  }
+  if (removeButton) {
+    oauthRows.splice(Number(removeButton.dataset.oauthRemove), 1);
+    err.textContent = '';
+    renderOauthProviders();
+  }
+}
+function updateLoginCliVisibility() {
   if (step === 0 && !validateAdminPassword()) return false;
+  if (step === 1 && !validateOauthProviders()) return false;
   if (step === 2) {
     if (!requireFields(['bootstrap_gateway_key','new_gateway_key','gateway_skin'])) return false;
     if (field('new_gateway_key').value === field('bootstrap_gateway_key').value || field('new_gateway_key').value === 'RoyBetty') {
@@ -500,7 +495,10 @@ async function startServerLogin() {
   const v = values();
   if (!v.credential_service_id) { err.textContent = 'Create a login pool first.'; return; }
   const r = await fetch('/install/api/llm-credential/server-login', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(v)});
-  const data = await r.json();
+document.getElementById('vnc_close').addEventListener('click', closeVncDialog);
+document.getElementById('add_oauth_provider').addEventListener('click', addOauthProvider);
+document.getElementById('oauth_provider_list').addEventListener('change', handleOauthChange);
+document.getElementById('oauth_provider_list').addEventListener('input', handleOauthChange);
   if (!r.ok || data.error) { err.textContent = data.error || 'Server login failed'; return; }
   err.textContent = '';
   activeServerLoginSession = data.session_id || '';

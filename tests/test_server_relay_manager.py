@@ -43,6 +43,17 @@ def test_server_workspace_allocates_runtime_path(monkeypatch, tmp_path):
     assert path == tmp_path / "data" / "runtime" / "relay" / "alice_example.com" / "conv_one"
 
 
+def test_server_relay_scope_runtime_paths(monkeypatch, tmp_path):
+    monkeypatch.setenv("PAWFLOW_DATA_DIR", str(tmp_path / "data"))
+
+    assert srm._relay_runtime_dir_for_scope("conv", "alice@example.com", "conv/one") == (
+        tmp_path / "data" / "runtime" / "relay" / "alice_example.com" / "conv_one")
+    assert srm._relay_runtime_dir_for_scope("user", "alice@example.com", "alice@example.com") == (
+        tmp_path / "data" / "runtime" / "relay" / "alice_example.com")
+    assert srm._relay_runtime_dir_for_scope("global", "alice@example.com", "") == (
+        tmp_path / "data" / "runtime" / "relay" / "global")
+
+
 def test_server_minimal_relay_uses_separate_runtime_subdir(monkeypatch, tmp_path):
     monkeypatch.setenv("PAWFLOW_DATA_DIR", str(tmp_path / "data"))
 

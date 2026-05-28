@@ -116,12 +116,38 @@ def _safe_path_part(value: str) -> str:
 
 
 def _relay_runtime_dir(user_id: str, conv_id: str, kind: str = _KIND_WORKSPACE) -> Path:
+    return _relay_runtime_dir_for_scope("conv", user_id, conv_id, kind)
+
+
+def _relay_runtime_dir_for_scope(
+    scope: str,
+    user_id: str,
+    scope_id: str,
+    kind: str = _KIND_WORKSPACE,
+) -> Path:
     kind = _validate_kind(kind)
     base = Path(os.environ.get("PAWFLOW_DATA_DIR") or "data") / "runtime" / "relay"
-    path = base / _safe_path_part(user_id or "global") / _safe_path_part(conv_id)
+    if scope == "global":
+        path = base / "global"
+    elif scope == "user":
+        path = base / _safe_path_part(scope_id or user_id)
+    else:
+        path = base / _safe_path_part(user_id or "global") / _safe_path_part(scope_id)
     if kind == _KIND_MINIMAL:
         path = path / "minimal"
     return path
+
+
+def _relay_container_name(relay_id: str, kind: str = _KIND_WORKSPACE) -> str:
+    kind = _validate_kind(kind)
+    prefix = "pawflow-relay-min" if kind == _KIND_MINIMAL else "pawflow-relay-srv"
+    return f"{prefix}-{_safe_path_part(relay_id)[:48]}"
+
+
+def _relay_volume_name(relay_id: str, kind: str = _KIND_WORKSPACE) -> str:
+    kind = _validate_kind(kind)
+    prefix = "pawflow_exec" if kind == _KIND_MINIMAL else "pawflow_ws"
+    return f"{prefix}_{_safe_path_part(relay_id)}"
 
 
 def _relay_runtime_host_dir(runtime_dir: Path) -> str:
@@ -372,6 +398,186 @@ class ServerRelayManager:
     def spawn_minimal(self, conv_id: str, user_id: str) -> Dict[str, Any]:
         """Spawn the protected minimal execution relay for this conversation."""
         return self.spawn(conv_id, user_id, kind=_KIND_MINIMAL)
+
+    def service_relay_config(
+        self,
+        relay_id: str,
+        *,
+        scope: str,
+        scope_id: str,
+        user_id: str,
+        kind: str = _KIND_WORKSPACE,
+    ) -> Dict[str, Any]:
+        """Return deterministic managed-runtime config for a relay service."""
+        kind = _validate_kind(kind)
+        runtime_dir = _relay_runtime_dir_for_scope(scope, user_id, scope_id, kind)
+        return {
+            "server_container_name": _relay_container_name(relay_id, kind),
+            "server_workspace_dir": str(runtime_dir),
+            "server_workspace_host_dir": _relay_runtime_host_dir(runtime_dir),
+            "server_home_volume": f"pawflow_home_{relay_id}",
+        }
+
+    def spawn_service_relay(
+        self,
+        relay_id: str,
+        token: str,
+        *,
+        scope: str,
+        scope_id: str,
+        user_id: str,
+        kind: str = _KIND_WORKSPACE,
+    ) -> Dict[str, Any]:
+        """Spawn a managed server relay container for an installed relay service."""
+        kind = _validate_kind(kind)
+        kind_cfg = _relay_kind_config(kind)
+        if not relay_id:
+            raise ValueError("Missing relay_id")
+        if not token:
+            raise ValueError("Missing relay token")
+
+        desktop_host_port = find_free_port() if kind_cfg["publish_desktop"] else None
+        audio_host_port = find_free_port() if kind_cfg["publish_desktop"] else None
+        path = f"/ws/relay/{relay_id}"
+        container_name = _relay_container_name(relay_id, kind)
+        home_volume = f"pawflow_home_{relay_id}"
+        volume = _relay_volume_name(relay_id, kind)
+        runtime_dir = _relay_runtime_dir_for_scope(scope, user_id, scope_id, kind)
+        runtime_dir.mkdir(parents=True, exist_ok=True)
+        runtime_host_dir = _relay_runtime_host_dir(runtime_dir)
+        host_ip = get_host_ip()
+
+        from services.http_listener_service import HTTPListenerService
+        _listeners = HTTPListenerService.all_instances()
+        if not _listeners:
+            raise RuntimeError(
+                "Cannot spawn server relay: no HTTPListenerService running. "
+                "Start the main listener first.")
+        _main_listener = next(iter(_listeners.values()))
+        main_port = _main_listener._port
+        ws_scheme = "wss" if _main_listener.is_ssl else "ws"
+
+        relay_image = kind_cfg["image"]
+        relay_mount_code = _truthy(_cfg("server_relay_mount_code"))
+        relay_tools_dir = _cfg("server_relay_tools_dir")
+        relay_workspace = _cfg("server_relay_workspace")
+        relay_cpus = kind_cfg["cpus"]
+        relay_memory = kind_cfg["memory"]
+
+        import os as _os
+        _TOOLS_IN_CONTAINER = "/opt/pawflow"
+        _SCRIPT_IN_CONTAINER = f"{_TOOLS_IN_CONTAINER}/pawflow_relay_launcher.py"
+        code_mount_args = []
+        if relay_mount_code:
+            tools_abs = _os.path.abspath(relay_tools_dir)
+            tools_host = to_host_path(tools_abs)
+            _pkg_abs = _os.path.abspath(
+                _os.path.join(_os.path.dirname(tools_abs), "pawflow_relay"))
+            _pkg_host = to_host_path(_pkg_abs) if _os.path.isdir(_pkg_abs) else ""
+            code_mount_args.extend([
+                "--volume", f"{tools_host}:{_TOOLS_IN_CONTAINER}:ro",
+            ])
+            if _pkg_host:
+                code_mount_args.extend([
+                    "--volume", f"{_pkg_host}:{_TOOLS_IN_CONTAINER}/pawflow_relay:ro",
+                ])
+
+        self._cleanup_container(container_name, remove=True)
+        ws_url_for_container = f"{ws_scheme}://{host_ip}:{main_port}{path}"
+        docker_run_args = [
+            "--rm",
+            "--detach",
+            "--name", container_name,
+            "--volume", f"{runtime_host_dir}:{relay_workspace}",
+            "--volume", f"{home_volume}:/home/pawflow",
+            *code_mount_args,
+            "--add-host", "host.docker.internal:host-gateway",
+            "--cpus", relay_cpus,
+            "--memory", relay_memory,
+            "--cap-add", "SYS_ADMIN",
+            "--device", "/dev/fuse",
+            "--security-opt", "apparmor:unconfined",
+            "--env", f"PAWFLOW_RELAY_SERVER={ws_url_for_container}",
+            "--env", f"PAWFLOW_RELAY_TOKEN={token}",
+            "--env", f"PAWFLOW_RELAY_ID={relay_id}",
+            "--env", f"PAWFLOW_RELAY_DIR={relay_workspace}",
+            "--env", "PAWFLOW_RELAY_ALLOW_EXEC=1",
+            "--env", "PAWFLOW_SERVER_MOUNT=/cc_sessions",
+            "--env", "PAWFLOW_FILESTORE_MOUNT=/filestore",
+            "--env", "PAWFLOW_SKILLS_MOUNT=/skills",
+            "--env", "HOME=/home/pawflow",
+            "--env", "USER=pawflow",
+            "--env", "PATH=/home/pawflow/.cargo/bin:/home/pawflow/go/bin:/usr/local/go/bin:/opt/kotlinc/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        ]
+        if kind_cfg["publish_desktop"]:
+            docker_run_args.extend([
+                "--publish", f"{desktop_host_port}:6080",
+                "--publish", f"{audio_host_port}:6180",
+                "--env", "PAWFLOW_DESKTOP_NOVNC_PORT=6080",
+            ])
+        docker_run_args.extend([
+            relay_image,
+            "python3", _SCRIPT_IN_CONTAINER,
+        ])
+        cmd = docker_cmd() + ["run"] + docker_run_args
+        logger.info("Spawning managed server relay service: %s  cmd=%s", container_name, cmd)
+        result = subprocess.run(  # nosec B603
+            cmd, capture_output=True, text=True,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"Failed to start relay container: {result.stderr.strip()}"
+            )
+
+        container_id = result.stdout.strip()
+        metadata = {
+            "relay_id": relay_id,
+            "container_id": container_id,
+            "container_name": container_name,
+            "user_id": user_id,
+            "scope": scope,
+            "scope_id": scope_id,
+            "ws_url": ws_url_for_container,
+            "volume": volume,
+            "workspace_dir": str(runtime_dir),
+            "workspace_host_dir": runtime_host_dir,
+            "home_volume": home_volume,
+            "kind": kind,
+            "image": relay_image,
+            "cpus": relay_cpus,
+            "memory": relay_memory,
+        }
+        if desktop_host_port is not None:
+            metadata["desktop_host_port"] = desktop_host_port
+        if audio_host_port is not None:
+            metadata["audio_host_port"] = audio_host_port
+        logger.info("Managed server relay service spawned: %s", relay_id)
+        return metadata
+
+    def cleanup_service_relay(self, config: Dict[str, Any]) -> bool:
+        """Stop a managed relay container and delete its managed runtime dir."""
+        if not config or not config.get("server_managed"):
+            return False
+        container_id = str(config.get("server_container_id") or "")
+        container_name = str(config.get("server_container_name") or "")
+        workspace_dir = str(config.get("server_workspace_dir") or "")
+        home_volume = str(config.get("server_home_volume") or "")
+
+        self._cleanup_container(container_id or container_name, remove=True)
+        if home_volume:
+            try:
+                subprocess.run(  # nosec B603
+                    docker_cmd() + ["volume", "rm", "-f", home_volume],
+                    capture_output=True,
+                )
+            except Exception as e:
+                logger.warning("Could not remove relay home volume %s: %s", home_volume, e)
+        if workspace_dir:
+            try:
+                shutil.rmtree(workspace_dir, ignore_errors=True)
+            except Exception as e:
+                logger.warning("Could not remove relay workspace %s: %s", workspace_dir, e)
+        return True
 
     def ensure(
         self,

@@ -4,7 +4,7 @@
 
 PawFlow provides a unified filesystem abstraction that allows flows and agents to access files from various sources — the user's local machine, cloud storage (Google Drive, OneDrive), or the browser — through a consistent interface with enforced permissions.
 
-**Core principle:** The PawFlow server does NOT access its own filesystem by default. All file access goes through an explicitly configured filesystem service.
+**Core principle:** The PawFlow server does NOT expose arbitrary server paths. Server-side relay services use PawFlow-managed runtime directories.
 
 ## Architecture
 
@@ -191,15 +191,21 @@ OAuth-backed rclone backends (`drive` and `onedrive`) use two services:
    service to the conversation; the relay manifest combines the filesystem
    mount settings with the referenced credential service to build `rclone.conf`.
 
-## Server Filesystem (Admin Only)
+## Server Relay Storage
 
-For rare cases where flows need server disk access (exports, logs, staging):
+Server disk access is provided by installing a `relay` service without an
+external relay token. PawFlow generates the token, starts the server relay, and
+mounts a managed runtime directory:
 
-```
-/service install filesystem staging root=/var/pawflow/staging,mode=readwrite
-```
+| Relay service scope | Managed root |
+|---|---|
+| conversation | `data/runtime/relay/<user>/<conversation>` |
+| user | `data/runtime/relay/<user>` |
+| global | `data/runtime/relay/global` |
 
-Only admin users can install this service type.
+After installation, link the relay to a conversation through the normal relay
+binding flow. Uninstalling a managed relay service stops its Docker container,
+removes its relay home volume, and deletes the managed runtime directory.
 
 ## Permissions
 

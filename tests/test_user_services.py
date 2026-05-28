@@ -787,15 +787,7 @@ class TestAgentServiceActions:
         data = json.loads(result[0].get_content())
         assert "error" in data
 
-    def test_server_filesystem_schema_requires_root(self):
-        from core import ServiceFactory
-
-        svc_cls = ServiceFactory.get("filesystem")
-        schema = svc_cls({"root": str(Path.cwd())}).get_parameter_schema()
-
-        assert schema["root"]["required"] is True
-
-    def test_service_install_rejects_filesystem_without_root(self):
+    def test_service_install_rejects_server_filesystem(self):
         from tasks.ai.actions.service_flow import _handle_service_flow
 
         ff = self._make_flowfile({
@@ -808,22 +800,121 @@ class TestAgentServiceActions:
         result = _handle_service_flow(None, "service_install", json.loads(ff.get_content()), None, "testuser", ff)
         data = json.loads(result[0].get_content())
 
-        assert data["error"] == "Missing required service config: root"
+        assert data["error"] == "Server filesystem services are disabled. Create a server relay instead."
+        assert result[0].get_attribute("http.response.status") == "400"
         assert self.reg.get_definition("user", "testuser", "workspace") is None
 
-    def test_filesystem_services_are_not_relays(self):
+    def test_list_service_types_hides_server_filesystem(self):
+        from tasks.ai.actions.service_flow import _handle_service_flow
+
+        ff = self._make_flowfile({"action": "list_service_types"})
+
+        result = _handle_service_flow(None, "list_service_types", json.loads(ff.get_content()), None, "testuser", ff)
+        data = json.loads(result[0].get_content())
+
+        assert "filesystem" not in {item["type"] for item in data["service_types"]}
+        assert "relay" in {item["type"] for item in data["service_types"]}
+
+    def test_service_install_relay_without_token_spawns_managed_server_relay(self, monkeypatch):
+        from tasks.ai.actions.service_flow import _handle_service_flow
+
+        calls = []
+
+        class FakeServerRelayManager:
+            @classmethod
+            def get_instance(cls):
+                return cls()
+
+            def service_relay_config(self, relay_id, *, scope, scope_id, user_id, kind="workspace"):
+                return {
+                    "server_container_name": f"pawflow-relay-srv-{relay_id}",
+                    "server_workspace_dir": f"data/runtime/relay/{user_id}",
+                    "server_workspace_host_dir": f"/host/data/runtime/relay/{user_id}",
+                    "server_home_volume": f"pawflow_home_{relay_id}",
+                }
+
+            def spawn_service_relay(self, relay_id, token, *, scope, scope_id, user_id, kind="workspace"):
+                calls.append({
+                    "relay_id": relay_id,
+                    "token": token,
+                    "scope": scope,
+                    "scope_id": scope_id,
+                    "user_id": user_id,
+                    "kind": kind,
+                })
+                return {"relay_id": relay_id, "workspace_dir": f"data/runtime/relay/{user_id}"}
+
+        monkeypatch.setattr("core.server_relay_manager.ServerRelayManager", FakeServerRelayManager)
+        ff = self._make_flowfile({
+            "action": "service_install",
+            "service_type": "relay",
+            "service_name": "MyWorkspace",
+            "scope": "user",
+            "config": {},
+        })
+
+        result = _handle_service_flow(None, "service_install", json.loads(ff.get_content()), None, "testuser", ff)
+        data = json.loads(result[0].get_content())
+        sdef = self.reg.get_definition("user", "testuser", "MyWorkspace")
+
+        assert data["installed"] is True
+        assert sdef is not None
+        assert sdef.service_type == "relay"
+        assert sdef.config["server_managed"] is True
+        assert sdef.config["token"]
+        assert sdef.config["server_container_name"] == "pawflow-relay-srv-MyWorkspace"
+        assert sdef.config["server_workspace_dir"] == "data/runtime/relay/testuser"
+        assert sdef.config["server_home_volume"] == "pawflow_home_MyWorkspace"
+        assert calls == [{
+            "relay_id": "MyWorkspace",
+            "token": sdef.config["token"],
+            "scope": "user",
+            "scope_id": "testuser",
+            "user_id": "testuser",
+            "kind": "workspace",
+        }]
+
+    def test_service_install_relay_with_token_stays_external_listener(self, monkeypatch):
+        from tasks.ai.actions.service_flow import _handle_service_flow
+
+        def fail_spawn(*args, **kwargs):
+            raise AssertionError("managed server relay should not spawn")
+
+        monkeypatch.setattr("core.server_relay_manager.ServerRelayManager.get_instance", fail_spawn)
+        ff = self._make_flowfile({
+            "action": "service_install",
+            "service_type": "relay",
+            "service_name": "ExternalRelay",
+            "scope": "user",
+            "config": {"token": "manual-token"},
+        })
+
+        result = _handle_service_flow(None, "service_install", json.loads(ff.get_content()), None, "testuser", ff)
+        data = json.loads(result[0].get_content())
+        sdef = self.reg.get_definition("user", "testuser", "ExternalRelay")
+
+        assert data["installed"] is True
+        assert sdef.config["token"] == "manual-token"
+        assert "server_managed" not in sdef.config
+
+    def test_server_filesystem_service_type_is_not_registered(self):
+        from core import ServiceFactory
+
+        assert "filesystem" not in ServiceFactory.list_types()
+
+    def test_non_relay_services_are_not_relays(self):
         from core.relay_bindings import link_relay, list_available_relays
 
         self.reg.install(
-            "user", "testuser", "workspace", "filesystem",
-            config={"root": str(Path.cwd())}, enabled=False)
-        self.reg.install(
             "user", "testuser", "relay1", "relay",
             config={"token": "token"}, enabled=False)
+        self.reg.install(
+            "user", "testuser", "cache1", "cacheService",
+            config={}, enabled=False)
 
         assert [r["relay_id"] for r in list_available_relays(user_id="testuser")] == ["relay1"]
-        with pytest.raises(ValueError, match="Relay service 'workspace' not found"):
-            link_relay("conv1", "workspace", user_id="testuser")
+        with pytest.raises(ValueError, match="Relay service 'cache1' not found"):
+            link_relay("conv1", "cache1", user_id="testuser")
 
     def test_service_uninstall(self):
         self.reg.install(self.SCOPE, "testuser", "mydb", SVC_TYPE)
@@ -837,6 +928,42 @@ class TestAgentServiceActions:
         data = json.loads(result[0].get_content())
         assert data["uninstalled"] is True
         assert self.reg.get_definition(self.SCOPE, "testuser", "mydb") is None
+
+    def test_service_uninstall_managed_relay_cleans_container_and_storage(self, monkeypatch):
+        calls = []
+
+        class FakeServerRelayManager:
+            @classmethod
+            def get_instance(cls):
+                return cls()
+
+            def cleanup_service_relay(self, config):
+                calls.append(dict(config))
+                return True
+
+        monkeypatch.setattr("core.server_relay_manager.ServerRelayManager", FakeServerRelayManager)
+        config = {
+            "token": "generated-token",
+            "server_managed": True,
+            "server_container_id": "cid",
+            "server_container_name": "pawflow-relay-srv-MyWorkspace",
+            "server_workspace_dir": "data/runtime/relay/testuser",
+            "server_home_volume": "pawflow_home_MyWorkspace",
+        }
+        self.reg.install(self.SCOPE, "testuser", "MyWorkspace", "relay", config=config)
+
+        from tasks.ai.agent_loop import AgentLoopTask
+        task = AgentLoopTask({"conversation_store": True, "api_key": "test-key"})
+        ff = self._make_flowfile({
+            "action": "service_uninstall",
+            "service_id": "MyWorkspace",
+        })
+        result = task._handle_action(ff)
+        data = json.loads(result[0].get_content())
+
+        assert data["uninstalled"] is True
+        assert self.reg.get_definition(self.SCOPE, "testuser", "MyWorkspace") is None
+        assert calls == [config]
 
     def test_service_uninstall_not_found(self):
         from tasks.ai.agent_loop import AgentLoopTask

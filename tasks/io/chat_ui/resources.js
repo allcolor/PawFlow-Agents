@@ -4223,6 +4223,7 @@ async function showServiceInstallForm() {
     + '<input id="svc-install-desc" style="' + _svcInputStyle + '" placeholder="' + escapeHtml(t('optionalDescription')) + '"/></div>'
     + '<div style="margin-bottom:8px;"><label style="' + _svcLabelStyle + '">' + escapeHtml(t('scope')) + '</label>'
     + '<select id="svc-install-scope" style="' + _svcInputStyle + '">'
+    + (typeof conversationId !== 'undefined' && conversationId ? '<option value="conversation">' + escapeHtml(t('conversation')) + '</option>' : '')
     + (_isAdmin() ? '<option value="global">' + t('global') + '</option>' : '')
     + '<option value="user">' + escapeHtml(t('user')) + '</option></select></div>'
     + '<div id="svc-install-params" style="border-top:1px solid var(--pf-border);padding-top:8px;margin-top:8px;"></div>'

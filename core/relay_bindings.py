@@ -110,7 +110,7 @@ def get_default(cid: str, agent: str = "") -> Optional[str]:
 def link_relay(cid: str, relay_id: str, agent: str = "", user_id: str = "") -> bool:
     """Link a relay to a conversation (optionally to a specific agent)."""
     if user_id:
-        _assert_relay_service(relay_id, user_id=user_id)
+        _assert_relay_service(relay_id, user_id=user_id, conv_id=cid)
     scope = agent if agent else _CONV
     b = get_bindings(cid)
     linked = b.setdefault("linked", {})
@@ -210,13 +210,13 @@ def set_default_local(cid: str, relay_id: str, local: bool, agent: str = "") -> 
     return True
 
 
-def list_available_relays(user_id: str = "") -> List[Dict[str, Any]]:
+def list_available_relays(user_id: str = "", conv_id: str = "") -> List[Dict[str, Any]]:
     """List all connected relay services across all scopes."""
     relays = []
     try:
         from core.service_registry import ServiceRegistry
         reg = ServiceRegistry.get_instance()
-        all_defs = reg.resolve_all(user_id=user_id)
+        all_defs = reg.resolve_all(user_id=user_id, conv_id=conv_id)
         for sid, sdef in all_defs.items():
             if sdef.service_type != "relay":
                 continue
@@ -237,11 +237,14 @@ def list_available_relays(user_id: str = "") -> List[Dict[str, Any]]:
     return relays
 
 
-def _assert_relay_service(relay_id: str, *, user_id: str = "") -> None:
+def _assert_relay_service(relay_id: str, *, user_id: str = "", conv_id: str = "") -> None:
     try:
         from core.service_registry import ServiceRegistry
         reg = ServiceRegistry.get_instance()
-        matches = [sdef for sid, sdef in reg.resolve_all(user_id=user_id).items() if sid == relay_id]
+        matches = [
+            sdef for sid, sdef in reg.resolve_all(user_id=user_id, conv_id=conv_id).items()
+            if sid == relay_id
+        ]
     except Exception:
         logger.debug("Relay service validation failed", exc_info=True)
         matches = []
@@ -250,7 +253,7 @@ def _assert_relay_service(relay_id: str, *, user_id: str = "") -> None:
 
 
 def resolve_relay(cid: str, relay_param: Optional[str] = None,
-                  agent: str = "") -> Tuple[str, Any]:
+                  agent: str = "", user_id: str = "") -> Tuple[str, Any]:
     """Resolve a relay for a conversation + agent.
 
     Resolution order:
@@ -281,7 +284,7 @@ def resolve_relay(cid: str, relay_param: Optional[str] = None,
     # Resolve service instance across all scopes
     try:
         from core.service_registry import ServiceRegistry
-        svc = ServiceRegistry.get_instance().resolve(relay_id)
+        svc = ServiceRegistry.get_instance().resolve(relay_id, user_id=user_id, conv_id=cid)
     except Exception:
         svc = None
     if svc is None:

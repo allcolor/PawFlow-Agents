@@ -833,8 +833,7 @@ PawFlow provides a unified filesystem abstraction layer. See `docs/filesystem.md
 
 | Type | Description | Git | Required |
 |------|-------------|-----|----------|
-| `relay` | WebSocket relay to user machine (exec, git, shell) | Yes | server relay or standalone `pawflow-relay` client |
-| `filesystem` | Server disk (admin only) | Yes | Admin role |
+| `relay` | WebSocket relay to server-managed storage or a standalone client (exec, git, shell) | Yes | Empty token for server relay; token for standalone `pawflow-relay` client |
 | `googleDrive` | Google Drive REST API v3 | No | OAuth2 |
 | `oneDrive` | OneDrive Graph API | No | OAuth2 |
 

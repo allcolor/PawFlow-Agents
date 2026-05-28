@@ -329,8 +329,9 @@ class RelayService(BaseService):
 
     def get_parameter_schema(self) -> Dict[str, Any]:
         return {
-            "token": {"type": "string", "required": True, "sensitive": True,
-                      "description": "Authentication token (relay must match)"},
+            "token": {"type": "string", "required": False, "sensitive": True,
+                      "default": "",
+                      "description": "Authentication token for an external relay. Leave empty to create a managed server relay."},
             "mode": {"type": "select", "required": False, "default": "readwrite",
                      "options": ["readwrite", "readonly"],
                      "description": "Access mode for file operations"},

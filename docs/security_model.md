@@ -19,7 +19,7 @@ PawFlow is self-hosted, but agents can still perform high-impact actions. Securi
 | Native/local relay | Full selected filesystem and optional shell/screen access | Personal trusted workflows. |
 | Docker relay | Mounted project directory and container tools | Untrusted code execution and public demos. |
 | Standalone client relay | User-selected filesystem/desktop through PawFlow Relay CLI/Desktop | Client machine workflows. |
-| Server filesystem service | Server-side files only | Controlled server assets and internal flows. |
+| Managed server relay | PawFlow-managed runtime directory under `data/runtime/relay/` | Server-side workspaces without exposing arbitrary host paths. |
 
 ## Permission Modes
 

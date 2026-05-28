@@ -26,9 +26,8 @@ The chat service installer receives service type metadata grouped by category an
 
 | Type | Purpose |
 |---|---|
-| `relay` | WebSocket relay to a user machine via server relay or standalone relay client. |
+| `relay` | WebSocket relay. Leave `token` empty to create a managed server relay; provide a token for a standalone relay client. |
 | `toolRelay` | Tool relay/MCP bridge for containerized scripts and CLI providers. |
-| `filesystem` | Server-side filesystem service. |
 | `googleDrive` | Google Drive filesystem backend. |
 | `oneDrive` | OneDrive filesystem backend. |
 | `browser` | Browser automation/screenshot/fetch support. |

@@ -2,6 +2,7 @@
 
 import json
 import logging
+import secrets
 import time
 import threading
 from typing import Dict, Any, List, Optional
@@ -162,7 +163,6 @@ _SERVICE_CATEGORY_BY_TYPE = {
     "wavespeedTryOn": "try-on",
     "wavespeedLipsync": "video",
     "wavespeedTrainer": "image",
-    "filesystem": "filesystem",
     "rcloneFilesystem": "filesystem",
     "rcloneOAuthCredentials": "filesystem",
     "googleDrive": "filesystem",
@@ -182,6 +182,12 @@ _SERVICE_CATEGORY_BY_TYPE = {
     "httpAuthValidator": "security",
     "sslContext": "security",
     "privateGateway": "security",
+}
+
+_DISABLED_DIRECT_SERVICE_INSTALL_TYPES = {"filesystem"}
+
+_DISABLED_DIRECT_SERVICE_INSTALL_MESSAGES = {
+    "filesystem": "Server filesystem services are disabled. Create a server relay instead.",
 }
 
 
@@ -679,6 +685,8 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         from core import ServiceFactory
         types = []
         for stype in ServiceFactory.list_types():
+            if stype in _DISABLED_DIRECT_SERVICE_INSTALL_TYPES:
+                continue
             try:
                 cls = ServiceFactory.get(stype)
                 types.append({
@@ -800,6 +808,12 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                     "error": "Usage: /service install <type> <name> [key=val,...]",
                 }).encode())
                 return [flowfile]
+            if svc_type in _DISABLED_DIRECT_SERVICE_INSTALL_TYPES:
+                flowfile.set_content(json.dumps({
+                    "error": _DISABLED_DIRECT_SERVICE_INSTALL_MESSAGES[svc_type],
+                }).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
             if scope == "global" and "admin" not in (flowfile.get_attribute("http.auth.roles") or ""):
                 flowfile.set_content(json.dumps({"error": "Requires admin role for global scope"}).encode())
                 flowfile.set_attribute("http.response.status", "403")
@@ -817,6 +831,13 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 merged = dict(profile_config)
                 merged.update(config)
                 config = merged
+            managed_server_relay = False
+            if svc_type == "relay" and not str(config.get("token", "") or "").strip():
+                config["token"] = secrets.token_urlsafe(32)
+                config.setdefault("mode", "readwrite")
+                config["server_managed"] = True
+                config.setdefault("server_kind", "workspace")
+                managed_server_relay = True
             description = body.get("description", "")
             from core.service_registry import ServiceRegistry, SCOPE_GLOBAL, SCOPE_USER, SCOPE_CONV
             reg = ServiceRegistry.get_instance()
@@ -828,6 +849,17 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             else:
                 scope_id = user_id
                 scope = "user"
+            server_relay_manager = None
+            if managed_server_relay:
+                from core.server_relay_manager import ServerRelayManager
+                server_relay_manager = ServerRelayManager.get_instance()
+                config.update(server_relay_manager.service_relay_config(
+                    svc_name,
+                    scope=scope,
+                    scope_id=scope_id,
+                    user_id=user_id,
+                    kind=str(config.get("server_kind") or "workspace"),
+                ))
             from core import ServiceFactory
             from core.service_install import (
                 ServiceInstallReporter,
@@ -855,6 +887,20 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                     reg.install(scope, scope_id, service_id=svc_name,
                                 service_type=svc_type, config=config,
                                 description=description)
+                    if managed_server_relay:
+                        reporter.step("starting", "Starting managed server relay", progress=0.98)
+                        try:
+                            prepare_result = server_relay_manager.spawn_service_relay(
+                                svc_name,
+                                config["token"],
+                                scope=scope,
+                                scope_id=scope_id,
+                                user_id=user_id,
+                                kind=str(config.get("server_kind") or "workspace"),
+                            )
+                        except Exception:
+                            reg.uninstall(scope, scope_id, svc_name)
+                            raise
                     if _service_requires_connected_state(svc_type) and not reg.is_connected(scope, scope_id, svc_name):
                         reg.uninstall(scope, scope_id, svc_name)
                         raise RuntimeError(
@@ -1060,9 +1106,13 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             from core.service_registry import ServiceRegistry
             registry = ServiceRegistry.get_instance()
             scope_id = _service_scope_id(scope, user_id, conv_id)
-            if not registry.get_definition(scope, scope_id, svc_id):
+            svc_def = registry.get_definition(scope, scope_id, svc_id)
+            if not svc_def:
                 flowfile.set_content(json.dumps({"error": f"Service '{svc_id}' not found."}).encode())
                 return [flowfile]
+            if svc_def.service_type == "relay" and (svc_def.config or {}).get("server_managed"):
+                from core.server_relay_manager import ServerRelayManager
+                ServerRelayManager.get_instance().cleanup_service_relay(svc_def.config or {})
             registry.uninstall(scope, scope_id, svc_id)
             flowfile.set_content(json.dumps({
                 "uninstalled": True, "id": svc_id,
@@ -2034,9 +2084,9 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             if not source_svc:
                 source_svc = greg.get_live_instance("global", "", relay_source)
         else:
-            # Find user's first connected filesystem service
+            # Find user's first connected relay service
             for sid, sdef in ureg.get_all("user", user_id).items():
-                if getattr(sdef, "service_type", "") in ("relay", "filesystem"):
+                if getattr(sdef, "service_type", "") == "relay":
                     svc = ureg.get_live_instance("user", user_id, sid)
                     if svc and hasattr(svc, '_relay_pool') and svc._relay_pool:
                         source_svc = svc

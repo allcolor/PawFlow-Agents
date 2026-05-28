@@ -104,7 +104,6 @@ def _register_all_services():
     import services.filesystem_service         # noqa: F401  — relay service (WS)
     import services.tool_relay_service         # noqa: F401  — MCP bridge tool relay
     import services.cc_interactive_event_service  # noqa: F401  — CC interactive MITM events
-    import services.server_filesystem_service  # noqa: F401
     import services.gdrive_filesystem_service  # noqa: F401
     import services.onedrive_filesystem_service  # noqa: F401
     import services.rclone_filesystem_service  # noqa: F401

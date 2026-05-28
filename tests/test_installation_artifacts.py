@@ -7,7 +7,9 @@ import subprocess
 def test_server_dockerfile_supports_bootstrap_docker_builds():
     src = Path("Dockerfile").read_text(encoding="utf-8")
 
-    assert "docker.io" in src
+    assert "DOCKER_CLI_VERSION" in src
+    assert "download.docker.com/linux/static/stable" in src
+    assert "/usr/local/bin/docker" in src
     assert "gosu" in src
     assert "openssl" in src
     assert "ca-certificates" in src

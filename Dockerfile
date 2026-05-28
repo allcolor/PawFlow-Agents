@@ -4,13 +4,27 @@ WORKDIR /app
 
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
-# System deps. docker.io provides the Docker CLI used by the first-run
-# bootstrap to build PawFlow's CLI and relay runtime images via the mounted
-# host Docker socket. openssl is required for bootstrap TLS. Playwright/Scrapling
+# System deps. openssl is required for bootstrap TLS. Playwright/Scrapling
 # need browser dependencies and Chromium inside the server image.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    bash ca-certificates curl git docker.io openssl ffmpeg procps gosu \
+    bash ca-certificates curl git openssl ffmpeg procps gosu \
     && rm -rf /var/lib/apt/lists/*
+
+# Docker CLI used by first-run server login to start the noVNC login desktop
+# through the mounted host Docker socket. Keep this independent of distro
+# packages so slim images consistently expose /usr/local/bin/docker.
+ARG DOCKER_CLI_VERSION=27.5.1
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    case "$arch" in \
+      amd64) docker_arch="x86_64" ;; \
+      arm64) docker_arch="aarch64" ;; \
+      *) echo "unsupported Docker CLI architecture: $arch" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL "https://download.docker.com/linux/static/stable/${docker_arch}/docker-${DOCKER_CLI_VERSION}.tgz" \
+      | tar -xz --strip-components=1 -C /usr/local/bin docker/docker; \
+    chmod +x /usr/local/bin/docker; \
+    docker --version
 
 # Python deps
 COPY requirements.txt .

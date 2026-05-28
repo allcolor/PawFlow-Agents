@@ -3184,10 +3184,19 @@ class ConversationStore:
         # large files. The file is append-only so reading stale data is safe
         # (we might miss the very last line, but that's acceptable for pagination).
         if not log.exists():
+            if total > 0:
+                cached = self._reload_cache(cid)
+                self._persist_recomputed_hot_metadata(cid, cached)
             return {"messages": [], "total_count": 0, "offset": 0,
                     "limit": limit, "has_more": False}
         try:
             result = self._read_tail(log, total, limit, offset)
+            if offset == 0 and total > 0 and not result.get("messages"):
+                cached = self._reload_cache(cid)
+                corrected_total = int(cached.get("msg_count") or 0)
+                if corrected_total != total:
+                    self._persist_recomputed_hot_metadata(cid, cached)
+                    result = self._read_tail(log, corrected_total, limit, offset)
             return result
         except Exception as e:
             logger.error("[convstore] load_page failed %s: %s", cid, e)

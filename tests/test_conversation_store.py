@@ -717,6 +717,27 @@ class TestMessageCount:
         assert page["total_count"] == 0
         assert page["has_more"] is False
 
+    def test_load_page_repairs_stale_hot_message_count_for_empty_transcript(self, conv):
+        store, cid, uid = conv
+        for i in range(3):
+            store.append_message(cid, _msg(content=f"m{i}", source={
+                "type": "user", "name": uid, "target_agent": "bot"}),
+                user_id=uid)
+        assert store.message_count(cid) == 3
+
+        store._transcript_log(cid).replace_dicts([])
+        with store._cache_lock:
+            store._cache.pop(cid, None)
+
+        page = store.load_page(cid, limit=10, offset=0, user_id=uid)
+
+        assert page["messages"] == []
+        assert page["total_count"] == 0
+        assert page["has_more"] is False
+        with store._cache_lock:
+            store._cache.pop(cid, None)
+        assert store.message_count(cid) == 0
+
 
 # ── get_extra / set_extra ────────────────────────────────────────────
 

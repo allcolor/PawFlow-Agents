@@ -373,9 +373,11 @@ def cmd_start(args):
     def _kill_spawned_docker_containers():
         """Hard-kill all containers this PawFlow server spawned.
 
-        Covers provider pool containers (`pf-*-pool-*`) and server-side
-        login containers (`pawflow-*-login-*`) for Claude Code, Codex, and
-        Gemini.
+        Covers provider pool containers (`pf-*-pool-*`), server-side
+        relay containers (`pawflow-relay-srv-*`, `pawflow-relay-min-*`),
+        and login containers (`pawflow-*-login-*`) for Claude Code,
+        Codex, and Gemini. This is the normal `docker stop pawflow-server`
+        cleanup path.
         """
         for _pool_mod, _pool_cls in (
             ("core.claude_code_pool", "ClaudeCodePool"),
@@ -394,6 +396,8 @@ def cmd_start(args):
                 "pf-cc-pool-",
                 "pf-codex-pool-",
                 "pf-gemini-pool-",
+                "pawflow-relay-srv-",
+                "pawflow-relay-min-",
                 "pawflow-claude-login-",
                 "pawflow-codex-login-",
                 "pawflow-gemini-login-",

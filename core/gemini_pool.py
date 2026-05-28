@@ -594,13 +594,15 @@ class GeminiPool:
                 "[pool] public_hostname lookup failed", exc_info=True)
 
         _host_ip = get_host_ip()
+        _add_host_target = (
+            "host-gateway" if _host_ip == "host.docker.internal" else _host_ip)
         _extra_add_hosts: list = []
         for _alias in _host_aliases:
-            _extra_add_hosts.extend(["--add-host", f"{_alias}:{_host_ip}"])
+            _extra_add_hosts.extend(["--add-host", f"{_alias}:{_add_host_target}"])
         if _extra_add_hosts:
             logger.info(
                 "[pool] container hostname aliases → %s: %s",
-                _host_ip, _host_aliases)
+                _add_host_target, _host_aliases)
 
         run_args = [
             "-d",  # detached

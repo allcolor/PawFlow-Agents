@@ -103,6 +103,25 @@ def test_cli_provider_pools_accept_contextual_workspace_mounts():
         assert "*workspace_mount_args" in src
 
 
+def test_cli_provider_hostname_aliases_use_docker_add_host_targets():
+    for path in (
+        "core/claude_code_pool.py",
+        "core/codex_pool.py",
+        "core/gemini_pool.py",
+    ):
+        src = Path(path).read_text(encoding="utf-8")
+        assert '"host-gateway" if _host_ip == "host.docker.internal"' in src
+        assert 'f"{_alias}:{_add_host_target}"' in src
+        assert 'f"{_alias}:{_host_ip}"' not in src
+
+
+def test_server_stop_reaps_managed_relay_containers():
+    src = Path("cli.py").read_text(encoding="utf-8")
+    assert "normal `docker stop pawflow-server`" in src
+    assert '"pawflow-relay-srv-"' in src
+    assert '"pawflow-relay-min-"' in src
+
+
 def test_cli_image_prepares_workspace_mountpoints():
     src = Path("docker/claude-code/Dockerfile").read_text(encoding="utf-8")
     assert "mkdir -p /opt/pawflow /workspace /relay /cc_sessions" in src

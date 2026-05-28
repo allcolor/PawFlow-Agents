@@ -113,7 +113,8 @@ def audio_ws_proxy(client_sock, path_params: dict, meta: dict):
         return
 
     from core.capability_routes import verify_route_ws
-    claims, err = verify_route_ws(meta or {}, "audio", session_id, token)
+    claims, err = verify_route_ws(
+        meta or {}, "audio", session_id, token, allow_bearer_only=True)
     if err is not None:
         try:
             client_sock.sendall(err)

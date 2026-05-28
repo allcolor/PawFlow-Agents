@@ -56,16 +56,16 @@ def _ensure_vnc_routes(flowfile: FlowFile) -> None:
         _vnc_owner = "_vnc_proxy"
         _http_svc.register_route("GET", "/vnc/{session_id}/{token}/websockify",
                                  _vnc_owner, callback=lambda req: None,
-                                 ws_handler=vnc_ws_proxy, public=True, private_only=True)
+                                 ws_handler=vnc_ws_proxy, public=True)
         _http_svc.register_route("GET", "/vnc/{session_id}/{token}/{path+}",
-                                 _vnc_owner, callback=vnc_http_proxy, public=True, private_only=True)
+                                 _vnc_owner, callback=vnc_http_proxy, public=True)
         logger.info("[vnc] Registered VNC routes on port %s", _req_port)
         _audio_exists = [r for r in _http_svc.get_routes()
                          if r.get("pattern", "").startswith("/audio/")]
         if not _audio_exists:
             _http_svc.register_route("GET", "/audio/{session_id}/{token}/stream",
                                      _vnc_owner, callback=lambda req: None,
-                                     ws_handler=audio_ws_proxy)
+                                     ws_handler=audio_ws_proxy, public=True)
     except Exception as e:
         logger.warning("[vnc] Route registration failed: %s", e)
 
@@ -2828,6 +2828,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                         _owner,
                         callback=lambda req: None,
                         ws_handler=terminal_ws_handler,
+                        public=True,
                     )
 
             flowfile.set_content(json.dumps({
@@ -2997,6 +2998,7 @@ finally:
                         _owner,
                         callback=lambda req: None,
                         ws_handler=terminal_ws_handler,
+                        public=True,
                     )
 
             flowfile.set_content(json.dumps({
@@ -3173,6 +3175,7 @@ finally:
                         _owner,
                         callback=lambda req: None,
                         ws_handler=terminal_ws_handler,
+                        public=True,
                     )
 
             flowfile.set_content(json.dumps({

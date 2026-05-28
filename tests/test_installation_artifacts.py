@@ -567,8 +567,12 @@ def test_install_bootstrap_reset_is_implemented():
 def test_vnc_login_routes_skip_session_auth():
     src = Path("tasks/ai/actions/service_flow.py").read_text(encoding="utf-8")
 
-    assert "ws_handler=vnc_ws_proxy, public=True, private_only=True" in src
-    assert "callback=vnc_http_proxy, public=True, private_only=True" in src
+    assert "ws_handler=vnc_ws_proxy, public=True" in src
+    assert "callback=vnc_http_proxy, public=True" in src
+    assert "ws_handler=vnc_ws_proxy, public=True, private_only=True" not in src
+    assert "callback=vnc_http_proxy, public=True, private_only=True" not in src
+    assert "ws_handler=audio_ws_proxy, public=True" in src
+    assert "ws_handler=terminal_ws_handler,\n                        public=True" in src
     assert 'existing = [r for r in svc.get_routes() if r.get("owner") == _vnc_owner]' not in src
     assert 'existing = [r for r in _http_svc.get_routes() if r.get("owner") == _vnc_owner]' not in src
 

@@ -195,6 +195,15 @@ def test_ws_owner_succeeds(cap_db):
     assert claims and claims.resource_type == "terminal"
 
 
+def test_ws_bearer_capability_succeeds_without_session_auth(cap_db):
+    tok = cr.mint_route_token("terminal", "t1", "alice")
+    claims, err = cr.verify_route_ws(
+        {"remote_addr": "203.0.113.10"}, "terminal", "t1", tok,
+        allow_bearer_only=True)
+    assert err is None
+    assert claims and claims.user_id == "alice"
+
+
 # ---------------------------------------------------------------------------
 # Route handlers refuse to mint without owner_user_id
 # ---------------------------------------------------------------------------

@@ -8,6 +8,10 @@ PawFlow relay lifecycle is separate from PawFlow clients.
 
 This separation keeps PawCode and the VS Code extension equivalent to the webchat: they do not create, start, stop, or own relays.
 
+Server relays do not ask the user for a filesystem path. PawFlow allocates their
+workspace under `data/runtime/relay/<user-or-global>/<conversation-id>` and
+mounts that directory into the relay container at `/workspace`.
+
 Server-side relay sessions track in-flight reverse filesystem requests per WebSocket connection. When a relay disconnects or is removed from the pool, those pending request tasks are cancelled so stale connections cannot retain writers, loops, or queued FUSE work.
 
 ## CLI

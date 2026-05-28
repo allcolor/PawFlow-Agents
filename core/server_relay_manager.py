@@ -20,9 +20,12 @@ Max 1 server relay of each kind per conversation (enforced in spawn).
 """
 
 import logging
+import os
 import secrets
+import shutil
 import subprocess  # nosec B404
 import threading
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
@@ -107,6 +110,33 @@ def _relay_id_for_conv(conv_id: str, kind: str = _KIND_WORKSPACE) -> str:
     return f"{prefix}_{conv_id[:16]}"
 
 
+def _safe_path_part(value: str) -> str:
+    text = str(value or "").strip() or "global"
+    return "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in text)
+
+
+def _relay_runtime_dir(user_id: str, conv_id: str, kind: str = _KIND_WORKSPACE) -> Path:
+    kind = _validate_kind(kind)
+    base = Path(os.environ.get("PAWFLOW_DATA_DIR") or "data") / "runtime" / "relay"
+    path = base / _safe_path_part(user_id or "global") / _safe_path_part(conv_id)
+    if kind == _KIND_MINIMAL:
+        path = path / "minimal"
+    return path
+
+
+def _relay_runtime_host_dir(runtime_dir: Path) -> str:
+    data_dir = Path(os.environ.get("PAWFLOW_DATA_DIR") or "data").resolve()
+    host_data_dir = os.environ.get("PAWFLOW_HOST_DATA_DIR", "").strip()
+    runtime_abs = runtime_dir.resolve()
+    if host_data_dir:
+        try:
+            rel = runtime_abs.relative_to(data_dir)
+            return str((Path(host_data_dir) / rel).resolve())
+        except ValueError:
+            pass
+    return to_host_path(str(runtime_abs))
+
+
 def _relay_kind_config(kind: str) -> Dict[str, Any]:
     kind = _validate_kind(kind)
     if kind == _KIND_MINIMAL:
@@ -183,6 +213,9 @@ class ServerRelayManager:
         path = f"/ws/relay/{relay_id}"
         container_name = _container_name(conv_id, kind)
         volume = _volume_name(conv_id, kind)
+        runtime_dir = _relay_runtime_dir(user_id, conv_id, kind)
+        runtime_dir.mkdir(parents=True, exist_ok=True)
+        runtime_host_dir = _relay_runtime_host_dir(runtime_dir)
         host_ip = get_host_ip()
 
         # Resolve the REAL main HTTPListenerService port + TLS state. The
@@ -242,7 +275,7 @@ class ServerRelayManager:
             "--rm",
             "--detach",
             "--name", container_name,
-            "--volume", f"{volume}:{relay_workspace}",
+            "--volume", f"{runtime_host_dir}:{relay_workspace}",
             "--volume", f"pawflow_home_{relay_id}:/home/pawflow",
             *code_mount_args,
             "--add-host", "host.docker.internal:host-gateway",
@@ -315,6 +348,8 @@ class ServerRelayManager:
             "user_id": user_id,
             "ws_url": ws_url_for_container,
             "volume": volume,
+            "workspace_dir": str(runtime_dir),
+            "workspace_host_dir": runtime_host_dir,
             "kind": kind,
             "image": relay_image,
             "cpus": relay_cpus,
@@ -371,6 +406,7 @@ class ServerRelayManager:
         container_id = meta.get("container_id", "")
         user_id = meta.get("user_id", "")
         volume = meta.get("volume", _volume_name(conv_id, kind))
+        workspace_dir = meta.get("workspace_dir", "")
 
         # Stop + remove container
         self._cleanup_container(container_id, remove=True)
@@ -384,6 +420,12 @@ class ServerRelayManager:
                 )
             except Exception as e:
                 logger.warning("Could not remove volume %s: %s", volume, e)
+
+        if workspace_dir:
+            try:
+                shutil.rmtree(workspace_dir, ignore_errors=True)
+            except Exception as e:
+                logger.warning("Could not remove relay workspace %s: %s", workspace_dir, e)
 
         # Uninstall the WS listener service
         if relay_id and user_id:

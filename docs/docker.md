@@ -185,6 +185,9 @@ These are the supported Docker install scenarios and their expected outcomes.
      `/opt/pawflow/pawflow_relay_launcher.py` and `pawflow_relay` package code by
      default. Live source-code mounts are used only when
      `server_relay_mount_code` is explicitly enabled for local development.
+   - The UI does not ask for a server workspace path. PawFlow allocates one under
+     `data/runtime/relay/<user-or-global>/<conversation-id>` and mounts it into
+     the relay container at `/workspace`.
    - Expected result: relay containers can start even when PawFlow itself runs in
      Docker, because the host daemon does not need to bind-mount `/app/tools`
      from inside the server container.

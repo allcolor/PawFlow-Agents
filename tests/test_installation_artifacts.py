@@ -86,6 +86,8 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert "cannot reach the mounted host Docker daemon" in run_src
     assert '-p "$PUBLISH_HOST:$PORT:$PORT"' in run_src
     assert "$PAWFLOW_HOME/data:/app/data" in run_src
+    assert "PAWFLOW_DATA_DIR" in run_src
+    assert "PAWFLOW_HOST_DATA_DIR" in run_src
     assert "$PAWFLOW_HOME/certs:/app/certs" in run_src
 
     dockerignore = Path(".dockerignore").read_text(encoding="utf-8")

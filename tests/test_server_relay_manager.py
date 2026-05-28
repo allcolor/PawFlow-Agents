@@ -36,6 +36,31 @@ def test_server_workspace_relay_keeps_existing_identity_and_desktop():
     assert cfg["publish_desktop"] is True
 
 
+def test_server_workspace_allocates_runtime_path(monkeypatch, tmp_path):
+    monkeypatch.setenv("PAWFLOW_DATA_DIR", str(tmp_path / "data"))
+    path = srm._relay_runtime_dir("alice@example.com", "conv/one", "workspace")
+
+    assert path == tmp_path / "data" / "runtime" / "relay" / "alice_example.com" / "conv_one"
+
+
+def test_server_minimal_relay_uses_separate_runtime_subdir(monkeypatch, tmp_path):
+    monkeypatch.setenv("PAWFLOW_DATA_DIR", str(tmp_path / "data"))
+
+    assert srm._relay_runtime_dir("", "conv1", "minimal") == (
+        tmp_path / "data" / "runtime" / "relay" / "global" / "conv1" / "minimal")
+
+
+def test_server_relay_host_path_maps_container_data_dir(monkeypatch, tmp_path):
+    container_data = tmp_path / "container-data"
+    host_data = tmp_path / "host-data"
+    runtime_dir = container_data / "runtime" / "relay" / "alice" / "conv1"
+    monkeypatch.setenv("PAWFLOW_DATA_DIR", str(container_data))
+    monkeypatch.setenv("PAWFLOW_HOST_DATA_DIR", str(host_data))
+
+    assert srm._relay_runtime_host_dir(runtime_dir) == str(
+        host_data / "runtime" / "relay" / "alice" / "conv1")
+
+
 def test_ensure_minimal_reuses_running_server_execution_relay(monkeypatch):
     mgr = srm.ServerRelayManager()
     existing = {"relay_id": "srv_min_abcdef1234567890", "container_id": "cid"}

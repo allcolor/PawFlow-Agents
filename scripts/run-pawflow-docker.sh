@@ -133,6 +133,8 @@ docker run -d \
   -v "$PAWFLOW_HOME/config:/app/config" \
   -v "$PAWFLOW_HOME/certs:/app/certs" \
   -v "$PAWFLOW_HOME/logs:/app/logs" \
+  -e PAWFLOW_DATA_DIR="/app/data" \
+  -e PAWFLOW_HOST_DATA_DIR="$PAWFLOW_HOME/data" \
   -e PAWFLOW_RUN_UID="$RUN_UID" \
   -e PAWFLOW_RUN_GID="$RUN_GID" \
   -e PAWFLOW_BOOTSTRAP_GATEWAY_KEY="$BOOTSTRAP_GATEWAY_KEY" \

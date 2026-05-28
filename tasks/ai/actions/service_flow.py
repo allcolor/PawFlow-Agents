@@ -2456,10 +2456,10 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                     "ok": True,
                     "relay_id": meta["relay_id"],
                     "ws_url": meta["ws_url"],
-                    "volume": meta["volume"],
+                    "workspace_dir": meta.get("workspace_dir", ""),
                     "message": (
                         f"Server workspace ready. "
-                        f"Use filesystem service '{meta['relay_id']}' to access your files."
+                        f"Use relay service '{meta['relay_id']}' to access your files."
                     ),
                 })
 

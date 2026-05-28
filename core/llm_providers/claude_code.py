@@ -1103,7 +1103,9 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                     conv_id, f"claude_pool_idx:{agent_name or 'default'}") or -1)
             except Exception:
                 logger.debug("exception suppressed", exc_info=True)
-        self._setup_credentials(workdir, pool_index=_resume_pool_idx)
+        self._setup_credentials(
+            workdir, pool_index=_resume_pool_idx,
+            user_id=user_id, conversation_id=conv_id)
         # Store pool index for this session
         if conv_id and hasattr(self, '_current_pool_index'):
             try:
@@ -2511,7 +2513,9 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                                 _refreshed = False
                                 try:
                                     if _bad_idx >= 0:
-                                        _refreshed = self._force_refresh_pool_entry(_bad_idx)
+                                        _refreshed = self._force_refresh_pool_entry(
+                                            _bad_idx, user_id=user_id,
+                                            conversation_id=conv_id)
                                 except Exception as _rf_err:
                                     logger.warning(
                                         "[claude-code] force-refresh pool[%s] "
@@ -2536,7 +2540,9 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                                             "retrying same slot",
                                             _err_text[:100], _bad_idx)
                                         self._setup_credentials(
-                                            workdir, pool_index=_bad_idx)
+                                            workdir, pool_index=_bad_idx,
+                                            user_id=user_id,
+                                            conversation_id=conv_id)
                                     else:
                                         _tried = getattr(self, '_tried_pool_idx', set())
                                         _tried = set(_tried) | {_bad_idx}
@@ -2548,7 +2554,9 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                                             _err_text[:100], sorted(_tried))
                                         self._setup_credentials(
                                             workdir, pool_index=-1,
-                                            exclude_indices=_tried)
+                                            exclude_indices=_tried,
+                                            user_id=user_id,
+                                            conversation_id=conv_id)
                                 except Exception as _ref_err:
                                     raise LLMClientError(
                                         f"Claude Code auth failed and "
@@ -2953,7 +2961,9 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                     # — CC may have refreshed mid-turn and we want them
                     # persisted for resume-without-live-session paths.
                     try:
-                        self._recover_tokens(workdir)
+                        self._recover_tokens(
+                            workdir, user_id=user_id,
+                            conversation_id=conv_id)
                     except Exception:
                         logger.debug(
                             "_recover_tokens failed", exc_info=True)
@@ -2967,7 +2977,8 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                 # Cleanup process — _cleanup_proc captures stderr internally
                 _stderr = self._cleanup_proc(proc)
                 # Recover refreshed tokens from workdir (Claude Code may have refreshed them)
-                self._recover_tokens(workdir)
+                self._recover_tokens(
+                    workdir, user_id=user_id, conversation_id=conv_id)
                 # Revoke the internal-auth token minted for this CC invocation —
                 # scoped to the lifetime of this stream, not retained across calls.
                 # Without this, tokens accumulate in core.internal_auth._tokens

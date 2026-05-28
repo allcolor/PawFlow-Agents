@@ -29,7 +29,8 @@ function renderUserAttachments(attachments) {
   let html = '';
   for (const att of attachments) {
     if (att.mime_type && att.mime_type.startsWith('image/')) {
-      const imgSrc = att.url || att.dataUrl || (att.file_id ? '/files/' + encodeURIComponent(att.file_id) + '/' + encodeURIComponent(att.filename) : '');
+      const rawImgSrc = att.url || att.dataUrl || (att.file_id ? '/files/' + encodeURIComponent(att.file_id) + '/' + encodeURIComponent(att.filename) : '');
+      const imgSrc = (typeof normalizePawFlowFileUrl === 'function') ? normalizePawFlowFileUrl(rawImgSrc) : rawImgSrc;
       html += '<img class="chat-image" src="' + imgSrc + '">';
     } else {
       html += '<span class="doc-badge">\u{1F4CE} ' + escapeHtml(att.filename) + '</span> ';

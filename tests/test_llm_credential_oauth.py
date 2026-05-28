@@ -9,6 +9,7 @@ from services.llm_credential_oauth import (
     resolve_credential_service_id,
 )
 from core.service_registry import ServiceRegistry
+from core.llm_providers import claude_code_session, codex_session, gemini_session
 
 
 def _sdef(service_id, service_type, config):
@@ -63,6 +64,100 @@ def test_credential_pool_resolution_prefers_llm_reference(monkeypatch):
 
     assert resolve_credential_service_id("codex-app-server", llm.service_id) == cred.service_id
     assert resolve_credential_service_id("codex-app-server", cred.service_id) == cred.service_id
+
+
+def test_cli_pool_helpers_resolve_user_scoped_credential_services(monkeypatch):
+    services = {}
+    cases = [
+        (
+            claude_code_session._find_cc_service_id,
+            "claude-code",
+            "claude_code_llm_service",
+            "claude_code_oauth_credentials",
+        ),
+        (
+            codex_session._find_codex_service_id,
+            "codex-app-server",
+            "codex_appserver_llm_service",
+            "codex_oauth_credentials",
+        ),
+        (
+            gemini_session._find_gemini_service_id,
+            "gemini",
+            "gemini_llm_service",
+            "gemini_oauth_credentials",
+        ),
+    ]
+    for _, provider, llm_id, cred_id in cases:
+        services[llm_id] = _sdef(
+            llm_id,
+            "llmConnection",
+            {"provider": provider, "credential_service_id": cred_id},
+        )
+        services[cred_id] = _sdef(
+            cred_id,
+            "llmCredentialOAuthProvider",
+            {"provider": provider},
+        )
+
+    def scoped_get_service_def(service_id, user_id="", conv_id=""):
+        if user_id == "alice" and conv_id == "conv-1":
+            return services.get(service_id)
+        return None
+
+    def scoped_all_service_defs(user_id="", conv_id=""):
+        if user_id == "alice" and conv_id == "conv-1":
+            return list(services.values())
+        return []
+
+    monkeypatch.setattr(
+        "services.llm_credential_oauth.get_service_def",
+        scoped_get_service_def,
+    )
+    monkeypatch.setattr(
+        "services.llm_credential_oauth._all_service_defs",
+        scoped_all_service_defs,
+    )
+
+    for finder, _, llm_id, cred_id in cases:
+        assert finder(llm_id, user_id="alice", conv_id="conv-1") == cred_id
+        assert finder(llm_id) == llm_id
+
+
+def test_cli_runtime_token_resolution_passes_scope_to_pool_loaders(monkeypatch):
+    calls = []
+    cases = [
+        (claude_code_session, claude_code_session.ClaudeCodeSessionMixin, "_resolve_service_tokens"),
+        (codex_session, codex_session.CodexSessionMixin, "_codex_resolve_service_tokens"),
+        (gemini_session, gemini_session.GeminiSessionMixin, "_gemini_resolve_service_tokens"),
+    ]
+
+    for module, mixin, method_name in cases:
+        def fake_load(service_id="", user_id="", conv_id="", module_name=module.__name__):
+            calls.append((module_name, service_id, user_id, conv_id))
+            return []
+
+        monkeypatch.setattr(module, "_load_credentials_pool", fake_load)
+        client = mixin()
+        client._agent_service = "scoped_llm_service"
+        client._user_id = "alice"
+        client._conversation_id = "conv-1"
+        getattr(client, method_name)()
+
+    assert calls == [
+        (claude_code_session.__name__, "scoped_llm_service", "alice", "conv-1"),
+        (codex_session.__name__, "scoped_llm_service", "alice", "conv-1"),
+        (gemini_session.__name__, "scoped_llm_service", "alice", "conv-1"),
+    ]
+
+
+def test_credential_pool_actions_pass_user_scope_to_cli_helpers():
+    src = Path("tasks/ai/actions/service_flow.py").read_text(encoding="utf-8")
+
+    assert "mod._load_credentials_pool(svc_id, user_id=user_id, conv_id=conv_id)" in src
+    assert "mod.reset_credentials_pool(svc_id, user_id=user_id, conv_id=conv_id)" in src
+    assert "mod.remove_credential_from_pool(idx, svc_id, user_id=user_id, conv_id=conv_id)" in src
+    assert "_load_credentials_pool(svc_id, user_id=user_id, conv_id=conv_id)" in src
 
 
 def test_claude_code_interactive_reuses_claude_code_credentials(monkeypatch):

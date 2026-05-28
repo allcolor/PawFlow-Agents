@@ -14,6 +14,7 @@ FILE_EXPLORER_JS = Path("tasks/io/chat_ui/file_explorer.js").read_text(encoding=
 AGENT_CORE = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
 TASK_MANAGEMENT = Path("core/handlers/task_management.py").read_text(encoding="utf-8")
 MEDIA_ACTIONS = Path("tasks/ai/actions/media.py").read_text(encoding="utf-8")
+ATTACHMENTS_JS = Path("tasks/io/chat_ui/attachments.js").read_text(encoding="utf-8")
 
 
 def test_add_msg_inserts_by_message_timestamp():
@@ -353,6 +354,16 @@ def test_inline_audio_uses_stable_global_player():
     assert "new Audio(url)" in MESSAGES_JS
     assert "data-audio-url" in MESSAGES_JS
     assert "<audio controls" not in MESSAGES_JS
+
+
+def test_absolute_file_media_urls_are_normalized_to_same_origin():
+    assert "function normalizePawFlowFileUrl(url)" in MESSAGES_JS
+    assert "raw.match(/^https?:\\/\\/[^/]+(\\/files\\/[a-f0-9]+\\/" in MESSAGES_JS
+    assert "const fileUrl = normalizePawFlowFileUrl(url);" in MESSAGES_JS
+    assert "inlineImageHtml(fileUrl," in MESSAGES_JS
+    assert "inlineAudioHtml(fileUrl," in MESSAGES_JS
+    assert "inlineVideoHtml(fileUrl," in MESSAGES_JS
+    assert "normalizePawFlowFileUrl(rawImgSrc)" in ATTACHMENTS_JS
 
 
 def test_primary_chat_controls_are_i18n_bound():

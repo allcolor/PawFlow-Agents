@@ -986,9 +986,10 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
 
     if action in ("llm_credential_pool_list", "claude_pool_list"):
         svc_id = body.get("service_id", "")
+        conv_id = body.get("conversation_id", "") or flowfile.get_attribute("http.conversation_id") or ""
         provider = _credential_provider_for_service(svc_id, user_id) or "claude-code"
         mod = _credential_module(provider)
-        pool = mod._load_credentials_pool(svc_id)
+        pool = mod._load_credentials_pool(svc_id, user_id=user_id, conv_id=conv_id)
         import time as _time
         entries = []
         now = _time.time()
@@ -1013,9 +1014,10 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
 
     if action in ("llm_credential_pool_reset", "claude_pool_reset"):
         svc_id = body.get("service_id", "")
+        conv_id = body.get("conversation_id", "") or flowfile.get_attribute("http.conversation_id") or ""
         provider = _credential_provider_for_service(svc_id, user_id) or "claude-code"
         mod = _credential_module(provider)
-        mod.reset_credentials_pool(svc_id)
+        mod.reset_credentials_pool(svc_id, user_id=user_id, conv_id=conv_id)
         flowfile.set_content(json.dumps({
             "ok": True,
             "message": f"Credentials pool cleared for {svc_id or provider}.",
@@ -1024,10 +1026,11 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
 
     if action in ("llm_credential_pool_remove", "claude_pool_remove"):
         svc_id = body.get("service_id", "")
+        conv_id = body.get("conversation_id", "") or flowfile.get_attribute("http.conversation_id") or ""
         idx = int(body.get("index", -1))
         provider = _credential_provider_for_service(svc_id, user_id) or "claude-code"
         mod = _credential_module(provider)
-        if mod.remove_credential_from_pool(idx, svc_id):
+        if mod.remove_credential_from_pool(idx, svc_id, user_id=user_id, conv_id=conv_id):
             flowfile.set_content(json.dumps({
                 "ok": True,
                 "message": f"Credential {idx} removed from pool.",
@@ -1040,13 +1043,14 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
 
     if action == "llm_credential_pool_refresh":
         svc_id = body.get("service_id", "")
+        conv_id = body.get("conversation_id", "") or flowfile.get_attribute("http.conversation_id") or ""
         idx = int(body.get("index", -1))
         provider = _credential_provider_for_service(svc_id, user_id)
         if not svc_id or idx < 0 or not provider:
             flowfile.set_content(json.dumps({"error": "Missing service_id/provider or invalid index"}).encode())
             return [flowfile]
         mod = _credential_module(provider)
-        pool = mod._load_credentials_pool(svc_id)
+        pool = mod._load_credentials_pool(svc_id, user_id=user_id, conv_id=conv_id)
         if idx >= len(pool):
             flowfile.set_content(json.dumps({"error": f"Invalid index {idx}"}).encode())
             return [flowfile]
@@ -1062,7 +1066,9 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                     tokens.get("refresh_token", refresh_token),
                     tokens.get("expires_at", 0),
                     service_id=svc_id,
-                    pool_index=idx)
+                    pool_index=idx,
+                    user_id=user_id,
+                    conv_id=conv_id)
             elif provider == "codex-app-server":
                 tokens = mod.refresh_oauth_token(refresh_token)
                 mod._persist_tokens_to_service(
@@ -1072,7 +1078,9 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                     service_id=svc_id,
                     pool_index=idx,
                     account=pool[idx].get("account", ""),
-                    id_token=pool[idx].get("id_token", ""))
+                    id_token=pool[idx].get("id_token", ""),
+                    user_id=user_id,
+                    conv_id=conv_id)
             else:
                 tokens = mod.refresh_oauth_token(refresh_token)
                 mod._persist_tokens_to_service(
@@ -1081,7 +1089,9 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                     tokens.get("expires_at", 0),
                     service_id=svc_id,
                     pool_index=idx,
-                    account=pool[idx].get("account", ""))
+                    account=pool[idx].get("account", ""),
+                    user_id=user_id,
+                    conv_id=conv_id)
             flowfile.set_content(json.dumps({
                 "ok": True,
                 "message": f"Credential {idx} refreshed.",
@@ -1117,7 +1127,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         # Also rotate CC credentials pool
         elif hasattr(svc, 'provider') and svc.provider == 'claude-code':
             from core.llm_providers.claude_code_session import _load_credentials_pool, ClaudeCodeSessionMixin
-            pool = _load_credentials_pool(svc_id)
+            pool = _load_credentials_pool(svc_id, user_id=user_id, conv_id=conv_id)
             if pool:
                 with ClaudeCodeSessionMixin._pool_lock:
                     new_idx = ClaudeCodeSessionMixin._pool_counter % len(pool)

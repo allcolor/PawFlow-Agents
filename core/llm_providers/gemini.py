@@ -835,7 +835,9 @@ class LLMGeminiMixin(GeminiSessionMixin):
                 logger.info(
                     "[gemini-acp-live] stored session %s has no live process; loading in fresh ACP process",
                     session_id[:12])
-            self._gemini_setup_credentials(workdir, pool_index=resume_pool_idx)
+            self._gemini_setup_credentials(
+                workdir, pool_index=resume_pool_idx,
+                user_id=user_id, conversation_id=conv_id)
             if conv_id and store is not None and hasattr(self, "_current_pool_index"):
                 try:
                     store.set_extra(conv_id, pool_key, self._current_pool_index)
@@ -1247,7 +1249,8 @@ class LLMGeminiMixin(GeminiSessionMixin):
                 if isinstance(active, dict):
                     active.pop(active_key, None)
             try:
-                self._gemini_recover_tokens(workdir)
+                self._gemini_recover_tokens(
+                    workdir, user_id=user_id, conversation_id=conv_id)
             except Exception:
                 logger.debug("[gemini-acp] token recovery failed", exc_info=True)
 

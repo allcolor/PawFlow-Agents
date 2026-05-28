@@ -35,19 +35,22 @@ _CODEX_TOKEN_ENDPOINT_PATH = "/oauth/token"  # nosec B105
 _CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 
 
-def _find_codex_service_id(service_id: str = "") -> str:
+def _find_codex_service_id(service_id: str = "", user_id: str = "",
+                           conv_id: str = "") -> str:
     """Find the credential-pool owner for Codex OAuth."""
     try:
         from services.llm_credential_oauth import resolve_credential_service_id
-        return resolve_credential_service_id("codex-app-server", service_id)
+        return resolve_credential_service_id(
+            "codex-app-server", service_id, user_id=user_id, conv_id=conv_id)
     except Exception:
         return service_id or ""
 
 
-def _load_credentials_pool(service_id: str = "") -> list:
+def _load_credentials_pool(service_id: str = "", user_id: str = "",
+                           conv_id: str = "") -> list:
     """Load the credentials pool for a codex service."""
     from core.secrets import get_secrets_manager
-    sid = _find_codex_service_id(service_id)
+    sid = _find_codex_service_id(service_id, user_id=user_id, conv_id=conv_id)
     if not sid:
         return []
     sm = get_secrets_manager()
@@ -66,10 +69,11 @@ def _load_credentials_pool(service_id: str = "") -> list:
         return []
 
 
-def _save_credentials_pool(pool: list, service_id: str = ""):
+def _save_credentials_pool(pool: list, service_id: str = "", user_id: str = "",
+                           conv_id: str = ""):
     """Save the credentials pool to secrets (encrypted)."""
     from core.secrets import get_secrets_manager
-    sid = _find_codex_service_id(service_id)
+    sid = _find_codex_service_id(service_id, user_id=user_id, conv_id=conv_id)
     if not sid:
         return
     sm = get_secrets_manager()
@@ -89,7 +93,8 @@ def _save_credentials_pool(pool: list, service_id: str = ""):
 def add_credential_to_pool(access_token: str, refresh_token: str,  # nosec B107
                             expires_at, account: str = "",
                             service_id: str = "",
-                            id_token: str = ""):
+                            id_token: str = "", user_id: str = "",
+                            conv_id: str = ""):
     """Add (or update on refresh_token match) a credential.
 
     `id_token` is the OAuth ID JWT codex expects in auth.json for the
@@ -97,7 +102,7 @@ def add_credential_to_pool(access_token: str, refresh_token: str,  # nosec B107
     id_token ("invalid ID token format"). Stored alongside access/refresh
     so we can reproduce the exact auth.json shape codex wrote on disk.
     """
-    pool = _load_credentials_pool(service_id)
+    pool = _load_credentials_pool(service_id, user_id=user_id, conv_id=conv_id)
     for i, existing in enumerate(pool):
         if existing.get("refresh_token") == refresh_token:
             pool[i] = {
@@ -108,7 +113,8 @@ def add_credential_to_pool(access_token: str, refresh_token: str,  # nosec B107
                 "account": account or existing.get("account", ""),
                 "added_at": int(time.time()),
             }
-            _save_credentials_pool(pool, service_id)
+            _save_credentials_pool(
+                pool, service_id, user_id=user_id, conv_id=conv_id)
             return
     pool.append({
         "access_token": access_token,
@@ -118,22 +124,25 @@ def add_credential_to_pool(access_token: str, refresh_token: str,  # nosec B107
         "account": account,
         "added_at": int(time.time()),
     })
-    _save_credentials_pool(pool, service_id)
+    _save_credentials_pool(pool, service_id, user_id=user_id, conv_id=conv_id)
     logger.info("[codex] credential added to pool (now %d) for '%s'",
-                len(pool), _find_codex_service_id(service_id))
+                len(pool), _find_codex_service_id(
+                    service_id, user_id=user_id, conv_id=conv_id))
 
 
-def remove_credential_from_pool(index: int, service_id: str = "") -> bool:
-    pool = _load_credentials_pool(service_id)
+def remove_credential_from_pool(index: int, service_id: str = "",
+                                user_id: str = "", conv_id: str = "") -> bool:
+    pool = _load_credentials_pool(service_id, user_id=user_id, conv_id=conv_id)
     if 0 <= index < len(pool):
         pool.pop(index)
-        _save_credentials_pool(pool, service_id)
+        _save_credentials_pool(pool, service_id, user_id=user_id, conv_id=conv_id)
         return True
     return False
 
 
-def reset_credentials_pool(service_id: str = ""):
-    _save_credentials_pool([], service_id)
+def reset_credentials_pool(service_id: str = "", user_id: str = "",
+                           conv_id: str = ""):
+    _save_credentials_pool([], service_id, user_id=user_id, conv_id=conv_id)
 
 
 def _validate_oauth_token(access_token: str, refresh_token: str,
@@ -233,7 +242,8 @@ def _persist_tokens_to_service(access_token: str, refresh_token: str,  # nosec B
                                 expires_at, service_id: str = "",
                                 pool_index: int = -1,
                                 id_token: str = "",
-                                account: str = ""):
+                                account: str = "", user_id: str = "",
+                                conv_id: str = ""):
     """Update a credential in the codex pool (after refresh).
 
     Mirror of claude_code_session._persist_tokens_to_service. If pool_index
@@ -247,14 +257,15 @@ def _persist_tokens_to_service(access_token: str, refresh_token: str,  # nosec B
             "(access_token=%r, expires_at=%r) to pool[%s] — keeping old",
             bool(access_token), expires_at, pool_index)
         return
-    sid = _find_codex_service_id(service_id)
+    sid = _find_codex_service_id(service_id, user_id=user_id, conv_id=conv_id)
     if not sid:
         return
-    pool = _load_credentials_pool(sid)
+    pool = _load_credentials_pool(sid, user_id=user_id, conv_id=conv_id)
     if not pool:
         add_credential_to_pool(
             access_token, refresh_token, expires_at,
-            account=account, id_token=id_token, service_id=sid)
+            account=account, id_token=id_token, service_id=sid,
+            user_id=user_id, conv_id=conv_id)
         return
     if 0 <= pool_index < len(pool):
         pool[pool_index]["access_token"] = access_token
@@ -276,7 +287,7 @@ def _persist_tokens_to_service(access_token: str, refresh_token: str,  # nosec B
             pool[0]["expires_at"] = int(expires_at)
             if id_token:
                 pool[0]["id_token"] = id_token
-    _save_credentials_pool(pool, sid)
+    _save_credentials_pool(pool, sid, user_id=user_id, conv_id=conv_id)
     logger.info("[codex] credential updated in pool for '%s'", sid)
 
 
@@ -307,7 +318,9 @@ class CodexSessionMixin:
     _pool_counter = 0
     _pool_lock = __import__('threading').Lock()
 
-    def _codex_resolve_service_tokens(self, pool_index: int = -1) -> dict:
+    def _codex_resolve_service_tokens(self, pool_index: int = -1,
+                                      user_id: str = "",
+                                      conversation_id: str = "") -> dict:
         """Resolve codex tokens from the credentials pool. Mirror of CC.
 
         Returns {"access_token", "refresh_token", "expires_at",
@@ -315,7 +328,9 @@ class CodexSessionMixin:
         """
         import time as _t
         svc_id = getattr(self, '_agent_service', '') or ''
-        pool = _load_credentials_pool(svc_id)
+        uid = user_id or getattr(self, '_user_id', '') or ''
+        cid = conversation_id or getattr(self, '_conversation_id', '') or ''
+        pool = _load_credentials_pool(svc_id, user_id=uid, conv_id=cid)
         if not pool:
             return {"access_token": "", "refresh_token": "",  # nosec B105
                     "expires_at": 0, "pool_index": -1,
@@ -341,23 +356,28 @@ class CodexSessionMixin:
             "account": cred.get("account", ""),
         }
 
-    def _codex_force_refresh_pool_entry(self, pool_index: int) -> bool:
+    def _codex_force_refresh_pool_entry(self, pool_index: int,
+                                        user_id: str = "",
+                                        conversation_id: str = "") -> bool:
         """Force-refresh access_token for pool[pool_index]. Mirror of CC.
 
         On failure, drops the slot from the pool entirely (a credential
         whose refresh is broken is dead and must not be re-attempted).
         """
         svc_id = getattr(self, '_agent_service', '') or ''
-        pool = _load_credentials_pool(svc_id)
+        uid = user_id or getattr(self, '_user_id', '') or ''
+        cid = conversation_id or getattr(self, '_conversation_id', '') or ''
+        pool = _load_credentials_pool(svc_id, user_id=uid, conv_id=cid)
         if pool_index < 0 or pool_index >= len(pool):
             return False
         refresh_token = pool[pool_index].get("refresh_token", "")
 
         def _drop_dead_slot(reason: str):
-            current = _load_credentials_pool(svc_id)
+            current = _load_credentials_pool(svc_id, user_id=uid, conv_id=cid)
             if 0 <= pool_index < len(current):
                 current.pop(pool_index)
-                _save_credentials_pool(current, service_id=svc_id)
+                _save_credentials_pool(
+                    current, service_id=svc_id, user_id=uid, conv_id=cid)
                 logger.warning(
                     "[codex force-refresh] removed dead pool[%d] (%s); "
                     "remaining=%d", pool_index, reason, len(current))
@@ -384,7 +404,8 @@ class CodexSessionMixin:
             return False
         _persist_tokens_to_service(
             _new_at, _new_rt, _new_exp,
-            service_id=svc_id, pool_index=pool_index, id_token=_new_id)
+            service_id=svc_id, pool_index=pool_index, id_token=_new_id,
+            user_id=uid, conv_id=cid)
         logger.info("[codex force-refresh] pool[%d] access_token renewed",
                     pool_index)
         return True
@@ -469,7 +490,8 @@ class CodexSessionMixin:
     _OAUTH_REFRESH_MIN_TTL_SEC = 30 * 60
 
     def _codex_setup_credentials(self, workdir: str, pool_index: int = -1,
-                            exclude_indices=None):
+                            exclude_indices=None, user_id: str = "",
+                            conversation_id: str = ""):
         """Write codex auth.json in <workdir>/.codex/ for codex CLI auth.
 
         Mirror of CC's _codex_setup_credentials. The four touchpoint differences:
@@ -495,7 +517,9 @@ class CodexSessionMixin:
             return
 
         svc_id = getattr(self, '_agent_service', '') or ''
-        pool = _load_credentials_pool(svc_id)
+        uid = user_id or getattr(self, '_user_id', '') or ''
+        cid = conversation_id or getattr(self, '_conversation_id', '') or ''
+        pool = _load_credentials_pool(svc_id, user_id=uid, conv_id=cid)
         if not pool:
             raise LLMClientError(
                 "Codex credentials not configured. "
@@ -553,7 +577,8 @@ class CodexSessionMixin:
                         _persist_tokens_to_service(
                             access_token, refresh_token, int(expires_at),
                             service_id=svc_id, pool_index=_pidx,
-                            id_token=id_token, account=account)
+                            id_token=id_token, account=account,
+                            user_id=uid, conv_id=cid)
                     except Exception as e:
                         logger.warning(
                             "[codex] pool[%d] refresh failed, dropping: %s",
@@ -568,13 +593,15 @@ class CodexSessionMixin:
             self._current_pool_index = _pidx
             if dead_indices:
                 pool = [c for i, c in enumerate(pool) if i not in dead_indices]
-                _save_credentials_pool(pool, service_id=svc_id)
+                _save_credentials_pool(
+                    pool, service_id=svc_id, user_id=uid, conv_id=cid)
                 logger.info("[codex] removed %d dead credential(s)",
                             len(dead_indices))
             break
         else:
             pool = [c for i, c in enumerate(pool) if i not in dead_indices]
-            _save_credentials_pool(pool, service_id=svc_id)
+            _save_credentials_pool(
+                pool, service_id=svc_id, user_id=uid, conv_id=cid)
             raise LLMClientError(
                 "All codex credentials expired or refresh failed. "
                 "Re-authenticate via the Login button.")
@@ -600,7 +627,8 @@ class CodexSessionMixin:
             json.dump(auth_blob, f)
         os.chmod(auth_path, 0o600)
 
-    def _codex_recover_tokens(self, workdir: str):
+    def _codex_recover_tokens(self, workdir: str, user_id: str = "",
+                              conversation_id: str = ""):
         """Read back tokens from <workdir>/.codex/auth.json after a run.
 
         Codex may have refreshed access_token mid-turn (via /v1/oauth/token).
@@ -620,14 +648,16 @@ class CodexSessionMixin:
             if not new_access:
                 return
             _pidx = getattr(self, '_current_pool_index', -1)
-            _current = self._codex_resolve_service_tokens(pool_index=_pidx)
+            _current = self._codex_resolve_service_tokens(
+                pool_index=_pidx, user_id=user_id,
+                conversation_id=conversation_id)
             if new_access == _current.get("access_token", ""):
                 return
             _service_id = getattr(self, '_agent_service', '') or ''
             _persist_tokens_to_service(
                 new_access, new_refresh, _current.get("expires_at", 0),
                 service_id=_service_id, pool_index=_pidx,
-                id_token=new_id)
+                id_token=new_id, user_id=user_id, conv_id=conversation_id)
             logger.info("[codex] recovered refreshed tokens [pool:%d]",
                         _pidx)
         except Exception as e:

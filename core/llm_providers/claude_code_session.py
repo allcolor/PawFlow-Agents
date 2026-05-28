@@ -34,23 +34,26 @@ def _maybe_transform_relay_proxy_url(url: str, user_id: str = "") -> Optional[st
     return maybe_transform_relay_proxy_url(url, user_id=user_id)
 
 
-def _find_cc_service_id(service_id: str = "") -> str:
+def _find_cc_service_id(service_id: str = "", user_id: str = "",
+                        conv_id: str = "") -> str:
     """Find the credential-pool owner for Claude Code OAuth."""
     try:
         from services.llm_credential_oauth import resolve_credential_service_id
-        return resolve_credential_service_id("claude-code", service_id)
+        return resolve_credential_service_id(
+            "claude-code", service_id, user_id=user_id, conv_id=conv_id)
     except Exception:
         return service_id or ""
 
 
-def _load_credentials_pool(service_id: str = "") -> list:
+def _load_credentials_pool(service_id: str = "", user_id: str = "",
+                           conv_id: str = "") -> list:
     """Load the credentials pool for a CC service.
 
     Returns list of {"access_token", "refresh_token", "expires_at", "account", "added_at"}.
     """
     from core.secrets import get_secrets_manager
 
-    sid = _find_cc_service_id(service_id)
+    sid = _find_cc_service_id(service_id, user_id=user_id, conv_id=conv_id)
     if not sid:
         return []
     sm = get_secrets_manager()
@@ -70,12 +73,13 @@ def _load_credentials_pool(service_id: str = "") -> list:
         return []
 
 
-def _save_credentials_pool(pool: list, service_id: str = ""):
+def _save_credentials_pool(pool: list, service_id: str = "", user_id: str = "",
+                           conv_id: str = ""):
     """Save the credentials pool to secrets (encrypted)."""
     from pathlib import Path
     from core.secrets import get_secrets_manager
 
-    sid = _find_cc_service_id(service_id)
+    sid = _find_cc_service_id(service_id, user_id=user_id, conv_id=conv_id)
     if not sid:
         return
     sm = get_secrets_manager()
@@ -95,10 +99,11 @@ def _save_credentials_pool(pool: list, service_id: str = ""):
 
 def add_credential_to_pool(access_token: str, refresh_token: str,
                            expires_at, account: str = "",
-                           service_id: str = ""):
+                           service_id: str = "", user_id: str = "",
+                           conv_id: str = ""):
     """Add a credential to the pool."""
     import time
-    pool = _load_credentials_pool(service_id)
+    pool = _load_credentials_pool(service_id, user_id=user_id, conv_id=conv_id)
     # Dedup: if same refresh_token exists, update it (same account re-login)
     for i, existing in enumerate(pool):
         if existing.get("refresh_token") == refresh_token:
@@ -109,9 +114,11 @@ def add_credential_to_pool(access_token: str, refresh_token: str,
                 "account": account or existing.get("account", ""),
                 "added_at": int(time.time()),
             }
-            _save_credentials_pool(pool, service_id)
+            _save_credentials_pool(
+                pool, service_id, user_id=user_id, conv_id=conv_id)
             logger.info("[claude-code] credential updated in pool (slot %d) for '%s'",
-                        i, _find_cc_service_id(service_id))
+                        i, _find_cc_service_id(
+                            service_id, user_id=user_id, conv_id=conv_id))
             return
     pool.append({
         "access_token": access_token,
@@ -120,24 +127,27 @@ def add_credential_to_pool(access_token: str, refresh_token: str,
         "account": account,
         "added_at": int(time.time()),
     })
-    _save_credentials_pool(pool, service_id)
+    _save_credentials_pool(pool, service_id, user_id=user_id, conv_id=conv_id)
     logger.info("[claude-code] credential added to pool (now %d) for '%s'",
-                len(pool), _find_cc_service_id(service_id))
+                len(pool), _find_cc_service_id(
+                    service_id, user_id=user_id, conv_id=conv_id))
 
 
-def remove_credential_from_pool(index: int, service_id: str = "") -> bool:
+def remove_credential_from_pool(index: int, service_id: str = "",
+                                user_id: str = "", conv_id: str = "") -> bool:
     """Remove a credential from the pool by index (0-based)."""
-    pool = _load_credentials_pool(service_id)
+    pool = _load_credentials_pool(service_id, user_id=user_id, conv_id=conv_id)
     if 0 <= index < len(pool):
         pool.pop(index)
-        _save_credentials_pool(pool, service_id)
+        _save_credentials_pool(pool, service_id, user_id=user_id, conv_id=conv_id)
         return True
     return False
 
 
-def reset_credentials_pool(service_id: str = ""):
+def reset_credentials_pool(service_id: str = "", user_id: str = "",
+                           conv_id: str = ""):
     """Clear all credentials from the pool."""
-    _save_credentials_pool([], service_id)
+    _save_credentials_pool([], service_id, user_id=user_id, conv_id=conv_id)
 
 
 def _validate_oauth_token(access_token: str, refresh_token: str,
@@ -164,7 +174,8 @@ def _validate_oauth_token(access_token: str, refresh_token: str,
 
 def _persist_tokens_to_service(access_token: str, refresh_token: str,
                                expires_at, service_id: str = "",
-                               pool_index: int = -1):
+                               pool_index: int = -1, user_id: str = "",
+                               conv_id: str = ""):
     """Update a credential in the pool (after refresh).
 
     If pool_index >= 0, updates that specific slot. Otherwise finds
@@ -181,14 +192,14 @@ def _persist_tokens_to_service(access_token: str, refresh_token: str,
             "(access_token=%r, expires_at=%r) to pool[%s] — keeping old",
             bool(access_token), expires_at, pool_index)
         return
-    sid = _find_cc_service_id(service_id)
+    sid = _find_cc_service_id(service_id, user_id=user_id, conv_id=conv_id)
     if not sid:
         return
-    pool = _load_credentials_pool(sid)
+    pool = _load_credentials_pool(sid, user_id=user_id, conv_id=conv_id)
     if not pool:
         # No pool yet — create one
         add_credential_to_pool(access_token, refresh_token, expires_at,
-                               service_id=sid)
+                               service_id=sid, user_id=user_id, conv_id=conv_id)
         return
 
     if 0 <= pool_index < len(pool):
@@ -208,7 +219,7 @@ def _persist_tokens_to_service(access_token: str, refresh_token: str,
             pool[0]["refresh_token"] = refresh_token
             pool[0]["expires_at"] = int(expires_at)
 
-    _save_credentials_pool(pool, sid)
+    _save_credentials_pool(pool, sid, user_id=user_id, conv_id=conv_id)
     logger.info("[claude-code] credential updated in pool for '%s'", sid)
 
 
@@ -234,7 +245,9 @@ class ClaudeCodeSessionMixin:
     _pool_counter = 0
     _pool_lock = __import__('threading').Lock()
 
-    def _resolve_service_tokens(self, pool_index: int = -1) -> dict:
+    def _resolve_service_tokens(self, pool_index: int = -1,
+                                user_id: str = "",
+                                conversation_id: str = "") -> dict:
         """Resolve Claude tokens from the credentials pool.
 
         If pool_index >= 0, returns that specific credential.
@@ -244,7 +257,9 @@ class ClaudeCodeSessionMixin:
         """
         import time as _t
         svc_id = getattr(self, '_agent_service', '') or ''
-        pool = _load_credentials_pool(svc_id)
+        uid = user_id or getattr(self, '_user_id', '') or ''
+        cid = conversation_id or getattr(self, '_conversation_id', '') or ''
+        pool = _load_credentials_pool(svc_id, user_id=uid, conv_id=cid)
         if not pool:
             return {"access_token": "", "refresh_token": "", "expires_at": 0, "pool_index": -1}  # nosec B105
 
@@ -270,7 +285,8 @@ class ClaudeCodeSessionMixin:
             "pool_index": idx,
         }
 
-    def _force_refresh_pool_entry(self, pool_index: int) -> bool:
+    def _force_refresh_pool_entry(self, pool_index: int, user_id: str = "",
+                                  conversation_id: str = "") -> bool:
         """Force-refresh the access_token for pool[pool_index] without
         regard to its expiry. Used on mid-stream auth failures where the
         access_token was rejected but the refresh_token may still be valid.
@@ -283,16 +299,19 @@ class ClaudeCodeSessionMixin:
         updated with a validated token; False otherwise.
         """
         svc_id = getattr(self, '_agent_service', '') or ''
-        pool = _load_credentials_pool(svc_id)
+        uid = user_id or getattr(self, '_user_id', '') or ''
+        cid = conversation_id or getattr(self, '_conversation_id', '') or ''
+        pool = _load_credentials_pool(svc_id, user_id=uid, conv_id=cid)
         if pool_index < 0 or pool_index >= len(pool):
             return False
         refresh_token = pool[pool_index].get("refresh_token", "")
 
         def _drop_dead_slot(reason: str):
-            current = _load_credentials_pool(svc_id)
+            current = _load_credentials_pool(svc_id, user_id=uid, conv_id=cid)
             if 0 <= pool_index < len(current):
                 dead = current.pop(pool_index)
-                _save_credentials_pool(current, service_id=svc_id)
+                _save_credentials_pool(
+                    current, service_id=svc_id, user_id=uid, conv_id=cid)
                 logger.warning(
                     "[force-refresh] removed dead pool[%d] (reason: %s); "
                     "remaining=%d", pool_index, reason, len(current))
@@ -328,7 +347,7 @@ class ClaudeCodeSessionMixin:
             return False
         _persist_tokens_to_service(
             _new_at, _new_rt, _new_exp,
-            service_id=svc_id, pool_index=pool_index)
+            service_id=svc_id, pool_index=pool_index, user_id=uid, conv_id=cid)
         logger.info("[force-refresh] pool[%d] access_token renewed", pool_index)
         return True
 
@@ -560,7 +579,8 @@ class ClaudeCodeSessionMixin:
     _OAUTH_REFRESH_MIN_TTL_SEC = 30 * 60
 
     def _setup_credentials(self, workdir: str, pool_index: int = -1,
-                            exclude_indices=None):
+                            exclude_indices=None, user_id: str = "",
+                            conversation_id: str = ""):
         """Write .credentials.json in session workdir for Claude Code auth.
 
         If ANTHROPIC_API_KEY is set (via api_key config), skips OAuth
@@ -589,7 +609,9 @@ class ClaudeCodeSessionMixin:
             return
 
         svc_id = getattr(self, '_agent_service', '') or ''
-        pool = _load_credentials_pool(svc_id)
+        uid = user_id or getattr(self, '_user_id', '') or ''
+        cid = conversation_id or getattr(self, '_conversation_id', '') or ''
+        pool = _load_credentials_pool(svc_id, user_id=uid, conv_id=cid)
         if not pool:
             raise LLMClientError(
                 "Claude Code credentials not configured. "
@@ -644,7 +666,8 @@ class ClaudeCodeSessionMixin:
                         expires_at = new_tokens["expires_at"]
                         _persist_tokens_to_service(
                             access_token, refresh_token, int(expires_at),
-                            service_id=svc_id, pool_index=_pidx)
+                            service_id=svc_id, pool_index=_pidx,
+                            user_id=uid, conv_id=cid)
                         logger.info("OAuth token [pool:%d] refreshed — expires in %.1fh",
                                     _pidx, (int(expires_at)/1000 - _time.time()) / 3600)
                     except OAuthRejectedError as e:
@@ -681,7 +704,8 @@ class ClaudeCodeSessionMixin:
             # Clean up dead credentials
             if dead_indices:
                 pool = [c for i, c in enumerate(pool) if i not in dead_indices]
-                _save_credentials_pool(pool, service_id=svc_id)
+                _save_credentials_pool(
+                    pool, service_id=svc_id, user_id=uid, conv_id=cid)
                 logger.info("Removed %d dead credential(s) from pool, %d remaining",
                             len(dead_indices), len(pool))
             break
@@ -690,7 +714,8 @@ class ClaudeCodeSessionMixin:
             # dropped; slots that failed transiently stay in the pool.
             if dead_indices:
                 pool = [c for i, c in enumerate(pool) if i not in dead_indices]
-                _save_credentials_pool(pool, service_id=svc_id)
+                _save_credentials_pool(
+                    pool, service_id=svc_id, user_id=uid, conv_id=cid)
             if had_transient:
                 raise LLMClientError(
                     "Claude Code OAuth refresh is temporarily unavailable "
@@ -719,7 +744,8 @@ class ClaudeCodeSessionMixin:
         with open(creds_path, "w", encoding="utf-8") as f:
             json.dump(creds, f)
 
-    def _recover_tokens(self, workdir: str):
+    def _recover_tokens(self, workdir: str, user_id: str = "",
+                        conversation_id: str = ""):
         """Read back tokens from workdir after a run.
 
         Claude Code may have refreshed the access_token during the run.
@@ -739,14 +765,17 @@ class ClaudeCodeSessionMixin:
                 return
 
             _pidx = getattr(self, '_current_pool_index', -1)
-            _current = self._resolve_service_tokens(pool_index=_pidx)
+            _current = self._resolve_service_tokens(
+                pool_index=_pidx, user_id=user_id,
+                conversation_id=conversation_id)
             if new_access == _current.get("access_token", ""):
                 return
 
             _service_id = getattr(self, '_agent_service', '') or ''
             _persist_tokens_to_service(
                 new_access, new_refresh, new_expires,
-                service_id=_service_id, pool_index=_pidx)
+                service_id=_service_id, pool_index=_pidx,
+                user_id=user_id, conv_id=conversation_id)
             logger.info("Recovered refreshed tokens [pool:%d] for '%s'", _pidx, _service_id)
         except Exception as e:
             logger.debug("Token recovery failed: %s", e)

@@ -692,7 +692,9 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                 live_key = None
 
         if not is_reuse:
-            self._codex_setup_credentials(workdir, pool_index=resume_pool_idx)
+            self._codex_setup_credentials(
+                workdir, pool_index=resume_pool_idx,
+                user_id=user_id, conversation_id=conv_id)
             if conv_id and store is not None and hasattr(self, "_current_pool_index"):
                 try:
                     store.set_extra(conv_id, f"codex_app_pool_idx:{agent_name or 'default'}",
@@ -1277,7 +1279,8 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                 if isinstance(active, dict):
                     active.pop(active_key, None)
             try:
-                self._codex_recover_tokens(workdir)
+                self._codex_recover_tokens(
+                    workdir, user_id=user_id, conversation_id=conv_id)
             except Exception:
                 logger.debug("[codex-app] token recovery failed", exc_info=True)
 

@@ -34,18 +34,21 @@ _GEMINI_CLIENT_ID = (
 _GEMINI_CLIENT_SECRET = "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"  # nosec B105
 
 
-def _find_gemini_service_id(service_id: str = "") -> str:
+def _find_gemini_service_id(service_id: str = "", user_id: str = "",
+                            conv_id: str = "") -> str:
     """Find the credential-pool owner for Gemini OAuth."""
     try:
         from services.llm_credential_oauth import resolve_credential_service_id
-        return resolve_credential_service_id("gemini", service_id)
+        return resolve_credential_service_id(
+            "gemini", service_id, user_id=user_id, conv_id=conv_id)
     except Exception:
         return service_id or ""
 
 
-def _load_credentials_pool(service_id: str = "") -> list:
+def _load_credentials_pool(service_id: str = "", user_id: str = "",
+                           conv_id: str = "") -> list:
     from core.secrets import get_secrets_manager
-    sid = _find_gemini_service_id(service_id)
+    sid = _find_gemini_service_id(service_id, user_id=user_id, conv_id=conv_id)
     if not sid:
         return []
     sm = get_secrets_manager()
@@ -64,9 +67,10 @@ def _load_credentials_pool(service_id: str = "") -> list:
         return []
 
 
-def _save_credentials_pool(pool: list, service_id: str = ""):
+def _save_credentials_pool(pool: list, service_id: str = "", user_id: str = "",
+                           conv_id: str = ""):
     from core.secrets import get_secrets_manager
-    sid = _find_gemini_service_id(service_id)
+    sid = _find_gemini_service_id(service_id, user_id=user_id, conv_id=conv_id)
     if not sid:
         return
     sm = get_secrets_manager()
@@ -85,8 +89,9 @@ def _save_credentials_pool(pool: list, service_id: str = ""):
 
 def add_credential_to_pool(access_token: str, refresh_token: str,
                             expires_at, account: str = "",
-                            service_id: str = ""):
-    pool = _load_credentials_pool(service_id)
+                            service_id: str = "", user_id: str = "",
+                            conv_id: str = ""):
+    pool = _load_credentials_pool(service_id, user_id=user_id, conv_id=conv_id)
     for i, existing in enumerate(pool):
         if existing.get("refresh_token") == refresh_token:
             pool[i] = {
@@ -96,7 +101,8 @@ def add_credential_to_pool(access_token: str, refresh_token: str,
                 "account": account or existing.get("account", ""),
                 "added_at": int(time.time()),
             }
-            _save_credentials_pool(pool, service_id)
+            _save_credentials_pool(
+                pool, service_id, user_id=user_id, conv_id=conv_id)
             return
     pool.append({
         "access_token": access_token,
@@ -105,22 +111,25 @@ def add_credential_to_pool(access_token: str, refresh_token: str,
         "account": account,
         "added_at": int(time.time()),
     })
-    _save_credentials_pool(pool, service_id)
+    _save_credentials_pool(pool, service_id, user_id=user_id, conv_id=conv_id)
     logger.info("[gemini] credential added to pool (now %d) for '%s'",
-                len(pool), _find_gemini_service_id(service_id))
+                len(pool), _find_gemini_service_id(
+                    service_id, user_id=user_id, conv_id=conv_id))
 
 
-def remove_credential_from_pool(index: int, service_id: str = "") -> bool:
-    pool = _load_credentials_pool(service_id)
+def remove_credential_from_pool(index: int, service_id: str = "",
+                                user_id: str = "", conv_id: str = "") -> bool:
+    pool = _load_credentials_pool(service_id, user_id=user_id, conv_id=conv_id)
     if 0 <= index < len(pool):
         pool.pop(index)
-        _save_credentials_pool(pool, service_id)
+        _save_credentials_pool(pool, service_id, user_id=user_id, conv_id=conv_id)
         return True
     return False
 
 
-def reset_credentials_pool(service_id: str = ""):
-    _save_credentials_pool([], service_id)
+def reset_credentials_pool(service_id: str = "", user_id: str = "",
+                           conv_id: str = ""):
+    _save_credentials_pool([], service_id, user_id=user_id, conv_id=conv_id)
 
 
 def _validate_oauth_token(access_token: str, refresh_token: str,
@@ -207,7 +216,8 @@ def parse_oauth_creds_json(creds_text: str) -> dict:
 def _persist_tokens_to_service(access_token: str, refresh_token: str,
                                 expires_at, service_id: str = "",
                                 pool_index: int = -1,
-                                account: str = ""):
+                                account: str = "", user_id: str = "",
+                                conv_id: str = ""):
     """Update a credential in the gemini pool (after refresh).
 
     Mirror of codex_session._persist_tokens_to_service / cc equivalent.
@@ -218,14 +228,14 @@ def _persist_tokens_to_service(access_token: str, refresh_token: str,
             "(access_token=%r, expires_at=%r) to pool[%s] — keeping old",
             bool(access_token), expires_at, pool_index)
         return
-    sid = _find_gemini_service_id(service_id)
+    sid = _find_gemini_service_id(service_id, user_id=user_id, conv_id=conv_id)
     if not sid:
         return
-    pool = _load_credentials_pool(sid)
+    pool = _load_credentials_pool(sid, user_id=user_id, conv_id=conv_id)
     if not pool:
         add_credential_to_pool(
             access_token, refresh_token, expires_at,
-            account=account, service_id=sid)
+            account=account, service_id=sid, user_id=user_id, conv_id=conv_id)
         return
     if 0 <= pool_index < len(pool):
         pool[pool_index]["access_token"] = access_token
@@ -241,7 +251,7 @@ def _persist_tokens_to_service(access_token: str, refresh_token: str,
             pool[0]["access_token"] = access_token
             pool[0]["refresh_token"] = refresh_token
             pool[0]["expires_at"] = int(expires_at)
-    _save_credentials_pool(pool, sid)
+    _save_credentials_pool(pool, sid, user_id=user_id, conv_id=conv_id)
     logger.info("[gemini] credential updated in pool for '%s'", sid)
 
 
@@ -263,10 +273,14 @@ class GeminiSessionMixin:
     _pool_counter = 0
     _pool_lock = __import__('threading').Lock()
 
-    def _gemini_resolve_service_tokens(self, pool_index: int = -1) -> dict:
+    def _gemini_resolve_service_tokens(self, pool_index: int = -1,
+                                       user_id: str = "",
+                                       conversation_id: str = "") -> dict:
         import time as _t
         svc_id = getattr(self, '_agent_service', '') or ''
-        pool = _load_credentials_pool(svc_id)
+        uid = user_id or getattr(self, '_user_id', '') or ''
+        cid = conversation_id or getattr(self, '_conversation_id', '') or ''
+        pool = _load_credentials_pool(svc_id, user_id=uid, conv_id=cid)
         if not pool:
             return {"access_token": "", "refresh_token": "",  # nosec B105
                     "expires_at": 0, "pool_index": -1, "account": ""}
@@ -290,18 +304,23 @@ class GeminiSessionMixin:
             "account": cred.get("account", ""),
         }
 
-    def _gemini_force_refresh_pool_entry(self, pool_index: int) -> bool:
+    def _gemini_force_refresh_pool_entry(self, pool_index: int,
+                                         user_id: str = "",
+                                         conversation_id: str = "") -> bool:
         svc_id = getattr(self, '_agent_service', '') or ''
-        pool = _load_credentials_pool(svc_id)
+        uid = user_id or getattr(self, '_user_id', '') or ''
+        cid = conversation_id or getattr(self, '_conversation_id', '') or ''
+        pool = _load_credentials_pool(svc_id, user_id=uid, conv_id=cid)
         if pool_index < 0 or pool_index >= len(pool):
             return False
         refresh_token = pool[pool_index].get("refresh_token", "")
 
         def _drop_dead_slot(reason: str):
-            current = _load_credentials_pool(svc_id)
+            current = _load_credentials_pool(svc_id, user_id=uid, conv_id=cid)
             if 0 <= pool_index < len(current):
                 current.pop(pool_index)
-                _save_credentials_pool(current, service_id=svc_id)
+                _save_credentials_pool(
+                    current, service_id=svc_id, user_id=uid, conv_id=cid)
                 logger.warning(
                     "[gemini force-refresh] removed dead pool[%d] (%s); "
                     "remaining=%d", pool_index, reason, len(current))
@@ -324,7 +343,7 @@ class GeminiSessionMixin:
             return False
         _persist_tokens_to_service(
             _new_at, _new_rt, _new_exp,
-            service_id=svc_id, pool_index=pool_index)
+            service_id=svc_id, pool_index=pool_index, user_id=uid, conv_id=cid)
         return True
 
     @staticmethod
@@ -397,7 +416,8 @@ class GeminiSessionMixin:
     _OAUTH_REFRESH_MIN_TTL_SEC = 30 * 60
 
     def _gemini_setup_credentials(self, workdir: str, pool_index: int = -1,
-                            exclude_indices=None):
+                            exclude_indices=None, user_id: str = "",
+                            conversation_id: str = ""):
         """Write oauth_creds.json under <workdir>/.gemini/.
 
         Mirror of CC/codex _gemini_setup_credentials. Touchpoint differences:
@@ -421,7 +441,9 @@ class GeminiSessionMixin:
             return
 
         svc_id = getattr(self, '_agent_service', '') or ''
-        pool = _load_credentials_pool(svc_id)
+        uid = user_id or getattr(self, '_user_id', '') or ''
+        cid = conversation_id or getattr(self, '_conversation_id', '') or ''
+        pool = _load_credentials_pool(svc_id, user_id=uid, conv_id=cid)
         if not pool:
             raise LLMClientError(
                 "Gemini credentials not configured. "
@@ -469,7 +491,8 @@ class GeminiSessionMixin:
                         expires_at = new_tokens["expires_at"]
                         _persist_tokens_to_service(
                             access_token, refresh_token, int(expires_at),
-                            service_id=svc_id, pool_index=_pidx, account=account)
+                            service_id=svc_id, pool_index=_pidx,
+                            account=account, user_id=uid, conv_id=cid)
                     except Exception as e:
                         logger.warning(
                             "[gemini] pool[%d] refresh failed, dropping: %s",
@@ -482,11 +505,13 @@ class GeminiSessionMixin:
             self._current_pool_index = _pidx
             if dead_indices:
                 pool = [c for i, c in enumerate(pool) if i not in dead_indices]
-                _save_credentials_pool(pool, service_id=svc_id)
+                _save_credentials_pool(
+                    pool, service_id=svc_id, user_id=uid, conv_id=cid)
             break
         else:
             pool = [c for i, c in enumerate(pool) if i not in dead_indices]
-            _save_credentials_pool(pool, service_id=svc_id)
+            _save_credentials_pool(
+                pool, service_id=svc_id, user_id=uid, conv_id=cid)
             raise LLMClientError(
                 "All gemini credentials expired or refresh failed. "
                 "Re-authenticate via the Login button.")
@@ -512,7 +537,8 @@ class GeminiSessionMixin:
                 json.dump({"accounts": {account: {}}, "active": account}, f)
             os.chmod(accounts_path, 0o600)
 
-    def _gemini_recover_tokens(self, workdir: str):
+    def _gemini_recover_tokens(self, workdir: str, user_id: str = "",
+                               conversation_id: str = ""):
         """Read back tokens from <workdir>/.gemini/oauth_creds.json."""
         creds_path = os.path.join(workdir, ".gemini", "oauth_creds.json")
         if not os.path.exists(creds_path):
@@ -526,13 +552,16 @@ class GeminiSessionMixin:
             if not new_access:
                 return
             _pidx = getattr(self, '_current_pool_index', -1)
-            _current = self._gemini_resolve_service_tokens(pool_index=_pidx)
+            _current = self._gemini_resolve_service_tokens(
+                pool_index=_pidx, user_id=user_id,
+                conversation_id=conversation_id)
             if new_access == _current.get("access_token", ""):
                 return
             _service_id = getattr(self, '_agent_service', '') or ''
             _persist_tokens_to_service(
                 new_access, new_refresh, new_expiry,
-                service_id=_service_id, pool_index=_pidx)
+                service_id=_service_id, pool_index=_pidx,
+                user_id=user_id, conv_id=conversation_id)
             logger.info("[gemini] recovered refreshed tokens [pool:%d]", _pidx)
         except Exception as e:
             logger.debug("[gemini] token recovery failed: %s", e)

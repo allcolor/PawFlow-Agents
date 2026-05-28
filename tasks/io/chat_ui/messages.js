@@ -1234,6 +1234,12 @@ function isImageFile(name) {
   return /\.(png|jpe?g|gif|svg|webp|bmp)$/i.test(name || '');
 }
 
+function normalizePawFlowFileUrl(url) {
+  const raw = String(url || '');
+  const m = raw.match(/^https?:\/\/[^/]+(\/files\/[a-f0-9]+\/[^\s<"'`]+)$/i);
+  return m ? m[1] : raw;
+}
+
 
 function _extractInlineMedia(text) {
   if (!text) return '';
@@ -1266,6 +1272,7 @@ function _extractInlineMedia(text) {
     } else {
       const fm = url.match(/\/files\/[a-f0-9]+\/([^?#]+)/);
       fname = fm ? fm[1] : '';
+      httpUrl = normalizePawFlowFileUrl(url);
     }
     if (!httpUrl || !fname) continue;
     if (isImageFile(fname)) out += inlineImageHtml(httpUrl, fname, '');
@@ -1309,6 +1316,7 @@ function renderTextWithInlineMedia(text) {
       // /files/... URL (absolute or relative)
       const fm = url.match(/\/files\/[a-f0-9]+\/([^?#]+)/);
       fname = fm ? fm[1] : '';
+      httpUrl = normalizePawFlowFileUrl(url);
     }
     if (httpUrl && fname && isImageFile(fname)) {
       out += inlineImageHtml(httpUrl, fname, '');
@@ -1576,32 +1584,34 @@ function renderMarkdown(text) {
   text = text.replace(/\x00IC(\d+)\x00/g, function(_, i) { return _inlineCodes[parseInt(i)]; });
   // Markdown links: [text](url) — must run BEFORE bare URL detection
   text = text.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, function(_, label, url) {
-    if (url.match(/\/files\/[a-f0-9]+\//)) {
+    const fileUrl = normalizePawFlowFileUrl(url);
+    if (fileUrl.match(/\/files\/[a-f0-9]+\//)) {
       if (isImageFile(label) || isImageFile(url)) {
-        return inlineImageHtml(url, label, '');
+        return inlineImageHtml(fileUrl, label, '');
       }
       if (isAudioFile(label) || isAudioFile(url)) {
-        return inlineAudioHtml(url, label);
+        return inlineAudioHtml(fileUrl, label);
       }
       if (isVideoFile(label) || isVideoFile(url)) {
-        return inlineVideoHtml(url, label);
+        return inlineVideoHtml(fileUrl, label);
       }
-      return '<a class="flink" href="' + url + '" style="color:#6c5ce7;cursor:pointer;" onclick="event.preventDefault();openFileViewer(\'' + url + '\')">\uD83D\uDCC4 ' + label + '</a>';
+      return '<a class="flink" href="' + fileUrl + '" style="color:#6c5ce7;cursor:pointer;" onclick="event.preventDefault();openFileViewer(\'' + fileUrl + '\')">\uD83D\uDCC4 ' + label + '</a>';
     }
     return '<a href="' + url + '" target="_blank">' + label + '</a>';
   });
   // Bare file URLs (not already inside a tag attribute)
   text = text.replace(/(^|[\s>])(https?:\/\/[^\s<"']*\/files\/[a-f0-9]+\/([^\s<"')]+))/g, function(_, pre, url, fname) {
+    const fileUrl = normalizePawFlowFileUrl(url);
     if (isImageFile(fname)) {
-      return pre + inlineImageHtml(url, fname, '');
+      return pre + inlineImageHtml(fileUrl, fname, '');
     }
     if (isAudioFile(fname)) {
-      return pre + inlineAudioHtml(url, fname);
+      return pre + inlineAudioHtml(fileUrl, fname);
     }
     if (isVideoFile(fname)) {
-      return pre + inlineVideoHtml(url, fname);
+      return pre + inlineVideoHtml(fileUrl, fname);
     }
-    return pre + '<a class="flink" href="' + url + '" style="color:#6c5ce7;cursor:pointer;" onclick="event.preventDefault();openFileViewer(\'' + url + '\')">\uD83D\uDCC4 ' + fname + '</a>';
+    return pre + '<a class="flink" href="' + fileUrl + '" style="color:#6c5ce7;cursor:pointer;" onclick="event.preventDefault();openFileViewer(\'' + fileUrl + '\')">\uD83D\uDCC4 ' + fname + '</a>';
   });
   text = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
   text = text.replace(/\*(.+?)\*/g, '<em>$1</em>');

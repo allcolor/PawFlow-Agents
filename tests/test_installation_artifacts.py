@@ -401,6 +401,9 @@ def test_pawflow_installer_flow_template_exists():
     assert "oauthRows" in ui_content
     assert "validateOauthProviders" in ui_content
     assert "function validate()" in ui_content
+    start_login = ui_content.split("async function startServerLogin()", 1)[1].split("async function saveCredentials()", 1)[0]
+    assert "const data = await r.json();" in start_login
+    assert "add_oauth_provider" not in start_login
     assert "Each OAuth provider can only be added once" in ui_content
     assert "oauth_generic_authorize_url" in ui_content
     assert "Final TLS mode" in ui_content

@@ -495,10 +495,7 @@ async function startServerLogin() {
   const v = values();
   if (!v.credential_service_id) { err.textContent = 'Create a login pool first.'; return; }
   const r = await fetch('/install/api/llm-credential/server-login', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(v)});
-document.getElementById('vnc_close').addEventListener('click', closeVncDialog);
-document.getElementById('add_oauth_provider').addEventListener('click', addOauthProvider);
-document.getElementById('oauth_provider_list').addEventListener('change', handleOauthChange);
-document.getElementById('oauth_provider_list').addEventListener('input', handleOauthChange);
+  const data = await r.json();
   if (!r.ok || data.error) { err.textContent = data.error || 'Server login failed'; return; }
   err.textContent = '';
   activeServerLoginSession = data.session_id || '';
@@ -524,10 +521,13 @@ async function refresh() {
 document.getElementById('prepare_pool').addEventListener('click', preparePool);
 document.getElementById('server_login').addEventListener('click', startServerLogin);
 document.getElementById('save_credentials').addEventListener('click', saveCredentials);
+document.getElementById('prepare_pool').addEventListener('click', preparePool);
+document.getElementById('server_login').addEventListener('click', startServerLogin);
+document.getElementById('save_credentials').addEventListener('click', saveCredentials);
 document.getElementById('vnc_close').addEventListener('click', closeVncDialog);
-field('llm_provider').addEventListener('change', updateLoginCliVisibility);
-document.getElementById('back').addEventListener('click', () => { if (step > 0) { step--; show(); } });
-document.getElementById('next').addEventListener('click', () => { if (validate() && step < names.length - 1) { step++; show(); } });
+document.getElementById('add_oauth_provider').addEventListener('click', addOauthProvider);
+document.getElementById('oauth_provider_list').addEventListener('change', handleOauthChange);
+document.getElementById('oauth_provider_list').addEventListener('input', handleOauthChange);
 form.addEventListener('submit', async e => {
   e.preventDefault();
   if (!validate()) return;

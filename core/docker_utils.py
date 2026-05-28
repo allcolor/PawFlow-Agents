@@ -69,25 +69,38 @@ def to_host_path(container_path: str) -> str:
 
     In Docker-in-Docker, PawFlow sees /workspace but the Docker daemon
     needs the original host path. Set PAWFLOW_HOST_WORKDIR to enable.
+    Runtime data mounted at PAWFLOW_DATA_DIR is translated with
+    PAWFLOW_HOST_DATA_DIR so child CLI containers see the same session files
+    the PawFlow server just wrote.
 
     Example:
       PAWFLOW_HOST_WORKDIR=/home/user/project
       PAWFLOW_WORKDIR=/workspace  (default)
       to_host_path("/workspace/sub") → "/home/user/project/sub"
     """
+    def _translate_with_root(container_root: str, host_root: str) -> str:
+        try:
+            rel = os.path.relpath(container_path, container_root)
+            if rel.startswith(".."):
+                return ""
+            if rel == ".":
+                return host_root
+            return os.path.join(host_root, rel).replace("\\", "/")
+        except ValueError:
+            return ""
+
+    host_data_dir = os.environ.get("PAWFLOW_HOST_DATA_DIR", "").strip()
+    if host_data_dir:
+        data_dir = os.environ.get("PAWFLOW_DATA_DIR", "/app/data")
+        translated = _translate_with_root(data_dir, host_data_dir)
+        if translated:
+            return translated
+
     host_workdir = os.environ.get("PAWFLOW_HOST_WORKDIR")
     if not host_workdir:
         return container_path  # not in DinD, path is already host
     container_workdir = os.environ.get("PAWFLOW_WORKDIR", "/workspace")
-    try:
-        rel = os.path.relpath(container_path, container_workdir)
-        if rel.startswith(".."):
-            return container_path  # outside workspace, can't translate
-        if rel == ".":
-            return host_workdir
-        return os.path.join(host_workdir, rel).replace("\\", "/")
-    except ValueError:
-        return container_path
+    return _translate_with_root(container_workdir, host_workdir) or container_path
 
 
 def docker_cmd() -> list:

@@ -580,11 +580,15 @@ def test_vnc_login_routes_skip_session_auth():
     assert 'existing = [r for r in _http_svc.get_routes() if r.get("owner") == _vnc_owner]' not in src
 
 
-def test_server_relay_desktop_uses_docker_published_host():
+def test_server_relay_desktop_uses_container_ip_before_published_host():
     src = Path("tasks/ai/actions/service_flow.py").read_text(encoding="utf-8")
     open_desktop = src[src.index('if action == "open_desktop"'):src.index('if action == "close_desktop"')]
 
-    assert "_docker_published_host()" in open_desktop
+    assert "def _get_server_relay_container_ip" in src
+    assert "_server_relay_proxy_target(relay_id, 6080" in open_desktop
+    assert "_server_relay_proxy_target(relay_id, 6180" in open_desktop
+    assert "return container_ip, container_port" in src
+    assert "return _docker_published_host(), published_host_port" in src
     assert "host=_backend_host" in open_desktop
     assert "host=backend_host" in open_desktop
     assert 'register_audio_source(_sid, "127.0.0.1", _ahp' not in open_desktop

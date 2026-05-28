@@ -223,8 +223,8 @@ const defaultCredentialIds = {'claude-code':'claude_code_oauth_credentials','cod
 const llmProviderOptions = ['codex-app-server','claude-code','gemini','antigravity-interactive','openai','anthropic'];
 const llmParamDefs = [
   ['base_url','Base URL','text',''], ['embedding_model','Embedding model','text',''], ['fallback_model','Fallback model','text',''],
-  ['supports_vision','Supports vision','checkbox',true], ['timeout','Timeout seconds','number',0], ['max_retries','Max retries','number',2],
-  ['max_context_size','Max context size','number',0], ['compact_target_tokens','Compact target tokens','number',0], ['compact_threshold_pct','Compact threshold pct','number',0],
+  ['supports_vision','Supports vision','checkbox',true], ['timeout','Timeout seconds','number',1800], ['max_retries','Max retries','number',2],
+  ['max_context_size','Max context size','number',200000], ['compact_target_tokens','Compact target tokens','number',25000], ['compact_threshold_pct','Compact threshold pct','number',95],
   ['max_iterations','Max iterations','number',0], ['temperature','Temperature','number',0], ['max_consecutive_tool_calls','Max consecutive tool calls','number',0],
   ['resilience_style','Resilience style','select',''], ['thinking_budget','Thinking budget','number',0], ['max_rounds','Max rounds','number',0],
   ['tool_result_max_chars','Tool result max chars','number',50000], ['token_multiplier','Token multiplier','number',0], ['max_concurrent','Max concurrent','number',0],
@@ -239,7 +239,7 @@ const summarizerParamDefs = [
   ['min_input_multiplier','Min input multiplier','number',4], ['chars_per_token','Chars per token','number',3.5], ['overshoot_warn_multiplier','Overshoot warn multiplier','number',1.5],
   ['header_char_multiplier','Header char multiplier','number',3.0]
 ];
-let llmServices = [{service_id:'codex_appserver_llm_service', scope:'user', credential_scope:'user', config:{provider:'codex-app-server', default_model:'gpt-5.5', supports_vision:true, timeout:0, max_retries:2, tool_result_max_chars:50000, docker_image:'pawflow-claude-code:latest', docker_cpu_limit:'2', docker_memory_limit:'2g', effort:'medium'}}];
+let llmServices = [{service_id:'codex_appserver_llm_service', scope:'user', credential_scope:'user', config:{provider:'codex-app-server', default_model:'gpt-5.5', supports_vision:true, timeout:1800, max_retries:2, max_context_size:200000, compact_target_tokens:25000, compact_threshold_pct:95, tool_result_max_chars:50000, docker_image:'pawflow-claude-code:latest', docker_cpu_limit:'2', docker_memory_limit:'2g', effort:'medium'}}];
 let activeCredentialIndex = 0;
 let summarizerConfig = {};
 let firstConversation = {title:'Welcome to PawFlow', agents:[{instance_name:'assistant', definition:'assistant', llm_service:'codex_appserver_llm_service', model:'', tools:'', max_depth:1000, params_text:'{\n  "name": "assistant"\n}'}]};
@@ -649,7 +649,7 @@ document.getElementById('vnc_close').addEventListener('click', closeVncDialog);
 document.getElementById('add_oauth_provider').addEventListener('click', addOauthProvider);
 document.getElementById('oauth_provider_list').addEventListener('change', handleOauthChange);
 document.getElementById('oauth_provider_list').addEventListener('input', handleOauthChange);
-document.getElementById('add_llm_service').addEventListener('click', () => { collectLlmEditorValues(); llmServices.push({service_id:'llm_service_' + (llmServices.length + 1), scope:'user', credential_scope:'user', config:{provider:'openai', default_model:'', supports_vision:true, timeout:0, max_retries:2, tool_result_max_chars:50000}}); renderLlmServices(); });
+document.getElementById('add_llm_service').addEventListener('click', () => { collectLlmEditorValues(); llmServices.push({service_id:'llm_service_' + (llmServices.length + 1), scope:'user', credential_scope:'user', config:{provider:'openai', default_model:'', supports_vision:true, timeout:1800, max_retries:2, max_context_size:200000, compact_target_tokens:25000, compact_threshold_pct:95, tool_result_max_chars:50000}}); renderLlmServices(); });
 document.getElementById('llm_services_editor').addEventListener('input', collectLlmEditorValues);
 document.getElementById('llm_services_editor').addEventListener('change', e => { collectLlmEditorValues(); if (e.target.closest('[data-llm-provider]')) renderLlmServices(); });
 document.getElementById('llm_services_editor').addEventListener('click', e => {

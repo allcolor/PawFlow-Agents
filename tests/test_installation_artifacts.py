@@ -258,6 +258,8 @@ def test_install_docs_and_agent_prompt_capture_bootstrap_contract():
 def test_compose_healthcheck_accepts_bootstrap_tls():
     compose = Path("docker-compose.yml").read_text(encoding="utf-8")
 
+    assert '"9090:9090"' in compose
+    assert '"19990:19990"' in compose
     assert "https://localhost:9090/health" in compose
     assert "ssl._create_unverified_context" in compose
     assert "http://localhost:9090/health" in compose
@@ -469,6 +471,14 @@ def test_pawflow_installer_flow_template_exists():
     assert "tail_token_budget','Tail token budget','number',11000" in ui_content
     assert "overshoot_warn_multiplier" in ui_content
     assert "header_char_multiplier" in ui_content
+    assert "'timeout','Timeout seconds','number',1800" in ui_content
+    assert "'max_context_size','Max context size','number',200000" in ui_content
+    assert "'compact_target_tokens','Compact target tokens','number',25000" in ui_content
+    assert "'compact_threshold_pct','Compact threshold pct','number',95" in ui_content
+    assert "timeout:1800" in ui_content
+    assert "max_context_size:200000" in ui_content
+    assert "compact_target_tokens:25000" in ui_content
+    assert "compact_threshold_pct:95" in ui_content
     assert "id=\"vnc_dialog\"" in ui_content
     assert "id=\"vnc_frame\"" in ui_content
     assert "showVncDialog" in ui_content

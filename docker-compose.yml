@@ -3,6 +3,7 @@ services:
     build: .
     ports:
       - "9090:9090"
+      - "19990:19990"
     environment:
       - PAWFLOW_SECRET_KEY=${PAWFLOW_SECRET_KEY}
       - PAWFLOW_SECRET_KEY_B64=${PAWFLOW_SECRET_KEY_B64}

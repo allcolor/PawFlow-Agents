@@ -191,6 +191,39 @@ def test_existing_deployments_skip_bootstrap_without_state(tmp_path, monkeypatch
         DeploymentRegistry.reset()
 
 
+def test_completed_install_syncs_main_flow_listener_port(tmp_path, monkeypatch):
+    DeploymentRegistry.reset()
+    dep_dir = tmp_path / "deployments"
+    state_file = tmp_path / "install_state.json"
+    main_template = tmp_path / "main.json"
+    _write_main_template(main_template)
+    state_file.write_text(json.dumps({"install_complete": True}), encoding="utf-8")
+
+    monkeypatch.setattr(_paths, "DEPLOYMENTS_DIR", dep_dir)
+    monkeypatch.setattr(ib, "INSTALL_STATE_FILE", state_file)
+    monkeypatch.setattr(ib, "INSTALLER_TEMPLATE", tmp_path / "missing.json")
+    _stub_cert_generation(tmp_path, monkeypatch)
+    monkeypatch.delenv("PAWFLOW_BOOTSTRAP_DISABLED", raising=False)
+
+    try:
+        from tasks import _register_all_services
+        _register_all_services()
+        reg = DeploymentRegistry.get_instance()
+        reg.deploy(
+            str(main_template),
+            instance_id=ib.MAIN_INSTANCE_ID,
+            source="bootstrap",
+            service_configs={"http_listener": {"port": 9090}},
+        )
+
+        assert ib.ensure_install_bootstrap(port=19990) is False
+        inst = reg.get(ib.MAIN_INSTANCE_ID)
+        assert inst is not None
+        assert inst.service_configs["http_listener"]["port"] == 19990
+    finally:
+        DeploymentRegistry.reset()
+
+
 def test_bootstrap_reset_removes_state_and_redeploys_installer(tmp_path, monkeypatch):
     DeploymentRegistry.reset()
     ServiceRegistry.reset()

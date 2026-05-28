@@ -215,6 +215,30 @@ def _final_listener_port(payload: Dict[str, Any]) -> int:
     return port
 
 
+def _sync_main_flow_listener_port(port: int) -> None:
+    """Keep an already-installed main flow aligned with the launched server port."""
+    try:
+        from core.deployment_registry import DeploymentRegistry
+        registry = DeploymentRegistry.get_instance()
+        inst = registry.get(MAIN_INSTANCE_ID)
+        if inst is None:
+            return
+        listener_config = inst.service_configs.setdefault("http_listener", {})
+        current = listener_config.get("port")
+        if current == port:
+            return
+        try:
+            if current is not None and int(current) == port:
+                return
+        except (TypeError, ValueError):
+            pass
+        listener_config["port"] = port
+        registry._save_instance(inst)
+        logger.info("Updated main flow listener port to %s", port)
+    except Exception:
+        logger.warning("Failed to sync main flow listener port", exc_info=True)
+
+
 def _load_state() -> Dict[str, Any]:
     if not INSTALL_STATE_FILE.exists():
         return {}
@@ -1440,6 +1464,7 @@ def ensure_install_bootstrap(port: int = 9090) -> bool:
 
     state = _load_state()
     if state.get("install_complete"):
+        _sync_main_flow_listener_port(port)
         return False
 
     from core.deployment_registry import DeploymentRegistry

@@ -472,11 +472,21 @@ async function preparePool() {
   document.getElementById('credential_actions').style.display = 'flex';
 }
 let activeServerLoginSession = '';
+function buildVncUrl(vncUrl) {
+  if (!vncUrl || vncUrl.indexOf('?') !== -1) return vncUrl;
+  const parts = vncUrl.split('/').filter(Boolean);
+  const vncIndex = parts.indexOf('vnc');
+  if (vncIndex === -1 || parts.length < vncIndex + 4 || parts[vncIndex + 3] !== 'vnc.html') return vncUrl;
+  const sessionId = parts[vncIndex + 1];
+  const token = parts[vncIndex + 2];
+  return vncUrl + '?autoconnect=true&resize=scale&path=vnc/' + encodeURIComponent(sessionId) + '/' + encodeURIComponent(token) + '/websockify';
+}
 function showVncDialog(vncUrl) {
   if (!vncUrl) return;
   const dlg = document.getElementById('vnc_dialog');
   const frame = document.getElementById('vnc_frame');
-  if (frame.getAttribute('src') !== vncUrl) frame.setAttribute('src', vncUrl);
+  const url = buildVncUrl(vncUrl);
+  if (frame.getAttribute('src') !== url) frame.setAttribute('src', url);
   dlg.hidden = false;
 }
 async function closeVncDialog() {

@@ -422,6 +422,8 @@ def test_pawflow_installer_flow_template_exists():
     assert "id=\"vnc_dialog\"" in ui_content
     assert "id=\"vnc_frame\"" in ui_content
     assert "showVncDialog" in ui_content
+    assert "autoconnect=true&resize=scale&path=vnc/" in ui_content
+    assert "/websockify" in ui_content
     assert "window.open" not in ui_content
     assert "codex_appserver_llm_service" in ui_content
     assert "window.location.href='/chat'" in ui_content

@@ -386,6 +386,7 @@ def test_pawflow_installer_flow_template_exists():
     assert "Confirm admin password" in ui_content
     assert "validAdminPassword" in ui_content
     assert "Admin password confirmation must match" in ui_content
+    assert "setCustomValidity" in ui_content
     assert "${" not in ui_content
     assert "`" not in ui_content
     assert "llm_service_id" in ui_content

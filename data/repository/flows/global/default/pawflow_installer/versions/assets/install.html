@@ -266,12 +266,18 @@ function validateAdminPassword() {
   if (!requireFields(['admin_username','admin_password','admin_password_confirm'])) return false;
   const password = field('admin_password').value;
   const confirm = field('admin_password_confirm').value;
+  field('admin_password').setCustomValidity('');
+  field('admin_password_confirm').setCustomValidity('');
   if (password !== confirm) {
     err.textContent = 'Admin password confirmation must match.';
+    field('admin_password_confirm').setCustomValidity('Admin password confirmation must match.');
+    field('admin_password_confirm').reportValidity();
     return false;
   }
   if (!validAdminPassword(password)) {
     err.textContent = 'Admin password must be at least 12 characters and include lowercase, uppercase, digit, and symbol characters.';
+    field('admin_password').setCustomValidity('Use at least 12 characters with lowercase, uppercase, digit, and symbol characters.');
+    field('admin_password').reportValidity();
     return false;
   }
   return true;

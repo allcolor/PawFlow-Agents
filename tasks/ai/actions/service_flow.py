@@ -908,6 +908,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                                 scope_id=scope_id,
                                 user_id=user_id,
                                 kind=str(config.get("server_kind") or "workspace"),
+                                internal_token=str(config.get("server_internal_token") or ""),
                             )
                             reporter.step("connecting", "Waiting for managed server relay connection", progress=0.99)
                             if not _wait_for_service_connected(reg, scope, scope_id, svc_name):

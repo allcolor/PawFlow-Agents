@@ -833,9 +833,10 @@ class TestAgentServiceActions:
                     "server_workspace_dir": f"data/runtime/relay/{user_id}",
                     "server_workspace_host_dir": f"/host/data/runtime/relay/{user_id}",
                     "server_home_volume": f"pawflow_home_{relay_id}",
+                    "server_internal_token": "internal-token",
                 }
 
-            def spawn_service_relay(self, relay_id, token, *, scope, scope_id, user_id, kind="workspace"):
+            def spawn_service_relay(self, relay_id, token, *, scope, scope_id, user_id, kind="workspace", internal_token=""):
                 calls.append({
                     "relay_id": relay_id,
                     "token": token,
@@ -843,6 +844,7 @@ class TestAgentServiceActions:
                     "scope_id": scope_id,
                     "user_id": user_id,
                     "kind": kind,
+                    "internal_token": internal_token,
                 })
                 return {"relay_id": relay_id, "workspace_dir": f"data/runtime/relay/{user_id}"}
 
@@ -877,6 +879,7 @@ class TestAgentServiceActions:
         assert sdef.config["server_container_name"] == "pawflow-relay-srv-MyWorkspace"
         assert sdef.config["server_workspace_dir"] == "data/runtime/relay/testuser"
         assert sdef.config["server_home_volume"] == "pawflow_home_MyWorkspace"
+        assert sdef.config["server_internal_token"] == "internal-token"
         assert connected == {"MyWorkspace"}
         assert calls == [{
             "relay_id": "MyWorkspace",
@@ -885,6 +888,7 @@ class TestAgentServiceActions:
             "scope_id": "testuser",
             "user_id": "testuser",
             "kind": "workspace",
+            "internal_token": "internal-token",
         }]
 
     def test_service_install_relay_with_token_stays_external_listener(self, monkeypatch):

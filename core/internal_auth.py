@@ -5,10 +5,10 @@ same host) and has no user session cookies. It needs to authenticate its
 WebSocket tool-relay connection against the main HTTPListener, which
 normally enforces the private gateway cookie and a live session/API key.
 
-The server mints a fresh token at each MCP config write and passes it to
-the MCP bridge via env. On WS upgrade for /ws/tools/* routes, presentation
-of a valid token bypasses the gateway + session checks (those routes still
-enforce their own tool-relay register-step token).
+The server mints a fresh token for server-spawned components and passes it
+via env. On WS upgrade for /ws/tools/* and /ws/relay/* routes,
+presentation of a valid token bypasses the gateway + session checks (tool
+routes still enforce their own tool-relay register-step token).
 
 Tokens have NO expiry — they remain valid as long as they sit in the
 registry. The caller revokes explicitly when the container / call ends

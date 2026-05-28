@@ -239,6 +239,8 @@ class ServerRelayManager:
         desktop_host_port = find_free_port() if kind_cfg["publish_desktop"] else None
         audio_host_port = find_free_port() if kind_cfg["publish_desktop"] else None
         token = secrets.token_urlsafe(32)
+        from core.internal_auth import mint_token
+        internal_token = mint_token()
         relay_id = _relay_id_for_conv(conv_id, kind)
         path = f"/ws/relay/{relay_id}"
         container_name = _container_name(conv_id, kind)
@@ -331,6 +333,7 @@ class ServerRelayManager:
             "--env", f"PAWFLOW_RELAY_DIR={relay_workspace}",
             "--env", "PAWFLOW_RELAY_ALLOW_EXEC=1",
             "--env", "PAWFLOW_RELAY_INSECURE=1",
+            "--env", f"PAWFLOW_INTERNAL_TOKEN={internal_token}",
             "--env", "PAWFLOW_SERVER_MOUNT=/cc_sessions",
             "--env", "PAWFLOW_FILESTORE_MOUNT=/filestore",
             "--env", "PAWFLOW_SKILLS_MOUNT=/skills",
@@ -385,6 +388,7 @@ class ServerRelayManager:
             "image": relay_image,
             "cpus": relay_cpus,
             "memory": relay_memory,
+            "internal_token": internal_token,
         }
         if desktop_host_port is not None:
             metadata["desktop_host_port"] = desktop_host_port
@@ -416,11 +420,13 @@ class ServerRelayManager:
         """Return deterministic managed-runtime config for a relay service."""
         kind = _validate_kind(kind)
         runtime_dir = _relay_runtime_dir_for_scope(scope, user_id, scope_id, kind)
+        from core.internal_auth import mint_token
         return {
             "server_container_name": _relay_container_name(relay_id, kind),
             "server_workspace_dir": str(runtime_dir),
             "server_workspace_host_dir": _relay_runtime_host_dir(runtime_dir),
             "server_home_volume": f"pawflow_home_{relay_id}",
+            "server_internal_token": mint_token(),
         }
 
     def spawn_service_relay(
@@ -432,6 +438,7 @@ class ServerRelayManager:
         scope_id: str,
         user_id: str,
         kind: str = _KIND_WORKSPACE,
+        internal_token: str = "",
     ) -> Dict[str, Any]:
         """Spawn a managed server relay container for an installed relay service."""
         kind = _validate_kind(kind)
@@ -440,6 +447,9 @@ class ServerRelayManager:
             raise ValueError("Missing relay_id")
         if not token:
             raise ValueError("Missing relay token")
+        if not internal_token:
+            from core.internal_auth import mint_token
+            internal_token = mint_token()
 
         desktop_host_port = find_free_port() if kind_cfg["publish_desktop"] else None
         audio_host_port = find_free_port() if kind_cfg["publish_desktop"] else None
@@ -508,6 +518,7 @@ class ServerRelayManager:
             "--env", f"PAWFLOW_RELAY_DIR={relay_workspace}",
             "--env", "PAWFLOW_RELAY_ALLOW_EXEC=1",
             "--env", "PAWFLOW_RELAY_INSECURE=1",
+            "--env", f"PAWFLOW_INTERNAL_TOKEN={internal_token}",
             "--env", "PAWFLOW_SERVER_MOUNT=/cc_sessions",
             "--env", "PAWFLOW_FILESTORE_MOUNT=/filestore",
             "--env", "PAWFLOW_SKILLS_MOUNT=/skills",
@@ -552,6 +563,7 @@ class ServerRelayManager:
             "image": relay_image,
             "cpus": relay_cpus,
             "memory": relay_memory,
+            "internal_token": internal_token,
         }
         if desktop_host_port is not None:
             metadata["desktop_host_port"] = desktop_host_port
@@ -568,8 +580,15 @@ class ServerRelayManager:
         container_name = str(config.get("server_container_name") or "")
         workspace_dir = str(config.get("server_workspace_dir") or "")
         home_volume = str(config.get("server_home_volume") or "")
+        internal_token = str(config.get("server_internal_token") or config.get("internal_token") or "")
 
         self._cleanup_container(container_id or container_name, remove=True)
+        if internal_token:
+            try:
+                from core.internal_auth import revoke_token
+                revoke_token(internal_token)
+            except Exception:
+                logger.debug("Ignored exception", exc_info=True)
         if home_volume:
             try:
                 subprocess.run(  # nosec B603

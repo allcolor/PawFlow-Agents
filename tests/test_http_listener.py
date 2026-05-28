@@ -726,6 +726,49 @@ class TestHTTPListenerIntegration:
         finally:
             svc.disconnect()
 
+    def test_relay_websocket_accepts_internal_cookie_with_private_gateway(self, monkeypatch):
+        from core import internal_auth
+
+        port = 19935
+        svc = HTTPListenerService({"host": "127.0.0.1", "port": port})
+
+        class _Gateway:
+            def is_enabled(self):
+                return True
+
+            def is_banned(self, _ip):
+                return False
+
+            def check_ws(self, *_args, **_kwargs):
+                return True
+
+        def _ws_handler(sock, _path_params, _meta):
+            sock.close()
+
+        token = internal_auth.mint_token()
+        svc.connect()
+        try:
+            svc._server._private_gateway = _Gateway()
+            svc.register_route(
+                "GET", "/ws/relay/MyWorkspace", "test", callback=None,
+                ws_handler=_ws_handler, private_only=True)
+            with socket.create_connection(("127.0.0.1", port), timeout=5) as sock:
+                sock.sendall((
+                    "GET /ws/relay/MyWorkspace HTTP/1.1\r\n"
+                    f"Host: 127.0.0.1:{port}\r\n"
+                    "Upgrade: websocket\r\n"
+                    "Connection: Upgrade\r\n"
+                    "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+                    "Sec-WebSocket-Version: 13\r\n"
+                    f"Cookie: pawflow_internal={token}\r\n"
+                    "\r\n"
+                ).encode("ascii"))
+                data = sock.recv(1024)
+            assert b"101 Switching Protocols" in data
+        finally:
+            internal_auth.revoke_token(token)
+            svc.disconnect()
+
     def test_builtin_health_endpoint_is_public(self):
         port = 19933
         svc = HTTPListenerService({"host": "127.0.0.1", "port": port})

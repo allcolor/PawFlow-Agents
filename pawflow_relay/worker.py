@@ -1625,6 +1625,9 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 _cookies.append(f'_pf_gw={gateway_cookie}')
             if session_token:
                 _cookies.append(f'pawflow_token={session_token}')
+            internal_token = os.environ.get('PAWFLOW_INTERNAL_TOKEN', '')
+            if internal_token:
+                _cookies.append(f'pawflow_internal={internal_token}')
             _extra_hdrs = ''
             if _cookies:
                 _extra_hdrs = 'Cookie: ' + '; '.join(_cookies) + '\r\n'

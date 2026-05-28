@@ -572,9 +572,23 @@ def test_vnc_login_routes_skip_session_auth():
     assert "ws_handler=vnc_ws_proxy, public=True, private_only=True" not in src
     assert "callback=vnc_http_proxy, public=True, private_only=True" not in src
     assert "ws_handler=audio_ws_proxy, public=True" in src
-    assert "ws_handler=terminal_ws_handler,\n                        public=True" in src
+    assert "def _ensure_terminal_routes" in src
+    assert "ws_handler=terminal_ws_handler" in src
+    assert "_ensure_terminal_routes(flowfile)" in src
+    assert 'greg.get_all("global", "")' not in src[src.index("if action == \"open_terminal\""):src.index("if action == \"list_cc_interactive_terminals\"")]
     assert 'existing = [r for r in svc.get_routes() if r.get("owner") == _vnc_owner]' not in src
     assert 'existing = [r for r in _http_svc.get_routes() if r.get("owner") == _vnc_owner]' not in src
+
+
+def test_server_relay_desktop_uses_docker_published_host():
+    src = Path("tasks/ai/actions/service_flow.py").read_text(encoding="utf-8")
+    open_desktop = src[src.index('if action == "open_desktop"'):src.index('if action == "close_desktop"')]
+
+    assert "_docker_published_host()" in open_desktop
+    assert "host=_backend_host" in open_desktop
+    assert "host=backend_host" in open_desktop
+    assert 'register_audio_source(_sid, "127.0.0.1", _ahp' not in open_desktop
+    assert 'register_audio_source(session_id, "127.0.0.1", _audio_host_port' not in open_desktop
 
 
 def test_pawflow_agent_auth_routes_cover_login_forms():

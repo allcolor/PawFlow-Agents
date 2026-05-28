@@ -70,6 +70,35 @@ def _ensure_vnc_routes(flowfile: FlowFile) -> None:
         logger.warning("[vnc] Route registration failed: %s", e)
 
 
+def _ensure_terminal_routes(flowfile: FlowFile) -> None:
+    """Ensure /terminal/ routes exist on the request's HTTP listener."""
+    _req_port = flowfile.get_attribute("http.listener.port") or ""
+    if not _req_port:
+        logger.warning("[terminal] No http.listener.port on flowfile — cannot target listener")
+        return
+    try:
+        from services.terminal_proxy import terminal_ws_handler
+        from services.http_listener_service import _instances
+        _http_svc = _instances.get(int(_req_port))
+        if not _http_svc:
+            logger.warning("[terminal] No live listener on port %s (instances: %s)",
+                           _req_port, list(_instances.keys()))
+            return
+        _owner = "_terminal_proxy"
+        _exists = [r for r in _http_svc.get_routes() if r.get("owner") == _owner]
+        if not _exists:
+            _http_svc.register_route(
+                "GET", "/terminal/{session_id}/{token}",
+                _owner,
+                callback=lambda req: None,
+                ws_handler=terminal_ws_handler,
+                public=True,
+            )
+            logger.info("[terminal] Registered terminal routes on port %s", _req_port)
+    except Exception as e:
+        logger.warning("[terminal] Route registration failed: %s", e)
+
+
 def _publish_command_result(conversation_id: str, result: dict):
     """Publish a command result via SSE (background thread → frontend)."""
     from core.conversation_event_bus import ConversationEventBus
@@ -2808,32 +2837,13 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             # Register terminal session for WS proxy
             # Both Docker and local terminals use the same relay WS path
             # (local terminal data arrives via host helper → relay → progress → dispatch)
-            from services.terminal_proxy import register_terminal, terminal_ws_handler
+            from services.terminal_proxy import register_terminal
             _term_token = register_terminal(
                 session_id, relay_id, relay_service=svc,
                 owner_user_id=user_id,
                 login_session_id=flowfile.get_attribute("auth.session_id") or "")
 
-            # Register WS route (once)
-            _owner = "_terminal_proxy"
-            http_svc = None
-            from core.service_registry import ServiceRegistry
-            greg = ServiceRegistry.get_instance()
-            for _sid, _sdef in greg.get_all("global", "").items():
-                if getattr(_sdef, "service_type", "") == "httpListener":
-                    http_svc = greg.get_live_instance("global", "", _sid)
-                    if http_svc:
-                        break
-            if http_svc:
-                existing = [r for r in http_svc.get_routes() if r.get("owner") == _owner]
-                if not existing:
-                    http_svc.register_route(
-                        "GET", "/terminal/{session_id}/{token}",
-                        _owner,
-                        callback=lambda req: None,
-                        ws_handler=terminal_ws_handler,
-                        public=True,
-                    )
+            _ensure_terminal_routes(flowfile)
 
             flowfile.set_content(json.dumps({
                 "ok": True,
@@ -2874,7 +2884,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             import uuid
             from core.claude_code_interactive_pool import InteractiveClaudeCodePool
             from core.docker_utils import docker_cmd
-            from services.terminal_proxy import register_terminal, terminal_ws_handler
+            from services.terminal_proxy import register_terminal
 
             state = InteractiveClaudeCodePool.instance().find_session(
                 user_id, conversation_id, agent_name, service_id=service_id)
@@ -2985,25 +2995,7 @@ finally:
                     "-x", "{cols}", "-y", "{rows}",
                 ]))
 
-            _owner = "_terminal_proxy"
-            http_svc = None
-            from core.service_registry import ServiceRegistry
-            greg = ServiceRegistry.get_instance()
-            for _sid, _sdef in greg.get_all("global", "").items():
-                if getattr(_sdef, "service_type", "") == "httpListener":
-                    http_svc = greg.get_live_instance("global", "", _sid)
-                    if http_svc:
-                        break
-            if http_svc:
-                existing = [r for r in http_svc.get_routes() if r.get("owner") == _owner]
-                if not existing:
-                    http_svc.register_route(
-                        "GET", "/terminal/{session_id}/{token}",
-                        _owner,
-                        callback=lambda req: None,
-                        ws_handler=terminal_ws_handler,
-                        public=True,
-                    )
+            _ensure_terminal_routes(flowfile)
 
             flowfile.set_content(json.dumps({
                 "ok": True,
@@ -3031,7 +3023,7 @@ finally:
             import uuid
             from core.antigravity_observer_pool import AntigravityObserverPool
             from core.docker_utils import docker_cmd
-            from services.terminal_proxy import register_terminal, terminal_ws_handler
+            from services.terminal_proxy import register_terminal
 
             if not service_id:
                 try:
@@ -3162,25 +3154,7 @@ finally:
                     "-x", "{cols}", "-y", "{rows}",
                 ]))
 
-            _owner = "_terminal_proxy"
-            http_svc = None
-            from core.service_registry import ServiceRegistry
-            greg = ServiceRegistry.get_instance()
-            for _sid, _sdef in greg.get_all("global", "").items():
-                if getattr(_sdef, "service_type", "") == "httpListener":
-                    http_svc = greg.get_live_instance("global", "", _sid)
-                    if http_svc:
-                        break
-            if http_svc:
-                existing = [r for r in http_svc.get_routes() if r.get("owner") == _owner]
-                if not existing:
-                    http_svc.register_route(
-                        "GET", "/terminal/{session_id}/{token}",
-                        _owner,
-                        callback=lambda req: None,
-                        ws_handler=terminal_ws_handler,
-                        public=True,
-                    )
+            _ensure_terminal_routes(flowfile)
 
             flowfile.set_content(json.dumps({
                 "ok": True,
@@ -3397,6 +3371,7 @@ finally:
                         return [flowfile]
                 else:
                     _hp = _get_desktop_host_port(relay_id)
+                    _backend_host = _docker_published_host()
                     logger.info("[open_desktop] already running, host_port=%s for %s", _hp, relay_id)
                     if _hp:
                         _sid = f"{_session_prefix}_{relay_id}"
@@ -3404,7 +3379,8 @@ finally:
                         _vtok = register_session(
                             _sid, _hp,
                             owner_user_id=user_id,
-                            login_session_id=_login_sid)
+                            login_session_id=_login_sid,
+                            host=_backend_host)
                         _ensure_vnc_routes(flowfile)
                         # Re-register audio for already-running desktop
                         _audio_token = ""  # nosec B105
@@ -3422,7 +3398,7 @@ finally:
                             if not _ahp:
                                 _ahp = _get_container_port(relay_id, 6180)
                             if _ahp:
-                                _audio_token = register_audio_source(_sid, "127.0.0.1", _ahp,
+                                _audio_token = register_audio_source(_sid, _backend_host, _ahp,
                                                                      owner_user_id=user_id,
                                                                      login_session_id=_login_sid)
                         except Exception:
@@ -3466,12 +3442,14 @@ finally:
                 if not host_port:
                     flowfile.set_content(json.dumps({"error": "Desktop started but host port not found"}).encode())
                     return [flowfile]
+                backend_host = _docker_published_host()
                 session_id = f"{_session_prefix}_{relay_id}"
                 from services.vnc_proxy import register_session
                 _vtok = register_session(
                     session_id, host_port,
                     owner_user_id=user_id,
-                    login_session_id=_login_sid)
+                    login_session_id=_login_sid,
+                    host=backend_host)
 
             _ensure_vnc_routes(flowfile)
 
@@ -3500,7 +3478,7 @@ finally:
                     if not _audio_host_port:
                         _audio_host_port = _get_container_port(relay_id, 6180)
                     if _audio_host_port:
-                        _audio_token = register_audio_source(session_id, "127.0.0.1", _audio_host_port,
+                        _audio_token = register_audio_source(session_id, backend_host, _audio_host_port,
                                                              owner_user_id=user_id,
                                                              login_session_id=_login_sid)
             except Exception as _ae:

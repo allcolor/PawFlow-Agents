@@ -1528,12 +1528,10 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                     logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 if svc:
                     _vnc_owner = "_vnc_proxy"
-                    existing = [r for r in svc.get_routes() if r.get("owner") == _vnc_owner]
-                    if not existing:
-                        svc.register_route("GET", "/vnc/{session_id}/{token}/websockify",
+                    svc.register_route("GET", "/vnc/{session_id}/{token}/websockify",
                                            _vnc_owner, callback=lambda req: None,
                                            ws_handler=vnc_ws_proxy, public=True, private_only=True)
-                        svc.register_route("GET", "/vnc/{session_id}/{token}/{path+}",
+                    svc.register_route("GET", "/vnc/{session_id}/{token}/{path+}",
                                            _vnc_owner, callback=vnc_http_proxy, public=True, private_only=True)
                 else:
                     logger.warning("[vnc-login] HTTPListenerService NOT FOUND")
@@ -2595,14 +2593,12 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                                _req_port, list(_instances.keys()))
                 return
             _vnc_owner = "_vnc_proxy"
-            existing = [r for r in _http_svc.get_routes() if r.get("owner") == _vnc_owner]
-            if not existing:
-                _http_svc.register_route("GET", "/vnc/{session_id}/{token}/websockify",
+            _http_svc.register_route("GET", "/vnc/{session_id}/{token}/websockify",
                                          _vnc_owner, callback=lambda req: None,
                                          ws_handler=vnc_ws_proxy, public=True, private_only=True)
-                _http_svc.register_route("GET", "/vnc/{session_id}/{token}/{path+}",
+            _http_svc.register_route("GET", "/vnc/{session_id}/{token}/{path+}",
                                          _vnc_owner, callback=vnc_http_proxy, public=True, private_only=True)
-                logger.info("[vnc] Registered VNC routes on port %s", _req_port)
+            logger.info("[vnc] Registered VNC routes on port %s", _req_port)
             _audio_exists = [r for r in _http_svc.get_routes()
                              if r.get("pattern", "").startswith("/audio/")]
             if not _audio_exists:
@@ -3729,12 +3725,10 @@ finally:
                     logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 if svc:
                     _vnc_owner = "_vnc_proxy"
-                    existing = [r for r in svc.get_routes() if r.get("owner") == _vnc_owner]
-                    if not existing:
-                        svc.register_route("GET", "/vnc/{session_id}/{token}/websockify",
+                    svc.register_route("GET", "/vnc/{session_id}/{token}/websockify",
                                            _vnc_owner, callback=lambda req: None,
                                            ws_handler=vnc_ws_proxy, public=True, private_only=True)
-                        svc.register_route("GET", "/vnc/{session_id}/{token}/{path+}",
+                    svc.register_route("GET", "/vnc/{session_id}/{token}/{path+}",
                                            _vnc_owner, callback=vnc_http_proxy, public=True, private_only=True)
                 else:
                     logger.warning("[codex-login] HTTPListenerService NOT FOUND")
@@ -3974,12 +3968,10 @@ finally:
                     logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 if svc:
                     _vnc_owner = "_vnc_proxy"
-                    existing = [r for r in svc.get_routes() if r.get("owner") == _vnc_owner]
-                    if not existing:
-                        svc.register_route("GET", "/vnc/{session_id}/{token}/websockify",
+                    svc.register_route("GET", "/vnc/{session_id}/{token}/websockify",
                                            _vnc_owner, callback=lambda req: None,
                                            ws_handler=vnc_ws_proxy, public=True, private_only=True)
-                        svc.register_route("GET", "/vnc/{session_id}/{token}/{path+}",
+                    svc.register_route("GET", "/vnc/{session_id}/{token}/{path+}",
                                            _vnc_owner, callback=vnc_http_proxy, public=True, private_only=True)
                 else:
                     logger.warning("[%s-login] HTTPListenerService NOT FOUND", login_cli)
@@ -4228,12 +4220,10 @@ finally:
                 svc = _find_http_listener()
                 if svc:
                     _vnc_owner = "_vnc_proxy"
-                    existing = [r for r in svc.get_routes() if r.get("owner") == _vnc_owner]
-                    if not existing:
-                        svc.register_route("GET", "/vnc/{session_id}/{token}/websockify",
+                    svc.register_route("GET", "/vnc/{session_id}/{token}/websockify",
                                            _vnc_owner, callback=lambda req: None,
                                            ws_handler=vnc_ws_proxy, public=True, private_only=True)
-                        svc.register_route("GET", "/vnc/{session_id}/{token}/{path+}",
+                    svc.register_route("GET", "/vnc/{session_id}/{token}/{path+}",
                                            _vnc_owner, callback=vnc_http_proxy, public=True, private_only=True)
                 else:
                     logger.warning("[rclone-login] HTTPListenerService NOT FOUND")

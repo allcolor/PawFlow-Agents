@@ -439,6 +439,8 @@ def test_vnc_login_routes_skip_session_auth():
 
     assert "ws_handler=vnc_ws_proxy, public=True, private_only=True" in src
     assert "callback=vnc_http_proxy, public=True, private_only=True" in src
+    assert 'existing = [r for r in svc.get_routes() if r.get("owner") == _vnc_owner]' not in src
+    assert 'existing = [r for r in _http_svc.get_routes() if r.get("owner") == _vnc_owner]' not in src
 
 
 def test_pawflow_agent_auth_routes_cover_login_forms():

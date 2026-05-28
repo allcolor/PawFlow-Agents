@@ -28,8 +28,12 @@
 <label>Admin password</label>
 <input name="admin_password" type="password" autocomplete="new-password" minlength="12" required>
 </div>
+<div>
+<label>Confirm admin password</label>
+<input name="admin_password_confirm" type="password" autocomplete="new-password" minlength="12" required>
 </div>
-<p class="muted">The admin account is created before normal auth is enabled.</p>
+</div>
+<p class="muted">The admin account is created before normal auth is enabled. Password must be at least 12 characters and include lowercase, uppercase, digit, and symbol characters.</p>
 </section>
 <section class="screen" data-step="1">
 <h2>OAuth Configuration</h2>
@@ -344,11 +348,162 @@
 </main>
 
 <script>
-const names=['Admin User','OAuth Configuration','Private Gateway','LLM Service','Summarizer','Runtime Flow','First Conversation','Relay image profiles','Smoke Tests','Finalize'];let step=0;let status=null;const form=document.getElementById('wizard');const screens=[...document.querySelectorAll('.screen')];const steps=document.getElementById('steps');const err=document.getElementById('error');function field(name){return form.elements[name]}function values(){return Object.fromEntries(new FormData(form))}function drawSteps(){steps.innerHTML=names.map((n,i)=>`<div class="step ${i===step?'current'} ${i<step?'done'}">
-<span class="num">${i+1}</span>
-<span>${n}</span>
-</div>`).join('')}function show(){screens.forEach((s,i)=>s.classList.toggle('active',i===step));document.getElementById('back').disabled=step===0;document.getElementById('next').style.display=step===names.length-1?'none':'';document.getElementById('finalize').style.display=step===names.length-1?'':'none';err.textContent='';drawSteps();renderReview()}function requireFields(list){for(const name of list){const el=field(name);if(!el.checkValidity()){el.reportValidity();return false}}return true}function validate(){if(step===0&&!requireFields(['admin_username','admin_password']))return false;if(step===2){if(!requireFields(['bootstrap_gateway_key','new_gateway_key','gateway_skin']))return false;if(field('new_gateway_key').value===field('bootstrap_gateway_key').value||field('new_gateway_key').value==='RoyBetty'){err.textContent='New gateway key must replace the bootstrap key.';return false}}if(step===3&&!requireFields(['llm_service_id','llm_provider','llm_model']))return false;return true}function renderReview(){document.querySelectorAll('[data-review]').forEach(el=>{el.textContent=field(el.dataset.review)?.value||''});const v=values();document.getElementById('review').innerHTML=['admin_username','auth_providers','ssl_mode','gateway_skin','llm_service_id','llm_service_scope','credential_pool_scope','summarizer_service_scope','llm_provider','llm_model'].map(k=>`<div>${k}</div>
-<div>${v[k]||''}</div>`).join('')}function loadSkins(skins){const select=document.getElementById('gateway_skin');if(!Array.isArray(skins)||!skins.length)return;select.innerHTML=skins.map(s=>`<option value="${String(s.name).replaceAll('&','&amp;').replaceAll('"','&quot;')}">${String(s.title||s.name).replaceAll('&','&amp;').replaceAll('<','&lt;')}</option>`).join('');select.value=skins.some(s=>s.name==='matrix')?'matrix':skins[0].name}function updateLoginCliVisibility(){const p=field('llm_provider')?.value||'';document.getElementById('gemini_login_cli_wrap').style.display=(p==='gemini'||p==='antigravity-interactive')?'block':'none'}async function preparePool(){if(!validate())return;const v=values();if(v.llm_api_key){err.textContent='API key is set; no OAuth pool is needed.';return}const r=await fetch('/install/api/llm-credential/prepare',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(v)});const data=await r.json();if(!r.ok||data.error){err.textContent=data.error||'Pool creation failed';return}field('credential_service_id').value=data.service_id;const help=document.getElementById('credential_help');help.style.display='block';help.textContent=data.message||'';document.getElementById('credential_label').style.display='block';document.getElementById('credential_json').style.display='block';document.getElementById('credential_actions').style.display='flex'}async function serverLoginStatus(sessionId){const v=values();v.session_id=sessionId;const r=await fetch('/install/api/llm-credential/server-login/status',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(v)});const data=await r.json();if(!r.ok||data.error){err.textContent=data.error||'Server login failed';return}if(data.ok){document.getElementById('credential_help').style.display='block';document.getElementById('credential_help').textContent=data.message||'Credentials saved.';return}setTimeout(()=>serverLoginStatus(sessionId),2500)}async function startServerLogin(){if(!validate())return;const v=values();if(!v.credential_service_id){err.textContent='Create a login pool first.';return}const r=await fetch('/install/api/llm-credential/server-login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(v)});const data=await r.json();if(!r.ok||data.error){err.textContent=data.error||'Server login failed';return}err.textContent='';if(data.vnc_url)window.open(data.vnc_url,'_blank','noopener');document.getElementById('credential_help').style.display='block';document.getElementById('credential_help').textContent=data.message||'Server login started.';if(data.session_id)serverLoginStatus(data.session_id)}async function saveCredentials(){const v=values();v.credentials=document.getElementById('credential_json').value;const r=await fetch('/install/api/llm-credential/paste',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(v)});const data=await r.json();if(!r.ok||data.error){err.textContent=data.error||'Credential save failed';return}err.textContent='';document.getElementById('credential_help').textContent='Credentials saved for '+data.service_id}async function refresh(){const r=await fetch('/install/api',{cache:'no-store'});status=await r.json();loadSkins(status.private_gateway_skins);document.getElementById('state').textContent=JSON.stringify(status,null,2)}document.getElementById('prepare_pool').addEventListener('click',preparePool);document.getElementById('server_login').addEventListener('click',startServerLogin);document.getElementById('save_credentials').addEventListener('click',saveCredentials);field('llm_provider').addEventListener('change',updateLoginCliVisibility);document.getElementById('back').addEventListener('click',()=>{if(step>0){step--;show()}});document.getElementById('next').addEventListener('click',()=>{if(validate()&&step<names.length-1){step++;show()}});form.addEventListener('submit',async e=>{e.preventDefault();if(!validate())return;const r=await fetch('/install/api/finalize',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(values())});const data=await r.json();document.getElementById('state').textContent=JSON.stringify(data,null,2);if(!r.ok||data.error){err.textContent=data.error||'Finalization failed';return}if(data.install_complete){window.location.href='/chat'}});updateLoginCliVisibility();show();refresh().then(()=>{updateLoginCliVisibility();show()}).catch(e=>{document.getElementById('state').textContent=String(e)});
+const names = ['Admin User','OAuth Configuration','Private Gateway','LLM Service','Summarizer','Runtime Flow','First Conversation','Relay image profiles','Smoke Tests','Finalize'];
+let step = 0;
+let status = null;
+const form = document.getElementById('wizard');
+const screens = [...document.querySelectorAll('.screen')];
+const steps = document.getElementById('steps');
+const err = document.getElementById('error');
+function field(name) { return form.elements[name]; }
+function values() { return Object.fromEntries(new FormData(form)); }
+function validAdminPassword(value) {
+  return value.length >= 12 && /[a-z]/.test(value) && /[A-Z]/.test(value) && /\d/.test(value) && /[^A-Za-z0-9]/.test(value);
+}
+function validateAdminPassword() {
+  if (!requireFields(['admin_username','admin_password','admin_password_confirm'])) return false;
+  const password = field('admin_password').value;
+  const confirm = field('admin_password_confirm').value;
+  if (password !== confirm) {
+    err.textContent = 'Admin password confirmation must match.';
+    return false;
+  }
+  if (!validAdminPassword(password)) {
+    err.textContent = 'Admin password must be at least 12 characters and include lowercase, uppercase, digit, and symbol characters.';
+    return false;
+  }
+  return true;
+}
+function escapeHtml(value) {
+  return String(value || '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;');
+}
+function drawSteps() {
+  steps.innerHTML = names.map((n, i) => {
+    const cls = 'step ' + (i === step ? 'current ' : '') + (i < step ? 'done' : '');
+    return '<div class="' + cls + '"><span class="num">' + (i + 1) + '</span><span>' + escapeHtml(n) + '</span></div>';
+  }).join('');
+}
+function show() {
+  screens.forEach((s, i) => s.classList.toggle('active', i === step));
+  document.getElementById('back').disabled = step === 0;
+  document.getElementById('next').style.display = step === names.length - 1 ? 'none' : '';
+  document.getElementById('finalize').style.display = step === names.length - 1 ? '' : 'none';
+  err.textContent = '';
+  drawSteps();
+  renderReview();
+}
+function requireFields(list) {
+  for (const name of list) {
+    const el = field(name);
+    if (!el.checkValidity()) {
+      el.reportValidity();
+      return false;
+    }
+  }
+  return true;
+}
+function validate() {
+  if (step === 0 && !validateAdminPassword()) return false;
+  if (step === 2) {
+    if (!requireFields(['bootstrap_gateway_key','new_gateway_key','gateway_skin'])) return false;
+    if (field('new_gateway_key').value === field('bootstrap_gateway_key').value || field('new_gateway_key').value === 'RoyBetty') {
+      err.textContent = 'New gateway key must replace the bootstrap key.';
+      return false;
+    }
+  }
+  if (step === 3 && !requireFields(['llm_service_id','llm_provider','llm_model'])) return false;
+  return true;
+}
+function renderReview() {
+  document.querySelectorAll('[data-review]').forEach(el => { el.textContent = field(el.dataset.review)?.value || ''; });
+  const v = values();
+  document.getElementById('review').innerHTML = ['admin_username','auth_providers','ssl_mode','gateway_skin','llm_service_id','llm_service_scope','credential_pool_scope','summarizer_service_scope','llm_provider','llm_model'].map(k => '<div>' + escapeHtml(k) + '</div><div>' + escapeHtml(v[k] || '') + '</div>').join('');
+}
+function loadSkins(skins) {
+  const select = document.getElementById('gateway_skin');
+  if (!Array.isArray(skins) || !skins.length) return;
+  select.innerHTML = skins.map(s => '<option value="' + escapeHtml(s.name) + '">' + escapeHtml(s.title || s.name) + '</option>').join('');
+  select.value = skins.some(s => s.name === 'matrix') ? 'matrix' : skins[0].name;
+
+}
+function updateLoginCliVisibility() {
+  const p = field('llm_provider')?.value || '';
+  document.getElementById('gemini_login_cli_wrap').style.display = (p === 'gemini' || p === 'antigravity-interactive') ? 'block' : 'none';
+}
+async function preparePool() {
+  if (!validate()) return;
+  const v = values();
+  if (v.llm_api_key) { err.textContent = 'API key is set; no OAuth pool is needed.'; return; }
+  const r = await fetch('/install/api/llm-credential/prepare', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(v)});
+  const data = await r.json();
+  if (!r.ok || data.error) { err.textContent = data.error || 'Pool creation failed'; return; }
+  field('credential_service_id').value = data.service_id;
+  const help = document.getElementById('credential_help');
+  help.style.display = 'block';
+  help.textContent = data.message || '';
+  document.getElementById('credential_label').style.display = 'block';
+  document.getElementById('credential_json').style.display = 'block';
+  document.getElementById('credential_actions').style.display = 'flex';
+}
+async function serverLoginStatus(sessionId) {
+  const v = values();
+  v.session_id = sessionId;
+  const r = await fetch('/install/api/llm-credential/server-login/status', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(v)});
+  const data = await r.json();
+  if (!r.ok || data.error) { err.textContent = data.error || 'Server login failed'; return; }
+  if (data.ok) {
+    document.getElementById('credential_help').style.display = 'block';
+    document.getElementById('credential_help').textContent = data.message || 'Credentials saved.';
+    return;
+  }
+  setTimeout(() => serverLoginStatus(sessionId), 2500);
+}
+async function startServerLogin() {
+  if (!validate()) return;
+  const v = values();
+  if (!v.credential_service_id) { err.textContent = 'Create a login pool first.'; return; }
+  const r = await fetch('/install/api/llm-credential/server-login', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(v)});
+  const data = await r.json();
+  if (!r.ok || data.error) { err.textContent = data.error || 'Server login failed'; return; }
+  err.textContent = '';
+  if (data.vnc_url) window.open(data.vnc_url, '_blank', 'noopener');
+  document.getElementById('credential_help').style.display = 'block';
+  document.getElementById('credential_help').textContent = data.message || 'Server login started.';
+  if (data.session_id) serverLoginStatus(data.session_id);
+}
+async function saveCredentials() {
+  const v = values();
+  v.credentials = document.getElementById('credential_json').value;
+  const r = await fetch('/install/api/llm-credential/paste', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(v)});
+  const data = await r.json();
+  if (!r.ok || data.error) { err.textContent = data.error || 'Credential save failed'; return; }
+  err.textContent = '';
+  document.getElementById('credential_help').textContent = 'Credentials saved for ' + data.service_id;
+}
+async function refresh() {
+  const r = await fetch('/install/api', {cache:'no-store'});
+  status = await r.json();
+  loadSkins(status.private_gateway_skins);
+  document.getElementById('state').textContent = JSON.stringify(status, null, 2);
+}
+document.getElementById('prepare_pool').addEventListener('click', preparePool);
+document.getElementById('server_login').addEventListener('click', startServerLogin);
+document.getElementById('save_credentials').addEventListener('click', saveCredentials);
+field('llm_provider').addEventListener('change', updateLoginCliVisibility);
+document.getElementById('back').addEventListener('click', () => { if (step > 0) { step--; show(); } });
+document.getElementById('next').addEventListener('click', () => { if (validate() && step < names.length - 1) { step++; show(); } });
+form.addEventListener('submit', async e => {
+  e.preventDefault();
+  if (!validate()) return;
+  const r = await fetch('/install/api/finalize', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(values())});
+  const data = await r.json();
+  document.getElementById('state').textContent = JSON.stringify(data, null, 2);
+  if (!r.ok || data.error) { err.textContent = data.error || 'Finalization failed'; return; }
+  if (data.install_complete) window.location.href='/chat';
+});
+updateLoginCliVisibility();
+show();
+refresh().then(() => { updateLoginCliVisibility(); show(); }).catch(e => { document.getElementById('state').textContent = String(e); });
 </script>
 </body>
 </html>

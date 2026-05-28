@@ -374,6 +374,12 @@ def test_pawflow_installer_flow_template_exists():
     assert "gateway_skin" in ui_content
     assert "new_gateway_key" in ui_content
     assert "admin_password" in ui_content
+    assert "admin_password_confirm" in ui_content
+    assert "Confirm admin password" in ui_content
+    assert "validAdminPassword" in ui_content
+    assert "Admin password confirmation must match" in ui_content
+    assert "${" not in ui_content
+    assert "`" not in ui_content
     assert "llm_service_id" in ui_content
     assert "credential_service_id" in ui_content
     assert "llm_service_scope" in ui_content

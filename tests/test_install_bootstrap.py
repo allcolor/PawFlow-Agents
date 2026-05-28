@@ -309,6 +309,52 @@ def test_finalize_install_requires_replaced_gateway_key(tmp_path, monkeypatch):
         pass
 
 
+def test_finalize_install_rejects_mismatched_admin_password_confirmation(tmp_path, monkeypatch):
+    state_file = tmp_path / "install_state.json"
+    monkeypatch.setattr(ib, "INSTALL_STATE_FILE", state_file)
+    monkeypatch.setenv("PAWFLOW_BOOTSTRAP_GATEWAY_KEY", "RoyBetty")
+    state_file.write_text(json.dumps({
+        "install_complete": False,
+        "installer_instance_id": ib.INSTALLER_INSTANCE_ID,
+        "checks": {},
+        "draft": {},
+    }), encoding="utf-8")
+
+    try:
+        ib.finalize_install({
+            "bootstrap_gateway_key": "RoyBetty",
+            "new_gateway_key": "new-gateway-key-123",
+            "admin_password": "Admin-password-123",
+            "admin_password_confirm": "Admin-password-456",
+        })
+        assert False, "mismatched admin password confirmation should fail"
+    except ValueError as exc:
+        assert "admin_password_confirm must match" in str(exc)
+
+
+def test_finalize_install_rejects_weak_admin_password(tmp_path, monkeypatch):
+    state_file = tmp_path / "install_state.json"
+    monkeypatch.setattr(ib, "INSTALL_STATE_FILE", state_file)
+    monkeypatch.setenv("PAWFLOW_BOOTSTRAP_GATEWAY_KEY", "RoyBetty")
+    state_file.write_text(json.dumps({
+        "install_complete": False,
+        "installer_instance_id": ib.INSTALLER_INSTANCE_ID,
+        "checks": {},
+        "draft": {},
+    }), encoding="utf-8")
+
+    try:
+        ib.finalize_install({
+            "bootstrap_gateway_key": "RoyBetty",
+            "new_gateway_key": "new-gateway-key-123",
+            "admin_password": "admin-password-123",
+            "admin_password_confirm": "admin-password-123",
+        })
+        assert False, "weak admin password should fail"
+    except ValueError as exc:
+        assert "admin_password must include an uppercase letter" in str(exc)
+
+
 def test_finalize_install_validates_main_template_before_persistent_writes(tmp_path, monkeypatch):
     ServiceRegistry.reset()
     state_file = tmp_path / "install_state.json"
@@ -330,7 +376,8 @@ def test_finalize_install_validates_main_template_before_persistent_writes(tmp_p
             ib.finalize_install({
                 "bootstrap_gateway_key": "RoyBetty",
                 "new_gateway_key": "new-gateway-key-123",
-                "admin_password": "admin-password-123",
+                "admin_password": "Admin-password-123",
+                "admin_password_confirm": "Admin-password-123",
                 "llm_service_id": "review_llm",
                 "llm_provider": "codex-app-server",
                 "llm_model": "gpt-5.5",
@@ -369,7 +416,8 @@ def test_finalize_install_requires_valid_cli_oauth_before_persistent_writes(tmp_
             ib.finalize_install({
                 "bootstrap_gateway_key": "RoyBetty",
                 "new_gateway_key": "new-gateway-key-123",
-                "admin_password": "admin-password-123",
+                "admin_password": "Admin-password-123",
+                "admin_password_confirm": "Admin-password-123",
                 "llm_service_id": "review_llm",
                 "llm_provider": "codex-app-server",
                 "llm_model": "gpt-5.5",
@@ -470,7 +518,8 @@ def test_finalize_install_persists_complete_state_without_cleartext_key(tmp_path
         status = ib.finalize_install({
             "bootstrap_gateway_key": "RoyBetty",
             "new_gateway_key": new_key,
-            "admin_password": "admin-password-123",
+            "admin_password": "Admin-password-123",
+            "admin_password_confirm": "Admin-password-123",
             "llm_service_id": "review_llm",
             "llm_provider": "codex-app-server",
             "llm_model": "gpt-5.5",
@@ -542,7 +591,7 @@ def test_finalize_install_persists_complete_state_without_cleartext_key(tmp_path
         assert summarizer.config["llm_service"] == "review_llm"
         secrets_file = _paths.GLOBAL_SECRETS_FILE.read_text(encoding="utf-8")
         assert new_key not in secrets_file
-        assert "admin-password-123" not in system_dir.joinpath("users.json").read_text(encoding="utf-8")
+        assert "Admin-password-123" not in system_dir.joinpath("users.json").read_text(encoding="utf-8")
     finally:
         from core.conversation_store import ConversationStore
         from core.executor_registry import ExecutorRegistry
@@ -614,7 +663,8 @@ def test_finalize_install_with_api_key_does_not_create_llm_credential_pool(tmp_p
         status = ib.finalize_install({
             "bootstrap_gateway_key": "RoyBetty",
             "new_gateway_key": "new-gateway-key-123",
-            "admin_password": "admin-password-123",
+            "admin_password": "Admin-password-123",
+            "admin_password_confirm": "Admin-password-123",
             "llm_service_id": "review_llm",
             "llm_provider": "codex-app-server",
             "llm_model": "gpt-5.5",
@@ -698,7 +748,7 @@ def test_finalize_install_rolls_back_runtime_artifacts_when_smoke_checks_fail(tm
 
         from core.security import SecurityManager, Role
         sm = SecurityManager.get_instance()
-        sm.create_user("bootstrap_admin", "old-admin-password-123", Role.ADMIN)
+        sm.create_user("bootstrap_admin", "Old-admin-password-123", Role.ADMIN)
         users_before = _paths.USERS_FILE.read_bytes()
         _paths.GLOBAL_SECRETS_FILE.parent.mkdir(parents=True, exist_ok=True)
         _paths.GLOBAL_SECRETS_FILE.write_text(
@@ -721,7 +771,8 @@ def test_finalize_install_rolls_back_runtime_artifacts_when_smoke_checks_fail(tm
                 "bootstrap_gateway_key": "RoyBetty",
                 "new_gateway_key": "new-gateway-key-123",
                 "admin_username": "rollback_admin",
-                "admin_password": "admin-password-123",
+                "admin_password": "Admin-password-123",
+                "admin_password_confirm": "Admin-password-123",
                 "llm_service_id": "review_llm",
                 "llm_provider": "codex-app-server",
                 "llm_model": "gpt-5.5",

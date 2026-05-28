@@ -157,7 +157,8 @@ endpoints under `POST /install/api/llm-credential/*`, and finalization at
 `privateGateway` service. The deployed executor preserves the flow version
 directory as the asset source directory so `install.html` resolves after process
 restore. Finalization requires the current bootstrap key,
-rejects keeping `RoyBetty`, requires an admin password, stores only a SHA-256
+rejects keeping `RoyBetty`, requires matching admin password confirmation and
+password complexity, stores only a SHA-256
 digest of the replacement gateway key, writes the final key as encrypted secret
 `privategateway.main`, creates the persistent `_private_gateway`, resolves the
 final listener certificate configuration, creates `_auth_gateway`, creates the selected `llmConnection`, creates
@@ -173,7 +174,9 @@ and global-secret files after removing runtime artifacts it created.
 
 1. Admin user
    - create or update the local admin user
-   - reject admin passwords shorter than 12 characters
+   - require password confirmation to match
+   - reject admin passwords shorter than 12 characters or missing lowercase,
+     uppercase, digit, or symbol characters
    - optionally link the admin to an external provider after that provider is configured
 
 2. Authentication and OAuth

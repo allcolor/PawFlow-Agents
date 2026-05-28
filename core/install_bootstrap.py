@@ -402,18 +402,34 @@ def _install_final_private_gateway(secret_ref: str, skin: str) -> str:
     return FINAL_PRIVATE_GATEWAY_SERVICE_ID
 
 
+def _validate_admin_password(payload: Dict[str, Any]) -> str:
+    password = str(payload.get("admin_password") or "")
+    confirm = str(payload.get("admin_password_confirm") or "")
+    if not password:
+        raise ValueError("admin_password is required")
+    if password != confirm:
+        raise ValueError("admin_password_confirm must match admin_password")
+    if len(password) < 12:
+        raise ValueError("admin_password must be at least 12 characters")
+    if not any(ch.islower() for ch in password):
+        raise ValueError("admin_password must include a lowercase letter")
+    if not any(ch.isupper() for ch in password):
+        raise ValueError("admin_password must include an uppercase letter")
+    if not any(ch.isdigit() for ch in password):
+        raise ValueError("admin_password must include a digit")
+    if not any(not ch.isalnum() for ch in password):
+        raise ValueError("admin_password must include a symbol")
+    return password
+
+
 def _configure_admin_user(payload: Dict[str, Any]) -> str:
     """Create or update the first admin user from installer input."""
     from core.security import SecurityManager, Role
 
     username = str(payload.get("admin_username") or "admin").strip()
-    password = str(payload.get("admin_password") or "")
+    password = _validate_admin_password(payload)
     if not username:
         raise ValueError("admin_username is required")
-    if not password:
-        raise ValueError("admin_password is required")
-    if len(password) < 12:
-        raise ValueError("admin_password must be at least 12 characters")
 
     sm = SecurityManager.get_instance()
     if sm.get_user(username):
@@ -1209,13 +1225,9 @@ def finalize_install(payload: Dict[str, Any]) -> Dict[str, Any]:
         raise ValueError("new_gateway_key must be at least 16 characters")
 
     admin_username = str(payload.get("admin_username") or "admin").strip()
-    admin_password = str(payload.get("admin_password") or "")
+    admin_password = _validate_admin_password(payload)
     if not admin_username:
         raise ValueError("admin_username is required")
-    if not admin_password:
-        raise ValueError("admin_password is required")
-    if len(admin_password) < 12:
-        raise ValueError("admin_password must be at least 12 characters")
     if not str(payload.get("llm_provider") or "").strip():
         raise ValueError("llm_provider is required")
     if not str(payload.get("llm_service_id") or "").strip():

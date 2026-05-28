@@ -77,6 +77,44 @@ class TestServiceRegistryCRUD:
         with pytest.raises(ValueError, match="Unknown service type"):
             self.reg.install(self.SCOPE, "alice", "mydb", "nonexistent_type_xyz")
 
+    def test_loaded_user_managed_relay_autoconnects(self, monkeypatch):
+        calls = []
+        user_dir = self.mod._user_services_dir() / "alice"
+        user_dir.mkdir(parents=True)
+        (user_dir / "MyWorkspace.json").write_text(json.dumps({
+            "service_id": "MyWorkspace",
+            "service_type": "relay",
+            "scope": "user",
+            "scope_id": "alice",
+            "enabled": True,
+            "config": {
+                "token": "relay-token",
+                "server_managed": True,
+                "server_scope": "user",
+                "server_scope_id": "alice",
+                "server_user_id": "alice",
+                "server_internal_token": "internal-token",
+            },
+        }), encoding="utf-8")
+
+        class FakeRelayService:
+            def __init__(self, config):
+                self.config = config
+
+            def connect(self):
+                calls.append(dict(self.config))
+
+            def is_connected(self):
+                return False
+
+        monkeypatch.setattr("core.service_registry.ServiceFactory.get", lambda _typ: FakeRelayService)
+
+        services = self.reg.get_all(self.SCOPE, "alice")
+
+        assert "MyWorkspace" in services
+        assert calls and calls[0]["_service_id"] == "MyWorkspace"
+        assert calls[0]["server_managed"] is True
+
     def test_install_replaces_existing(self):
         self.reg.install(self.SCOPE, "alice", "mydb", SVC_TYPE, config={"host": "a"})
         self.reg.install(self.SCOPE, "alice", "mydb", SVC_TYPE, config={"host": "b"})

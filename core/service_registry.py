@@ -233,6 +233,20 @@ class ServiceRegistry:
                 just_loaded = True
         if just_loaded and scope in (SCOPE_GLOBAL, SCOPE_USER):
             self._migrate_llm_oauth_credentials(scope, sid)
+        if just_loaded:
+            self._connect_managed_relays(sid)
+
+    def _connect_managed_relays(self, scope_id: str) -> None:
+        with self._data_lock:
+            relay_ids = [
+                service_id
+                for service_id, sdef in self._definitions.get(scope_id, {}).items()
+                if sdef.enabled
+                and sdef.service_type == "relay"
+                and bool((sdef.config or {}).get("server_managed"))
+            ]
+        for service_id in relay_ids:
+            self._connect_one(scope_id, service_id)
 
     def reload_scope(self, scope: str, scope_id: str = "") -> None:
         """Force reload definitions from disk for a scope.

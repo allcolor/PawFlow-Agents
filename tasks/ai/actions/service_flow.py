@@ -910,7 +910,6 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                                     scope_id=scope_id,
                                     user_id=user_id,
                                     kind=str(config.get("server_kind") or "workspace"),
-                                    internal_token=str(config.get("server_internal_token") or ""),
                                 )
                                 if live_svc is not None:
                                     setattr(live_svc, "_managed_container_started", True)

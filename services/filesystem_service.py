@@ -405,7 +405,6 @@ class RelayService(BaseService):
                 scope_id=scope_id,
                 user_id=user_id,
                 kind=str(self.config.get("server_kind") or "workspace"),
-                internal_token=str(self.config.get("server_internal_token") or ""),
             )
             self._managed_container_started = True
         except Exception as e:

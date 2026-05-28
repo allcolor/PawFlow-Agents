@@ -420,13 +420,11 @@ class ServerRelayManager:
         """Return deterministic managed-runtime config for a relay service."""
         kind = _validate_kind(kind)
         runtime_dir = _relay_runtime_dir_for_scope(scope, user_id, scope_id, kind)
-        from core.internal_auth import mint_token
         return {
             "server_container_name": _relay_container_name(relay_id, kind),
             "server_workspace_dir": str(runtime_dir),
             "server_workspace_host_dir": _relay_runtime_host_dir(runtime_dir),
             "server_home_volume": f"pawflow_home_{relay_id}",
-            "server_internal_token": mint_token(),
             "server_scope": scope,
             "server_scope_id": scope_id,
             "server_user_id": user_id,

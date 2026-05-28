@@ -93,7 +93,6 @@ class TestServiceRegistryCRUD:
                 "server_scope": "user",
                 "server_scope_id": "alice",
                 "server_user_id": "alice",
-                "server_internal_token": "internal-token",
             },
         }), encoding="utf-8")
 
@@ -871,7 +870,6 @@ class TestAgentServiceActions:
                     "server_workspace_dir": f"data/runtime/relay/{user_id}",
                     "server_workspace_host_dir": f"/host/data/runtime/relay/{user_id}",
                     "server_home_volume": f"pawflow_home_{relay_id}",
-                    "server_internal_token": "internal-token",
                     "server_scope": scope,
                     "server_scope_id": scope_id,
                     "server_user_id": user_id,
@@ -885,7 +883,6 @@ class TestAgentServiceActions:
                     "scope_id": scope_id,
                     "user_id": user_id,
                     "kind": kind,
-                    "internal_token": internal_token,
                 })
                 return {"relay_id": relay_id, "workspace_dir": f"data/runtime/relay/{user_id}"}
 
@@ -920,7 +917,6 @@ class TestAgentServiceActions:
         assert sdef.config["server_container_name"] == "pawflow-relay-srv-MyWorkspace"
         assert sdef.config["server_workspace_dir"] == "data/runtime/relay/testuser"
         assert sdef.config["server_home_volume"] == "pawflow_home_MyWorkspace"
-        assert sdef.config["server_internal_token"] == "internal-token"
         assert sdef.config["server_scope"] == "user"
         assert sdef.config["server_scope_id"] == "testuser"
         assert sdef.config["server_user_id"] == "testuser"
@@ -932,7 +928,6 @@ class TestAgentServiceActions:
             "scope_id": "testuser",
             "user_id": "testuser",
             "kind": "workspace",
-            "internal_token": "internal-token",
         }]
 
     def test_service_install_relay_with_token_stays_external_listener(self, monkeypatch):

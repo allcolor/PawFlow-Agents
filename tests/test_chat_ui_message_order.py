@@ -108,6 +108,20 @@ def test_view_menu_grouping_toggles_set_conversation_parameter_and_reload():
     assert "wrap.style.display = conversationId ? 'inline-flex' : 'none'" in CONVERSATIONS_JS
 
 
+def test_repo_agents_expose_resource_context_menu():
+    repo_block = RESOURCES_JS[
+        RESOURCES_JS.index("var repoAgents = (data.repo_agents || [])"):
+        RESOURCES_JS.index("allAgentsInConversation", RESOURCES_JS.index("var repoAgents = (data.repo_agents || [])"))]
+
+    assert "showResourceMenu(event,\\'agent\\'" in repo_block
+    assert "\\',null);return false;" in repo_block
+    assert "escapeHtml(a.scope || '')" in repo_block
+    assert "showAddAgentToConvDialog(this.dataset.n)" in repo_block
+    assert "const isRepoAgent = rtype === 'agent' && autoconv === null" in RESOURCES_JS
+    assert "if (isRepoAgent)" in RESOURCES_JS
+    assert "showAddAgentToConvDialog(name)" in RESOURCES_JS
+
+
 def test_live_conversation_tts_button_and_sse_hooks_are_wired():
     serve_src = Path("tasks/io/serve_chat_ui.py").read_text(encoding="utf-8")
     assert '"conversation_tts.js"' in serve_src

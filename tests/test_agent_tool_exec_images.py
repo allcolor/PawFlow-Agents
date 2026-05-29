@@ -63,6 +63,41 @@ def test_wrapped_multimodal_tool_output_preserves_image_blocks():
     assert wrapped[1] == content[1]
 
 
+def test_tool_result_images_are_materialized_to_filestore_refs(tmp_path, monkeypatch):
+    from core.file_store import FileStore
+
+    store = FileStore(base_dir=str(tmp_path / "files"))
+    monkeypatch.setattr(FileStore, "_instance", store)
+    content = [
+        {"type": "text", "text": "Image: screenshot.png (1 bytes, image/png)"},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,AA=="}},
+        {"type": "image", "mimeType": "image/png", "data": "AA=="},
+    ]
+
+    materialized = AgentCoreMixin._materialize_tool_result_images(
+        content, user_id="user-1", conversation_id="conv-1")
+
+    assert materialized[0] == content[0]
+    assert materialized[1]["type"] == "image_ref"
+    assert materialized[2]["type"] == "image_ref"
+    assert "data" not in str(materialized)
+    assert "base64" not in str(materialized)
+
+
+def test_context_usage_counts_image_blocks_as_placeholders():
+    from tasks.ai.context_usage_cache import context_usage_from_cache
+
+    class Msg:
+        role = "tool"
+        msg_id = "m1"
+        content = [{"type": "image", "mimeType": "image/png", "data": "A" * 100_000}]
+
+    usage = context_usage_from_cache([Msg()], 200000, source="test")
+
+    assert usage["last_marker"].startswith("tool:m1:7:")
+    assert usage["used"] < 20
+
+
 def test_use_tool_text_result_wraps_as_inner_tool():
     tc = LLMToolCall(
         id="tc-fetch",

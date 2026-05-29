@@ -1761,6 +1761,8 @@ class LLMGeminiMixin(GeminiSessionMixin):
             ctype = content.get("type")
             if ctype == "text":
                 return content.get("text", "") or ""
+            if ctype in ("image", "image_url", "image_ref"):
+                return "[image]"
             if ctype == "content":
                 return LLMGeminiMixin._gemini_acp_content_text(content.get("content"))
             if ctype == "resource" and isinstance(content.get("resource"), dict):
@@ -1796,7 +1798,8 @@ class LLMGeminiMixin(GeminiSessionMixin):
         if parts:
             return "\n".join(parts)
         if update.get("rawOutput") is not None:
-            return json.dumps(update.get("rawOutput"), ensure_ascii=False, default=str)
+            text = LLMGeminiMixin._gemini_acp_content_text(update.get("rawOutput"))
+            return text or "[non-text tool result]"
         return update.get("status") or ""
 
     @staticmethod

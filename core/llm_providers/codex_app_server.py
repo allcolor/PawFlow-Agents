@@ -1622,6 +1622,44 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
         return {"type": "localImage", "path": f"{container_dir}/{rel_name}"}
 
     @staticmethod
+    def _codex_app_mcp_content_text(content) -> str:
+        """Return transcript-safe text for MCP content blocks.
+
+        Image blocks are already delivered to Codex as multimodal MCP content.
+        PawFlow's transcript only keeps the human-readable text so base64 image
+        bytes never become counted context payload.
+        """
+        if not isinstance(content, list):
+            return ""
+        parts = []
+        image_count = 0
+        for part in content:
+            if isinstance(part, str):
+                if part:
+                    parts.append(part)
+                continue
+            if not isinstance(part, dict):
+                continue
+            ptype = part.get("type") or ""
+            if ptype == "text":
+                text = part.get("text") or ""
+                if text:
+                    parts.append(str(text))
+                continue
+            if ptype in ("image", "image_url"):
+                image_count += 1
+                continue
+            text = part.get("text") or part.get("input_text") or part.get("output_text") or ""
+            if text:
+                parts.append(str(text))
+        text = "\n".join(p for p in parts if p)
+        if text:
+            return text
+        if image_count:
+            return f"[image sent to vision: {image_count}]"
+        return ""
+
+    @staticmethod
     def _codex_app_result_text(item: dict) -> str:
         if not isinstance(item, dict):
             return ""
@@ -1629,12 +1667,11 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
             return str(item.get("error"))
         result = item.get("result")
         if isinstance(result, dict) and isinstance(result.get("content"), list):
-            parts = []
-            for part in result["content"]:
-                if isinstance(part, dict) and part.get("type") == "text":
-                    parts.append(part.get("text", ""))
-            if parts:
-                return "\n".join(p for p in parts if p)
+            return LLMCodexAppServerMixin._codex_app_mcp_content_text(result["content"])
+        if isinstance(result, list):
+            text = LLMCodexAppServerMixin._codex_app_mcp_content_text(result)
+            if text:
+                return text
         if isinstance(result, (dict, list)):
             return json.dumps(result, ensure_ascii=False, default=str)
         if result is not None:

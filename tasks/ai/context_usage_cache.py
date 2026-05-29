@@ -30,13 +30,18 @@ def _message_id(msg: Any) -> str:
 def _content_text(content: Any) -> str:
     if isinstance(content, str):
         return content
+    if isinstance(content, dict):
+        ptype = content.get("type")
+        if ptype in ("image", "image_url", "image_ref"):
+            return "[image]"
+        return str(content.get("text", "") or content.get("content", "") or "")
     if isinstance(content, list):
         parts: List[str] = []
         for part in content:
             if not isinstance(part, dict):
                 continue
             ptype = part.get("type")
-            if ptype == "image_url":
+            if ptype in ("image", "image_url", "image_ref"):
                 parts.append("[image]")
             else:
                 parts.append(str(part.get("text", "") or ""))

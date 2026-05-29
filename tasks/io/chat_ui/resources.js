@@ -1389,7 +1389,8 @@ async function _renderResourcesData(data) {
       if (repoAgents.length) {
         repoAgents.forEach(function(a) {
           var aName = escapeHtml(a.name);
-          repoHtml += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;">'
+          repoHtml += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer;"'
+            + ' oncontextmenu="showResourceMenu(event,\'agent\',\'' + aName + '\',\'' + escapeHtml(a.scope || '') + '\',null);return false;">'
             + _scopeBadge(a.scope)
             + '<span style="color:var(--pf-muted);font-size:12px;flex:1;">' + aName + '</span>'
             + '<span style="color:var(--pf-accent);font-size:10px;cursor:pointer;padding:0 4px;" title="' + escapeHtml(t('addToConversation')) + '"'
@@ -1692,6 +1693,7 @@ function _positionMenu(menu, e) {
 
 function showResourceMenu(e, rtype, name, scope, autoconv) {
   e.preventDefault();
+  const isRepoAgent = rtype === 'agent' && autoconv === null;
   const old = document.querySelector('.ctx-menu');
   if (old) old.remove();
   const menu = document.createElement('div');
@@ -1721,24 +1723,28 @@ function showResourceMenu(e, rtype, name, scope, autoconv) {
     item('\u270F ' + t('editWithEllipsis'), () => showResourceEditor(rtype, name));
   }
   if (rtype === 'agent') {
-    item('\u25B6 ' + t('select'), () => cmdAgentSelect(name));
-    item('\u2699 ' + t('toolsMcpOverrideMenu'), () => _showToolMcpFilterDialog(name, 'agent'));
-    if (autoconv) {
-      item('\u23F9 ' + t('autoconvOff'), () => {
-        action$('random_thought', { sub: 'off', agent: name }).subscribe(d => {
-          addMsg('system', d.error || t('autoconvDisabledFor', { agent: name }));
-          loadResources();
-        });
-      });
+    if (isRepoAgent) {
+      item('+ ' + t('addToConversation'), () => showAddAgentToConvDialog(name));
     } else {
-      item('\u{1F504} ' + t('autoconvOnMenu'), () => {
-        const freq = prompt(t('autoconvFrequencyPrompt'), '6/1m');
-        if (!freq) return;
-        action$('random_thought', { sub: 'on', agent: name, frequency: freq }).subscribe(d => {
-          addMsg('system', d.error || t('autoconvEnabledFor', { agent: name, freq: freq }));
-          loadResources();
+      item('\u25B6 ' + t('select'), () => cmdAgentSelect(name));
+      item('\u2699 ' + t('toolsMcpOverrideMenu'), () => _showToolMcpFilterDialog(name, 'agent'));
+      if (autoconv) {
+        item('\u23F9 ' + t('autoconvOff'), () => {
+          action$('random_thought', { sub: 'off', agent: name }).subscribe(d => {
+            addMsg('system', d.error || t('autoconvDisabledFor', { agent: name }));
+            loadResources();
+          });
         });
-      });
+      } else {
+        item('\u{1F504} ' + t('autoconvOnMenu'), () => {
+          const freq = prompt(t('autoconvFrequencyPrompt'), '6/1m');
+          if (!freq) return;
+          action$('random_thought', { sub: 'on', agent: name, frequency: freq }).subscribe(d => {
+            addMsg('system', d.error || t('autoconvEnabledFor', { agent: name, freq: freq }));
+            loadResources();
+          });
+        });
+      }
     }
   }
   if (rtype === 'skill') {

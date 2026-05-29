@@ -183,6 +183,81 @@ class AgentCoreMixin:
         )
 
     @staticmethod
+    def _materialize_tool_result_images(content, *, user_id: str,
+                                        conversation_id: str):
+        """Replace inline image bytes in tool results with FileStore refs.
+
+        Vision-capable providers resolve ``image_ref`` back to native image
+        input at send time. The PawFlow transcript/context must never carry the
+        base64 bytes as tool-result text or JSON payload.
+        """
+        if not isinstance(content, list):
+            return content
+
+        import base64 as _b64
+        import re as _re
+        import time as _time
+
+        def _store_image(filename: str, mime: str, data_b64: str):
+            if not user_id or not conversation_id:
+                return {"type": "text", "text": "[image omitted: missing FileStore context]"}
+            try:
+                raw = _b64.b64decode(data_b64, validate=False)
+                ext = {
+                    "image/png": "png",
+                    "image/jpeg": "jpg",
+                    "image/webp": "webp",
+                    "image/gif": "gif",
+                }.get(mime, "png")
+                safe_name = filename or f"tool_image_{int(_time.time())}.{ext}"
+                from core.file_store import FileStore
+                fid = FileStore.instance().store(
+                    safe_name, raw, mime,
+                    user_id=user_id, conversation_id=conversation_id)
+                return {
+                    "type": "image_ref",
+                    "file_id": fid,
+                    "filename": safe_name,
+                    "mime_type": mime,
+                    "size": len(raw),
+                }
+            except Exception:
+                return {"type": "text", "text": "[image omitted: failed to store image result]"}
+
+        out = []
+        for idx, part in enumerate(content):
+            if not isinstance(part, dict):
+                out.append(part)
+                continue
+            ptype = part.get("type") or ""
+            if ptype == "image_url":
+                url = ((part.get("image_url") or {}).get("url") or "")
+                match = _re.match(r"data:([^;]+);base64,(.+)", url, _re.DOTALL)
+                if match:
+                    mime, data_b64 = match.group(1), match.group(2)
+                    ext = mime.split("/")[-1] or "png"
+                    out.append(_store_image(
+                        f"tool_image_{idx}.{ext}", mime, data_b64))
+                    continue
+            elif ptype == "image":
+                source = part.get("source") if isinstance(part.get("source"), dict) else {}
+                if source.get("type") == "base64" and source.get("data"):
+                    mime = source.get("media_type") or part.get("mimeType") or "image/png"
+                    out.append(_store_image(
+                        part.get("filename") or f"tool_image_{idx}.png",
+                        mime, source.get("data") or ""))
+                    continue
+                data_b64 = part.get("data") or ""
+                if data_b64:
+                    mime = part.get("mimeType") or part.get("mime_type") or "image/png"
+                    out.append(_store_image(
+                        part.get("filename") or f"tool_image_{idx}.png",
+                        mime, data_b64))
+                    continue
+            out.append(part)
+        return out
+
+    @staticmethod
     def _tool_result_display_call(tc):
         """Return the inner tool call used for result display/wrapping.
 
@@ -1810,6 +1885,9 @@ class AgentCoreMixin:
                                 # Tool result (in LLM context) — wrap as
                                 # untrusted content before persisting.
                                 tr_content = _result or "(no output)"
+                                tr_content = self._materialize_tool_result_images(
+                                    tr_content, user_id=user_id,
+                                    conversation_id=conversation_id)
                                 tr_content = self._wrap_tool_output(_display_name, tr_content)
                                 tr_msg = LLMMessage(
                                     role="tool", content=tr_content,
@@ -1940,6 +2018,9 @@ class AgentCoreMixin:
                         if event_type == "tool_result":
                             _tool_name = payload.get("tool", "") or ""
                             _result = payload.get("result", "") or "(no output)"
+                            _result = self._materialize_tool_result_images(
+                                _result, user_id=user_id,
+                                conversation_id=conversation_id)
                             msg = LLMMessage(
                                 role="tool",
                                 content=self._wrap_tool_output(_tool_name, _result),
@@ -2610,6 +2691,9 @@ class AgentCoreMixin:
                         # Wrap tool output in an untrusted-content envelope so
                         # any instructions embedded in file contents, web pages,
                         # grep matches, etc. are read as data, not as orders.
+                        result_text = self._materialize_tool_result_images(
+                            result_text, user_id=user_id,
+                            conversation_id=conversation_id)
                         _wrapped = self._wrap_tool_output(display_tc.name, result_text)
                         _tr_msg = LLMMessage(role="tool", content=_wrapped, tool_call_id=tc.id,
                                               conversation_id=conversation_id)

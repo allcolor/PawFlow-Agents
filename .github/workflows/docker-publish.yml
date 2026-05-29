@@ -38,6 +38,17 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Free runner disk space
+        run: |
+          sudo rm -rf \
+            /opt/hostedtoolcache \
+            /usr/local/lib/android \
+            /usr/share/dotnet \
+            /usr/share/swift \
+            /usr/local/.ghcup
+          docker system prune -af || true
+          df -h
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 

@@ -107,6 +107,8 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
        zod ajv @openai/codex \
        # Database
        prisma drizzle-kit knex typeorm \
+    && npm cache clean --force \
+    && rm -rf /root/.npm /tmp/* /var/tmp/* \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Rust (installed as pawflow user → /home/pawflow/.cargo) ────────
@@ -116,7 +118,8 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
 ENV PATH="/home/pawflow/.cargo/bin:${PATH}"
 RUN cargo install cargo-watch cargo-edit cargo-expand \
     && cargo install --git https://github.com/rtk-ai/rtk \
-    && rustup component add clippy rustfmt rust-analyzer
+    && rustup component add clippy rustfmt rust-analyzer \
+    && rm -rf /home/pawflow/.cargo/registry /home/pawflow/.cargo/git /tmp/* /var/tmp/*
 USER root
 RUN install -m 0755 /home/pawflow/.cargo/bin/rtk /usr/local/bin/rtk
 
@@ -131,7 +134,8 @@ USER pawflow
 RUN go install golang.org/x/tools/gopls@latest \
     && go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest \
     && go install gotest.tools/gotestsum@latest \
-    && go install github.com/air-verse/air@latest
+    && go install github.com/air-verse/air@latest \
+    && rm -rf "$GOPATH/pkg/mod" "$GOPATH/pkg/sumdb" /tmp/* /var/tmp/*
 USER root
 
 # ── Java (OpenJDK) + Kotlin ─────────────────────────────────────────
@@ -182,6 +186,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # ── code-server (VS Code in browser) ──────────────────────────────
 RUN curl -fsSL https://code-server.dev/install.sh | sh
+RUN rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
 ENV PAWFLOW_DOCKER_IMAGE="pawflow-relay-dev:latest"
 
@@ -222,7 +227,8 @@ RUN mkdir -p /ms-playwright \
     && ln -sf /usr/local/bin/chromium /usr/local/bin/chromium-browser \
     && mkdir -p /usr/local/share/applications \
     && printf '[Desktop Entry]\nType=Application\nName=Chromium\nExec=/usr/local/bin/chromium %%U\nMimeType=text/html;x-scheme-handler/http;x-scheme-handler/https;\n' \
-       > /usr/local/share/applications/chromium.desktop
+       > /usr/local/share/applications/chromium.desktop \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* /root/.cache/ms-playwright
 
 # ── Docker CLI (for DinD — exec shells via docker.sock) ────────────
 RUN curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg \

@@ -42,6 +42,9 @@ def test_server_dockerfile_supports_bootstrap_docker_builds():
     relay_dev = Path("docker/relay-dev/Dockerfile").read_text(encoding="utf-8")
     assert "COPY tools/ /opt/pawflow/" in relay_dev
     assert "COPY pawflow_relay/ /opt/pawflow/pawflow_relay/" in relay_dev
+    assert "npm cache clean --force" in relay_dev
+    assert "/home/pawflow/.cargo/registry" in relay_dev
+    assert '"$GOPATH/pkg/mod"' in relay_dev
 
     relay_build = Path("docker/relay-dev/build.sh").read_text(encoding="utf-8")
     assert "-f \"$SCRIPT_DIR/Dockerfile\"" in relay_build
@@ -415,6 +418,8 @@ def test_docker_publish_workflow_only_publishes_redistributable_images():
     assert "THIRD_PARTY_NOTICES.md" in src
     assert "type=ref,event=tag" in src
     assert "type=semver,pattern={{version}}" in src
+    assert "Free runner disk space" in src
+    assert "/opt/hostedtoolcache" in src
     assert "type=raw,value=latest" not in src
     assert "main-" not in src
     assert "platforms: linux/amd64" in src

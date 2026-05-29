@@ -9,8 +9,9 @@
 #   PAWFLOW_HOME        Persistent data directory (default: $HOME/pawflow)
 #   PAWFLOW_CONTAINER   Container name (default: pawflow-server)
 #   PAWFLOW_PORT        Host/server port selected during install (required)
-#   PAWFLOW_HOST        Bind host inside container (default: 0.0.0.0)
+#   PAWFLOW_HOST        Host interface for Docker port publishing (default: 0.0.0.0)
 #   PAWFLOW_PUBLISH_HOST Host interface for Docker port publishing (default: PAWFLOW_HOST)
+#   PAWFLOW_CONTAINER_HOST Bind host inside container (default: 0.0.0.0)
 #   PAWFLOW_EXTRA_ARGS  Extra args appended to `python cli.py start`
 #   PAWFLOW_BOOTSTRAP_RESET Reset first-run installer state before startup
 #   PAWFLOW_RUN_UID/GID Host uid/gid used by the container process (default: current user)
@@ -27,6 +28,7 @@ CONTAINER="$(printenv PAWFLOW_CONTAINER || true)"
 PORT="$(printenv PAWFLOW_PORT || true)"
 HOST="$(printenv PAWFLOW_HOST || true)"
 PUBLISH_HOST="$(printenv PAWFLOW_PUBLISH_HOST || true)"
+CONTAINER_HOST="$(printenv PAWFLOW_CONTAINER_HOST || true)"
 EXTRA_ARGS="$(printenv PAWFLOW_EXTRA_ARGS || true)"
 BOOTSTRAP_GATEWAY_KEY="$(printenv PAWFLOW_BOOTSTRAP_GATEWAY_KEY || true)"
 BOOTSTRAP_RESET="$(printenv PAWFLOW_BOOTSTRAP_RESET || true)"
@@ -38,6 +40,7 @@ if [[ -z "$PAWFLOW_HOME" ]]; then PAWFLOW_HOME="$HOME/pawflow"; fi
 if [[ -z "$CONTAINER" ]]; then CONTAINER="pawflow-server"; fi
 if [[ -z "$HOST" ]]; then HOST="0.0.0.0"; fi
 if [[ -z "$PUBLISH_HOST" ]]; then PUBLISH_HOST="$HOST"; fi
+if [[ -z "$CONTAINER_HOST" ]]; then CONTAINER_HOST="0.0.0.0"; fi
 if [[ -z "$BOOTSTRAP_GATEWAY_KEY" ]]; then
   BOOTSTRAP_GATEWAY_KEY="RoyBetty"
   BOOTSTRAP_GATEWAY_LABEL="RoyBetty"
@@ -145,7 +148,7 @@ docker run -d \
   -e PAWFLOW_BOOTSTRAP_GATEWAY_KEY="$BOOTSTRAP_GATEWAY_KEY" \
   -e PAWFLOW_BOOTSTRAP_RESET="$BOOTSTRAP_RESET" \
   "$IMAGE" \
-  python cli.py start --host "$HOST" --port "$PORT" $EXTRA_ARGS
+  python cli.py start --host "$CONTAINER_HOST" --port "$PORT" $EXTRA_ARGS
 
 cat <<MSG
 

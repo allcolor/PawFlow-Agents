@@ -28,7 +28,7 @@ Prerequisites to check first:
 3. Verify Docker daemon is reachable with `docker info`.
 4. Verify the selected port is available. The port must be chosen explicitly during install.
 5. Verify internet access to GitHub and the Docker registry.
-6. Prefer running `bash scripts/doctor-pawflow.sh` when this repository is available; follow its OS-specific remediation instructions.
+6. Prefer running `bash scripts/doctor-pawflow.sh --port PORT` when this repository is available; follow its OS-specific remediation instructions.
 7. On Windows, run `powershell -ExecutionPolicy Bypass -File scripts/doctor-pawflow.ps1` as a host prerequisite check. Docker Desktop Linux containers are required. WSL2 integration is required only when installing from WSL.
 
 Install path: complete from-scratch bootstrap

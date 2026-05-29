@@ -61,3 +61,17 @@ def test_private_gateway_service_registered_and_uses_explicit_secret_refs(monkey
     assert svc.is_enabled() is True
     assert private_gateway.verify_secret("RoyBetty", "gateway_key") is True
     assert private_gateway.verify_secret("RoyBetty", "privategateway.legacy") is False
+
+
+def test_private_gateway_cookie_is_bound_to_secret_refs():
+    import services.private_gateway as private_gateway
+
+    cookie = private_gateway._make_cookie_value("127.0.0.1", "privategateway.bootstrap")
+
+    assert private_gateway._verify_cookie(
+        cookie, "127.0.0.1", secret_refs="privategateway.bootstrap") is True
+    assert private_gateway._verify_cookie(
+        cookie, "127.0.0.1", secret_refs="privategateway.main") is False
+    assert private_gateway._verify_cookie(
+        cookie.split(".", 1)[1], "127.0.0.1",
+        secret_refs="privategateway.bootstrap") is False

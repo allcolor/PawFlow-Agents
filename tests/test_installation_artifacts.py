@@ -258,6 +258,55 @@ def test_run_docker_publish_host_follows_bind_host(tmp_path):
 
     assert result.returncode == 0, result.stderr
     assert "-p 0.0.0.0:12345:12345" in docker_log.read_text(encoding="utf-8")
+    assert 'python cli.py start --host 0.0.0.0 --port 12345' in docker_log.read_text(encoding="utf-8")
+
+
+def test_run_docker_keeps_container_bind_reachable_when_publish_host_is_loopback(tmp_path):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    docker_log = tmp_path / "docker.log"
+    fake_docker = bin_dir / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf '%s\\n' \"$*\" >> \"$DOCKER_LOG\"\n"
+        "if [[ \"$1\" == \"ps\" ]]; then exit 0; fi\n"
+        "if [[ \"$1\" == \"run\" ]]; then\n"
+        "  args=\"$*\"\n"
+        "  if [[ \"$args\" == *\"command -v docker && docker --version\"* ]]; then\n"
+        "    printf '/usr/bin/docker\\nDocker version 27.0.0\\n'\n"
+        "    exit 0\n"
+        "  fi\n"
+        "  if [[ \"$args\" == *\"docker version >/dev/null\"* ]]; then exit 0; fi\n"
+        "  printf 'container-id\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+
+    env = {
+        "DOCKER_LOG": str(docker_log),
+        "HOME": str(tmp_path),
+        "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+        "PAWFLOW_HOME": str(tmp_path / "pawflow-home"),
+        "PAWFLOW_HOST": "127.0.0.1",
+        "PAWFLOW_IMAGE": "test-image",
+        "PAWFLOW_PORT": "12345",
+    }
+    result = subprocess.run(
+        ["bash", "scripts/run-pawflow-docker.sh"],
+        cwd=Path.cwd(),
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=10,
+    )
+
+    log = docker_log.read_text(encoding="utf-8")
+    assert result.returncode == 0, result.stderr
+    assert "-p 127.0.0.1:12345:12345" in log
+    assert 'python cli.py start --host 0.0.0.0 --port 12345' in log
 
 
 def test_install_docs_and_agent_prompt_capture_bootstrap_contract():
@@ -334,6 +383,7 @@ def test_compose_healthcheck_accepts_bootstrap_tls():
     assert "choose a port with --port PORT or PAWFLOW_PORT=PORT" in install_script
     assert "PAWFLOW_PORT is required" in run_script
     assert "choose a port with --port PORT or PAWFLOW_PORT=PORT" in doctor_script
+    assert "PAWFLOW_CONTAINER_HOST" in run_script
     assert "/var/run/docker.sock:/var/run/docker.sock" in compose
 
 
@@ -468,11 +518,8 @@ def test_pawflow_installer_flow_template_exists():
     ui_params = flow["tasks"]["install_ui"]["parameters"]
     assert ui_params["content_file"] == "install.html"
     ui_asset = template.parent / "assets" / "install.html"
-    root_asset = template.parent.parent / "assets" / "install.html"
     assert ui_asset.exists()
-    assert root_asset.exists()
     ui_content = ui_asset.read_text(encoding="utf-8")
-    assert root_asset.read_text(encoding="utf-8") == ui_content
     assert "Admin User" in ui_content
     assert "OAuth Configuration" in ui_content
     assert "Private Gateway" in ui_content

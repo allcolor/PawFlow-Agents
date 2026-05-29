@@ -48,20 +48,30 @@ def _signing_key() -> bytes:
     return get_secrets_manager().derive_subkey(b"private-gateway-cookie")
 
 
-def _make_cookie_value(ip: str) -> str:
+def _cookie_scope(secret_refs: Any = None) -> str:
+    refs = _split_refs(secret_refs)
+    return ",".join(refs)
+
+
+def _make_cookie_value(ip: str, secret_refs: Any = None) -> str:
     ts = str(int(time.time()))
-    payload = f"{ts}:{ip}"
+    scope = _cookie_scope(secret_refs)
+    payload = f"{ts}:{ip}:{scope}"
     sig = hmac.new(_signing_key(), payload.encode(), hashlib.sha256).hexdigest()[:32]
-    return f"{ts}.{sig}"
+    return f"v2.{ts}.{sig}"
 
 
-def _verify_cookie(value: str, ip: str, max_age: int = _COOKIE_MAX_AGE) -> bool:
+def _verify_cookie(value: str, ip: str, max_age: int = _COOKIE_MAX_AGE,
+                   secret_refs: Any = None) -> bool:
     try:
-        ts_str, sig = value.split(".", 1)
+        version, ts_str, sig = value.split(".", 2)
+        if version != "v2":
+            return False
         ts = int(ts_str)
         if time.time() - ts > max_age:
             return False
-        payload = f"{ts_str}:{ip}"
+        scope = _cookie_scope(secret_refs)
+        payload = f"{ts_str}:{ip}:{scope}"
         expected = hmac.new(_signing_key(), payload.encode(), hashlib.sha256).hexdigest()[:32]
         return hmac.compare_digest(sig, expected)
     except Exception:
@@ -405,7 +415,8 @@ def _check_request_inner(handler, config: Dict[str, Any]) -> bool:
         part = part.strip()
         if part.startswith(cookie_name + "="):
             cookie_val = part[len(cookie_name) + 1:]
-            if _verify_cookie(cookie_val, ip, max_age=cookie_max_age):
+            if _verify_cookie(cookie_val, ip, max_age=cookie_max_age,
+                              secret_refs=secret_refs):
                 return False
 
     if handler.command == "POST" and path == "/_gateway":
@@ -472,7 +483,7 @@ def _handle_submit(handler, ip, body, secret_refs=None,
 
     # Success — set cookie and redirect to original URL
     record_success(ip)
-    cookie_val = _make_cookie_value(ip)
+    cookie_val = _make_cookie_value(ip, secret_refs)
     cookie = f"{cookie_name}={cookie_val}; Path=/; Max-Age={cookie_max_age}; HttpOnly; SameSite=Lax"
     handler.send_response(302)
     handler.send_header("Location", next_url)

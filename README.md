@@ -51,8 +51,8 @@ python cli.py start --host 0.0.0.0 --port PORT
 git clone https://github.com/allcolor/PawFlow-Agents.git
 cd PawFlow-Agents
 
-bash scripts/doctor-pawflow.sh
-bash scripts/install-pawflow.sh
+bash scripts/doctor-pawflow.sh --port PORT
+bash scripts/install-pawflow.sh --port PORT
 # Installer available at https://localhost:PORT/install
 ```
 

@@ -18,8 +18,8 @@ image, then complete the bootstrap wizard in the browser.
 ### Complete from-scratch install
 
 ```bash
-bash scripts/doctor-pawflow.sh
-bash scripts/install-pawflow.sh
+bash scripts/doctor-pawflow.sh --port PORT
+bash scripts/install-pawflow.sh --port PORT
 ```
 
 This is the recommended Linux, macOS, Windows-native Docker Desktop, and WSL2
@@ -122,7 +122,7 @@ configure relays; relay onboarding happens later from the webchat.
 These are the supported Docker install scenarios and their expected outcomes.
 
 1. Fresh complete install on Linux, macOS, Windows native, or WSL
-   - Run `bash scripts/doctor-pawflow.sh`, then `bash scripts/install-pawflow.sh`.
+   - Run `bash scripts/doctor-pawflow.sh --port PORT`, then `bash scripts/install-pawflow.sh --port PORT`.
    - The installer first tries `ghcr.io/allcolor/pawflow:latest`, then builds it from source if needed, and builds
      `pawflow-claude-code:latest`, `pawflow-relay-minimal:latest`, and
      `pawflow-relay-dev:latest` before starting the server.

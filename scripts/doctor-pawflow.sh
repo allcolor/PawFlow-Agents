@@ -109,7 +109,7 @@ else
   if has_cmd git; then
     ok "git command found (optional for image install)"
   else
-    warn "git not found. Image install can continue; --source install will not work."
+    warn "git not found. Running from a checkout can continue; standalone installs and --source installs need git."
   fi
 fi
 

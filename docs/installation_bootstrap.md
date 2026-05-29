@@ -16,7 +16,7 @@ server.
 Before starting either install path, run:
 
 ```bash
-bash scripts/doctor-pawflow.sh
+bash scripts/doctor-pawflow.sh --port PORT
 ```
 
 On Windows, PawFlow supports two install shells: native Windows Bash backed by
@@ -41,7 +41,7 @@ The default path is a complete Docker bootstrap with a prebuilt server image
 first:
 
 ```bash
-bash scripts/install-pawflow.sh
+bash scripts/install-pawflow.sh --port PORT
 ```
 
 When run from a checkout, the installer uses that checkout. When run as a
@@ -146,7 +146,7 @@ generated, startup must fail loudly instead of falling back to plain HTTP.
 
 The installer template is stored at
 `data/repository/flows/global/default/pawflow_installer/versions/1.0.0.json`.
-The browser UI is a separate flow asset at
+The browser UI is a single versioned flow asset at
 `data/repository/flows/global/default/pawflow_installer/versions/assets/install.html`,
 referenced by the installer flow through `generateFlowFile.content_file`. The
 template defines a public `GET /` redirect to `/install`, `/install`, dynamic
@@ -164,7 +164,10 @@ final listener certificate configuration, creates `_auth_gateway`, creates the s
 `summarizer_service`, deploys `default.pawflow_agent:1.0.0` as
 `pawflow-agent`, creates a starter conversation with the `assistant` agent
 selected, writes `install_complete=true`, disables `_bootstrap_private_gateway`,
-and marks the installer deployment stopped for restart-safe restoration.
+and marks the installer deployment stopped for restart-safe restoration. Gateway
+cookies are bound to the configured gateway secret references, so a cookie issued
+for the bootstrap secret is not accepted by the final private gateway after the
+secret reference changes.
 If finalization fails before completion, the installer returns a JSON error and
 restores the pre-finalization system user/session/security, final certificate,
 and global-secret files after removing runtime artifacts it created.

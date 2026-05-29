@@ -5,12 +5,12 @@
 # Windows Bash shell backed by Docker Desktop Linux containers.
 #
 # Usage:
-#   bash scripts/install-pawflow.sh
-#   bash scripts/install-pawflow.sh --version 1.0.0
-#   bash scripts/install-pawflow.sh --from-source --version 1.0.0
-#   bash scripts/install-pawflow.sh --native
+#   bash scripts/install-pawflow.sh --port PORT
+#   bash scripts/install-pawflow.sh --version 1.0.0 --port PORT
+#   bash scripts/install-pawflow.sh --from-source --version 1.0.0 --port PORT
+#   bash scripts/install-pawflow.sh --native --port PORT
 #   bash scripts/install-pawflow.sh --dir ~/pawflow-src --port PORT
-#   bash scripts/install-pawflow.sh --pull-server --image ghcr.io/allcolor/pawflow:latest
+#   bash scripts/install-pawflow.sh --pull-server --image ghcr.io/allcolor/pawflow:latest --port PORT
 
 set -euo pipefail
 

@@ -2,8 +2,7 @@ name: Docker Images
 
 on:
   push:
-    branches: [main]
-    tags: ['v*', '[0-9]*.[0-9]*.[0-9]*', 'prealpha*', 'alpha*', 'beta*']
+    tags: ['v*.*.*', '*.*.*']
   workflow_dispatch:
 
 permissions:
@@ -15,6 +14,7 @@ permissions:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAMESPACE: allcolor
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   publish:
@@ -47,7 +47,7 @@ jobs:
           python3 scripts/generate-relay-image.py \
             --profile server-minimal \
             --out docker/relay-generated/server-minimal \
-            --image ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.image }}:latest
+            --image ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.image }}:${{ github.ref_name }}
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -62,10 +62,8 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.image }}
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
             type=ref,event=tag
             type=semver,pattern={{version}}
-            type=sha,prefix=main-,enable={{is_default_branch}}
           labels: |
             org.opencontainers.image.title=PawFlow ${{ matrix.image }}
             org.opencontainers.image.description=PawFlow redistributable Docker image

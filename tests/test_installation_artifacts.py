@@ -404,14 +404,19 @@ def test_docker_publish_workflow_only_publishes_redistributable_images():
     assert workflow.exists()
     assert "packages: write" in src
     assert "ghcr.io" in src
-    assert "prealpha*" in src
-    assert "alpha*" in src
-    assert "beta*" in src
+    assert "branches:" not in src
+    assert "v*.*.*" in src
+    assert "*.*.*" in src
+    assert "FORCE_JAVASCRIPT_ACTIONS_TO_NODE24" in src
     assert "pawflow-relay-minimal" in src
     assert "pawflow-relay-dev" in src
     assert "sbom: true" in src
     assert "provenance: true" in src
     assert "THIRD_PARTY_NOTICES.md" in src
+    assert "type=ref,event=tag" in src
+    assert "type=semver,pattern={{version}}" in src
+    assert "type=raw,value=latest" not in src
+    assert "main-" not in src
     assert "platforms: linux/amd64" in src
     assert "docker/relay-generated/server-minimal" in src
     assert "scripts/generate-relay-image.py" in src

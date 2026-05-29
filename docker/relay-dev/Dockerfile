@@ -199,12 +199,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     meld ncdu galculator mousepad \
     && rm -rf /var/lib/apt/lists/*
 
-# Browser runtime for manual desktop use and Playwright/Patchright-backed tools.
-# Use Ubuntu's Chromium package for stability inside the desktop container; the
-# wrapper adds Docker-safe flags and is also exposed through
-# PAWFLOW_CHROMIUM_EXECUTABLE for code paths that accept an executable override.
-RUN apt-get update && apt-get install -y --no-install-recommends chromium-browser \
-    && printf '#!/bin/bash\nset -e\nexec /usr/bin/chromium-browser --no-sandbox --disable-dev-shm-usage --user-data-dir="$HOME/.chromium-profile" "$@"\n' \
+# Browser runtime for manual desktop use only.
+# Ubuntu 24.04's chromium-browser package is a Snap transition wrapper, which
+# does not work reliably in this Docker desktop. XtraDeb provides a native
+# Chromium deb for Noble, while Playwright remains managed by application code.
+RUN add-apt-repository -y ppa:xtradeb/apps \
+    && apt-get update && apt-get install -y --no-install-recommends chromium \
+    && printf '#!/bin/bash\nset -e\nexec /usr/bin/chromium --no-sandbox --disable-dev-shm-usage --user-data-dir="$HOME/.chromium-profile" "$@"\n' \
        > /usr/local/bin/chromium \
     && chmod +x /usr/local/bin/chromium \
     && ln -sf /usr/local/bin/chromium /usr/local/bin/chromium-browser \
@@ -212,7 +213,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends chromium-browse
     && printf '[Desktop Entry]\nType=Application\nName=Chromium\nExec=/usr/local/bin/chromium %%U\nMimeType=text/html;x-scheme-handler/http;x-scheme-handler/https;\n' \
        > /usr/local/share/applications/chromium.desktop \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* /root/.cache/ms-playwright
-ENV PAWFLOW_CHROMIUM_EXECUTABLE="/usr/local/bin/chromium"
 
 # ── Docker CLI (for DinD — exec shells via docker.sock) ────────────
 RUN curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg \

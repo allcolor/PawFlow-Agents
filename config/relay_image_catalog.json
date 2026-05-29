@@ -156,10 +156,11 @@
     "browser.chromium": {
       "label": "Chromium",
       "category": "browser",
-      "description": "Redistributable Chromium browser for browser automation or desktop use.",
-      "apt": ["libgtk-3-0", "libnotify4", "fonts-dejavu", "fonts-liberation", "fonts-noto-color-emoji"],
+      "description": "Native Chromium browser for desktop use in relay containers.",
+      "pre_apt": ["add-apt-repository -y ppa:xtradeb/apps"],
+      "apt": ["chromium", "libgtk-3-0", "libnotify4", "fonts-dejavu", "fonts-liberation", "fonts-noto-color-emoji"],
       "pip": ["playwright"],
-      "setup": ["mkdir -p /ms-playwright", "PLAYWRIGHT_BROWSERS_PATH=/ms-playwright python3 -m playwright install --with-deps chromium", "printf '#!/bin/bash\\nset -e\\nCHROME=$(find /ms-playwright -path \"*/chrome-linux/chrome\" -type f | sort | tail -n 1)\\nexec \"$CHROME\" --no-sandbox --disable-gpu --disable-dev-shm-usage --user-data-dir=\"$HOME/.chromium-profile\" \"$@\"\\n' > /usr/local/bin/chromium", "chmod +x /usr/local/bin/chromium", "ln -sf /usr/local/bin/chromium /usr/local/bin/chromium-browser", "mkdir -p /usr/local/share/applications", "printf '[Desktop Entry]\\nType=Application\\nName=Chromium\\nExec=/usr/local/bin/chromium %%U\\nMimeType=text/html;x-scheme-handler/http;x-scheme-handler/https;\\n' > /usr/local/share/applications/chromium.desktop", "chown -R pawflow:pawflow /ms-playwright"],
+      "setup": ["printf '#!/bin/bash\\nset -e\\nexec /usr/bin/chromium --no-sandbox --disable-dev-shm-usage --user-data-dir=\"$HOME/.chromium-profile\" \"$@\"\\n' > /usr/local/bin/chromium", "chmod +x /usr/local/bin/chromium", "ln -sf /usr/local/bin/chromium /usr/local/bin/chromium-browser", "mkdir -p /usr/local/share/applications", "printf '[Desktop Entry]\\nType=Application\\nName=Chromium\\nExec=/usr/local/bin/chromium %%U\\nMimeType=text/html;x-scheme-handler/http;x-scheme-handler/https;\\n' > /usr/local/share/applications/chromium.desktop"],
       "estimated_size_mb": 650
     },
     "desktop.runtime": {

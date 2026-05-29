@@ -55,9 +55,11 @@ def test_server_dockerfile_supports_bootstrap_docker_builds():
     for heavy_app in ("blender", "libreoffice-calc", "vlc", "audacity"):
         assert heavy_app not in relay_dev
     assert "python3 -m patchright install" not in relay_dev
-    assert "PAWFLOW_CHROMIUM_EXECUTABLE" in relay_dev
-    assert "chromium-browser" in relay_dev
-    assert "/usr/bin/chromium-browser --no-sandbox" in relay_dev
+    assert "ppa:xtradeb/apps" in relay_dev
+    assert "apt-get install -y --no-install-recommends chromium" in relay_dev
+    assert "/usr/bin/chromium --no-sandbox" in relay_dev
+    assert "google-chrome" not in relay_dev
+    assert "PAWFLOW_CHROMIUM_EXECUTABLE" not in relay_dev
     assert "python3 -m playwright install" not in relay_dev
 
     relay_build = Path("docker/relay-dev/build.sh").read_text(encoding="utf-8")

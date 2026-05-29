@@ -119,8 +119,11 @@ def test_generator_resolves_implied_features_and_writes_installer_artifacts(tmp_
     assert "https://deb.nodesource.com/setup_22.x" in dockerfile
     assert dockerfile.index("https://deb.nodesource.com/setup_22.x") < dockerfile.index("nodejs")
     assert "gimp gimp-plugin-registry" in dockerfile
-    assert "/ms-playwright" in dockerfile
-    assert "chromium-browser" in dockerfile
+    assert "ppa:xtradeb/apps" in dockerfile
+    assert "apt-get install -y --no-install-recommends" in dockerfile
+    assert "chromium" in dockerfile
+    assert "/usr/bin/chromium --no-sandbox" in dockerfile
+    assert "/ms-playwright" not in dockerfile
     assert "google-chrome" not in dockerfile
     assert "packages.microsoft.com/repos/code" not in dockerfile
     assert "COPY runtime/ /opt/pawflow/" not in dockerfile

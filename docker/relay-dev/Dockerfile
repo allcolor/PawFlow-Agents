@@ -205,7 +205,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 ENV PLAYWRIGHT_BROWSERS_PATH="/ms-playwright"
 RUN mkdir -p /ms-playwright \
     && python3 -m playwright install --with-deps chromium \
-    && printf '#!/bin/bash\nset -e\nCHROME=$(find /ms-playwright -path "*/chrome-linux/chrome" -type f | sort | tail -n 1)\nif [[ -z "$CHROME" ]]; then\n  echo "Chromium executable not found under /ms-playwright" >&2\n  find /ms-playwright -maxdepth 4 -type f -name chrome -print >&2 || true\n  exit 127\nfi\nexec "$CHROME" --no-sandbox --disable-gpu --disable-dev-shm-usage --user-data-dir="$HOME/.chromium-profile" "$@"\n' \
+    && printf '#!/bin/bash\nset -e\nCHROME=$(find /ms-playwright \\( -path "*/chrome-linux/chrome" -o -path "*/chrome-linux64/chrome" \\) -type f | sort | tail -n 1)\nif [[ -z "$CHROME" ]]; then\n  echo "Chromium executable not found under /ms-playwright" >&2\n  find /ms-playwright -maxdepth 4 -type f -name chrome -print >&2 || true\n  exit 127\nfi\nexec "$CHROME" --no-sandbox --disable-gpu --disable-dev-shm-usage --user-data-dir="$HOME/.chromium-profile" "$@"\n' \
        > /usr/local/bin/chromium \
     && chmod +x /usr/local/bin/chromium \
     && ln -sf /usr/local/bin/chromium /usr/local/bin/chromium-browser \

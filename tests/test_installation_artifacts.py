@@ -57,6 +57,7 @@ def test_server_dockerfile_supports_bootstrap_docker_builds():
     assert "python3 -m patchright install" not in relay_dev
     assert "PAWFLOW_CHROMIUM_EXECUTABLE" in relay_dev
     assert "PLAYWRIGHT_BROWSERS_PATH" in relay_dev
+    assert "chrome-linux64/chrome" in relay_dev
     assert "Chromium executable not found under /ms-playwright" in relay_dev
 
     relay_build = Path("docker/relay-dev/build.sh").read_text(encoding="utf-8")

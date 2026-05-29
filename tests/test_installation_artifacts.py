@@ -137,6 +137,10 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert "PAWFLOW_DOCKER_PLATFORM" in install_src
     assert "PAWFLOW_START_TARGET" in install_src
     assert "PAWFLOW_RUNTIME_DIR" in install_src
+    assert "PAWFLOW_GHCR_USER" in install_src
+    assert "PAWFLOW_GHCR_TOKEN" in install_src
+    assert "docker login ghcr.io" in install_src
+    assert "--password-stdin" in install_src
     assert "PAWFLOW_DATA_DIR" in install_src
     assert "find_optional_python" in install_src
     assert 'PYTHON_BIN="$(find_optional_python)"' in install_src

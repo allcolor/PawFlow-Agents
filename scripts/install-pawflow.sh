@@ -37,6 +37,8 @@ VENV_DIR="$(printenv PAWFLOW_VENV_DIR || true)"
 RELAY_MINIMAL_IMAGE="$(printenv PAWFLOW_RELAY_MINIMAL_IMAGE || printenv PAWFLOW_SERVER_MINIMAL_RELAY_IMAGE || true)"
 RELAY_DEV_IMAGE="$(printenv PAWFLOW_RELAY_DEV_IMAGE || true)"
 CLI_LLM_IMAGE="$(printenv PAWFLOW_CLI_LLM_IMAGE || true)"
+GHCR_USER="$(printenv PAWFLOW_GHCR_USER || printenv GHCR_USER || true)"
+GHCR_TOKEN="$(printenv PAWFLOW_GHCR_TOKEN || printenv GHCR_TOKEN || true)"
 
 if [[ -z "$IMAGE_REPO" ]]; then IMAGE_REPO="ghcr.io/allcolor/pawflow"; fi
 if [[ -z "$RELAY_MINIMAL_IMAGE_REPO" ]]; then RELAY_MINIMAL_IMAGE_REPO="ghcr.io/allcolor/pawflow-relay-minimal"; fi
@@ -101,6 +103,8 @@ Options:
   --repo URL         Git repository to clone when the script is not run from a checkout.
   --dir PATH         Source checkout directory for cloned installs.
   --runtime-dir PATH Host directory used for artifacts extracted from the server image in image installs.
+  PAWFLOW_GHCR_USER / PAWFLOW_GHCR_TOKEN
+                     Optional GHCR credentials for private image pulls. Token needs read:packages.
   --port PORT        Host/server port selected for this install.
   --host HOST        Server bind host. Container default is 0.0.0.0; native default is 127.0.0.1.
   --home PATH        Persistent PawFlow home (default: ~/pawflow).
@@ -135,6 +139,18 @@ need_cmd() {
     echo "Missing required command: $1" >&2
     exit 1
   fi
+}
+
+maybe_login_ghcr() {
+  if [[ -z "$GHCR_TOKEN" ]]; then
+    return 0
+  fi
+  if [[ -z "$GHCR_USER" ]]; then
+    echo "ERROR: PAWFLOW_GHCR_TOKEN is set but PAWFLOW_GHCR_USER is missing." >&2
+    exit 2
+  fi
+  echo "Logging in to GHCR as $GHCR_USER"
+  printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin >/dev/null
 }
 
 find_python() {
@@ -397,6 +413,7 @@ if ! docker info >/dev/null 2>&1; then
   echo "Start Docker Desktop/Engine, then rerun the installer." >&2
   exit 1
 fi
+maybe_login_ghcr
 
 if [[ -z "$IMAGE" ]]; then
   if [[ -n "$VERSION" ]]; then

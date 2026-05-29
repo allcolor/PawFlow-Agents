@@ -299,6 +299,20 @@ def test_mcp_bridge_dispatches_tool_calls_concurrently():
     assert "_do_request_serial" not in src
 
 
+def test_mcp_bridge_retries_initial_tool_relay_connection():
+    src = Path("tools/mcp_bridge.py").read_text(encoding="utf-8")
+    assert "def _ensure_relay_client():" in src
+    assert "retrying a failed initial connect" in src
+    assert "for attempt in range(5):" in src
+    assert "Connecting to tool relay on demand (attempt" in src
+    assert "time.sleep(0.5)" in src
+    assert "Tool relay unavailable after retries" in src
+    assert "relay_client = _ensure_relay_client()" in src
+    assert "if not relay_client:" in src
+    assert "result = relay_client.request(\"get_tool_schema\"" in src
+    assert "result = relay_client.request(\"execute_tool\"" in src
+
+
 def test_mcp_bridge_and_tool_relay_emit_timing_breakdown():
     bridge_src = Path("tools/mcp_bridge.py").read_text(encoding="utf-8")
     relay_src = Path("services/tool_relay_service.py").read_text(encoding="utf-8")

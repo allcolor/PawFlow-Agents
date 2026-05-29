@@ -491,6 +491,44 @@ def main():
     _log(f"MCP bridge ready: {len(mcp_tools)} tools, "
          f"relay={'connected' if client else 'unavailable'}")
 
+    def _ensure_relay_client():
+        """Return a connected relay client, retrying a failed initial connect."""
+        nonlocal client
+        if not relay_url or not relay_token:
+            return None
+        if client:
+            try:
+                client._ensure_connected()
+                return client
+            except Exception as e:
+                _log(f"Existing tool relay client is unavailable: {e}")
+                try:
+                    client.close()
+                except Exception:
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+                client = None
+        last_error = None
+        for attempt in range(5):
+            try:
+                _log(f"Connecting to tool relay on demand (attempt {attempt + 1}/5)...")
+                new_client = ToolRelayClient(
+                    relay_url, relay_token, user_id, conv_id, agent_name)
+                new_client.connect()
+                client = new_client
+                return client
+            except Exception as e:
+                last_error = e
+                _log(f"On-demand tool relay connect failed (attempt {attempt + 1}/5): {e}")
+                try:
+                    new_client.close()
+                except Exception:
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+                client = None
+                if attempt < 4:
+                    time.sleep(0.5)
+        _log(f"Tool relay unavailable after retries: {last_error}")
+        return None
+
     def _handle_tool_call(req_id, params, raw_line):
         call_started = time.perf_counter()
         name = params.get("name", "")
@@ -510,11 +548,13 @@ def main():
                 break
         _log(f"CALL {name}({json.dumps(args)[:300]})")
 
-        if not client:
+        relay_client = _ensure_relay_client()
+
+        if not relay_client:
             result = "Error: tool relay not connected"
         elif name == "get_tool_schema":
             tool_name = args.get("tool_name", "") if isinstance(args, dict) else ""
-            result = client.request("get_tool_schema", tool_name=tool_name) if tool_name else client.request("list_tools")
+            result = relay_client.request("get_tool_schema", tool_name=tool_name) if tool_name else relay_client.request("list_tools")
             result = json.dumps(result, indent=2, ensure_ascii=False) if isinstance(result, (dict, list)) else str(result)
         elif name == "use_tool":
             if not isinstance(args, dict):
@@ -659,7 +699,7 @@ def main():
                         result = f"Error: arguments for {tool_name} must be a JSON object, got string: {tool_args[:200]}"
                     else:
                         _log(f"USE_TOOL {tool_name} final_type={type(tool_args).__name__} final={json.dumps(tool_args, default=str)[:300]}")
-                        result = client.request("execute_tool", tool_name=tool_name, arguments=tool_args)
+                        result = relay_client.request("execute_tool", tool_name=tool_name, arguments=tool_args)
                         if result is None or result == "":
                             result = "(no output)"
         else:

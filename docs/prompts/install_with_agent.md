@@ -37,19 +37,19 @@ Install path: complete from-scratch bootstrap
    cd ~/pawflow-src
 2. Run the installer with the selected port:
    bash scripts/install-pawflow.sh --port PORT
-3. Confirm the installer first tries the prebuilt PawFlow server image, then builds from source only if needed, and builds these local runtime images before starting the server:
+3. Confirm the installer first tries the prebuilt PawFlow server and redistributable relay images, then builds from source only if needed. It still builds the CLI LLM image locally before starting the server:
    - ghcr.io/allcolor/pawflow:latest, or ghcr.io/allcolor/pawflow:VERSION when a version is requested
+   - ghcr.io/allcolor/pawflow-relay-minimal:latest, or ghcr.io/allcolor/pawflow-relay-minimal:VERSION
+   - ghcr.io/allcolor/pawflow-relay-dev:latest, or ghcr.io/allcolor/pawflow-relay-dev:VERSION
    - pawflow-claude-code:latest
-   - pawflow-relay-minimal:latest
-   - pawflow-relay-dev:latest
 4. If the user requested source mode, use:
    bash scripts/install-pawflow.sh --from-source --port PORT
    or:
    bash scripts/install-pawflow.sh --from-source --version VERSION --port PORT
 5. If the user requested a native PawFlow server instead of a server container, use:
    bash scripts/install-pawflow.sh --native --port PORT
-6. If release testing must require a pulled server image while still building local runtime images, use:
-   bash scripts/install-pawflow.sh --pull-server --port PORT
+6. If release testing must require pulled server and relay images while still building the CLI LLM image locally, use:
+   bash scripts/install-pawflow.sh --pull-images --port PORT
 
 After starting:
 1. Follow logs:

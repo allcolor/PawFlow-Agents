@@ -13,9 +13,11 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PLATFORM="$(printenv PAWFLOW_DOCKER_PLATFORM || true)"
+IMAGE="$(printenv PAWFLOW_CLI_LLM_IMAGE || true)"
+if [[ -z "$IMAGE" ]]; then IMAGE="pawflow-claude-code:latest"; fi
 BUILD_ARGS=()
 if [[ -n "$PLATFORM" ]]; then BUILD_ARGS+=(--platform "$PLATFORM"); fi
 
-docker build "${BUILD_ARGS[@]}" -t pawflow-claude-code:latest "$SCRIPT_DIR"
+docker build "${BUILD_ARGS[@]}" -t "$IMAGE" "$SCRIPT_DIR"
 
-echo "Built pawflow-claude-code:latest"
+echo "Built $IMAGE"

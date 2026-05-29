@@ -59,13 +59,12 @@ Desktop and browser features:
 - `desktop.runtime`
 - `desktop.audio`
 - `desktop.ocr`
-- `browser.chrome`
+- `browser.chromium`
 
 GUI applications are also individually selectable:
 
 - `gui.gimp`
 - `gui.inkscape`
-- `gui.vscode`
 - `gui.libreoffice-writer`
 - `gui.libreoffice-calc`
 - `gui.libreoffice-impress`
@@ -99,8 +98,8 @@ The initial catalog ships these presets:
 
 - `client-minimal` — relay base only
 - `client-python` — Python development and AST tooling
-- `client-frontend` — Node/frontend and Chrome
-- `client-desktop` — desktop automation, audio, OCR, Chrome, media CLI
+- `client-frontend` — Node/frontend and Chromium
+- `client-desktop` — desktop automation, audio, OCR, Chromium, media CLI
 - `server-minimal` — protected server execution relay with `relay.base` only
 - `server-full` — official full server relay capability set
 
@@ -118,9 +117,11 @@ bash scripts/build-server-minimal-relay.sh
 
 That script generates `docker/relay-generated/server-minimal/` from the
 `server-minimal` profile and builds the tag configured by
-`server_relay_minimal_image` (`pawflow-relay-minimal:latest` by default). Use
-`PAWFLOW_SERVER_MINIMAL_RELAY_IMAGE` to build a custom tag, and set the matching
-PawFlow variable if the server should start a different image.
+`server_relay_minimal_image` (`pawflow-relay-minimal:latest` by default, or a
+GHCR tag during prebuilt installs). Use `PAWFLOW_SERVER_MINIMAL_RELAY_IMAGE` to
+build a custom tag. Docker installs pass `PAWFLOW_SERVER_RELAY_IMAGE` and
+`PAWFLOW_SERVER_RELAY_MINIMAL_IMAGE` into the server container so the server uses
+the same prebuilt or locally built tags selected by the installer.
 
 A flow may still choose a specific relay explicitly by setting a normal relay
 parameter, for example `relay: "${relay_secure}"`, where `relay_secure` contains

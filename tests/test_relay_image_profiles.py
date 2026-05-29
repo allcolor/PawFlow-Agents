@@ -54,7 +54,7 @@ def test_gui_apps_are_individually_selectable_and_imply_desktop_runtime():
 
     assert "gui.gimp" in gui_features
     assert "gui.inkscape" in gui_features
-    assert "gui.vscode" in gui_features
+    assert "gui.vscode" not in gui_features
     assert "gui.libreoffice-calc" in gui_features
     assert "gui.audacity" in gui_features
     assert len(gui_features) >= 10
@@ -73,8 +73,11 @@ def test_server_profile_is_full_and_execution_profile_is_minimal():
     assert catalog["default_client_profile"] == "client-minimal"
     assert server_minimal_features == {"relay.base"}
     assert client_features == {"relay.base"}
-    for required in ("lang.python-dev", "lang.node", "lang.rust", "desktop.runtime", "browser.chrome", "gui.gimp"):
+    for required in ("lang.python-dev", "lang.node", "lang.rust", "desktop.runtime", "browser.chromium", "gui.gimp"):
         assert required in server_features
+
+    assert "browser.chrome" not in server_features
+    assert "gui.vscode" not in server_features
 
 
 def test_generator_resolves_implied_features_and_writes_installer_artifacts(tmp_path):
@@ -84,7 +87,7 @@ def test_generator_resolves_implied_features_and_writes_installer_artifacts(tmp_
     manifest = generator.generate(
         CATALOG_PATH,
         "client-minimal",
-        ["gui.gimp", "lang.node"],
+        ["gui.gimp", "lang.node", "browser.chromium"],
         out_dir,
         "pawflow-relay:test",
     )
@@ -102,6 +105,7 @@ def test_generator_resolves_implied_features_and_writes_installer_artifacts(tmp_
     assert "gui.gimp" in manifest["features"]
     assert "desktop.runtime" in manifest["features"]
     assert "lang.node" in manifest["features"]
+    assert "browser.chromium" in manifest["features"]
     assert "/dev/fuse" in manifest["runtime_docker_args"]
 
     dockerfile = (out_dir / "Dockerfile").read_text(encoding="utf-8")
@@ -111,6 +115,10 @@ def test_generator_resolves_implied_features_and_writes_installer_artifacts(tmp_
     assert "https://deb.nodesource.com/setup_22.x" in dockerfile
     assert dockerfile.index("https://deb.nodesource.com/setup_22.x") < dockerfile.index("nodejs")
     assert "gimp gimp-plugin-registry" in dockerfile
+    assert "/ms-playwright" in dockerfile
+    assert "chromium-browser" in dockerfile
+    assert "google-chrome" not in dockerfile
+    assert "packages.microsoft.com/repos/code" not in dockerfile
     assert "COPY runtime/ /opt/pawflow/" in dockerfile
 
     run_script = (out_dir / "run-relay.sh").read_text(encoding="utf-8")

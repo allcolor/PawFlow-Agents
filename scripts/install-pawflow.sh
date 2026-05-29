@@ -11,11 +11,14 @@
 #   bash scripts/install-pawflow.sh --native --port PORT
 #   bash scripts/install-pawflow.sh --dir ~/pawflow-src --port PORT
 #   bash scripts/install-pawflow.sh --pull-server --image ghcr.io/allcolor/pawflow:latest --port PORT
+#   bash scripts/install-pawflow.sh --pull-images --version 1.0.0 --port PORT
 
 set -euo pipefail
 
 IMAGE="$(printenv PAWFLOW_IMAGE || true)"
 IMAGE_REPO="$(printenv PAWFLOW_IMAGE_REPO || true)"
+RELAY_MINIMAL_IMAGE_REPO="$(printenv PAWFLOW_RELAY_MINIMAL_IMAGE_REPO || true)"
+RELAY_DEV_IMAGE_REPO="$(printenv PAWFLOW_RELAY_DEV_IMAGE_REPO || true)"
 REPO_URL="$(printenv PAWFLOW_REPO_URL || true)"
 INSTALL_DIR="$(printenv PAWFLOW_INSTALL_DIR || true)"
 PORT="$(printenv PAWFLOW_PORT || true)"
@@ -24,19 +27,27 @@ HOST_SET=0
 PAWFLOW_HOME="$(printenv PAWFLOW_HOME || true)"
 VERSION="$(printenv PAWFLOW_VERSION || true)"
 SERVER_MODE="$(printenv PAWFLOW_SERVER_MODE || true)"
+RUNTIME_IMAGE_MODE="$(printenv PAWFLOW_RUNTIME_IMAGE_MODE || true)"
 START_TARGET="$(printenv PAWFLOW_START_TARGET || true)"
 DOCKER_PLATFORM="$(printenv PAWFLOW_DOCKER_PLATFORM || true)"
 PYTHON_BIN="$(printenv PAWFLOW_PYTHON || true)"
 VENV_DIR="$(printenv PAWFLOW_VENV_DIR || true)"
+RELAY_MINIMAL_IMAGE="$(printenv PAWFLOW_RELAY_MINIMAL_IMAGE || printenv PAWFLOW_SERVER_MINIMAL_RELAY_IMAGE || true)"
+RELAY_DEV_IMAGE="$(printenv PAWFLOW_RELAY_DEV_IMAGE || true)"
+CLI_LLM_IMAGE="$(printenv PAWFLOW_CLI_LLM_IMAGE || true)"
 
 if [[ -z "$IMAGE_REPO" ]]; then IMAGE_REPO="ghcr.io/allcolor/pawflow"; fi
+if [[ -z "$RELAY_MINIMAL_IMAGE_REPO" ]]; then RELAY_MINIMAL_IMAGE_REPO="ghcr.io/allcolor/pawflow-relay-minimal"; fi
+if [[ -z "$RELAY_DEV_IMAGE_REPO" ]]; then RELAY_DEV_IMAGE_REPO="ghcr.io/allcolor/pawflow-relay-dev"; fi
 if [[ -z "$REPO_URL" ]]; then REPO_URL="https://github.com/allcolor/PawFlow-Agents.git"; fi
 if [[ -z "$INSTALL_DIR" ]]; then INSTALL_DIR="$HOME/pawflow-src"; fi
 if [[ -n "$HOST" ]]; then HOST_SET=1; fi
 if [[ -z "$HOST" ]]; then HOST="0.0.0.0"; fi
 if [[ -z "$PAWFLOW_HOME" ]]; then PAWFLOW_HOME="$HOME/pawflow"; fi
 if [[ -z "$SERVER_MODE" ]]; then SERVER_MODE="auto"; fi
+if [[ -z "$RUNTIME_IMAGE_MODE" ]]; then RUNTIME_IMAGE_MODE="auto"; fi
 if [[ -z "$START_TARGET" ]]; then START_TARGET="container"; fi
+if [[ -z "$CLI_LLM_IMAGE" ]]; then CLI_LLM_IMAGE="pawflow-claude-code:latest"; fi
 
 RUN_DOCTOR=1
 START_SERVER=1
@@ -45,6 +56,12 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --from-source|--source|--build-server) SERVER_MODE="source"; shift ;;
     --pull-server) SERVER_MODE="pull"; shift ;;
+    --pull-images) SERVER_MODE="pull"; RUNTIME_IMAGE_MODE="pull"; shift ;;
+    --build-images) SERVER_MODE="source"; RUNTIME_IMAGE_MODE="source"; shift ;;
+    --runtime-image-mode) RUNTIME_IMAGE_MODE="$2"; shift 2 ;;
+    --relay-minimal-image) RELAY_MINIMAL_IMAGE="$2"; shift 2 ;;
+    --relay-dev-image) RELAY_DEV_IMAGE="$2"; shift 2 ;;
+    --cli-llm-image) CLI_LLM_IMAGE="$2"; shift 2 ;;
     --version) VERSION="$2"; shift 2 ;;
     --image) IMAGE="$2"; shift 2 ;;
     --image-repo) IMAGE_REPO="$2"; shift 2 ;;
@@ -59,15 +76,25 @@ while [[ $# -gt 0 ]]; do
     --skip-doctor) RUN_DOCTOR=0; shift ;;
     --no-start) START_SERVER=0; shift ;;
     --help|-h)
-      sed -n '1,18p' "$0"
+      sed -n '1,14p' "$0"
       cat <<'HELP'
 
 Options:
   --version VERSION  Install this PawFlow version. Checkout this git tag before building runtime images; prebuilt server image tag uses this value.
   --from-source      Build the server from source. With --version, checkout that exact git tag; without it, checkout main.
   --pull-server      Require pulling the server image. Fails if the image is not available.
+  --pull-images      Require pulling server + redistributable relay images.
+  --build-images     Build server + relay images from source.
+  --runtime-image-mode MODE
+                     Relay image mode: auto, pull, or source (default: auto).
   --image TAG        Full server image tag to build, pull, or run.
   --image-repo REPO  Server image repository when --image is not set (default: ghcr.io/allcolor/pawflow).
+  --relay-minimal-image TAG
+                     Minimal relay image tag (default: ghcr.io/allcolor/pawflow-relay-minimal:<version|latest>).
+  --relay-dev-image TAG
+                     Full relay image tag (default: ghcr.io/allcolor/pawflow-relay-dev:<version|latest>).
+  --cli-llm-image TAG
+                     Local CLI LLM image tag (default: pawflow-claude-code:latest).
   --repo URL         Git repository to clone when the script is not run from a checkout.
   --dir PATH         Source checkout directory for cloned installs.
   --port PORT        Host/server port selected for this install.
@@ -78,14 +105,15 @@ Options:
   --container        Start PawFlow server in Docker after building runtime images (default).
   --no-start         Build images but do not start the server container.
 
-Default server mode is auto: try the prebuilt server image first, then build
-from source if that image is unavailable. Runtime images are always built from
-the checkout.
+Default server/runtime mode is auto: try prebuilt images first, then build from
+source if an image is unavailable. The Claude/Codex/Gemini/Antigravity CLI image
+is always built locally because Claude Code and Antigravity are not redistributed
+by PawFlow images.
 
-Always builds the required local runtime images:
-  pawflow-claude-code:latest   Claude Code, Codex, Gemini, and Antigravity CLIs
-  pawflow-relay-minimal:latest protected server minimal relay
-  pawflow-relay-dev:latest     full server relay image
+Images:
+  pawflow-claude-code:latest   local build: Claude Code, Codex, Gemini, and Antigravity CLIs
+  ghcr.io/allcolor/pawflow-relay-minimal:<tag> prebuilt/build fallback: protected server minimal relay
+  ghcr.io/allcolor/pawflow-relay-dev:<tag>     prebuilt/build fallback: full server relay image
 HELP
       exit 0
       ;;
@@ -202,6 +230,44 @@ pull_server_image() {
   docker pull "${pull_args[@]}" "$IMAGE"
 }
 
+pull_image() {
+  local image="$1"
+  local pull_args=()
+  if [[ -n "$DOCKER_PLATFORM" ]]; then pull_args+=(--platform "$DOCKER_PLATFORM"); fi
+  echo "Pulling image: $image"
+  docker pull "${pull_args[@]}" "$image"
+}
+
+build_minimal_relay_image() {
+  PAWFLOW_PYTHON="$PYTHON_BIN" PAWFLOW_SERVER_MINIMAL_RELAY_IMAGE="$RELAY_MINIMAL_IMAGE" bash "$REPO_DIR/scripts/build-server-minimal-relay.sh"
+}
+
+build_full_relay_image() {
+  PAWFLOW_RELAY_DEV_IMAGE="$RELAY_DEV_IMAGE" bash "$REPO_DIR/docker/relay-dev/build.sh"
+}
+
+ensure_runtime_image() {
+  local label="$1"
+  local image="$2"
+  local build_func="$3"
+
+  if [[ "$RUNTIME_IMAGE_MODE" == "pull" ]]; then
+    pull_image "$image"
+  elif [[ "$RUNTIME_IMAGE_MODE" == "source" ]]; then
+    "$build_func"
+  elif [[ "$RUNTIME_IMAGE_MODE" == "auto" ]]; then
+    if pull_image "$image"; then
+      echo "Using prebuilt $label image: $image"
+    else
+      echo "Prebuilt $label image unavailable, building from source: $image"
+      "$build_func"
+    fi
+  else
+    echo "Invalid PAWFLOW_RUNTIME_IMAGE_MODE: $RUNTIME_IMAGE_MODE (expected auto, source, or pull)" >&2
+    exit 2
+  fi
+}
+
 seed_native_data() {
   mkdir -p "$PAWFLOW_HOME/data" "$PAWFLOW_HOME/logs"
   if [[ ! -d "$PAWFLOW_HOME/data/repository" ]]; then
@@ -249,6 +315,8 @@ Initial bootstrap Private Gateway key:
 MSG
   cd "$REPO_DIR"
   PAWFLOW_DATA_DIR="$PAWFLOW_HOME/data" \
+  PAWFLOW_SERVER_RELAY_IMAGE="$RELAY_DEV_IMAGE" \
+  PAWFLOW_SERVER_RELAY_MINIMAL_IMAGE="$RELAY_MINIMAL_IMAGE" \
   PAWFLOW_BOOTSTRAP_GATEWAY_KEY="$bootstrap_gateway_key" \
   "$venv_python" "$REPO_DIR/cli.py" start --host "$native_host" --port "$PORT"
 }
@@ -270,6 +338,20 @@ if [[ -z "$IMAGE" ]]; then
     IMAGE="$IMAGE_REPO:latest"
   fi
 fi
+if [[ -z "$RELAY_MINIMAL_IMAGE" ]]; then
+  if [[ -n "$VERSION" ]]; then
+    RELAY_MINIMAL_IMAGE="$RELAY_MINIMAL_IMAGE_REPO:$VERSION"
+  else
+    RELAY_MINIMAL_IMAGE="$RELAY_MINIMAL_IMAGE_REPO:latest"
+  fi
+fi
+if [[ -z "$RELAY_DEV_IMAGE" ]]; then
+  if [[ -n "$VERSION" ]]; then
+    RELAY_DEV_IMAGE="$RELAY_DEV_IMAGE_REPO:$VERSION"
+  else
+    RELAY_DEV_IMAGE="$RELAY_DEV_IMAGE_REPO:latest"
+  fi
+fi
 
 REPO_DIR="$(ensure_checkout)"
 prepare_checkout_ref "$REPO_DIR"
@@ -289,6 +371,10 @@ echo "PawFlow source: $REPO_DIR"
 echo "Host: $HOST_OS"
 echo "Version: ${VERSION}"
 echo "Server image: $IMAGE ($SERVER_MODE)"
+echo "Runtime image mode: $RUNTIME_IMAGE_MODE"
+echo "Minimal relay image: $RELAY_MINIMAL_IMAGE"
+echo "Full relay image: $RELAY_DEV_IMAGE"
+echo "CLI LLM image: $CLI_LLM_IMAGE (local build)"
 echo "Start target: $START_TARGET"
 if [[ -n "$DOCKER_PLATFORM" ]]; then
   echo "Docker build platform: $DOCKER_PLATFORM"
@@ -311,14 +397,12 @@ else
   exit 2
 fi
 
-echo "Building PawFlow CLI LLM image: pawflow-claude-code:latest"
-bash "$REPO_DIR/docker/claude-code/build.sh"
+echo "Building PawFlow CLI LLM image locally: $CLI_LLM_IMAGE"
+PAWFLOW_CLI_LLM_IMAGE="$CLI_LLM_IMAGE" bash "$REPO_DIR/docker/claude-code/build.sh"
 
-echo "Building PawFlow server minimal relay image: pawflow-relay-minimal:latest"
-PAWFLOW_PYTHON="$PYTHON_BIN" bash "$REPO_DIR/scripts/build-server-minimal-relay.sh"
+ensure_runtime_image "server minimal relay" "$RELAY_MINIMAL_IMAGE" build_minimal_relay_image
 
-echo "Building PawFlow full server relay image: pawflow-relay-dev:latest"
-bash "$REPO_DIR/docker/relay-dev/build.sh"
+ensure_runtime_image "full server relay" "$RELAY_DEV_IMAGE" build_full_relay_image
 
 if [[ "$START_SERVER" != "1" ]]; then
   echo "Image build complete. Server start skipped because --no-start was set."
@@ -328,7 +412,7 @@ fi
 if [[ "$START_TARGET" == "native" ]]; then
   run_native_server
 elif [[ "$START_TARGET" == "container" ]]; then
-  PAWFLOW_IMAGE="$IMAGE" PAWFLOW_PORT="$PORT" PAWFLOW_HOST="$HOST" PAWFLOW_HOME="$PAWFLOW_HOME" bash "$REPO_DIR/scripts/run-pawflow-docker.sh"
+  PAWFLOW_IMAGE="$IMAGE" PAWFLOW_PORT="$PORT" PAWFLOW_HOST="$HOST" PAWFLOW_HOME="$PAWFLOW_HOME" PAWFLOW_SERVER_RELAY_IMAGE="$RELAY_DEV_IMAGE" PAWFLOW_SERVER_RELAY_MINIMAL_IMAGE="$RELAY_MINIMAL_IMAGE" bash "$REPO_DIR/scripts/run-pawflow-docker.sh"
 else
   echo "Invalid PAWFLOW_START_TARGET: $START_TARGET (expected container or native)" >&2
   exit 2

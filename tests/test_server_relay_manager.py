@@ -26,6 +26,14 @@ def test_server_minimal_relay_config_is_protected_execution_target(monkeypatch):
     assert "minimal execution" in cfg["description"]
 
 
+def test_server_relay_image_settings_can_be_overridden_by_environment(monkeypatch):
+    monkeypatch.setenv("PAWFLOW_SERVER_RELAY_IMAGE", "ghcr.io/allcolor/pawflow-relay-dev:test")
+    monkeypatch.setenv("PAWFLOW_SERVER_RELAY_MINIMAL_IMAGE", "ghcr.io/allcolor/pawflow-relay-minimal:test")
+
+    assert srm._cfg("server_relay_image") == "ghcr.io/allcolor/pawflow-relay-dev:test"
+    assert srm._cfg("server_relay_minimal_image") == "ghcr.io/allcolor/pawflow-relay-minimal:test"
+
+
 def test_server_workspace_relay_keeps_existing_identity_and_desktop():
     conv_id = "abcdef1234567890fedcba"
     cfg = srm._relay_kind_config("workspace")

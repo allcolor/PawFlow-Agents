@@ -23,20 +23,20 @@ bash scripts/install-pawflow.sh --port PORT
 ```
 
 This is the recommended Linux, macOS, Windows-native Docker Desktop, and WSL2
-install path. It first tries the prebuilt server image
-(`ghcr.io/allcolor/pawflow:latest`, or
-`ghcr.io/allcolor/pawflow:VERSION` when `--version VERSION` is set). If that
-image is unavailable, it builds the server image from source. It always builds
-the shared CLI LLM image (`pawflow-claude-code:latest` for Claude Code, Codex,
-Gemini, and Antigravity), the protected minimal server relay image
-(`pawflow-relay-minimal:latest`), and the full server relay image
-(`pawflow-relay-dev:latest`). It then creates persistent directories under
+install path. It first tries the prebuilt server and redistributable relay
+images (`ghcr.io/allcolor/pawflow`, `ghcr.io/allcolor/pawflow-relay-minimal`,
+and `ghcr.io/allcolor/pawflow-relay-dev`, tagged `latest` or `VERSION`). If any
+of those images is unavailable, it builds that image from source. It always
+builds the shared CLI LLM image locally (`pawflow-claude-code:latest` for Claude
+Code, Codex, Gemini, and Antigravity), because Claude Code and Antigravity are
+not redistributed by PawFlow images. It then creates persistent directories under
 `~/pawflow`, starts `pawflow-server`, and exposes the port selected with `--port` / `PAWFLOW_PORT`.
 On macOS, the installer defaults Docker builds to `linux/amd64` unless
 `PAWFLOW_DOCKER_PLATFORM` or `--platform` is set.
 Use `bash scripts/install-pawflow.sh --native` when the PawFlow server itself
 should run on the host instead of in the server Docker container. Native mode
-still builds the CLI LLM and relay images.
+still builds the CLI LLM image and prepares relay images with the same
+pull/build fallback.
 When `/var/run/docker.sock` is available on the host, the run script mounts it
 into the PawFlow container so PawFlow can spawn server-side workspace relay
 containers after installation. It also exports `PAWFLOW_HOST_APP_DIR` from the
@@ -80,11 +80,12 @@ bash scripts/install-pawflow.sh --from-source --version 1.0.0
 bash scripts/install-pawflow.sh --from-source
 ```
 
-`--version VERSION` first tries the prebuilt `ghcr.io/allcolor/pawflow:VERSION`
-server image. `--from-source --version VERSION` checks out the exact git tag and
-fails if it is missing. `--from-source` without a version checks out `main`.
-All modes still build the local CLI LLM, minimal relay, and full relay images
-from the repository Docker contexts.
+`--version VERSION` first tries the prebuilt `ghcr.io/allcolor/pawflow:VERSION`,
+`ghcr.io/allcolor/pawflow-relay-minimal:VERSION`, and
+`ghcr.io/allcolor/pawflow-relay-dev:VERSION` images. `--from-source --version
+VERSION` checks out the exact git tag and fails if it is missing. `--from-source`
+without a version checks out `main`. All modes still build the local CLI LLM
+image from the repository Docker context.
 
 The doctor script validates host prerequisites before install. It detects
 Linux, macOS, Windows shells, and WSL, checks Docker CLI/daemon access, WSL
@@ -123,9 +124,11 @@ These are the supported Docker install scenarios and their expected outcomes.
 
 1. Fresh complete install on Linux, macOS, Windows native, or WSL
    - Run `bash scripts/doctor-pawflow.sh --port PORT`, then `bash scripts/install-pawflow.sh --port PORT`.
-   - The installer first tries `ghcr.io/allcolor/pawflow:latest`, then builds it from source if needed, and builds
-     `pawflow-claude-code:latest`, `pawflow-relay-minimal:latest`, and
-     `pawflow-relay-dev:latest` before starting the server.
+   - The installer first tries `ghcr.io/allcolor/pawflow:latest`,
+     `ghcr.io/allcolor/pawflow-relay-minimal:latest`, and
+     `ghcr.io/allcolor/pawflow-relay-dev:latest`, then builds any missing image
+     from source. It always builds `pawflow-claude-code:latest` locally before
+     starting the server.
    - The container starts as root only long enough to seed missing defaults and
      fix persistent directory ownership, then runs PawFlow as UID/GID `1000`.
    - An empty `~/pawflow/data` receives `data/repository`, so the installer flow
@@ -140,12 +143,13 @@ These are the supported Docker install scenarios and their expected outcomes.
 
 2. Versioned install
    - Run `bash scripts/install-pawflow.sh --version VERSION`.
-   - The script first pulls `ghcr.io/allcolor/pawflow:VERSION`; if unavailable,
-     it checks out git tag `VERSION`, builds the server, builds the CLI LLM and
-     relay images, starts the same persistent layout, and follows the same
-     browser finalization flow.
-   - Expected result: all local runtime images match the requested PawFlow
-     version when the tag exists.
+   - The script first pulls `ghcr.io/allcolor/pawflow:VERSION`,
+     `ghcr.io/allcolor/pawflow-relay-minimal:VERSION`, and
+     `ghcr.io/allcolor/pawflow-relay-dev:VERSION`; if any image is unavailable,
+     it checks out git tag `VERSION` and builds the missing image from source.
+     It always builds the CLI LLM image locally.
+   - Expected result: server and relay images match the requested PawFlow version
+     when published tags exist.
 
 3. Native server install
    - Run `bash scripts/install-pawflow.sh --native`.
@@ -183,9 +187,10 @@ These are the supported Docker install scenarios and their expected outcomes.
 6. Server-side relay after install
    - Provide Docker socket access and use the normal PawFlow UI/API to create a
      server workspace relay.
-   - PawFlow uses the standalone `pawflow-relay-dev:latest` image with embedded
-     `/opt/pawflow/pawflow_relay_launcher.py` and `pawflow_relay` package code by
-     default. Live source-code mounts are used only when
+   - PawFlow uses the standalone relay image selected during installation, such
+     as `ghcr.io/allcolor/pawflow-relay-dev:latest`, with embedded
+     `/opt/pawflow/pawflow_relay_launcher.py` and `pawflow_relay` package code.
+     Live source-code mounts are used only when
      `server_relay_mount_code` is explicitly enabled for local development.
    - The UI does not ask for a server workspace path. PawFlow allocates one under
      `data/runtime/relay/<user-or-global>/<conversation-id>` and mounts it into

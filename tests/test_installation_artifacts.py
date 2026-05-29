@@ -108,6 +108,12 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert "--version" in install_src
     assert "Checkout this git tag before building runtime images" in install_src
     assert "--pull-server" in install_src
+    assert "--pull-images" in install_src
+    assert "--runtime-image-mode" in install_src
+    assert "PAWFLOW_RUNTIME_IMAGE_MODE" in install_src
+    assert "PAWFLOW_RELAY_MINIMAL_IMAGE" in install_src
+    assert "PAWFLOW_RELAY_DEV_IMAGE" in install_src
+    assert "PAWFLOW_CLI_LLM_IMAGE" in install_src
     assert "--platform" in install_src
     assert "--native" in install_src
     assert "--container" in install_src
@@ -125,7 +131,9 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert 'IMAGE="$IMAGE_REPO:latest"' in install_src
     assert "ghcr.io/allcolor/pawflow" in install_src
     assert "docker pull \"${pull_args[@]}\" \"$IMAGE\"" in install_src
+    assert "ensure_runtime_image" in install_src
     assert "Prebuilt PawFlow server image unavailable" in install_src
+    assert "Prebuilt $label image unavailable" in install_src
     assert 'SERVER_MODE="source" prepare_checkout_ref "$REPO_DIR"' in install_src
     assert '[[ "$SERVER_MODE" != "source" && -z "$VERSION" ]]' in install_src
     assert "refs/tags/$VERSION" in install_src
@@ -135,12 +143,14 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert "scripts/build-server-minimal-relay.sh" in install_src
     assert "docker/relay-dev/build.sh" in install_src
     assert "pawflow-claude-code:latest" in install_src
-    assert "pawflow-relay-minimal:latest" in install_src
-    assert "pawflow-relay-dev:latest" in install_src
+    assert "ghcr.io/allcolor/pawflow-relay-minimal" in install_src
+    assert "ghcr.io/allcolor/pawflow-relay-dev" in install_src
     assert "windows-shell" in install_src
     assert "Native Windows shells are not supported" not in install_src
     assert 'printenv PAWFLOW_BOOTSTRAP_GATEWAY_KEY' in install_src
     assert 'PAWFLOW_BOOTSTRAP_GATEWAY_KEY="$bootstrap_gateway_key"' in install_src
+    assert "PAWFLOW_SERVER_RELAY_IMAGE" in run_src
+    assert "PAWFLOW_SERVER_RELAY_MINIMAL_IMAGE" in run_src
 
     build_src = build.read_text(encoding="utf-8")
     assert "printenv PAWFLOW_IMAGE" in build_src
@@ -337,8 +347,8 @@ def test_install_docs_and_agent_prompt_capture_bootstrap_contract():
     assert "prebuilt" in doc
     assert "checks out the matching git tag before" in doc
     assert "pawflow-claude-code:latest" in doc
-    assert "pawflow-relay-minimal:latest" in doc
-    assert "pawflow-relay-dev:latest" in doc
+    assert "ghcr.io/allcolor/pawflow-relay-minimal:latest" in doc
+    assert "ghcr.io/allcolor/pawflow-relay-dev:latest" in doc
 
     assert "docker info" in prompt
     assert "doctor-pawflow.sh" in prompt
@@ -349,8 +359,8 @@ def test_install_docs_and_agent_prompt_capture_bootstrap_contract():
     assert "--native" in prompt
     assert "prebuilt" in prompt
     assert "pawflow-claude-code:latest" in prompt
-    assert "pawflow-relay-minimal:latest" in prompt
-    assert "pawflow-relay-dev:latest" in prompt
+    assert "ghcr.io/allcolor/pawflow-relay-minimal:latest" in prompt
+    assert "ghcr.io/allcolor/pawflow-relay-dev:latest" in prompt
     assert "--port PORT" in prompt
     assert "self-signed bootstrap certificate" in prompt
     assert "Do not configure relays" in prompt
@@ -387,6 +397,34 @@ def test_compose_healthcheck_accepts_bootstrap_tls():
     assert "/var/run/docker.sock:/var/run/docker.sock" in compose
 
 
+def test_docker_publish_workflow_only_publishes_redistributable_images():
+    workflow = Path(".github/workflows/docker-publish.yml")
+    src = workflow.read_text(encoding="utf-8")
+
+    assert workflow.exists()
+    assert "packages: write" in src
+    assert "ghcr.io" in src
+    assert "pawflow-relay-minimal" in src
+    assert "pawflow-relay-dev" in src
+    assert "sbom: true" in src
+    assert "provenance: true" in src
+    assert "THIRD_PARTY_NOTICES.md" in src
+    assert "platforms: linux/amd64" in src
+    assert "docker/relay-generated/server-minimal" in src
+    assert "scripts/generate-relay-image.py" in src
+    assert "pawflow-claude-code" not in src
+    assert "claude" not in src.lower()
+    assert "antigravity" not in src.lower()
+
+    notices = Path("THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8")
+    assert "ghcr.io/allcolor/pawflow" in notices
+    assert "ghcr.io/allcolor/pawflow-relay-minimal" in notices
+    assert "ghcr.io/allcolor/pawflow-relay-dev" in notices
+    assert "does not publish `pawflow-claude-code:latest`" in notices
+    assert "Google Chrome" in notices
+    assert "Visual Studio Code desktop" in notices
+
+
 def test_docker_docs_explain_wsl_vhdx_compaction():
     doc = Path("docs/docker.md").read_text(encoding="utf-8")
 
@@ -398,8 +436,8 @@ def test_docker_docs_explain_wsl_vhdx_compaction():
     assert "--native" in doc
     assert "PAWFLOW_DOCKER_PLATFORM" in doc
     assert "pawflow-claude-code:latest" in doc
-    assert "pawflow-relay-minimal:latest" in doc
-    assert "pawflow-relay-dev:latest" in doc
+    assert "ghcr.io/allcolor/pawflow-relay-minimal:latest" in doc
+    assert "ghcr.io/allcolor/pawflow-relay-dev:latest" in doc
     assert "Restart before finalization" in doc
     assert "Restart after finalization" in doc
     assert "Docker socket unavailable" in doc

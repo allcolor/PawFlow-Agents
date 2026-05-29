@@ -146,12 +146,13 @@
       "apt": ["postgresql-client", "mysql-client", "redis-tools"],
       "estimated_size_mb": 260
     },
-    "browser.chrome": {
-      "label": "Google Chrome",
+    "browser.chromium": {
+      "label": "Chromium",
       "category": "browser",
-      "description": "Chrome browser for browser automation or desktop use.",
+      "description": "Redistributable Chromium browser for browser automation or desktop use.",
       "apt": ["libgtk-3-0", "libnotify4", "fonts-dejavu", "fonts-liberation", "fonts-noto-color-emoji"],
-      "setup": ["curl -fsSL https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb -o /tmp/chrome.deb && apt-get update && apt-get install -y /tmp/chrome.deb && rm /tmp/chrome.deb", "mv /opt/google/chrome/google-chrome /opt/google/chrome/google-chrome-real", "printf '#!/bin/bash\\nrm -f \"$HOME/.chrome-profile/SingletonLock\" \"$HOME/.chrome-profile/SingletonCookie\" \"$HOME/.chrome-profile/SingletonSocket\" 2>/dev/null\\nexec /opt/google/chrome/google-chrome-real --no-sandbox --disable-gpu --disable-dev-shm-usage --user-data-dir=$HOME/.chrome-profile \"$@\"\\n' > /opt/google/chrome/google-chrome", "chmod +x /opt/google/chrome/google-chrome", "ln -sf /usr/bin/google-chrome-stable /usr/bin/chromium-browser"],
+      "pip": ["playwright"],
+      "setup": ["mkdir -p /ms-playwright", "PLAYWRIGHT_BROWSERS_PATH=/ms-playwright python3 -m playwright install --with-deps chromium", "printf '#!/bin/bash\\nset -e\\nCHROME=$(find /ms-playwright -path \"*/chrome-linux/chrome\" -type f | sort | tail -n 1)\\nexec \"$CHROME\" --no-sandbox --disable-gpu --disable-dev-shm-usage --user-data-dir=\"$HOME/.chromium-profile\" \"$@\"\\n' > /usr/local/bin/chromium", "chmod +x /usr/local/bin/chromium", "ln -sf /usr/local/bin/chromium /usr/local/bin/chromium-browser", "mkdir -p /usr/local/share/applications", "printf '[Desktop Entry]\\nType=Application\\nName=Chromium\\nExec=/usr/local/bin/chromium %%U\\nMimeType=text/html;x-scheme-handler/http;x-scheme-handler/https;\\n' > /usr/local/share/applications/chromium.desktop", "chown -R pawflow:pawflow /ms-playwright"],
       "estimated_size_mb": 650
     },
     "desktop.runtime": {
@@ -191,13 +192,6 @@
       "estimated_size_mb": 430
     },
     "gui.blender": {"label": "Blender", "category": "gui_apps", "apt": ["blender"], "implies": ["desktop.runtime"], "estimated_size_mb": 520},
-    "gui.vscode": {
-      "label": "VS Code desktop",
-      "category": "gui_apps",
-      "setup": ["curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /usr/share/keyrings/microsoft.gpg", "echo 'deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/code stable main' > /etc/apt/sources.list.d/vscode.list", "apt-get update && apt-get install -y --no-install-recommends code", "mv /usr/share/code/code /usr/share/code/code-real", "printf '#!/bin/bash\\nexec /usr/share/code/code-real --no-sandbox \"$@\"\\n' > /usr/share/code/code", "chmod +x /usr/share/code/code"],
-      "implies": ["desktop.runtime"],
-      "estimated_size_mb": 620
-    },
     "gui.libreoffice-writer": {"label": "LibreOffice Writer", "category": "gui_apps", "apt": ["libreoffice-writer"], "implies": ["desktop.runtime"], "estimated_size_mb": 300},
     "gui.libreoffice-calc": {"label": "LibreOffice Calc", "category": "gui_apps", "apt": ["libreoffice-calc"], "implies": ["desktop.runtime"], "estimated_size_mb": 300},
     "gui.libreoffice-impress": {"label": "LibreOffice Impress", "category": "gui_apps", "apt": ["libreoffice-impress"], "implies": ["desktop.runtime"], "estimated_size_mb": 300},
@@ -241,11 +235,11 @@
     },
     "client-frontend": {
       "label": "Client frontend relay",
-      "features": ["relay.base", "dev.shell-tools", "lang.node", "browser.chrome"]
+      "features": ["relay.base", "dev.shell-tools", "lang.node", "browser.chromium"]
     },
     "client-desktop": {
       "label": "Client desktop automation relay",
-      "features": ["relay.base", "desktop.runtime", "desktop.audio", "desktop.ocr", "browser.chrome", "media.cli"]
+      "features": ["relay.base", "desktop.runtime", "desktop.audio", "desktop.ocr", "browser.chromium", "media.cli"]
     },
     "server-minimal": {
       "label": "Server minimal execution relay",
@@ -255,7 +249,7 @@
     "server-full": {
       "label": "Server full relay",
       "description": "Official full-capability server relay matching the current pawflow-relay-dev image.",
-      "features": ["relay.base", "dev.build-essential", "dev.shell-tools", "lang.python-dev", "lang.tree-sitter", "lang.node", "lang.rust", "lang.go", "lang.java-kotlin", "lang.dotnet", "lang.ruby", "lang.php", "lang.perl", "lang.lua", "lang.zig", "db.clients", "code-server", "desktop.runtime", "desktop.audio", "desktop.ocr", "browser.chrome", "gui.gimp", "gui.inkscape", "gui.vscode", "gui.libreoffice-writer", "gui.libreoffice-calc", "gui.libreoffice-impress", "gui.libreoffice-draw", "gui.vlc", "gui.audacity", "gui.pdf-viewer", "gui.image-viewer", "gui.archive-manager", "gui.meld", "gui.mousepad", "gui.calculator", "media.cli", "network.tools"]
+      "features": ["relay.base", "dev.build-essential", "dev.shell-tools", "lang.python-dev", "lang.tree-sitter", "lang.node", "lang.rust", "lang.go", "lang.java-kotlin", "lang.dotnet", "lang.ruby", "lang.php", "lang.perl", "lang.lua", "lang.zig", "db.clients", "code-server", "desktop.runtime", "desktop.audio", "desktop.ocr", "browser.chromium", "gui.gimp", "gui.inkscape", "gui.libreoffice-writer", "gui.libreoffice-calc", "gui.libreoffice-impress", "gui.libreoffice-draw", "gui.vlc", "gui.audacity", "gui.pdf-viewer", "gui.image-viewer", "gui.archive-manager", "gui.meld", "gui.mousepad", "gui.calculator", "media.cli", "network.tools"]
     }
   }
 }

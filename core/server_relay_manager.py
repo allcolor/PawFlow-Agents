@@ -66,6 +66,10 @@ _KIND_MINIMAL = "minimal"
 
 def _cfg(key: str) -> str:
     """Read a server relay setting from global_parameters.json (live, no cache)."""
+    env_key = "PAWFLOW_" + key.upper()
+    env_value = os.environ.get(env_key)
+    if env_value:
+        return env_value
     try:
         from core.expression import _load_global_parameters
         return _load_global_parameters().get(key, _DEFAULTS[key])

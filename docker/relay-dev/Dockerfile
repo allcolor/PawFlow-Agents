@@ -3,6 +3,7 @@ FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive
 ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 # Force clean PATH — Docker Desktop WSL2 injects host PATH otherwise
 ENV PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
@@ -209,35 +210,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     meld ncdu galculator mousepad \
     && rm -rf /var/lib/apt/lists/*
 
-# ── VS Code (desktop app) ────────────────────────────────────────
-RUN curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /usr/share/keyrings/microsoft.gpg \
-    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/code stable main" \
-       > /etc/apt/sources.list.d/vscode.list \
-    && apt-get update && apt-get install -y --no-install-recommends code \
-    && rm -rf /var/lib/apt/lists/* \
-    # Wrapper: Docker containers can't use Electron's sandbox
-    && mv /usr/share/code/code /usr/share/code/code-real \
-    && printf '#!/bin/bash\nexec /usr/share/code/code-real --no-sandbox "$@"\n' \
-       > /usr/share/code/code \
-    && chmod +x /usr/share/code/code
-
-# ── Google Chrome (real deb — chromium-browser is snap stub on 24.04) ──
-RUN curl -fsSL https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \
-       -o /tmp/chrome.deb \
-    && apt-get update && apt-get install -y /tmp/chrome.deb \
-    && rm /tmp/chrome.deb && rm -rf /var/lib/apt/lists/* \
-    # Wrapper: Docker containers can't use Chrome's sandbox
-    && mv /opt/google/chrome/google-chrome /opt/google/chrome/google-chrome-real \
-    && printf '#!/bin/bash\nrm -f "$HOME/.chrome-profile/SingletonLock" "$HOME/.chrome-profile/SingletonCookie" "$HOME/.chrome-profile/SingletonSocket" 2>/dev/null\nexec /opt/google/chrome/google-chrome-real --no-sandbox --disable-gpu --disable-dev-shm-usage --user-data-dir=$HOME/.chrome-profile "$@"\n' \
-       > /opt/google/chrome/google-chrome \
-    && chmod +x /opt/google/chrome/google-chrome \
-    && ln -sf /usr/bin/google-chrome-stable /usr/bin/chromium-browser
-
 # Python Playwright/Patchright are required by web_search and Scrapling stealth
-# mode; install managed Chromium browsers too so Python tools work even without
-# the desktop Chrome path.
-RUN python3 -m playwright install chromium \
-    && python3 -m patchright install chromium
+# mode. Use the managed Chromium build instead of proprietary Google Chrome so
+# the relay image can be redistributed publicly.
+RUN mkdir -p /ms-playwright \
+    && python3 -m playwright install --with-deps chromium \
+    && python3 -m patchright install chromium \
+    && printf '#!/bin/bash\nset -e\nCHROME=$(find /ms-playwright -path "*/chrome-linux/chrome" -type f | sort | tail -n 1)\nexec "$CHROME" --no-sandbox --disable-gpu --disable-dev-shm-usage --user-data-dir="$HOME/.chromium-profile" "$@"\n' \
+       > /usr/local/bin/chromium \
+    && chmod +x /usr/local/bin/chromium \
+    && ln -sf /usr/local/bin/chromium /usr/local/bin/chromium-browser \
+    && mkdir -p /usr/local/share/applications \
+    && printf '[Desktop Entry]\nType=Application\nName=Chromium\nExec=/usr/local/bin/chromium %%U\nMimeType=text/html;x-scheme-handler/http;x-scheme-handler/https;\n' \
+       > /usr/local/share/applications/chromium.desktop
 
 # ── Docker CLI (for DinD — exec shells via docker.sock) ────────────
 RUN curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg \
@@ -259,8 +244,8 @@ RUN update-desktop-database /usr/share/applications 2>/dev/null || true
 # its subtrees onto these canonical paths. We pre-create all three so
 # the unprivileged pawflow user can mount onto them — root-owned dirs
 # would refuse the bind-mount.
-RUN mkdir -p /workspace /cc_sessions /filestore /skills \
-    && chown pawflow:pawflow /workspace /cc_sessions /filestore /skills \
+RUN mkdir -p /workspace /cc_sessions /filestore /skills /ms-playwright \
+    && chown pawflow:pawflow /workspace /cc_sessions /filestore /skills /ms-playwright \
     && (groupadd -f docker; usermod -aG docker pawflow) 2>/dev/null || true
 
 # ── PawFlow relay + SDK ────────────────────────────────────────────

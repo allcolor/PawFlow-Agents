@@ -47,19 +47,22 @@ bash scripts/install-pawflow.sh --port PORT
 When run from a checkout, the installer uses that checkout. When run as a
 downloaded standalone script, it clones
 `https://github.com/allcolor/PawFlow-Agents.git` into `~/pawflow-src`. Without a
-version, it first tries the prebuilt `ghcr.io/allcolor/pawflow:latest` server
-image. With `--version VERSION`, it checks out the matching git tag before
-building local runtime images, then first tries `ghcr.io/allcolor/pawflow:VERSION`.
-If the prebuilt server image is unavailable, the installer builds the server
-image from that same source tag. It always builds every
-local runtime image required before the first web installer opens:
+version, it first tries the prebuilt `ghcr.io/allcolor/pawflow:latest`,
+`ghcr.io/allcolor/pawflow-relay-minimal:latest`, and
+`ghcr.io/allcolor/pawflow-relay-dev:latest` images. With `--version VERSION`, it
+checks out the matching git tag before fallback builds, then first tries the
+matching `:VERSION` image tags. If a prebuilt image is unavailable, the installer
+builds that image from the same source tag. It always builds the local CLI LLM
+image required before the first web installer opens:
 
 - `ghcr.io/allcolor/pawflow:latest`, `ghcr.io/allcolor/pawflow:VERSION`, or
   `PAWFLOW_IMAGE` for the server
 - `pawflow-claude-code:latest` for Claude Code, Codex, Gemini, and Antigravity
   CLI sessions and OAuth login containers
-- `pawflow-relay-minimal:latest` for protected server-side minimal execution
-- `pawflow-relay-dev:latest` for full server relay workspaces
+- `ghcr.io/allcolor/pawflow-relay-minimal:latest` or `:VERSION` for protected
+  server-side minimal execution
+- `ghcr.io/allcolor/pawflow-relay-dev:latest` or `:VERSION` for full server
+  relay workspaces
 
 After the builds, it creates persistent volumes under `~/pawflow`, starts
 `pawflow-server`, and publishes the explicitly selected `PAWFLOW_PORT` on the same host
@@ -101,16 +104,15 @@ With `--from-source --version VERSION`, the installer checks out the exact git
 tag `VERSION` and fails if that tag does not exist. With `--from-source` and no
 version, it checks out branch `main`.
 
-### Require a published server image
+### Require published server and relay images
 
-To fail instead of falling back to a source-built server image, use:
+To fail instead of falling back to source-built server and relay images, use:
 
 ```bash
-bash scripts/install-pawflow.sh --pull-server
+bash scripts/install-pawflow.sh --pull-images
 ```
 
-This still builds the local CLI LLM, minimal relay, and full relay images from
-the repository Docker contexts.
+This still builds the local CLI LLM image from the repository Docker context.
 
 ## First Run Contract
 

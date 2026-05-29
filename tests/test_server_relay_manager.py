@@ -89,6 +89,28 @@ def test_server_relay_host_path_maps_container_data_dir(monkeypatch, tmp_path):
         host_data / "runtime" / "relay" / "alice" / "conv1")
 
 
+def test_prepare_relay_code_dir_stages_runtime_from_server_image(monkeypatch, tmp_path):
+    root = tmp_path / "app"
+    tools = root / "tools"
+    relay_pkg = root / "pawflow_relay"
+    sdk = root / "docker" / "pawflow_sdk"
+    core = root / "core"
+    tools.mkdir(parents=True)
+    relay_pkg.mkdir()
+    sdk.mkdir(parents=True)
+    core.mkdir()
+    (tools / "pawflow_relay_launcher.py").write_text("launcher", encoding="utf-8")
+    (relay_pkg / "__init__.py").write_text("pkg", encoding="utf-8")
+    (sdk / "pawflow.py").write_text("sdk", encoding="utf-8")
+    monkeypatch.setattr(srm, "__file__", str(core / "server_relay_manager.py"))
+
+    code_dir = srm._prepare_relay_code_dir(tmp_path / "runtime")
+
+    assert (code_dir / "pawflow_relay_launcher.py").read_text(encoding="utf-8") == "launcher"
+    assert (code_dir / "pawflow_relay" / "__init__.py").read_text(encoding="utf-8") == "pkg"
+    assert (code_dir / "pawflow.py").read_text(encoding="utf-8") == "sdk"
+
+
 def test_ensure_minimal_reuses_running_server_execution_relay(monkeypatch):
     mgr = srm.ServerRelayManager()
     existing = {"relay_id": "srv_min_abcdef1234567890", "container_id": "cid"}

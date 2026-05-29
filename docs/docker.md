@@ -187,17 +187,16 @@ These are the supported Docker install scenarios and their expected outcomes.
 6. Server-side relay after install
    - Provide Docker socket access and use the normal PawFlow UI/API to create a
      server workspace relay.
-   - PawFlow uses the standalone relay image selected during installation, such
-     as `ghcr.io/allcolor/pawflow-relay-dev:latest`, with embedded
-     `/opt/pawflow/pawflow_relay_launcher.py` and `pawflow_relay` package code.
-     Live source-code mounts are used only when
-     `server_relay_mount_code` is explicitly enabled for local development.
+   - PawFlow uses the standalone relay dependency image selected during
+     installation, such as `ghcr.io/allcolor/pawflow-relay-dev:latest`, and
+     stages the relay runtime code from the PawFlow server image into the
+     server data dir before bind-mounting it at `/opt/pawflow`.
    - The UI does not ask for a server workspace path. PawFlow allocates one under
      `data/runtime/relay/<user-or-global>/<conversation-id>` and mounts it into
      the relay container at `/workspace`.
    - Expected result: relay containers can start even when PawFlow itself runs in
-     Docker, because the host daemon does not need to bind-mount `/app/tools`
-     from inside the server container.
+     Docker, and relay image rebuilds are needed only for dependency image
+     changes rather than PawFlow relay code changes.
 
 7. Windows host prerequisites
    - Run `powershell -ExecutionPolicy Bypass -File scripts/doctor-pawflow.ps1`.
@@ -287,15 +286,18 @@ bash docker/relay-dev/build.sh
 ```
 
 Includes: Python 3, Node.js 22 + TypeScript, Rust, Go, C/C++ (gcc/g++/cmake),
-Java 21 + Kotlin + Scala, C# (.NET 9), Ruby, PHP, Perl, Lua, Zig,
-git, make, cmake, curl, wget, jq, sqlite, ssh.
+Java 21, Ruby, PHP, Perl, Lua, desktop automation, Chromium, GIMP/Inkscape,
+network tools, git, make, cmake, curl, wget, jq, sqlite, and ssh.
 
-The image also embeds `/opt/pawflow/pawflow_relay_launcher.py` and the
-`pawflow_relay` package. Server-side relays use that embedded code by default,
-which is required when the PawFlow server itself runs in Docker and talks to the
-host daemon through `/var/run/docker.sock`. Local development can opt into live
-code mounts by setting the `server_relay_mount_code` system parameter to a
-truthy value.
+Kotlin, .NET, Zig, golangci-lint and heavier GUI/media applications such as
+Blender, LibreOffice, VLC and Audacity stay available as optional relay image
+features for manual/profile-based builds instead of the default published
+`pawflow-relay-dev` image.
+
+The image does not embed PawFlow relay code. Server-side relays stage the relay
+runtime from the PawFlow server image into the server data dir and bind-mount it
+at `/opt/pawflow`, while desktop/local relays use their own packaged runtime
+mounts.
 
 ### Building a custom image
 
@@ -432,8 +434,8 @@ Docker shells (`docker-*`) create a new container per command. For persistent co
 
 ### Optional RTK rewrite
 
-The `pawflow-relay-dev` image includes the `rtk` CLI. When `PAWFLOW_USE_RTK`
-is truthy (`1`, `true`, `yes`, `on`) and the selected relay target has the
+The `pawflow-relay-dev` image does not install RTK by default. When
+`PAWFLOW_USE_RTK` is truthy (`1`, `true`, `yes`, `on`) and the selected relay target has the
 `rtk` binary, PawFlow uses RTK on compatible relay-backed tools: `bash` and
 `run_tests` run `rtk rewrite <command>` before execution, while `read` uses
 `rtk read`. `grep` and `glob` stay on the native relay implementations because

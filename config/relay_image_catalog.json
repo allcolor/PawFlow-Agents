@@ -86,18 +86,25 @@
       "category": "languages",
       "description": "Go toolchain and common Go developer tools.",
       "setup": ["curl -fsSL https://go.dev/dl/go1.23.6.linux-amd64.tar.gz | tar -C /usr/local -xzf -"],
-      "user_install": ["go install golang.org/x/tools/gopls@latest", "go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest", "go install gotest.tools/gotestsum@latest", "go install github.com/air-verse/air@latest"],
+      "user_install": ["go install golang.org/x/tools/gopls@latest", "go install gotest.tools/gotestsum@latest", "go install github.com/air-verse/air@latest"],
       "env": {"PATH_PREFIX": "/usr/local/go/bin:/home/pawflow/go/bin", "GOPATH": "/home/pawflow/go"},
       "estimated_size_mb": 1300
+    },
+    "lang.java": {
+      "label": "Java",
+      "category": "languages",
+      "description": "OpenJDK, Maven and Gradle.",
+      "apt": ["openjdk-21-jdk-headless", "maven", "gradle"],
+      "estimated_size_mb": 1450
     },
     "lang.java-kotlin": {
       "label": "Java / Kotlin",
       "category": "languages",
-      "description": "OpenJDK, Maven, Gradle and Kotlin compiler.",
-      "apt": ["openjdk-21-jdk-headless", "maven", "gradle"],
+      "description": "Kotlin compiler layered on top of the Java toolchain.",
       "setup": ["curl -fsSL https://github.com/JetBrains/kotlin/releases/download/v2.1.10/kotlin-compiler-2.1.10.zip -o /tmp/kotlin.zip && unzip -q /tmp/kotlin.zip -d /opt && rm /tmp/kotlin.zip"],
       "env": {"PATH_PREFIX": "/opt/kotlinc/bin"},
-      "estimated_size_mb": 1700
+      "implies": ["lang.java"],
+      "estimated_size_mb": 250
     },
     "lang.dotnet": {
       "label": ".NET / C#",
@@ -249,7 +256,7 @@
     "server-full": {
       "label": "Server full relay",
       "description": "Official full-capability server relay matching the current pawflow-relay-dev image.",
-      "features": ["relay.base", "dev.build-essential", "dev.shell-tools", "lang.python-dev", "lang.tree-sitter", "lang.node", "lang.rust", "lang.go", "lang.java-kotlin", "lang.dotnet", "lang.ruby", "lang.php", "lang.perl", "lang.lua", "lang.zig", "db.clients", "code-server", "desktop.runtime", "desktop.audio", "desktop.ocr", "browser.chromium", "gui.gimp", "gui.inkscape", "gui.libreoffice-writer", "gui.libreoffice-calc", "gui.libreoffice-impress", "gui.libreoffice-draw", "gui.vlc", "gui.audacity", "gui.pdf-viewer", "gui.image-viewer", "gui.archive-manager", "gui.meld", "gui.mousepad", "gui.calculator", "media.cli", "network.tools"]
+      "features": ["relay.base", "dev.build-essential", "dev.shell-tools", "lang.python-dev", "lang.tree-sitter", "lang.node", "lang.rust", "lang.go", "lang.java", "lang.ruby", "lang.php", "lang.perl", "lang.lua", "db.clients", "code-server", "desktop.runtime", "desktop.audio", "desktop.ocr", "browser.chromium", "gui.gimp", "gui.inkscape", "gui.pdf-viewer", "gui.image-viewer", "gui.archive-manager", "gui.meld", "gui.mousepad", "gui.calculator", "media.cli", "network.tools"]
     }
   }
 }

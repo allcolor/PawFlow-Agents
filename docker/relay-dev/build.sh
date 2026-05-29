@@ -11,11 +11,12 @@
 #
 # Languages included:
 #   Python 3, Node.js 22 + TypeScript, Rust, Go, C/C++ (gcc/g++/cmake),
-#   Java 21 + Kotlin + Scala, C# (.NET 9), Ruby, PHP, Perl, Lua, Zig
+#   Java 21, Ruby, PHP, Perl, Lua
 #
 # Tools: git, make, cmake, curl, wget, jq, sqlite, ssh, zip/unzip
 #
-# Size: ~3-4GB (multi-language dev environment)
+# Size: large multi-language dev environment; optional desktop builds can add
+# Kotlin, .NET, Zig and heavier GUI/media applications when needed.
 
 set -e
 
@@ -35,4 +36,4 @@ echo ""
 echo "Usage:"
 echo "  python tools/pawflow_relay.py --dir /path/to/project --allow-exec --docker-image $IMAGE"
 echo ""
-echo "Languages: python, node/ts, rust, go, c/c++, java, kotlin, c#, ruby, php, perl, lua, zig"
+echo "Languages: python, node/ts, rust, go, c/c++, java, ruby, php, perl, lua"

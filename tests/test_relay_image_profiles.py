@@ -73,9 +73,13 @@ def test_server_profile_is_full_and_execution_profile_is_minimal():
     assert catalog["default_client_profile"] == "client-minimal"
     assert server_minimal_features == {"relay.base"}
     assert client_features == {"relay.base"}
-    for required in ("lang.python-dev", "lang.node", "lang.rust", "desktop.runtime", "browser.chromium", "gui.gimp"):
+    for required in ("lang.python-dev", "lang.node", "lang.rust", "lang.java", "desktop.runtime", "browser.chromium", "gui.gimp"):
         assert required in server_features
 
+    for omitted in ("lang.dotnet", "lang.zig", "gui.libreoffice-calc", "gui.vlc", "gui.audacity"):
+        assert omitted not in server_features
+    assert "lang.java-kotlin" not in server_features
+    assert "lang.java" in _catalog()["features"]["lang.java-kotlin"].get("implies", [])
     assert "browser.chrome" not in server_features
     assert "gui.vscode" not in server_features
 
@@ -119,10 +123,11 @@ def test_generator_resolves_implied_features_and_writes_installer_artifacts(tmp_
     assert "chromium-browser" in dockerfile
     assert "google-chrome" not in dockerfile
     assert "packages.microsoft.com/repos/code" not in dockerfile
-    assert "COPY runtime/ /opt/pawflow/" in dockerfile
+    assert "COPY runtime/ /opt/pawflow/" not in dockerfile
 
     run_script = (out_dir / "run-relay.sh").read_text(encoding="utf-8")
     assert "PAWFLOW_RELAY_TOKEN" in run_script
+    assert '"$SCRIPT_DIR/runtime:/opt/pawflow:ro"' in run_script
     assert "--server-mount /cc_sessions" in run_script
     assert "--filestore-mount /filestore" in run_script
     assert "--device /dev/fuse" in run_script

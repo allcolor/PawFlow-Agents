@@ -133,15 +133,15 @@ class RelayFuseLaunchTests(unittest.TestCase):
             src = f.read()
         self.assertIn('@openai/codex', src)
 
-    def test_dockerfile_installs_rtk_outside_persistent_home(self):
+    def test_dockerfile_does_not_build_rtk_by_default(self):
         import os
         path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
             'docker', 'relay-dev', 'Dockerfile')
         with open(path, 'r') as f:
             src = f.read()
-        self.assertIn('cargo install --git https://github.com/rtk-ai/rtk', src)
-        self.assertIn('/usr/local/bin/rtk', src)
+        self.assertNotIn('cargo install --git https://github.com/rtk-ai/rtk', src)
+        self.assertNotIn('/usr/local/bin/rtk', src)
 
     def test_worker_forwards_local_flag_to_host_helper(self):
         from pawflow_relay import worker

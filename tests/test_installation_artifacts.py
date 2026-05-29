@@ -40,11 +40,21 @@ def test_server_dockerfile_supports_bootstrap_docker_builds():
     assert "exec gosu pawflow" in entrypoint
 
     relay_dev = Path("docker/relay-dev/Dockerfile").read_text(encoding="utf-8")
-    assert "COPY tools/ /opt/pawflow/" in relay_dev
-    assert "COPY pawflow_relay/ /opt/pawflow/pawflow_relay/" in relay_dev
+    assert "COPY tools/ /opt/pawflow/" not in relay_dev
+    assert "COPY pawflow_relay/ /opt/pawflow/pawflow_relay/" not in relay_dev
+    assert "stays a clean dependency image" in relay_dev
     assert "npm cache clean --force" in relay_dev
     assert "/home/pawflow/.cargo/registry" in relay_dev
+    assert "chmod -R u+w \"$GOPATH/pkg/mod\"" in relay_dev
     assert '"$GOPATH/pkg/mod"' in relay_dev
+    assert "golangci-lint" not in relay_dev
+    assert "dotnet-install.sh" not in relay_dev
+    assert "kotlin-compiler" not in relay_dev
+    assert "ziglang.org" not in relay_dev
+    for heavy_app in ("blender", "libreoffice-calc", "vlc", "audacity"):
+        assert heavy_app not in relay_dev
+    assert "python3 -m patchright install" not in relay_dev
+    assert "PAWFLOW_CHROMIUM_EXECUTABLE" in relay_dev
 
     relay_build = Path("docker/relay-dev/build.sh").read_text(encoding="utf-8")
     assert "-f \"$SCRIPT_DIR/Dockerfile\"" in relay_build
@@ -717,10 +727,13 @@ def test_pawflow_agent_auth_routes_cover_login_forms():
         assert ("http_in", relationship) in relation_keys
 
 
-def test_server_relay_uses_embedded_code_by_default():
+def test_server_relay_always_injects_runtime_code_from_server_image():
     src = Path("core/server_relay_manager.py").read_text(encoding="utf-8")
 
-    assert '"server_relay_mount_code": "0"' in src
-    assert "code_mount_args = []" in src
-    assert "if relay_mount_code:" in src
+    assert "server_relay_mount_code" not in src
+    assert "server_relay_tools_dir" not in src
+    assert "code_mount_args" not in src
+    assert "_prepare_relay_code_dir" in src
+    assert '.pawflow-runtime' in src
+    assert ':{_TOOLS_IN_CONTAINER}:ro' in src
     assert "pawflow_relay_launcher.py" in src

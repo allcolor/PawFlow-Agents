@@ -45,6 +45,7 @@ Language features:
 - `lang.node`
 - `lang.rust`
 - `lang.go`
+- `lang.java`
 - `lang.java-kotlin`
 - `lang.dotnet`
 - `lang.ruby`

@@ -117,11 +117,9 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
     sh -s -- -y --default-toolchain stable --profile default
 ENV PATH="/home/pawflow/.cargo/bin:${PATH}"
 RUN cargo install cargo-watch cargo-edit cargo-expand \
-    && cargo install --git https://github.com/rtk-ai/rtk \
     && rustup component add clippy rustfmt rust-analyzer \
     && rm -rf /home/pawflow/.cargo/registry /home/pawflow/.cargo/git /tmp/* /var/tmp/*
 USER root
-RUN install -m 0755 /home/pawflow/.cargo/bin/rtk /usr/local/bin/rtk
 
 # ── Go ──────────────────────────────────────────────────────────────
 RUN curl -fsSL https://go.dev/dl/go1.23.6.linux-amd64.tar.gz | \
@@ -132,26 +130,17 @@ ENV PATH="${GOPATH}/bin:${PATH}"
 # Go dev tools (as pawflow so binaries land in /home/pawflow/go/bin)
 USER pawflow
 RUN go install golang.org/x/tools/gopls@latest \
-    && go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest \
     && go install gotest.tools/gotestsum@latest \
     && go install github.com/air-verse/air@latest \
+    && (chmod -R u+w "$GOPATH/pkg/mod" "$GOPATH/pkg/sumdb" 2>/dev/null || true) \
     && rm -rf "$GOPATH/pkg/mod" "$GOPATH/pkg/sumdb" /tmp/* /var/tmp/*
 USER root
 
 # ── Java (OpenJDK) + Kotlin ─────────────────────────────────────────
+# ── Java (OpenJDK) ─────────────────────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
     openjdk-21-jdk-headless maven gradle \
     && rm -rf /var/lib/apt/lists/*
-# Kotlin
-RUN curl -fsSL https://github.com/JetBrains/kotlin/releases/download/v2.1.10/kotlin-compiler-2.1.10.zip \
-    -o /tmp/kotlin.zip && unzip -q /tmp/kotlin.zip -d /opt && rm /tmp/kotlin.zip
-ENV PATH="/opt/kotlinc/bin:${PATH}"
-
-# ── C# / .NET ──────────────────────────────────────────────────────
-RUN curl -fsSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel 9.0 --install-dir /usr/share/dotnet \
-    && ln -sf /usr/share/dotnet/dotnet /usr/bin/dotnet
-ENV DOTNET_ROOT="/usr/share/dotnet"
-
 # ── Ruby ────────────────────────────────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ruby ruby-dev ruby-bundler \
@@ -174,10 +163,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     lua5.4 liblua5.4-dev luarocks \
     && luarocks install busted \
     && rm -rf /var/lib/apt/lists/*
-
-# ── Zig ─────────────────────────────────────────────────────────────
-RUN curl -fsSL https://ziglang.org/download/0.13.0/zig-linux-x86_64-0.13.0.tar.xz | \
-    tar -C /opt -xJf - && ln -sf /opt/zig-linux-x86_64-0.13.0/zig /usr/local/bin/zig
 
 # ── Database CLIs ───────────────────────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -206,9 +191,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # ── Desktop apps: image, video, audio, office, viewers ─────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gimp gimp-plugin-registry inkscape blender imagemagick \
-    ffmpeg vlc audacity \
-    libreoffice-calc libreoffice-writer libreoffice-impress libreoffice-draw \
+    gimp gimp-plugin-registry inkscape imagemagick \
+    ffmpeg \
     feh evince file-roller eog \
     nmap net-tools iproute2 dnsutils tcpdump iputils-ping httpie \
     tmux \
@@ -216,11 +200,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Python Playwright/Patchright are required by web_search and Scrapling stealth
-# mode. Use the managed Chromium build instead of proprietary Google Chrome so
-# the relay image can be redistributed publicly.
+# mode. Install one Playwright-managed Chromium build and point Patchright at
+# the same executable instead of downloading a duplicate browser.
 RUN mkdir -p /ms-playwright \
     && python3 -m playwright install --with-deps chromium \
-    && python3 -m patchright install chromium \
     && printf '#!/bin/bash\nset -e\nCHROME=$(find /ms-playwright -path "*/chrome-linux/chrome" -type f | sort | tail -n 1)\nexec "$CHROME" --no-sandbox --disable-gpu --disable-dev-shm-usage --user-data-dir="$HOME/.chromium-profile" "$@"\n' \
        > /usr/local/bin/chromium \
     && chmod +x /usr/local/bin/chromium \
@@ -229,6 +212,7 @@ RUN mkdir -p /ms-playwright \
     && printf '[Desktop Entry]\nType=Application\nName=Chromium\nExec=/usr/local/bin/chromium %%U\nMimeType=text/html;x-scheme-handler/http;x-scheme-handler/https;\n' \
        > /usr/local/share/applications/chromium.desktop \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* /root/.cache/ms-playwright
+ENV PAWFLOW_CHROMIUM_EXECUTABLE="/usr/local/bin/chromium"
 
 # ── Docker CLI (for DinD — exec shells via docker.sock) ────────────
 RUN curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg \
@@ -254,14 +238,11 @@ RUN mkdir -p /workspace /cc_sessions /filestore /skills /ms-playwright \
     && chown pawflow:pawflow /workspace /cc_sessions /filestore /skills /ms-playwright \
     && (groupadd -f docker; usermod -aG docker pawflow) 2>/dev/null || true
 
-# ── PawFlow relay + SDK ────────────────────────────────────────────
-# The published relay image must be standalone: Docker socket users run the
-# daemon on the host, so it cannot bind-mount /app/tools from inside the
-# PawFlow server container. Local dev can still opt into code mounts at runtime.
-RUN mkdir -p /opt/pawflow
-COPY tools/ /opt/pawflow/
-COPY pawflow_relay/ /opt/pawflow/pawflow_relay/
-RUN chown -R pawflow:pawflow /opt/pawflow
+# ── PawFlow relay runtime mount point ──────────────────────────────
+# Server/desktop launchers bind-mount the relay runtime code here so this image
+# stays a clean dependency image and does not need rebuilds for relay code edits.
+RUN mkdir -p /opt/pawflow \
+    && chown pawflow:pawflow /opt/pawflow
 # /workspace/.pylib is the host-mounted vendored deps dir — putting it on
 # PYTHONPATH means any python invocation inside the container (including
 # the relay itself and user scripts) sees the pinned/vendored packages

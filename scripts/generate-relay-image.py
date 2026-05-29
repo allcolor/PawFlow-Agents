@@ -194,7 +194,6 @@ def _render_dockerfile(catalog: dict[str, Any], feature_ids: list[str], image_na
         lines.append(f"ENV {key}=\"{value}\"")
     lines.extend([
         f"ENV PAWFLOW_DOCKER_IMAGE=\"{image_name}\"",
-        "COPY runtime/ /opt/pawflow/",
         "RUN apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*",
         "RUN chown -R pawflow:pawflow /opt/pawflow /home/pawflow \\",
         "    && find /home/pawflow -maxdepth 1 ! -user pawflow -exec chown -R pawflow:pawflow {} +",
@@ -270,6 +269,7 @@ def _write_scripts(out_dir: Path, image_name: str, manifest: dict[str, Any]) -> 
     run.write_text(
         "#!/usr/bin/env bash\n"
         "set -euo pipefail\n"
+        "SCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\n"
         f": {dollar}{{PAWFLOW_SERVER:?Set PAWFLOW_SERVER, for example wss://host:PORT/ws/relay}}\n"
         f": {dollar}{{PAWFLOW_RELAY_TOKEN:?Set PAWFLOW_RELAY_TOKEN from the PawFlow relay installer}}\n"
         f": {dollar}{{PAWFLOW_RELAY_ID:?Set PAWFLOW_RELAY_ID from the PawFlow relay installer}}\n"
@@ -278,6 +278,7 @@ def _write_scripts(out_dir: Path, image_name: str, manifest: dict[str, Any]) -> 
         "docker run --rm --name \"pawflow-relay-$PAWFLOW_RELAY_ID\" \\\n"
         "  -v \"$WORKSPACE:/workspace\" \\\n"
         "  -v \"pawflow_home_$PAWFLOW_RELAY_ID:/home/pawflow\" \\\n"
+        "  -v \"$SCRIPT_DIR/runtime:/opt/pawflow:ro\" \\\n"
         f"  {run_args} \\\n"
         "  \"$IMAGE\" python3 /opt/pawflow/pawflow_relay_launcher.py \\\n"
         "  --server \"$PAWFLOW_SERVER\" --token \"$PAWFLOW_RELAY_TOKEN\" \\\n"

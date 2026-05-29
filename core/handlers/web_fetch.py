@@ -684,12 +684,15 @@ class WebSearchHandler(ToolHandler):
     def _fetch_search_browser(self, url: str, locale: str = "en-US",
                               timezone_id: str = "America/New_York") -> str:
         """Fetch a search results page with Patchright/Playwright stealth mode."""
+        import os
         from patchright.sync_api import sync_playwright
         from urllib.parse import urlparse
 
+        executable_path = os.environ.get("PAWFLOW_CHROMIUM_EXECUTABLE") or None
         with sync_playwright() as p:
             browser = p.chromium.launch(
                 headless=True,
+                executable_path=executable_path,
                 args=["--no-sandbox", "--disable-dev-shm-usage"],
             )
             try:

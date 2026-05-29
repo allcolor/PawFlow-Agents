@@ -134,6 +134,13 @@ if [[ -z "$PORT" ]]; then
   exit 2
 fi
 
+if [[ "$SERVER_MODE" == "auto" && -n "$VERSION" ]]; then
+  SERVER_MODE="pull"
+fi
+if [[ "$RUNTIME_IMAGE_MODE" == "auto" && -n "$VERSION" ]]; then
+  RUNTIME_IMAGE_MODE="pull"
+fi
+
 need_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
     echo "Missing required command: $1" >&2
@@ -306,7 +313,19 @@ pull_server_image() {
   local pull_args=()
   if [[ -n "$DOCKER_PLATFORM" ]]; then pull_args+=(--platform "$DOCKER_PLATFORM"); fi
   echo "Pulling PawFlow server image: $IMAGE"
-  docker pull "${pull_args[@]}" "$IMAGE"
+  if ! docker pull "${pull_args[@]}" "$IMAGE"; then
+    cat >&2 <<MSG
+
+Failed to pull PawFlow server image: $IMAGE
+
+If this GHCR package is private, create a GitHub token with read:packages and rerun:
+  export PAWFLOW_GHCR_USER='your-github-user'
+  export PAWFLOW_GHCR_TOKEN='ghp_...'
+  bash scripts/install-pawflow.sh --version ${VERSION} --port $PORT
+
+MSG
+    return 1
+  fi
 }
 
 pull_image() {

@@ -147,12 +147,16 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert "python -m venv" not in install_src
     assert "-m venv" in install_src
     assert "SERVER_MODE=\"auto\"" in install_src
+    assert 'SERVER_MODE="pull"' in install_src
+    assert 'RUNTIME_IMAGE_MODE="pull"' in install_src
+    assert '[[ "$SERVER_MODE" == "auto" && -n "$VERSION" ]]' in install_src
     assert "START_TARGET=\"container\"" in install_src
     assert 'HOST="0.0.0.0"' in install_src
     assert 'native_host="127.0.0.1"' in install_src
     assert 'IMAGE="$IMAGE_REPO:latest"' in install_src
     assert "ghcr.io/allcolor/pawflow" in install_src
     assert "docker pull \"${pull_args[@]}\" \"$IMAGE\"" in install_src
+    assert "If this GHCR package is private" in install_src
     assert "ensure_runtime_image" in install_src
     assert "Prebuilt PawFlow server image unavailable" in install_src
     assert "Prebuilt $label image unavailable" in install_src

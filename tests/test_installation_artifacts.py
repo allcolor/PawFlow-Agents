@@ -404,6 +404,9 @@ def test_docker_publish_workflow_only_publishes_redistributable_images():
     assert workflow.exists()
     assert "packages: write" in src
     assert "ghcr.io" in src
+    assert "prealpha*" in src
+    assert "alpha*" in src
+    assert "beta*" in src
     assert "pawflow-relay-minimal" in src
     assert "pawflow-relay-dev" in src
     assert "sbom: true" in src

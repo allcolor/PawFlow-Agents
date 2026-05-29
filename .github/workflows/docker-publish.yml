@@ -3,7 +3,7 @@ name: Docker Images
 on:
   push:
     branches: [main]
-    tags: ['v*', '[0-9]+.[0-9]+.[0-9]+*']
+    tags: ['v*', '[0-9]*.[0-9]*.[0-9]*', 'prealpha*', 'alpha*', 'beta*']
   workflow_dispatch:
 
 permissions:

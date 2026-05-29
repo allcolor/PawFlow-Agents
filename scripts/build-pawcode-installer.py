@@ -61,6 +61,9 @@ def python_command() -> str:
 
 
 def project_version() -> str:
+    override = os.environ.get("PAWCODE_VERSION") or os.environ.get("PAWFLOW_VERSION")
+    if override:
+        return override
     text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     match = re.search(r'(?m)^version\s*=\s*"([^"]+)"', text)
     if not match:
@@ -340,9 +343,10 @@ def main() -> None:
                         help="Package an existing dist/pawcode-installers binary")
     parser.add_argument("--no-native", action="store_true",
                         help="Skip native .deb/.pkg/NSIS packaging")
+    parser.add_argument("--version", help="Override the version used in artifact names and native packages")
     args = parser.parse_args()
 
-    version = project_version()
+    version = args.version or project_version()
     tag = platform_tag()
     binary = DIST_ROOT / f"pawcode-{version}-{tag}" / "bin" / executable_name()
     if not args.skip_binary:

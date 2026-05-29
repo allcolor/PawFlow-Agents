@@ -1,0 +1,213 @@
+name: Release Assets
+
+on:
+  push:
+    tags: ['v*.*.*', '*.*.*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version, for example 1.0.0.prealpha.1
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  install-zip:
+    name: PawFlow install zip
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Resolve version
+        shell: bash
+        run: |
+          raw="${{ inputs.version || github.ref_name }}"
+          echo "VERSION=${raw#v}" >> "$GITHUB_ENV"
+
+      - name: Build minimal install zip
+        run: bash scripts/build-pawflow-install-zip.sh --version "$VERSION"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pawflow-install-zip
+          path: dist/pawflow-installers/*
+          if-no-files-found: error
+
+  pawcode:
+    name: PawCode ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install NSIS
+        if: runner.os == 'Windows'
+        run: choco install nsis -y --no-progress
+
+      - name: Resolve version
+        shell: bash
+        run: |
+          raw="${{ inputs.version || github.ref_name }}"
+          echo "VERSION=${raw#v}" >> "$GITHUB_ENV"
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e . pyinstaller
+
+      - name: Build PawCode installers
+        shell: bash
+        run: python scripts/build-pawcode-installer.py --version "$VERSION"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pawcode-${{ runner.os }}
+          path: |
+            dist/pawcode-installers/*.zip
+            dist/pawcode-installers/*.tar.gz
+            dist/pawcode-installers/*.deb
+            dist/pawcode-installers/*setup.exe
+          if-no-files-found: error
+
+  relay-cli:
+    name: Relay CLI ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Resolve version
+        shell: bash
+        run: |
+          raw="${{ inputs.version || github.ref_name }}"
+          echo "VERSION=${raw#v}" >> "$GITHUB_ENV"
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e . pyinstaller
+
+      - name: Build relay CLI installers
+        shell: bash
+        run: python scripts/build-relay-cli-installer.py --version "$VERSION"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: relay-cli-${{ runner.os }}
+          path: |
+            dist/relay-cli-installers/*.zip
+            dist/relay-cli-installers/*.tar.gz
+          if-no-files-found: error
+
+  relay-desktop:
+    name: Relay Desktop ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            npm_script: dist:linux
+          - os: windows-latest
+            npm_script: dist:win
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: pawflow-relay-desktop/package-lock.json
+
+      - name: Resolve version
+        shell: bash
+        run: |
+          raw="${{ inputs.version || github.ref_name }}"
+          version="${raw#v}"
+          desktop_version="$version"
+          desktop_version="${desktop_version/.prealpha./-prealpha.}"
+          desktop_version="${desktop_version/.alpha./-alpha.}"
+          desktop_version="${desktop_version/.beta./-beta.}"
+          desktop_version="${desktop_version/.rc./-rc.}"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          echo "DESKTOP_VERSION=$desktop_version" >> "$GITHUB_ENV"
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e . pyinstaller
+
+      - name: Install desktop dependencies
+        working-directory: pawflow-relay-desktop
+        run: npm ci
+
+      - name: Set desktop package version
+        working-directory: pawflow-relay-desktop
+        shell: bash
+        run: npm version "$DESKTOP_VERSION" --no-git-tag-version --allow-same-version
+
+      - name: Build Relay Desktop installers
+        working-directory: pawflow-relay-desktop
+        run: npm run ${{ matrix.npm_script }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: relay-desktop-${{ runner.os }}
+          path: |
+            dist/relay-desktop-installers/*.AppImage
+            dist/relay-desktop-installers/*.deb
+            dist/relay-desktop-installers/*.exe
+            dist/relay-desktop-installers/*.blockmap
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    runs-on: ubuntu-latest
+    needs: [install-zip, pawcode, relay-cli, relay-desktop]
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Resolve release tag
+        shell: bash
+        run: |
+          if [[ -n "${{ github.ref_name }}" && "${{ github.event_name }}" == "push" ]]; then
+            echo "RELEASE_TAG=${{ github.ref_name }}" >> "$GITHUB_ENV"
+          else
+            echo "RELEASE_TAG=${{ inputs.version }}" >> "$GITHUB_ENV"
+          fi
+
+      - name: Publish assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          fail_on_unmatched_files: true
+          files: release-assets/*

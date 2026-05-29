@@ -2,6 +2,7 @@ from pathlib import Path
 import json
 import os
 import subprocess
+import zipfile
 from unittest.mock import MagicMock
 
 
@@ -63,13 +64,14 @@ def test_server_dockerfile_supports_bootstrap_docker_builds():
 
 def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     install = Path("scripts/install-pawflow.sh")
+    install_zip = Path("scripts/build-pawflow-install-zip.sh")
     build = Path("scripts/build-pawflow-docker.sh")
     build_server_minimal_relay = Path("scripts/build-server-minimal-relay.sh")
     run = Path("scripts/run-pawflow-docker.sh")
     doctor = Path("scripts/doctor-pawflow.sh")
     doctor_ps1 = Path("scripts/doctor-pawflow.ps1")
 
-    for script in (install, build, build_server_minimal_relay, run, doctor):
+    for script in (install, install_zip, build, build_server_minimal_relay, run, doctor):
         assert script.exists()
         assert script.stat().st_mode & 0o111
         assert "set -euo pipefail" in script.read_text(encoding="utf-8")
@@ -119,7 +121,7 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert "--source" in install_src
     assert "--from-source" in install_src
     assert "--version" in install_src
-    assert "Checkout this git tag before building runtime images" in install_src
+    assert "Image installs pull this tag; source installs checkout this git tag" in install_src
     assert "--pull-server" in install_src
     assert "--pull-images" in install_src
     assert "--runtime-image-mode" in install_src
@@ -134,7 +136,10 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert "PAWFLOW_VERSION" in install_src
     assert "PAWFLOW_DOCKER_PLATFORM" in install_src
     assert "PAWFLOW_START_TARGET" in install_src
+    assert "PAWFLOW_RUNTIME_DIR" in install_src
     assert "PAWFLOW_DATA_DIR" in install_src
+    assert "find_optional_python" in install_src
+    assert 'PYTHON_BIN="$(find_optional_python)"' in install_src
     assert "python -m venv" not in install_src
     assert "-m venv" in install_src
     assert "SERVER_MODE=\"auto\"" in install_src
@@ -152,6 +157,18 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert "refs/tags/$VERSION" in install_src
     assert "checkout main" in install_src
     assert "git clone" in install_src
+    assert "image_runtime_dir" in install_src
+    assert "extract_image_artifacts" in install_src
+    assert 'docker create "$image" true' in install_src
+    assert 'docker cp "$cid:/app/$rel" "$out_dir/$rel"' in install_src
+    assert "scripts/run-pawflow-docker.sh" in install_src
+    assert "scripts/doctor-pawflow.sh" in install_src
+    assert "tools/mcp_bridge.py" in install_src
+    assert "docker/pawflow_sdk" in install_src
+    assert "pawflow_relay" in install_src
+    assert 'RUNTIME_IMAGE_MODE="pull"' in install_src
+    assert "Image installs cannot build relay images from source" in install_src
+    assert "Native installs require a source checkout" in install_src
     assert "docker/claude-code/build.sh" in install_src
     assert "scripts/build-server-minimal-relay.sh" in install_src
     assert "docker/relay-dev/build.sh" in install_src
@@ -214,6 +231,40 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert "already in use on Windows" in doctor_ps1_src
     assert "already in use inside WSL" in doctor_ps1_src
     assert "Port $Port" in doctor_ps1_src
+
+
+def test_minimal_install_zip_contains_only_bootstrap_files(tmp_path):
+    subprocess.run(
+        [
+            "bash",
+            "scripts/build-pawflow-install-zip.sh",
+            "--version",
+            "1.0.0.test",
+            "--out-dir",
+            str(tmp_path),
+        ],
+        check=True,
+    )
+
+    archive = tmp_path / "pawflow-install-1.0.0.test.zip"
+    assert archive.exists()
+
+    with zipfile.ZipFile(archive) as zf:
+        assert sorted(zf.namelist()) == [
+            "LICENSE",
+            "README.md",
+            "scripts/install-pawflow.sh",
+        ]
+
+
+def test_docker_publish_skips_existing_ghcr_tags():
+    workflow = Path(".github/workflows/docker-publish.yml").read_text(encoding="utf-8")
+
+    assert "Check existing image tag" in workflow
+    assert "docker buildx imagetools inspect" in workflow
+    assert "Image already exists, skipping rebuild" in workflow
+    assert "steps.existing.outputs.exists != 'true'" in workflow
+    assert "Generate minimal relay image context" in workflow
 
 
 def test_install_script_help_works_without_pawflow_env(tmp_path):

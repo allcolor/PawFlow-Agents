@@ -26,11 +26,40 @@ That image is built locally by `scripts/install-pawflow.sh` because it installs 
 
 `scripts/install-pawflow.sh` defaults to `auto` mode:
 
-- Pull the prebuilt server and relay images first.
-- Build any missing server or relay image from the checkout.
+- Pull the prebuilt server image first.
+- When the server image is available, extract installer/runtime artifacts from `/app` in that image and pull the matching relay images.
+- When the server image is unavailable, use a source checkout and build the server and relay images from source.
 - Always build the CLI LLM image locally.
 
 Use `--pull-images` to require all three public images to be available. Use `--build-images` to force source builds for the server and relay images.
+
+Image installs do not require the installer zip to carry PawFlow runtime files. The installer copies the run script, doctor script, CLI image Docker context, MCP bridge, PawFlow SDK, and relay Python package out of the pulled `ghcr.io/allcolor/pawflow:<tag>` image into `PAWFLOW_RUNTIME_DIR` or `~/.pawflow/runtime/<tag>`. Source installs keep using the checkout selected by `--dir` / `PAWFLOW_INSTALL_DIR`.
+
+Build the release zip with:
+
+```bash
+bash scripts/build-pawflow-install-zip.sh --version VERSION
+```
+
+The resulting `dist/pawflow-installers/pawflow-install-VERSION.zip` contains only `scripts/install-pawflow.sh`, `README.md`, and `LICENSE`. After unzip, users can run `bash scripts/install-pawflow.sh --version VERSION --port PORT`; the remaining installer scripts and runtime bridge files are copied from the pulled server image.
+
+## GitHub Release Assets
+
+`.github/workflows/release-assets.yml` publishes user-facing installers to the GitHub Release attached to a pushed tag or manual `workflow_dispatch` version. It builds:
+
+- the minimal PawFlow install zip on Linux;
+- PawCode archives and native packages on Linux and Windows;
+- standalone Relay CLI archives on Linux and Windows;
+- Relay Desktop installers on Linux (`.AppImage`, `.deb`) and Windows (`.exe`).
+
+To publish a release, push a version tag after the Docker image workflow can publish matching GHCR tags:
+
+```bash
+git tag 1.0.0.prealpha.1
+git push origin 1.0.0.prealpha.1
+```
+
+The release asset workflow uses the tag name without a leading `v` for file names and installer versions. If a manual run is needed, start **Release Assets** from GitHub Actions and pass the exact version.
 
 The server container receives `PAWFLOW_SERVER_RELAY_IMAGE` and `PAWFLOW_SERVER_RELAY_MINIMAL_IMAGE` so server-spawned relays use the same GHCR or locally built tags that the installer prepared.
 

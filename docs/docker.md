@@ -25,12 +25,16 @@ bash scripts/install-pawflow.sh --port PORT
 This is the recommended Linux, macOS, Windows-native Docker Desktop, and WSL2
 install path. It first tries the prebuilt server and redistributable relay
 images (`ghcr.io/allcolor/pawflow`, `ghcr.io/allcolor/pawflow-relay-minimal`,
-and `ghcr.io/allcolor/pawflow-relay-dev`, tagged `latest` or `VERSION`). If any
-of those images is unavailable, it builds that image from source. It always
-builds the shared CLI LLM image locally (`pawflow-claude-code:latest` for Claude
-Code, Codex, Gemini, and Antigravity), because Claude Code and Antigravity are
-not redistributed by PawFlow images. It then creates persistent directories under
-`~/pawflow`, starts `pawflow-server`, and exposes the port selected with `--port` / `PAWFLOW_PORT`.
+and `ghcr.io/allcolor/pawflow-relay-dev`, tagged `latest` or `VERSION`). If the
+server image is available, it extracts the run scripts, CLI image Docker context,
+MCP bridge, PawFlow SDK, and relay Python package from `/app` in that image into
+`PAWFLOW_RUNTIME_DIR` or `~/.pawflow/runtime/<tag>`, then pulls the relay images.
+If the server image is unavailable, it falls back to a source checkout and builds
+from source. It always builds the shared CLI LLM image locally
+(`pawflow-claude-code:latest` for Claude Code, Codex, Gemini, and Antigravity),
+because Claude Code and Antigravity are not redistributed by PawFlow images. It
+then creates persistent directories under `~/pawflow`, starts `pawflow-server`,
+and exposes the port selected with `--port` / `PAWFLOW_PORT`.
 On macOS, the installer defaults Docker builds to `linux/amd64` unless
 `PAWFLOW_DOCKER_PLATFORM` or `--platform` is set.
 Use `bash scripts/install-pawflow.sh --native` when the PawFlow server itself
@@ -40,8 +44,9 @@ pull/build fallback.
 When `/var/run/docker.sock` is available on the host, the run script mounts it
 into the PawFlow container so PawFlow can spawn server-side workspace relay
 containers after installation. It also exports `PAWFLOW_HOST_APP_DIR` from the
-host checkout path so child CLI containers can bind-mount PawFlow's MCP bridge
-files from host-visible paths instead of container-only `/app/...` paths.
+host source checkout or extracted image-artifact directory so child CLI
+containers can bind-mount PawFlow's MCP bridge files from host-visible paths
+instead of container-only `/app/...` paths.
 
 The server image keeps repository and config defaults outside the mounted
 runtime directories. On container start, `docker/server-entrypoint.sh` seeds
@@ -85,7 +90,8 @@ bash scripts/install-pawflow.sh --from-source
 `ghcr.io/allcolor/pawflow-relay-dev:VERSION` images. `--from-source --version
 VERSION` checks out the exact git tag and fails if it is missing. `--from-source`
 without a version checks out `main`. All modes still build the local CLI LLM
-image from the repository Docker context.
+image locally; image installs get that Docker context from the pulled server
+image, while source installs use the repository checkout.
 
 The doctor script validates host prerequisites before install. It detects
 Linux, macOS, Windows shells, and WSL, checks Docker CLI/daemon access, WSL

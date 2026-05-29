@@ -10,6 +10,7 @@
 #   bash scripts/install-pawflow.sh --from-source --version 1.0.0 --port PORT
 #   bash scripts/install-pawflow.sh --native --port PORT
 #   bash scripts/install-pawflow.sh --dir ~/pawflow-src --port PORT
+#   bash scripts/install-pawflow.sh --runtime-dir ~/.pawflow/runtime/latest --port PORT
 #   bash scripts/install-pawflow.sh --pull-server --image ghcr.io/allcolor/pawflow:latest --port PORT
 #   bash scripts/install-pawflow.sh --pull-images --version 1.0.0 --port PORT
 
@@ -21,6 +22,7 @@ RELAY_MINIMAL_IMAGE_REPO="$(printenv PAWFLOW_RELAY_MINIMAL_IMAGE_REPO || true)"
 RELAY_DEV_IMAGE_REPO="$(printenv PAWFLOW_RELAY_DEV_IMAGE_REPO || true)"
 REPO_URL="$(printenv PAWFLOW_REPO_URL || true)"
 INSTALL_DIR="$(printenv PAWFLOW_INSTALL_DIR || true)"
+RUNTIME_DIR="$(printenv PAWFLOW_RUNTIME_DIR || true)"
 PORT="$(printenv PAWFLOW_PORT || true)"
 HOST="$(printenv PAWFLOW_HOST || true)"
 HOST_SET=0
@@ -67,6 +69,7 @@ while [[ $# -gt 0 ]]; do
     --image-repo) IMAGE_REPO="$2"; shift 2 ;;
     --repo) REPO_URL="$2"; shift 2 ;;
     --dir) INSTALL_DIR="$2"; shift 2 ;;
+    --runtime-dir) RUNTIME_DIR="$2"; shift 2 ;;
     --port) PORT="$2"; shift 2 ;;
     --host) HOST="$2"; HOST_SET=1; shift 2 ;;
     --home) PAWFLOW_HOME="$2"; shift 2 ;;
@@ -76,11 +79,11 @@ while [[ $# -gt 0 ]]; do
     --skip-doctor) RUN_DOCTOR=0; shift ;;
     --no-start) START_SERVER=0; shift ;;
     --help|-h)
-      sed -n '1,14p' "$0"
+      sed -n '1,15p' "$0"
       cat <<'HELP'
 
 Options:
-  --version VERSION  Install this PawFlow version. Checkout this git tag before building runtime images; prebuilt server image tag uses this value.
+  --version VERSION  Install this PawFlow version. Image installs pull this tag; source installs checkout this git tag.
   --from-source      Build the server from source. With --version, checkout that exact git tag; without it, checkout main.
   --pull-server      Require pulling the server image. Fails if the image is not available.
   --pull-images      Require pulling server + redistributable relay images.
@@ -97,6 +100,7 @@ Options:
                      Local CLI LLM image tag (default: pawflow-claude-code:latest).
   --repo URL         Git repository to clone when the script is not run from a checkout.
   --dir PATH         Source checkout directory for cloned installs.
+  --runtime-dir PATH Host directory used for artifacts extracted from the server image in image installs.
   --port PORT        Host/server port selected for this install.
   --host HOST        Server bind host. Container default is 0.0.0.0; native default is 127.0.0.1.
   --home PATH        Persistent PawFlow home (default: ~/pawflow).
@@ -151,6 +155,27 @@ find_python() {
   exit 1
 }
 
+find_optional_python() {
+  if [[ -n "$PYTHON_BIN" ]]; then
+    if command -v "$PYTHON_BIN" >/dev/null 2>&1; then
+      printf '%s' "$PYTHON_BIN"
+    fi
+    return 0
+  fi
+  if command -v python3 >/dev/null 2>&1; then
+    printf '%s' "python3"
+    return 0
+  fi
+  if command -v python >/dev/null 2>&1; then
+    printf '%s' "python"
+    return 0
+  fi
+}
+
+require_python() {
+  PYTHON_BIN="$(find_python)"
+}
+
 detect_host() {
   local kernel os
   kernel="$(uname -s 2>/dev/null || echo unknown)"
@@ -187,6 +212,44 @@ ensure_checkout() {
   fi
   printf '%s' "$INSTALL_DIR"
 }
+
+image_runtime_dir() {
+  local image="$1" tag safe
+  tag="${image##*:}"
+  if [[ "$tag" == "$image" || -z "$tag" ]]; then tag="latest"; fi
+  safe="${tag//[^A-Za-z0-9._-]/_}"
+  if [[ -n "$RUNTIME_DIR" ]]; then
+    printf '%s' "$RUNTIME_DIR"
+  else
+    printf '%s' "$HOME/.pawflow/runtime/$safe"
+  fi
+}
+
+extract_image_artifacts() (
+  local image="$1" out_dir="$2" cid rel
+  echo "Extracting PawFlow runtime artifacts from image: $image -> $out_dir" >&2
+  mkdir -p "$out_dir"
+  cid="$(docker create "$image" true)"
+  trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
+
+  for rel in \
+    scripts/run-pawflow-docker.sh \
+    scripts/doctor-pawflow.sh \
+    docker/claude-code \
+    docker/pawflow_sdk \
+    tools/mcp_bridge.py \
+    pawflow_relay
+  do
+    mkdir -p "$out_dir/$(dirname "$rel")"
+    rm -rf "$out_dir/$rel"
+    docker cp "$cid:/app/$rel" "$out_dir/$rel"
+  done
+
+  chmod +x \
+    "$out_dir/scripts/run-pawflow-docker.sh" \
+    "$out_dir/scripts/doctor-pawflow.sh" \
+    "$out_dir/docker/claude-code/build.sh"
+)
 
 prepare_checkout_ref() {
   local repo_dir="$1"
@@ -239,6 +302,7 @@ pull_image() {
 }
 
 build_minimal_relay_image() {
+  require_python
   PAWFLOW_PYTHON="$PYTHON_BIN" PAWFLOW_SERVER_MINIMAL_RELAY_IMAGE="$RELAY_MINIMAL_IMAGE" bash "$REPO_DIR/scripts/build-server-minimal-relay.sh"
 }
 
@@ -279,6 +343,7 @@ seed_native_data() {
 
 run_native_server() {
   local py venv_python bootstrap_gateway_key bootstrap_gateway_label native_host
+  require_python
   py="$(find_python)"
   native_host="$HOST"
   if [[ "$HOST_SET" == "0" ]]; then native_host="127.0.0.1"; fi
@@ -322,9 +387,11 @@ MSG
 }
 
 HOST_OS="$(detect_host)"
+REPO_DIR=""
+INSTALL_SOURCE=""
 
 need_cmd docker
-PYTHON_BIN="$(find_python)"
+PYTHON_BIN="$(find_optional_python)"
 if ! docker info >/dev/null 2>&1; then
   echo "Docker is installed but the daemon is not reachable." >&2
   echo "Start Docker Desktop/Engine, then rerun the installer." >&2
@@ -353,9 +420,6 @@ if [[ -z "$RELAY_DEV_IMAGE" ]]; then
   fi
 fi
 
-REPO_DIR="$(ensure_checkout)"
-prepare_checkout_ref "$REPO_DIR"
-
 if [[ -z "$DOCKER_PLATFORM" && "$HOST_OS" == "macos" ]]; then
   DOCKER_PLATFORM="linux/amd64"
 fi
@@ -363,11 +427,12 @@ if [[ -n "$DOCKER_PLATFORM" ]]; then
   export PAWFLOW_DOCKER_PLATFORM="$DOCKER_PLATFORM"
 fi
 
-if [[ "$RUN_DOCTOR" == "1" ]]; then
-  bash "$REPO_DIR/scripts/doctor-pawflow.sh" --port "$PORT" --source
+if [[ "$SERVER_MODE" == "source" ]]; then
+  REPO_DIR="$(ensure_checkout)"
+  prepare_checkout_ref "$REPO_DIR"
+  INSTALL_SOURCE="source"
 fi
 
-echo "PawFlow source: $REPO_DIR"
 echo "Host: $HOST_OS"
 echo "Version: ${VERSION}"
 echo "Server image: $IMAGE ($SERVER_MODE)"
@@ -382,20 +447,51 @@ fi
 
 if [[ "$SERVER_MODE" == "pull" ]]; then
   pull_server_image
+  REPO_DIR="$(image_runtime_dir "$IMAGE")"
+  extract_image_artifacts "$IMAGE" "$REPO_DIR"
+  INSTALL_SOURCE="image"
 elif [[ "$SERVER_MODE" == "source" ]]; then
   build_server_image
 elif [[ "$SERVER_MODE" == "auto" ]]; then
   if pull_server_image; then
     echo "Using prebuilt PawFlow server image: $IMAGE"
+    REPO_DIR="$(image_runtime_dir "$IMAGE")"
+    extract_image_artifacts "$IMAGE" "$REPO_DIR"
+    INSTALL_SOURCE="image"
   else
     echo "Prebuilt PawFlow server image unavailable, building from source: $IMAGE"
+    REPO_DIR="$(ensure_checkout)"
     SERVER_MODE="source" prepare_checkout_ref "$REPO_DIR"
     build_server_image
+    INSTALL_SOURCE="source"
   fi
 else
   echo "Invalid PAWFLOW_SERVER_MODE: $SERVER_MODE (expected auto, source, or pull)" >&2
   exit 2
 fi
+
+if [[ "$INSTALL_SOURCE" == "image" && "$RUNTIME_IMAGE_MODE" == "auto" ]]; then
+  RUNTIME_IMAGE_MODE="pull"
+fi
+if [[ "$INSTALL_SOURCE" == "image" && "$RUNTIME_IMAGE_MODE" == "source" ]]; then
+  echo "Image installs cannot build relay images from source. Use --from-source or --runtime-image-mode pull." >&2
+  exit 2
+fi
+if [[ "$INSTALL_SOURCE" == "image" && "$START_TARGET" == "native" ]]; then
+  echo "Native installs require a source checkout. Use --from-source --native, or omit --native to run the pulled server image." >&2
+  exit 2
+fi
+
+if [[ "$RUN_DOCTOR" == "1" ]]; then
+  if [[ "$INSTALL_SOURCE" == "source" ]]; then
+    bash "$REPO_DIR/scripts/doctor-pawflow.sh" --port "$PORT" --source
+  else
+    bash "$REPO_DIR/scripts/doctor-pawflow.sh" --port "$PORT"
+  fi
+fi
+
+echo "PawFlow install artifacts: $REPO_DIR ($INSTALL_SOURCE)"
+echo "Effective runtime image mode: $RUNTIME_IMAGE_MODE"
 
 echo "Building PawFlow CLI LLM image locally: $CLI_LLM_IMAGE"
 PAWFLOW_CLI_LLM_IMAGE="$CLI_LLM_IMAGE" bash "$REPO_DIR/docker/claude-code/build.sh"

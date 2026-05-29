@@ -40,7 +40,7 @@
       "target": ["nsis"]
     },
     "linux": {
-      "target": ["AppImage", "deb"],
+      "target": ["AppImage", "deb", "tar.gz"],
       "category": "Development",
       "maintainer": "AllColor <contact@allcolor.ai>"
     },

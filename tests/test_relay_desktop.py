@@ -21,6 +21,7 @@ def test_relay_desktop_package_exposes_electron_app():
     assert "electron-builder" in package["scripts"]["dist"]
     assert package["build"]["win"]["target"] == ["nsis"]
     assert "AppImage" in package["build"]["linux"]["target"]
+    assert "tar.gz" in package["build"]["linux"]["target"]
     assert package["build"]["linux"]["maintainer"]
     assert "dmg" in package["build"]["mac"]["target"]
     assert {"from": "runtime", "to": "runtime"} in package["build"]["extraResources"]

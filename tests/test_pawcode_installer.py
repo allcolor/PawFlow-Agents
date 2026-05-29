@@ -62,7 +62,9 @@ def test_release_assets_workflow_publishes_all_installers():
     assert "dist/pawcode-installers/*.zip" in workflow
     assert "dist/relay-cli-installers/*.zip" in workflow
     assert "dist/relay-desktop-installers/*.AppImage" in workflow
+    assert "dist/relay-desktop-installers/*.tar.gz" in workflow
     assert "dist/relay-desktop-installers/*.exe" in workflow
+    assert "dist/relay-desktop-installers/*.blockmap" not in workflow
 
 
 def test_pawcode_docs_cover_standalone_installer():

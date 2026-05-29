@@ -182,8 +182,8 @@ jobs:
           path: |
             dist/relay-desktop-installers/*.AppImage
             dist/relay-desktop-installers/*.deb
+            dist/relay-desktop-installers/*.tar.gz
             dist/relay-desktop-installers/*.exe
-            dist/relay-desktop-installers/*.blockmap
           if-no-files-found: error
 
   publish:

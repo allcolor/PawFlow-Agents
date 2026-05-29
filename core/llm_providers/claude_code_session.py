@@ -507,8 +507,6 @@ class ClaudeCodeSessionMixin:
 
         Returns (url, token). Creates the service on first call.
         """
-        if cls._tool_relay_cache:
-            return cls._tool_relay_cache
         try:
             from core.service_registry import ServiceRegistry, SCOPE_GLOBAL
             from services.http_listener_service import HTTPListenerService
@@ -538,6 +536,20 @@ class ClaudeCodeSessionMixin:
             for sdef in reg.resolve_by_type("toolRelay"):
                 svc = reg.get_live_instance(sdef.scope, sdef.scope_id, sdef.service_id)
                 if svc:
+                    try:
+                        # A previous lazy connect may have run before the HTTP
+                        # listener existed. In that case ServiceRegistry can
+                        # hold a live object whose /ws/tools route was never
+                        # registered, yielding HTTP 400 on MCP bridge upgrade.
+                        # Re-register before publishing the URL to a CLI.
+                        svc.connect()
+                    except Exception:
+                        logger.debug("tool relay route refresh failed", exc_info=True)
+                    if hasattr(svc, "is_connected") and not svc.is_connected():
+                        logger.warning(
+                            "[tool-relay] service %s exists but is not connected; "
+                            "skipping cached route", sdef.service_id)
+                        continue
                     cfg = getattr(sdef, "config", {}) or {}
                     token = cfg.get("token", "")
                     _sid = cfg.get("_service_id", sdef.service_id)
@@ -562,13 +574,16 @@ class ClaudeCodeSessionMixin:
                 "_service_id": service_id,
             }, description="Auto-created tool relay for Claude Code MCP bridge")
             svc = reg.get_live_instance(SCOPE_GLOBAL, "", service_id)
-            if svc:
+            if svc and (not hasattr(svc, "is_connected") or svc.is_connected()):
                 logger.info(
                     "[tool-relay] registered route /ws/tools/%s on main "
                     "listener port %d",
                     service_id, main_port)
                 cls._tool_relay_cache = (_build_url(service_id), token)
                 return cls._tool_relay_cache
+            logger.error(
+                "[tool-relay] failed to register route /ws/tools/%s on main "
+                "listener port %d", service_id, main_port)
         except Exception as e:
             logger.error("Failed to get/create tool relay: %s", e)
         return "", ""

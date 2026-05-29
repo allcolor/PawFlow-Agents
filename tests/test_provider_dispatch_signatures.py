@@ -313,6 +313,17 @@ def test_mcp_bridge_retries_initial_tool_relay_connection():
     assert "result = relay_client.request(\"execute_tool\"" in src
 
 
+def test_tool_relay_info_refreshes_registered_ws_route():
+    src = Path("core/llm_providers/claude_code_session.py").read_text(encoding="utf-8")
+    block = src[src.index("def _get_tool_relay_info"):
+                src.index("# Proactively refresh OAuth tokens")]
+    assert "if cls._tool_relay_cache:" not in block
+    assert "svc.connect()" in block
+    assert "not svc.is_connected()" in block
+    assert "skipping cached route" in block
+    assert "failed to register route /ws/tools" in block
+
+
 def test_mcp_bridge_and_tool_relay_emit_timing_breakdown():
     bridge_src = Path("tools/mcp_bridge.py").read_text(encoding="utf-8")
     relay_src = Path("services/tool_relay_service.py").read_text(encoding="utf-8")

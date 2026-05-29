@@ -84,6 +84,7 @@ def test_security_headers_and_global_rate_limit_policy_are_present():
     assert "Content-Security-Policy" in _SECURITY_HEADERS
     csp = _SECURITY_HEADERS["Content-Security-Policy"]
     assert "frame-src 'self' blob: http: https:" in csp
+    assert "https://esm.sh" in csp
     assert "X-Frame-Options" in _SECURITY_HEADERS
     assert _SECURITY_HEADERS["Permissions-Policy"] == "camera=(), microphone=(self), geolocation=()"
     assert _rate_limit_policy("/auth/login")[0] == "login"

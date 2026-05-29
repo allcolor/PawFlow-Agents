@@ -29,13 +29,14 @@ _HTTP_TIMING_DIAG_MS = float(os.getenv("PAWFLOW_HTTP_TIMING_DIAG_MS", "20") or "
 
 
 _SECURITY_HEADERS = {
-    # The chat UI pulls rxjs from jsDelivr and highlight.js (script + theme
-    # CSS) from cdnjs. Both CDN origins are whitelisted explicitly so the
-    # default 'self'-only policy doesn't break the page on first load.
+    # The chat UI pulls rxjs from jsDelivr, highlight.js (script + theme CSS)
+    # from cdnjs, and the embedded flow graph's ESM imports from esm.sh. These
+    # CDN origins are whitelisted explicitly so the default 'self'-only policy
+    # doesn't break the page on first load.
     "Content-Security-Policy": (
         "default-src 'self'; "
         "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: "
-        "https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; "
+        "https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://esm.sh; "
         "style-src 'self' 'unsafe-inline' "
         "https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; "
         "img-src 'self' data: blob:; "

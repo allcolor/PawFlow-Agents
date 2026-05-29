@@ -16,9 +16,12 @@ def test_relay_desktop_package_exposes_electron_app():
     assert package["scripts"]["prepare-runtime"] == "node scripts/prepare-runtime.js"
     assert package["scripts"]["build-relay-bin"] == "node scripts/build-relay-bin.js"
     assert package["scripts"]["package:portable"] == "node scripts/package-portable.js"
+    assert package["homepage"] == "https://github.com/allcolor/PawFlow-Agents"
+    assert package["author"]["email"]
     assert "electron-builder" in package["scripts"]["dist"]
     assert package["build"]["win"]["target"] == ["nsis"]
     assert "AppImage" in package["build"]["linux"]["target"]
+    assert package["build"]["linux"]["maintainer"]
     assert "dmg" in package["build"]["mac"]["target"]
     assert {"from": "runtime", "to": "runtime"} in package["build"]["extraResources"]
     assert "scripts/prepare-runtime.js" in package["scripts"]["check"]

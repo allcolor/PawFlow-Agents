@@ -4,6 +4,14 @@ on:
   push:
     tags: ['v*.*.*', '*.*.*']
   workflow_dispatch:
+    inputs:
+      version:
+        description: Image tag to publish, for example 1.0.0.prealpha.1
+        required: true
+      force_rebuild:
+        description: Rebuild and push even if the GHCR tag already exists
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -38,6 +46,14 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Resolve image tag
+        id: release
+        run: |
+          raw="${{ inputs.version || github.ref_name }}"
+          tag="${raw#v}"
+          echo "image_tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "force_rebuild=${{ inputs.force_rebuild || false }}" >> "$GITHUB_OUTPUT"
+
       - name: Free runner disk space
         run: |
           sudo rm -rf \
@@ -62,7 +78,12 @@ jobs:
       - name: Check existing image tag
         id: existing
         run: |
-          image="${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.image }}:${{ github.ref_name }}"
+          image="${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.image }}:${{ steps.release.outputs.image_tag }}"
+          if [[ "${{ steps.release.outputs.force_rebuild }}" == "true" ]]; then
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "Force rebuild requested: $image"
+            exit 0
+          fi
           if docker buildx imagetools inspect "$image" >/dev/null 2>&1; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
             echo "Image already exists, skipping rebuild: $image"
@@ -76,7 +97,7 @@ jobs:
           python3 scripts/generate-relay-image.py \
             --profile server-minimal \
             --out docker/relay-generated/server-minimal \
-            --image ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.image }}:${{ github.ref_name }}
+            --image ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.image }}:${{ steps.release.outputs.image_tag }}
 
       - name: Docker metadata
         if: steps.existing.outputs.exists != 'true'
@@ -85,8 +106,7 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.image }}
           tags: |
-            type=ref,event=tag
-            type=semver,pattern={{version}}
+            type=raw,value=${{ steps.release.outputs.image_tag }}
           labels: |
             org.opencontainers.image.title=PawFlow ${{ matrix.image }}
             org.opencontainers.image.description=PawFlow redistributable Docker image

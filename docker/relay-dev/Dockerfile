@@ -202,9 +202,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Python Playwright/Patchright are required by web_search and Scrapling stealth
 # mode. Install one Playwright-managed Chromium build and point Patchright at
 # the same executable instead of downloading a duplicate browser.
+ENV PLAYWRIGHT_BROWSERS_PATH="/ms-playwright"
 RUN mkdir -p /ms-playwright \
     && python3 -m playwright install --with-deps chromium \
-    && printf '#!/bin/bash\nset -e\nCHROME=$(find /ms-playwright -path "*/chrome-linux/chrome" -type f | sort | tail -n 1)\nexec "$CHROME" --no-sandbox --disable-gpu --disable-dev-shm-usage --user-data-dir="$HOME/.chromium-profile" "$@"\n' \
+    && printf '#!/bin/bash\nset -e\nCHROME=$(find /ms-playwright -path "*/chrome-linux/chrome" -type f | sort | tail -n 1)\nif [[ -z "$CHROME" ]]; then\n  echo "Chromium executable not found under /ms-playwright" >&2\n  find /ms-playwright -maxdepth 4 -type f -name chrome -print >&2 || true\n  exit 127\nfi\nexec "$CHROME" --no-sandbox --disable-gpu --disable-dev-shm-usage --user-data-dir="$HOME/.chromium-profile" "$@"\n' \
        > /usr/local/bin/chromium \
     && chmod +x /usr/local/bin/chromium \
     && ln -sf /usr/local/bin/chromium /usr/local/bin/chromium-browser \

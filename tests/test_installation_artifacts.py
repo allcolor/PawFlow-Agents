@@ -56,6 +56,8 @@ def test_server_dockerfile_supports_bootstrap_docker_builds():
         assert heavy_app not in relay_dev
     assert "python3 -m patchright install" not in relay_dev
     assert "PAWFLOW_CHROMIUM_EXECUTABLE" in relay_dev
+    assert "PLAYWRIGHT_BROWSERS_PATH" in relay_dev
+    assert "Chromium executable not found under /ms-playwright" in relay_dev
 
     relay_build = Path("docker/relay-dev/build.sh").read_text(encoding="utf-8")
     assert "-f \"$SCRIPT_DIR/Dockerfile\"" in relay_build
@@ -269,6 +271,8 @@ def test_docker_publish_skips_existing_ghcr_tags():
     workflow = Path(".github/workflows/docker-publish.yml").read_text(encoding="utf-8")
 
     assert "Check existing image tag" in workflow
+    assert "force_rebuild" in workflow
+    assert "Force rebuild requested" in workflow
     assert "docker buildx imagetools inspect" in workflow
     assert "Image already exists, skipping rebuild" in workflow
     assert "steps.existing.outputs.exists != 'true'" in workflow
@@ -485,8 +489,8 @@ def test_docker_publish_workflow_only_publishes_redistributable_images():
     assert "sbom: true" in src
     assert "provenance: true" in src
     assert "THIRD_PARTY_NOTICES.md" in src
-    assert "type=ref,event=tag" in src
-    assert "type=semver,pattern={{version}}" in src
+    assert "type=raw,value=${{ steps.release.outputs.image_tag }}" in src
+    assert "Resolve image tag" in src
     assert "Free runner disk space" in src
     assert "/opt/hostedtoolcache" in src
     assert "type=raw,value=latest" not in src

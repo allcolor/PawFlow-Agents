@@ -55,6 +55,7 @@ def test_server_dockerfile_supports_bootstrap_docker_builds():
     for heavy_app in ("blender", "libreoffice-calc", "vlc", "audacity"):
         assert heavy_app not in relay_dev
     assert "python3 -m patchright install" not in relay_dev
+    assert "software-properties-common" in relay_dev
     assert "ppa:xtradeb/apps" in relay_dev
     assert "apt-get install -y --no-install-recommends chromium" in relay_dev
     assert "/usr/bin/chromium --no-sandbox" in relay_dev

@@ -119,6 +119,7 @@ def test_generator_resolves_implied_features_and_writes_installer_artifacts(tmp_
     assert "https://deb.nodesource.com/setup_22.x" in dockerfile
     assert dockerfile.index("https://deb.nodesource.com/setup_22.x") < dockerfile.index("nodejs")
     assert "gimp gimp-plugin-registry" in dockerfile
+    assert "software-properties-common" in dockerfile
     assert "ppa:xtradeb/apps" in dockerfile
     assert "apt-get install -y --no-install-recommends" in dockerfile
     assert "chromium" in dockerfile

@@ -203,7 +203,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Ubuntu 24.04's chromium-browser package is a Snap transition wrapper, which
 # does not work reliably in this Docker desktop. XtraDeb provides a native
 # Chromium deb for Noble, while Playwright remains managed by application code.
-RUN add-apt-repository -y ppa:xtradeb/apps \
+RUN apt-get update && apt-get install -y --no-install-recommends software-properties-common \
+    && add-apt-repository -y ppa:xtradeb/apps \
     && apt-get update && apt-get install -y --no-install-recommends chromium \
     && printf '#!/bin/bash\nset -e\nexec /usr/bin/chromium --no-sandbox --disable-dev-shm-usage --user-data-dir="$HOME/.chromium-profile" "$@"\n' \
        > /usr/local/bin/chromium \

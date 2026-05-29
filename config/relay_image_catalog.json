@@ -157,7 +157,7 @@
       "label": "Chromium",
       "category": "browser",
       "description": "Native Chromium browser for desktop use in relay containers.",
-      "pre_apt": ["add-apt-repository -y ppa:xtradeb/apps"],
+      "pre_apt": ["apt-get update && apt-get install -y --no-install-recommends software-properties-common", "add-apt-repository -y ppa:xtradeb/apps"],
       "apt": ["chromium", "libgtk-3-0", "libnotify4", "fonts-dejavu", "fonts-liberation", "fonts-noto-color-emoji"],
       "pip": ["playwright"],
       "setup": ["printf '#!/bin/bash\\nset -e\\nexec /usr/bin/chromium --no-sandbox --disable-dev-shm-usage --user-data-dir=\"$HOME/.chromium-profile\" \"$@\"\\n' > /usr/local/bin/chromium", "chmod +x /usr/local/bin/chromium", "ln -sf /usr/local/bin/chromium /usr/local/bin/chromium-browser", "mkdir -p /usr/local/share/applications", "printf '[Desktop Entry]\\nType=Application\\nName=Chromium\\nExec=/usr/local/bin/chromium %%U\\nMimeType=text/html;x-scheme-handler/http;x-scheme-handler/https;\\n' > /usr/local/share/applications/chromium.desktop"],

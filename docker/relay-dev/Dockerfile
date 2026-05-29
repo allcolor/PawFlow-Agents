@@ -199,13 +199,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     meld ncdu galculator mousepad \
     && rm -rf /var/lib/apt/lists/*
 
-# Python Playwright/Patchright are required by web_search and Scrapling stealth
-# mode. Install one Playwright-managed Chromium build and point Patchright at
-# the same executable instead of downloading a duplicate browser.
-ENV PLAYWRIGHT_BROWSERS_PATH="/ms-playwright"
-RUN mkdir -p /ms-playwright \
-    && python3 -m playwright install --with-deps chromium \
-    && printf '#!/bin/bash\nset -e\nCHROME=$(find /ms-playwright \\( -path "*/chrome-linux/chrome" -o -path "*/chrome-linux64/chrome" \\) -type f | sort | tail -n 1)\nif [[ -z "$CHROME" ]]; then\n  echo "Chromium executable not found under /ms-playwright" >&2\n  find /ms-playwright -maxdepth 4 -type f -name chrome -print >&2 || true\n  exit 127\nfi\nexec "$CHROME" --no-sandbox --disable-gpu --disable-dev-shm-usage --user-data-dir="$HOME/.chromium-profile" "$@"\n' \
+# Browser runtime for manual desktop use and Playwright/Patchright-backed tools.
+# Use Ubuntu's Chromium package for stability inside the desktop container; the
+# wrapper adds Docker-safe flags and is also exposed through
+# PAWFLOW_CHROMIUM_EXECUTABLE for code paths that accept an executable override.
+RUN apt-get update && apt-get install -y --no-install-recommends chromium-browser \
+    && printf '#!/bin/bash\nset -e\nexec /usr/bin/chromium-browser --no-sandbox --disable-dev-shm-usage --user-data-dir="$HOME/.chromium-profile" "$@"\n' \
        > /usr/local/bin/chromium \
     && chmod +x /usr/local/bin/chromium \
     && ln -sf /usr/local/bin/chromium /usr/local/bin/chromium-browser \

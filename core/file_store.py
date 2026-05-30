@@ -402,8 +402,8 @@ class FileStore:
                 return False
             return Path(entry.get("path", "")).exists()
 
-    def get_disk_path(self, file_id: str,
-                      user_id: str = "") -> Optional[Path]:
+    def get_disk_path(self, file_id: str, user_id: str = "",
+                      gateway_key: str = "") -> Optional[Path]:
         """Return the on-disk Path for a file, or None if missing/denied.
 
         Used by code paths that need to open the file lazily (FUSE
@@ -420,7 +420,8 @@ class FileStore:
             if time.time() - entry.get("created_at", 0) > entry["ttl"]:
                 self._delete_entry(file_id)
                 return None
-        if not self.check_access(file_id, user_id=user_id):
+        if not self.check_access(file_id, user_id=user_id,
+                                 gateway_key=gateway_key):
             return None
         path = Path(entry.get("path", ""))
         if not path.exists():

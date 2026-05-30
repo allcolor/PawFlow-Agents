@@ -356,9 +356,11 @@ class TestServeFileTask(unittest.TestCase):
         ff.set_attribute("http.auth.principal", "test_user")
         results = task.execute(ff)
 
-        assert results[0].get_content() == b"a,b,c\n1,2,3"
+        assert results[0].get_content() == b""
         assert results[0].get_attribute("http.response.status") == "200"
         assert results[0].get_attribute("http.response.header.Content-Type") == "text/csv"
+        assert results[0].get_attribute("http.response.header.Content-Length") == str(len(b"a,b,c\n1,2,3"))
+        assert results[0].get_attribute("http.response.file_path")
         assert "test.csv" in results[0].get_attribute("http.response.header.Content-Disposition")
 
     def test_serve_missing_file(self):

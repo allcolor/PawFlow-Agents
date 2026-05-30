@@ -193,16 +193,16 @@ class FetchHTTPTask(BaseTask):
         try:
             req = Request(url, data=body, headers=headers, method=self.method)
             with urlopen(req, timeout=self.timeout) as response:  # nosec B310 - task intentionally fetches user-configured HTTP(S) URLs.
-                content = response.read()
                 status_code = response.status
                 response_headers = dict(response.getheaders())
+                size_hint = int(response_headers.get('Content-Length') or 0)
+                flowfile.set_content_from_stream(response, size_hint=size_hint)
 
-            flowfile.set_content(content)
             flowfile.set_attribute('http.status.code', str(status_code))
             content_type = response_headers.get('Content-Type', '')
             if content_type:
                 flowfile.set_attribute('mime.type', content_type)
-            self._set_common_attrs(flowfile, url, len(content))
+            self._set_common_attrs(flowfile, url, flowfile.size())
             return [flowfile]
 
         except HTTPError as e:

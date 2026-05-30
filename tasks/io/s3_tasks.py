@@ -80,17 +80,17 @@ class GetS3Task(BaseTask):
                 s3.download_fileobj(bucket, key, tmp)
                 tmp_path = tmp.name
 
-            content = Path(tmp_path).read_bytes()
-            os.unlink(tmp_path)
-
             # Get metadata
             head = s3.head_object(Bucket=bucket, Key=key)
+            size = head.get('ContentLength', 0)
 
-            flowfile.set_content(content)
+            with open(tmp_path, 'rb') as fh:
+                flowfile.set_content_from_stream(fh, size_hint=size)
+            os.unlink(tmp_path)
             flowfile.set_attribute('filename', Path(key).name)
             flowfile.set_attribute('s3.bucket', bucket)
             flowfile.set_attribute('s3.key', key)
-            flowfile.set_attribute('fileSize', str(head.get('ContentLength', len(content))))
+            flowfile.set_attribute('fileSize', str(size or flowfile.size()))
             content_type = head.get('ContentType', '')
             if content_type:
                 flowfile.set_attribute('mime.type', content_type)

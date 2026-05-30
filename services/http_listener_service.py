@@ -10,6 +10,7 @@ don't conflict.  When no route matches, 504/404 is returned directly.
 
 import json
 import logging
+import mimetypes
 import os
 import re
 import socket
@@ -17,10 +18,12 @@ import ssl
 import threading
 import time
 import uuid
+from pathlib import Path
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 from typing import Any, Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
+from urllib.parse import parse_qs
 
 from core.base_service import BaseService
 
@@ -482,6 +485,86 @@ class _RequestHandler(BaseHTTPRequestHandler):
             self.wfile.write(body)
         return True
 
+    def _send_json_error(self, status: int, message: bytes) -> None:
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(message)))
+        if hasattr(self, '_renew_cookie') and self._renew_cookie:
+            self.send_header("Set-Cookie", self._renew_cookie)
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(message)
+
+    def _handle_filestore_download(self, path_params: Dict[str, str],
+                                   query: str, session) -> bool:
+        """Stream FileStore downloads directly from disk.
+
+        Large exports must not travel through FlowFile content queues: the
+        default queue byte threshold is 100 MB, so a 180 MB archive can be
+        produced successfully and then stall forever before send_response.
+        """
+        file_id = path_params.get("file_id", "")
+        if not file_id:
+            self._send_json_error(400, b'{"error": "No file ID provided"}')
+            return True
+
+        from core.file_store import FileStore
+
+        user_id = ""
+        if session and session is not True:
+            user_id = getattr(session, "username", "") or ""
+
+        query_params = parse_qs(query or "")
+        gateway_key = (query_params.get("k") or [""])[0]
+
+        store = FileStore.instance()
+        if not store.exists(file_id):
+            self._send_json_error(404, b'{"error": "File not found or expired"}')
+            return True
+        if not store.check_access(file_id, user_id=user_id,
+                                  gateway_key=gateway_key):
+            self._send_json_error(403, b'{"error": "Access denied"}')
+            return True
+
+        path = store.get_disk_path(file_id, user_id=user_id,
+                                   gateway_key=gateway_key)
+        metadata = store.get_metadata(file_id)
+        if path is None or metadata is None:
+            self._send_json_error(404, b'{"error": "File not found or expired"}')
+            return True
+
+        filename = metadata.get("filename", path.name)
+        content_type = (metadata.get("content_type")
+                        or mimetypes.guess_type(filename)[0]
+                        or "application/octet-stream")
+        size = path.stat().st_size
+
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Disposition",
+                         f'inline; filename="{Path(filename).name}"')
+        self.send_header("Content-Length", str(size))
+        if hasattr(self, '_renew_cookie') and self._renew_cookie:
+            self.send_header("Set-Cookie", self._renew_cookie)
+        self.end_headers()
+        if self.command == "HEAD":
+            return True
+
+        try:
+            with path.open("rb") as f:
+                while True:
+                    chunk = f.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            logger.debug("Client disconnected during FileStore download %s",
+                         file_id)
+        except OSError as e:
+            logger.debug("Client disconnected during FileStore download %s: %s",
+                         file_id, e)
+        return True
+
     def _handle(self):
         method = self.command
         path = self.path.split('?', 1)[0]
@@ -636,6 +719,10 @@ class _RequestHandler(BaseHTTPRequestHandler):
             return
 
         entry, path_params = result
+
+        if method in ("GET", "HEAD") and path.startswith("/files/"):
+            if self._handle_filestore_download(path_params, query, session):
+                return
 
         # Create pending request
         req = PendingRequest(

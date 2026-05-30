@@ -19,6 +19,7 @@ from services.http_auth_service import HTTPAuthService, AuthValidationResult
 from tasks.io.http_receiver import HTTPReceiverTask
 from tasks.io.handle_http_response import HandleHTTPResponseTask
 from tasks.io.validate_http_auth import ValidateHTTPAuthTask
+from tasks.io.serve_file import ServeFileTask
 from core import FlowFile
 
 
@@ -398,6 +399,86 @@ class TestHTTPListenerService:
             assert b"function" in resp.read()
             assert resp.headers.get("Cache-Control") == "public, max-age=31536000, immutable"
             assert dispatched == []
+        finally:
+            svc.disconnect()
+
+    def test_filestore_download_streams_without_flow_dispatch(self, tmp_path, monkeypatch):
+        from core.file_store import FileStore
+
+        store = FileStore(base_dir=str(tmp_path / "files"))
+        monkeypatch.setattr(FileStore, "_instance", store)
+        size = 2 * 1024 * 1024 + 3
+        file_id = store.store(
+            "conversation.pfconv.zip",
+            b"x" * size,
+            "application/zip",
+            user_id="test_user",
+            conversation_id="conv-1",
+        )
+
+        svc = HTTPListenerService({"host": "127.0.0.1", "port": 19912})
+        svc.connect()
+        try:
+            dispatched = []
+            svc.register_route(
+                "GET", "/files/{file_id}/{filename+}", "test",
+                lambda req: dispatched.append(req),
+            )
+            req = urllib.request.Request(
+                f"http://127.0.0.1:19912/files/{file_id}/conversation.pfconv.zip",
+                method="GET",
+                headers={"Cookie": f"pawflow_token={_create_test_session()}"},
+            )
+            resp = urllib.request.urlopen(req, timeout=5)
+
+            assert resp.status == 200
+            assert resp.headers.get("Content-Type") == "application/zip"
+            assert resp.headers.get("Content-Length") == str(size)
+            assert resp.read() == b"x" * size
+            assert dispatched == []
+        finally:
+            svc.disconnect()
+
+    def test_serve_file_flow_streams_without_large_flowfile_body(self, tmp_path, monkeypatch):
+        from core.file_store import FileStore
+
+        store = FileStore(base_dir=str(tmp_path / "files"))
+        monkeypatch.setattr(FileStore, "_instance", store)
+        size = 2 * 1024 * 1024 + 7
+        file_id = store.store(
+            "large.bin",
+            b"y" * size,
+            "application/octet-stream",
+            user_id="test_user",
+            conversation_id="conv-1",
+        )
+
+        svc = HTTPListenerService({"host": "127.0.0.1", "port": 19913})
+        svc.connect()
+        try:
+            def on_request(req):
+                ff = FlowFile(content=b"")
+                ff.set_attribute("http.request.id", req.request_id)
+                ff.set_attribute("http.path.file_id", req.path_params["file_id"])
+                ff.set_attribute("http.auth.principal", req.auth_user_id)
+                served = ServeFileTask({}).execute(ff)[0]
+                assert served.get_content() == b""
+                assert served.get_attribute("http.response.file_path")
+                responder = HandleHTTPResponseTask({"service_id": "http_listener"})
+                responder.get_service = lambda service_id: svc
+                responder.execute(served)
+
+            svc.register_route("GET", "/files/{file_id}", "test", on_request)
+            req = urllib.request.Request(
+                f"http://127.0.0.1:19913/files/{file_id}",
+                method="GET",
+                headers={"Cookie": f"pawflow_token={_create_test_session()}"},
+            )
+            resp = urllib.request.urlopen(req, timeout=5)
+
+            assert resp.status == 200
+            assert resp.headers.get("Content-Length") == str(size)
+            assert resp.read() == b"y" * size
         finally:
             svc.disconnect()
 

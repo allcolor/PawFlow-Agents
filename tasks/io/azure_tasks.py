@@ -69,15 +69,20 @@ class GetAzureBlobTask(BaseTask):
             service_client = self._get_client()
             blob_client = service_client.get_blob_client(container=container_name, blob=blob_name)
 
-            downloader = blob_client.download_blob()
-            content = downloader.readall()
             properties = blob_client.get_blob_properties()
+            downloader = blob_client.download_blob()
+            with tempfile.NamedTemporaryFile(delete=False) as tmp:
+                downloader.readinto(tmp)
+                tmp_path = tmp.name
 
-            flowfile.set_content(content)
+            size = properties.size or Path(tmp_path).stat().st_size
+            with open(tmp_path, 'rb') as fh:
+                flowfile.set_content_from_stream(fh, size_hint=size)
+            os.unlink(tmp_path)
             flowfile.set_attribute('filename', Path(blob_name).name)
             flowfile.set_attribute('azure.container', container_name)
             flowfile.set_attribute('azure.blob', blob_name)
-            flowfile.set_attribute('fileSize', str(properties.size or len(content)))
+            flowfile.set_attribute('fileSize', str(size))
             content_type = properties.content_settings.content_type or ''
             if content_type:
                 flowfile.set_attribute('mime.type', content_type)

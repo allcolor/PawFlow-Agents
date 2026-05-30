@@ -81,10 +81,10 @@ class GetSFTPTask(BaseTask):
             sftp.get(remote, tmp_path)
             stat = sftp.stat(remote)
 
-            content = Path(tmp_path).read_bytes()
+            with open(tmp_path, 'rb') as fh:
+                flowfile.set_content_from_stream(fh, size_hint=stat.st_size)
             os.unlink(tmp_path)
 
-            flowfile.set_content(content)
             flowfile.set_attribute('filename', Path(remote).name)
             flowfile.set_attribute('path', remote)
             flowfile.set_attribute('fileSize', str(stat.st_size))

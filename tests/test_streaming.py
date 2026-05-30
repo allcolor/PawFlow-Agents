@@ -93,6 +93,29 @@ class TestContentReference:
         assert ref.get_bytes() == b"from stream"
         assert not ref.is_on_disk
 
+    def test_from_stream_unknown_size_spills_without_full_read(self):
+        class ChunkOnlyStream:
+            def __init__(self, chunks):
+                self._chunks = list(chunks)
+
+            def read(self, n=-1):
+                assert n > 0, "from_stream must not call whole-stream read()"
+                if not self._chunks:
+                    return b""
+                return self._chunks.pop(0)
+
+        original_threshold = SPILL_THRESHOLD
+        try:
+            set_spill_threshold(10)
+            ref = ContentReference.from_stream(
+                ChunkOnlyStream([b"abc", b"def", b"ghijk", b"lm"]),
+                size_hint=0,
+            )
+            assert ref.is_on_disk
+            assert ref.get_bytes() == b"abcdefghijklm"
+        finally:
+            set_spill_threshold(original_threshold)
+
     def test_from_stream_large(self):
         original_threshold = SPILL_THRESHOLD
         try:

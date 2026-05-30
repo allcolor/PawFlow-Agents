@@ -2,6 +2,7 @@
 
 import json
 import logging
+import shutil
 import time
 import threading
 from pathlib import Path
@@ -53,8 +54,8 @@ def _extract_conversation_members(zf, conv_dir: Path) -> None:
             continue
         dest = conv_dir / rel
         dest.parent.mkdir(parents=True, exist_ok=True)
-        with zf.open(name) as src:
-            dest.write_bytes(src.read())
+        with zf.open(name) as src, dest.open("wb") as out:
+            shutil.copyfileobj(src, out, length=1024 * 1024)
 
 
 def _patch_json_identity(obj: Any, cid: str, user_id: str,
@@ -128,14 +129,14 @@ def _write_filestore_archive(zf, conv_id: str, user_id: str) -> Dict[str, Any]:
             continue
         filename = Path(entry.get("filename") or src.name).name or "file"
         arc = f"filestore/objects/{fid}_{filename}"
-        data = src.read_bytes()
-        zf.writestr(arc, data)
-        total_size += len(data)
+        size = src.stat().st_size
+        zf.write(src, arc)
+        total_size += size
         objects.append({
             "file_id": fid,
             "filename": filename,
             "content_type": entry.get("content_type", "application/octet-stream"),
-            "size": len(data),
+            "size": size,
             "created_at": entry.get("created_at", 0),
             "access": entry.get("access", "private"),
             "shared_with": entry.get("shared_with", []),
@@ -195,21 +196,22 @@ def _restore_filestore_archive(zf, cid: str, user_id: str,
             arc = "filestore/" + rel_obj
             if arc not in zf.namelist():
                 raise ValueError(f"Missing FileStore object: {rel_obj}")
-            content = zf.read(arc)
             filename = Path(meta.get("filename") or "file").name or "file"
             scope_dir = fs._scope_dir(user_id, cid)
             bucket = fs._pick_bucket(scope_dir)
             bucket_dir = scope_dir / bucket
             bucket_dir.mkdir(parents=True, exist_ok=True)
             disk_path = bucket_dir / f"{new_id}_{filename}"
-            disk_path.write_bytes(content)
-            total_size += len(content)
+            with zf.open(arc) as src, disk_path.open("wb") as out:
+                shutil.copyfileobj(src, out, length=1024 * 1024)
+            size = disk_path.stat().st_size
+            total_size += size
             restored += 1
             fs._entries[new_id] = {
                 "filename": filename,
                 "path": str(disk_path),
                 "content_type": meta.get("content_type", "application/octet-stream"),
-                "size": len(content),
+                "size": size,
                 "created_at": meta.get("created_at", time.time()),
                 "conversation_id": cid,
                 "user_id": user_id,

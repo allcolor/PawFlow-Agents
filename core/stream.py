@@ -304,34 +304,58 @@ class ContentReference:
     def from_stream(cls, stream: BinaryIO, size_hint: int = 0) -> 'ContentReference':
         """Create a ContentReference by reading from a stream.
 
-        If size_hint exceeds SPILL_THRESHOLD, streams directly to disk
-        without buffering entire content in memory.
+        Stream in chunks. Content stays in memory only while it is below the
+        spill threshold; once it crosses the threshold, the buffered prefix and
+        all remaining chunks are written to disk. This matters when callers do
+        not know the size upfront: unknown-size streams must not fall back to a
+        whole-stream read before spilling.
         """
+        import uuid as _uuid
+
+        chunks = []
+        total = 0
+        out = None
+        temp_path = None
+
         if size_hint > SPILL_THRESHOLD:
-            # Stream directly to disk
             spill_dir = _get_spill_dir()
-            import uuid as _uuid
             temp_path = spill_dir / f"spill_stream_{_uuid.uuid4().hex[:12]}"
-            total = 0
-            with open(temp_path, 'wb') as f:
-                while True:
-                    chunk = stream.read(65536)
-                    if not chunk:
-                        break
-                    f.write(chunk)
-                    total += len(chunk)
-            ref = cls.__new__(cls)
-            ref._lock = threading.Lock()
-            ref._data = None
-            ref._file_path = temp_path
-            ref._size = total
-            ref._ref_count = 1
-            _spill_tracker.register(temp_path, total, ref)
-            return ref
-        else:
-            # Read into memory, check if it exceeds threshold
-            data = stream.read()
-            return cls(data=data)
+            out = open(temp_path, 'wb')
+
+        try:
+            while True:
+                chunk = stream.read(65536)
+                if not chunk:
+                    break
+                total += len(chunk)
+
+                if out is None and total > SPILL_THRESHOLD:
+                    spill_dir = _get_spill_dir()
+                    temp_path = spill_dir / f"spill_stream_{_uuid.uuid4().hex[:12]}"
+                    out = open(temp_path, 'wb')
+                    for buffered in chunks:
+                        out.write(buffered)
+                    chunks.clear()
+
+                if out is not None:
+                    out.write(chunk)
+                else:
+                    chunks.append(chunk)
+        finally:
+            if out is not None:
+                out.close()
+
+        if temp_path is None:
+            return cls(data=b''.join(chunks))
+
+        ref = cls.__new__(cls)
+        ref._lock = threading.Lock()
+        ref._data = None
+        ref._file_path = temp_path
+        ref._size = total
+        ref._ref_count = 1
+        _spill_tracker.register(temp_path, total, ref)
+        return ref
 
     def __del__(self):
         """Cleanup temp file if ref count is zero."""

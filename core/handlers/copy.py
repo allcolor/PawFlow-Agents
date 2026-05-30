@@ -1,6 +1,10 @@
 """copy — Copy files between filesystem services, FileStore, and agent workdir."""
 
 import logging
+import mimetypes
+import os
+import re
+import shutil
 from typing import Any, Dict
 
 from core.handlers._fs_base import BaseFsHandler
@@ -74,8 +78,25 @@ class CopyHandler(BaseFsHandler):
             return self._no_target_error(dst_svc_name)
 
         try:
-            # Read from source
             _local = bool(arguments.get("local", False))
+            if dst_svc == "filestore" and src_svc is None and src_workdir:
+                full = self._sandbox_path(source_path, src_workdir)
+                if not os.path.exists(full):
+                    return f"Error: '{source_path}' not found in workspace"
+                fid = self._store_path_in_filestore(full, dest_path)
+                return f"Copied {os.path.basename(source_path)} to FileStore: {fid}"
+
+            if src_svc == "filestore" and dst_svc is None and dst_workdir:
+                src_disk = self._filestore_disk_path(source_path)
+                if isinstance(src_disk, str):
+                    return src_disk
+                full = self._sandbox_path(dest_path, dst_workdir)
+                os.makedirs(os.path.dirname(full), exist_ok=True)
+                with open(src_disk, "rb") as inp, open(full, "wb") as out:
+                    shutil.copyfileobj(inp, out, length=1024 * 1024)
+                return f"Copied {source_path} → {dest_path}"
+
+            # Read from source
             data = self._read_bytes(src_svc, src_workdir, source_path, local=_local)
             if isinstance(data, str):
                 return data  # error message
@@ -89,22 +110,12 @@ class CopyHandler(BaseFsHandler):
 
     def _read_bytes(self, svc, workdir, path, local: bool = False):
         """Read raw bytes from source."""
-        import os
-        import re
-
         if svc == "filestore":
-            from core.file_store import FileStore
-            store = FileStore.instance()
-            _fid_match = re.search(r'/?(?:files/)?([a-f0-9]{12})(?:/|$)', path)
-            file_id = _fid_match.group(1) if _fid_match else path.split("/")[0]
-            entry = store.get(file_id)
-            if not entry:
-                found = store.find_by_name(file_id)
-                if found:
-                    entry = store.get(found)
-            if not entry:
-                return f"Error: '{file_id}' not found in FileStore"
-            return entry[1]  # data bytes
+            disk_path = self._filestore_disk_path(path)
+            if isinstance(disk_path, str):
+                return disk_path
+            with open(disk_path, "rb") as f:
+                return f.read()
 
         if workdir:
             full = self._sandbox_path(path, workdir)
@@ -117,11 +128,8 @@ class CopyHandler(BaseFsHandler):
 
     def _write_bytes(self, svc, workdir, path, data, local: bool = False):
         """Write raw bytes to dest."""
-        import os
-
         if svc == "filestore":
             from core.file_store import FileStore
-            import mimetypes
             fname = path.rsplit("/", 1)[-1] if "/" in path else path
             mime = mimetypes.guess_type(fname)[0] or "application/octet-stream"
             fid = FileStore.instance().store(
@@ -139,3 +147,28 @@ class CopyHandler(BaseFsHandler):
 
         svc.write_file(path, data, local=local)
         return path
+
+    def _store_path_in_filestore(self, source_path: str, dest_path: str) -> str:
+        from core.file_store import FileStore
+
+        fname = dest_path.rsplit("/", 1)[-1] if "/" in dest_path else dest_path
+        mime = mimetypes.guess_type(fname)[0] or "application/octet-stream"
+        return FileStore.instance().store_file(
+            fname, source_path, mime,
+            user_id=self._user_id,
+            conversation_id=getattr(self, '_conversation_id', '') or '')
+
+    def _filestore_disk_path(self, path):
+        from core.file_store import FileStore
+
+        store = FileStore.instance()
+        match = re.search(r'/?(?:files/)?([a-f0-9]{12})(?:/|$)', path)
+        file_id = match.group(1) if match else path.split("/")[0]
+        disk_path = store.get_disk_path(file_id, user_id=self._user_id)
+        if disk_path is None:
+            found = store.find_by_name(file_id, user_id=self._user_id)
+            if found:
+                disk_path = store.get_disk_path(found, user_id=self._user_id)
+        if disk_path is None:
+            return f"Error: '{file_id}' not found in FileStore"
+        return disk_path

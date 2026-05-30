@@ -18,12 +18,22 @@ FlowFile attributes that override defaults:
 
 import json
 import logging
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from core import FlowFile
 from core.base_task import BaseTask
 
 logger = logging.getLogger(__name__)
+
+
+def _iter_file_chunks(path: Path, chunk_size: int = 1024 * 1024):
+    with path.open("rb") as f:
+        while True:
+            chunk = f.read(chunk_size)
+            if not chunk:
+                break
+            yield chunk
 
 
 class HandleHTTPResponseTask(BaseTask):
@@ -93,21 +103,32 @@ class HandleHTTPResponseTask(BaseTask):
                 headers[header_name] = attr_val
 
         # --- Body ---
-        body_attr = flowfile.get_attribute("http.response.body")
-        if body_attr is not None:
-            body = body_attr.encode("utf-8") if isinstance(body_attr, str) else body_attr
+        # Large file responses are represented as a disk path and streamed by
+        # the listener. Do not call get_content() for those: that would pull
+        # the payload back into memory and reintroduce FlowFile queue pressure.
+        file_path_attr = flowfile.get_attribute("http.response.file_path")
+        stream = None
+        body = b""
+        if file_path_attr:
+            stream = _iter_file_chunks(Path(file_path_attr))
         else:
-            body = flowfile.get_content()
+            body_attr = flowfile.get_attribute("http.response.body")
+            if body_attr is not None:
+                body = body_attr.encode("utf-8") if isinstance(body_attr, str) else body_attr
+            else:
+                body = flowfile.get_content()
 
         # Submit response — streaming or regular
         sse_stream = getattr(flowfile, "_sse_stream", None)
         is_stream = flowfile.get_attribute("http.response.stream") == "true" and sse_stream
-        if is_stream:
+        if stream is not None:
+            success = svc.submit_stream_response(request_id, status, headers, stream)
+        elif is_stream:
             success = svc.submit_stream_response(request_id, status, headers, sse_stream)
         else:
             success = svc.submit_response(request_id, status, headers, body)
         logger.debug("[handleHTTPResponse] %s status=%d (req_id=%s, body=%db, ok=%s)",
-                    "stream" if is_stream else "submit",
+                    "stream" if (is_stream or stream is not None) else "submit",
                     status, request_id[:8] if request_id else "?",
                     len(body) if body else 0, success)
         if not success:

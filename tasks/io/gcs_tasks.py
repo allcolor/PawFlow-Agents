@@ -82,17 +82,17 @@ class GetGCSTask(BaseTask):
                 blob.download_to_filename(tmp.name)
                 tmp_path = tmp.name
 
-            content = Path(tmp_path).read_bytes()
-            os.unlink(tmp_path)
-
             # Reload blob metadata
             blob.reload()
+            size = blob.size or Path(tmp_path).stat().st_size
 
-            flowfile.set_content(content)
+            with open(tmp_path, 'rb') as fh:
+                flowfile.set_content_from_stream(fh, size_hint=size)
+            os.unlink(tmp_path)
             flowfile.set_attribute('filename', Path(blob_name).name)
             flowfile.set_attribute('gcs.bucket', bucket_name)
             flowfile.set_attribute('gcs.blob', blob_name)
-            flowfile.set_attribute('fileSize', str(blob.size or len(content)))
+            flowfile.set_attribute('fileSize', str(size))
             content_type = blob.content_type or ''
             if content_type:
                 flowfile.set_attribute('mime.type', content_type)

@@ -73,18 +73,21 @@ class ServeFileTask(BaseTask):
                                    "application/json")
             return [flowfile]
 
-        result = store.get(file_id, user_id=user_id,
-                           gateway_key=gateway_key)
-        if result is None:
+        path = store.get_disk_path(file_id, user_id=user_id,
+                                   gateway_key=gateway_key)
+        metadata = store.get_metadata(file_id)
+        if path is None or metadata is None:
             flowfile.set_content(b'{"error": "File not found or expired"}')
             flowfile.set_attribute("http.response.status", "404")
             flowfile.set_attribute("http.response.header.Content-Type",
                                    "application/json")
             return [flowfile]
 
-        filename, content, content_type = result
+        filename = metadata.get("filename", path.name)
+        content_type = metadata.get("content_type", "application/octet-stream")
+        size = path.stat().st_size
 
-        flowfile.set_content(content)
+        flowfile.set_content(b"")
         flowfile.set_attribute("http.response.status", "200")
         flowfile.set_attribute("http.response.header.Content-Type",
                                content_type)
@@ -92,7 +95,8 @@ class ServeFileTask(BaseTask):
             "http.response.header.Content-Disposition",
             f'inline; filename="{filename}"')
         flowfile.set_attribute("http.response.header.Content-Length",
-                               str(len(content)))
+                               str(size))
+        flowfile.set_attribute("http.response.file_path", str(path))
 
         return [flowfile]
 

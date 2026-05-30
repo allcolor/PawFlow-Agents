@@ -197,7 +197,7 @@ def _render_dockerfile(catalog: dict[str, Any], feature_ids: list[str], image_na
         "RUN apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*",
         "RUN chown -R pawflow:pawflow /opt/pawflow /home/pawflow \\",
         "    && find /home/pawflow -maxdepth 1 ! -user pawflow -exec chown -R pawflow:pawflow {} +",
-        "USER pawflow",
+        "USER root",
         "ENV HOME=\"/home/pawflow\"",
         "ENV USER=\"pawflow\"",
         "WORKDIR /workspace",

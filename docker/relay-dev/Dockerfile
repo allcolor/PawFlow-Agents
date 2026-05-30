@@ -251,16 +251,16 @@ RUN mkdir -p /opt/pawflow \
 # re-running pip after each container restart.
 ENV PYTHONPATH="/opt/pawflow:/workspace/.pylib"
 
-# ── Init script: start chronyd then exec CMD ──────────────────────
-RUN printf '#!/bin/bash\nsudo chronyd 2>/dev/null || true\nexec "$@"\n' > /usr/local/bin/init.sh \
+# ── Init script: repair bind-mount permissions, then exec as pawflow ─────
+RUN printf '#!/bin/bash\nset -e\nchronyd 2>/dev/null || true\nfor d in /workspace /cc_sessions /filestore /skills; do\n  mkdir -p "$d"\n  gid=$(stat -c %g "$d" 2>/dev/null || echo 1000)\n  group=$(getent group "$gid" | cut -d: -f1 || true)\n  if [ -z "$group" ]; then group=pfmount_$gid; groupadd -g "$gid" "$group" 2>/dev/null || true; fi\n  usermod -aG "$group" pawflow 2>/dev/null || true\n  chmod g+rwx "$d" 2>/dev/null || true\ndone\nexec sudo -E -u pawflow "$@"\n' > /usr/local/bin/init.sh \
     && chmod +x /usr/local/bin/init.sh
 
 # ── Fix home ownership (usermod -m may keep old uid on preexisting files) ──
 RUN chown pawflow:pawflow /home/pawflow \
     && find /home/pawflow -maxdepth 1 ! -user pawflow -exec chown -R pawflow:pawflow {} +
 
-# ── Run as pawflow ──────────────────────────────────────────────────
-USER pawflow
+# ── Start as root; init.sh drops to pawflow after bind-mount repair ──────
+USER root
 ENV HOME="/home/pawflow"
 ENV USER="pawflow"
 WORKDIR /workspace

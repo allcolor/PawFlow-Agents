@@ -30,6 +30,11 @@ def test_relay_catalog_has_required_base_runtime():
     assert base["required"] is True
     assert "python3" in base["apt"]
     assert "python3-dev" in base["apt"]
+    assert "vim-tiny" in base["apt"]
+    assert "nano" in base["apt"]
+    assert "procps" in base["apt"]
+    assert "iproute2" in base["apt"]
+    assert "netcat-openbsd" in base["apt"]
     assert "fuse3" in base["apt"]
     assert "libfuse3-dev" in base["apt"]
     assert "build-essential" in base["apt"]
@@ -40,6 +45,8 @@ def test_relay_catalog_has_required_base_runtime():
     assert "/workspace" in post_install
     assert "/cc_sessions" in post_install
     assert "/filestore" in post_install
+    assert "chmod g+rwx" in post_install
+    assert "sudo -E -u pawflow" in post_install
     assert base["runtime"]["requires_fuse"] is True
     assert "/dev/fuse" in base["runtime"]["docker_args"]
 
@@ -128,6 +135,9 @@ def test_generator_resolves_implied_features_and_writes_installer_artifacts(tmp_
     assert "google-chrome" not in dockerfile
     assert "packages.microsoft.com/repos/code" not in dockerfile
     assert "COPY runtime/ /opt/pawflow/" not in dockerfile
+    assert "USER root" in dockerfile
+    assert "sudo -E -u pawflow" in dockerfile
+    assert "chmod g+rwx" in dockerfile
 
     run_script = (out_dir / "run-relay.sh").read_text(encoding="utf-8")
     assert "PAWFLOW_RELAY_TOKEN" in run_script

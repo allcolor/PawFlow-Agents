@@ -224,6 +224,84 @@ class TestOAuthRedirectTask(unittest.TestCase):
         results = task.execute(ff)
         assert results[0].get_attribute("http.response.status") == "500"
 
+    def test_inline_authorize_url_cannot_redirect_to_login_route(self):
+        from tasks.io.oauth_redirect import OAuthRedirectTask
+
+        task = OAuthRedirectTask({
+            "provider": "custom",
+            "client_id": "test-id",
+            "client_secret": "test-secret",
+            "redirect_uri": "https://webchat.example/auth/callback",
+            "authorize_url": "/auth/login",
+            "token_url": "https://idp.example/token",
+            "userinfo_url": "https://idp.example/userinfo",
+        })
+        ff = FlowFile(content=b"")
+        ff.set_attribute("http.header.host", "webchat.example")
+
+        results = task.execute(ff)
+
+        assert results[0].get_attribute("http.response.status") == "500"
+        assert "OAuth configuration error" in results[0].get_content().decode("utf-8")
+        assert results[0].get_attribute("http.response.header.Location") is None
+
+    def test_login_provider_self_redirect_returns_config_error_before_rate_limit(self):
+        from tasks.io.oauth_redirect import OAuthRedirectTask
+
+        class BadProvider:
+            def get_authorize_url(self, state, redirect_uri):
+                return "https://webchat.example/auth/login?state=" + state
+
+        class Auth:
+            def get_provider(self, name):
+                assert name == "bad"
+                return BadProvider()
+
+            def generate_state(self, provider):
+                return "state-123"
+
+            def check_rate_limit(self, ip):
+                raise AssertionError("config errors must not hit login rate limit")
+
+        task = OAuthRedirectTask({})
+        task._services = {}
+        ff = FlowFile(content=b"")
+        ff.set_attribute("http.header.host", "webchat.example")
+
+        results = task._handle_oauth_redirect(ff, Auth(), "bad", "127.0.0.1")
+
+        assert results[0].get_attribute("http.response.status") == "500"
+        body = results[0].get_content().decode("utf-8")
+        assert "OAuth configuration error" in body
+        assert "redirect loop" in body
+
+    def test_single_oauth_login_page_self_redirect_returns_config_error(self):
+        from tasks.io.serve_login import ServeLoginTask
+
+        class BadProvider:
+            def get_authorize_url(self, state, redirect_uri):
+                return "https://webchat.example/auth/login?state=" + state
+
+        class Auth:
+            def get_enabled_providers(self):
+                return [{"name": "bad", "display_name": "Bad OAuth", "icon": "", "is_oauth": True}]
+
+            def get_provider(self, name):
+                return BadProvider()
+
+            def generate_state(self, provider):
+                return "state-123"
+
+        task = ServeLoginTask({"auth_service_id": "auth"})
+        task._services = {"auth": Auth()}
+        ff = FlowFile(content=b"")
+        ff.set_attribute("http.header.host", "webchat.example")
+
+        results = task.execute(ff)
+
+        assert results[0].get_attribute("http.response.status") == "500"
+        assert "OAuth configuration error" in results[0].get_content().decode("utf-8")
+
     def test_builtin_login_sets_pawflow_token_cookie(self):
         from types import SimpleNamespace
         from tasks.io.oauth_redirect import OAuthRedirectTask

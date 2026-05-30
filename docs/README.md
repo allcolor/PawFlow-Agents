@@ -24,6 +24,7 @@
 | [PawFlow Packages](PFP_PACKAGES.md) | Signed `.pfp` package format, install plan, export/build workflow, and security model |
 | [PFP Developer Guide](PFP_DEVELOPER_GUIDE.md) | Build and test package tools/services locally with `dev-load`, media artifacts, and runtime SDK patterns |
 | [PFP Publisher Guide](PFP_PUBLISHER_GUIDE.md) | Registry publishing, release versioning, SHA pinning, and key rotation |
+| [Marketplace and Package Registries](marketplace.md) | PFP registries, skill marketplace import, review model, and UI/CLI entry points |
 | [Cognitive Tools](COGNITIVE_TOOLS.md) | Memory, Knowledge Graph, Diary, Project Graph |
 | [Expression Language](EXPRESSION_LANGUAGE.md) | `${scope.key}` syntax, operators, cascade |
 | [Slash Commands](SLASH_COMMANDS.md) | Webchat/CLI/VS Code command surface |

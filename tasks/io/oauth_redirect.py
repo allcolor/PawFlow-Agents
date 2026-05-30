@@ -9,11 +9,55 @@ Flow pattern:
 
 import logging
 from typing import Dict, Any, List
+from urllib.parse import urlparse
 
 from core import FlowFile, TaskFactory
 from core.base_task import BaseTask
 
 logger = logging.getLogger(__name__)
+
+
+def is_self_auth_login_url(url: str, host: str = "") -> bool:
+    """Return True when an OAuth authorize URL points back to PawFlow login."""
+    raw = str(url or "").strip()
+    if not raw:
+        return False
+    parsed = urlparse(raw)
+    path = parsed.path or raw.split("?", 1)[0]
+    if path.rstrip("/") != "/auth/login" and not path.startswith("/auth/login/"):
+        return False
+    if not parsed.netloc:
+        return True
+    return bool(host) and parsed.netloc.lower() == host.lower()
+
+
+def oauth_config_error(flowfile: FlowFile, provider_name: str, authorize_url: str) -> List[FlowFile]:
+    """Return an explicit HTTP response for OAuth self-redirect config bugs."""
+    import html
+
+    provider = html.escape(str(provider_name or "oauth"))
+    target = html.escape(str(authorize_url or ""))
+    body = f"""<!DOCTYPE html>
+<html lang=\"en\">
+<head><meta charset=\"utf-8\"><title>PawFlow auth configuration error</title>
+<style>
+body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background:#0a0a1a; color:#eee; margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center; }}
+.box {{ max-width:720px; background:#16213e; border:1px solid #e94560; border-radius:8px; padding:28px; box-shadow:0 8px 32px rgba(0,0,0,.35); }}
+h1 {{ margin:0 0 12px; font-size:22px; color:#fff; }}
+p {{ line-height:1.5; color:#d8d8e8; }}
+code {{ background:#080818; color:#ffb4c2; padding:2px 5px; border-radius:4px; }}
+</style></head>
+<body><div class=\"box\">
+<h1>OAuth configuration error</h1>
+<p>Provider <code>{provider}</code> is configured to authorize against PawFlow's own login route:</p>
+<p><code>{target}</code></p>
+<p>This would create a login redirect loop. Configure this provider's authorization URL to the external identity provider endpoint, or enable the built-in provider for local username/password login.</p>
+</div></body></html>"""
+    flowfile.set_content(body.encode("utf-8"))
+    flowfile.set_attribute("http.response.status", "500")
+    flowfile.set_attribute("http.response.header.Content-Type", "text/html; charset=utf-8")
+    flowfile.set_attribute("http.response.header.Cache-Control", "no-store")
+    return [flowfile]
 
 
 class OAuthRedirectTask(BaseTask):
@@ -67,6 +111,11 @@ class OAuthRedirectTask(BaseTask):
 
         state = service.generate_state(metadata=metadata)
         authorize_url = service.get_authorize_url(state)
+        host = flowfile.get_attribute("http.header.host") or ""
+        if is_self_auth_login_url(authorize_url, host):
+            logger.error("OAuth provider %s authorize_url points to PawFlow login: %s",
+                         getattr(service, "provider", service_id), authorize_url)
+            return oauth_config_error(flowfile, getattr(service, "provider", service_id), authorize_url)
 
         logger.info(f"OAuth2 redirect to {service.provider} (state={state[:8]}...)")
 
@@ -155,12 +204,6 @@ class OAuthRedirectTask(BaseTask):
 
     def _handle_oauth_redirect(self, flowfile, auth_svc, provider_name, ip):
         """Handle GET /auth/login/{provider} — redirect to OAuth provider."""
-        allowed, wait = auth_svc.check_rate_limit(ip)
-        if not allowed:
-            flowfile.set_content(f"Too many attempts. Wait {wait}s.".encode())
-            flowfile.set_attribute("http.response.status", "429")
-            return [flowfile]
-
         provider = auth_svc.get_provider(provider_name)
         if not provider:
             flowfile.set_content(f"Provider '{provider_name}' not available".encode())
@@ -181,6 +224,16 @@ class OAuthRedirectTask(BaseTask):
         else:
             state = auth_svc.generate_state(provider_name)
         url = provider.get_authorize_url(state, redirect_uri)
+        if is_self_auth_login_url(url, host):
+            logger.error("Auth provider %s authorize_url points to PawFlow login: %s",
+                         provider_name, url)
+            return oauth_config_error(flowfile, provider_name, url)
+
+        allowed, wait = auth_svc.check_rate_limit(ip)
+        if not allowed:
+            flowfile.set_content(f"Too many attempts. Wait {wait}s.".encode())
+            flowfile.set_attribute("http.response.status", "429")
+            return [flowfile]
         flowfile.set_content(b"")
         flowfile.set_attribute("http.response.status", "302")
         flowfile.set_attribute("http.response.header.Location", url)

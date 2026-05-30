@@ -87,6 +87,8 @@ _DEFAULT_HEADER_READ_TIMEOUT = 3.0
 
 
 def _rate_limit_policy(path: str) -> Optional[Tuple[str, int, float]]:
+    if path == "/auth/login" or path.startswith("/auth/login/"):
+        return None
     if path.startswith("/auth") or path == "/_gateway":
         return ("login", 30, 60.0)
     if path.startswith("/api/"):

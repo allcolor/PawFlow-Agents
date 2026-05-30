@@ -10,10 +10,12 @@ Flow pattern:
 import json
 import logging
 import urllib.parse
+import html
 from typing import Dict, Any, List
 
 from core import FlowFile, TaskFactory
 from core.base_task import BaseTask
+from tasks.io.oauth_redirect import is_self_auth_login_url, oauth_config_error
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +81,11 @@ class ServeLoginTask(BaseTask):
             redirect_uri = self._build_redirect_uri(flowfile, callback)
             p = auth_svc.get_provider(provider["name"])
             url = p.get_authorize_url(state, redirect_uri)
+            host = flowfile.get_attribute("http.header.host") or ""
+            if is_self_auth_login_url(url, host):
+                logger.error("Auth provider %s authorize_url points to PawFlow login: %s",
+                             provider["name"], url)
+                return oauth_config_error(flowfile, provider["name"], url)
             flowfile.set_attribute("http.response.status", "302")
             flowfile.set_attribute("http.response.header.Location", url)
             flowfile.set_content(b'Redirecting...')
@@ -127,6 +134,13 @@ class ServeLoginTask(BaseTask):
             provider_obj = auth_svc.get_provider(p["name"])
             url = provider_obj.get_authorize_url(state, redirect_uri)
             icon = p.get("icon", "")
+            if is_self_auth_login_url(url, flowfile.get_attribute("http.header.host") or ""):
+                pname = html.escape(str(p["name"]))
+                buttons_html += (
+                    f'<div class="error">OAuth provider <code>{pname}</code> is misconfigured: '
+                    f'its authorization URL points back to <code>/auth/login</code>.</div>\n'
+                )
+                continue
             buttons_html += (
                 f'<a href="{url}" class="provider-btn">'
                 f'<span class="provider-icon">{icon}</span> {p["display_name"]}'

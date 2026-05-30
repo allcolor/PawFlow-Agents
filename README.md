@@ -40,6 +40,7 @@ PawFlow gives agents a real operating surface without handing your workspace to 
 - **Multi-provider agents**: mix Codex app-server, Claude Code, Antigravity/Agy, Gemini CLI, Anthropic, OpenAI, and OpenAI-compatible services per agent or conversation.
 - **Shared clients**: continue the same conversation from the web UI, PawCode CLI, VS Code, API clients, or channel integrations.
 - **Deterministic flows**: turn repeated work into NiFi-style DAGs with scheduling, backpressure, checkpoints, approvals, and explicit LLM steps.
+- **Package ecosystem**: distribute agents, skills, tools, services, flow tasks, flows, and UI extensions as signed `.pfp` packages or import skills from supported marketplaces.
 
 ## What You Can Build
 
@@ -48,6 +49,7 @@ PawFlow gives agents a real operating surface without handing your workspace to 
 - Browser and desktop automation for workflows that do not have clean APIs.
 - Media pipelines that create images, video, audio, 3D assets, voice, and FileStore outputs.
 - Scheduled operational flows: daily digests, inbox triage, data transforms, reports, monitoring, and webhook-driven automation.
+- Reusable packages and registries for sharing internal or community agents, skills, tools, services, flow tasks, flows, and UI extensions.
 - Portable conversations with full PawFlow archives, including optional FileStore attachments and generated files.
 
 ## Quick Start
@@ -179,7 +181,7 @@ Memory digests and diary entries are automatically injected into the system prom
 - Delegate tasks to sub-agents with `delegate()`
 - Each sub-agent gets its own LLM, tools, and conversation context
 - Agents can run in parallel or sequentially
-- Git worktree isolation for parallel coding tasks
+- Git worktree isolation for parallel coding tasks is on the roadmap
 
 ### Plans
 
@@ -201,6 +203,25 @@ Memory digests and diary entries are automatically injected into the system prom
 | **AI** | 2+ | agentLoop, agentActions, tool-use cycle |
 
 Flows are defined in JSON, executed as DAGs, and support backpressure, checkpointing, crash recovery, parameter contexts, subflows, and CRON scheduling.
+
+## Packages and Marketplace
+
+PawFlow Packages (`.pfp`) are signed zip artifacts for distributing PawFlow resources. A package can include agents, prompts, skills, themes, task definitions, flows, service definitions, tools, service providers, flow tasks, task providers, and UI extensions. Install is review-first: PawFlow verifies the package signature and lock file, shows a selectable install plan, records per-object provenance, and executes code-bearing objects through a relay runtime instead of importing third-party code into the server process.
+
+Common package workflows:
+
+```bash
+/pfp key-create
+/pfp build ./my-package.pfpdir --key-env PAWFLOW_PFP_SIGNING_KEY
+/pfp inspect ./dist/my-package-1.0.0.pfp
+/pfp install ./dist/my-package-1.0.0.pfp --include skill:x,service_provider:y
+/pfp dev-load ./my-package.pfpdir --include service_provider:image --secret api_key=my_provider_key
+/pfp export --package my.bundle --version 0.1.0 --include agent:helper,flow:daily --out ./my.bundle.pfpdir
+```
+
+Marketplace and registry support is decentralized. Users can add static package registries, search them, inspect remote packages with explicit download confirmation, then install or update selected objects. Skill marketplace import is also supported for Codex/OpenAI skills, Claude/Anthropic plugin marketplaces, HermesHub, and OpenClaw GitHub tree URLs; imports are bounded, reviewed, and never grant tool permissions automatically.
+
+See [PawFlow Packages](docs/PFP_PACKAGES.md), [PFP Developer Guide](docs/PFP_DEVELOPER_GUIDE.md), [PFP Publisher Guide](docs/PFP_PUBLISHER_GUIDE.md), and [Marketplace](docs/marketplace.md).
 
 ### Expression Language
 
@@ -287,6 +308,10 @@ pytest tests/ -v    # 2500+ tests across 100+ test files
 | [Tool Catalog](docs/tool_catalog.md) | Agent-facing tools |
 | [Services Catalog](docs/services.md) | Service types and provider integrations |
 | [Task Catalog](docs/tasks.md) | Built-in flow tasks and tool tasks |
+| [PawFlow Packages](docs/PFP_PACKAGES.md) | Signed `.pfp` packages, install plans, registries, export/build, and security model |
+| [PFP Developer Guide](docs/PFP_DEVELOPER_GUIDE.md) | Local package development with `dev-load`, service providers, flow tasks, media artifacts, and SDK patterns |
+| [PFP Publisher Guide](docs/PFP_PUBLISHER_GUIDE.md) | Registry publishing, versioning, SHA pinning, and key rotation |
+| [Marketplace](docs/marketplace.md) | PFP registries, skill marketplace import, review model, and UI/CLI entry points |
 | [Security Model](docs/security_model.md) | Trust boundaries and production checklist |
 | [Deployment](docs/deployment.md) | Local, Docker, production |
 | [Docker](docs/docker.md) | Docker setup, relay mode |
@@ -299,12 +324,14 @@ See [ROADMAP.md](ROADMAP.md) for the full roadmap.
 
 Key upcoming areas:
 
-- Voice input (push-to-talk / transcription)
+- Stabilization and release hardening
+- Manual flow editor
+- New media service providers
 - Git worktree isolation for parallel agents
-- Mobile PWA client
-- Marketplace for agents, skills, tools, MCP servers, tasks, and flows
-- Full flow editor
-- Installation wizard
+- Mobile client (PWA)
+- MCP elicitation and PawFlow as an MCP server
+- Filesystem hooks
+- Full cost tracking dashboard
 
 ## Contributing
 

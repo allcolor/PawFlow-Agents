@@ -88,7 +88,9 @@ def test_security_headers_and_global_rate_limit_policy_are_present():
     assert "https://esm.sh" in csp
     assert "X-Frame-Options" in _SECURITY_HEADERS
     assert _SECURITY_HEADERS["Permissions-Policy"] == "camera=(), microphone=(self), geolocation=()"
-    assert _rate_limit_policy("/auth/login")[0] == "login"
+    assert _rate_limit_policy("/auth/login") is None
+    assert _rate_limit_policy("/auth/login/google") is None
+    assert _rate_limit_policy("/auth/callback")[0] == "login"
     assert _rate_limit_policy("/_gateway")[0] == "login"
     assert _rate_limit_policy("/api/ui")[0] == "api"
     assert _rate_limit_policy("/health") is None

@@ -808,6 +808,33 @@ class TestHTTPListenerIntegration:
         finally:
             svc.disconnect()
 
+    def test_websocket_headers_are_case_insensitive(self):
+        port = 19936
+        svc = HTTPListenerService({"host": "127.0.0.1", "port": port})
+
+        def _ws_handler(sock, _path_params, _meta):
+            sock.close()
+
+        svc.connect()
+        try:
+            svc.register_route(
+                "GET", "/ws/caddy", "test", callback=None,
+                ws_handler=_ws_handler, public=True)
+            with socket.create_connection(("127.0.0.1", port), timeout=5) as sock:
+                sock.sendall((
+                    "GET /ws/caddy HTTP/1.1\r\n"
+                    f"Host: 127.0.0.1:{port}\r\n"
+                    "Upgrade: websocket\r\n"
+                    "Connection: Upgrade\r\n"
+                    "Sec-Websocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+                    "Sec-Websocket-Version: 13\r\n"
+                    "\r\n"
+                ).encode("ascii"))
+                data = sock.recv(1024)
+            assert b"101 Switching Protocols" in data
+        finally:
+            svc.disconnect()
+
     def test_relay_websocket_accepts_internal_cookie_with_private_gateway(self, monkeypatch):
         from core import internal_auth
 

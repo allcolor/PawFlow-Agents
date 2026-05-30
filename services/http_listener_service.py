@@ -1294,10 +1294,14 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
             query = parts[1].split("?", 1)[1] if len(parts) >= 2 and "?" in parts[1] else ""
 
             headers = {}
+            headers_lc = {}
             for line in lines[1:]:
                 if ":" in line:
                     k, v = line.split(":", 1)
-                    headers[k.strip()] = v.strip()
+                    key = k.strip()
+                    value = v.strip()
+                    headers[key] = value
+                    headers_lc[key.lower()] = value
 
             _remote = client_address[0] if client_address else "?"
 
@@ -1325,7 +1329,7 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
             if path.startswith("/ws/tools/") or path.startswith("/ws/relay/"):
                 try:
                     from core.internal_auth import validate_token
-                    _ch = headers.get("Cookie", "")
+                    _ch = headers_lc.get("cookie", "")
                     for _p in _ch.split(";"):
                         _p = _p.strip()
                         if _p.startswith("pawflow_internal="):
@@ -1372,7 +1376,7 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
                     from core.security import SecurityManager
                     sm = SecurityManager.get_instance()
                     ws_token = None
-                    cookie_header = headers.get("Cookie", "")
+                    cookie_header = headers_lc.get("cookie", "")
                     for part in cookie_header.split(";"):
                         part = part.strip()
                         if part.startswith("pawflow_token="):
@@ -1431,7 +1435,7 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
                 return
 
             # RFC 6455 handshake
-            ws_key = headers.get("Sec-WebSocket-Key", "")
+            ws_key = headers_lc.get("sec-websocket-key", "")
             if not ws_key:
                 sock.sendall(b"HTTP/1.1 400 Bad Request\r\n\r\n")
                 sock.close()
@@ -1448,7 +1452,7 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
                 f"Connection: Upgrade\r\n"
                 f"Sec-WebSocket-Accept: {accept}\r\n"
             )
-            ws_protocol = headers.get("Sec-WebSocket-Protocol", "")
+            ws_protocol = headers_lc.get("sec-websocket-protocol", "")
             if ws_protocol:
                 response += f"Sec-WebSocket-Protocol: {ws_protocol.split(',')[0].strip()}\r\n"
             response += "\r\n"

@@ -14,6 +14,214 @@ from core.tool_registry import ToolRegistry
 logger = logging.getLogger(__name__)
 
 
+def _zip_rel_path(name: str, prefix: str = "") -> Optional[Path]:
+    """Return a safe archive-relative path, optionally stripping prefix."""
+    if prefix:
+        if name == prefix.rstrip("/"):
+            return None
+        if not name.startswith(prefix):
+            return None
+        name = name[len(prefix):]
+    if not name or name.endswith("/"):
+        return None
+    rel = Path(name)
+    if rel.is_absolute() or ".." in rel.parts:
+        raise ValueError(f"Unsafe archive path: {name}")
+    if rel.parts and rel.parts[0] in (".git", "filestore"):
+        return None
+    if str(rel) == "manifest.json":
+        return None
+    return rel
+
+
+def _archive_manifest(zf) -> Dict[str, Any]:
+    if "manifest.json" not in zf.namelist():
+        return {}
+    try:
+        return json.loads(zf.read("manifest.json").decode("utf-8"))
+    except Exception:
+        return {}
+
+
+def _extract_conversation_members(zf, conv_dir: Path) -> None:
+    """Extract conversation files while excluding manifest/FileStore payloads."""
+    names = zf.namelist()
+    prefix = "conversation/" if any(n.startswith("conversation/") for n in names) else ""
+    for name in names:
+        rel = _zip_rel_path(name, prefix=prefix)
+        if rel is None:
+            continue
+        dest = conv_dir / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        with zf.open(name) as src:
+            dest.write_bytes(src.read())
+
+
+def _patch_json_identity(obj: Any, cid: str, user_id: str,
+                         file_id_map: Dict[str, str]) -> Any:
+    if isinstance(obj, dict):
+        out = {}
+        for key, value in obj.items():
+            if key == "conversation_id":
+                out[key] = cid
+            elif key in ("user_id", "_meta_user_id"):
+                out[key] = user_id
+            else:
+                out[key] = _patch_json_identity(value, cid, user_id, file_id_map)
+        return out
+    if isinstance(obj, list):
+        return [_patch_json_identity(v, cid, user_id, file_id_map) for v in obj]
+    if isinstance(obj, str) and file_id_map:
+        text = obj
+        for old_id, new_id in file_id_map.items():
+            text = text.replace(old_id, new_id)
+        return text
+    return obj
+
+
+def _patch_conversation_files(conv_dir: Path, cid: str, user_id: str,
+                              file_id_map: Dict[str, str]) -> None:
+    """Patch imported JSON/JSONL identity fields without rebuilding caches."""
+    for path in sorted(conv_dir.rglob("*")):
+        if not path.is_file() or ".git" in path.parts:
+            continue
+        if path.suffix == ".json":
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            patched = _patch_json_identity(data, cid, user_id, file_id_map)
+            path.write_text(json.dumps(patched, ensure_ascii=False, indent=2), encoding="utf-8")
+        elif path.suffix == ".jsonl":
+            lines = []
+            changed = False
+            for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    lines.append(line)
+                    continue
+                patched = _patch_json_identity(row, cid, user_id, file_id_map)
+                lines.append(json.dumps(patched, ensure_ascii=False))
+                changed = True
+            if changed:
+                path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _write_filestore_archive(zf, conv_id: str, user_id: str) -> Dict[str, Any]:
+    """Write FileStore files for a conversation into an archive."""
+    from core.file_store import FileStore
+    fs = FileStore.instance()
+    objects = []
+    total_size = 0
+    with fs._store_lock:  # FileStore has no export API yet.
+        fs._ensure_loaded()
+        entries = [(fid, dict(entry)) for fid, entry in fs._entries.items()
+                   if entry.get("conversation_id") == conv_id
+                   and entry.get("user_id") == user_id]
+    for fid, entry in entries:
+        src = Path(entry.get("path", ""))
+        if not src.is_file():
+            continue
+        filename = Path(entry.get("filename") or src.name).name or "file"
+        arc = f"filestore/objects/{fid}_{filename}"
+        data = src.read_bytes()
+        zf.writestr(arc, data)
+        total_size += len(data)
+        objects.append({
+            "file_id": fid,
+            "filename": filename,
+            "content_type": entry.get("content_type", "application/octet-stream"),
+            "size": len(data),
+            "created_at": entry.get("created_at", 0),
+            "access": entry.get("access", "private"),
+            "shared_with": entry.get("shared_with", []),
+            "ttl": entry.get("ttl", 0),
+            "agent_name": entry.get("agent_name", ""),
+            "category": entry.get("category", ""),
+            "path": f"objects/{fid}_{filename}",
+        })
+    zf.writestr("filestore/index.json", json.dumps(objects, ensure_ascii=False, indent=2))
+    return {"included": True, "count": len(objects), "bytes": total_size}
+
+
+def _restore_filestore_archive(zf, cid: str, user_id: str,
+                               restore: bool,
+                               file_id_policy: str = "preserve_or_remap"
+                               ) -> Dict[str, Any]:
+    """Restore archived FileStore entries and return an old->new id map."""
+    if "filestore/index.json" not in zf.namelist():
+        return {"restored": 0, "bytes": 0, "file_id_map": {}}
+    if not restore:
+        return {"restored": 0, "bytes": 0, "file_id_map": {}}
+    import uuid as _uuid
+    from core.file_store import FileStore
+    try:
+        entries = json.loads(zf.read("filestore/index.json").decode("utf-8"))
+    except Exception as e:
+        raise ValueError(f"Invalid FileStore index: {e}")
+    if file_id_policy not in ("preserve", "remap", "preserve_or_remap"):
+        raise ValueError("Invalid file_id_policy")
+    fs = FileStore.instance()
+    id_map: Dict[str, str] = {}
+    total_size = 0
+    restored = 0
+    with fs._store_lock:
+        fs._ensure_loaded()
+        used = set(fs._entries.keys())
+        for meta in entries:
+            old_id = str(meta.get("file_id", ""))
+            if not old_id:
+                continue
+            collision = old_id in used
+            if file_id_policy == "preserve" and collision:
+                raise ValueError(f"FileStore file_id collision: {old_id}")
+            if file_id_policy == "remap" or collision:
+                new_id = _uuid.uuid4().hex[:12]
+                while new_id in used:
+                    new_id = _uuid.uuid4().hex[:12]
+            else:
+                new_id = old_id
+            used.add(new_id)
+            if new_id != old_id:
+                id_map[old_id] = new_id
+
+            rel_obj = str(meta.get("path", ""))
+            if not rel_obj or rel_obj.startswith("/") or ".." in Path(rel_obj).parts:
+                raise ValueError(f"Unsafe FileStore object path: {rel_obj}")
+            arc = "filestore/" + rel_obj
+            if arc not in zf.namelist():
+                raise ValueError(f"Missing FileStore object: {rel_obj}")
+            content = zf.read(arc)
+            filename = Path(meta.get("filename") or "file").name or "file"
+            scope_dir = fs._scope_dir(user_id, cid)
+            bucket = fs._pick_bucket(scope_dir)
+            bucket_dir = scope_dir / bucket
+            bucket_dir.mkdir(parents=True, exist_ok=True)
+            disk_path = bucket_dir / f"{new_id}_{filename}"
+            disk_path.write_bytes(content)
+            total_size += len(content)
+            restored += 1
+            fs._entries[new_id] = {
+                "filename": filename,
+                "path": str(disk_path),
+                "content_type": meta.get("content_type", "application/octet-stream"),
+                "size": len(content),
+                "created_at": meta.get("created_at", time.time()),
+                "conversation_id": cid,
+                "user_id": user_id,
+                "access": meta.get("access", "private"),
+                "shared_with": meta.get("shared_with", []),
+                "ttl": meta.get("ttl", 0),
+                "agent_name": meta.get("agent_name", ""),
+                "category": meta.get("category", ""),
+            }
+        fs._save_index()
+    return {"restored": restored, "bytes": total_size, "file_id_map": id_map}
+
+
 def _handle_conversation(self, action, body, store, user_id, flowfile):
     """Handle conversation actions. Returns [flowfile] or None."""
 
@@ -538,6 +746,7 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
 
     if action == "conv_export_pawflow":
         conv_id = body.get("conversation_id", "")
+        include_filestore = bool(body.get("include_filestore", False))
         if not conv_id:
             flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
             return [flowfile]
@@ -550,6 +759,23 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "Conversation not found"}).encode())
             return [flowfile]
         buf = io.BytesIO()
+        manifest = {
+            "format": "pawflow-conversation-archive",
+            "version": 2,
+            "mode": "full",
+            "conversation_id": conv_id,
+            "exported_at": time.time(),
+            "includes": {
+                "transcript": True,
+                "shared_context": True,
+                "agent_contexts": True,
+                "buckets": True,
+                "extras": True,
+                "bindings": (conv_dir / "bindings.json").exists(),
+                "filestore": include_filestore,
+            },
+            "filestore": {"included": False, "count": 0, "bytes": 0},
+        }
         with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
             written = set()
 
@@ -579,16 +805,23 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
                 if arcname in written:
                     continue
                 parts = rel.parts
+                if parts and parts[0] in ("filestore",):
+                    continue
                 if parts and parts[0] in ("transcript", "shared"):
                     continue
                 if len(parts) >= 2 and parts[1] == "context":
                     continue
                 zf.write(f, arcname)
+            if include_filestore:
+                manifest["filestore"] = _write_filestore_archive(zf, conv_id, user_id)
+            zf.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
         filename = f"conversation_{conv_id[:8]}.pfconv.zip"
         fid = FileStore.instance().store(filename, buf.getvalue(),
             "application/zip", user_id=user_id, conversation_id=conv_id)
         flowfile.set_content(json.dumps({
             "ok": True, "url": f"/files/{fid}/{filename}", "filename": filename,
+            "include_filestore": include_filestore,
+            "filestore": manifest.get("filestore", {}),
         }).encode())
         return [flowfile]
 
@@ -696,18 +929,37 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
             import zipfile, io
             try:
                 with zipfile.ZipFile(io.BytesIO(raw)) as zf:
-                    if "transcript.jsonl" not in zf.namelist():
+                    names = zf.namelist()
+                    transcript_name = "transcript.jsonl" if "transcript.jsonl" in names else "conversation/transcript.jsonl"
+                    if transcript_name not in names:
                         flowfile.set_content(json.dumps({"error": "Not a valid PawFlow archive (missing transcript.jsonl)"}).encode())
                         return [flowfile]
+                    manifest = _archive_manifest(zf)
                     # Count messages
-                    for line in zf.read("transcript.jsonl").decode("utf-8", errors="replace").splitlines():
+                    for line in zf.read(transcript_name).decode("utf-8", errors="replace").splitlines():
                         if line.strip(): message_count += 1
                     # Extract agents from extras.json
-                    if "extras.json" in zf.namelist():
-                        extras = json.loads(zf.read("extras.json"))
+                    extras_name = "extras.json" if "extras.json" in names else "conversation/extras.json"
+                    if extras_name in names:
+                        extras = json.loads(zf.read(extras_name))
                         conv_agents = extras.get("conv_agents", {})
                         for name, cfg in conv_agents.items():
                             agents_found.append({"name": name, "definition": cfg.get("definition", name)})
+                    filestore_entries = []
+                    if "filestore/index.json" in names:
+                        try:
+                            filestore_entries = json.loads(zf.read("filestore/index.json").decode("utf-8"))
+                        except Exception:
+                            filestore_entries = []
+                    bucket_count = len([
+                        n for n in names
+                        if (n.startswith("summaries/_shared/") or n.startswith("conversation/summaries/_shared/"))
+                        and n.endswith(".json") and not n.endswith("meta.json")
+                    ])
+                    agent_context_count = len([
+                        n for n in names
+                        if n.endswith("/context.jsonl")
+                    ])
             except zipfile.BadZipFile:
                 flowfile.set_content(json.dumps({"error": "Invalid zip file"}).encode())
                 return [flowfile]
@@ -719,6 +971,12 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
         flowfile.set_content(json.dumps({
             "ok": True, "temp_id": temp_id, "format": fmt,
             "agents": agents_found, "message_count": message_count,
+            "full_archive": bool(fmt == "pawflow"),
+            "manifest": manifest if fmt == "pawflow" else {},
+            "bucket_count": bucket_count if fmt == "pawflow" else 0,
+            "agent_context_count": agent_context_count if fmt == "pawflow" else 0,
+            "filestore_count": len(filestore_entries) if fmt == "pawflow" else 0,
+            "filestore_bytes": sum(int(x.get("size", 0) or 0) for x in filestore_entries) if fmt == "pawflow" else 0,
         }).encode())
         return [flowfile]
 
@@ -730,6 +988,8 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
         title = body.get("title", "Imported conversation")
         relay_ids = body.get("relays", []) or []
         default_relay = body.get("default_relay", "") or ""
+        restore_filestore = bool(body.get("restore_filestore", False))
+        file_id_policy = body.get("file_id_policy", "preserve_or_remap") or "preserve_or_remap"
         # Resolve llm_service -> {provider, model, base_url, containerized}
         # once per agent mapping so imported assistant/tool messages carry
         # the right `source` metadata (name, llm_service, provider, model).
@@ -772,8 +1032,17 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
         conv_dir.mkdir(parents=True, exist_ok=True)
         if fmt == "pawflow":
             import zipfile, io
-            with zipfile.ZipFile(io.BytesIO(raw)) as zf:
-                zf.extractall(conv_dir)
+            filestore_result = {"restored": 0, "bytes": 0, "file_id_map": {}}
+            try:
+                with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+                    _extract_conversation_members(zf, conv_dir)
+                    filestore_result = _restore_filestore_archive(
+                        zf, cid, user_id, restore_filestore, file_id_policy)
+            except (zipfile.BadZipFile, ValueError) as e:
+                import shutil as _shutil
+                _shutil.rmtree(conv_dir, ignore_errors=True)
+                flowfile.set_content(json.dumps({"error": str(e)}).encode())
+                return [flowfile]
             store._cid_user[cid] = user_id  # required for segmented log helpers
             now_ts = time.time()
             # Update extras with new cid, user, and agent mapping
@@ -802,6 +1071,9 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
                 if new_conv_agents:
                     extras["selectedAgent"] = list(new_conv_agents.keys())[0]
             extras_path.write_text(json.dumps(extras, ensure_ascii=False, indent=2), encoding="utf-8")
+            _patch_conversation_files(
+                conv_dir, cid, user_id,
+                filestore_result.get("file_id_map", {}) or {})
         elif fmt == "claude_code":
             # Convert CC JSONL to PawFlow transcript.
             # Real Claude Code session files use type="user"/"assistant".
@@ -1005,9 +1277,12 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
         # Cleanup temp
         import shutil
         shutil.rmtree(temp_dir, ignore_errors=True)
-        flowfile.set_content(json.dumps({
-            "ok": True, "conversation_id": cid,
-        }).encode())
+        result = {"ok": True, "conversation_id": cid}
+        if fmt == "pawflow":
+            result["filestore_restored"] = filestore_result.get("restored", 0)
+            result["filestore_bytes"] = filestore_result.get("bytes", 0)
+            result["filestore_remapped"] = len(filestore_result.get("file_id_map", {}) or {})
+        flowfile.set_content(json.dumps(result).encode())
         return [flowfile]
 
     return None

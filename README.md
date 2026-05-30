@@ -18,7 +18,7 @@
 
 ---
 
-PawFlow is a self-hosted runtime that lets AI agents work inside your real infrastructure, with durable context, relay-backed tools, and interchangeable LLM providers. Run Claude Code, Codex, Gemini, Anthropic, OpenAI, or OpenAI-compatible agents against your own workspaces without moving your data into a vendor-controlled agent cloud.
+PawFlow is a self-hosted runtime that lets AI agents work inside your real infrastructure, with durable context, relay-backed tools, and interchangeable LLM providers. Run Claude Code, Codex app-server, Antigravity/Agy, Gemini CLI, Anthropic, OpenAI, or OpenAI-compatible agents against your own workspaces without moving your data into a vendor-controlled agent cloud.
 
 ## Why PawFlow
 
@@ -26,7 +26,7 @@ Most agent tools are either libraries, hosted coding assistants, or workflow aut
 
 - **Agents work where your files are** — a relay runs next to the user's workspace and executes filesystem, shell, browser, desktop, and generation tools over a controlled connection.
 - **Context is durable** — conversations, per-agent context, memory, knowledge graphs, diaries, and project graphs survive restarts and can be shared across web, CLI, API, and channel flows.
-- **Providers are swappable** — use Claude Code, Codex CLI, Gemini CLI, Anthropic API, OpenAI API, or local/OpenAI-compatible endpoints per agent or conversation.
+- **Providers are swappable** — use Claude Code, Claude Code interactive, Codex app-server, Antigravity/Agy, Gemini CLI, Anthropic API, OpenAI API, or local/OpenAI-compatible endpoints per agent or conversation.
 - **Orchestration is built in** — combine autonomous agents with NiFi-style flows, backpressure, checkpointing, scheduling, approvals, and multi-agent delegation.
 - **Self-hosted by design** — your conversations, tools, code access, desktop access, and runtime data stay on infrastructure you operate.
 
@@ -47,12 +47,18 @@ python cli.py start --host 0.0.0.0 --port PORT
 
 ### With Docker
 
-```bash
-git clone https://github.com/allcolor/PawFlow-Agents.git
-cd PawFlow-Agents
+Downloadable artifacts are published on the [latest GitHub release](https://github.com/allcolor/PawFlow-Agents/releases/latest): installer zip, PawCode packages, Relay CLI archives, Relay Desktop installers, checksums, and source archives.
 
-bash scripts/doctor-pawflow.sh --port PORT
-bash scripts/install-pawflow.sh --port PORT
+```bash
+PAWFLOW_VERSION=$(curl -fsSL https://api.github.com/repos/allcolor/PawFlow-Agents/releases/latest \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["tag_name"])')
+
+curl -L -o "pawflow-install-$PAWFLOW_VERSION.zip" \
+  "https://github.com/allcolor/PawFlow-Agents/releases/download/$PAWFLOW_VERSION/pawflow-install-$PAWFLOW_VERSION.zip"
+unzip "pawflow-install-$PAWFLOW_VERSION.zip"
+cd "pawflow-install-$PAWFLOW_VERSION"
+
+bash scripts/install-pawflow.sh --port PORT --pull-images --version "$PAWFLOW_VERSION"
 # Installer available at https://localhost:PORT/install
 ```
 
@@ -111,14 +117,16 @@ The **server** hosts the API, agent orchestration, pipeline engine, and web UI. 
 
 | Provider | Mode | Features |
 |---|---|---|
-| **Claude Code** | CLI subprocess/container + MCP | Full tool use via relay, session persistence, thinking |
-| **Codex CLI** | CLI subprocess/container | Coding-agent sessions, container pool, streaming JSON handling |
-| **Gemini CLI** | CLI subprocess/container | Gemini-backed coding-agent sessions and streaming |
+| **Claude Code** | CLI subprocess/container + MCP | Non-interactive coding turns, session persistence, thinking |
+| **Claude Code interactive** | Interactive CLI container + observed stream | Claude subscription sessions, live control, provider-observed usage |
+| **Codex app-server** | App-server protocol in pooled container | Codex subscription or OpenAI API-key coding agents, threads, steering |
+| **Antigravity / Agy** | Interactive CLI container + observed stream | Default Gemini subscription provider, Gemini OAuth pool, MCP tools |
+| **Gemini CLI** | CLI subprocess/container | Secondary Gemini CLI path for Pro/CLI-specific workflows |
 | **Anthropic API** | Direct HTTP | Streaming, tool use, vision, extended thinking |
 | **OpenAI API** | Direct HTTP | Streaming, tool use, vision, JSON mode |
 | **OpenAI-compatible** | Direct HTTP | Local/self-hosted and third-party compatible endpoints via `base_url` |
 
-Switch providers per agent, per conversation, or globally. Self-hosted and third-party LLMs can use the OpenAI-compatible endpoint (`base_url` override). See [LLM Providers](docs/llm_providers.md).
+Switch providers per agent, per conversation, or globally. API keys normally use direct `openai`/`anthropic` services; subscription logins use the matching CLI-backed provider (`codex-app-server`, `claude-code-interactive`, or `antigravity-interactive`). Self-hosted and third-party LLMs can use the OpenAI-compatible endpoint (`base_url` override). See [LLM Providers](docs/llm_providers.md).
 
 ## Agent Capabilities
 
@@ -239,7 +247,7 @@ pytest tests/ -v    # 2500+ tests across 100+ test files
 | [Cognitive Tools](docs/COGNITIVE_TOOLS.md) | Memory, KG, diary, project graph (21 tools) |
 | [Expression Language](docs/EXPRESSION_LANGUAGE.md) | 40+ operators, scopes, cascade |
 | [Slash Commands](docs/SLASH_COMMANDS.md) | All webchat commands |
-| [LLM Providers](docs/llm_providers.md) | OpenAI, Anthropic, Claude Code, Codex, Gemini, compatible APIs |
+| [LLM Providers](docs/llm_providers.md) | OpenAI, Anthropic, Claude Code, Codex app-server, Antigravity/Agy, Gemini CLI, compatible APIs |
 | [PawCode CLI](docs/pawcode.md) | Terminal client and stream-JSON mode |
 | [VS Code Extension](docs/vscode.md) | Editor client and resource panel |
 | [Multi-Client Conversations](docs/multi_client_conversations.md) | Shared runtime across web, CLI, VS Code, API, channels |

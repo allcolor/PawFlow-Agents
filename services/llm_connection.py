@@ -1,7 +1,8 @@
 """LLM Connection Service - Connector for AI inference providers.
 
-Supports OpenAI, Anthropic, and any OpenAI-compatible API (Ollama, vLLM, LiteLLM, etc.)
-Uses shared LLM client from core/llm_client.py (stdlib HTTP, zero dependencies).
+Supports direct OpenAI/Anthropic APIs, OpenAI-compatible APIs, and CLI-backed
+providers (Claude Code, Claude Code interactive, Antigravity interactive, Codex
+app-server, Gemini CLI). Uses shared LLM client from core/llm_client.py.
 """
 
 import logging
@@ -21,9 +22,10 @@ class LLMConnectionService(BaseService):
     Delegates to core.llm_client.LLMClient for actual HTTP calls.
 
     Config:
-        provider: "openai" or "anthropic"
-        api_key: API key (or env var reference)
-        base_url: API base URL (override for self-hosted/compatible APIs)
+        provider: one of LLMClient.PROVIDERS
+        api_key: API key (or env var reference); optional for OAuth CLI providers
+        credential_service_id: OAuth credential pool for CLI providers
+        base_url: API base URL (override for compatible APIs where supported)
         default_model: Default model to use
         timeout: Request timeout in seconds
         max_retries: Number of retries on transient errors
@@ -559,7 +561,7 @@ class LLMConnectionService(BaseService):
                 "set": {
                     "api_key":       {"visible": True, "description": "Anthropic API key (empty = OAuth credential service)"},
                     "credential_service_id": {"visible": True},
-                    "base_url":      {"visible": False},
+                    "base_url":      {"visible": True, "description": "Anthropic-compatible endpoint for API-key mode (empty = provider default)"},
                     "max_retries":   {"visible": False},
                     "fallback_model": {"visible": False},
                     "supports_vision": {"visible": False},
@@ -577,7 +579,7 @@ class LLMConnectionService(BaseService):
                 "set": {
                     "api_key":       {"visible": True, "description": "Google AI Studio key (empty = Gemini OAuth credential service)"},
                     "credential_service_id": {"visible": True},
-                    "base_url":      {"visible": False},
+                    "base_url":      {"visible": True, "description": "Gemini-compatible endpoint for API-key mode (empty = provider default)"},
                     "max_retries":   {"visible": False},
                     "fallback_model": {"visible": False},
                     "supports_vision": {"visible": False},
@@ -595,7 +597,7 @@ class LLMConnectionService(BaseService):
                 "set": {
                     "api_key":       {"visible": True, "description": "OpenAI API key (empty = OAuth credential service)"},
                     "credential_service_id": {"visible": True},
-                    "base_url":      {"visible": False},
+                    "base_url":      {"visible": True, "description": "OpenAI-compatible endpoint for API-key mode (empty = provider default)"},
                     "max_retries":   {"visible": False},
                     "fallback_model": {"visible": False},
                     "supports_vision": {"visible": False},
@@ -613,7 +615,7 @@ class LLMConnectionService(BaseService):
                 "set": {
                     "api_key":       {"visible": True, "description": "Google AI Studio key (empty = OAuth credential service)"},
                     "credential_service_id": {"visible": True},
-                    "base_url":      {"visible": False},
+                    "base_url":      {"visible": True, "description": "Gemini-compatible endpoint for API-key mode (empty = provider default)"},
                     "max_retries":   {"visible": False},
                     "fallback_model": {"visible": False},
                     "supports_vision": {"visible": False},

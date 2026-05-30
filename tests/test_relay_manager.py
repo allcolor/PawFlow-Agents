@@ -243,12 +243,18 @@ def test_relay_docker_loop_reregisters_service_without_killing_container():
     assert "_service_reregister_requested.set()" in bad_request_branch
     assert "_full_reconnect_requested.set()" not in bad_request_branch
 
-    health_branch = source.split("if _consecutive_fails >= 3:", 1)[1]
-    health_branch = health_branch.split("\n\n                if self._stop_event.is_set():", 1)[0]
-    assert "if self._stop_event.is_set():" in health_branch
-    assert "self._reregister_service()" in health_branch
-    assert "self._docker_proc.kill()" not in health_branch
-    assert "_full_reconnect_requested.set()" not in health_branch
+    health_block = source.split("# Periodic health check: is the relay still connected to the server?", 1)[1]
+    health_block = health_block.split("\n\n                if self._stop_event.is_set():", 1)[0]
+    assert "if _consecutive_fails >= 3:" in health_block
+    assert "if self._stop_event.is_set():" in health_block
+    assert "self._reregister_service()" in health_block
+    early_health_branch = health_block.split(
+        "if _stale_disconnect_fails >= 10:", 1)[0]
+    assert "self._docker_proc.kill()" not in early_health_branch
+    assert "_full_reconnect_requested.set()" not in early_health_branch
+    assert "_stale_disconnect_fails >= 10" in health_block
+    assert "restarting Docker relay container" in health_block
+    assert "_full_reconnect_requested.set()" in health_block
 
 
 def test_relay_docker_launcher_passes_token_as_equals_arg():
@@ -256,6 +262,7 @@ def test_relay_docker_launcher_passes_token_as_equals_arg():
 
     assert 'f"--token={self.ws_token}"' in source
     assert '"--token", self.ws_token' not in source
+    assert '"python3", "-u", "/opt/pawflow/pawflow_relay_launcher.py"' in source
 
 
 def test_relay_manager_start_requires_logged_in_server(monkeypatch, tmp_path):

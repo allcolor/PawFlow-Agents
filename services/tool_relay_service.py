@@ -33,6 +33,55 @@ from core.base_service import BaseService
 
 logger = logging.getLogger(__name__)
 
+_RELAY_TRANSPORT_RETRY_ATTEMPTS = 5
+_RELAY_TRANSPORT_RETRY_DELAY_SECONDS = 5.0
+_RELAY_TRANSPORT_RETRY_EXHAUSTED_MARKER = "Relay transport retry attempts exhausted"
+_RELAY_TRANSPORT_ERROR_MARKERS = (
+    "Relay disconnected",
+    "Relay not connected",
+    "Failed to send to relay",
+)
+_RELAY_TRANSPORT_RESULT_PREFIXES = (
+    "Error reading",
+    "Error writing",
+    "Error editing",
+    "Error copying",
+    "Error deleting",
+    "Error executing command",
+    "Error: Relay disconnected",
+    "Error: Relay not connected",
+    "Error: Failed to send to relay",
+)
+
+
+def _contains_relay_transport_marker(text: str) -> bool:
+    return any(marker in text for marker in _RELAY_TRANSPORT_ERROR_MARKERS)
+
+
+def _is_relay_transport_result(result: Any) -> bool:
+    if not isinstance(result, str):
+        return False
+    text = result.strip()
+    if _RELAY_TRANSPORT_RETRY_EXHAUSTED_MARKER in text:
+        return False
+    if not _contains_relay_transport_marker(text):
+        return False
+    return any(text.startswith(prefix) for prefix in _RELAY_TRANSPORT_RESULT_PREFIXES)
+
+
+def _is_relay_transport_error(exc: Exception) -> bool:
+    seen = set()
+    current = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        text = str(current)
+        if _RELAY_TRANSPORT_RETRY_EXHAUSTED_MARKER in text:
+            return False
+        if _contains_relay_transport_marker(text):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
 
 def _resolve_vars_in_args(arguments: dict, env: dict, skip_keys: set = None):
     """Resolve $VAR and ${VAR} patterns in all string values of arguments.
@@ -1851,9 +1900,26 @@ class ToolRelayService(BaseService):
             _set_current_cancel_event(cancel_event)
             _set_current_kill_hooks(kill_hooks)
             try:
-                _result_holder[0] = self._do_execute(
-                    request_id, tool_name, arguments,
-                    user_id, conversation_id, agent_name)
+                for attempt in range(1, _RELAY_TRANSPORT_RETRY_ATTEMPTS + 1):
+                    try:
+                        _result_holder[0] = self._do_execute(
+                            request_id, tool_name, arguments,
+                            user_id, conversation_id, agent_name)
+                        break
+                    except Exception as e:
+                        if (not _is_relay_transport_error(e)
+                                or attempt >= _RELAY_TRANSPORT_RETRY_ATTEMPTS):
+                            _result_holder[0] = {
+                                "type": "result", "request_id": request_id,
+                                "data": f"Error: {e}"}
+                            break
+                        logger.warning(
+                            "[tool-relay] relay transport error during %s "
+                            "request=%s; retrying in %.1fs (attempt %d/%d): %s",
+                            tool_name, request_id,
+                            _RELAY_TRANSPORT_RETRY_DELAY_SECONDS,
+                            attempt, _RELAY_TRANSPORT_RETRY_ATTEMPTS, e)
+                        time.sleep(_RELAY_TRANSPORT_RETRY_DELAY_SECONDS)
             except Exception as e:
                 _result_holder[0] = {"type": "result", "request_id": request_id,
                                       "data": f"Error: {e}"}
@@ -2227,11 +2293,16 @@ class ToolRelayService(BaseService):
                     conversation_id=conversation_id, user_id=user_id,
                     agent_name=agent_name)
             result_str = str(result) if result is not None else "(no output)"
+            if _is_relay_transport_result(result_str):
+                raise RuntimeError(result_str)
             if tool_name in self._SECRET_MUTATION_TOOLS:
                 self.clear_runtime_caches(
                     conversation_id=conversation_id, user_id=user_id)
         except Exception as e:
             tool_exec_ms = (time.perf_counter() - tool_exec_started) * 1000 if 'tool_exec_started' in locals() else 0.0
+            if _is_relay_transport_error(e):
+                logger.warning("Tool relay transport failure in '%s': %s", tool_name, e)
+                raise
             result_str = f"Error: {e}"
             logger.error("Tool relay execute '%s' failed: %s", tool_name, e)
 

@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Install PawFlow in minutes with Docker or from source, then open the first-run installer and start a conversation.">
+  <title>PawFlow Quickstart</title>
+  <link rel="icon" href="assets/logo.png" type="image/png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body data-page="quickstart">
+  <header class="site-header" data-header>
+    <a class="brand" href="index.html"><img src="assets/logo.png" alt="" class="brand-mark"><span>PawFlow</span></a>
+    <button class="nav-toggle" type="button" data-nav-toggle aria-label="Open navigation" aria-expanded="false"><span></span><span></span><span></span></button>
+    <nav class="site-nav" data-nav><a href="quickstart.html">Quickstart</a><a href="docs.html">Docs</a><a href="howtos.html">How-tos</a><a href="faq.html">FAQ</a><a href="https://github.com/allcolor/PawFlow-Agents" target="_blank" rel="noreferrer">GitHub</a></nav>
+  </header>
+
+  <main>
+    <section class="page-hero">
+      <div class="container split">
+        <div data-reveal>
+          <p class="eyebrow">Quickstart</p>
+          <h1>Install PawFlow and reach the first chat.</h1>
+          <p class="hero-copy">Use the Docker installer for a first run. It prepares persistent data, starts the bootstrap server, and opens the browser wizard for the admin account and first LLM service.</p>
+          <div class="hero-actions"><a class="button button-primary" href="#docker">Docker install</a><a class="button button-secondary" href="#source">Source install</a></div>
+        </div>
+        <figure class="visual-card" data-reveal>
+          <img src="assets/media/product/quickstart-installer.webp" onerror="this.onerror=null;this.src='assets/feature-channels.png';" alt="PawFlow installer preview">
+          <figcaption>Replace this with `assets/media/product/quickstart-installer.webp` when the final wizard image is ready.</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section class="section surface" id="docker">
+      <div class="container doc-layout">
+        <aside class="toc"><a href="#docker">Docker</a><a href="#downloads">Downloads</a><a href="#wizard">Wizard</a><a href="#relay-media">Relays + media</a><a href="#source">Source</a><a href="#next">Next steps</a></aside>
+        <div class="doc-body">
+          <div class="section-head align-left" data-reveal><p class="eyebrow">Recommended</p><h2>Release installer</h2><p>The fastest path is the latest release installer zip. Download it, unzip it, then let the install script pull the matching server and relay images. Current release: <a href="#" data-release-url><span data-release-version></span></a>.</p></div>
+          <div class="code-card" data-reveal>
+            <div class="code-top"><span>terminal</span><button type="button" data-copy="#docker-install">Copy</button></div>
+            <pre id="docker-install" data-install-command><code>Loading current release command...</code></pre>
+          </div>
+          <div class="info-grid" data-reveal>
+            <div><strong>What it does</strong><p>Uses the release installer package, pulls the matching prebuilt PawFlow and relay images, prepares runtime files, and creates persistent data under `~/pawflow`.</p></div>
+            <div><strong>Where to open</strong><p>After the server starts, open `https://localhost:19990/install` for the first-run wizard.</p></div>
+          </div>
+
+          <div id="downloads" class="section-block" data-reveal>
+            <h2>Release downloads</h2>
+            <p>All downloadable packages live on the current GitHub release. The website builds these links from the single release version configured in `site.js`.</p>
+            <div class="link-grid">
+              <a href="#" data-release-download="installer"><strong>Installer zip</strong><span data-release-asset></span></a>
+              <a href="#" data-release-download="pawcodeLinuxZip"><strong>PawCode Linux zip</strong><span data-release-asset></span></a>
+              <a href="#" data-release-download="pawcodeWindowsZip"><strong>PawCode Windows zip</strong><span data-release-asset></span></a>
+              <a href="#" data-release-download="pawcodeDeb"><strong>PawCode Debian package</strong><span data-release-asset></span></a>
+              <a href="#" data-release-download="relayCliLinuxZip"><strong>Relay CLI Linux zip</strong><span data-release-asset></span></a>
+              <a href="#" data-release-download="relayCliWindowsZip"><strong>Relay CLI Windows zip</strong><span data-release-asset></span></a>
+              <a href="#" data-release-download="relayDesktopAppImage"><strong>Relay Desktop AppImage</strong><span data-release-asset></span></a>
+              <a href="#" data-release-download="relayDesktopWindows"><strong>Relay Desktop Windows</strong><span data-release-asset></span></a>
+              <a href="#" data-release-download="vscodeVsix"><strong>VS Code extension VSIX</strong><span data-release-asset></span></a>
+              <a href="#" data-release-url><strong>All release assets</strong><span>Open the GitHub release page for checksums, tarballs, source archives, and platform variants.</span></a>
+            </div>
+          </div>
+
+          <div id="wizard" class="step-list" data-reveal>
+            <h2>Complete the installer wizard</h2>
+            <article><span>1</span><div><h3>Accept the local certificate</h3><p>The bootstrap server starts with a self-signed certificate for private/local installs.</p></div></article>
+            <article><span>2</span><div><h3>Enter the bootstrap key</h3><p>The temporary first-run Private Gateway key is `RoyBetty`. The wizard forces you to replace it before finalizing.</p></div></article>
+            <article><span>3</span><div><h3>Create the runtime</h3><p>Create the admin user, configure the first LLM service and summarizer service, deploy the PawFlow Agent flow, and open the starter conversation with `assistant` selected.</p></div></article>
+          </div>
+
+          <div id="relay-media" class="section-block" data-reveal>
+            <h2>Connect relays and media services</h2>
+            <p>After the server is running, the next useful setup is usually a relay boundary and optional media/voice services.</p>
+            <div class="link-grid">
+              <a href="howtos.html#server-relay"><strong>Install a server relay</strong><span>Create a managed relay service from PawFlow for server-side tools and diagnostics.</span></a>
+              <a href="howtos.html#remote-relay"><strong>Install a remote relay</strong><span>Use Relay Desktop or Relay CLI from the release downloads on the machine that owns the files or desktop.</span></a>
+              <a href="howtos.html#desktop-relay"><strong>Access the desktop</strong><span>Open the Desktop Relay view, including local desktop access when the relay allows local host tools.</span></a>
+              <a href="howtos.html#media-service"><strong>Add media services</strong><span>Configure image, video, audio, TTS, STT, voice clone, and speech-to-video providers.</span></a>
+            </div>
+          </div>
+
+          <div id="source" class="section-block" data-reveal>
+            <h2>Source or development install</h2>
+            <p>Use source mode when you are developing PawFlow itself or want to inspect/edit the Python runtime directly.</p>
+            <div class="code-card">
+              <div class="code-top"><span>terminal</span><button type="button" data-copy="#source-install">Copy</button></div>
+              <pre id="source-install"><code>git clone https://github.com/allcolor/PawFlow-Agents.git
+cd PawFlow-Agents
+pip install -r requirements.txt
+python cli.py start --host 0.0.0.0 --port PORT</code></pre>
+            </div>
+          </div>
+
+          <div id="next" class="section-block" data-reveal>
+            <h2>Next steps</h2>
+            <div class="link-grid">
+              <a href="howtos.html#server-relay"><strong>Install a server relay</strong><span>Create the managed server-side relay service.</span></a>
+              <a href="howtos.html#remote-relay"><strong>Install a remote relay</strong><span>Connect Relay Desktop or Relay CLI to a workstation.</span></a>
+              <a href="howtos.html#desktop-relay"><strong>Open desktop access</strong><span>Give agents controlled access to a full desktop.</span></a>
+              <a href="howtos.html#first-agent"><strong>Start the first agent</strong><span>Open a conversation and select the right LLM service.</span></a>
+              <a href="howtos.html#media-service"><strong>Add media/voice</strong><span>Enable image, video, audio, TTS, STT, and voice services.</span></a>
+              <a href="faq.html#security"><strong>Check security</strong><span>Understand relays, providers, secrets, and permissions.</span></a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+  <footer class="site-footer"><div class="container footer-grid"><div><strong>PawFlow</strong><span>Install locally, then connect real infrastructure.</span></div><nav><a href="index.html">Home</a><a href="docs.html">Docs</a><a href="howtos.html">How-tos</a><a href="faq.html">FAQ</a></nav></div></footer>
+  <script src="site.js"></script>
+</body>
+</html>

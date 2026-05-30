@@ -32,6 +32,10 @@ import time
 import uuid
 
 
+TOOL_RELAY_RETRY_ATTEMPTS = 5
+TOOL_RELAY_RETRY_DELAY_SECONDS = 5.0
+
+
 # ── WebSocket client to PawFlow server ──────────────────────────
 
 class ToolRelayClient:
@@ -178,26 +182,28 @@ class ToolRelayClient:
     def request(self, method: str, **kwargs) -> any:
         """Send a request and wait for the response.
 
-        On connection failure: reconnect ONCE and retry with the same
+        On connection failure: reconnect and retry with the same
         request_id. Server caches results, so retrying the same ID
         returns the already-computed result without re-executing.
         """
         import time as _time
         request_id = uuid.uuid4().hex[:12]
-        for attempt in range(3):
+        for attempt in range(TOOL_RELAY_RETRY_ATTEMPTS):
             try:
                 self._ensure_connected()
                 return self._do_request(method, request_id, **kwargs)
             except (ConnectionError, OSError, BrokenPipeError) as e:
-                _log(f"Connection lost during request (attempt {attempt + 1}/3): {e}")
+                _log(
+                    f"Connection lost during request "
+                    f"(attempt {attempt + 1}/{TOOL_RELAY_RETRY_ATTEMPTS}): {e}")
                 # Close cleanly before reconnecting
                 try:
                     self.close()
                 except Exception:
                     logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 self._sock = None
-                if attempt < 2:
-                    _time.sleep(2)
+                if attempt < TOOL_RELAY_RETRY_ATTEMPTS - 1:
+                    _time.sleep(TOOL_RELAY_RETRY_DELAY_SECONDS)
                     continue
                 raise ConnectionError(f"Tool relay unavailable: {e}") from e
 
@@ -508,9 +514,11 @@ def main():
                     logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 client = None
         last_error = None
-        for attempt in range(5):
+        for attempt in range(TOOL_RELAY_RETRY_ATTEMPTS):
             try:
-                _log(f"Connecting to tool relay on demand (attempt {attempt + 1}/5)...")
+                _log(
+                    f"Connecting to tool relay on demand "
+                    f"(attempt {attempt + 1}/{TOOL_RELAY_RETRY_ATTEMPTS})...")
                 new_client = ToolRelayClient(
                     relay_url, relay_token, user_id, conv_id, agent_name)
                 new_client.connect()
@@ -518,14 +526,16 @@ def main():
                 return client
             except Exception as e:
                 last_error = e
-                _log(f"On-demand tool relay connect failed (attempt {attempt + 1}/5): {e}")
+                _log(
+                    f"On-demand tool relay connect failed "
+                    f"(attempt {attempt + 1}/{TOOL_RELAY_RETRY_ATTEMPTS}): {e}")
                 try:
                     new_client.close()
                 except Exception:
                     logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 client = None
-                if attempt < 4:
-                    time.sleep(0.5)
+                if attempt < TOOL_RELAY_RETRY_ATTEMPTS - 1:
+                    time.sleep(TOOL_RELAY_RETRY_DELAY_SECONDS)
         _log(f"Tool relay unavailable after retries: {last_error}")
         return None
 

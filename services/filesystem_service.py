@@ -71,6 +71,20 @@ _RELAY_SCRIPT_FILES = [
     "fs_screen.py", "fs_mcp.py", "fs_common.py",
 ]
 
+_RELAY_RETRY_ATTEMPTS = 5
+_RELAY_RETRY_DELAY_SECONDS = 5.0
+_RELAY_RETRY_EXHAUSTED_MARKER = "Relay transport retry attempts exhausted"
+_RELAY_DISCONNECT_ERRORS = (
+    "Relay disconnected",
+    "Relay not connected",
+    "Failed to send to relay",
+)
+
+
+def _is_relay_disconnect_error(exc: Exception) -> bool:
+    text = str(exc)
+    return any(marker in text for marker in _RELAY_DISCONNECT_ERRORS)
+
 
 def _get_relay_scripts_bundle():
     """Read relay scripts from tools/ and return {filename: content_b64, hash: combined_hash}."""
@@ -1112,6 +1126,36 @@ class RelayService(BaseService):
         Uses the pool's most-recently-connected entry first, falling
         back to older entries only on send failure.
         """
+        wait_timeout = kwargs.pop("_request_timeout", None)
+        retry_on_disconnect = kwargs.pop("_retry_on_disconnect", True)
+        attempts = (_RELAY_RETRY_ATTEMPTS if retry_on_disconnect else 1)
+        retry_request_id = uuid.uuid4().hex[:12]
+        last_exc = None
+        for attempt in range(attempts):
+            try:
+                return self._request_once(
+                    action, path, _request_timeout=wait_timeout,
+                    _request_id=retry_request_id, **kwargs)
+            except Exception as exc:
+                last_exc = exc
+                if not retry_on_disconnect or not _is_relay_disconnect_error(exc):
+                    raise
+                if attempt >= attempts - 1:
+                    break
+                logger.warning(
+                    "Relay request %s on %s lost connection; retrying in %.0fs "
+                    "(attempt %d/%d): %s",
+                    action, self._service_id, _RELAY_RETRY_DELAY_SECONDS,
+                    attempt + 2, attempts, exc)
+                time.sleep(_RELAY_RETRY_DELAY_SECONDS)
+        if last_exc is not None:
+            raise Exception(
+                f"{_RELAY_RETRY_EXHAUSTED_MARKER} for {action}: {last_exc}")
+        raise Exception(f"Relay request failed for {action}")
+
+    def _request_once(self, action: str, path: str = ".", **kwargs) -> Any:
+        wait_timeout = kwargs.pop("_request_timeout", None)
+        request_id = kwargs.pop("_request_id", "") or uuid.uuid4().hex[:12]
         with self._relay_pool_lock:
             pool = self._relay_pool[:]
         if not pool:
@@ -1121,9 +1165,7 @@ class RelayService(BaseService):
                 f"--server wss://<server_host>:<server_port>/ws/relay/{self._service_id} "
                 f"--relay-id {self._service_id} --token <token> --dir <path>"
             )
-        wait_timeout = kwargs.pop("_request_timeout", None)
 
-        request_id = uuid.uuid4().hex[:12]
         evt = threading.Event()
         holder: Dict[str, Any] = {}
         holder["_action"] = action

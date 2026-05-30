@@ -6,7 +6,7 @@
 |----------|-------------|
 | [Architecture](architecture.md) | Internal architecture: FlowFile, Task, Service, Flow, engine |
 | [Agent System](AGENT_SYSTEM.md) | Agent loop, context management, plans, multi-agent, streaming |
-| [LLM Providers](llm_providers.md) | OpenAI/Anthropic APIs, Claude Code, Codex, Gemini, OpenAI-compatible endpoints |
+| [LLM Providers](llm_providers.md) | Provider selection matrix for API keys and subscriptions: OpenAI/Anthropic APIs, Claude Code, Codex app-server, Antigravity/Agy, Gemini CLI, and compatible endpoints |
 | [Claude Code Interactive](CLAUDE_CODE_INTERACTIVE.md) | Experimental MITM-backed Claude Code interactive provider |
 | [PawCode CLI](pawcode.md) | Terminal client, stream-JSON mode, shared conversations |
 | [VS Code Extension](vscode.md) | Editor client, resource panel, approvals |
@@ -57,6 +57,7 @@
 ## Quick Links
 
 - **Root README**: [../README.md](../README.md)
+- **Latest downloads**: [GitHub Releases](https://github.com/allcolor/PawFlow-Agents/releases/latest) -- installer zip, PawCode, Relay CLI, Relay Desktop, source archives
 - **CHANGELOG**: [../CHANGELOG.md](../CHANGELOG.md)
 - **Project summary**: [../PROJECT_SUMMARY.md](../PROJECT_SUMMARY.md)
 - **CLAUDE.md**: [../CLAUDE.md](../CLAUDE.md) -- development context for AI assistants

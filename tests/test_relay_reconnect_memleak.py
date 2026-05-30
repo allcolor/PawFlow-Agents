@@ -67,6 +67,74 @@ def test_clear_last_relay_unblocks_all_pending_even_without_reader_tag():
     assert svc._relay_pool == []
 
 
+def test_request_retries_transient_relay_disconnect(monkeypatch):
+    import services.filesystem_service as fs_mod
+
+    svc = RelayService({"_service_id": "fs1", "token": "tok"})
+    calls = {"count": 0}
+    sleeps = []
+    request_ids = []
+
+    def _request_once(action, path=".", **kwargs):
+        calls["count"] += 1
+        request_ids.append(kwargs.get("_request_id"))
+        if calls["count"] == 1:
+            raise Exception("Relay disconnected")
+        assert action == "read_file"
+        assert path == "README.md"
+        return "ok"
+
+    monkeypatch.setattr(svc, "_request_once", _request_once)
+    monkeypatch.setattr(fs_mod.time, "sleep", lambda delay: sleeps.append(delay))
+
+    assert svc._request("read_file", "README.md") == "ok"
+    assert calls["count"] == 2
+    assert sleeps == [5.0]
+    assert request_ids[0] == request_ids[1]
+
+
+def test_request_does_not_retry_functional_relay_error(monkeypatch):
+    import services.filesystem_service as fs_mod
+
+    svc = RelayService({"_service_id": "fs1", "token": "tok"})
+    calls = {"count": 0}
+
+    def _request_once(action, path=".", **kwargs):
+        calls["count"] += 1
+        raise Exception("file not found")
+
+    monkeypatch.setattr(svc, "_request_once", _request_once)
+    monkeypatch.setattr(fs_mod.time, "sleep", lambda _delay: None)
+
+    with pytest.raises(Exception, match="file not found"):
+        svc._request("read_file", "missing.txt")
+    assert calls["count"] == 1
+
+
+def test_request_marks_relay_disconnect_after_retry_exhaustion(monkeypatch):
+    import services.filesystem_service as fs_mod
+
+    svc = RelayService({"_service_id": "fs1", "token": "tok"})
+    calls = {"count": 0}
+    sleeps = []
+    request_ids = []
+
+    def _request_once(_action, _path=".", **kwargs):
+        calls["count"] += 1
+        request_ids.append(kwargs.get("_request_id"))
+        raise Exception("Relay disconnected")
+
+    monkeypatch.setattr(svc, "_request_once", _request_once)
+    monkeypatch.setattr(fs_mod.time, "sleep", lambda delay: sleeps.append(delay))
+
+    with pytest.raises(Exception, match="Relay transport retry attempts exhausted"):
+        svc._request("read_file", "README.md")
+
+    assert calls["count"] == 5
+    assert sleeps == [5.0, 5.0, 5.0, 5.0]
+    assert len(set(request_ids)) == 1
+
+
 class _BrokenReader:
     def exception(self):
         return TimeoutError("network interface changed")

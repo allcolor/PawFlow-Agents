@@ -56,6 +56,9 @@ def test_release_assets_workflow_publishes_all_installers():
     assert "scripts/build-pawcode-installer.py --version" in workflow
     assert "scripts/build-relay-cli-installer.py --version" in workflow
     assert "npm run ${{ matrix.npm_script }}" in workflow
+    assert "vscode-extension" in workflow
+    assert "node node_modules/@vscode/vsce/vsce package" in workflow
+    assert "dist/vscode-installers/*.vsix" in workflow
     assert "ubuntu-latest" in workflow
     assert "windows-latest" in workflow
     assert "dist/pawflow-installers/*" in workflow

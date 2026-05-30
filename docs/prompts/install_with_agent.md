@@ -1,6 +1,6 @@
 # Prompt: Install PawFlow Server With A Local Coding Agent
 
-Give this prompt to Codex, Claude Code, Gemini CLI, or another local coding agent
+Give this prompt to Codex app-server, Claude Code, Antigravity/Agy, Gemini CLI, or another local coding agent
 running on the target machine.
 
 ```text

@@ -578,7 +578,7 @@ class RelayThread:
                 "-e", "USER=pawflow",
                 "-e", "PATH=/home/pawflow/.cargo/bin:/home/pawflow/go/bin:/usr/local/go/bin:/opt/kotlinc/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
                 self.docker_image,
-                "python3", "/opt/pawflow/pawflow_relay_launcher.py",
+                "python3", "-u", "/opt/pawflow/pawflow_relay_launcher.py",
                 "--server", ws_url,
                 # token_urlsafe() can generate values beginning with "--".
                 # Pass the token with --token=VALUE so argparse cannot
@@ -640,6 +640,7 @@ class RelayThread:
                 _health_interval = 30  # check relay connectivity every 30s
                 _last_health = time.time()
                 _consecutive_fails = 0
+                _stale_disconnect_fails = 0
 
                 while not self._stop_event.is_set():
                     try:
@@ -667,11 +668,19 @@ class RelayThread:
                         _last_health = time.time()
                         if self._check_relay_connected():
                             _consecutive_fails = 0
+                            _stale_disconnect_fails = 0
                         else:
                             _consecutive_fails += 1
+                            _stale_disconnect_fails += 1
                             self._log(
                                 f"[Relay] Health: relay not connected "
                                 f"({_consecutive_fails} consecutive)")
+                            if _stale_disconnect_fails >= 10:
+                                self._log(
+                                    "[Relay] Relay disconnected for an extended "
+                                    "period; restarting Docker relay container")
+                                _full_reconnect_requested.set()
+                                continue
                             if _consecutive_fails >= 3:
                                 if self._stop_event.is_set():
                                     break

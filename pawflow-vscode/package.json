@@ -4,6 +4,12 @@
   "description": "AI agent chat and code assistant powered by PawFlow",
   "version": "0.1.0",
   "publisher": "pawflow",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/allcolor/PawFlow-Agents.git",
+    "directory": "pawflow-vscode"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },

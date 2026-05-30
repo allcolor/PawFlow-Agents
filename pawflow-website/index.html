@@ -3,331 +3,191 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>PawFlow — AI Agent, Desktop, and Flow Orchestration Platform</title>
+  <meta name="description" content="PawFlow is a self-hosted agent runtime for real infrastructure: durable AI agents, relay-backed tools, shared context, and deterministic flows.">
+  <title>PawFlow - Self-hosted agent runtime</title>
   <link rel="icon" href="assets/logo.png" type="image/png">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 </head>
-<body>
-
-<!-- Navigation -->
-<nav class="nav">
-  <div class="nav-inner">
-    <a href="#" class="nav-brand">
-      <img src="assets/logo.png" alt="PawFlow" class="nav-logo">
+<body data-page="home">
+  <header class="site-header" data-header>
+    <a class="brand" href="index.html" aria-label="PawFlow home">
+      <img src="assets/logo.png" alt="" class="brand-mark">
       <span>PawFlow</span>
     </a>
-    <div class="nav-links">
-      <a href="#features">Features</a>
-      <a href="#architecture">Architecture</a>
-      <a href="#channels">Channels</a>
-      <a href="#get-started">Get Started</a>
-      <a href="https://github.com/allcolor/PawFlow-Agents" class="btn btn-outline" target="_blank">GitHub</a>
-      <a href="/docs" class="btn btn-primary">Documentation</a>
-    </div>
-    <button class="nav-toggle" onclick="document.querySelector('.nav-links').classList.toggle('open')">
+    <button class="nav-toggle" type="button" data-nav-toggle aria-label="Open navigation" aria-expanded="false">
       <span></span><span></span><span></span>
     </button>
-  </div>
-</nav>
+    <nav class="site-nav" data-nav>
+      <a href="quickstart.html">Quickstart</a>
+      <a href="docs.html">Docs</a>
+      <a href="howtos.html">How-tos</a>
+      <a href="faq.html">FAQ</a>
+      <a href="https://github.com/allcolor/PawFlow-Agents" target="_blank" rel="noreferrer">GitHub</a>
+    </nav>
+  </header>
 
-<!-- Hero -->
-<section class="hero">
-  <div class="hero-bg">
-    <img src="assets/hero-banner.png" alt="" class="hero-bg-img">
-    <div class="hero-overlay"></div>
-  </div>
-  <div class="hero-content">
-    <div class="hero-badge">Open Source · MIT License</div>
-    <h1>AI Agents Meet<br><span class="gradient-text">Deterministic Pipelines</span></h1>
-    <p class="hero-sub">
-      PawFlow combines multi-provider AI agents, shared conversations, desktop tools,
-      multimodal generation, and deterministic flows that can keep running after the chat ends.
-    </p>
-    <div class="hero-actions">
-      <a href="#get-started" class="btn btn-primary btn-lg">Get Started</a>
-      <a href="#architecture" class="btn btn-outline btn-lg">How It Works</a>
-    </div>
-    <div class="hero-stats">
-      <div class="stat"><span class="stat-num">100+</span><span class="stat-label">Task Types</span></div>
-      <div class="stat"><span class="stat-num">8+</span><span class="stat-label">Clients & Channels</span></div>
-      <div class="stat"><span class="stat-num">5+</span><span class="stat-label">LLM Backends</span></div>
-      <div class="stat"><span class="stat-num">∞</span><span class="stat-label">Custom Flows</span></div>
-    </div>
-  </div>
-</section>
-
-<!-- Problem / Solution -->
-<section class="section section-dark">
-  <div class="container">
-    <div class="two-col">
-      <div class="col">
-        <h2 class="section-label">The Problem</h2>
-        <h3>AI agents are creative.<br>But creativity ≠ reliability.</h3>
-        <p>Pure chat agents are great at exploration, but fragile for recurring operations. A 7 AM digest, webhook, or data sync should not depend on a fresh model decision at every run unless you explicitly want that behavior.</p>
+  <main>
+    <section class="hero hero-home">
+      <div class="hero-media" aria-hidden="true">
+        <img src="assets/media/hero/pawflow-runtime-hero.webp" onerror="this.onerror=null;this.src='assets/hero-banner.png';" alt="" class="hero-image">
+        <div class="flow-line flow-line-a"></div>
+        <div class="flow-line flow-line-b"></div>
+        <div class="flow-line flow-line-c"></div>
       </div>
-      <div class="col">
-        <h2 class="section-label">The Solution</h2>
-        <h3>Agents design.<br>ETL executes.</h3>
-        <p>PawFlow separates <strong>conception</strong> from <strong>execution</strong>. The AI agent has its creative moment when it generates the flow. Once deployed, the flow runs as deterministic, structured JSON — no LLM in the loop. Same input, same output, every time.</p>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- Features -->
-<section id="features" class="section">
-  <div class="container">
-    <h2 class="section-title">Everything You Need</h2>
-    <p class="section-desc">A self-hosted runtime for agentic coding, desktop automation, multimodal tools, and repeatable flows.</p>
-
-    <div class="features-grid">
-      <div class="feature-card feature-card-wide">
-        <img src="assets/feature-agent-flows.png" alt="Agent-Generated Flows">
-        <div class="feature-body">
-          <h3>Agent-Generated Flows</h3>
-          <p>Describe what you need in natural language. The AI agent generates a complete, deployable pipeline — cron triggers, data fetching, LLM processing, email delivery. All as structured JSON, ready to run forever.</p>
+      <div class="hero-content" data-reveal>
+        <p class="eyebrow">Open source. Self-hosted. Built for real work.</p>
+        <h1>Self-hosted agent runtime for real infrastructure.</h1>
+        <p class="hero-copy">Run durable AI agents against your own files, tools, browsers, desktops, services, and workflows without moving the runtime into a vendor-controlled agent cloud.</p>
+        <div class="hero-actions">
+          <a class="button button-primary" href="quickstart.html">Install PawFlow</a>
+          <a class="button button-secondary" href="#how-it-works">See how it works</a>
+        </div>
+        <div class="signal-row" aria-label="PawFlow capabilities">
+          <span>Relay-backed tools</span>
+          <span>Shared context</span>
+          <span>Multi-provider agents</span>
+          <span>Deterministic flows</span>
         </div>
       </div>
+    </section>
 
-      <div class="feature-card">
-        <div class="feature-icon">⚡</div>
-        <h3>100+ Task Types</h3>
-        <p>From Kafka to S3, MQTT to SQL, CSV to Parquet — a full ETL toolkit. Plus HTTP listeners, webhooks, rate control, deduplication, and merge/split/routing.</p>
+    <section class="band compact-band">
+      <div class="container product-strip" data-reveal>
+        <a href="#workspace-menu"><strong>Web UI</strong><span>chat, context, memory, terminals</span></a>
+        <a href="docs.html#clients"><strong>PawCode</strong><span>terminal client, shared conversations</span></a>
+        <a href="#workspace-menu"><strong>Desktop Relay</strong><span>remote or local screen access</span></a>
+        <a href="docs.html#automation"><strong>Flows</strong><span>scheduled DAGs with backpressure</span></a>
       </div>
+    </section>
 
-      <div class="feature-card">
-        <div class="feature-icon">🤖</div>
-        <h3>Multi-Agent Orchestration</h3>
-        <p>Spawn agents, assign tasks, verify results. Agents can collaborate, delegate, and escalate — each with its own LLM, tools, and permissions.</p>
-      </div>
-
-      <div class="feature-card">
-        <div class="feature-icon">🔒</div>
-        <h3>Fine-Grained Permissions</h3>
-        <p>Per-tool allow/deny/confirm controls. Encrypted secrets. OAuth2 built-in. Checkpoints with /rewind. You control what agents can do.</p>
-      </div>
-
-      <div class="feature-card">
-        <div class="feature-icon">🧠</div>
-        <h3>Persistent Memory</h3>
-        <p>Agents remember across sessions with semantic search. Not just keyword matching — actual meaning-based recall that improves over time.</p>
-      </div>
-
-      <div class="feature-card">
-        <div class="feature-icon">🎨</div>
-        <h3>Media Generation</h3>
-        <p>Generate images, video, audio, voice, 3D assets, try-on outputs, lipsync clips, and upscaled images directly from agent conversations and flows.</p>
-      </div>
-
-      <div class="feature-card">
-        <div class="feature-icon">📋</div>
-        <h3>Plans & Tasks</h3>
-        <p>Structured plans with approval gates. Assignable tasks with verification. Agents don't just talk — they execute and report.</p>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- Architecture -->
-<section id="architecture" class="section section-dark">
-  <div class="container">
-    <h2 class="section-title">The Architecture Difference</h2>
-    <p class="section-desc">Agents can explore, build, and delegate; flows handle the repeatable parts with explicit structure.</p>
-
-    <div class="arch-comparison">
-      <div class="arch-card arch-others">
-        <h3>Other Platforms</h3>
-        <div class="arch-flow">
-          <div class="arch-step">Cron Trigger</div>
-          <div class="arch-arrow">→</div>
-          <div class="arch-step arch-llm">🤖 LLM Agent</div>
-          <div class="arch-arrow">→</div>
-          <div class="arch-step arch-llm">🤖 LLM Decides</div>
-          <div class="arch-arrow">→</div>
-          <div class="arch-step">Maybe Sends Email</div>
+    <section class="section" id="why">
+      <div class="container split">
+        <div data-reveal>
+          <p class="eyebrow">Why PawFlow</p>
+          <h2>Agents should work where your infrastructure already is.</h2>
+          <p class="lead">PawFlow keeps the orchestration layer under your control. The server coordinates agents and conversations; relays execute tools next to the workspace; flows run repeatable work with explicit structure.</p>
+          <div class="bullet-stack">
+            <div><strong>Your files stay reachable through relays.</strong><span>Agents can read, edit, search, run commands, use browser/desktop actions, and generate media through controlled tool routes.</span></div>
+            <div><strong>Context survives restarts.</strong><span>Conversations, memory, knowledge graphs, diaries, project graphs, and FileStore outputs remain available across clients.</span></div>
+            <div><strong>Providers are interchangeable.</strong><span>Use Codex app-server, Claude Code interactive, Antigravity/Agy, Gemini CLI, Anthropic, OpenAI, or compatible endpoints per agent or conversation.</span></div>
+          </div>
         </div>
-        <p class="arch-verdict">❌ Non-deterministic. The agent is in the execution loop. It might decide not to send. It might hallucinate. Different result every run.</p>
+        <figure class="visual-card" data-reveal>
+          <img src="assets/media/product/webchat-console.webp" onerror="this.onerror=null;this.src='assets/feature-agent-flows.png';" alt="PawFlow web chat and flow console preview">
+          <figcaption>One runtime shared by web chat, PawCode, VS Code, API clients, and channel flows.</figcaption>
+        </figure>
       </div>
+    </section>
 
-      <div class="arch-card arch-pawflow">
-        <h3>PawFlow</h3>
-        <div class="arch-flow">
-          <div class="arch-step arch-llm">🤖 Agent Designs Flow</div>
-          <div class="arch-arrow">→</div>
-          <div class="arch-step arch-etl">📋 JSON Pipeline</div>
-          <div class="arch-arrow">→</div>
-          <div class="arch-step arch-etl">⚙️ ETL Executes</div>
-          <div class="arch-arrow">→</div>
-          <div class="arch-step arch-etl">✅ Always Sends</div>
+    <section class="section surface" id="how-it-works">
+      <div class="container">
+        <div class="section-head" data-reveal>
+          <p class="eyebrow">Architecture</p>
+          <h2>A clear boundary between server, relay, agent, and flow.</h2>
+          <p>PawFlow does not need permanent direct access to every machine. It routes work through connected relays and explicit services.</p>
         </div>
-        <p class="arch-verdict">✅ Deterministic. The agent designed it once. The ETL runs it forever. Same input → same output.</p>
+        <div class="architecture-grid">
+          <div class="architecture-diagram" data-reveal>
+            <div class="node clients">Clients<br><span>Web, CLI, VS Code, API</span></div>
+            <div class="connector"></div>
+            <div class="node server">PawFlow Server<br><span>agents, context, flows, auth</span></div>
+            <div class="connector"></div>
+            <div class="node relay">Relay<br><span>filesystem, shell, screen, browser</span></div>
+            <div class="connector"></div>
+            <div class="node workspace">Workspace<br><span>code, desktop, local services</span></div>
+          </div>
+          <div class="arch-copy" data-reveal>
+            <h3>Design with agents. Execute with structure.</h3>
+            <p>Use agents for exploration, coding, decisions, and maintenance. When work becomes repeatable, turn it into a flow: CRON triggers, task DAGs, backpressure, checkpoints, retries, and explicit LLM calls only where modeled.</p>
+            <a class="inline-link" href="howtos.html#daily-digest">View the daily digest pattern</a>
+          </div>
+        </div>
       </div>
-    </div>
+    </section>
 
-    <div class="arch-detail">
-      <img src="assets/feature-architecture.png" alt="Architecture" class="arch-img">
-      <div class="arch-text">
-        <h3>A Controlled Spectrum</h3>
-        <p>You choose <em>exactly</em> how much AI you want at each step:</p>
-        <ul>
-          <li><strong>Fully automatic</strong> — zero agent at execution. Pure ETL.</li>
-          <li><strong>Semi-autonomous</strong> — agent consulted on specific decisions via <code>inferLLM</code> tasks.</li>
-          <li><strong>Supervised</strong> — human in the loop via <code>publishMessage</code> + <code>readConversation</code>.</li>
-        </ul>
-        <p>And the ETL can call agents, publish to conversations, and even participate in them. It's not a wall between two worlds — it's a bridge you control.</p>
+    <section class="section" id="workspace-menu">
+      <div class="container split reverse">
+        <figure class="visual-card" data-reveal>
+          <img src="assets/media/product/webchat-workspace-menu.webp" onerror="this.onerror=null;this.src='assets/media/product/resource-panel.webp';this.onerror=function(){this.src='assets/feature-channels.png';};" alt="PawFlow webchat workspace menu with relay tools">
+          <figcaption>Planned capture: webchat side menu showing relay desktop, terminals, context, memory, and VS Code/code-server entries.</figcaption>
+        </figure>
+        <div data-reveal>
+          <p class="eyebrow">Webchat workspace</p>
+          <h2>The conversation can open the same surfaces the agent uses.</h2>
+          <p class="lead">A linked relay is not only file access. From the webchat, operators can open desktop sessions, terminals, VS Code/code-server, context editors, memory editors, and provider runtime views while the agent works.</p>
+          <div class="bullet-stack">
+            <div><strong>Desktop Relay</strong><span>Agents can inspect and control a full desktop through screen tools. With a local relay started with `allow_local`, that desktop can be the local machine where the relay runs; otherwise it is the relay container or configured remote desktop.</span></div>
+            <div><strong>Terminals on the relay</strong><span>The webchat can open terminals for the relay Docker workspace, the host-local relay surface when allowed, and the relay server/runtime shell used for diagnostics.</span></div>
+            <div><strong>Interactive provider tmux</strong><span>CLI-backed interactive providers such as Claude Code interactive and Antigravity/Agy run in tmux-backed sessions, so their live terminal state can be observed and debugged instead of being a black box.</span></div>
+          </div>
+        </div>
       </div>
-    </div>
-  </div>
-</section>
-
-<!-- Channels -->
-<section id="channels" class="section">
-  <div class="container">
-    <h2 class="section-title">Talk to Your Agents Anywhere</h2>
-    <p class="section-desc">Connect via the channels your team already uses.</p>
-
-    <div class="channels-row">
-      <img src="assets/feature-channels.png" alt="Multi-channel" class="channels-img">
-    </div>
-
-    <div class="channels-grid">
-      <div class="channel"><span class="channel-icon">💬</span> WhatsApp</div>
-      <div class="channel"><span class="channel-icon">✈️</span> Telegram</div>
-      <div class="channel"><span class="channel-icon">🎮</span> Discord</div>
-      <div class="channel"><span class="channel-icon">💼</span> Slack</div>
-      <div class="channel"><span class="channel-icon">🌐</span> Web UI</div>
-      <div class="channel"><span class="channel-icon">⌨️</span> CLI</div>
-      <div class="channel"><span class="channel-icon">🧩</span> VS Code</div>
-      <div class="channel"><span class="channel-icon">🐍</span> Python SDK</div>
-    </div>
-  </div>
-</section>
-
-<!-- Code Example -->
-<section class="section section-dark">
-  <div class="container">
-    <h2 class="section-title">See It In Action</h2>
-    <p class="section-desc">A real flow generated by an agent — daily crypto digest with LLM analysis, sent via OAuth2 email.</p>
-
-    <div class="code-block">
-      <div class="code-header">
-        <span class="code-dot red"></span>
-        <span class="code-dot yellow"></span>
-        <span class="code-dot green"></span>
-        <span class="code-title">daily-crypto-email-oauth2.json</span>
+      <div class="container menu-grid" data-reveal>
+        <article class="feature"><span>01</span><h3>Desktop access</h3><p>Screen, browser, VNC, and full desktop tools let agents operate real UI workflows when APIs are not enough.</p></article>
+        <article class="feature"><span>02</span><h3>Relay terminals</h3><p>Open shell sessions against the remote Docker relay, the local host relay when `allow_local` is enabled, or the relay server runtime.</p></article>
+        <article class="feature"><span>03</span><h3>Context editor</h3><p>Inspect and adjust the conversation context that agents will actually see before a turn runs.</p></article>
+        <article class="feature"><span>04</span><h3>Memory editor</h3><p>Review, correct, or remove durable memories so long-term context stays useful and auditable.</p></article>
+        <article class="feature"><span>05</span><h3>VS Code/code-server</h3><p>Open a browser editor attached to the relay workspace for hands-on review while agents continue in the same conversation.</p></article>
+        <article class="feature"><span>06</span><h3>Provider sessions</h3><p>Watch tmux-backed CLI providers and relay diagnostics when a provider, login, or long-running tool needs direct inspection.</p></article>
       </div>
-      <pre><code>{
-  <span class="k">"id"</span>: <span class="s">"daily-crypto-email-oauth2"</span>,
-  <span class="k">"tasks"</span>: {
-    <span class="k">"trigger"</span>:           { <span class="k">"type"</span>: <span class="s">"cronTrigger"</span>, <span class="k">"parameters"</span>: { <span class="k">"schedule"</span>: <span class="s">"0 7 * * *"</span> } },
-    <span class="k">"fetch_crypto"</span>:       { <span class="k">"type"</span>: <span class="s">"executeScript"</span>,  <span class="c">// Fetch CoinGecko API</span> },
-    <span class="k">"prepare_llm_input"</span>:  { <span class="k">"type"</span>: <span class="s">"executeScript"</span>,  <span class="c">// Format prompt</span> },
-    <span class="k">"generate_summary"</span>:   { <span class="k">"type"</span>: <span class="s">"inferLLM"</span>,       <span class="c">// AI analysis</span> },
-    <span class="k">"merge_parts"</span>:        { <span class="k">"type"</span>: <span class="s">"mergeContent"</span>    <span class="c">// Combine data + summary</span> },
-    <span class="k">"compose_email"</span>:      { <span class="k">"type"</span>: <span class="s">"executeScript"</span>,  <span class="c">// Build email body</span> },
-    <span class="k">"send_email"</span>:         { <span class="k">"type"</span>: <span class="s">"sendEmail"</span>, <span class="k">"parameters"</span>: { <span class="k">"auth_type"</span>: <span class="s">"oauth2"</span> } }
-  },
-  <span class="k">"relations"</span>: [
-    { <span class="k">"from"</span>: <span class="s">"trigger"</span>, <span class="k">"to"</span>: <span class="s">"fetch_crypto"</span> },
-    { <span class="k">"from"</span>: <span class="s">"fetch_crypto"</span>, <span class="k">"to"</span>: <span class="s">"prepare_llm_input"</span> },
-    { <span class="k">"from"</span>: <span class="s">"prepare_llm_input"</span>, <span class="k">"to"</span>: <span class="s">"generate_summary"</span> },
-    { <span class="k">"from"</span>: <span class="s">"generate_summary"</span>, <span class="k">"to"</span>: <span class="s">"merge_parts"</span> },
-    { <span class="k">"from"</span>: <span class="s">"merge_parts"</span>, <span class="k">"to"</span>: <span class="s">"compose_email"</span> },
-    { <span class="k">"from"</span>: <span class="s">"compose_email"</span>, <span class="k">"to"</span>: <span class="s">"send_email"</span> }
-  ]
-}</code></pre>
+    </section>
+
+    <section class="section">
+      <div class="container">
+        <div class="section-head" data-reveal>
+          <p class="eyebrow">What you can do</p>
+          <h2>From first chat to operational workflows.</h2>
+        </div>
+        <div class="feature-grid">
+          <article class="feature" data-reveal><span>01</span><h3>Agentic coding</h3><p>Run coding agents against a linked workspace with relay-backed read, edit, shell, grep, browser, and project graph tools.</p></article>
+          <article class="feature" data-reveal><span>02</span><h3>Multi-agent work</h3><p>Delegate tasks, assign plans, verify outputs, and run different providers in the same conversation.</p></article>
+          <article class="feature" data-reveal><span>03</span><h3>Desktop and browser tasks</h3><p>Operate controlled desktops, browsers, VNC sessions, and forwarded local services from the same runtime.</p></article>
+          <article class="feature" data-reveal><span>04</span><h3>Media generation</h3><p>Generate and transform images, video, audio, voice, 3D assets, try-on outputs, and upscaled media into FileStore.</p></article>
+          <article class="feature" data-reveal><span>05</span><h3>Deterministic automations</h3><p>Run NiFi-style JSON flows with 100+ task types across IO, data, control, system, and AI categories.</p></article>
+          <article class="feature" data-reveal><span>06</span><h3>Self-hosted security model</h3><p>Use explicit relays, stored secrets, provider boundaries, private gateways, and per-agent permissions.</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section surface">
+      <div class="container split reverse">
+        <figure class="visual-card" data-reveal>
+          <img src="assets/media/diagrams/agent-to-flow-pattern.webp" onerror="this.onerror=null;this.src='assets/feature-architecture.png';" alt="Agent-created deterministic flow pattern">
+          <figcaption>Agents are useful at design time; flows keep the schedule reliable at runtime.</figcaption>
+        </figure>
+        <div data-reveal>
+          <p class="eyebrow">The practical difference</p>
+          <h2>Not every workflow should keep an agent in the loop forever.</h2>
+          <p class="lead">For recurring jobs, PawFlow lets the agent design or maintain the automation, then the flow engine runs the explicit graph. You decide where LLM calls are allowed and where execution must stay deterministic.</p>
+          <div class="compare-row">
+            <div><strong>Agent mode</strong><span>Explore, code, inspect, reason, delegate.</span></div>
+            <div><strong>Flow mode</strong><span>Schedule, route, retry, transform, deliver.</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section cta-section">
+      <div class="container cta-panel" data-reveal>
+        <div>
+          <p class="eyebrow">Five-minute path</p>
+          <h2>Install it, open the wizard, start the first conversation.</h2>
+          <p>The Docker installer checks prerequisites, starts PawFlow, opens the bootstrap wizard, creates the admin user, configures the first LLM service, and deploys the starter agent flow.</p>
+        </div>
+        <div class="cta-actions">
+          <a class="button button-primary" href="quickstart.html">Open quickstart</a>
+          <a class="button button-secondary" href="docs.html">Browse docs</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-grid">
+      <div><strong>PawFlow</strong><span>Self-hosted agent runtime for real infrastructure.</span></div>
+      <nav><a href="quickstart.html">Quickstart</a><a href="docs.html">Docs</a><a href="howtos.html">How-tos</a><a href="faq.html">FAQ</a></nav>
     </div>
-    <p class="code-caption">An agent generated this flow from: <em>"Send me a daily crypto digest email at 7 AM with AI analysis."</em><br>It runs every day. Deterministically. The agent is no longer in the loop.</p>
-  </div>
-</section>
-
-<!-- LLM Providers -->
-<section class="section">
-  <div class="container">
-    <h2 class="section-title">Bring Your Own Model</h2>
-    <p class="section-desc">Run agents through API providers or provider CLIs, with model selection per agent or conversation.</p>
-    <div class="providers-grid">
-      <div class="provider">Claude Code</div>
-      <div class="provider">Codex CLI</div>
-      <div class="provider">Gemini CLI</div>
-      <div class="provider">OpenAI API</div>
-      <div class="provider">Anthropic API</div>
-      <div class="provider">OpenAI-compatible</div>
-    </div>
-  </div>
-</section>
-
-<!-- Get Started -->
-<section id="get-started" class="section section-dark">
-  <div class="container">
-    <h2 class="section-title">Get Started in Minutes</h2>
-    <div class="install-steps">
-      <div class="install-step">
-        <div class="step-num">1</div>
-        <h3>Clone & Install</h3>
-        <div class="code-inline">git clone https://github.com/allcolor/PawFlow-Agents<br>cd PawFlow-Agents && pip install -e .</div>
-      </div>
-      <div class="install-step">
-        <div class="step-num">2</div>
-        <h3>Configure</h3>
-        <div class="code-inline">cp .env.example .env<br># Add at least one LLM backend</div>
-      </div>
-      <div class="install-step">
-        <div class="step-num">3</div>
-        <h3>Launch</h3>
-        <div class="code-inline">python cli.py run --flow data/deployments/global/pawflow-agent.json<br># Open http://localhost:9090/chat</div>
-      </div>
-    </div>
-    <div class="cta-row">
-      <a href="/docs" class="btn btn-primary btn-lg">Read the Docs</a>
-      <a href="https://github.com/allcolor/PawFlow-Agents" class="btn btn-outline btn-lg" target="_blank">View on GitHub</a>
-    </div>
-  </div>
-</section>
-
-<!-- Footer -->
-<footer class="footer">
-  <div class="container">
-    <div class="footer-inner">
-      <div class="footer-brand">
-        <img src="assets/logo.png" alt="PawFlow" class="footer-logo">
-        <span>PawFlow</span>
-      </div>
-      <div class="footer-links">
-        <a href="/docs">Documentation</a>
-        <a href="https://github.com/allcolor/PawFlow-Agents">GitHub</a>
-        <a href="#features">Features</a>
-        <a href="#architecture">Architecture</a>
-      </div>
-      <div class="footer-copy">
-        MIT License · Built with ❤️ by <a href="https://github.com/qanciaux">Quentin Anciaux</a>
-      </div>
-    </div>
-  </div>
-</footer>
-
-<script>
-// Smooth scroll
-document.querySelectorAll('a[href^="#"]').forEach(a => {
-  a.addEventListener('click', e => {
-    e.preventDefault();
-    const el = document.querySelector(a.getAttribute('href'));
-    if (el) el.scrollIntoView({ behavior: 'smooth' });
-  });
-});
-
-// Nav background on scroll
-window.addEventListener('scroll', () => {
-  document.querySelector('.nav').classList.toggle('scrolled', window.scrollY > 50);
-});
-
-// Animate on scroll
-const observer = new IntersectionObserver(entries => {
-  entries.forEach(e => { if (e.isIntersecting) e.target.classList.add('visible'); });
-}, { threshold: 0.1 });
-document.querySelectorAll('.feature-card, .arch-card, .install-step, .stat').forEach(el => observer.observe(el));
-</script>
-
+  </footer>
+  <script src="site.js"></script>
 </body>
 </html>

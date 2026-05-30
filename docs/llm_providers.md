@@ -6,13 +6,33 @@ PawFlow can run agents through direct HTTP APIs and through CLI-backed coding ag
 
 | Provider | Mode | Typical use | Notes |
 |---|---|---|---|
-| `openai` | Direct API | OpenAI and OpenAI-compatible endpoints | Set `api_key`, optional `base_url`, and `default_model`. |
-| `anthropic` | Direct API | Claude API agents | Set `api_key`, optional `base_url`, and `default_model`. |
-| `claude-code` / Claude Code | CLI container or subprocess | Coding agents using Claude Code sessions | Uses Claude credentials, session resume, and PawFlow tool bridge. |
-| `codex-app-server` / Codex app-server | CLI app-server in a pooled container | Coding agents using Codex app-server threads | Uses Codex/OpenAI credentials, a Codex pool, and the PawFlow MCP bridge. |
-| `gemini` / Gemini CLI | CLI container or subprocess | Gemini-backed coding agents | Uses Gemini credentials, stream-json output, and Gemini session files. |
+| `openai` | Direct API | OpenAI and OpenAI-compatible endpoints | Set `api_key`, optional `base_url`, and `default_model`. This is the generic OpenAI-compatible API surface. |
+| `anthropic` | Direct API | Claude API and Anthropic-compatible endpoints | Set `api_key`, optional `base_url`, and `default_model`. |
+| `claude-code` | CLI container or subprocess | Non-interactive Claude Code style coding turns | Uses Claude Code credentials or API-key mode, session resume, and the PawFlow MCP bridge. |
+| `claude-code-interactive` | Interactive CLI container with observed provider stream | Claude subscription accounts and long-lived Claude Code sessions | Uses the Claude Code OAuth pool by default. API-key mode can also set `api_key` and `base_url` for Anthropic-compatible endpoints. |
+| `antigravity-interactive` | Interactive `agy` CLI in tmux with observed provider stream | Default Gemini subscription provider | Uses the Gemini OAuth credential pool, starts the real `agy` CLI, and routes tools through PawFlow MCP. |
+| `codex-app-server` | Codex `app-server` in a pooled container | Codex subscription accounts or OpenAI API-key coding agents | Uses Codex/OpenAI credentials, Codex app-server threads, a Codex pool, and the PawFlow MCP bridge. |
+| `gemini` | Gemini CLI one-shot stream provider | Secondary Gemini CLI path, mainly when a Gemini Pro account/CLI workflow is required | Uses Gemini credentials, stream-json output, and Gemini session files. Prefer `antigravity-interactive` for normal Gemini subscription use. |
 
 Direct API providers are normal HTTP clients. CLI providers launch a provider CLI, keep provider-specific session state, and route tools through PawFlow's relay/MCP bridge.
+
+## Which Provider To Use
+
+Use the credential source to choose the provider surface:
+
+| Credential source | Preferred provider(s) | Why |
+|---|---|---|
+| Generic API key for an OpenAI-compatible endpoint | `openai` | Direct HTTP, tool calling, vision when `supports_vision=true`, `base_url` support, and `/v1/embeddings` support when the endpoint exposes it. |
+| Anthropic API key | `anthropic`, or `claude-code` / `claude-code-interactive` with `api_key` | Use `anthropic` for direct API agents. Use Claude Code providers when you want the provider CLI/session behavior and PawFlow MCP bridge. |
+| Claude subscription login | `claude-code-interactive` | Long-lived interactive Claude Code session with OAuth credentials from the `claude-code` credential pool. |
+| OpenAI API key | `openai`, or `codex-app-server` with `api_key` | Use `openai` for direct API agents. Use `codex-app-server` when you want Codex app-server threads and coding-agent behavior. |
+| Codex subscription login | `codex-app-server` | Uses Codex OAuth credentials and the app-server protocol; this is PawFlow's Codex agent provider. |
+| Gemini subscription login | `antigravity-interactive` | Default Gemini subscription path. It uses the `agy`/Antigravity CLI with the Gemini OAuth pool. |
+| Gemini Pro / Gemini CLI account | `gemini` | Use when the account/workflow specifically needs Gemini CLI stream-json behavior. |
+
+`llmCredentialOAuthProvider` services own OAuth pools for three canonical CLI credential providers: `claude-code`, `codex-app-server`, and `gemini`. `claude-code-interactive` reuses the `claude-code` pool. `antigravity-interactive` reuses the `gemini` pool. API-key mode skips the OAuth pool.
+
+Advanced endpoint routing is supported where the underlying CLI honors it. `claude-code` and `claude-code-interactive` can be used against non-Anthropic compatible endpoints by setting `api_key` plus `base_url`; in that mode PawFlow passes `ANTHROPIC_API_KEY` and `ANTHROPIC_BASE_URL` instead of writing OAuth credentials. `codex-app-server` can use an OpenAI API key and passes it as `CODEX_API_KEY`/`OPENAI_API_KEY`; direct OpenAI-compatible endpoints should normally use the `openai` provider.
 
 On a cold CLI session, PawFlow writes the full serialized initial context to a
 session-local `.pawflow_cli/initial_context.md` file and sends a short bootstrap
@@ -67,10 +87,11 @@ Common fields:
 
 | Field | Required | Description |
 |---|---:|---|
-| `provider` | yes | Provider name: `openai`, `anthropic`, `claude-code`, `codex-app-server`, `gemini`, or compatible aliases. |
+| `provider` | yes | Provider name: `openai`, `anthropic`, `claude-code`, `claude-code-interactive`, `antigravity-interactive`, `codex-app-server`, or `gemini`. |
 | `default_model` / `model` | yes | Model used when the agent does not override it. |
-| `api_key` | provider-dependent | API key or credential reference for direct API providers and key-based CLI auth. |
-| `base_url` | no | Alternate API endpoint. For Codex/OpenAI-compatible providers this maps to `OPENAI_BASE_URL`; for Gemini it maps to `GEMINI_BASE_URL`. |
+| `api_key` | provider-dependent | Required for direct API providers. Optional for CLI providers: when present, it bypasses OAuth credentials and configures key-based CLI auth. |
+| `credential_service_id` | CLI OAuth mode | References an `llmCredentialOAuthProvider` service. Used when `api_key` is empty for CLI-backed providers. |
+| `base_url` | no | Alternate API endpoint. For direct `openai`/`anthropic`, this changes the HTTP target. For Claude Code API-key mode, this maps to `ANTHROPIC_BASE_URL`; for Codex it maps to `OPENAI_BASE_URL`; for Gemini/Agy infrastructure it maps to `GEMINI_BASE_URL` where the underlying CLI supports it. |
 | `docker_image` | CLI providers | Container image used for server-side CLI sessions and pools. |
 | `max_context_size` | yes for CLI providers unless the CLI reports the window | Authoritative context window. PawFlow must not guess a hard default. |
 | `compact_target_tokens` | no | Target size after compaction. |
@@ -144,21 +165,25 @@ Protected request keys such as `model`, `messages`, `tools`, `stream`, token lim
 
 The Anthropic provider accepts direct Anthropic services and compatible endpoints such as DeepSeek. The `supports_vision` setting on OpenAI and Anthropic API services is the user-controlled capability flag: when enabled, PawFlow resolves `image_ref` attachments and multimodal `see` tool results into native image blocks; when disabled, PawFlow sends only a text note and never transmits image bytes to that provider. For Anthropic payloads, PawFlow logs the number of image blocks included.
 
-## Claude Code
+## Claude Code Providers
 
-Claude Code can authenticate with an Anthropic API key or with its normal CLI login state.
+PawFlow has two Claude Code provider surfaces:
+
+- `claude-code`: non-interactive CLI turns with session files and MCP bridge.
+- `claude-code-interactive`: long-lived interactive Claude Code session with observed provider stream.
+
+Both can authenticate with an Anthropic API key or with Claude Code OAuth/login credentials. Both can target a compatible non-Anthropic endpoint by setting `api_key` and `base_url` instead of using an OAuth credential service.
 
 Credential inputs:
 
 - `ANTHROPIC_API_KEY` or service `api_key`
 - `ANTHROPIC_BASE_URL` or service `base_url` when using a compatible Anthropic endpoint
-- Claude Code OAuth/session files when using CLI login
+- `credential_service_id` pointing at an `llmCredentialOAuthProvider` whose provider is `claude-code` when using OAuth login
 
 Login options:
 
-1. `set_credentials`: paste or store an API key/session payload on the LLM service.
-2. Server login: PawFlow starts a tokenized VNC login session on the PawFlow server. The resulting URL is capability-protected and stores credentials back on the service.
-3. Relay login: a PawFlow relay runs the provider login on the user's relay host and returns the credential payload.
+1. Set `api_key` on the LLM service for API-key mode.
+2. Create/use `claude_code_oauth_credentials` and use server login, relay login, or pasted credentials for OAuth mode.
 
 Container notes:
 
@@ -172,20 +197,20 @@ Codex agents use `codex-app-server`. PawFlow does not expose a legacy `codex`
 agent provider. The image-generation service may run isolated `codex exec`
 jobs for `$imagegen`, but that is a media service, not an agent provider.
 
-Codex app-server uses OpenAI/Codex credentials and Codex thread state.
+Codex app-server uses OpenAI/Codex credentials and Codex thread state. Use it for Codex subscription accounts and for OpenAI API-key backed coding-agent sessions. Use the direct `openai` provider when you only need normal HTTP chat/completions behavior.
 
 Credential inputs:
 
 - `CODEX_API_KEY` preferred when available
 - `OPENAI_API_KEY` for OpenAI-compatible Codex auth
 - `OPENAI_BASE_URL` from service `base_url` for compatible endpoints
-- Codex CLI login files when using OAuth/login mode
+- `credential_service_id` pointing at an `llmCredentialOAuthProvider` whose provider is `codex-app-server` when using OAuth/login mode
 
-Login options are the same as Claude Code: `set_credentials`, server login, or relay login. Server login containers are named `pawflow-codex-login-*`; pool containers are named `pf-codex-pool-*`.
+Login options are the same as other credential pools: set `api_key`, or use `codex_oauth_credentials` with server login, relay login, or pasted credentials. Server login containers are named `pawflow-codex-login-*`; pool containers are named `pf-codex-pool-*`.
 
 Operational notes:
 
-- Configure `max_context_size` on the service unless the Codex CLI reports the model context window.
+- Configure `max_context_size` on the service unless the Codex app-server runtime reports the model context window.
 - `compact_threshold_pct=0` means no proactive compaction; use a positive percentage such as `90` to compact before the provider hard limit.
 - The provider prompt instructs Codex to use only the PawFlow MCP bridge for workspace reads, edits, shell commands, browser/screen actions, and web fetches.
 - PawFlow keeps Codex app-server's native sandbox policy at `dangerFullAccess`; restricting app-server networking or filesystem policy can break the MCP bridge and provider tool stream. Native provider tool use is constrained by the provider prompt and made auditable in PawFlow's technical stream.
@@ -224,21 +249,27 @@ Configure these fields on the `summarizer` service:
 
 Invalid service values are ignored with a warning and the default is used for that decision. Integer counts must be non-negative for `tail_reserve_msgs` and positive for the other count/token fields; multipliers and fractions must be positive.
 
-## Gemini CLI
+## Gemini And Antigravity
 
-Gemini uses either API-key auth or Gemini CLI OAuth state.
+PawFlow has two Gemini-backed CLI provider surfaces:
+
+- `antigravity-interactive`: the default for Gemini subscription accounts. It runs the real Antigravity CLI (`agy`) in tmux, observes the provider stream, and uses PawFlow MCP tools.
+- `gemini`: the Gemini CLI stream-json provider. Use it when a Gemini Pro account or workflow specifically requires Gemini CLI behavior.
+
+Both use either API-key auth or the shared Gemini OAuth credential pool. `antigravity-interactive` is not a separate credential provider; it reuses `gemini_oauth_credentials`.
 
 Credential inputs:
 
 - `GEMINI_API_KEY` or service `api_key`
 - `GEMINI_BASE_URL` from service `base_url` when using a compatible endpoint
-- Gemini CLI OAuth files such as `settings.json` and `oauth_creds.json`
+- `credential_service_id` pointing at an `llmCredentialOAuthProvider` whose provider is `gemini` when using OAuth/login mode
 
-Login options are the same as other CLI providers: `set_credentials`, server login, or relay login. Server login containers are named `pawflow-gemini-login-*`; pool containers are named `pf-gemini-pool-*`.
+Login options are the same as other credential pools: set `api_key`, or use `gemini_oauth_credentials` with server login, relay login, or pasted credentials. The credential service exposes both Gemini CLI server login and Agy/Antigravity server login; both write the same Gemini OAuth pool. Server login containers are named `pawflow-gemini-login-*`; pool containers are named `pf-gemini-pool-*`; Antigravity observer containers are named `pf-*-agyobs-*`.
 
 Operational notes:
 
 - Gemini sessions live under the Gemini CLI tmp/chat layout, not the Claude/Codex project layout.
+- Antigravity sessions live under `data/runtime/sessions/antigravity-observer/...` and use `agy --dangerously-skip-permissions` inside the shared CLI image.
 - Gemini stream-json is one-shot stdin. Preemption kills the active process and resumes from the provider session; it should not write to a closed stdin.
 - Configure `max_context_size` unless the Gemini CLI reports the context window.
 
@@ -248,7 +279,7 @@ Operational notes:
 |---|---|---|
 | Tool calls | Native PawFlow tool/function calling | Provider CLI plus PawFlow bridge/MCP where applicable |
 | Conversation state | PawFlow builds the context | Provider CLI may keep and resume its own session |
-| Preemption | Queued or provider-specific | Provider-specific; Claude can stream control, Codex/Gemini use kill/resume where needed |
+| Preemption | Queued or provider-specific | Provider-specific; Claude interactive and Antigravity interactive can inject/control live tmux sessions, Codex app-server uses `turn/steer`, Gemini CLI uses kill/resume where needed |
 | Containerization | Optional | Recommended for isolation and reproducibility |
 | Context window | API/model metadata or service config | CLI-reported window or mandatory service `max_context_size` |
 

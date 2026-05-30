@@ -8,7 +8,8 @@ The chat service installer receives service type metadata grouped by category an
 
 | Type | Purpose |
 |---|---|
-| `llmConnection` | Direct API LLM service configuration. |
+| `llmConnection` | LLM service configuration for direct API providers and CLI-backed providers (`openai`, `anthropic`, `claude-code`, `claude-code-interactive`, `antigravity-interactive`, `codex-app-server`, `gemini`). |
+| `llmCredentialOAuthProvider` | Encrypted OAuth credential pool for CLI-backed LLM providers. Canonical providers are `claude-code`, `codex-app-server`, and `gemini`; `claude-code-interactive` reuses `claude-code`, and `antigravity-interactive` reuses `gemini`. |
 | `httpClientService` | Reusable HTTP client. |
 | `httpListener` | Shared listener for inbound HTTP/webhook/SSE/VNC routes. |
 | `httpAuthValidator` | Bearer/basic/custom auth validator. |

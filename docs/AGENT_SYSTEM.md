@@ -68,7 +68,7 @@ Agents can be created through:
 
 ### LLM Service Reference
 
-The `llm_service` field points to a configured LLM service (OpenAI-compatible, Anthropic, Claude Code, Grok, local models, etc.). Expression language references like `${llm_default_service}` are resolved at runtime from the expression cascade: flow -> conversation -> user -> global.
+The `llm_service` field points to a configured `llmConnection` service. Built-in providers are `openai`, `anthropic`, `claude-code`, `claude-code-interactive`, `antigravity-interactive`, `codex-app-server`, and `gemini`; OpenAI-compatible and Anthropic-compatible endpoints use `base_url` on the corresponding direct API provider. Expression language references like `${llm_default_service}` are resolved at runtime from the expression cascade: flow -> conversation -> user -> global.
 
 ---
 
@@ -212,7 +212,7 @@ As a last resort, messages are brute-force truncated: per-message character budg
 
 ### Auto-compact trigger
 
-Auto-compaction runs when messages exceed 90% of `max_context_size`. It is skipped when a Claude Code session is active (CC manages its own context).
+Proactive PawFlow compaction is controlled by the selected LLM service's `compact_threshold_pct`. `0` disables proactive PawFlow compaction; a positive value compacts when the estimated context reaches that percentage of `max_context_size`. Claude Code's own compact boundary can still fire independently, and PawFlow handles provider-triggered compact events by compacting PawFlow context and restarting the provider session.
 
 Background pyramid buckets are different from hot-path context compaction. They run asynchronously and only submit a summarizer call when the bucket input is useful: at least four times the L1 summary target (`BUCKET_OUTPUT_TARGET`, currently 2000 tokens). This prevents the background worker from spending an LLM call to summarize tiny slices after every few chat messages.
 
@@ -520,7 +520,7 @@ This ensures important information is captured even if the user never explicitly
 
 ### Auto-compact
 
-Context compaction runs automatically before each agent turn when messages exceed 90% of `max_context_size`. See [Context Compaction](#context-compaction) for details.
+Context compaction can run before or during agent turns when the selected LLM service sets `compact_threshold_pct`, or when a stateful provider reports its own compact boundary. See [Context Compaction](#context-compaction) for details.
 
 ### Auto-reschedule Tasks
 

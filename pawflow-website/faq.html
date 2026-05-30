@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="PawFlow FAQ: self-hosting, relays, providers, deterministic flows, security, media tools, Docker updates, and production readiness.">
+  <title>PawFlow FAQ</title>
+  <link rel="icon" href="assets/logo.png" type="image/png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body data-page="faq">
+  <header class="site-header" data-header>
+    <a class="brand" href="index.html"><img src="assets/logo.png" alt="" class="brand-mark"><span>PawFlow</span></a>
+    <button class="nav-toggle" type="button" data-nav-toggle aria-label="Open navigation" aria-expanded="false"><span></span><span></span><span></span></button>
+    <nav class="site-nav" data-nav><a href="quickstart.html">Quickstart</a><a href="docs.html">Docs</a><a href="howtos.html">How-tos</a><a href="faq.html">FAQ</a><a href="https://github.com/allcolor/PawFlow-Agents" target="_blank" rel="noreferrer">GitHub</a></nav>
+  </header>
+  <main>
+    <section class="page-hero"><div class="container split"><div data-reveal><p class="eyebrow">FAQ</p><h1>Answers before the install.</h1><p class="hero-copy">The short version: PawFlow is a self-hosted runtime for agents, relays, shared context, media tools, and deterministic flow automation.</p></div><figure class="visual-card" data-reveal><img src="assets/media/faq/agent-vs-flow.webp" onerror="this.onerror=null;this.src='assets/feature-architecture.png';" alt="Agent versus flow explanation"><figcaption>Drop the final FAQ visual at `assets/media/faq/agent-vs-flow.webp`.</figcaption></figure></div></section>
+    <section class="section surface"><div class="container faq-list">
+      <details open data-reveal><summary>Is PawFlow a hosted agent cloud?</summary><p>No. PawFlow is designed to be self-hosted. You run the server and decide which LLM providers, relays, workspaces, secrets, and media services are connected.</p></details>
+      <details data-reveal id="security"><summary>What leaves my machine?</summary><p>It depends on provider and tool configuration. Prompts and selected context go to the chosen LLM provider. Relay tool requests cross from PawFlow to the relay. Media prompts and source media may go to configured media providers. Your deployment controls those boundaries.</p></details>
+      <details data-reveal><summary>Why use a relay?</summary><p>The relay lets agents work next to a filesystem, shell, browser, desktop, or local service without giving the PawFlow server permanent direct filesystem access. It is the main boundary between orchestration and execution.</p></details>
+      <details data-reveal><summary>What is the difference between a server relay and a remote relay?</summary><p>The server relay is the managed PawFlow-side relay service used for brokering and diagnostics. A remote relay is the client installed on the machine that owns the workspace or desktop, using Relay Desktop for a GUI install or Relay CLI for terminal/server machines.</p></details>
+      <details data-reveal><summary>Can agents use a full desktop?</summary><p>Yes. With Desktop Relay, agents can inspect and operate a full desktop through screen, browser, and VNC-style tools. If the relay is started with `allow_local`, the accessible desktop can be the local desktop where that relay runs; otherwise the boundary is the relay container or configured remote desktop.</p></details>
+      <details data-reveal><summary>Can I open terminals from webchat?</summary><p>Yes. The webchat workspace menu can expose terminals for the remote Docker relay workspace, the local host surface when `allow_local` is enabled, and the relay server/runtime environment for diagnostics. Keep those surfaces separate so operators know whether commands run in Docker, on the host, or in the relay runtime.</p></details>
+      <details data-reveal><summary>What are the context and memory editors?</summary><p>The context editor lets an operator inspect and adjust the short-term context sent to the selected agent. The memory editor is for durable long-term memory: review, correct, delete, and audit remembered facts before they influence future turns.</p></details>
+      <details data-reveal><summary>How do interactive CLI providers run?</summary><p>Subscription-backed interactive providers such as Claude Code interactive and Antigravity/Agy run through observable CLI sessions, including tmux-backed runtime state. This makes login, approvals, streaming, and provider-side issues inspectable from the relay/webchat tooling.</p></details>
+      <details data-reveal><summary>Where does VS Code/code-server fit?</summary><p>The webchat can open VS Code/code-server against a linked relay workspace, so a human can inspect diffs, edit files, and run manual review while agents continue using the same relay-backed filesystem and tools.</p></details>
+      <details data-reveal><summary>Which LLM providers work?</summary><p>PawFlow supports direct HTTP providers such as OpenAI, Anthropic, and OpenAI-compatible endpoints, plus CLI-backed coding agents including Codex app-server, Claude Code, Claude Code interactive, Antigravity/Agy, and Gemini CLI. Use Agy as the default Gemini subscription path; use Gemini CLI for Gemini Pro or CLI-specific workflows.</p></details>
+      <details data-reveal><summary>Can I use several providers in one conversation?</summary><p>Yes. Agents reference LLM services by id, so different agents in the same conversation can use different providers, models, credentials, permissions, and tool sets.</p></details>
+      <details data-reveal><summary>What is the difference between an agent and a flow?</summary><p>An agent is useful for exploration, coding, reasoning, tool use, and maintenance. A flow is an explicit task graph for repeatable execution: triggers, routing, transforms, retries, checkpoints, and LLM calls only where modeled.</p></details>
+      <details data-reveal><summary>When is execution deterministic?</summary><p>Flow execution is deterministic where it uses explicit tasks and fixed inputs. Any `inferLLM` or agent task remains intentionally model-driven, so you choose where variability is allowed.</p></details>
+      <details data-reveal><summary>Can agents edit my files?</summary><p>Only through configured tools and relays. Use narrow permissions, approval gates, Docker relays for untrusted work, and read-only inspection before allowing edits, shell commands, deletes, or desktop control.</p></details>
+      <details data-reveal><summary>Can PawFlow generate media?</summary><p>Yes. Agents can use provider-backed image, video, audio, voice, 3D, try-on, lipsync, and upscaling tools. Outputs should be stored as FileStore URLs or real files, not embedded as base64 in conversation text.</p></details>
+      <details data-reveal><summary>How do I enable TTS and STT?</summary><p>Add a TTS service such as Supertonic, Voicebox, LuxTTS, or a compatible hosted provider, then add an STT service such as OpenAI-compatible STT or Voicebox. The webchat speaker and microphone controls use those services, and agents can also call voice tools such as `speak`, `clone_voice`, and `speech_to_video` when configured.</p></details>
+      <details data-reveal><summary>Can I run PawFlow on a VPS?</summary><p>Yes. Use the Docker install path, persistent volumes, HTTPS or a reverse proxy, strong secrets, the Private Gateway for exposed demos, and restrictive relay/tool permissions.</p></details>
+      <details data-reveal><summary>Is PawFlow production-ready?</summary><p>It is alpha software with a substantial runtime, docs, tests, and deployment path. Treat internet-facing deployments carefully: use production env settings, HTTPS, strong secrets, restricted tools, budget caps, and reviewed OAuth redirects.</p></details>
+      <details data-reveal><summary>How do I update a Docker install?</summary><p>Pull the new image/tag and recreate the server container while keeping bind-mounted persistent data. Do not delete `~/pawflow` data unless you explicitly want a fresh install.</p></details>
+    </div></section>
+    <section class="section"><div class="container cta-panel" data-reveal><div><p class="eyebrow">Ready enough to try</p><h2>The fastest answer is still the quickstart.</h2><p>Install locally, open the wizard, configure one provider, and test a relay-backed conversation.</p></div><a class="button button-primary" href="quickstart.html">Install PawFlow</a></div></section>
+  </main>
+  <footer class="site-footer"><div class="container footer-grid"><div><strong>PawFlow</strong><span>Clear boundaries before real infrastructure access.</span></div><nav><a href="index.html">Home</a><a href="quickstart.html">Quickstart</a><a href="docs.html">Docs</a><a href="howtos.html">How-tos</a></nav></div></footer>
+  <script src="site.js"></script>
+</body>
+</html>

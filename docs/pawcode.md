@@ -13,6 +13,27 @@ PAWFLOW_SERVER=http://localhost:PORT python -m pawflow_cli --dir .
 
 PawCode opens the browser for OAuth login when needed, then connects as a conversation client. Start filesystem access separately with `pawflow-relay` or from the webchat resource panel.
 
+## Server And Private Gateway
+
+Use an explicit server URL whenever you are not targeting the default local development port:
+
+```bash
+PAWFLOW_SERVER="https://localhost:19990" pawcode --dir .
+```
+
+For a server protected by Private Gateway, pass the gateway key through the environment or the CLI option. PawCode exchanges it for the gateway cookie before normal auth/API/SSE calls:
+
+```bash
+PAWFLOW_SERVER="https://pawflow.example.com" \
+PAWFLOW_GATEWAY_KEY="your-private-gateway-key" \
+pawcode --dir .
+
+# Equivalent explicit flag
+pawcode --server "https://pawflow.example.com" --gateway-key "your-private-gateway-key" --dir .
+```
+
+Keep the gateway key in your shell profile or secret manager. Do not paste it into conversation prompts.
+
 ## Standalone Installer Builds
 
 PawCode can be packaged as a standalone terminal binary with PyInstaller:

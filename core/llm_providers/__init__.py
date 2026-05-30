@@ -1,4 +1,4 @@
-"""LLM provider mixins -- OpenAI, Anthropic, Claude Code CLI, Codex app-server, Gemini CLI."""
+"""LLM provider mixins -- API, Claude Code, Codex app-server, Gemini, Antigravity."""
 
 from core.llm_providers.cli_shared import LLMCliSharedMixin  # noqa: F401
 from core.llm_providers.openai import LLMOpenaiMixin  # noqa: F401

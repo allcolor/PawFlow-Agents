@@ -192,6 +192,20 @@ class TestLLMConnectionService:
         openai_rule = next(r for r in rules if r["when"] == {"provider": ["openai"]})
         assert openai_rule["set"]["extra_body"]["visible"] is True
 
+    def test_claude_code_interactive_exposes_base_url_for_api_key_mode(self):
+        rules = LLMConnectionService({}).get_parameter_rules()
+        rule = next(r for r in rules if r["when"] == {"provider": ["claude-code-interactive"]})
+
+        assert rule["set"]["api_key"]["visible"] is True
+        assert rule["set"]["base_url"]["visible"] is True
+
+    def test_cli_api_key_providers_expose_base_url_when_supported(self):
+        rules = LLMConnectionService({}).get_parameter_rules()
+        for provider in ("claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "gemini"):
+            rule = next(r for r in rules if r["when"] == {"provider": [provider]})
+            assert rule["set"]["api_key"]["visible"] is True
+            assert rule["set"]["base_url"]["visible"] is True
+
     def test_missing_api_key_raises(self):
         svc = LLMConnectionService({"provider": "openai", "api_key": ""})
         with pytest.raises(Exception):

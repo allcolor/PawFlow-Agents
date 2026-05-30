@@ -4,9 +4,20 @@ AI agent chat and code assistant powered by PawFlow. Chat with agents, send edit
 
 ## Installation
 
-1. Open the `pawflow-vscode` folder in VS Code
-2. Press F5 to launch Extension Development Host
-3. The PawFlow icon appears in the activity bar
+### Release VSIX
+
+1. Download `pawflow-vscode-<version>.vsix` from the PawFlow GitHub release.
+2. In VS Code, run **Extensions: Install from VSIX...** from the command palette.
+3. Select the downloaded file and reload VS Code when prompted.
+4. Set `pawflow.serverUrl` and, when Private Gateway is enabled, `pawflow.gatewayKey`.
+5. Run **PawFlow: Login** and open the PawFlow activity bar view.
+
+### Development Host
+
+1. Open the `pawflow-vscode` folder in VS Code.
+2. Run `npm ci` and `npm run compile`.
+3. Press F5 to launch Extension Development Host.
+4. The PawFlow icon appears in the activity bar.
 
 ## Features
 
@@ -38,6 +49,17 @@ AI agent chat and code assistant powered by PawFlow. Chat with agents, send edit
 - `pawflow.serverUrl` — PawFlow server URL (default: http://localhost:9090)
 - `pawflow.gatewayKey` — Private gateway access key
 - `pawflow.pythonPath` — Optional Python interpreter path for helper commands
+
+## Release Packaging
+
+The release workflow packages the extension as a `.vsix` with `vsce` and uploads it beside PawCode, Relay CLI, Relay Desktop, and the server installer assets. To build locally:
+
+```bash
+cd pawflow-vscode
+npm ci
+npm run compile
+npx vsce package --out ../dist/vscode-installers/pawflow-vscode-local.vsix
+```
 
 ## Relay Lifecycle
 

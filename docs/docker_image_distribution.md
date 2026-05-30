@@ -55,8 +55,9 @@ The resulting `dist/pawflow-installers/pawflow-install-VERSION.zip` contains onl
 To publish a release, push a version tag after the Docker image workflow can publish matching GHCR tags:
 
 ```bash
-git tag 1.0.0.prealpha.1
-git push origin 1.0.0.prealpha.1
+VERSION=1.0.0.prealpha.N
+git tag "$VERSION"
+git push origin "$VERSION"
 ```
 
 The release asset workflow uses the tag name without a leading `v` for file names and installer versions. If a manual run is needed, start **Release Assets** from GitHub Actions and pass the exact version.

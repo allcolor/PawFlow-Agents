@@ -303,9 +303,12 @@ def test_mcp_bridge_retries_initial_tool_relay_connection():
     src = Path("tools/mcp_bridge.py").read_text(encoding="utf-8")
     assert "def _ensure_relay_client():" in src
     assert "retrying a failed initial connect" in src
-    assert "for attempt in range(5):" in src
-    assert "Connecting to tool relay on demand (attempt" in src
-    assert "time.sleep(0.5)" in src
+    assert "TOOL_RELAY_RETRY_ATTEMPTS = 5" in src
+    assert "TOOL_RELAY_RETRY_DELAY_SECONDS = 5.0" in src
+    assert "for attempt in range(TOOL_RELAY_RETRY_ATTEMPTS):" in src
+    assert "Connecting to tool relay on demand " in src
+    assert "(attempt {attempt + 1}/{TOOL_RELAY_RETRY_ATTEMPTS})" in src
+    assert "time.sleep(TOOL_RELAY_RETRY_DELAY_SECONDS)" in src
     assert "Tool relay unavailable after retries" in src
     assert "relay_client = _ensure_relay_client()" in src
     assert "if not relay_client:" in src

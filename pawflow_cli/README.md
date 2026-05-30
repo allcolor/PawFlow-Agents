@@ -13,6 +13,11 @@ python -m pawflow_cli --dir .
 
 # With custom server
 PAWFLOW_SERVER=http://myserver:9090 python -m pawflow_cli
+
+# With Private Gateway
+PAWFLOW_SERVER=https://pawflow.example.com \
+PAWFLOW_GATEWAY_KEY=your-private-gateway-key \
+python -m pawflow_cli --dir .
 ```
 
 ## Standalone Installer
@@ -82,6 +87,7 @@ Artifacts are written to `dist/pawcode-installers/`. The builder always creates 
 ## Environment Variables
 
 - `PAWFLOW_SERVER` — Server URL (default: http://localhost:9090)
+- `PAWFLOW_GATEWAY_KEY` — Private Gateway key; PawCode exchanges it for the gateway cookie before normal auth/API/SSE calls
 
 ## Architecture
 

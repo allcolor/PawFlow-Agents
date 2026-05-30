@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 
+import pytest
+
 from services.filesystem_service import RelayService
 from services.tool_relay_service import ToolRelayService
 
@@ -253,3 +255,110 @@ def test_bash_still_receives_secret_environment(monkeypatch):
     assert registry.executed_args[0]["command"] == "echo $TOKEN"
     assert len(env_calls) == 1
     assert len(fingerprint_calls) == 2
+
+
+def test_handle_execute_retries_relay_transport_errors(monkeypatch):
+    import services.tool_relay_service as relay_mod
+
+    svc = ToolRelayService({})
+    calls = {"count": 0}
+    sleeps = []
+
+    def _execute(request_id, tool_name, arguments, user_id, conversation_id, agent_name):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise RuntimeError("Relay not connected")
+        return {"type": "result", "request_id": request_id, "data": "ok"}
+
+    monkeypatch.setattr(svc, "_do_execute", _execute)
+    monkeypatch.setattr(relay_mod.time, "sleep", lambda delay: sleeps.append(delay))
+
+    result = svc._handle_execute(
+        "rid-retry", "read", {"path": "README.md"}, "alice", "conv1", "assistant")
+
+    assert result["data"] == "ok"
+    assert calls["count"] == 2
+    assert sleeps == [5.0]
+
+
+def test_do_execute_reraises_relay_transport_errors(monkeypatch):
+    class _DisconnectRegistry(_Registry):
+        def execute(self, _tool_name, _arguments):
+            raise RuntimeError("Relay disconnected")
+
+    registry = _DisconnectRegistry()
+    svc = ToolRelayService({})
+    monkeypatch.setattr(svc, "_get_registry", lambda *args: registry)
+    monkeypatch.setattr(
+        ToolRelayService, "_conversation_has_hooks", classmethod(lambda *args: False))
+    monkeypatch.setattr(
+        ToolRelayService, "_conversation_extra_fast",
+        staticmethod(lambda _cid, key, default=None: _fast_auto_permissions(key, default)))
+    monkeypatch.setattr(
+        svc, "_cached_secret_values", lambda *_args: (set(), {}))
+
+    with pytest.raises(RuntimeError, match="Relay disconnected"):
+        svc._do_execute("rid", "read", {"path": "README.md"},
+                        "alice", "conv1", "assistant")
+
+
+def test_handle_execute_retries_relay_transport_error_results(monkeypatch):
+    import services.tool_relay_service as relay_mod
+
+    registry = _Registry()
+    registry.results = iter([
+        "Error reading 'README.md': Relay disconnected",
+        "ok",
+    ])
+
+    def _execute(_tool_name, arguments):
+        registry.executed_args.append(arguments)
+        return next(registry.results)
+
+    registry.execute = _execute
+    svc = ToolRelayService({})
+    sleeps = []
+    monkeypatch.setattr(svc, "_get_registry", lambda *args: registry)
+    monkeypatch.setattr(
+        ToolRelayService, "_conversation_has_hooks", classmethod(lambda *args: False))
+    monkeypatch.setattr(
+        ToolRelayService, "_conversation_extra_fast",
+        staticmethod(lambda _cid, key, default=None: _fast_auto_permissions(key, default)))
+    monkeypatch.setattr(svc, "_cached_secret_values", lambda *_args: (set(), {}))
+    monkeypatch.setattr(relay_mod.time, "sleep", lambda delay: sleeps.append(delay))
+
+    result = svc._handle_execute(
+        "rid-result-retry", "read", {"path": "README.md"},
+        "alice", "conv1", "assistant")
+
+    assert result["data"] == "ok"
+    assert len(registry.executed_args) == 2
+    assert sleeps == [5.0]
+
+
+def test_handle_execute_does_not_retry_exhausted_relay_results(monkeypatch):
+    import services.tool_relay_service as relay_mod
+
+    exhausted = (
+        "Error reading 'README.md': Relay transport retry attempts exhausted "
+        "for read_file: Relay disconnected"
+    )
+    registry = _Registry(exhausted)
+    svc = ToolRelayService({})
+    sleeps = []
+
+    monkeypatch.setattr(svc, "_get_registry", lambda *args: registry)
+    monkeypatch.setattr(
+        ToolRelayService, "_conversation_has_hooks", classmethod(lambda *args: False))
+    monkeypatch.setattr(
+        ToolRelayService, "_conversation_extra_fast",
+        staticmethod(lambda _cid, key, default=None: _fast_auto_permissions(key, default)))
+    monkeypatch.setattr(svc, "_cached_secret_values", lambda *_args: (set(), {}))
+    monkeypatch.setattr(relay_mod.time, "sleep", lambda delay: sleeps.append(delay))
+
+    result = svc._handle_execute(
+        "rid-exhausted", "read", {"path": "README.md"},
+        "alice", "conv1", "assistant")
+
+    assert result["data"] == exhausted
+    assert sleeps == []

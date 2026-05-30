@@ -20,6 +20,18 @@ ENTRY = ROOT / "pawflow-relay-desktop" / "scripts" / "relay-bin-entry.py"
 DIST_ROOT = ROOT / "dist" / "relay-cli-installers"
 BUILD_ROOT = ROOT / "build" / "relay-cli-pyinstaller"
 
+RUNTIME_TOOL_HIDDEN_IMPORTS = [
+    "concurrent.futures",
+    "difflib",
+    "select",
+    "selectors",
+    "shlex",
+    "signal",
+    "urllib.error",
+    "urllib.request",
+    "uuid",
+]
+
 
 def _run(command: list[str], *, cwd: Path = ROOT, env: dict[str, str] | None = None) -> None:
     result = subprocess.run(command, cwd=cwd, env=env, check=False)  # nosec B603
@@ -88,7 +100,7 @@ def build_binary(python: str, version: str) -> Path:
 
     env = os.environ.copy()
     env["PYTHONPATH"] = str(ROOT) + os.pathsep + env.get("PYTHONPATH", "")
-    _run([
+    command = [
         python,
         "-m",
         "PyInstaller",
@@ -113,7 +125,10 @@ def build_binary(python: str, version: str) -> Path:
         "--hidden-import",
         "pawflow_cli.auth",
         str(ENTRY),
-    ], env=env)
+    ]
+    for module in RUNTIME_TOOL_HIDDEN_IMPORTS:
+        command[-1:-1] = ["--hidden-import", module]
+    _run(command, env=env)
     if not exe_path.exists():
         raise RuntimeError(f"Relay binary was not produced: {exe_path}")
     if platform.system().lower() != "windows":

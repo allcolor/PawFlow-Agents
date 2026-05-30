@@ -175,6 +175,10 @@ def test_relay_desktop_prepare_runtime_script_declares_required_payload():
     assert "binDir" in build_bin
     assert "pawflow-relay.exe" in build_bin
     assert "--hidden-import" in build_bin
+    assert "runtimeToolHiddenImports" in build_bin
+    assert "difflib" in build_bin
+    assert "urllib.request" in build_bin
+    assert "selectors" in build_bin
 
 
 def test_relay_manager_cli_supports_desktop_json_contract():
@@ -203,9 +207,14 @@ def test_relay_desktop_generated_runtime_has_required_payload():
     assert (runtime / "pawflow_relay" / "thread.py").is_file()
     assert (runtime / "pawflow_cli" / "auth.py").is_file()
     env = os.environ.copy()
-    env["PYTHONPATH"] = str(runtime)
+    env["PYTHONPATH"] = os.pathsep.join([str(runtime), str(runtime / "tools")])
     subprocess.run(
-        [sys.executable, "-c", "import pawflow_cli.auth; import pawflow_relay.manager_cli"],
+        [
+            sys.executable,
+            "-c",
+            "import pawflow_cli.auth; import pawflow_relay.manager_cli; "
+            "import fs_actions; import fs_http; import fs_mcp; import fs_exec",
+        ],
         cwd=DESKTOP,
         env=env,
         check=True,

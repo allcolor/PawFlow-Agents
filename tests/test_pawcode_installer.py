@@ -40,6 +40,9 @@ def test_pawcode_installer_scripts_are_declared():
     assert "install.ps1" in relay_text
     assert "install.sh" in relay_text
     assert "--version" in relay_text
+    assert "RUNTIME_TOOL_HIDDEN_IMPORTS" in relay_text
+    assert "difflib" in relay_text
+    assert "urllib.request" in relay_text
 
 
 def test_pawcode_installer_scripts_compile():

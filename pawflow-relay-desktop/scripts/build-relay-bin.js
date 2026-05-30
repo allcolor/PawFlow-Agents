@@ -10,6 +10,17 @@ const buildDir = path.join(desktopRoot, 'build', 'pyinstaller');
 const entry = path.join(__dirname, 'relay-bin-entry.py');
 const exeName = process.platform === 'win32' ? 'pawflow-relay.exe' : 'pawflow-relay';
 const exePath = path.join(binDir, exeName);
+const runtimeToolHiddenImports = [
+  'concurrent.futures',
+  'difflib',
+  'select',
+  'selectors',
+  'shlex',
+  'signal',
+  'urllib.error',
+  'urllib.request',
+  'uuid',
+];
 
 function pythonCommand() {
   return process.env.PAWFLOW_RELAY_PYTHON || process.env.PYTHON || (process.platform === 'win32' ? 'python' : 'python3');
@@ -64,6 +75,7 @@ run(pythonCommand(), [
   '--hidden-import', 'pawflow_relay.thread',
   '--hidden-import', 'pawflow_relay.worker',
   '--hidden-import', 'pawflow_cli.auth',
+  ...runtimeToolHiddenImports.flatMap((name) => ['--hidden-import', name]),
   entry,
 ], {
   env: {

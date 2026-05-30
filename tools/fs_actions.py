@@ -6,7 +6,6 @@ The relay is responsible for path resolution and access control.
 import logging
 
 import base64
-import difflib
 import json
 import os
 import re
@@ -734,6 +733,7 @@ def _find_window_matches(text: str, old_string: str, *, fuzzy: bool = False,
         return matches
 
     best: List[Dict[str, Any]] = []
+    import difflib
     for span_len in {span, max(1, span - 1), span + 1}:
         if span_len > len(text_lines):
             continue

@@ -75,9 +75,10 @@ def _screen_action_subprocess(action: str, req: dict) -> dict:
         timeout = 15
     env = dict(os.environ)
     env[_CHILD_ENV] = "1"
+    cmd = _screen_action_child_command(action)
     try:
         proc = subprocess.run(  # nosec B603
-            [sys.executable, __file__, action],
+            cmd,
             input=json.dumps(req),
             text=True,
             capture_output=True,
@@ -94,6 +95,19 @@ def _screen_action_subprocess(action: str, req: dict) -> dict:
         return json.loads(proc.stdout or "{}")
     except Exception as e:
         return {"error": f"Invalid {action} response: {e}"}
+
+
+def _screen_action_child_command(action: str) -> list[str]:
+    """Return the subprocess command for a killable screen action child.
+
+    In source mode, sys.executable is a Python interpreter and can execute this
+    file directly. In the packaged desktop relay, sys.executable is the
+    pawflow-relay binary; running it with `screen_actions.py` would enter the
+    normal CLI and fail before the screen action runs.
+    """
+    if getattr(sys, "frozen", False):
+        return [sys.executable, "__pawflow_screen_action_child__", action]
+    return [sys.executable, __file__, action]
 
 
 def _screenshot(req):

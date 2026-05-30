@@ -8,6 +8,7 @@ import logging
 import json
 import os
 import secrets
+import shutil
 import socket
 import subprocess  # nosec B404
 import sys
@@ -49,6 +50,16 @@ def _relay_runtime_root() -> Path:
 
 def _relay_tools_dir() -> str:
     return str(_relay_runtime_root() / "tools")
+
+
+def _host_python_command() -> str:
+    """Return a real host Python, not the packaged pawflow-relay binary."""
+    override = os.environ.get("PAWFLOW_RELAY_PYTHON", "") or os.environ.get("PYTHON", "")
+    if override:
+        return override
+    if not getattr(sys, "frozen", False):
+        return sys.executable
+    return shutil.which("python") or shutil.which("python3") or ""
 
 
 def _host_abs_path(raw_path: str, root_dir: str) -> str:
@@ -932,7 +943,6 @@ class RelayThread:
     def _host_start_local_desktop(self, req):
         """Start VNC + websockify on the host to share the local screen."""
         import subprocess as _sp  # nosec B404
-        import shutil
 
         if hasattr(self, '_local_desktop_procs') and self._local_desktop_procs:
             alive = all(p.poll() is None for p in self._local_desktop_procs)
@@ -960,10 +970,13 @@ class RelayThread:
         if websockify_cmd:
             _ws_base = [websockify_cmd]
         else:
+            _python_cmd = _host_python_command()
+            if not _python_cmd:
+                return {"error": "websockify not installed. Install with: pip install websockify"}
             try:
-                _sp.run([sys.executable, "-m", "websockify", "--help"],  # nosec B603
+                _sp.run([_python_cmd, "-m", "websockify", "--help"],  # nosec B603
                         capture_output=True, timeout=5)
-                _ws_base = [sys.executable, "-m", "websockify"]
+                _ws_base = [_python_cmd, "-m", "websockify"]
             except Exception:
                 return {"error": "websockify not installed. Install with: pip install websockify"}
 

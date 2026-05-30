@@ -757,12 +757,22 @@ function _showImportConvDialog(info, fmt) {
     var _relCss = 'width:100%;min-height:60px;max-height:120px;overflow-y:auto;border:1px solid var(--border,#444);border-radius:4px;padding:4px;background:var(--bg,#141420);';
     var _btnCss = 'padding:4px 10px;border:1px solid var(--border,#444);border-radius:4px;background:var(--bg2,#1e1e2e);color:inherit;cursor:pointer;font-size:16px;font-weight:600;';
 
+    var fileRestoreHtml = '';
+    if (fmt === 'pawflow' && (info.filestore_count || 0) > 0) {
+      var mb = ((info.filestore_bytes || 0) / (1024 * 1024)).toFixed(1);
+      fileRestoreHtml = '<label style="display:flex;gap:8px;align-items:center;font-size:12px;color:#ccc;border:1px solid var(--border,#444);border-radius:4px;padding:8px;background:var(--bg,#141420);">'
+        + '<input id="_impRestoreFiles" type="checkbox" checked style="margin:0;">'
+        + '<span>Restore attached/generated files (' + escapeHtml(String(info.filestore_count)) + ' files, ' + escapeHtml(mb) + ' MB)</span>'
+        + '</label>';
+    }
+
     box.innerHTML =
       '<span id="_impCloseX" style="position:absolute;top:8px;right:12px;cursor:pointer;color:#888;font-size:18px;" title="' + escapeHtml(t('contextCancel')) + '">\u2715</span>'
       + '<div style="font-weight:600;font-size:1.1em;">' + escapeHtml(t('importConversation')) + '</div>'
       + '<div style="color:#888;font-size:11px;">' + escapeHtml(t('contextMessages', { n: info.message_count })) + ' \u2014 ' + escapeHtml(t('formatLabel', { format: fmt })) + '</div>'
       + '<div><label style="font-size:11px;color:#888;">' + escapeHtml(t('title')) + '</label>'
       + '<input id="_impTitle" type="text" value="' + escapeHtml(t('importedConversationTitle')) + '" style="width:100%;padding:6px 10px;border-radius:5px;border:1px solid var(--border,#444);background:var(--bg,#141420);color:inherit;font-size:0.95em;box-sizing:border-box;"></div>'
+      + fileRestoreHtml
       + '<div style="font-size:12px;font-weight:600;color:#6c5ce7;">' + escapeHtml(t('agentMapping')) + '</div>'
       + '<div style="display:flex;gap:12px;align-items:stretch;">'
       +   '<div id="_impAgentTree" style="' + _listCss + 'flex:1;"></div>'
@@ -976,6 +986,8 @@ function _showImportConvDialog(info, fmt) {
         temp_id: info.temp_id, format: fmt,
         agent_mapping: agentInstances, title,
         relays: selRelays, default_relay: defaultRelay,
+        restore_filestore: !!(document.getElementById('_impRestoreFiles') && document.getElementById('_impRestoreFiles').checked),
+        file_id_policy: 'preserve_or_remap',
       }).subscribe(result => {
         if (result.error) { addMsg('error', t('importFailed', { error: result.error })); document.getElementById('status').textContent = t('ready'); return; }
         addMsg('system', t('importSuccess'));
@@ -1000,7 +1012,8 @@ function showExportDialog() {
   panel.innerHTML = '<h3 style="margin:0 0 16px;color:#e0e0e0;font-size:14px;">Export Conversation</h3>'
     + '<div style="display:flex;flex-direction:column;gap:8px;">'
     + '<button onclick="this.closest(\'div[style*=fixed]\').remove();exportConversation()" style="background:#0f3460;color:#e0e0e0;border:1px solid #333;padding:10px;border-radius:6px;cursor:pointer;text-align:left;"><b>HTML</b><br><span style=font-size:11px;color:#888>Standalone HTML file for viewing/sharing</span></button>'
-    + '<button onclick="this.closest(\'div[style*=fixed]\').remove();exportPawflow()" style="background:#0f3460;color:#e0e0e0;border:1px solid #333;padding:10px;border-radius:6px;cursor:pointer;text-align:left;"><b>PawFlow (.pfconv.zip)</b><br><span style=font-size:11px;color:#888>Full conversation archive, re-importable</span></button>'
+    + '<label style="display:flex;gap:8px;align-items:center;color:#ccc;font-size:12px;background:#0f3460;border:1px solid #333;padding:8px 10px;border-radius:6px;"><input id="_expIncludeFiles" type="checkbox" style="margin:0;"> Include attached/generated files</label>'
+    + '<button onclick="var p=this.closest(\'div[style*=fixed]\');var cb=p.querySelector(\'#_expIncludeFiles\');p.remove();exportPawflow(cb&&cb.checked)" style="background:#0f3460;color:#e0e0e0;border:1px solid #333;padding:10px;border-radius:6px;cursor:pointer;text-align:left;"><b>PawFlow (.pfconv.zip)</b><br><span style=font-size:11px;color:#888>Full conversation archive, re-importable</span></button>'
     + '<button onclick="this.closest(\'div[style*=fixed]\').remove();exportClaudeCode()" style="background:#0f3460;color:#e0e0e0;border:1px solid #333;padding:10px;border-radius:6px;cursor:pointer;text-align:left;"><b>Claude Code (.jsonl)</b><br><span style=font-size:11px;color:#888>Claude Code compatible format</span></button>'
     + '</div>'
     + '<div style="margin-top:12px;text-align:right;"><button onclick="this.closest(\'div[style*=fixed]\').remove()" style="background:#333;color:#ccc;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button></div>';
@@ -1009,10 +1022,10 @@ function showExportDialog() {
   document.body.appendChild(overlay);
 }
 
-function exportPawflow() {
+function exportPawflow(includeFilestore) {
   if (!conversationId) return;
   document.getElementById('status').textContent = t('exporting');
-  action$('conv_export_pawflow', { conversation_id: conversationId }).subscribe(data => {
+  action$('conv_export_pawflow', { conversation_id: conversationId, include_filestore: !!includeFilestore }).subscribe(data => {
     if (data.error) { addMsg('error', t('exportFailed', { error: data.error })); }
     else { const a = document.createElement('a'); a.href = data.url; a.download = data.filename; a.click(); addMsg('system', t('exportedFile', { file: data.filename })); }
     document.getElementById('status').textContent = t('ready');

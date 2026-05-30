@@ -75,6 +75,42 @@ def _export_pawflow_zip(store, cid):
     return raw
 
 
+def _execute_pawflow_import(store, raw, **kwargs):
+    from tasks.ai.actions.conversation import _handle_conversation
+    from core import FlowFile
+    from core.file_store import FileStore
+
+    fs = FileStore.instance()
+    fid = fs.store("conversation.pfconv.zip", raw, "application/zip",
+                   user_id="testuser", conversation_id="_upload")
+
+    class _Self:
+        pass
+
+    ff = FlowFile(content=b"")
+    out = _handle_conversation(
+        _Self(), "conv_import_analyze",
+        {"file_id": fid, "format": "pawflow"}, store, "testuser", ff)
+    info = json.loads(out[0].get_content().decode())
+    assert info.get("ok"), info
+
+    ff2 = FlowFile(content=b"")
+    body = {
+        "temp_id": info["temp_id"],
+        "format": "pawflow",
+        "title": "Imported full",
+        "agent_mapping": {
+            "bot": {"definition": "bot", "params": {"name": "bot"}, "llm_service": ""},
+        },
+    }
+    body.update(kwargs)
+    out2 = _handle_conversation(_Self(), "conv_import_execute", body,
+                                store, "testuser", ff2)
+    res = json.loads(out2[0].get_content().decode())
+    assert res.get("ok"), res
+    return res["conversation_id"], res, info
+
+
 def test_export_pawflow_creates_valid_zip(conv):
     store, cid = conv
     raw = _export_pawflow_zip(store, cid)
@@ -91,6 +127,108 @@ def test_export_pawflow_excludes_git(conv):
     with zipfile.ZipFile(io.BytesIO(raw)) as zf:
         for name in zf.namelist():
             assert '.git' not in name
+
+
+def test_export_pawflow_full_includes_context_buckets_and_filestore(store, tmp_path):
+    from core.bucket_store import BucketStore
+    from core.file_store import FileStore
+
+    FileStore.reset()
+    FileStore._instance = FileStore(base_dir=str(tmp_path / "files"))
+    cid = store.generate_id()
+    store.save(cid, [_msg("user", "Hello")], user_id="testuser")
+    store.set_extra(cid, "conv_agents", {"bot": {"definition": "bot", "params": {"name": "bot"}}}, user_id="testuser")
+    store.save_agent_context(cid, "bot", [_msg("assistant", "private context")])
+    BucketStore.get(store._conv_dir(cid)).add_bucket(
+        1, 1, 10.0, 10.0, "bucket summary", msg_count=1)
+    fid = FileStore.instance().store(
+        "artifact.txt", b"payload", "text/plain",
+        user_id="testuser", conversation_id=cid, category="tool_result")
+
+    from core import FlowFile
+    from tasks.ai.actions.conversation import _handle_conversation
+
+    class _Self:
+        pass
+
+    ff = FlowFile(content=b"")
+    out = _handle_conversation(
+        _Self(), "conv_export_pawflow",
+        {"conversation_id": cid, "include_filestore": True},
+        store, "testuser", ff)
+    res = json.loads(out[0].get_content().decode())
+    stored = FileStore.instance().get(res["url"].split("/files/", 1)[1].split("/", 1)[0], user_id="testuser")
+    assert stored is not None
+    _filename, raw, _content_type = stored
+
+    with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+        names = set(zf.namelist())
+        assert "manifest.json" in names
+        assert "bot/context.jsonl" in names
+        assert "summaries/_shared/meta.json" in names
+        assert "summaries/_shared/B_00001.json" in names
+        assert "filestore/index.json" in names
+        index = json.loads(zf.read("filestore/index.json"))
+        assert index[0]["file_id"] == fid
+        assert "filestore/objects/%s_artifact.txt" % fid in names
+
+
+def test_pawflow_full_import_restores_buckets_context_and_filestore(store, tmp_path):
+    from core.bucket_store import BucketStore
+    from core.file_store import FileStore
+
+    FileStore.reset()
+    FileStore._instance = FileStore(base_dir=str(tmp_path / "files"))
+    cid = store.generate_id()
+    store.save(cid, [_msg("user", "seed")], user_id="testuser")
+    fid = FileStore.instance().store(
+        "artifact.txt", b"payload", "text/plain",
+        user_id="testuser", conversation_id=cid, category="tool_result")
+    store.append_message(
+        cid,
+        _msg("user", f"download /files/{fid}/artifact.txt",
+             source={"target_agent": "bot"}),
+        user_id="testuser")
+    store.set_extra(cid, "conv_agents", {"bot": {"definition": "bot", "params": {"name": "bot"}}}, user_id="testuser")
+    store.save_agent_context(cid, "bot", [_msg("assistant", f"context sees fs://filestore/{fid}/artifact.txt")])
+    BucketStore.get(store._conv_dir(cid)).add_bucket(
+        1, 2, 10.0, 20.0, f"summary references {fid}", msg_count=2)
+
+    # Request a full FileStore archive through the action directly.
+    from core import FlowFile
+    from tasks.ai.actions.conversation import _handle_conversation
+
+    class _Self:
+        pass
+
+    ff = FlowFile(content=b"")
+    out = _handle_conversation(
+        _Self(), "conv_export_pawflow",
+        {"conversation_id": cid, "include_filestore": True},
+        store, "testuser", ff)
+    res = json.loads(out[0].get_content().decode())
+    stored = FileStore.instance().get(res["url"].split("/files/", 1)[1].split("/", 1)[0], user_id="testuser")
+    assert stored is not None
+    raw = stored[1]
+
+    imported_cid, import_res, info = _execute_pawflow_import(
+        store, raw, restore_filestore=True, file_id_policy="preserve_or_remap")
+
+    assert info["bucket_count"] == 1
+    assert info["agent_context_count"] == 1
+    assert info["filestore_count"] == 1
+    assert import_res["filestore_restored"] == 1
+    assert import_res["filestore_remapped"] == 1
+    imported_dir = store._conv_dir(imported_cid)
+    assert BucketStore.get(imported_dir).has_any()
+    ctx = store.load_agent_context(imported_cid, "bot")
+    assert ctx and "context sees" in ctx[0]["content"]
+    imported_msgs = store.load(imported_cid, user_id="testuser")
+    new_file_id = next(
+        part for part in imported_msgs[-1]["content"].split("/")
+        if len(part) == 12 and part != fid)
+    assert FileStore.instance().get(new_file_id, user_id="testuser")[1] == b"payload"
+    assert fid not in "\n".join(m.get("content", "") for m in imported_msgs)
 
 
 # ── Export Claude Code JSONL ──

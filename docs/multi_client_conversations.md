@@ -34,6 +34,8 @@ Use `/git-prune` (`/prune-git`) to run that retention immediately for the curren
 
 Code that needs conversation rows must go through `ConversationStore` or `SegmentedJsonl` instead of opening those files directly. PawFlow exports still write flat `transcript.jsonl` and context JSONL files inside `.pfconv.zip` archives so archives remain portable and easy to inspect.
 
+PawFlow conversation archives are full restore archives by default for conversation state: transcript, shared context, per-agent context files, extras, bindings, and `summaries/_shared` bucket caches are exported together so an imported conversation can resume without recomputing bucket summaries. The export dialog can also include conversation-scoped FileStore objects. When FileStore restore is enabled during import, PawFlow restores those files under the new `(user_id, conversation_id)` scope, preserves file IDs when possible, remaps colliding file IDs, and patches imported JSON/JSONL references so `/files/{file_id}` and `fs://filestore/{file_id}/...` links keep working.
+
 Existing installations can migrate stored conversations offline. First migrate
 the logical row format so transcript, shared context, and per-agent contexts all
 store the same provider-turn rows:

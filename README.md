@@ -1,12 +1,21 @@
 <p align="center">
-  <img src="pawflow_art.png" alt="PawFlow" width="200">
+  <a href="https://pawflow.allcolor.org/">
+    <img src="pawflow_logo.png" alt="PawFlow" width="180">
+  </a>
 </p>
 
 <h1 align="center">PawFlow</h1>
 
 <p align="center">
   <strong>Self-hosted agent runtime for real infrastructure.</strong><br>
-  Durable AI agents with relay-backed tools, shared context, and interchangeable LLM providers.
+  Run durable AI agents against your own files, tools, browsers, desktops, services, and workflows.
+</p>
+
+<p align="center">
+  <a href="https://pawflow.allcolor.org/"><strong>Website</strong></a>
+  · <a href="https://pawflow.allcolor.org/quickstart.html">Quickstart</a>
+  · <a href="https://pawflow.allcolor.org/docs.html">Docs</a>
+  · <a href="https://github.com/allcolor/PawFlow-Agents/releases/latest">Releases</a>
 </p>
 
 <p align="center">
@@ -18,34 +27,34 @@
 
 ---
 
-PawFlow is a self-hosted runtime that lets AI agents work inside your real infrastructure, with durable context, relay-backed tools, and interchangeable LLM providers. Run Claude Code, Codex app-server, Antigravity/Agy, Gemini CLI, Anthropic, OpenAI, or OpenAI-compatible agents against your own workspaces without moving your data into a vendor-controlled agent cloud.
+PawFlow is the runtime layer between chat agents, local tools, and production workflows. The server keeps conversations, context, memory, files, flows, and provider sessions durable. Relays execute filesystem, shell, browser, desktop, and media tools next to the machines where the work actually happens.
+
+Use it when a hosted coding assistant is too boxed-in, a workflow tool is too rigid, and a library is not enough runtime.
 
 ## Why PawFlow
 
-Most agent tools are either libraries, hosted coding assistants, or workflow automations. PawFlow is the runtime layer between them: it keeps agent state, routes work through connected relays, streams shared conversations to multiple clients, and lets each agent use the provider that fits the job.
+PawFlow gives agents a real operating surface without handing your workspace to a vendor-controlled agent cloud.
 
-- **Agents work where your files are** — a relay runs next to the user's workspace and executes filesystem, shell, browser, desktop, and generation tools over a controlled connection.
-- **Context is durable** — conversations, per-agent context, memory, knowledge graphs, diaries, and project graphs survive restarts and can be shared across web, CLI, API, and channel flows.
-- **Providers are swappable** — use Claude Code, Claude Code interactive, Codex app-server, Antigravity/Agy, Gemini CLI, Anthropic API, OpenAI API, or local/OpenAI-compatible endpoints per agent or conversation.
-- **Orchestration is built in** — combine autonomous agents with NiFi-style flows, backpressure, checkpointing, scheduling, approvals, and multi-agent delegation.
-- **Self-hosted by design** — your conversations, tools, code access, desktop access, and runtime data stay on infrastructure you operate.
+- **Relay-backed tools**: read, edit, grep, run commands, browse, control desktops, generate media, and inspect projects through explicit relay routes.
+- **Durable context**: conversations, shared context, per-agent context, memory, knowledge graphs, diaries, project graphs, files, and buckets survive restarts.
+- **Multi-provider agents**: mix Codex app-server, Claude Code, Antigravity/Agy, Gemini CLI, Anthropic, OpenAI, and OpenAI-compatible services per agent or conversation.
+- **Shared clients**: continue the same conversation from the web UI, PawCode CLI, VS Code, API clients, or channel integrations.
+- **Deterministic flows**: turn repeated work into NiFi-style DAGs with scheduling, backpressure, checkpoints, approvals, and explicit LLM steps.
+
+## What You Can Build
+
+- Agentic coding sessions against a linked workspace, with persistent context and auditable tool output.
+- Multi-agent operations where planners, coders, reviewers, researchers, and verifiers work in the same conversation.
+- Browser and desktop automation for workflows that do not have clean APIs.
+- Media pipelines that create images, video, audio, 3D assets, voice, and FileStore outputs.
+- Scheduled operational flows: daily digests, inbox triage, data transforms, reports, monitoring, and webhook-driven automation.
+- Portable conversations with full PawFlow archives, including optional FileStore attachments and generated files.
 
 ## Quick Start
 
-### With pip
+The easiest path is the Docker installer from the latest release. It starts PawFlow, opens the bootstrap wizard, creates the first admin user, configures the selected LLM services, deploys the starter flow, and opens your first agent conversation.
 
-```bash
-git clone https://github.com/allcolor/PawFlow-Agents.git
-cd PawFlow-Agents
-pip install -r requirements.txt
-
-# Start the server
-python cli.py start --host 0.0.0.0 --port PORT
-
-# Open the web chat at http://localhost:PORT/chat
-```
-
-### With Docker
+### Docker Installer
 
 Downloadable artifacts are published on the [latest GitHub release](https://github.com/allcolor/PawFlow-Agents/releases/latest): installer zip, PawCode packages, Relay CLI archives, Relay Desktop installers, checksums, and source archives.
 
@@ -59,29 +68,51 @@ unzip "pawflow-install-$PAWFLOW_VERSION.zip"
 cd "pawflow-install-$PAWFLOW_VERSION"
 
 bash scripts/install-pawflow.sh --port PORT --pull-images --version "$PAWFLOW_VERSION"
-# Installer available at https://localhost:PORT/install
 ```
 
-The Docker installer creates persistent data under `~/pawflow`, starts a
-bootstrap HTTPS server, and opens the first-run installer behind the temporary
-Private Gateway key `RoyBetty`. Finalizing the wizard replaces that key, creates
-the admin user, installs the selected LLM and summarizer services, deploys the
-main PawFlow Agent flow, and creates a starter conversation with the `assistant`
-agent selected.
+Open the installer at:
+
+```text
+https://localhost:PORT/install
+```
+
+The first-run Private Gateway key is `RoyBetty`. Finalizing the wizard replaces it.
+
+### From Source
+
+```bash
+git clone https://github.com/allcolor/PawFlow-Agents.git
+cd PawFlow-Agents
+pip install -r requirements.txt
+python cli.py start --host 0.0.0.0 --port PORT
+```
+
+Open the web chat at:
+
+```text
+http://localhost:PORT/chat
+```
+
+## Clients
+
+### Web UI
+
+The web UI is the main operator surface: chat, context editor, memory editor, file attachments, relay tools, desktop entry points, terminals, provider sessions, and flow actions in one place.
 
 ### PawCode CLI
 
-A drop-in replacement for Claude Code that talks to your PawFlow server:
+PawCode is a terminal client for the same PawFlow conversations. It can be used interactively or in Claude Code-compatible stream-JSON mode.
 
 ```bash
-# Interactive mode
 pawcode --server http://localhost:PORT
 
-# Stream-JSON mode (Claude Code compatible)
 echo '{"type":"user","message":{"role":"user","content":"hello"}}' | \
   pawcode --input-format stream-json --output-format stream-json
 ```
 
+### VS Code and Relays
+
+Use the relay CLI or Relay Desktop to connect workspaces, desktops, browsers, and terminals. The VS Code extension can attach to the same conversation and resource panel.
 ## Architecture
 
 ```

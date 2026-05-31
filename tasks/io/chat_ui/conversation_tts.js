@@ -138,7 +138,7 @@ function _convTtsShowServiceDialog() {
   html += '<div class="dialog-actions" style="margin-top:12px;"><button class="btn" onclick="document.getElementById(\'convTtsServiceDialog\').remove()">'
     + escapeHtml(typeof t === 'function' ? t('cancel') : 'Cancel') + '</button></div></div>';
   overlay.innerHTML = html;
-  overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
+
   document.body.appendChild(overlay);
 }
 

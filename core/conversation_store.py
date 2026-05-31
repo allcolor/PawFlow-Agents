@@ -4073,6 +4073,80 @@ class ConversationStore:
             return 0
         return self._remove_msg_ids_from_files(cid, set(msg_ids))
 
+    def find_restart_boundary(self, cid: str, msg_id: str) -> Dict[str, Any]:
+        """Find the transcript row that restart_from should keep through.
+
+        A restart targeting a user message means "re-run this prompt", so the
+        transcript is kept through the previous visible row and the prompt text
+        is returned to the UI. Other targets are kept through the target row.
+        The search walks from the tail and stops as soon as the target and, for
+        user rows, its predecessor are known.
+        """
+        msg_id = str(msg_id or "").strip()
+        if not msg_id or not self.exists(cid):
+            return {"found": False}
+
+        target: Optional[Dict[str, Any]] = None
+        boundary: Optional[Dict[str, Any]] = None
+        for row in self._transcript_log(cid).iter_rows_reverse():
+            if not row.get("role"):
+                continue
+            if target is not None:
+                boundary = dict(row)
+                break
+            if row.get("msg_id") == msg_id:
+                target = dict(row)
+                if target.get("role") != "user":
+                    boundary = target
+                    break
+
+        if target is None:
+            return {"found": False}
+        return {
+            "found": True,
+            "target": target,
+            "boundary": boundary,
+            "boundary_msg_id": (boundary or {}).get("msg_id", ""),
+        }
+
+    def truncate_after_msg_id(self, cid: str, msg_id: str) -> Dict[str, Any]:
+        """Truncate transcript, shared context, and agent contexts after msg_id."""
+        msg_id = str(msg_id or "").strip()
+        if not msg_id or not self.exists(cid):
+            return {"found": False, "kept_messages": 0, "contexts_truncated": 0}
+
+        lock = self._get_conv_lock(cid)
+        contexts_truncated = 0
+        with lock:
+            transcript = self._transcript_log(cid).truncate_after_msg_id(msg_id)
+            if not transcript.get("found"):
+                return {"found": False, "kept_messages": 0, "contexts_truncated": 0}
+
+            shared = SegmentedJsonl(self._shared_ctx_path(cid)).truncate_after_msg_id(msg_id)
+            if shared.get("found"):
+                contexts_truncated += 1
+            conv_dir = self._conv_dir(cid)
+            if conv_dir.is_dir():
+                for entry in conv_dir.iterdir():
+                    ctx_path = entry / "context.jsonl"
+                    if entry.is_dir() and self._jsonl_exists(ctx_path):
+                        ctx_res = SegmentedJsonl(ctx_path).truncate_after_msg_id(msg_id)
+                        if ctx_res.get("found"):
+                            contexts_truncated += 1
+
+        with self._cache_lock:
+            self._cache.pop(cid, None)
+        self._invalidate_ctx_cache(cid)
+        cached = self._reload_cache(cid)
+        self._persist_recomputed_hot_metadata(cid, cached)
+        self.invalidate_claude_sessions(cid)
+        return {
+            "found": True,
+            "kept_messages": int(cached.get("msg_count") or 0),
+            "contexts_truncated": contexts_truncated,
+            "boundary": transcript.get("boundary"),
+        }
+
     def _remove_msg_ids_from_files(self, cid: str, ids: set) -> int:
         """Remove messages by msg_id from transcript + shared + all agent contexts."""
         lock = self._get_conv_lock(cid)

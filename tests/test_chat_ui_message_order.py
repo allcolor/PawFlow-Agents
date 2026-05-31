@@ -284,14 +284,14 @@ def test_restart_from_slash_msg_id_uses_visible_user_message_semantics():
     assert "messages.find(el => el.dataset.msgid === restartTarget)" in cmd_context_js
     assert "msg.dataset.messageRole === 'user'" in cmd_context_js
     assert "restartParamsForMessage(msg)" in cmd_context_js
-    assert "setPromptTextForRestart(restartPromptText)" in cmd_context_js
+    assert "setTimeout(() => setPromptTextForRestart(promptText), 100)" in cmd_context_js
 
 
 def test_restart_from_done_reloads_truncated_conversation():
     assert "data.operation === 'restart_from'" in SSE_JS
     assert "resumeConv(conversationId, true)" in SSE_JS
     assert "data.restart_prompt_text" in SSE_JS
-    assert "setPromptTextForRestart(restartPromptText)" in SSE_JS
+    assert "setTimeout(() => setPromptTextForRestart(restartPromptText), 100)" in SSE_JS
 
 
 def test_live_tool_events_keep_chat_scrolled():

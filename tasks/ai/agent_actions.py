@@ -249,6 +249,7 @@ class AgentActionsMixin:
         result_action = result_action or action
         import copy
         _body = copy.deepcopy(body)
+        _body["_result_action"] = result_action
         # Clone flowfile for bg thread — main thread will overwrite the original with ack
         from core import FlowFile as _FF
         _bg_ff = _FF(content=flowfile.get_content(), attributes=dict(flowfile.attributes))
@@ -274,6 +275,8 @@ class AgentActionsMixin:
                     if result is not None:
                         _content = ""
                         if isinstance(result, list) and result:
+                            if result[0].get_attribute("suppress_command_result") == "1":
+                                return
                             _content = result[0].get_content().decode("utf-8", errors="replace")
                         from core.conversation_event_bus import ConversationEventBus
                         # The "conversation_id" field is the *call's* scope so
@@ -620,6 +623,30 @@ class AgentActionsMixin:
         """
         from core.conversation_event_bus import ConversationEventBus
         bus = ConversationEventBus.instance()
+        try:
+            _body = json.loads(flowfile.get_content().decode("utf-8", errors="replace"))
+            if not isinstance(_body, dict):
+                _body = {}
+        except Exception:
+            _body = {}
+        reply_conversation_id = _body.get("_reply_conversation_id", "") or ""
+        call_id = _body.get("_call_id", "") or ""
+        result_action = _body.get("_result_action", "") or op_name
+
+        def _publish_command_result(payload: dict):
+            if not reply_conversation_id:
+                return
+            try:
+                data = {
+                    "action": result_action,
+                    "result": json.dumps(payload, ensure_ascii=False),
+                    "conversation_id": conv_id,
+                }
+                if call_id:
+                    data["_callId"] = call_id
+                bus.publish_event(reply_conversation_id, "command_result", data)
+            except Exception:
+                logger.debug("context op command_result publish failed", exc_info=True)
 
         def _matching_active_contexts(target_agent: str = ""):
             target = "" if target_agent in ("", "shared", "ALL") else target_agent
@@ -752,10 +779,12 @@ class AgentActionsMixin:
                     bus.publish_event(conv_id, "compact_progress", {
                         "stage": "done", **result,
                     })
+                _publish_command_result(result)
             except Exception as e:
                 bus.publish_event(conv_id, "compact_progress", {
                     "stage": "error", "error": str(e),
                 })
+                _publish_command_result({"error": str(e), "operation": op_name})
                 logger.error("%s failed: %s", op_name, e, exc_info=True)
             finally:
                 if op_name == "compact":
@@ -782,6 +811,7 @@ class AgentActionsMixin:
         flowfile.set_content(json.dumps({
             "status": "accepted", "action": op_name,
         }).encode())
+        flowfile.set_attribute("suppress_command_result", "1")
         return [flowfile]
 
     # ═════════════════════════════════════════════════════════════════

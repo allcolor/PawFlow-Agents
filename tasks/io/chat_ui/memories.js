@@ -78,7 +78,7 @@ function showMemoryOverlay(memories) {
     + '<div id="mem-list" style="flex:1;overflow-y:auto;border:1px solid #222;border-radius:8px;background:#0d1117">' + msgsHtml + '</div>'
     + '</div>';
   document.body.appendChild(overlay);
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+
 }
 
 function _formatAge(ts) {

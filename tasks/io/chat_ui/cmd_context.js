@@ -25,8 +25,17 @@ function cmdRestartFrom(text, parts) {
     }
   }
   action$('restart_from', restartParams).subscribe(data => {
-    if (data.error) addMsg('error', data.error);
-    else if (restartPromptText && typeof setPromptTextForRestart === 'function') setPromptTextForRestart(restartPromptText);
+    if (data.error) {
+      hideContextOp();
+      addMsg('error', data.error);
+      return;
+    }
+    hideContextOp();
+    if (conversationId) resumeConv(conversationId, true);
+    const promptText = data.restart_prompt_text || restartPromptText || '';
+    if (promptText && typeof setPromptTextForRestart === 'function') {
+      setTimeout(() => setPromptTextForRestart(promptText), 100);
+    }
   });
   return true;
 }

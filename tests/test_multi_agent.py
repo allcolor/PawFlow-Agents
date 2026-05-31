@@ -1,5 +1,6 @@
 """Tests for SubAgentExecutor — multi-agent orchestration."""
 
+import inspect
 import time
 import pytest
 from unittest.mock import MagicMock, patch
@@ -428,6 +429,18 @@ class TestResolveAgentTask:
             with pytest.raises(KeyError, match="not in conversation"):
                 resolve_agent_task("nope", "Hi", "user1",
                                    conversation_id="conv1")
+
+
+class TestBroadcastAgents:
+    def test_broadcast_all_uses_conversation_agents(self):
+        from tasks.ai.agent_side_channels import AgentSideChannelsMixin
+
+        src = inspect.getsource(AgentSideChannelsMixin._broadcast_agents)
+        assert "get_all_agent_configs(conversation_id)" in src
+        assert "rs.list_all(\"agent\", user_id)" not in src
+        assert "_resolve_agent_client(\"\", user_id, conversation_id)" not in src
+        assert "conversation_id=conversation_id" in src
+        assert "_resolve_llm_service(\n                    svc_id, uid, conversation_id)" in src
 
 
 class TestDelegateExcluded:

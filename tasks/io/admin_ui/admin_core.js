@@ -170,9 +170,7 @@ function adminInit() {
     };
     document.getElementById("btn-deploy").onclick = openDeployModal;
     document.getElementById("flow-search").oninput = filterFlowList;
-    document.getElementById("modal-overlay").onclick = function(e) {
-        if (e.target === this) closeModal();
-    };
+
     // Nav toggle
     document.getElementById("nav-runtime").onclick = function() {
         setNavActive("nav-runtime");

@@ -30,7 +30,7 @@ function showProjectGraphOverlay() {
     + '</div>'
     + '</div>';
   document.body.appendChild(overlay);
-  overlay.addEventListener('click', function(e) { if (e.target === overlay) overlay.remove(); });
+
 }
 
 function pgBuild() {

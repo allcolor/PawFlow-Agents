@@ -573,20 +573,20 @@ function loadMoreMessages() {
 
 function deleteConv(event, cid) {
   event.stopPropagation();
+  deleteConversationById(cid);
+}
+
+function deleteCurrentConv() {
+  deleteConversationById(conversationId);
+}
+
+function deleteConversationById(cid) {
+  if (!cid) return;
   if (!confirm(t('confirmDelete'))) return;
   var wasActive = (cid === conversationId);
   action$('delete_conversation', { conversation_id: cid }).subscribe(() => {
     if (wasActive) _switchAfterDelete(cid);
     else loadConversations();
-  });
-}
-
-function deleteCurrentConv() {
-  if (!conversationId) return;
-  if (!confirm(t('confirmDelete'))) return;
-  var cid = conversationId;
-  action$('delete_conversation', { conversation_id: cid }).subscribe(() => {
-    _switchAfterDelete(cid);
   });
 }
 
@@ -619,11 +619,12 @@ function _switchAfterDelete(deletedCid) {
   });
 }
 
-function exportConversation() {
-  if (!conversationId) return;
+function exportConversation(cid) {
+  const targetCid = cid || conversationId;
+  if (!targetCid) return;
   document.getElementById('status').textContent = t('exporting');
   // Export needs the full history — subscribe to load_history result
-  action$('load_history', { conversation_id: conversationId, limit: 99999, offset: 0 })
+  action$('load_history', { conversation_id: targetCid, limit: 99999, offset: 0 })
     .subscribe(async data => {
       try {
         const messages = data.messages || [];
@@ -658,14 +659,14 @@ function exportConversation() {
           const zipBlob = buildSimpleZip(files);
           const a = document.createElement('a');
           a.href = URL.createObjectURL(zipBlob);
-          a.download = 'conversation_' + conversationId.substring(0, 8) + '.zip';
+          a.download = 'conversation_' + targetCid.substring(0, 8) + '.zip';
           a.click();
           URL.revokeObjectURL(a.href);
         } else {
           const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
           const a = document.createElement('a');
           a.href = URL.createObjectURL(blob);
-          a.download = 'conversation_' + conversationId.substring(0, 8) + '.html';
+          a.download = 'conversation_' + targetCid.substring(0, 8) + '.html';
           a.click();
           URL.revokeObjectURL(a.href);
         }
@@ -1003,39 +1004,43 @@ function _showImportConvDialog(info, fmt) {
   });
 }
 
-function showExportDialog() {
-  if (!conversationId) return;
+function showExportDialog(cid) {
+  const targetCid = cid || conversationId;
+  if (!targetCid) return;
   const overlay = document.createElement('div');
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  overlay.dataset.conversationId = targetCid;
   const panel = document.createElement('div');
   panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:340px;border:1px solid #333;';
   panel.innerHTML = '<h3 style="margin:0 0 16px;color:#e0e0e0;font-size:14px;">Export Conversation</h3>'
     + '<div style="display:flex;flex-direction:column;gap:8px;">'
-    + '<button onclick="this.closest(\'div[style*=fixed]\').remove();exportConversation()" style="background:#0f3460;color:#e0e0e0;border:1px solid #333;padding:10px;border-radius:6px;cursor:pointer;text-align:left;"><b>HTML</b><br><span style=font-size:11px;color:#888>Standalone HTML file for viewing/sharing</span></button>'
+    + '<button onclick="var p=this.closest(\'div[style*=fixed]\');var cid=p.dataset.conversationId;p.remove();exportConversation(cid)" style="background:#0f3460;color:#e0e0e0;border:1px solid #333;padding:10px;border-radius:6px;cursor:pointer;text-align:left;"><b>HTML</b><br><span style=font-size:11px;color:#888>Standalone HTML file for viewing/sharing</span></button>'
     + '<label style="display:flex;gap:8px;align-items:center;color:#ccc;font-size:12px;background:#0f3460;border:1px solid #333;padding:8px 10px;border-radius:6px;"><input id="_expIncludeFiles" type="checkbox" style="margin:0;"> Include attached/generated files</label>'
-    + '<button onclick="var p=this.closest(\'div[style*=fixed]\');var cb=p.querySelector(\'#_expIncludeFiles\');p.remove();exportPawflow(cb&&cb.checked)" style="background:#0f3460;color:#e0e0e0;border:1px solid #333;padding:10px;border-radius:6px;cursor:pointer;text-align:left;"><b>PawFlow (.pfconv.zip)</b><br><span style=font-size:11px;color:#888>Full conversation archive, re-importable</span></button>'
-    + '<button onclick="this.closest(\'div[style*=fixed]\').remove();exportClaudeCode()" style="background:#0f3460;color:#e0e0e0;border:1px solid #333;padding:10px;border-radius:6px;cursor:pointer;text-align:left;"><b>Claude Code (.jsonl)</b><br><span style=font-size:11px;color:#888>Claude Code compatible format</span></button>'
+    + '<button onclick="var p=this.closest(\'div[style*=fixed]\');var cb=p.querySelector(\'#_expIncludeFiles\');var cid=p.dataset.conversationId;p.remove();exportPawflow(cb&&cb.checked,cid)" style="background:#0f3460;color:#e0e0e0;border:1px solid #333;padding:10px;border-radius:6px;cursor:pointer;text-align:left;"><b>PawFlow (.pfconv.zip)</b><br><span style=font-size:11px;color:#888>Full conversation archive, re-importable</span></button>'
+    + '<button onclick="var p=this.closest(\'div[style*=fixed]\');var cid=p.dataset.conversationId;p.remove();exportClaudeCode(cid)" style="background:#0f3460;color:#e0e0e0;border:1px solid #333;padding:10px;border-radius:6px;cursor:pointer;text-align:left;"><b>Claude Code (.jsonl)</b><br><span style=font-size:11px;color:#888>Claude Code compatible format</span></button>'
     + '</div>'
     + '<div style="margin-top:12px;text-align:right;"><button onclick="this.closest(\'div[style*=fixed]\').remove()" style="background:#333;color:#ccc;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button></div>';
   overlay.appendChild(panel);
-  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+
   document.body.appendChild(overlay);
 }
 
-function exportPawflow(includeFilestore) {
-  if (!conversationId) return;
+function exportPawflow(includeFilestore, cid) {
+  const targetCid = cid || conversationId;
+  if (!targetCid) return;
   document.getElementById('status').textContent = t('exporting');
-  action$('conv_export_pawflow', { conversation_id: conversationId, include_filestore: !!includeFilestore }).subscribe(data => {
+  action$('conv_export_pawflow', { conversation_id: targetCid, include_filestore: !!includeFilestore }).subscribe(data => {
     if (data.error) { addMsg('error', t('exportFailed', { error: data.error })); }
     else { const a = document.createElement('a'); a.href = data.url; a.download = data.filename; a.click(); addMsg('system', t('exportedFile', { file: data.filename })); }
     document.getElementById('status').textContent = t('ready');
   });
 }
 
-function exportClaudeCode() {
-  if (!conversationId) return;
+function exportClaudeCode(cid) {
+  const targetCid = cid || conversationId;
+  if (!targetCid) return;
   document.getElementById('status').textContent = t('exporting');
-  action$('conv_export_claude_code', { conversation_id: conversationId }).subscribe(data => {
+  action$('conv_export_claude_code', { conversation_id: targetCid }).subscribe(data => {
     if (data.error) { addMsg('error', t('exportFailed', { error: data.error })); }
     else { const a = document.createElement('a'); a.href = data.url; a.download = data.filename; a.click(); addMsg('system', t('exportedFile', { file: data.filename })); }
     document.getElementById('status').textContent = t('ready');
@@ -1198,6 +1203,10 @@ function showConvMenu(e, cid, status) {
     menu.appendChild(s);
   };
 
+  item('\u{1F4E5} ' + t('export'), () => showExportDialog(cid));
+  item('\u{21BB} ' + t('refresh'), () => resumeConv(cid, true));
+  item('\u{1F5D1} ' + t('delete'), () => deleteConversationById(cid), { danger: true });
+  sep();
   item('\u{1F500} Fork', () => convFork(cid), { disabled: !idle });
   item('\u{1F33F} Branch...', () => convBranchPrompt(cid), { disabled: !idle });
   item('\u{21C4} Switch branch...', () => convSwitchBranchDialog(cid), { disabled: !idle });
@@ -1342,7 +1351,7 @@ function convRollbackDialog(cid) {
     dialog.innerHTML = html;
     overlay.appendChild(dialog);
     document.body.appendChild(overlay);
-    overlay.onclick = (ev) => { if (ev.target === overlay) overlay.remove(); };
+
 
     let selectedHash = null;
     dialog.querySelectorAll('.git-commit-row').forEach(row => {
@@ -1397,7 +1406,7 @@ function _showGitDialog(title, items, onSelect) {
   dialog.innerHTML = html;
   overlay.appendChild(dialog);
   document.body.appendChild(overlay);
-  overlay.onclick = (ev) => { if (ev.target === overlay) overlay.remove(); };
+
   dialog.querySelectorAll('.git-list-item').forEach(row => {
     if (row.dataset.disabled) return;
     row.onclick = () => { overlay.remove(); onSelect(row.dataset.value); };

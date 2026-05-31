@@ -1377,27 +1377,28 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
-        _rf_msgs = store.load(conv_id, user_id=user_id)
-        if not _rf_msgs:
+        _meta = store.get_metadata(conv_id)
+        if not _meta:
             flowfile.set_content(json.dumps({"error": "Conversation not found"}).encode())
             flowfile.set_attribute("http.response.status", "404")
             return [flowfile]
-
+        if user_id and _meta.get("user_id") and _meta.get("user_id") != user_id:
+            flowfile.set_content(json.dumps({"error": "Access denied"}).encode())
+            flowfile.set_attribute("http.response.status", "403")
+            return [flowfile]
         restart_prompt_text = ""
         restart_original_msg_id = ""
+        _rf_msgs = None
+        truncate_boundary_msg_id = ""
         if _rf_target:
-            _rf_idx = next(
-                (i for i, m in enumerate(_rf_msgs)
-                 if isinstance(m, dict) and m.get("msg_id") == _rf_target),
-                -1,
-            )
-            if _rf_idx < 0:
+            boundary = store.find_restart_boundary(conv_id, _rf_target)
+            if not boundary.get("found"):
                 flowfile.set_content(json.dumps({
                     "error": f"msg_id {_rf_target} not found",
                 }).encode())
                 flowfile.set_attribute("http.response.status", "404")
                 return [flowfile]
-            _target_msg = _rf_msgs[_rf_idx]
+            _target_msg = boundary.get("target") or {}
             if isinstance(_target_msg, dict) and _target_msg.get("role") == "user":
                 restart_original_msg_id = _rf_target
                 _content = _target_msg.get("content", "")
@@ -1411,10 +1412,17 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
                     ).strip()
                 else:
                     restart_prompt_text = str(_content or "")
-                keep_count = _rf_idx
+            truncate_boundary_msg_id = boundary.get("boundary_msg_id") or ""
+            if not truncate_boundary_msg_id:
+                keep_count = 0
             else:
-                keep_count = _rf_idx + 1
+                keep_count = -1
         else:
+            _rf_msgs = store.load(conv_id, user_id=user_id)
+            if not _rf_msgs:
+                flowfile.set_content(json.dumps({"error": "Conversation not found"}).encode())
+                flowfile.set_attribute("http.response.status", "404")
+                return [flowfile]
             if _rf_index_raw is None:
                 flowfile.set_content(json.dumps({
                     "error": "Missing restart_index or msg_id",
@@ -1436,18 +1444,25 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
                 flowfile.set_attribute("http.response.status", "400")
                 return [flowfile]
 
-        kept_msgs = list(_rf_msgs[:keep_count])
+        kept_msgs = list(_rf_msgs[:keep_count]) if _rf_msgs is not None and keep_count >= 0 else []
         drop_ids = {
             str(m.get("msg_id") or "")
-            for m in _rf_msgs[keep_count:]
+            for m in (_rf_msgs or [])[keep_count:]
             if isinstance(m, dict) and m.get("msg_id")
-        }
+        } if _rf_msgs is not None and keep_count >= 0 else set()
 
         def _do_restart():
             import time as _time
 
             deleted_contexts = 0
-            if keep_count == 0:
+            kept_message_count = len(kept_msgs)
+            if _rf_target and truncate_boundary_msg_id:
+                result = store.truncate_after_msg_id(conv_id, truncate_boundary_msg_id)
+                if not result.get("found"):
+                    raise ValueError(
+                        f"msg_id {truncate_boundary_msg_id} not found")
+                kept_message_count = int(result.get("kept_messages") or 0)
+            elif keep_count == 0:
                 lock = store._get_conv_lock(conv_id)
                 with lock:
                     rows = list(store._transcript_log(conv_id).iter_rows())
@@ -1480,6 +1495,7 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
                 for agent_name in sorted(agent_names):
                     if store.delete_agent_context(conv_id, agent_name):
                         deleted_contexts += 1
+                store.invalidate_claude_sessions(conv_id)
             elif drop_ids:
                 store._remove_msg_ids_from_files(conv_id, drop_ids)
             try:
@@ -1489,12 +1505,12 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
                 logger.debug("restart_from bucket wipe failed", exc_info=True)
             return {
                 "operation": "restart_from",
-                "kept_messages": len(kept_msgs),
+                "kept_messages": kept_message_count,
                 "deleted_contexts": deleted_contexts,
                 "msg_id": _rf_target or None,
                 "restart_original_msg_id": restart_original_msg_id or None,
                 "restart_prompt_text": restart_prompt_text,
-                "restart_index": keep_count,
+                "restart_index": kept_message_count,
                 "agent": "shared",
             }
 

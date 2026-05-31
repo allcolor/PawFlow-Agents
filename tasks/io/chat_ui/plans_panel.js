@@ -249,7 +249,7 @@ async function showAssignPlanDialog(planId) {
   // Build dialog
   const overlay = document.createElement('div');
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999;';
-  overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
+
 
   let agentBtns = agents.map(function(a) {
     return '<button onclick="assignPlanTo(\'' + escapeHtml(planId) + '\',\'' + escapeHtml(a) + '\',\'\');this.closest(\'[data-overlay]\').remove();" '
@@ -300,7 +300,7 @@ async function showAssignStepDialog(planId, stepIndex) {
 
   const overlay = document.createElement('div');
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999;';
-  overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
+
 
   let agentBtns = agents.map(function(a) {
     return '<button onclick="assignPlanTo(\'' + escapeHtml(planId) + '\',\'' + escapeHtml(a) + '\',\'' + stepIndex + '\');this.closest(\'[data-overlay]\').remove();" '
@@ -323,7 +323,7 @@ async function showAssignStepDialog(planId, stepIndex) {
 async function showCreatePlanDialog() {
   const overlay = document.createElement('div');
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999;';
-  overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
+
 
   const panel = document.createElement('div');
   panel.setAttribute('data-overlay', '1');
@@ -373,7 +373,7 @@ async function showSetVerifierDialog(planId, stepIndex) {
 
   const overlay = document.createElement('div');
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999;';
-  overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
+
 
   const label = stepIndex > 0 ? t('stepLabelTitle', { n: stepIndex }) : t('planTitle');
   let btns = '<button onclick="setPlanVerifier(\'' + escapeHtml(planId) + '\',' + stepIndex + ',\'\');this.closest(\'[data-overlay]\').remove();" '

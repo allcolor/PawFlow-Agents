@@ -3117,7 +3117,7 @@ async function showAddAgentToConvDialog(presetDefinition) {
   panel.innerHTML = '<p style="color:var(--pf-text);font-weight:600;">' + escapeHtml(t('addAgentToConversation')) + '</p><p style="color:var(--pf-muted);">' + escapeHtml(t('loading')) + '</p>';
   overlay.appendChild(panel);
   document.body.appendChild(overlay);
-  overlay.addEventListener('click', function(e) { if (e.target === overlay) overlay.remove(); });
+
   try {
     var data = await rxjs.firstValueFrom(action$('list_repo_agents', {}));
     var svcData = await rxjs.firstValueFrom(listServices$('llmConnection'));
@@ -3461,7 +3461,7 @@ function _showEditLimitsDialog(taskId) {
     const overlay = document.createElement('div');
     overlay.id = 'resourceEditorOverlay';
     overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:var(--pf-shadow);z-index:9999;display:flex;align-items:center;justify-content:center;';
-    overlay.onclick = (ev) => { if (ev.target === overlay) overlay.remove(); };
+
     const panel = document.createElement('div');
     panel.style.cssText = 'background:var(--pf-panel);border:1px solid var(--pf-border);border-radius:8px;padding:20px;min-width:340px;max-width:420px;color:var(--pf-text);';
     const _f = (id, label, val, ph) => `<div style="margin-bottom:8px;"><label style="font-size:11px;color:var(--pf-muted);">${label}</label><input id="${id}" value="${val||''}" placeholder="${ph}" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;font-size:12px;"/></div>`;
@@ -3956,7 +3956,7 @@ function _openVncLoginDialog(sessionId, serviceId, token, triggerBtn, cli, scope
   }
 
   document.getElementById('vnc-dialog-close').onclick = () => closeDialog(null);
-  overlay.onclick = (e) => { if (e.target === overlay) closeDialog(null); };
+
 
   // Poll for completion (per-CLI status action)
   const pollInterval = setInterval(async () => {

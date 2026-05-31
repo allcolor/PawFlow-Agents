@@ -208,6 +208,110 @@ class SegmentedJsonl:
     def replace_dicts(self, rows: Iterable[Dict[str, Any]]) -> None:
         self.replace_lines(json.dumps(row, ensure_ascii=False) + "\n" for row in rows)
 
+    def truncate_after_msg_id(self, msg_id: str) -> Dict[str, Any]:
+        """Keep rows through ``msg_id`` and discard everything after it.
+
+        This is the hot path for restart-from. For segmented logs it searches
+        segments from the tail, rewrites only the segment that contains the
+        boundary row, and unlinks later segments. It avoids materializing the
+        whole logical stream just to drop a suffix.
+        """
+        msg_id = str(msg_id or "").strip()
+        if not msg_id or not self.exists():
+            return {"found": False, "kept_rows": 0, "boundary": None}
+
+        self._flush_own_append_handles()
+
+        if not self.is_segmented():
+            rows = []
+            boundary = None
+            found = False
+            for row in self._iter_file(self.flat_path):
+                rows.append(row)
+                if row.get("msg_id") == msg_id:
+                    boundary = row
+                    found = True
+                    break
+            if not found:
+                return {"found": False, "kept_rows": 0, "boundary": None}
+            self.replace_dicts(rows)
+            return {"found": True, "kept_rows": len(rows), "boundary": boundary}
+
+        paths = sorted(self.segment_dir.glob("*.jsonl")) if self.segment_dir.is_dir() else []
+        if not paths:
+            return {"found": False, "kept_rows": 0, "boundary": None}
+
+        index = self._load_index()
+        indexed = {
+            str(item.get("file") or ""): dict(item)
+            for item in index.get("segments") or []
+        }
+
+        target_idx = -1
+        target_rows: List[Dict[str, Any]] = []
+        boundary = None
+        boundary_row_idx = -1
+        for idx in range(len(paths) - 1, -1, -1):
+            rows = list(self._iter_file(paths[idx]))
+            for row_idx in range(len(rows) - 1, -1, -1):
+                row = rows[row_idx]
+                if row.get("msg_id") == msg_id:
+                    target_idx = idx
+                    target_rows = rows
+                    boundary = row
+                    boundary_row_idx = row_idx
+                    break
+            if target_idx >= 0:
+                break
+
+        if target_idx < 0:
+            return {"found": False, "kept_rows": 0, "boundary": None}
+
+        kept_target_rows = target_rows[:boundary_row_idx + 1]
+        target_path = paths[target_idx]
+        self._replace_rows_in_path(target_path, kept_target_rows)
+
+        for path in paths[target_idx + 1:]:
+            self._close_append_handles(path)
+            try:
+                path.unlink(missing_ok=True)
+            except FileNotFoundError:
+                pass
+
+        segments = []
+        total_rows = 0
+        for path in paths[:target_idx]:
+            item = indexed.get(path.name)
+            if item is None:
+                item = {
+                    "file": path.name,
+                    "rows": sum(1 for _ in self._iter_file(path)),
+                    "bytes": path.stat().st_size if path.exists() else 0,
+                }
+            else:
+                item["file"] = path.name
+            total_rows += int(item.get("rows") or 0)
+            segments.append(item)
+
+        target_item = {
+            "file": target_path.name,
+            "rows": len(kept_target_rows),
+            "bytes": target_path.stat().st_size if target_path.exists() else 0,
+        }
+        total_rows += len(kept_target_rows)
+        segments.append(target_item)
+
+        new_index = {
+            "version": 1,
+            "max_rows": self.max_rows,
+            "max_bytes": self.max_bytes,
+            "segments": segments,
+            "total_rows": total_rows,
+        }
+        self._remember_index(new_index, flushed=True)
+        self._write_index(new_index)
+        return {"found": True, "kept_rows": total_rows, "boundary": boundary}
+
     def prewarm_append(self) -> None:
         """Create the first append handle before a latency-sensitive write."""
         cache_key = self._cache_key()

@@ -505,7 +505,7 @@ function _showNewConvDialog(repoAgents, llmServices, availableRelays, resolve) {
 
   var cleanup = function(val) { overlay.remove(); resolve(val); };
   document.getElementById('_ncCancelBtn').onclick = function() { cleanup(null); };
-  overlay.addEventListener('click', function(e) { if (e.target === overlay) cleanup(null); });
+
   document.getElementById('_ncCreateBtn').onclick = function() {
     if (_instanceCount() === 0) return;
     var agents = Object.keys(agentInstances).map(function(iname) {

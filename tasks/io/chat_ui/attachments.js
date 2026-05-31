@@ -137,6 +137,13 @@ function restartFromMsg(btn) {
     if (data.error) {
       hideContextOp();
       addMsg('error', data.error);
+      return;
+    }
+    hideContextOp();
+    if (conversationId) resumeConv(conversationId, true);
+    const promptText = data.restart_prompt_text || data.prompt_text || '';
+    if (promptText && typeof setPromptTextForRestart === 'function') {
+      setTimeout(() => setPromptTextForRestart(promptText), 100);
     }
   });
 }

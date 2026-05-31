@@ -211,43 +211,37 @@ class AgentSideChannelsMixin:
         """
         from core.conversation_event_bus import ConversationEventBus
         from core.conversation_store import ConversationStore
-        from core.resource_store import ResourceStore
         from core.agent_executor import SubAgentExecutor, resolve_agent_task
+        from core.conv_agent_config import get_all_agent_configs
 
         bus = ConversationEventBus.instance()
 
         try:
-            rs = ResourceStore.instance()
-            all_agents = rs.list_all("agent", user_id)
-            if not all_agents:
+            all_agent_configs = get_all_agent_configs(conversation_id) or {}
+            all_targets = [
+                name for name in all_agent_configs.keys()
+                if isinstance(name, str) and name.strip()
+            ]
+            if not all_targets:
                 bus.publish_event(conversation_id, "error_event", {
-                    "message": "No agents defined. Use /agent create first.",
+                    "message": "No agents are attached to this conversation.",
                 })
                 return
 
-            agent_names = [a["name"] for a in all_agents]
-            all_targets = agent_names
             bus.publish_event(conversation_id, "thinking", {
                 "detail": f"Broadcasting to {len(all_targets)} targets: {', '.join(all_targets)}",
             })
-
-            # Resolve default LLM client (no specific agent for broadcast)
-            client, _, _ = self._resolve_agent_client("", user_id, conversation_id)
-            if not client:
-                bus.publish_event(conversation_id, "error_event", {
-                    "message": "No LLM service available for broadcast.",
-                })
-                return
 
             # Build tasks
             registry = self.get_tool_registry()
             self._configure_tool_handlers(
                 registry, conversation_id=conversation_id,
-                user_id=user_id, llm_client=client,
+                user_id=user_id,
             )
 
             def _client_resolver(svc_id, uid):
-                return self._resolve_llm_service(svc_id, uid)
+                return self._resolve_llm_service(
+                    svc_id, uid, conversation_id)
 
             def _bc_on_event(event_type, data):
                 try:
@@ -255,16 +249,12 @@ class AgentSideChannelsMixin:
                 except Exception:
                     logger.debug("exception suppressed", exc_info=True)
 
-            sub_executor = SubAgentExecutor(
-                client, registry, max_workers=len(agent_names) + 1,
-                client_resolver=_client_resolver,
-                on_event=_bc_on_event,
-            )
-
             tasks = []
             for name in all_targets:
                 try:
-                    task = resolve_agent_task(name, message, user_id)
+                    task = resolve_agent_task(
+                        name, message, user_id,
+                        conversation_id=conversation_id)
                     tasks.append(task)
                 except KeyError:
                     logger.warning("Broadcast: agent '%s' not found, skipping", name)
@@ -274,6 +264,19 @@ class AgentSideChannelsMixin:
                     "message": "No valid agents to broadcast to.",
                 })
                 return
+
+            fallback_client = None
+            try:
+                fallback_client, _ = self._resolve_llm_service(
+                    tasks[0].llm_service, user_id, conversation_id)
+            except Exception:
+                logger.debug("Broadcast fallback client resolution failed", exc_info=True)
+
+            sub_executor = SubAgentExecutor(
+                fallback_client, registry, max_workers=len(tasks) + 1,
+                client_resolver=_client_resolver,
+                on_event=_bc_on_event,
+            )
 
             # Spawn all agents in parallel
             results = sub_executor.spawn(tasks, wait=True)

@@ -221,9 +221,7 @@
           box.appendChild(body);
           overlay.appendChild(box);
           if (!(opts && opts.modal === false)) {
-            overlay.addEventListener('click', function (e) {
-              if (e.target === overlay) api.ui.closeDialog();
-            });
+
           }
           host.appendChild(overlay);
           return true;

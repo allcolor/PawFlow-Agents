@@ -98,30 +98,25 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "Missing file_id"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
-        # Verify the file belongs to a conversation owned by this user
-        if conv_id and user_id:
-            conv_data = store.load(conv_id, user_id=user_id)
-            if conv_data is None:
-                flowfile.set_content(json.dumps({"error": "Access denied"}).encode())
-                flowfile.set_attribute("http.response.status", "403")
-                return [flowfile]
-            # Verify file_id is referenced in this conversation
-            import re as _re_del
-            found = any(
-                file_id in (m.get("content", "") if isinstance(m.get("content"), str) else "")
-                for m in conv_data
-            )
-            if not found:
-                flowfile.set_content(json.dumps({"error": "File not in this conversation"}).encode())
-                flowfile.set_attribute("http.response.status", "403")
-                return [flowfile]
         from core.file_store import FileStore
         fstore = FileStore.instance()
-        if not fstore.exists(file_id):
+        meta = fstore.get_metadata(file_id)
+        if not meta or not fstore.exists(file_id):
             flowfile.set_content(json.dumps({"error": "File not found"}).encode())
             flowfile.set_attribute("http.response.status", "404")
             return [flowfile]
-        fstore.delete(file_id)
+        if user_id and not fstore.check_access(file_id, user_id=user_id):
+            flowfile.set_content(json.dumps({"error": "Access denied"}).encode())
+            flowfile.set_attribute("http.response.status", "403")
+            return [flowfile]
+        if conv_id and meta.get("conversation_id") != conv_id:
+            flowfile.set_content(json.dumps({"error": "File not in this conversation"}).encode())
+            flowfile.set_attribute("http.response.status", "403")
+            return [flowfile]
+        if not fstore.delete(file_id, user_id=user_id):
+            flowfile.set_content(json.dumps({"error": "Access denied"}).encode())
+            flowfile.set_attribute("http.response.status", "403")
+            return [flowfile]
         flowfile.set_content(json.dumps({"ok": True, "file_id": file_id}).encode())
         return [flowfile]
 

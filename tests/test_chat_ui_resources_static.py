@@ -1,6 +1,40 @@
 from pathlib import Path
 
 
+def test_modal_overlays_do_not_close_from_background_clicks():
+    ui_files = list(Path("tasks/io/chat_ui").glob("*.js"))
+    ui_files += list(Path("tasks/io/admin_ui").glob("*.js"))
+    forbidden = [
+        "if (e.target === overlay) overlay.remove()",
+        "if(e.target===overlay)overlay.remove()",
+        "if (ev.target === overlay) overlay.remove()",
+        "if(ev.target===overlay)overlay.remove()",
+        "if (e.target === this) closeModal()",
+        "if (e.target === overlay) closeDialog(null)",
+        "if (e.target === overlay) cleanup(null)",
+        "if(e.target===o)closeExplorer()",
+    ]
+
+    offenders = []
+    for path in ui_files:
+        src = path.read_text(encoding="utf-8")
+        for needle in forbidden:
+            if needle in src:
+                offenders.append(f"{path}:{needle}")
+
+    assert offenders == []
+
+
+def test_agent_attach_dialog_has_only_explicit_close_handlers():
+    js = Path("tasks/io/chat_ui/resources.js").read_text(encoding="utf-8")
+    start = js.index("async function showAddAgentToConvDialog")
+    block = js[start:js.index("\n// ── Assign task dialog", start)]
+
+    assert "closeBtn.onclick = function() { overlay.remove(); }" in block
+    assert "e.target === overlay" not in block
+    assert "overlay.addEventListener('click'" not in block
+
+
 def test_cmd_resource_action_returns_promise_for_then_callers():
     js = Path("tasks/io/chat_ui/attachments.js").read_text(encoding="utf-8")
     start = js.index("function cmdResourceAction(action, extra)")

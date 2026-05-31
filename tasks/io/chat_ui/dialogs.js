@@ -154,7 +154,7 @@ function showToolCallDialog(toolName) {
   const overlay = document.createElement('div');
   overlay.id = 'toolCallOverlay';
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999;';
-  overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
+
   const panel = document.createElement('div');
   panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:550px;max-height:80vh;overflow-y:auto;border:1px solid #333;';
   panel.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">'

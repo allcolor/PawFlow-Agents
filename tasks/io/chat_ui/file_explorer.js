@@ -5,7 +5,7 @@ function openExplorer(){
   if(_fe.overlay)return;
   const o=document.createElement('div');o.className='fe-overlay';
   o.innerHTML=`<div class="fe-panel"><div class="fe-toolbar"><select id="feSvcSel" onchange="_feSelSvc(this.value)"></select><div class="fe-bc" id="feBc"></div><input class="fe-search" placeholder="' + t('searchPlaceholder') + '" onkeydown="if(event.key==='Enter')_feSearch(this.value)"><button class="btn" onclick="_feRefresh()" title="' + t('refresh') + '">&#x21bb;</button><button class="btn" onclick="_feUpload()">&#x2B06; ' + t('upload') + '</button><button class="btn" onclick="closeExplorer()">&#x2715;</button></div><div class="fe-content"><table class="fe-table"><thead><tr><th></th><th onclick="_feSortBy('name')">' + t('fileName') + '</th><th onclick="_feSortBy('size')">' + t('fileSize') + '</th><th onclick="_feSortBy('modified')">' + t('modified') + '</th></tr></thead><tbody id="feTbody"></tbody></table></div><div class="fe-status"><span id="feCount"></span><span id="feClip" class="fe-clip"></span></div></div>`;
-  o.addEventListener('click',e=>{if(e.target===o)closeExplorer();});
+
   document.body.appendChild(o);_fe.overlay=o;
   document.addEventListener('keydown',_feKeys);
   // Drag-and-drop upload

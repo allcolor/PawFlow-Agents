@@ -95,3 +95,13 @@ def test_typing_indicators_use_sweeping_block_animation():
     assert ".typing .verb { animation: none; }" in template
     assert "typingInterval = startTypingSweep('typing', '')" in js
     assert "contextOpInterval = startTypingSweep('contextOpTyping', label)" in js
+
+
+def test_flow_template_graph_passes_conversation_id():
+    services_js = Path("tasks/io/chat_ui/services.js").read_text(encoding="utf-8")
+    flow_graph = Path("tasks/io/chat_ui/flow_graph.html").read_text(encoding="utf-8")
+
+    assert "window.__PAWFLOW_FLOW_CONVERSATION_ID" in services_js
+    assert "conversation_id=' + encodeURIComponent(convId)" in services_js
+    assert "const CONVERSATION_ID = params.get('conversation_id')" in flow_graph
+    assert "template_id: TEMPLATE_ID, conversation_id: CONVERSATION_ID" in flow_graph

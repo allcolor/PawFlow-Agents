@@ -60,11 +60,14 @@ async function _openFlowGraphTab(instanceId) {
 
 async function _openFlowTemplateGraphTab(templateId) {
   try {
-    const graphUrl = '/chat/js/flow_graph.html?template_id=' + encodeURIComponent(templateId);
+    const convId = typeof conversationId !== 'undefined' ? (conversationId || '') : '';
+    const graphUrl = '/chat/js/flow_graph.html?template_id=' + encodeURIComponent(templateId)
+      + (convId ? '&conversation_id=' + encodeURIComponent(convId) : '');
     const resp = await fetch(graphUrl, { credentials: 'same-origin' });
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     let html = await resp.text();
-    const bootstrap = '<script>window.__PAWFLOW_FLOW_TEMPLATE_ID=' + JSON.stringify(templateId) + ';<\/script>\n';
+    const bootstrap = '<script>window.__PAWFLOW_FLOW_TEMPLATE_ID=' + JSON.stringify(templateId)
+      + ';window.__PAWFLOW_FLOW_CONVERSATION_ID=' + JSON.stringify(convId) + ';<\/script>\n';
     html = html.replace('<script type="module">', bootstrap + '<script type="module">');
     addBlobHtmlTab('template-' + templateId, html);
   } catch (e) {

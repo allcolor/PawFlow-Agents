@@ -694,6 +694,7 @@ import dagre from '@dagrejs/dagre';
 const params = new URLSearchParams(window.location.search);
 const INSTANCE_ID = params.get('instance_id') || window.__PAWFLOW_FLOW_INSTANCE_ID || '';
 const TEMPLATE_ID = params.get('template_id') || window.__PAWFLOW_FLOW_TEMPLATE_ID || '';
+const CONVERSATION_ID = params.get('conversation_id') || window.__PAWFLOW_FLOW_CONVERSATION_ID || '';
 const API_BASE = (window.location.protocol === 'blob:' || window.location.origin === 'null')
   ? window.parent.location.origin
   : window.location.origin;
@@ -806,7 +807,7 @@ function App() {
   const fetchData = useCallback(async () => {
     try {
       const body = TEMPLATE_ID
-        ? { action: 'flow_runtime_graph', template_id: TEMPLATE_ID }
+        ? { action: 'flow_runtime_graph', template_id: TEMPLATE_ID, conversation_id: CONVERSATION_ID }
         : { action: 'flow_runtime_graph', instance_id: INSTANCE_ID };
       const resp = await fetch(API_BASE + '/api/agent', {
         method: 'POST',

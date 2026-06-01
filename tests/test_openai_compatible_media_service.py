@@ -120,6 +120,13 @@ def test_video_service_uses_openrouter_chat_and_downloads_direct_video(monkeypat
     assert body["messages"][0]["content"][1]["image_url"]["url"] == "https://cdn.example.com/first.png"
 
 
+def test_video_service_default_timeout_matches_schema():
+    svc = OpenAICompatibleVideoGenerationService({"llm_service": "openrouter_llm"})
+
+    assert svc.timeout == 900
+    assert svc.get_parameter_schema()["timeout"]["default"] == 900
+
+
 def test_video_service_polls_generation_id(monkeypatch):
     svc = OpenAICompatibleVideoGenerationService({
         "llm_service": "openrouter_llm",

@@ -413,6 +413,7 @@ class OpenAICompatibleVideoGenerationService(_OpenAICompatibleMediaMixin, BaseVi
     def __init__(self, config):
         super().__init__(config)
         self._init_common()
+        self.timeout = int(self.config.get("timeout", 900) or 900)
         self.max_duration = int(self.config.get("max_duration", 15) or 15)
         self.submit_path = (self.config.get("submit_path", "/videos/generations") or "/videos/generations").strip()
         self.status_path_template = (self.config.get("status_path_template", "/videos/{id}") or "/videos/{id}").strip()

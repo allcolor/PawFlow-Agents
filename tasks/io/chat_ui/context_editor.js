@@ -182,11 +182,12 @@ function ctxLoadMore() {
       if (!mid) return;
       _ctxVisibleById.set(mid, m);
       const color = roleColors[m.role] || '#808090';
-      const badge = '<span style="display:inline-block;background:' + color + '22;color:' + color + ';padding:1px 6px;border-radius:6px;font-size:11px;font-weight:600;margin-right:6px">' + m.role + '</span>';
+      const safeMid = jsStringArg(mid);
+      const badge = '<span style="display:inline-block;background:' + color + '22;color:' + color + ';padding:1px 6px;border-radius:6px;font-size:11px;font-weight:600;margin-right:6px">' + escapeHtml(m.role || '') + '</span>';
       const tcTag = m.has_tool_calls ? '<span style="color:#f4a261;font-size:10px;margin-left:4px">[tool_calls]</span>' : '';
       const content = _ctxDisplayContent(m);
-      const editBtn = readonly ? '' : '<button onclick="event.stopPropagation();ctxEditMessage(\'' + mid + '\')" style="background:none;border:none;color:#4fc3f7;cursor:pointer;font-size:13px;padding:0 3px" title="' + escapeHtml(t('edit')) + '">&#9998;</button>';
-      const delBtn = readonly ? '' : '<button onclick="event.stopPropagation();ctxDeleteMessage(\'' + mid + '\')" style="background:none;border:none;color:#e74c3c;cursor:pointer;font-size:13px;padding:0 3px" title="' + escapeHtml(t('delete')) + '">&#128465;</button>';
+      const editBtn = readonly ? '' : '<button onclick="event.stopPropagation();ctxEditMessage(' + safeMid + ')" style="background:none;border:none;color:#4fc3f7;cursor:pointer;font-size:13px;padding:0 3px" title="' + escapeAttr(t('edit')) + '">&#9998;</button>';
+      const delBtn = readonly ? '' : '<button onclick="event.stopPropagation();ctxDeleteMessage(' + safeMid + ')" style="background:none;border:none;color:#e74c3c;cursor:pointer;font-size:13px;padding:0 3px" title="' + escapeAttr(t('delete')) + '">&#128465;</button>';
       const row = document.createElement('div');
       row.dataset.msgid = mid;
       row.style.cssText = 'padding:6px 8px;border-bottom:1px solid #222;cursor:pointer';
@@ -309,8 +310,8 @@ function _buildCtxAgentDropdown(data) {
   const sharedStatus = agents['*'] || 'messages';
   const sharedLabel = t('contextShared') + (sharedStatus === 'diverged' ? ' \u2733' : '');
   let html = '<select id="ctxAgentFilter" onchange="ctxAgentChanged()" style="background:#1e1e3a;color:#c0c0d0;border:1px solid #444;border-radius:6px;padding:3px 8px;font-size:12px">';
-  html += '<option value="transcript"' + (_ctxAgentFilter === 'transcript' ? ' selected' : '') + '>' + t('contextTranscript') + '</option>';
-  html += '<option value=""' + (!_ctxAgentFilter ? ' selected' : '') + '>' + sharedLabel + '</option>';
+  html += '<option value="transcript"' + (_ctxAgentFilter === 'transcript' ? ' selected' : '') + '>' + escapeHtml(t('contextTranscript')) + '</option>';
+  html += '<option value=""' + (!_ctxAgentFilter ? ' selected' : '') + '>' + escapeHtml(sharedLabel) + '</option>';
   for (const n of names) {
     const status = agents[n] || 'messages';
     let label;
@@ -323,7 +324,7 @@ function _buildCtxAgentDropdown(data) {
     } else {
       label = n + (status === 'diverged' ? ' \u2733' : '');
     }
-    html += '<option value="' + n + '"' + (_ctxAgentFilter === n ? ' selected' : '') + '>' + label + '</option>';
+    html += '<option value="' + escapeAttr(n) + '"' + (_ctxAgentFilter === n ? ' selected' : '') + '>' + escapeHtml(label) + '</option>';
   }
   html += '</select>';
   return html;
@@ -443,13 +444,14 @@ function showContextOverlay(data) {
       if (!mid) return;  // cannot edit/delete a message without a stable id
       _ctxVisibleById.set(mid, m);
       const color = roleColors[m.role] || '#808090';
-      const badge = '<span style="display:inline-block;background:' + color + '22;color:' + color + ';padding:1px 6px;border-radius:6px;font-size:11px;font-weight:600;margin-right:6px">' + m.role + '</span>';
+      const safeMid = jsStringArg(mid);
+      const badge = '<span style="display:inline-block;background:' + color + '22;color:' + color + ';padding:1px 6px;border-radius:6px;font-size:11px;font-weight:600;margin-right:6px">' + escapeHtml(m.role || '') + '</span>';
       const tcTag = m.has_tool_calls ? '<span style="color:#f4a261;font-size:10px;margin-left:4px">[tool_calls]</span>' : '';
-      const src = m.source ? '<span style="color:#808090;font-size:10px;margin-left:4px">[' + (m.source.name||'') + ']</span>' : '';
+      const src = m.source ? '<span style="color:#808090;font-size:10px;margin-left:4px">[' + escapeHtml(m.source.name || '') + ']</span>' : '';
       const content = _ctxDisplayContent(m);
-      const editBtn = _isReadonly ? '' : '<button onclick="event.stopPropagation();ctxEditMessage(\'' + mid + '\')" style="background:none;border:none;color:#4fc3f7;cursor:pointer;font-size:13px;padding:0 3px" title="' + t('contextEdit') + '">&#9998;</button>';
-      const delBtn = _isReadonly ? '' : '<button onclick="event.stopPropagation();ctxDeleteMessage(\'' + mid + '\')" style="background:none;border:none;color:#e74c3c;cursor:pointer;font-size:13px;padding:0 3px" title="' + t('contextDelete') + '">&#128465;</button>';
-      msgsHtml += '<div data-msgid="' + mid + '" title="' + t('contextExpandTitle') + '" style="padding:6px 8px;border-bottom:1px solid #222;cursor:pointer" onmousedown="if(event.shiftKey||event.ctrlKey)event.preventDefault()" onclick="if(event.ctrlKey||event.shiftKey){event.preventDefault();ctxToggleSelect(this,event)}else{if(event.target&&event.target.closest(\'.ctx-preview,.ctx-full\'))return;this.querySelector(\'.ctx-full\')&&(this.querySelector(\'.ctx-full\').style.display=this.querySelector(\'.ctx-full\').style.display===\'block\'?\'none\':\'block\')}">'
+      const editBtn = _isReadonly ? '' : '<button onclick="event.stopPropagation();ctxEditMessage(' + safeMid + ')" style="background:none;border:none;color:#4fc3f7;cursor:pointer;font-size:13px;padding:0 3px" title="' + escapeAttr(t('contextEdit')) + '">&#9998;</button>';
+      const delBtn = _isReadonly ? '' : '<button onclick="event.stopPropagation();ctxDeleteMessage(' + safeMid + ')" style="background:none;border:none;color:#e74c3c;cursor:pointer;font-size:13px;padding:0 3px" title="' + escapeAttr(t('contextDelete')) + '">&#128465;</button>';
+      msgsHtml += '<div data-msgid="' + escapeAttr(mid) + '" title="' + escapeAttr(t('contextExpandTitle')) + '" style="padding:6px 8px;border-bottom:1px solid #222;cursor:pointer" onmousedown="if(event.shiftKey||event.ctrlKey)event.preventDefault()" onclick="if(event.ctrlKey||event.shiftKey){event.preventDefault();ctxToggleSelect(this,event)}else{if(event.target&&event.target.closest(\'.ctx-preview,.ctx-full\'))return;this.querySelector(\'.ctx-full\')&&(this.querySelector(\'.ctx-full\').style.display=this.querySelector(\'.ctx-full\').style.display===\'block\'?\'none\':\'block\')}">'
         + '<div style="display:flex;align-items:center">' + badge + tcTag + src + '<span style="margin-left:auto">' + editBtn + delBtn + '</span></div>'
         + '<div class="ctx-preview" style="color:#c0c0d0;font-size:12px;margin-top:4px;white-space:pre-wrap;word-break:break-word;max-height:96px;overflow-y:auto;border:1px solid #1d2636;border-radius:6px;padding:6px;background:#0a0f18">' + content + '</div>'
         + '<div class="ctx-full" style="display:none;color:#a0a0c0;font-size:12px;margin-top:4px;white-space:pre-wrap;word-break:break-word;max-height:min(60vh,640px);overflow-y:auto;border:1px solid #222;border-radius:6px;padding:8px;background:#090d14">' + content + '</div>'
@@ -464,11 +466,11 @@ function showContextOverlay(data) {
   }
   overlay.innerHTML = '<div style="background:#1a1a2e;border:1px solid #333;border-radius:12px;padding:20px;max-width:700px;width:90%;max-height:80vh;display:flex;flex-direction:column">'
     + '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">'
-    + '<h3 style="margin:0;color:#e0e0e0;font-size:16px">' + t('contextTitle') + '</h3>'
+    + '<h3 style="margin:0;color:#e0e0e0;font-size:16px">' + escapeHtml(t('contextTitle')) + '</h3>'
     + statusBadge
     + _buildCtxAgentDropdown(data)
-    + '<span style="color:#6c6c8a;font-size:12px;margin-left:auto">' + t('contextMessages', {n:data.message_count}) + ' &middot; ' + t('contextTokens', {n:data.token_estimate}) + '</span>'
-    + (_ctxAgentFilter && !_isTranscript ? '<button onclick="ctxDeleteContext()" style="background:#5a1a1a;color:#e74c3c;border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600" title="' + (_isReadonly ? t('contextInvalidateRuntimeTitle') : t('contextDeleteContextTitle')) + '">\u{1F5D1} ' + (_isReadonly ? t('contextInvalidate') : t('contextDelete')) + '</button>' : '')
+    + '<span style="color:#6c6c8a;font-size:12px;margin-left:auto">' + escapeHtml(t('contextMessages', {n:data.message_count})) + ' &middot; ' + escapeHtml(t('contextTokens', {n:data.token_estimate})) + '</span>'
+    + (_ctxAgentFilter && !_isTranscript ? '<button onclick="ctxDeleteContext()" style="background:#5a1a1a;color:#e74c3c;border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600" title="' + escapeAttr(_isReadonly ? t('contextInvalidateRuntimeTitle') : t('contextDeleteContextTitle')) + '">\u{1F5D1} ' + escapeHtml(_isReadonly ? t('contextInvalidate') : t('contextDelete')) + '</button>' : '')
     + '<button onclick="ctxClose()" style="background:none;border:none;color:#aaa;cursor:pointer;font-size:18px;margin-left:4px">&times;</button>'
     + '</div>'
     + usageHtml

@@ -28,8 +28,8 @@ function showKgOverlay(triples) {
     + '</span>';
 
   // Filter input
-  const filterHtml = '<input id="kgFilterInput" type="text" placeholder="' + t('filterTriples') + '" value="'
-    + escapeHtml(_kgFilter) + '" oninput="kgFilterChanged(this.value)"'
+  const filterHtml = '<input id="kgFilterInput" type="text" placeholder="' + escapeAttr(t('filterTriples')) + '" value="'
+    + escapeAttr(_kgFilter) + '" oninput="kgFilterChanged(this.value)"'
     + ' style="background:#1e1e3a;color:#c0c0d0;border:1px solid #444;border-radius:6px;padding:3px 8px;font-size:12px;width:160px">';
 
   // Build triple rows
@@ -74,16 +74,16 @@ function _kgBuildRows(triples) {
     else if (conf === 'AMBIGUOUS') { confBg = '#5a3a1a'; confColor = '#ffb347'; }
     else { confBg = '#1b4332'; confColor = '#52b788'; }  // EXTRACTED
     const confBadge = '<span style="background:' + confBg + ';color:' + confColor
-      + ';padding:1px 6px;border-radius:6px;font-size:10px;font-weight:600">' + conf + '</span>';
+      + ';padding:1px 6px;border-radius:6px;font-size:10px;font-weight:600">' + escapeHtml(conf) + '</span>';
 
     // Status badge
     const statusBadge = ended
-      ? '<span style="color:#e74c3c;font-size:11px" title="' + t('endedTitle') + '">\u2717 ' + t('ended') + '</span>'
-      : '<span style="color:#52b788;font-size:11px" title="' + t('currentTitle') + '">\u2713 ' + t('current') + '</span>';
+      ? '<span style="color:#e74c3c;font-size:11px" title="' + escapeAttr(t('endedTitle')) + '">\u2717 ' + escapeHtml(t('ended')) + '</span>'
+      : '<span style="color:#52b788;font-size:11px" title="' + escapeAttr(t('currentTitle')) + '">\u2713 ' + escapeHtml(t('current')) + '</span>';
 
     // Invalidate button (only for current triples)
-    const invalidateBtn = ended ? '' : '<button onclick="event.stopPropagation();kgInvalidate(\'' + (t.id || '').replace(/'/g, "\\'") + '\')"'
-      + ' style="background:none;border:none;color:#e74c3c;cursor:pointer;font-size:11px;padding:0 3px" title="' + t('invalidate') + '">\u2717</button>';
+    const invalidateBtn = ended ? '' : '<button onclick="event.stopPropagation();kgInvalidate(' + jsStringArg(t.id || '') + ')"'
+      + ' style="background:none;border:none;color:#e74c3c;cursor:pointer;font-size:11px;padding:0 3px" title="' + escapeAttr(t('invalidate')) + '">\u2717</button>';
 
     // Age
     const age = t.valid_from ? _kgFormatAge(t.valid_from) : '';

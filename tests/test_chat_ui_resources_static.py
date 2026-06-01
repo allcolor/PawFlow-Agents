@@ -105,3 +105,59 @@ def test_flow_template_graph_passes_conversation_id():
     assert "conversation_id=' + encodeURIComponent(convId)" in services_js
     assert "const CONVERSATION_ID = params.get('conversation_id')" in flow_graph
     assert "template_id: TEMPLATE_ID, conversation_id: CONVERSATION_ID" in flow_graph
+
+
+def test_chat_ui_html_helpers_escape_attribute_and_js_contexts():
+    js = Path("tasks/io/chat_ui/messages.js").read_text(encoding="utf-8")
+    conv_js = Path("tasks/io/chat_ui/conversations.js").read_text(encoding="utf-8")
+
+    for src in (js, conv_js):
+        assert "function escapeAttr" in src
+        assert "function jsStringArg" in src
+        assert ".replace(/\"/g, '&quot;')" in src
+        assert ".replace(/'/g, '&#39;')" in src
+        assert "JSON.stringify(String(" in src
+
+
+def test_context_editor_escapes_agent_names_sources_and_message_ids():
+    js = Path("tasks/io/chat_ui/context_editor.js").read_text(encoding="utf-8")
+
+    assert "'<option value=\"' + escapeAttr(n)" in js
+    assert "+ escapeHtml(label) + '</option>'" in js
+    assert "escapeHtml(m.source.name || '')" in js
+    assert "const safeMid = jsStringArg(mid)" in js
+    assert "data-msgid=\"' + escapeAttr(mid)" in js
+    assert js.count("_ctxVisibleById.set(mid, m)") >= 2
+    assert "<option value=\"' + n + '\"" not in js
+    assert "[' + (m.source.name||'') + ']" not in js
+
+
+def test_resource_panel_uses_safe_js_args_for_user_resource_names():
+    js = Path("tasks/io/chat_ui/resources.js").read_text(encoding="utf-8")
+
+    assert "function _pfpJsArg" in js
+    assert "showAgentMenu(event,' + _pfpJsArg(aName)" in js
+    assert "showResourceMenu(event,'agent',' + aName" not in js
+    assert "showResourceMenu(event,'skill',${_pfpJsArg(s.name)}" in js
+    assert "_usePrompt(${_pfpJsArg(p.name)}" in js
+    assert "_applyThemeFromResource(${_pfpJsArg(ref)})" in js
+    assert "_renameVoiceClone(${_pfpJsArg(v.name)})" in js
+    assert "_deleteVoiceClone(${_pfpJsArg(v.name)})" in js
+    assert "showRunningTaskMenu(event,${_pfpJsArg(t.task_id)}" in js
+    assert "showDeployFlowDialog(${_pfpJsArg(t.id)})" in js
+    assert "showResourceMenu(event,'mcp',${_pfpJsArg(m.name)}" in js
+    assert "showResourceMenu(event,'agent_hook',${_pfpJsArg(h.name)}" in js
+    assert "showToolCallDialog(${_pfpJsArg(t.name)})" in js
+    assert "_saveResourceEdit(${_pfpJsArg(rtype)},${_pfpJsArg(name)},${_pfpJsArg(scope)})" in js
+    assert "_submitAssign(${_pfpJsArg(taskDefName)})" in js
+    assert "_executeServiceAction(' + _pfpJsArg(a.id)" in js
+
+
+def test_sse_plan_and_ask_user_events_escape_user_controlled_html():
+    js = Path("tasks/io/chat_ui/sse.js").read_text(encoding="utf-8")
+
+    assert "escapeHtml(title) + '</strong> ('" in js
+    assert "planAction(\\'approve_plan\\',' + jsStringArg(planId)" in js
+    assert "document.getElementById(\\'input\\').value=' + jsStringArg(opt)" in js
+    assert "'<strong>' + title + '</strong>'" not in js
+    assert "opt.replace(/'/g" not in js

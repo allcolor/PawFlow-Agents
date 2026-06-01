@@ -31,7 +31,7 @@ function renderCtxGauge(usage, opts) {
   const color = (pct >= 0.80) ? '#f0ad4e' : '#4ecdc4';
   const barPx = Math.round(pct * width);
   const title = t('contextGaugeTitle', { used: usedK, max: maxK, pct: pctInt });
-  return '<span class="ctx-gauge" title="' + title + '" style="display:inline-flex;align-items:center;gap:4px;vertical-align:middle;">'
+  return '<span class="ctx-gauge" title="' + escapeAttr(title) + '" style="display:inline-flex;align-items:center;gap:4px;vertical-align:middle;">'
     + '<span style="display:inline-block;width:' + width + 'px;height:6px;background:#222;border-radius:3px;overflow:hidden;">'
     + '<span style="display:block;width:' + barPx + 'px;height:100%;background:' + color + ';"></span>'
     + '</span>'
@@ -119,7 +119,8 @@ function _refreshGaugeSurfaces(key) {
       && agentKey(selectedAgent) === key) {
     updateActiveAgentBadge();
   }
-  const row = document.querySelector('#res-section-agent [data-ctx-agent="' + key + '"]');
+  const safeKey = window.CSS && CSS.escape ? CSS.escape(key) : String(key).replace(/"/g, '\\"');
+  const row = document.querySelector('#res-section-agent [data-ctx-agent="' + safeKey + '"]');
   if (row) row.innerHTML = renderCtxGauge(window._contextUsage[key]);
 }
 
@@ -295,15 +296,15 @@ function updateActivePanel() {
         lived: livedStr,
         count: reuseCount,
       });
-      liveBadge = '<span class="a-cc-live" title="' + liveTitle
+      liveBadge = '<span class="a-cc-live" title="' + escapeAttr(liveTitle)
         + '" style="display:inline-block;padding:1px 5px;margin-right:4px;'
         + 'font-size:9px;font-weight:bold;color:#0f0;border:1px solid #0f0;'
         + 'border-radius:3px;vertical-align:middle;">LIVE</span>';
       const restartFn = liveCli === 'cc' ? 'ccRestartSingle'
                       : liveCli === 'codex' ? 'codexRestartSingle'
                       : 'geminiRestartSingle';
-      restartBtn = '<button class="btn-cc-restart" title="' + escapeHtml(t('restartCliTitle', { cli: cliLabel })) + '"'
-        + ' onclick="' + restartFn + '(\'' + escapeHtml(apiName) + '\')"'
+      restartBtn = '<button class="btn-cc-restart" title="' + escapeAttr(t('restartCliTitle', { cli: cliLabel })) + '"'
+        + ' onclick="' + restartFn + '(' + jsStringArg(apiName) + ')"'
         + '>&#x21BB;</button>';
     }
     return '<div class="active-row">'
@@ -315,9 +316,9 @@ function updateActivePanel() {
       + ctxHtml
       + '<span class="a-time">' + timeStr + '</span>'
       + '<span class="a-actions">'
-      + '<button title="' + escapeHtml(t('stopTitle')) + '" onclick="interruptSingle(\'' + escapeHtml(apiName) + '\',\'' + escapeHtml(info.taskId || '') + '\')">&#x23F8;</button>'
+      + '<button title="' + escapeAttr(t('stopTitle')) + '" onclick="interruptSingle(' + jsStringArg(apiName) + ',' + jsStringArg(info.taskId || '') + ')">&#x23F8;</button>'
       + restartBtn
-      + '<button class="btn-stop" title="' + escapeHtml(t('stop')) + '" onclick="stopSingle(\'' + escapeHtml(apiName) + '\',\'' + escapeHtml(info.taskId || '') + '\')">&#x25A0;</button>'
+      + '<button class="btn-stop" title="' + escapeAttr(t('stop')) + '" onclick="stopSingle(' + jsStringArg(apiName) + ',' + jsStringArg(info.taskId || '') + ')">&#x25A0;</button>'
       + '</span></div>';
   }).join('');
   if (scrollNav) {

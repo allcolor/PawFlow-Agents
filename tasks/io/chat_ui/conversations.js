@@ -72,8 +72,16 @@ function renderConvList(convs) {
 }
 
 function escapeHtml(s) {
-  const d = document.createElement('div'); d.textContent = s; return d.innerHTML;
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
+function escapeAttr(s) { return escapeHtml(s); }
+function jsStringArg(s) { return escapeAttr(JSON.stringify(String(s == null ? '' : s))); }
+
 
 function highlightConv(cid) {
   document.querySelectorAll('.conv-item').forEach(el => {

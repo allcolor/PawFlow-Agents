@@ -1266,9 +1266,9 @@ function connectSSE(cid, onReady, opts) {
     const stepCount = (plan.steps && plan.steps.length) || data.steps || 0;
     const planId = plan.id || plan.plan_id || '';
     const isPendingApproval = (plan.status || '') === 'pending_approval';
-    let msgHtml = '\u{1F4CB} Plan created: <strong>' + title + '</strong> (' + stepCount + ' steps)';
+    let msgHtml = '\u{1F4CB} Plan created: <strong>' + escapeHtml(title) + '</strong> (' + stepCount + ' steps)';
     if (isPendingApproval && planId) {
-      msgHtml += ' &mdash; <button onclick="planAction(\'approve_plan\',\'' + planId + '\')" style="margin-left:6px;padding:2px 10px;background:#6c5ce7;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.9em">\u2705 Approve</button>';
+      msgHtml += ' &mdash; <button onclick="planAction(\'approve_plan\',' + jsStringArg(planId) + ')" style="margin-left:6px;padding:2px 10px;background:#6c5ce7;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.9em">\u2705 Approve</button>';
     }
     // Show step list
     if (plan.steps && plan.steps.length) {
@@ -1322,7 +1322,7 @@ function connectSSE(cid, onReady, opts) {
     if (data.options && data.options.length) {
       html += '<div class="ask-user-options">';
       for (const opt of data.options) {
-        html += '<button class="btn ask-user-btn" onclick="document.getElementById(\'input\').value=\'' + opt.replace(/'/g, "\\'") + '\';sendMsg()">' + escapeHtml(opt) + '</button>';
+        html += '<button class="btn ask-user-btn" onclick="document.getElementById(\'input\').value=' + jsStringArg(opt) + ';sendMsg()">' + escapeHtml(opt) + '</button>';
       }
       html += '</div>';
     }

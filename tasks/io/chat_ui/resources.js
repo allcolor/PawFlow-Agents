@@ -224,7 +224,11 @@ function _repoSectionHeader(title, rtype, opts) {
 function _sectionFooter() { return '</div>'; }
 
 function _pfpAttr(value) {
-  return escapeHtml(String(value == null ? '' : value)).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  return escapeAttr(String(value == null ? '' : value));
+}
+
+function _pfpJsArg(value) {
+  return jsStringArg(value);
 }
 
 function _pfpObjectLabel(obj) {
@@ -768,10 +772,10 @@ function _renderFlowPackageGroup(packageName, flows) {
     <div id="res-section-${sectionId}" style="display:${display};margin-top:2px;">`;
   flows.forEach(t => {
     const ver = t.version ? ` v${escapeHtml(t.version)}` : '';
-    const desc = t.description ? ` title="${escapeHtml(t.description)}"` : '';
-    html += `<div style="display:flex;align-items:center;gap:4px;margin-left:14px;margin-bottom:2px;cursor:pointer;"${desc} onclick="showDeployFlowDialog('${escapeHtml(t.id)}')" oncontextmenu="showFlowTemplateMenu(event,'${escapeHtml(t.id)}');return false;">
+    const desc = t.description ? ` title="${_pfpAttr(t.description)}"` : '';
+    html += `<div style="display:flex;align-items:center;gap:4px;margin-left:14px;margin-bottom:2px;cursor:pointer;"${desc} onclick="showDeployFlowDialog(${_pfpJsArg(t.id)})" oncontextmenu="showFlowTemplateMenu(event,${_pfpJsArg(t.id)});return false;">
       ${_scopeBadge(t.scope)}<span style="color:var(--pf-text);font-size:12px;flex:1;">${escapeHtml(t.name)}${ver}</span>
-      <span style="color:var(--pf-muted);font-size:10px;">[${t.tasks_count} tasks]</span>
+      <span style="color:var(--pf-muted);font-size:10px;">[${escapeHtml(t.tasks_count)} tasks]</span>
     </div>`;
   });
   html += '</div></div>';
@@ -837,9 +841,9 @@ function _showRelayInfoDialog(relayId, details) {
       + '<span style="color:var(--pf-muted);min-width:80px;">' + escapeHtml(t('conversation')) + ':</span>'
       + '<span style="color:' + convColor + ';">' + convLabel + '</span>'
       + '<button style="font-size:10px;padding:2px 6px;border:1px solid var(--pf-border);border-radius:3px;background:var(--pf-panel);color:var(--pf-success);cursor:pointer;" '
-      + 'onclick="_setRelayLocal(\'' + escapeHtml(relayId) + '\',true,\'\')">' + escapeHtml(t('local')) + '</button>'
+      + 'onclick="_setRelayLocal(' + _pfpJsArg(relayId) + ',true,\'\')">' + escapeHtml(t('local')) + '</button>'
       + '<button style="font-size:10px;padding:2px 6px;border:1px solid var(--pf-border);border-radius:3px;background:var(--pf-panel);color:var(--pf-danger);cursor:pointer;" '
-      + 'onclick="_setRelayLocal(\'' + escapeHtml(relayId) + '\',false,\'\')">' + escapeHtml(t('docker')) + '</button>'
+      + 'onclick="_setRelayLocal(' + _pfpJsArg(relayId) + ',false,\'\')">' + escapeHtml(t('docker')) + '</button>'
       + '</div>';
     // Per-agent toggles (from conversation agents)
     try {
@@ -860,9 +864,9 @@ function _showRelayInfoDialog(relayId, details) {
           + '<span style="color:var(--pf-muted);min-width:80px;">@' + escapeHtml(agentName) + ':</span>'
           + '<span style="color:' + aColor + ';">' + aLabel + '</span>'
           + '<button style="font-size:10px;padding:2px 6px;border:1px solid var(--pf-border);border-radius:3px;background:var(--pf-panel);color:var(--pf-success);cursor:pointer;" '
-          + 'onclick="_setRelayLocal(\'' + escapeHtml(relayId) + '\',true,\'' + escapeHtml(agentName) + '\')">' + escapeHtml(t('local')) + '</button>'
+          + 'onclick="_setRelayLocal(' + _pfpJsArg(relayId) + ',true,' + _pfpJsArg(agentName) + ')">' + escapeHtml(t('local')) + '</button>'
           + '<button style="font-size:10px;padding:2px 6px;border:1px solid var(--pf-border);border-radius:3px;background:var(--pf-panel);color:var(--pf-danger);cursor:pointer;" '
-          + 'onclick="_setRelayLocal(\'' + escapeHtml(relayId) + '\',false,\'' + escapeHtml(agentName) + '\')">' + escapeHtml(t('docker')) + '</button>'
+          + 'onclick="_setRelayLocal(' + _pfpJsArg(relayId) + ',false,' + _pfpJsArg(agentName) + ')">' + escapeHtml(t('docker')) + '</button>'
           + '</div>';
       });
     } catch(e) {}
@@ -1102,8 +1106,10 @@ async function _renderResourcesData(data) {
     if (data.agents && data.agents.length) {
       data.agents.forEach(function(a) {
         var isPrimary = a.active;
-        var aName = escapeHtml(a.name);
-        var aKeyLc = (a.name || '').toLowerCase();
+        var aName = String(a.name || '');
+        var aNameHtml = escapeHtml(aName);
+        var aNameAttr = _pfpAttr(aName);
+        var aKeyLc = aName.toLowerCase();
         var primaryColor = isPrimary ? 'var(--pf-success)' : 'var(--pf-muted)';
         var textColor = isPrimary ? 'var(--pf-text)' : 'var(--pf-muted)';
         var primaryTitle = isPrimary ? t('primaryAgent') : t('setPrimaryAgent');
@@ -1112,16 +1118,16 @@ async function _renderResourcesData(data) {
         // Hydrate the global cache through the same monotonic path used by
         // Resource polling must not touch the context gauge. The gauge is
         // updated only by live context events and the explicit /context view.
-        liveHtml += '<div data-agent-name="' + aName + '" style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;"'
-          + ' oncontextmenu="showAgentMenu(event,\'' + aName + '\',\'' + escapeHtml(a.scope || '') + '\',' + (a.autoconv ? 'true' : 'false') + ');return false;">'
-          + '<span style="cursor:pointer;color:' + primaryColor + ';font-size:11px;" title="' + primaryTitle + '"'
-          + ' onclick="_selectAgentAndRefresh(this.dataset.n)" data-n="' + aName + '">' + primaryArrow + '</span>'
+        liveHtml += '<div data-agent-name="' + aNameAttr + '" style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;"'
+          + ' oncontextmenu="showAgentMenu(event,' + _pfpJsArg(aName) + ',' + _pfpJsArg(a.scope || '') + ',' + (a.autoconv ? 'true' : 'false') + ');return false;">'
+          + '<span style="cursor:pointer;color:' + primaryColor + ';font-size:11px;" title="' + _pfpAttr(primaryTitle) + '"'
+          + ' onclick="_selectAgentAndRefresh(this.dataset.n)" data-n="' + aNameAttr + '">' + primaryArrow + '</span>'
           + _scopeBadge(a.scope)
           + '<span style="color:' + textColor + ';font-size:12px;cursor:pointer;flex:1;"'
-          + ' onclick="_selectAgentAndRefresh(this.dataset.n)" data-n="' + aName + '">' + aName + '</span>'
+          + ' onclick="_selectAgentAndRefresh(this.dataset.n)" data-n="' + aNameAttr + '">' + aNameHtml + '</span>'
           + autoconvTag
-          + '<span style="cursor:pointer;font-size:11px;color:var(--pf-danger);padding:0 3px;" title="' + escapeHtml(t('removeFromConversation')) + '"'
-          + ' onclick="_removeAgentFromConv(this.dataset.n)" data-n="' + aName + '">&times;</span>'
+          + '<span style="cursor:pointer;font-size:11px;color:var(--pf-danger);padding:0 3px;" title="' + _pfpAttr(t('removeFromConversation')) + '"'
+          + ' onclick="_removeAgentFromConv(this.dataset.n)" data-n="' + aNameAttr + '">&times;</span>'
           + '</div>';
         // Per-agent context-window gauge (persisted on the conversation,
         // updated in-place via setContextUsage on SSE message_meta/done).
@@ -1170,10 +1176,10 @@ async function _renderResourcesData(data) {
           const statusColor = t.status === 'active' ? 'var(--pf-success)' : t.status === 'paused' ? 'var(--pf-warning)' : 'var(--pf-muted)';
           const statusIcon = t.status === 'active' ? '\u25B6' : t.status === 'paused' ? '\u23F8' : '\u23F9';
           const label = (t.task_def_name || (t.task || '').substring(0, 30) || t.task_id) + ' \u2192 ' + t.agent;
-          liveHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showRunningTaskMenu(event,'${t.task_id}','${t.agent}','${t.status}');return false;">
+          liveHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showRunningTaskMenu(event,${_pfpJsArg(t.task_id)},${_pfpJsArg(t.agent)},${_pfpJsArg(t.status)});return false;">
             <span style="color:${statusColor};font-size:11px;">${statusIcon}</span>
-            <span style="color:var(--pf-muted);font-size:11px;" title="${escapeHtml(t.task)}">${escapeHtml(label)}</span>
-            <span style="color:var(--pf-muted);font-size:10px;">[${t.iterations}/${t.max_iterations}]</span>
+            <span style="color:var(--pf-muted);font-size:11px;" title="${_pfpAttr(t.task)}">${escapeHtml(label)}</span>
+            <span style="color:var(--pf-muted);font-size:10px;">[${escapeHtml(t.iterations)}/${escapeHtml(t.max_iterations)}]</span>
           </div>`;
         });
       } else {
@@ -1195,9 +1201,9 @@ async function _renderResourcesData(data) {
       data.flows.forEach(f => {
         const statusIcon = f.status === 'running' ? '\u25B6' : f.status === 'stopped' ? '\u23F9' : '\u26A0';
         const statusColor = f.status === 'running' ? 'var(--pf-success)' : f.status === 'stopped' ? 'var(--pf-muted)' : 'var(--pf-danger)';
-        const flowCtx = ` oncontextmenu="showFlowInstanceMenu(event,'${f.instance_id}','${f.status}','${f.scope}');return false;"`;
+        const flowCtx = ` oncontextmenu="showFlowInstanceMenu(event,${_pfpJsArg(f.instance_id)},${_pfpJsArg(f.status)},${_pfpJsArg(f.scope)});return false;"`;
         liveHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;"${flowCtx}>
-          ${_scopeBadge(f.scope)}<span style="color:${statusColor};font-size:11px;">${statusIcon} ${f.flow_name || f.instance_id}</span>
+          ${_scopeBadge(f.scope)}<span style="color:${statusColor};font-size:11px;">${statusIcon} ${escapeHtml(f.flow_name || f.instance_id)}</span>
         </div>`;
       });
     } else {
@@ -1220,9 +1226,9 @@ async function _renderResourcesData(data) {
           const img = s.relay_info.docker_image;
           dockerTag = ' \u{1F433}' + (img ? ` [${img}]` : '');
         }
-        const svcCtx = ` oncontextmenu="showServiceMenu(event,'${s.service_id}','${s.scope}',${s.enabled});return false;"`;
+        const svcCtx = ` oncontextmenu="showServiceMenu(event,${_pfpJsArg(s.service_id)},${_pfpJsArg(s.scope)},${s.enabled});return false;"`;
         liveHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;"${svcCtx}>
-          ${_scopeBadge(s.scope)}<span style="color:var(--pf-muted);font-size:11px;">${statusDot} <b>${s.service_id}</b> <span style="color:var(--pf-muted)">(${s.service_type})</span>${dockerTag}</span>
+          ${_scopeBadge(s.scope)}<span style="color:var(--pf-muted);font-size:11px;">${statusDot} <b>${escapeHtml(s.service_id)}</b> <span style="color:var(--pf-muted)">(${escapeHtml(s.service_type)})</span>${escapeHtml(dockerTag)}</span>
         </div>`;
       });
     } else {
@@ -1304,7 +1310,7 @@ async function _renderResourcesData(data) {
           var color = isConvDefault ? 'var(--pf-success)' : 'var(--pf-muted)';
           var icon = isConvDefault ? '\u25C9' : '\u25CB';
           var titleText = isConvDefault ? t('defaultRelay') : t('setDefaultRelay');
-          var clickDefault = isConvDefault ? '' : ' onclick="fireAction(\'relay_default\',{relay_id:\'' + escapeHtml(rid) + '\'}); setTimeout(loadResources, 500)"';
+          var clickDefault = isConvDefault ? '' : ' onclick="fireAction(\'relay_default\',{relay_id:' + _pfpJsArg(rid) + '}); setTimeout(loadResources, 500)"';
           var det = _rbDetails[rid] || {};
           var connDot = det.connected ? '\u{1F7E2}' : '\u{1F534}';
           var pathInfo = '';
@@ -1312,14 +1318,14 @@ async function _renderResourcesData(data) {
           if (det.host_root) pathInfo += '<div style="font-size:10px;color:var(--pf-muted);margin-left:20px;">local: <code>' + escapeHtml(det.host_root) + '</code></div>';
           var _rbDefaultLocal = (_rb.default_local || {})[rid] || {};
           var _detWithLocal = Object.assign({}, det, {_default_local: _rbDefaultLocal});
-          var _detJson = escapeHtml(JSON.stringify(_detWithLocal).replace(/'/g, "\\'"));
-          liveHtml += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="_showRelayInfoDialog(\'' + escapeHtml(rid) + '\',' + _detJson + ');return false;">'
-            + '<span style="color:' + color + ';font-size:11px;cursor:pointer;" title="' + titleText + '"' + clickDefault + '>' + icon + '</span>'
+          var _detJson = _pfpAttr(JSON.stringify(_detWithLocal));
+          liveHtml += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="_showRelayInfoDialog(' + _pfpJsArg(rid) + ',' + _detJson + ');return false;">'
+            + '<span style="color:' + color + ';font-size:11px;cursor:pointer;" title="' + _pfpAttr(titleText) + '"' + clickDefault + '>' + icon + '</span>'
             + '<span style="font-size:11px;">' + connDot + '</span>'
             + '<span style="color:' + color + ';font-size:12px;">' + escapeHtml(rid) + star + '</span>'
             + agentTags
-            + '<span style="cursor:pointer;font-size:11px;color:var(--pf-danger);padding:0 3px;" title="' + escapeHtml(t('unlink')) + '"'
-            + ' onclick="fireAction(\'relay_unlink\',{relay_id:\'' + escapeHtml(rid) + '\'}); setTimeout(loadResources, 500)">&times;</span>'
+            + '<span style="cursor:pointer;font-size:11px;color:var(--pf-danger);padding:0 3px;" title="' + _pfpAttr(t('unlink')) + '"'
+            + ' onclick="fireAction(\'relay_unlink\',{relay_id:' + _pfpJsArg(rid) + '}); setTimeout(loadResources, 500)">&times;</span>'
             + '</div>' + pathInfo;
         });
       } else {
@@ -1343,8 +1349,9 @@ async function _renderResourcesData(data) {
       var _linkedFs = _remoteFs.linked || [];
       if (_linkedFs.length) {
         _linkedFs.forEach(function(s) {
-          var serviceId = escapeHtml(s.service_id || '');
-          var scope = escapeHtml(s.scope || 'user');
+          var serviceId = String(s.service_id || '');
+          var serviceIdAttr = _pfpAttr(serviceId);
+          var scope = String(s.scope || 'user');
           var isRclone = s.service_type === 'rcloneFilesystem';
           var mountPath = escapeHtml(isRclone ? (s.mount_path || '') : '');
           var tag = escapeHtml(isRclone ? 'rclone' : (s.service_type || 'filesystem'));
@@ -1352,10 +1359,10 @@ async function _renderResourcesData(data) {
           liveHtml += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;">'
             + _scopeBadge(scope)
             + '<span style="font-size:11px;">' + enabledDot + '</span>'
-            + '<span style="color:var(--pf-text);font-size:12px;flex:1;">' + serviceId + '</span>'
+            + '<span style="color:var(--pf-text);font-size:12px;flex:1;">' + escapeHtml(serviceId) + '</span>'
             + '<span style="font-size:9px;color:var(--pf-muted);background:color-mix(in srgb, var(--pf-muted) 14%, var(--pf-panel));padding:1px 4px;border-radius:3px;">' + tag + '</span>'
-            + '<span style="cursor:pointer;font-size:11px;color:var(--pf-danger);padding:0 3px;" title="' + escapeHtml(t('unlink')) + '"'
-            + ' onclick="_unlinkRemoteFs(this.dataset.serviceId)" data-service-id="' + serviceId + '">&times;</span>'
+            + '<span style="cursor:pointer;font-size:11px;color:var(--pf-danger);padding:0 3px;" title="' + _pfpAttr(t('unlink')) + '"'
+            + ' onclick="_unlinkRemoteFs(this.dataset.serviceId)" data-service-id="' + serviceIdAttr + '">&times;</span>'
             + '</div>'
             + (mountPath ? '<div style="font-size:10px;color:var(--pf-muted);margin-left:24px;"><code>' + mountPath + '</code></div>' : '<div style="font-size:10px;color:var(--pf-muted);margin-left:24px;">' + escapeHtml(t('availableToTools')) + '</div>');
         });
@@ -1411,13 +1418,14 @@ async function _renderResourcesData(data) {
       var repoAgents = (data.repo_agents || []).filter(function(a) { return !a.in_conversation; });
       if (repoAgents.length) {
         repoAgents.forEach(function(a) {
-          var aName = escapeHtml(a.name);
+          var aName = String(a.name || '');
+          var aNameAttr = _pfpAttr(aName);
           repoHtml += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer;"'
-            + ' oncontextmenu="showResourceMenu(event,\'agent\',\'' + aName + '\',\'' + escapeHtml(a.scope || '') + '\',null);return false;">'
+            + ' oncontextmenu="showResourceMenu(event,\'agent\',' + _pfpJsArg(aName) + ',' + _pfpJsArg(a.scope || '') + ',null);return false;">'
             + _scopeBadge(a.scope)
-            + '<span style="color:var(--pf-muted);font-size:12px;flex:1;">' + aName + '</span>'
-            + '<span style="color:var(--pf-accent);font-size:10px;cursor:pointer;padding:0 4px;" title="' + escapeHtml(t('addToConversation')) + '"'
-            + ' onclick="showAddAgentToConvDialog(this.dataset.n)" data-n="' + aName + '">+</span>'
+            + '<span style="color:var(--pf-muted);font-size:12px;flex:1;">' + escapeHtml(aName) + '</span>'
+            + '<span style="color:var(--pf-accent);font-size:10px;cursor:pointer;padding:0 4px;" title="' + _pfpAttr(t('addToConversation')) + '"'
+            + ' onclick="showAddAgentToConvDialog(this.dataset.n)" data-n="' + aNameAttr + '">+</span>'
             + '</div>';
         });
       } else {
@@ -1436,10 +1444,10 @@ async function _renderResourcesData(data) {
           const assignedTo = s.assigned_to || [];
           const assignedTag = assignedTo.length ? ' <span style="color:var(--pf-muted);font-size:9px;">\u2192 ' + assignedTo.map(escapeHtml).join(', ') + '</span>' : '';
           const skillInvalid = s.invalid
-            ? ' <span style="font-size:9px;" title="' + escapeHtml(s.invalid) + '">⚠ ' + escapeHtml(s.invalid) + '</span>'
+            ? ' <span style="font-size:9px;" title="' + _pfpAttr(s.invalid) + '">⚠ ' + escapeHtml(s.invalid) + '</span>'
             : '';
           const skillColor = s.invalid ? 'var(--pf-danger,#e05260)' : 'var(--pf-text)';
-          repoHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer;" oncontextmenu="showResourceMenu(event,'skill','${escapeHtml(s.name)}','${s.scope||''}');return false;">
+          repoHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer;" oncontextmenu="showResourceMenu(event,'skill',${_pfpJsArg(s.name)},${_pfpJsArg(s.scope || '')});return false;">
             ${_scopeBadge(s.scope)}<span style="color:${skillColor};font-size:12px;flex:1;">${escapeHtml(s.name)}${skillInvalid || assignedTag}</span>
           </div>`;
         });
@@ -1459,9 +1467,9 @@ async function _renderResourcesData(data) {
         prompts.forEach(p => {
           const title = p.title || p.name;
           const icon = p.has_parameters ? '\u{1F4DD}' : '\u{1F4CB}';
-          const desc = p.description ? ' title="' + escapeHtml(p.description) + '"' : '';
+          const desc = p.description ? ' title="' + _pfpAttr(p.description) + '"' : '';
           repoHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer"${desc}
-            onclick="_usePrompt('${escapeHtml(p.name)}',${p.has_parameters})" oncontextmenu="showResourceMenu(event,'prompt','${p.name}','${p.scope||''}');return false;">
+            onclick="_usePrompt(${_pfpJsArg(p.name)},${p.has_parameters})" oncontextmenu="showResourceMenu(event,'prompt',${_pfpJsArg(p.name)},${_pfpJsArg(p.scope || '')});return false;">
             ${_scopeBadge(p.scope)}<span style="font-size:11px">${icon}</span>
             <span style="font-size:12px;color:var(--pf-text)">${escapeHtml(title)}</span>
           </div>`;
@@ -1485,12 +1493,12 @@ async function _renderResourcesData(data) {
           const builtin = !!t.builtin;
           const builtinArg = builtin ? 'true' : 'false';
           const cssLabel = (t.css_length || 0) + ' css';
-          const desc = t.description ? ' title="' + escapeHtml(t.description) + '"' : '';
+          const desc = t.description ? ' title="' + _pfpAttr(t.description) + '"' : '';
           repoHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer"${desc}
-            onclick="_applyThemeFromResource('${escapeHtml(ref)}')" oncontextmenu="_showThemeMenu(event,'${escapeHtml(ref)}',${builtinArg},'${escapeHtml(t.scope || '')}');return false;">
+            onclick="_applyThemeFromResource(${_pfpJsArg(ref)})" oncontextmenu="_showThemeMenu(event,${_pfpJsArg(ref)},${builtinArg},${_pfpJsArg(t.scope || '')});return false;">
             ${_scopeBadge(t.scope)}<span style="font-size:11px;color:var(--pf-accent);">\u25A3</span>
             <span style="font-size:12px;color:var(--pf-text);flex:1;">${escapeHtml(t.title || t.name)}</span>
-            <span style="color:var(--pf-muted);font-size:10px;">${cssLabel}</span>
+            <span style="color:var(--pf-muted);font-size:10px;">${escapeHtml(cssLabel)}</span>
           </div>`;
         });
       } else {
@@ -1514,14 +1522,14 @@ async function _renderResourcesData(data) {
           const previewUrl = v.ref_audio_fid
             ? `/files/${encodeURIComponent(v.ref_audio_fid)}` : '';
           const previewBtn = previewUrl
-            ? `<span style="cursor:pointer;color:var(--pf-accent);font-size:11px;padding:0 4px;" title="${escapeHtml(t('previewReferenceAudio'))}" onclick="_previewVoice('${escapeHtml(previewUrl)}')">\u25B6</span>`
+            ? `<span style="cursor:pointer;color:var(--pf-accent);font-size:11px;padding:0 4px;" title="${_pfpAttr(t('previewReferenceAudio'))}" onclick="_previewVoice(${_pfpJsArg(previewUrl)})">\u25B6</span>`
             : '';
-          repoHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" title="${escapeHtml(v.provider)} \u2014 ${paradigm}">
-            <span style="color:${pColor};font-size:9px;font-weight:600;border:1px solid ${pColor};border-radius:3px;padding:0 3px;">${pBadge}</span>
+          repoHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" title="${_pfpAttr((v.provider || '') + ' \u2014 ' + paradigm)}">
+            <span style="color:${pColor};font-size:9px;font-weight:600;border:1px solid ${pColor};border-radius:3px;padding:0 3px;">${escapeHtml(pBadge)}</span>
             <span style="color:var(--pf-text);font-size:12px;flex:1;">\u{1F399} ${escapeHtml(v.name)}<span style="color:var(--pf-muted);font-size:10px;">${prov}</span></span>
             ${previewBtn}
-            <span style="cursor:pointer;color:var(--pf-muted);font-size:11px;padding:0 4px;" title="${escapeHtml(t('renameVoiceClone'))}" onclick="_renameVoiceClone('${escapeHtml(v.name)}')">\u270E</span>
-            <span style="cursor:pointer;color:var(--pf-danger);font-size:11px;padding:0 4px;" title="${escapeHtml(t('deleteVoiceClone'))}" onclick="_deleteVoiceClone('${escapeHtml(v.name)}')">\u2716</span>
+            <span style="cursor:pointer;color:var(--pf-muted);font-size:11px;padding:0 4px;" title="${_pfpAttr(t('renameVoiceClone'))}" onclick="_renameVoiceClone(${_pfpJsArg(v.name)})">\u270E</span>
+            <span style="cursor:pointer;color:var(--pf-danger);font-size:11px;padding:0 4px;" title="${_pfpAttr(t('deleteVoiceClone'))}" onclick="_deleteVoiceClone(${_pfpJsArg(v.name)})">\u2716</span>
           </div>`;
         });
       } else {
@@ -1537,9 +1545,9 @@ async function _renderResourcesData(data) {
     { const allTasks = data.task_defs || [];
       if (allTasks.length) {
         allTasks.forEach(t => {
-          repoHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer;" oncontextmenu="showResourceMenu(event,'task_def','${escapeHtml(t.name)}','${t.scope||''}');return false;">
-            ${_scopeBadge(t.scope)}<span style="color:var(--pf-text);font-size:12px;flex:1;" title="${escapeHtml(t.description)}">${escapeHtml(t.name)}</span>
-            <span style="color:var(--pf-muted);font-size:10px;">[${t.default_interval}]</span>
+          repoHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer;" oncontextmenu="showResourceMenu(event,'task_def',${_pfpJsArg(t.name)},${_pfpJsArg(t.scope || '')});return false;">
+            ${_scopeBadge(t.scope)}<span style="color:var(--pf-text);font-size:12px;flex:1;" title="${_pfpAttr(t.description)}">${escapeHtml(t.name)}</span>
+            <span style="color:var(--pf-muted);font-size:10px;">[${escapeHtml(t.default_interval)}]</span>
           </div>`;
         });
       } else {
@@ -1560,7 +1568,7 @@ async function _renderResourcesData(data) {
       repoHtml += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:4px;cursor:pointer;color:var(--pf-accent-2);font-size:11px;" onclick="_showToolMcpFilterDialog(\'\', \'conversation\')">\u2699 ' + escapeHtml(t('configureAvailability')) + '</div>';
       if (mcps.length) {
         mcps.forEach(m => {
-          repoHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer;" oncontextmenu="showResourceMenu(event,'mcp','${escapeHtml(m.name)}','${m.scope||''}');return false;">
+          repoHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer;" oncontextmenu="showResourceMenu(event,'mcp',${_pfpJsArg(m.name)},${_pfpJsArg(m.scope || '')});return false;">
             ${_scopeBadge(m.scope)}<span style="color:var(--pf-text);font-size:12px;flex:1;">${escapeHtml(m.name)}</span>
           </div>`;
         });
@@ -1581,8 +1589,8 @@ async function _renderResourcesData(data) {
       if (hooks.length) {
         hooks.forEach(h => {
           const events = Array.isArray(h.events) ? h.events.join(', ') : '';
-          const desc = h.description ? ' title="' + escapeHtml(h.description) + '"' : '';
-          repoHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer;"${desc} oncontextmenu="showResourceMenu(event,'agent_hook','${escapeHtml(h.name)}','${h.scope||''}');return false;">
+          const desc = h.description ? ' title="' + _pfpAttr(h.description) + '"' : '';
+          repoHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer;"${desc} oncontextmenu="showResourceMenu(event,'agent_hook',${_pfpJsArg(h.name)},${_pfpJsArg(h.scope || '')});return false;">
             ${_scopeBadge(h.scope)}<span style="color:var(--pf-accent);font-size:11px">\u2693</span>
             <span style="color:var(--pf-text);font-size:12px;flex:1;">${escapeHtml(h.name)}</span>
             <span style="color:var(--pf-muted);font-size:10px;">${escapeHtml(events)}</span>
@@ -1603,7 +1611,7 @@ async function _renderResourcesData(data) {
       const tools = window._cachedTools || [];
       repoHtml += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:4px;cursor:pointer;color:var(--pf-accent-2);font-size:11px;" onclick="_showToolMcpFilterDialog(\'\', \'conversation\')">\u2699 ' + escapeHtml(t('configureAvailability')) + '</div>';
       tools.forEach(t => {
-        repoHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer" onclick="showToolCallDialog('${escapeHtml(t.name)}')">
+        repoHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer" onclick="showToolCallDialog(${_pfpJsArg(t.name)})">
           <span style="color:var(--pf-accent);font-size:11px">\u26A1</span>
           <span style="font-size:12px;color:var(--pf-text)">${escapeHtml(t.name)}</span>
         </div>`;
@@ -2933,7 +2941,7 @@ async function showResourceEditor(rtype, name, readonly) {
   } else {
     html += `<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
     <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">${escapeHtml(t('contextCancel'))}</button>
-    <button onclick="_saveResourceEdit('${rtype}','${name}','${scope}')" style="background:var(--pf-accent);color:var(--pf-bg);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">${escapeHtml(t('contextSave'))}</button>
+    <button onclick="_saveResourceEdit(${_pfpJsArg(rtype)},${_pfpJsArg(name)},${_pfpJsArg(scope)})" style="background:var(--pf-accent);color:var(--pf-bg);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">${escapeHtml(t('contextSave'))}</button>
     </div>`;
   }
   panel.innerHTML = html;
@@ -3341,7 +3349,7 @@ function _showAssignDialog(taskDefName) {
     </div></details>
   <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
     <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">${escapeHtml(t('contextCancel'))}</button>
-    <button onclick="_submitAssign('${taskDefName}')" style="background:var(--pf-accent);color:var(--pf-bg);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">${escapeHtml(t('assign'))}</button>
+    <button onclick="_submitAssign(${_pfpJsArg(taskDefName)})" style="background:var(--pf-accent);color:var(--pf-bg);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">${escapeHtml(t('assign'))}</button>
   </div>`;
   overlay.appendChild(panel);
   document.body.appendChild(overlay);
@@ -3824,9 +3832,9 @@ function _renderServiceActions(actions, serviceId, scope) {
   let html = '<div class="svc-actions" style="margin-top:12px;padding-top:8px;border-top:1px solid var(--pf-border);">';
   for (const a of actions) {
     const whenAttr = a.when ? ' data-action-when=\'' + JSON.stringify(a.when).replace(/'/g, '&#39;') + '\'' : '';
-    html += '<button type="button" onclick="_executeServiceAction(\'' + a.id + '\',\'' + serviceId + '\',\'' + (a.flow || 'simple') + '\',\'' + (a.server_action || '') + '\',\'' + scope + '\')"'
+    html += '<button type="button" onclick="_executeServiceAction(' + _pfpJsArg(a.id) + ',' + _pfpJsArg(serviceId) + ',' + _pfpJsArg(a.flow || 'simple') + ',' + _pfpJsArg(a.server_action || '') + ',' + _pfpJsArg(scope) + ')"'
       + whenAttr + ' style="background:color-mix(in srgb, var(--pf-accent) 14%, var(--pf-panel));color:var(--pf-accent);border:1px solid var(--pf-accent);border-radius:4px;padding:6px 12px;cursor:pointer;font-size:12px;margin-right:8px;">'
-      + (a.icon || '') + ' ' + (a.label || a.id) + '</button>';
+      + escapeHtml(a.icon || '') + ' ' + escapeHtml(a.label || a.id) + '</button>';
   }
   html += '</div>';
   return html;

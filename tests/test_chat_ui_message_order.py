@@ -113,9 +113,9 @@ def test_repo_agents_expose_resource_context_menu():
         RESOURCES_JS.index("var repoAgents = (data.repo_agents || [])"):
         RESOURCES_JS.index("allAgentsInConversation", RESOURCES_JS.index("var repoAgents = (data.repo_agents || [])"))]
 
-    assert "showResourceMenu(event,\\'agent\\'" in repo_block
-    assert "\\',null);return false;" in repo_block
-    assert "escapeHtml(a.scope || '')" in repo_block
+    assert "showResourceMenu(event,\\'agent\\',' + _pfpJsArg(aName)" in repo_block
+    assert "+ _pfpJsArg(a.scope || '') + ',null);return false;" in repo_block
+    assert "escapeHtml(a.scope || '')" not in repo_block
     assert "showAddAgentToConvDialog(this.dataset.n)" in repo_block
     assert "const isRepoAgent = rtype === 'agent' && autoconv === null" in RESOURCES_JS
     assert "if (isRepoAgent)" in RESOURCES_JS

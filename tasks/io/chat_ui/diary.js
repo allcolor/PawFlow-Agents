@@ -69,10 +69,10 @@ function showDiaryOverlay(entries, agentName) {
     rowsHtml = '<div style="color:#6c6c8a;text-align:center;padding:20px">' + t('noDiaryEntries') + '</div>';
   } else {
     entries.forEach((e, i) => {
-      const text = (e.text || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const text = escapeHtml(e.text || '');
       rowsHtml += '<div id="diary-row-' + i + '" style="padding:6px 8px;border-bottom:1px solid #222;cursor:pointer" onclick="this.querySelector(\'.diary-full\')&&(this.querySelector(\'.diary-full\').style.display=this.querySelector(\'.diary-full\').style.display===\'block\'?\'none\':\'block\')">'
         + '<div style="display:flex;align-items:center;gap:4px">' + typeBadge(e.type)
-        + '<span style="color:#6c6c8a;font-size:10px;margin-left:auto">' + (e.timestamp || '') + '</span>'
+        + '<span style="color:#6c6c8a;font-size:10px;margin-left:auto">' + escapeHtml(e.timestamp || '') + '</span>'
         + '</div>'
         + '<div style="color:#c0c0d0;font-size:12px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + text.slice(0, 200) + '</div>'
         + '<div class="diary-full" style="display:none;color:#a0a0c0;font-size:12px;margin-top:4px;white-space:pre-wrap;word-break:break-word;max-height:200px;overflow-y:auto">' + text + '</div>'
@@ -82,7 +82,7 @@ function showDiaryOverlay(entries, agentName) {
 
   overlay.innerHTML = '<div style="background:#1a1a2e;border:1px solid #333;border-radius:12px;padding:20px;max-width:700px;width:90%;max-height:80vh;display:flex;flex-direction:column">'
     + '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">'
-    + '<h3 style="margin:0;color:#e0e0e0;font-size:16px">' + t('diaryTitle', { agent: (agentName || '?').replace(/</g, '&lt;') }) + '</h3>'
+    + '<h3 style="margin:0;color:#e0e0e0;font-size:16px">' + escapeHtml(t('diaryTitle', { agent: agentName || '?' })) + '</h3>'
     + '<span style="color:#6c6c8a;font-size:12px">' + entries.length + ' entries</span>'
     + filterHtml
     + '<button onclick="diaryAddNew()" style="background:#1e3a5f;color:#4fc3f7;border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600;margin-left:auto">+ ' + escapeHtml(t('add')) + '</button>'

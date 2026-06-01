@@ -6,6 +6,7 @@
 <title>PawFlow Installer</title>
 <style>:root{color-scheme:dark;--bg:#0d1020;--panel:#12172a;--line:#26304a;--field:#0b1020;--text:#e6edf7;--muted:#9aa7bd;--green:#1e8f4d;--amber:#ffcf66;--danger:#ff7a7a}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,system-ui,sans-serif}.wrap{max-width:1120px;margin:0 auto;padding:36px 24px}.badge{display:inline-block;background:var(--green);color:white;border-radius:6px;padding:4px 8px;font-size:12px}.panel{border:1px solid var(--line);background:var(--panel);border-radius:8px;padding:22px;margin-top:18px}.layout{display:grid;grid-template-columns:minmax(220px,280px) 1fr;gap:18px}.steps{display:grid;gap:8px;align-content:start}.step{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:6px;padding:10px;background:#0f1424;color:var(--muted);text-align:left}.step.current{border-color:var(--green);color:var(--text)}.step.done{color:#9ff0bd}.num{display:inline-grid;place-items:center;width:22px;height:22px;border-radius:999px;background:#1b2440;font-size:12px}.step.done .num,.step.current .num{background:var(--green);color:white}.formgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}.muted{color:var(--muted)}.warn{color:var(--amber)}.error{color:var(--danger);min-height:1.2em}label{display:block;margin:12px 0 6px}input,select{width:100%;background:var(--field);color:var(--text);border:1px solid #394764;border-radius:6px;padding:10px}input[type=checkbox]{width:auto}button{background:var(--green);color:white;border:0;border-radius:6px;padding:10px 14px;font-weight:700}button.secondary{background:#25304a}button:disabled{opacity:.45}.actions{display:flex;gap:10px;justify-content:flex-end;margin-top:18px}.screen{display:none}.screen.active{display:block}pre{white-space:pre-wrap;background:var(--field);border:1px solid var(--line);border-radius:6px;padding:12px;max-height:260px;overflow:auto}.kv{display:grid;grid-template-columns:190px 1fr;gap:8px;margin-top:12px}.kv div{padding:8px;border-bottom:1px solid var(--line)}.pill{display:inline-block;border:1px solid var(--line);border-radius:999px;padding:4px 8px;margin:4px 4px 0 0;color:var(--muted)}.vnc-backdrop{position:fixed;inset:0;background:rgba(4,7,16,.78);display:grid;place-items:center;padding:18px;z-index:20}.vnc-backdrop[hidden]{display:none}.vnc-modal{width:min(1120px,96vw);height:min(760px,92vh);background:var(--panel);border:1px solid var(--line);border-radius:8px;display:grid;grid-template-rows:auto 1fr}.vnc-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border-bottom:1px solid var(--line)}.vnc-head strong{font-size:14px}.vnc-modal iframe{width:100%;height:100%;border:0;background:#050814}@media(max-width:820px){.layout{grid-template-columns:1fr}.steps{grid-template-columns:1fr 1fr}.step{font-size:13px}.kv{grid-template-columns:1fr}.vnc-modal{width:100vw;height:100vh;border-radius:0}}
 </style>
+<style>.param-help{display:inline-grid;place-items:center;width:15px;height:15px;margin-left:5px;border-radius:50%;border:1px solid var(--line);background:var(--field);color:var(--muted);font-size:10px;padding:0;vertical-align:middle}.param-fill{width:38px;min-width:38px;height:38px;padding:0;border:1px solid var(--green);background:var(--field);color:var(--green);font-size:11px}.param-row{display:flex;gap:6px;align-items:flex-start}.param-row input,.param-row select,.param-row textarea{min-width:0;flex:1}.helper-pop{position:fixed;z-index:40;width:min(620px,calc(100vw - 24px));max-height:min(520px,calc(100vh - 24px));display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:0 12px 36px rgba(0,0,0,.55);overflow:hidden}.helper-head{display:flex;align-items:center;gap:8px;padding:9px 11px;background:#0f1424;border-bottom:1px solid var(--line)}.helper-head strong{flex:1;font-size:13px}.helper-body{padding:12px;overflow:auto;font-size:13px;line-height:1.45}.helper-item{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:start;border:1px solid var(--line);border-radius:6px;padding:9px;margin-bottom:7px;background:var(--field)}.helper-item small{display:block;color:var(--muted);margin-top:3px}.param-help:hover,.param-fill:hover{background:var(--field);color:var(--green);border-color:var(--green)}</style>
 </head>
 <body>
 <main class="wrap">
@@ -110,18 +111,29 @@
 </div>
 </section>
 <section class="screen" data-step="4">
+<h2>Relay Server</h2>
+<label style="display:flex;align-items:center;gap:8px"><input id="relay_server_enabled" type="checkbox"> Install a managed server relay now</label>
+<p class="muted">Optional. You can skip this step and add relays later from a conversation. When enabled, PawFlow generates the relay token server-side and starts a managed workspace relay.</p>
+<div class="formgrid" id="relay_server_fields">
+<div><label>Relay service id</label><input id="relay_server_id" value="workspace_relay"></div>
+<div><label>Scope</label><select id="relay_server_scope"><option value="global">Global</option><option value="user">Admin user</option></select></div>
+<div><label>Auto-background after seconds</label><input id="relay_server_auto_background" type="number" min="0" step="1" value="0"></div>
+</div>
+</section>
+<section class="screen" data-step="5">
 <h2>First Conversation</h2>
 <div class="formgrid">
 <div><label>Conversation title</label><input id="first_conversation_title" name="first_conversation_title" value="Welcome to PawFlow" required></div>
+<div><label>Default relay</label><select id="first_conversation_relay"><option value="">No relay</option></select></div>
 </div>
 <div class="actions" style="justify-content:flex-start;margin:0 0 12px 0">
 <button type="button" id="add_first_agent">+ Add agent</button>
 </div>
 <div id="first_conversation_agents"></div>
 </section>
-<section class="screen" data-step="5">
+<section class="screen" data-step="6">
 <h2>Finalize</h2>
-<p>Finalization writes services, deploys the main flow, starts the executor, creates the first conversation, disables the bootstrap gateway, and redirects to chat.</p>
+<p>Finalization writes services, optionally starts the managed server relay, deploys the main flow, starts the executor, creates the first conversation, disables the bootstrap gateway, and redirects to chat.</p>
 <pre id="state">Loading installer state...</pre>
 <div class="kv" id="review">
 </div>
@@ -149,7 +161,7 @@
 </div>
 
 <script>
-const names = ['Admin User','OAuth Configuration','Private Gateway','LLM Services','First Conversation','Finalize'];
+const names = ['Admin User','OAuth Configuration','Private Gateway','LLM Services','Relay Server','First Conversation','Finalize'];
 let step = 0;
 let status = null;
 const form = document.getElementById('wizard');
@@ -161,9 +173,11 @@ function values() {
   const v = Object.fromEntries(new FormData(form));
   const llmPayload = buildLlmServicesPayload();
   const summarizerPayload = buildSummarizerPayload();
+  const relayPayload = buildRelayServerPayload();
   const firstConversationPayload = buildFirstConversationPayload();
   v.llm_services = JSON.stringify(llmPayload);
   v.summarizer_service = JSON.stringify(summarizerPayload);
+  v.relay_server = JSON.stringify(relayPayload);
   v.first_conversation = JSON.stringify(firstConversationPayload);
   if (llmPayload.length) {
     const first = llmPayload[0];
@@ -217,6 +231,7 @@ function clearAdminPasswordValidity() {
 function escapeHtml(value) {
   return String(value || '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;');
 }
+function escapeAttr(value) { return escapeHtml(value).replaceAll("'", '&#39;'); }
 const credentialProviders = ['claude-code','codex-app-server','gemini','antigravity-interactive'];
 const credentialProviderMap = {'antigravity-interactive':'gemini'};
 const defaultCredentialIds = {'claude-code':'claude_code_oauth_credentials','codex-app-server':'codex_oauth_credentials','gemini':'gemini_oauth_credentials','antigravity-interactive':'gemini_oauth_credentials'};
@@ -239,10 +254,35 @@ const summarizerParamDefs = [
   ['min_input_multiplier','Min input multiplier','number',4], ['chars_per_token','Chars per token','number',3.5], ['overshoot_warn_multiplier','Overshoot warn multiplier','number',1.5],
   ['header_char_multiplier','Header char multiplier','number',3.0]
 ];
+const llmParamHelp = {
+  default_model: 'Default model name used by this LLM service. Helper: live provider lookup is attempted when a usable API key/base URL is filled; otherwise bundled fallback values are shown.',
+  api_key: 'API key for OpenAI/Anthropic-compatible providers. For CLI-backed providers, leave empty when using an OAuth credential service.',
+  base_url: 'Base URL override for self-hosted or compatible APIs. Helper: suggests common OpenAI-compatible, Anthropic-compatible, OpenRouter, DeepSeek, xAI, DashScope, and local relay URLs.',
+  embedding_model: 'Embedding model used when this service is selected for embeddings. Empty uses the client default embedding model.',
+  fallback_model: 'Fallback model used when the primary model fails. Mostly useful for OpenAI-compatible API providers.',
+  supports_vision: 'Send image attachments to this API provider as native vision input.',
+  timeout: 'Request timeout in seconds. 0 means no timeout.',
+  max_retries: 'Number of retries on transient provider errors.',
+  max_context_size: 'Context window in tokens. Helper suggests common context sizes.',
+  compact_target_tokens: 'Absolute cap on compact output, in tokens. Default 25000. Must stay at or below 40% of max_context_size when both are set.',
+  compact_threshold_pct: 'Proactive compact trigger as a percent of max_context_size. Default 95. Set 0 to disable proactive compact.',
+  extra_body: 'Extra JSON object merged into OpenAI-compatible request bodies, for provider-specific options such as OpenRouter routing.',
+  token_multiplier: 'Correction factor between cl100k token counts and this model real tokenizer.',
+  cost_per_1m_input: 'Cost per 1M input tokens in dollars, used by local cost tracking.',
+  cost_per_1m_output: 'Cost per 1M output tokens in dollars, used by local cost tracking.',
+  cost_per_1m_cache_read: 'Cost per 1M cache-hit input tokens. Empty uses provider/default cache ratio.',
+  cost_per_1m_cache_write: 'Cost per 1M cache-creation input tokens. Empty uses provider/default cache ratio.',
+  docker_image: 'Docker image for containerized CLI-backed provider execution.',
+  docker_cpu_limit: 'CPU limit for the provider container.',
+  docker_memory_limit: 'Memory limit for the provider container.',
+  effort: 'CLI provider effort level / thinking budget preset.'
+};
+const llmHelperParams = new Set(['default_model','base_url','embedding_model','fallback_model','extra_body','max_context_size','compact_target_tokens','compact_threshold_pct','token_multiplier','cost_per_1m_input','cost_per_1m_output','cost_per_1m_cache_read','cost_per_1m_cache_write']);
 let llmServices = [{service_id:'codex_appserver_llm_service', scope:'user', credential_scope:'user', config:{provider:'codex-app-server', default_model:'gpt-5.5', supports_vision:true, timeout:1800, max_retries:2, max_context_size:200000, compact_target_tokens:25000, compact_threshold_pct:95, tool_result_max_chars:50000, docker_image:'pawflow-claude-code:latest', docker_cpu_limit:'2', docker_memory_limit:'2g', effort:'medium'}}];
 let activeCredentialIndex = 0;
 let summarizerConfig = {};
-let firstConversation = {title:'Welcome to PawFlow', agents:[{instance_name:'assistant', definition:'assistant', llm_service:'codex_appserver_llm_service', model:'', tools:'', max_depth:1000, params_text:'{\n  "name": "assistant"\n}'}]};
+let relayServer = {enabled:false, service_id:'workspace_relay', scope:'global', auto_background_after_seconds:0};
+let firstConversation = {title:'Welcome to PawFlow', relay_id:'', agents:[{instance_name:'assistant', definition:'assistant', llm_service:'codex_appserver_llm_service', model:'', tools:'', max_depth:1000, params_text:'{\n  "name": "assistant"\n}'}]};
 function drawSteps() {
   steps.innerHTML = names.map((n, i) => {
     const cls = 'step ' + (i === step ? 'current ' : '') + (i < step ? 'done' : '');
@@ -250,7 +290,8 @@ function drawSteps() {
   }).join('');
 }
 function show() {
-  if (step === 4) { collectLlmEditorValues(); renderFirstConversation(); }
+  if (step === 5) { collectLlmEditorValues(); renderFirstConversation(); }
+  renderRelayServer();
   screens.forEach((s, i) => s.classList.toggle('active', i === step));
   document.getElementById('back').disabled = step === 0;
   document.getElementById('next').style.display = step === names.length - 1 ? 'none' : '';
@@ -391,13 +432,85 @@ function visibleLlmParam(name, provider) {
   if (name === 'base_url') return api || provider === 'claude-code';
   return true;
 }
-function fieldHtml(index, key, label, type, value) {
+function llmLabelHtml(key, label) {
+  const help = llmParamHelp[key] || '';
+  return escapeHtml(label) + (help ? ' <button type="button" class="param-help" data-help-key="' + escapeAttr(key) + '" title="Parameter help">?</button>' : '');
+}
+function llmFillButton(index, key) {
+  return llmHelperParams.has(key) ? '<button type="button" class="param-fill" data-helper-key="' + escapeAttr(key) + '" data-helper-index="' + index + '" title="Fill from helper">[...]</button>' : '';
+}
+function withFill(index, key, controlHtml) {
+  const fill = llmFillButton(index, key);
+  return fill ? '<div class="param-row">' + controlHtml + fill + '</div>' : controlHtml;
+}
+function fieldHtml(index, key, label, type, value, required) {
   const safe = escapeHtml(value === undefined ? '' : value);
-  if (type === 'checkbox') return '<label><input data-llm-param="' + key + '" data-llm-index="' + index + '" type="checkbox"' + (value ? ' checked' : '') + '> ' + escapeHtml(label) + '</label>';
-  if (type === 'textarea') return '<div><label>' + escapeHtml(label) + '</label><textarea data-llm-param="' + key + '" data-llm-index="' + index + '" style="width:100%;min-height:76px;background:var(--field);color:var(--text);border:1px solid #394764;border-radius:6px;padding:10px">' + safe + '</textarea></div>';
-  if (type === 'select' && key === 'resilience_style') return '<div><label>' + escapeHtml(label) + '</label><select data-llm-param="' + key + '" data-llm-index="' + index + '"><option value=""></option><option value="cautious"' + (value === 'cautious' ? ' selected' : '') + '>cautious</option><option value="balanced"' + (value === 'balanced' ? ' selected' : '') + '>balanced</option><option value="aggressive"' + (value === 'aggressive' ? ' selected' : '') + '>aggressive</option></select></div>';
-  if (type === 'select' && key === 'effort') return '<div><label>' + escapeHtml(label) + '</label><select data-llm-param="' + key + '" data-llm-index="' + index + '"><option value="low"' + (value === 'low' ? ' selected' : '') + '>low</option><option value="medium"' + (value === 'medium' ? ' selected' : '') + '>medium</option><option value="high"' + (value === 'high' ? ' selected' : '') + '>high</option><option value="max"' + (value === 'max' ? ' selected' : '') + '>max</option></select></div>';
-  return '<div><label>' + escapeHtml(label) + '</label><input data-llm-param="' + key + '" data-llm-index="' + index + '" type="' + type + '" value="' + safe + '"></div>';
+  const req = required ? ' required' : '';
+  if (type === 'checkbox') return '<label><input data-llm-param="' + key + '" data-llm-index="' + index + '" type="checkbox"' + (value ? ' checked' : '') + '> ' + llmLabelHtml(key, label) + '</label>';
+  if (type === 'textarea') return '<div><label>' + llmLabelHtml(key, label) + '</label>' + withFill(index, key, '<textarea data-llm-param="' + key + '" data-llm-index="' + index + '" style="width:100%;min-height:76px;background:var(--field);color:var(--text);border:1px solid #394764;border-radius:6px;padding:10px">' + safe + '</textarea>') + '</div>';
+  if (type === 'select' && key === 'resilience_style') return '<div><label>' + llmLabelHtml(key, label) + '</label>' + withFill(index, key, '<select data-llm-param="' + key + '" data-llm-index="' + index + '"><option value=""></option><option value="cautious"' + (value === 'cautious' ? ' selected' : '') + '>cautious</option><option value="balanced"' + (value === 'balanced' ? ' selected' : '') + '>balanced</option><option value="aggressive"' + (value === 'aggressive' ? ' selected' : '') + '>aggressive</option></select>') + '</div>';
+  if (type === 'select' && key === 'effort') return '<div><label>' + llmLabelHtml(key, label) + '</label>' + withFill(index, key, '<select data-llm-param="' + key + '" data-llm-index="' + index + '"><option value="low"' + (value === 'low' ? ' selected' : '') + '>low</option><option value="medium"' + (value === 'medium' ? ' selected' : '') + '>medium</option><option value="high"' + (value === 'high' ? ' selected' : '') + '>high</option><option value="max"' + (value === 'max' ? ' selected' : '') + '>max</option></select>') + '</div>';
+  return '<div><label>' + llmLabelHtml(key, label) + '</label>' + withFill(index, key, '<input data-llm-param="' + key + '" data-llm-index="' + index + '" type="' + type + '" value="' + safe + '"' + req + '>') + '</div>';
+}
+function closeHelperPopups() { document.querySelectorAll('.helper-pop').forEach(el => el.remove()); }
+function positionPopup(pop, anchor) {
+  const rect = anchor.getBoundingClientRect();
+  const pad = 12;
+  pop.style.left = Math.min(Math.max(pad, rect.left), window.innerWidth - pop.offsetWidth - pad) + 'px';
+  pop.style.top = Math.min(Math.max(pad, rect.bottom + 8), window.innerHeight - pop.offsetHeight - pad) + 'px';
+}
+function showHelperPopup(title, bodyHtml, anchor) {
+  closeHelperPopups();
+  const pop = document.createElement('div');
+  pop.className = 'helper-pop';
+  pop.innerHTML = '<div class="helper-head"><strong>' + escapeHtml(title) + '</strong><button type="button" class="secondary" data-helper-close="1">Close</button></div><div class="helper-body">' + bodyHtml + '</div>';
+  document.body.appendChild(pop);
+  pop.querySelector('[data-helper-close]').onclick = closeHelperPopups;
+  positionPopup(pop, anchor);
+}
+function showLlmParamHelp(btn) {
+  const key = btn.dataset.helpKey || '';
+  showHelperPopup(key, '<p style="margin:0;white-space:pre-wrap">' + escapeHtml(llmParamHelp[key] || 'No help available.') + '</p>', btn);
+}
+async function openLlmParamHelper(btn) {
+  collectLlmEditorValues();
+  const key = btn.dataset.helperKey || '';
+  const index = Number(btn.dataset.helperIndex || 0);
+  const svc = llmServices[index] || {config:{}};
+  showHelperPopup(key, '<p class="muted" style="margin:0">Loading...</p>', btn);
+  try {
+    const resp = await fetch('/install/api/service-parameter-helper', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({service_type:'llmConnection', parameter:key, config:svc.config || {}, admin_username:field('admin_username')?.value || 'admin'})
+    });
+    const data = await resp.json();
+    if (data.error) throw new Error(data.error);
+    let html = data.warning ? '<p class="warn">' + escapeHtml(data.warning) + '</p>' : '';
+    const values = data.values || [];
+    if (!values.length) html += '<p class="muted">No suggestions.</p>';
+    values.forEach(item => {
+      const value = JSON.stringify(item.value == null ? '' : item.value);
+      html += '<div class="helper-item"><div><strong>' + escapeHtml(item.label || item.value || '') + '</strong>' + (item.description ? '<small>' + escapeHtml(item.description) + '</small>' : '') + '</div><button type="button" data-helper-apply="' + index + '" data-helper-param="' + escapeAttr(key) + '" data-helper-value="' + escapeAttr(value) + '">Use</button></div>';
+    });
+    const pop = document.querySelector('.helper-pop .helper-body');
+    if (pop) pop.innerHTML = html;
+  } catch (e) {
+    const pop = document.querySelector('.helper-pop .helper-body');
+    if (pop) pop.innerHTML = '<p class="error">' + escapeHtml(e.message) + '</p>';
+  }
+}
+function applyLlmHelperValue(btn) {
+  const index = Number(btn.dataset.helperApply || 0);
+  const key = btn.dataset.helperParam || '';
+  let value = '';
+  try { value = JSON.parse(btn.dataset.helperValue || '""'); } catch (_e) { value = btn.dataset.helperValue || ''; }
+  if (typeof value === 'object') value = JSON.stringify(value, null, 2);
+  const input = document.querySelector('[data-llm-param="' + key + '"][data-llm-index="' + index + '"]');
+  if (!input) return;
+  input.value = String(value == null ? '' : value);
+  input.dispatchEvent(new Event('input', {bubbles:true}));
+  input.dispatchEvent(new Event('change', {bubbles:true}));
+  closeHelperPopups();
 }
 function renderLlmServices() {
   const editor = document.getElementById('llm_services_editor');
@@ -407,7 +520,7 @@ function renderLlmServices() {
     const providerOptions = llmProviderOptions.map(p => '<option value="' + p + '"' + (p === provider ? ' selected' : '') + '>' + p + '</option>').join('');
     const params = llmParamDefs.filter(d => visibleLlmParam(d[0], provider)).map(d => fieldHtml(index, d[0], d[1], d[2], cfg[d[0]] === undefined ? d[3] : cfg[d[0]])).join('');
     const cred = isCredentialProvider(provider) ? '<div class="panel" style="margin-top:12px"><strong>Credential provider</strong><div class="formgrid"><div><label>Credential service id</label><input data-llm-param="credential_service_id" data-llm-index="' + index + '" value="' + escapeHtml(cfg.credential_service_id || '') + '" placeholder="' + escapeHtml(defaultCredentialIds[provider] || '') + '"></div><div><label>Credential scope</label><select data-llm-cred-scope="' + index + '"><option value="global"' + (svc.credential_scope === 'global' ? ' selected' : '') + '>Global</option><option value="user"' + (svc.credential_scope === 'user' ? ' selected' : '') + '>Admin user</option></select></div>' + loginCliField(index, provider) + '</div><div class="actions" style="justify-content:flex-start"><button type="button" class="secondary" data-cred-add="' + index + '">+ Add credential service</button><button type="button" class="secondary" data-cred-login="' + index + '">Login via server</button><button type="button" class="secondary" data-cred-paste="' + index + '">Paste credentials JSON</button></div></div>' : '';
-    return '<div class="panel" data-llm-card="' + index + '"><div class="actions" style="margin-top:0"><button type="button" class="secondary" data-llm-remove="' + index + '">Remove</button></div><div class="formgrid"><div><label>Service id</label><input data-llm-id="' + index + '" value="' + escapeHtml(svc.service_id) + '" required></div><div><label>Scope</label><select data-llm-scope="' + index + '"><option value="global"' + (svc.scope === 'global' ? ' selected' : '') + '>Global</option><option value="user"' + (svc.scope === 'user' ? ' selected' : '') + '>Admin user</option></select></div><div><label>Provider</label><select data-llm-provider="' + index + '">' + providerOptions + '</select></div><div><label>Default model</label><input data-llm-param="default_model" data-llm-index="' + index + '" value="' + escapeHtml(cfg.default_model || '') + '" required></div><div><label>API key</label><input data-llm-param="api_key" data-llm-index="' + index + '" type="password" value="' + escapeHtml(cfg.api_key || '') + '"></div></div><div class="formgrid">' + params + '</div>' + cred + '</div>';
+    return '<div class="panel" data-llm-card="' + index + '"><div class="actions" style="margin-top:0"><button type="button" class="secondary" data-llm-remove="' + index + '">Remove</button></div><div class="formgrid"><div><label>Service id</label><input data-llm-id="' + index + '" value="' + escapeHtml(svc.service_id) + '" required></div><div><label>Scope</label><select data-llm-scope="' + index + '"><option value="global"' + (svc.scope === 'global' ? ' selected' : '') + '>Global</option><option value="user"' + (svc.scope === 'user' ? ' selected' : '') + '>Admin user</option></select></div><div><label>Provider</label><select data-llm-provider="' + index + '">' + providerOptions + '</select></div>' + fieldHtml(index, 'default_model', 'Default model', 'text', cfg.default_model || '', true) + fieldHtml(index, 'api_key', 'API key', 'password', cfg.api_key || '') + '</div><div class="formgrid">' + params + '</div>' + cred + '</div>';
   }).join('');
   renderSummarizer();
   renderFirstConversation();
@@ -441,11 +554,57 @@ function buildSummarizerPayload() {
   Object.keys(summarizerConfig).forEach(k => { if (summarizerConfig[k] !== '') cfg[k] = summarizerConfig[k]; });
   return {service_id: field('summarizer_service_id')?.value || 'summarizer_service', scope: field('summarizer_service_scope')?.value || 'global', config: cfg};
 }
+function renderRelayServer() {
+  const enabled = document.getElementById('relay_server_enabled');
+  const fields = document.getElementById('relay_server_fields');
+  if (!enabled || !fields) return;
+  enabled.checked = !!relayServer.enabled;
+  document.getElementById('relay_server_id').value = relayServer.service_id || 'workspace_relay';
+  document.getElementById('relay_server_scope').value = relayServer.scope || 'global';
+  document.getElementById('relay_server_auto_background').value = relayServer.auto_background_after_seconds || 0;
+  fields.style.opacity = relayServer.enabled ? '1' : '.5';
+}
+function collectRelayServerValues() {
+  const enabled = document.getElementById('relay_server_enabled');
+  if (!enabled) return;
+  relayServer.enabled = enabled.checked;
+  const previousRelayId = relayServer.service_id || 'workspace_relay';
+  relayServer.service_id = document.getElementById('relay_server_id').value.trim() || 'workspace_relay';
+  relayServer.scope = document.getElementById('relay_server_scope').value || 'global';
+  relayServer.auto_background_after_seconds = Number(document.getElementById('relay_server_auto_background').value || 0);
+  if (!relayServer.enabled && firstConversation.relay_id === previousRelayId) firstConversation.relay_id = '';
+  if (relayServer.enabled && firstConversation.relay_id === previousRelayId) firstConversation.relay_id = relayServer.service_id;
+}
+function buildRelayServerPayload() {
+  collectRelayServerValues();
+  return {
+    enabled: !!relayServer.enabled,
+    service_id: relayServer.service_id || 'workspace_relay',
+    scope: relayServer.scope || 'global',
+    auto_background_after_seconds: relayServer.auto_background_after_seconds || 0
+  };
+}
+function validateRelayServer() {
+  const spec = buildRelayServerPayload();
+  if (!spec.enabled) return true;
+  if (!spec.service_id) { err.textContent = 'Relay service id is required when relay server setup is enabled.'; return false; }
+  if (spec.auto_background_after_seconds < 0) { err.textContent = 'Relay auto-background delay must be greater than or equal to 0.'; return false; }
+  return true;
+}
 function renderFirstConversation() {
   const llmIds = new Set(llmServices.map(s => s.service_id));
   firstConversation.agents.forEach(agent => { if (!llmIds.has(agent.llm_service)) agent.llm_service = (llmServices[0] || {}).service_id || ''; });
   const title = document.getElementById('first_conversation_title');
   if (title) title.value = firstConversation.title || 'Welcome to PawFlow';
+  const relayBox = document.getElementById('first_conversation_relay');
+  if (relayBox) {
+    collectRelayServerValues();
+    const relayOptions = ['<option value="">No relay</option>'];
+    if (relayServer.enabled && relayServer.service_id) relayOptions.push('<option value="' + escapeHtml(relayServer.service_id) + '">' + escapeHtml(relayServer.service_id + ' [' + relayServer.scope + ']') + '</option>');
+    relayBox.innerHTML = relayOptions.join('');
+    if (relayServer.enabled && !firstConversation.relay_id) firstConversation.relay_id = relayServer.service_id;
+    relayBox.value = firstConversation.relay_id || '';
+  }
   const box = document.getElementById('first_conversation_agents');
   if (!box) return;
   const llmOptions = llmServices.map(s => '<option value="' + escapeHtml(s.service_id) + '">' + escapeHtml(s.service_id) + '</option>').join('');
@@ -458,6 +617,8 @@ function renderFirstConversation() {
 function collectFirstConversationValues() {
   const title = document.getElementById('first_conversation_title');
   if (title) firstConversation.title = title.value.trim();
+  const relay = document.getElementById('first_conversation_relay');
+  if (relay) firstConversation.relay_id = relay.value;
   document.querySelectorAll('[data-first-agent-field]').forEach(el => {
     const index = Number(el.dataset.firstAgentIndex);
     firstConversation.agents[index][el.dataset.firstAgentField] = el.value;
@@ -467,6 +628,7 @@ function buildFirstConversationPayload() {
   collectFirstConversationValues();
   return {
     title: firstConversation.title || 'Welcome to PawFlow',
+    relay_id: firstConversation.relay_id || '',
     agents: firstConversation.agents.map(agent => {
       let params = {};
       if (String(agent.params_text || '').trim()) params = JSON.parse(agent.params_text);
@@ -486,6 +648,7 @@ function validateFirstConversation() {
   try {
     const spec = buildFirstConversationPayload();
     if (!spec.title) { err.textContent = 'Conversation title is required.'; return false; }
+    if (spec.relay_id && (!relayServer.enabled || spec.relay_id !== relayServer.service_id)) { err.textContent = 'Selected conversation relay must be the managed relay configured in the previous step.'; return false; }
     if (!spec.agents.length) { err.textContent = 'Add at least one conversation agent.'; return false; }
     const namesSeen = new Set();
     const llmIds = new Set(llmServices.map(s => s.service_id));
@@ -526,12 +689,15 @@ function validate() {
     if (field('new_gateway_key').value === 'RoyBetty') { err.textContent = 'New gateway key must replace the bootstrap key.'; return false; }
   }
   if (step === 3 && (!validateLlmServices() || !field('summarizer_service_id').value || !field('summarizer_llm_service').value)) { err.textContent = err.textContent || 'Configure the summarizer service and linked LLM.'; return false; }
-  if (step === 4 && !validateFirstConversation()) return false;
+  if (step === 4 && !validateRelayServer()) return false;
+  if (step === 5 && !validateFirstConversation()) return false;
   return true;
 }
 function renderReview() {
   const v = values();
-  document.getElementById('review').innerHTML = ['admin_username','auth_providers','gateway_skin','ssl_certfile','ssl_keyfile'].map(k => '<div>' + escapeHtml(k) + '</div><div>' + escapeHtml(v[k] || '') + '</div>').join('') + '<div>llm_services</div><div>' + escapeHtml(llmServices.map(s => s.service_id + ' [' + s.scope + ']').join(', ')) + '</div><div>summarizer</div><div>' + escapeHtml((field('summarizer_service_id')?.value || '') + ' -> ' + (field('summarizer_llm_service')?.value || '')) + '</div><div>conversation</div><div>' + escapeHtml(firstConversation.title + ' / ' + firstConversation.agents.map(a => a.instance_name + ' -> ' + a.llm_service).join(', ')) + '</div>';
+  const relayText = relayServer.enabled ? relayServer.service_id + ' [' + relayServer.scope + ']' : 'skipped';
+  const conversationRelay = firstConversation.relay_id || 'none';
+  document.getElementById('review').innerHTML = ['admin_username','auth_providers','gateway_skin','ssl_certfile','ssl_keyfile'].map(k => '<div>' + escapeHtml(k) + '</div><div>' + escapeHtml(v[k] || '') + '</div>').join('') + '<div>llm_services</div><div>' + escapeHtml(llmServices.map(s => s.service_id + ' [' + s.scope + ']').join(', ')) + '</div><div>summarizer</div><div>' + escapeHtml((field('summarizer_service_id')?.value || '') + ' -> ' + (field('summarizer_llm_service')?.value || '')) + '</div><div>relay_server</div><div>' + escapeHtml(relayText) + '</div><div>conversation_relay</div><div>' + escapeHtml(conversationRelay) + '</div><div>conversation</div><div>' + escapeHtml(firstConversation.title + ' / ' + firstConversation.agents.map(a => a.instance_name + ' -> ' + a.llm_service).join(', ')) + '</div>';
 }
 function loadSkins(skins) {
   const select = document.getElementById('gateway_skin');
@@ -663,11 +829,15 @@ document.getElementById('llm_services_editor').addEventListener('click', e => {
   if (paste) { activeCredentialIndex = Number(paste.dataset.credPaste); document.getElementById('credential_label').style.display = 'block'; document.getElementById('credential_json').style.display = 'block'; document.getElementById('credential_actions').style.display = 'flex'; return; }
 });
 document.getElementById('summarizer_params').addEventListener('input', collectLlmEditorValues);
+document.getElementById('relay_server_enabled').addEventListener('change', () => { collectRelayServerValues(); renderRelayServer(); renderFirstConversation(); });
+document.getElementById('relay_server_fields').addEventListener('input', () => { collectRelayServerValues(); renderFirstConversation(); });
+document.getElementById('relay_server_fields').addEventListener('change', () => { collectRelayServerValues(); renderFirstConversation(); });
 document.getElementById('add_first_agent').addEventListener('click', () => { collectFirstConversationValues(); firstConversation.agents.push({instance_name:'agent_' + (firstConversation.agents.length + 1), definition:'assistant', llm_service:(llmServices[0] || {}).service_id || '', model:'', tools:'', max_depth:1000, params_text:'{}'}); renderFirstConversation(); });
 document.getElementById('first_conversation_agents').addEventListener('input', collectFirstConversationValues);
 document.getElementById('first_conversation_agents').addEventListener('change', collectFirstConversationValues);
 document.getElementById('first_conversation_agents').addEventListener('click', e => { const remove = e.target.closest('[data-first-agent-remove]'); if (remove) { collectFirstConversationValues(); if (firstConversation.agents.length > 1) firstConversation.agents.splice(Number(remove.dataset.firstAgentRemove), 1); renderFirstConversation(); } });
 document.getElementById('first_conversation_title').addEventListener('input', collectFirstConversationValues);
+document.getElementById('first_conversation_relay').addEventListener('change', collectFirstConversationValues);
 field('admin_password').addEventListener('input', clearAdminPasswordValidity);
 field('admin_password_confirm').addEventListener('input', clearAdminPasswordValidity);
 document.getElementById('back').addEventListener('click', () => { if (step > 0) { step--; show(); } });
@@ -689,9 +859,10 @@ form.addEventListener('submit', async e => {
   if (data.install_complete) window.location.href='/chat';
 });
 renderLlmServices();
+renderRelayServer();
 renderFirstConversation();
 show();
-refresh().then(() => { renderLlmServices(); renderFirstConversation(); show(); }).catch(e => { document.getElementById('state').textContent = String(e); });
+refresh().then(() => { renderLlmServices(); renderRelayServer(); renderFirstConversation(); show(); }).catch(e => { document.getElementById('state').textContent = String(e); });
 </script>
 </body>
 </html>

@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import os
+import secrets
 import shutil
 import subprocess  # nosec B404
 import threading
@@ -50,6 +51,7 @@ INSTALL_STEPS = [
     "admin",
     "llm_services",
     "summarizer_service",
+    "relay_server",
     "variables",
     "secrets",
     "cli_credentials",
@@ -860,6 +862,44 @@ def _summarizer_spec(payload: Dict[str, Any], default_llm_service_id: str) -> Di
     }
 
 
+def _relay_server_spec(payload: Dict[str, Any]) -> Dict[str, Any] | None:
+    raw = _json_field(payload, "relay_server", {})
+    if not raw:
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError("relay_server must be an object")
+    enabled = raw.get("enabled")
+    if isinstance(enabled, str):
+        enabled = enabled.strip().lower() in {"1", "true", "yes", "on"}
+    if not enabled:
+        return None
+    service_id = str(raw.get("service_id") or "_tool_relay").strip()
+    if not service_id:
+        raise ValueError("relay_server service_id is required")
+    scope = _normalize_install_scope(str(raw.get("scope") or "global"))
+    config = dict(raw.get("config") or {})
+    try:
+        auto_background = float(
+            config.get("auto_background_after_seconds")
+            if config.get("auto_background_after_seconds") is not None
+            else raw.get("auto_background_after_seconds") or 0
+        )
+    except (TypeError, ValueError) as exc:
+        raise ValueError("relay_server auto_background_after_seconds must be a number") from exc
+    if auto_background < 0:
+        raise ValueError("relay_server auto_background_after_seconds must be >= 0")
+    return {
+        "service_id": service_id,
+        "scope": scope,
+        "config": {
+            "_service_id": service_id,
+            "auto_background_after_seconds": auto_background,
+            "mode": "readwrite",
+            "server_kind": "workspace",
+        },
+    }
+
+
 def _list_field(value: Any) -> list[str]:
     if isinstance(value, list):
         return [str(item).strip() for item in value if str(item).strip()]
@@ -879,6 +919,7 @@ def _first_conversation_spec(payload: Dict[str, Any], default_llm_service_id: st
         raise ValueError("first_conversation must be an object")
     raw = raw or {}
     title = str(raw.get("title") or "Welcome to PawFlow").strip() or "Welcome to PawFlow"
+    relay_id = str(raw.get("relay_id") or raw.get("default_relay") or "").strip()
     agent_items = raw.get("agents") or []
     if not agent_items:
         agent_items = [{
@@ -925,7 +966,7 @@ def _first_conversation_spec(payload: Dict[str, Any], default_llm_service_id: st
             "max_depth": max_depth,
             "params": params,
         })
-    return {"title": title, "agents": agents}
+    return {"title": title, "relay_id": relay_id, "agents": agents}
 
 
 def _validate_llm_services_auth_ready(payload: Dict[str, Any]) -> None:
@@ -1159,6 +1200,49 @@ def _install_llm_and_summarizer(payload: Dict[str, Any]) -> tuple[str, str, str]
     return installed_llm_ids[0], summarizer["service_id"], (installed_credential_ids[0] if installed_credential_ids else "")
 
 
+def _install_relay_server(payload: Dict[str, Any], admin_username: str) -> str:
+    spec = _relay_server_spec(payload)
+    if not spec:
+        return ""
+    from tasks import _register_all_services
+    from core.service_registry import ServiceRegistry
+    from core.server_relay_manager import ServerRelayManager
+    from tasks.ai.actions.service_flow import _wait_for_service_connected
+
+    _register_all_services()
+    reg = ServiceRegistry.get_instance()
+    manager = ServerRelayManager.get_instance()
+    scope = spec["scope"]
+    scope_id = _install_scope_id(scope, admin_username)
+    service_id = spec["service_id"]
+    config = dict(spec["config"])
+    token = secrets.token_urlsafe(32)
+    config["token"] = token
+    config["server_managed"] = True
+    config.update(manager.service_relay_config(
+        service_id,
+        scope=scope,
+        scope_id=scope_id,
+        user_id=admin_username,
+        kind=str(config.get("server_kind") or "workspace"),
+    ))
+    reg.install(
+        scope=spec["scope"],
+        scope_id=scope_id,
+        service_id=service_id,
+        service_type="relay",
+        config=config,
+        description="Tool relay server installed from first-run bootstrap",
+        enabled=True,
+    )
+    if not _wait_for_service_connected(reg, scope, scope_id, service_id):
+        reg.uninstall(scope, scope_id, service_id)
+        raise RuntimeError(
+            f"Managed server relay '{service_id}' container started but did not connect. "
+            f"Check Docker logs for {config.get('server_container_name', service_id)}.")
+    return service_id
+
+
 def _deploy_main_flow(private_gateway_service_id: str,
                       tls_config: Dict[str, str],
                       auth_config: Dict[str, Any],
@@ -1309,6 +1393,9 @@ def _rollback_service_refs(payload: Dict[str, Any]) -> list[Dict[str, str]]:
     if specs:
         summarizer = _summarizer_spec(payload, specs[0]["service_id"])
         refs.append({"scope": summarizer["scope"], "service_id": summarizer["service_id"]})
+    relay = _relay_server_spec(payload)
+    if relay:
+        refs.append({"scope": relay["scope"], "service_id": relay["service_id"]})
     return refs
 
 
@@ -1356,6 +1443,10 @@ def _create_first_conversation(
         "active_resources",
         {"agents": agent_names, "agent": agent_names[0]},
     )
+    if spec.get("relay_id"):
+        from core.relay_bindings import link_relay, set_default_relay
+        link_relay(conv_id, spec["relay_id"], user_id=admin_user)
+        set_default_relay(conv_id, spec["relay_id"])
     for agent in spec["agents"]:
         add_agent_to_conv(
             conv_id,
@@ -1382,6 +1473,7 @@ def _run_install_smoke_checks(
     main_instance_id: str,
     first_conversation_id: str,
     auth_config: Dict[str, Any],
+    relay_service_id: str = "",
 ) -> Dict[str, Any]:
     """Run final internal smoke checks before marking first-run install complete."""
     from core.conversation_store import ConversationStore
@@ -1419,6 +1511,16 @@ def _run_install_smoke_checks(
     )
 
     record("admin_user", SecurityManager.get_instance().get_user(admin_user) is not None)
+
+    if relay_service_id:
+        relay_def = reg.resolve_definition(relay_service_id, user_id=admin_user)
+        record(
+            "relay_server",
+            relay_def is not None and relay_def.enabled and relay_def.service_type == "relay",
+            service_id=relay_service_id,
+        )
+    else:
+        record("relay_server", True, skipped=True)
 
     llm_def = reg.resolve_definition(llm_service_id, user_id=admin_user)
     record(
@@ -1516,6 +1618,7 @@ def finalize_install(payload: Dict[str, Any]) -> Dict[str, Any]:
         raise ValueError("at least one LLM service is required")
     primary_provider = str((llm_specs[0].get("config") or {}).get("provider") or "")
     summarizer_plan = _summarizer_spec(payload, llm_specs[0]["service_id"])
+    relay_plan = _relay_server_spec(payload)
     rollback_refs = _rollback_service_refs(payload)
     if not MAIN_TEMPLATE.exists():
         raise ValueError(f"main PawFlow flow template is missing: {MAIN_TEMPLATE}")
@@ -1530,6 +1633,7 @@ def finalize_install(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     admin_user = str(admin_username)
     llm_service_id = str(payload.get("llm_service_id") or "").strip()
+    relay_service_id = ""
     first_conversation_id = ""
     runtime_artifacts_created = False
     try:
@@ -1546,6 +1650,7 @@ def finalize_install(payload: Dict[str, Any]) -> Dict[str, Any]:
         llm_service_id, summarizer_service_id, credential_service_id = _install_llm_and_summarizer(payload)
         main_instance_id = _deploy_main_flow(final_gateway_service_id, tls_config, auth_config, listener_port)
         _start_main_flow_executor(main_instance_id)
+        relay_service_id = _install_relay_server(payload, admin_user)
         first_conversation_id = _create_first_conversation(
             admin_user,
             payload,
@@ -1562,6 +1667,7 @@ def finalize_install(payload: Dict[str, Any]) -> Dict[str, Any]:
             main_instance_id=main_instance_id,
             first_conversation_id=first_conversation_id,
             auth_config=auth_config,
+            relay_service_id=relay_service_id,
         )
     except Exception:
         if runtime_artifacts_created or first_conversation_id:
@@ -1597,6 +1703,7 @@ def finalize_install(payload: Dict[str, Any]) -> Dict[str, Any]:
     checks["llm_service"] = True
     checks["llm_credential_pool"] = True
     checks["summarizer_service"] = True
+    checks["relay_server"] = True
     checks["summarizer_llm_resolution"] = True
     checks["main_flow_deployed"] = True
     checks["main_flow_executor"] = True
@@ -1641,6 +1748,11 @@ def finalize_install(payload: Dict[str, Any]) -> Dict[str, Any]:
         "service_id": summarizer_service_id,
         "scope": summarizer_plan["scope"],
         "llm_service": summarizer_plan["config"].get("llm_service", ""),
+    }
+    draft["relay_server"] = {
+        "enabled": bool(relay_plan),
+        "service_id": relay_plan["service_id"] if relay_plan else "",
+        "scope": relay_plan["scope"] if relay_plan else "",
     }
     draft["flows"] = {"main_instance_id": main_instance_id}
     draft["conversation"] = {

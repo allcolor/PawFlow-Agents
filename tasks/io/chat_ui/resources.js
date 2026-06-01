@@ -3796,6 +3796,14 @@ function _renderServiceTypeOptions(serviceTypes) {
   return html;
 }
 
+function _installSchemaForServiceType(serviceType, schema) {
+  schema = Object.assign({}, schema || {});
+  if (serviceType === 'relay') {
+    delete schema.token;
+  }
+  return schema;
+}
+
 function _renderSchemaFields(schema, values, readonly) {
   let html = '';
   const dis = readonly ? ' disabled' : '';
@@ -4458,10 +4466,11 @@ async function showServiceInstallForm() {
     const paramsDiv = document.getElementById('svc-install-params');
     paramsDiv.innerHTML = '<div style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('loadingParameters')) + '</div>';
     const schemaData = await _fetchServiceSchema(typeSelect.value);
-    panel.dataset.schema = JSON.stringify(schemaData.parameters || {});
+    const installParams = _installSchemaForServiceType(typeSelect.value, schemaData.parameters || {});
+    panel.dataset.schema = JSON.stringify(installParams);
     panel.dataset.rules = JSON.stringify(schemaData.rules || []);
     panel.dataset.actions = JSON.stringify(schemaData.actions || []);
-    const params = schemaData.parameters || {};
+    const params = installParams;
     if (Object.keys(params).length === 0) {
       paramsDiv.innerHTML = '<div style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('noConfigurableParametersForServiceType')) + '</div>';
     } else {

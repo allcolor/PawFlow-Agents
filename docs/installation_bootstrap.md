@@ -124,7 +124,8 @@ On a fresh server data volume, PawFlow starts in bootstrap mode:
    the installer `httpListener`.
 4. Generate and use a bootstrap self-signed TLS certificate.
 5. Persist installer progress in a server-side install state file.
-6. Never create a default user relay during bootstrap.
+6. Never create a default user relay implicitly during bootstrap; the wizard
+   exposes an explicit opt-in managed server relay step instead.
 7. Use the standalone relay runtime image for server workspaces; local source
    mounts are opt-in development behavior only.
 
@@ -310,8 +311,14 @@ Secrets must not be stored in install state. Store only secret IDs.
 
 ## Relay Onboarding After Install
 
-The initial server install does not create relays. After the user reaches the
-webchat, the Relays panel should offer:
+The initial server install does not create relays implicitly. During first-run
+setup, the wizard includes an optional **Relay Server** step. When enabled, it
+creates a managed server-side `relay` service in either global or admin-user
+scope, generates the relay token on the server, starts the managed workspace
+relay, and lets the first conversation select it as the default relay. The
+wizard never asks the user to type a relay token for this managed path.
+
+After the user reaches the webchat, the Relays panel should still offer:
 
 - Install relay client
   - generate a short-lived provisioning token
@@ -324,7 +331,8 @@ webchat, the Relays panel should offer:
 - Install relay server
   - configure and launch a relay on the server host when explicitly requested
 
-This keeps PawFlow server bootstrap separate from user workspace onboarding.
+This keeps implicit bootstrap separate from user workspace onboarding while
+allowing an explicit complete-server install path.
 
 ## Recovery
 

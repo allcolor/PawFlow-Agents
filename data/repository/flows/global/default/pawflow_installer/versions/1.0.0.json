@@ -83,6 +83,12 @@
             "pattern": "/install/api/llm-credential/server-login/cleanup",
             "relationship": "POST:/install/api/llm-credential/server-login/cleanup",
             "public": true
+          },
+          {
+            "method": "POST",
+            "pattern": "/install/api/service-parameter-helper",
+            "relationship": "POST:/install/api/service-parameter-helper",
+            "public": true
           }
         ]
       }
@@ -125,6 +131,11 @@
             "attribute": "http.path",
             "operator": "equals",
             "value": "/install/api/llm-credential/server-login/cleanup"
+          },
+          "service_parameter_helper": {
+            "attribute": "http.path",
+            "operator": "equals",
+            "value": "/install/api/service-parameter-helper"
           }
         },
         "default_relationship": "ui"
@@ -263,6 +274,16 @@
       "from": "route_install",
       "to": "install_api",
       "type": "llm_credential_server_login_cleanup"
+    },
+    {
+      "from": "http_in",
+      "to": "route_install",
+      "type": "POST:/install/api/service-parameter-helper"
+    },
+    {
+      "from": "route_install",
+      "to": "install_api",
+      "type": "service_parameter_helper"
     }
   ],
   "entries": [

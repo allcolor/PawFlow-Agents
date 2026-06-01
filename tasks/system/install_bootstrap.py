@@ -56,6 +56,9 @@ class InstallBootstrapTask(BaseTask):
                 status, payload = self._server_login(flowfile, self._request_json(flowfile), "status")
             elif method == "POST" and path == "/install/api/llm-credential/server-login/cleanup":
                 status, payload = self._server_login(flowfile, self._request_json(flowfile), "cleanup")
+            elif method == "POST" and path == "/install/api/service-parameter-helper":
+                status = 200
+                payload = self._service_parameter_helper(self._request_json(flowfile))
             elif method == "POST" and path == "/install/api/finalize":
                 status = 200
                 payload = finalize_install(self._request_json(flowfile))
@@ -145,6 +148,22 @@ class InstallBootstrapTask(BaseTask):
         except Exception as exc:
             raise ValueError("server login action returned invalid JSON") from exc
         return int(out[0].get_attribute("http.response.status") or 200), data
+
+    @staticmethod
+    def _service_parameter_helper(payload: Dict[str, Any]) -> Dict[str, Any]:
+        service_type = str(payload.get("service_type") or "").strip()
+        parameter = str(payload.get("parameter") or "").strip()
+        if not service_type or not parameter:
+            raise ValueError("service_type and parameter are required")
+        from core.service_parameter_helpers import get_service_parameter_helper
+        return get_service_parameter_helper(
+            service_type,
+            parameter,
+            payload.get("config") if isinstance(payload.get("config"), dict) else {},
+            user_id=str(payload.get("admin_username") or "admin").strip() or "admin",
+            conversation_id="",
+            store=None,
+        )
 
 
 TaskFactory.register(InstallBootstrapTask)

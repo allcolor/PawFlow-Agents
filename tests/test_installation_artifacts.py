@@ -610,6 +610,7 @@ def test_pawflow_installer_flow_template_exists():
     assert "/install/api/llm-credential/server-login" in patterns
     assert "/install/api/llm-credential/server-login/status" in patterns
     assert "/install/api/llm-credential/server-login/cleanup" in patterns
+    assert "/install/api/service-parameter-helper" in patterns
     assert "/install/api/finalize" in patterns
 
     redirect = flow["tasks"]["redirect_to_install"]["parameters"]
@@ -641,6 +642,7 @@ def test_pawflow_installer_flow_template_exists():
         "llm_credential_server_login",
         "llm_credential_server_login_status",
         "llm_credential_server_login_cleanup",
+        "service_parameter_helper",
     }.issubset(route_names)
 
     ui_params = flow["tasks"]["install_ui"]["parameters"]
@@ -656,6 +658,7 @@ def test_pawflow_installer_flow_template_exists():
     assert "fetch('/install/api/llm-credential/paste'" in ui_content
     assert "fetch('/install/api/llm-credential/server-login'" in ui_content
     assert "fetch('/install/api/llm-credential/server-login/status'" in ui_content
+    assert "fetch('/install/api/service-parameter-helper'" in ui_content
     assert "fetch('/install/api/finalize'" in ui_content
     assert "private_gateway_skins" in ui_content
     assert "gateway_skin" in ui_content
@@ -706,6 +709,14 @@ def test_pawflow_installer_flow_template_exists():
     assert "Login via server" in ui_content
     assert "Paste credentials JSON" in ui_content
     assert "First Conversation" in ui_content
+    assert "Relay Server" in ui_content
+    assert "id=\"relay_server_enabled\"" in ui_content
+    assert "buildRelayServerPayload" in ui_content
+    assert "validateRelayServer" in ui_content
+    assert "relay_server = JSON.stringify(relayPayload)" in ui_content
+    assert "id=\"first_conversation_relay\"" in ui_content
+    assert "conversation_relay" in ui_content
+    assert "relay_id: firstConversation.relay_id" in ui_content
     assert "id=\"first_conversation_title\"" in ui_content
     assert "id=\"add_first_agent\"" in ui_content
     assert "buildFirstConversationPayload" in ui_content

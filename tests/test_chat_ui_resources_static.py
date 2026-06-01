@@ -38,6 +38,17 @@ def test_service_parameter_fill_helper_is_wired_in_chat_ui():
     assert "button.svc-param-fill, button.svc-param-fill:hover" in html
 
 
+def test_relay_install_hides_token_parameter():
+    src = Path("tasks/io/chat_ui/resources.js").read_text(encoding="utf-8")
+    relay_src = Path("services/filesystem_service.py").read_text(encoding="utf-8")
+
+    assert "function _installSchemaForServiceType" in src
+    assert "if (serviceType === 'relay')" in src
+    assert "delete schema.token" in src
+    assert "Leave empty to create a managed server relay" not in relay_src
+    assert "Managed server relays generate this token server-side" in relay_src
+
+
 def test_agent_attach_dialog_has_only_explicit_close_handlers():
     js = Path("tasks/io/chat_ui/resources.js").read_text(encoding="utf-8")
     start = js.index("async function showAddAgentToConvDialog")

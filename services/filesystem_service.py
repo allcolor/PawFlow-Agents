@@ -346,7 +346,7 @@ class RelayService(BaseService):
         return {
             "token": {"type": "string", "required": False, "sensitive": True,
                       "default": "",
-                      "description": "Authentication token for an external relay. Leave empty to create a managed server relay."},
+                      "description": "Authentication token for a standalone external relay client. Managed server relays generate this token server-side."},
             "mode": {"type": "select", "required": False, "default": "readwrite",
                      "options": ["readwrite", "readonly"],
                      "description": "Access mode for file operations"},

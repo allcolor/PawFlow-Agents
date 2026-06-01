@@ -1116,6 +1116,148 @@ def test_install_multiple_llm_services_and_linked_summarizer(tmp_path, monkeypat
         ServiceRegistry.reset()
 
 
+def test_install_relay_server_generates_token_server_side(monkeypatch):
+    ServiceRegistry.reset()
+    calls = []
+
+    class FakeServerRelayManager:
+        @classmethod
+        def get_instance(cls):
+            return cls()
+
+        def service_relay_config(self, relay_id, *, scope, scope_id, user_id, kind="workspace"):
+            return {
+                "server_container_name": f"pawflow-relay-srv-{relay_id}",
+                "server_workspace_dir": f"data/runtime/relay/{user_id}",
+                "server_scope": scope,
+                "server_scope_id": scope_id,
+                "server_user_id": user_id,
+            }
+
+        def spawn_service_relay(self, relay_id, token, *, scope, scope_id, user_id, kind="workspace", internal_token=""):
+            calls.append({
+                "relay_id": relay_id,
+                "token": token,
+                "scope": scope,
+                "scope_id": scope_id,
+                "user_id": user_id,
+                "kind": kind,
+            })
+            return {"relay_id": relay_id}
+
+    monkeypatch.setattr("core.server_relay_manager.ServerRelayManager", FakeServerRelayManager)
+    monkeypatch.setattr("tasks.ai.actions.service_flow._wait_for_service_connected", lambda *args, **kwargs: True)
+
+    class FakeListener:
+        _port = 19990
+        is_ssl = True
+
+        def register_route(self, *_args, **_kwargs):
+            return None
+
+    monkeypatch.setattr(
+        "services.http_listener_service.HTTPListenerService.all_instances",
+        staticmethod(lambda: {19990: FakeListener()}),
+    )
+
+    try:
+        service_id = ib._install_relay_server({
+            "relay_server": {
+                "enabled": True,
+                "service_id": "workspace_relay",
+                "scope": "user",
+            }
+        }, "alice")
+
+        reg = ServiceRegistry.get_instance()
+        sdef = reg.get_definition("user", "alice", "workspace_relay")
+
+        assert service_id == "workspace_relay"
+        assert sdef is not None
+        assert sdef.service_type == "relay"
+        assert sdef.config["server_managed"] is True
+        assert sdef.config["token"]
+        assert calls == [{
+            "relay_id": "workspace_relay",
+            "token": sdef.config["token"],
+            "scope": "user",
+            "scope_id": "alice",
+            "user_id": "alice",
+            "kind": "workspace",
+        }]
+    finally:
+        ServiceRegistry.reset()
+
+
+def test_relay_server_spec_ignores_client_token():
+    spec = ib._relay_server_spec({
+        "relay_server": json.dumps({
+            "enabled": True,
+            "service_id": "workspace_relay",
+            "scope": "global",
+            "token": "client-token-should-not-be-used",
+        })
+    })
+
+    assert spec["service_id"] == "workspace_relay"
+    assert spec["scope"] == "global"
+    assert "token" not in spec["config"]
+    assert spec["config"]["mode"] == "readwrite"
+
+
+def test_create_first_conversation_links_selected_relay(tmp_path, monkeypatch):
+    ServiceRegistry.reset()
+    runtime_dir = tmp_path / "runtime"
+    repository_dir = tmp_path / "repository"
+    monkeypatch.setattr(_paths, "CONVERSATIONS_DIR", runtime_dir / "conversations")
+    monkeypatch.setattr(_paths, "REPOSITORY_DIR", repository_dir)
+
+    try:
+        from core.conversation_store import ConversationStore
+        from core.resource_store import ResourceStore
+        from core.relay_bindings import get_default, get_linked
+        from tasks import _register_all_services
+
+        ConversationStore.reset()
+        ResourceStore.reset()
+        _register_all_services()
+        ServiceRegistry.get_instance().install(
+            SCOPE_GLOBAL,
+            "",
+            "workspace_relay",
+            "relay",
+            {"token": "server-generated-token", "mode": "readwrite"},
+            enabled=True,
+        )
+
+        conv_id = ib._create_first_conversation(
+            "alice",
+            {
+                "first_conversation": json.dumps({
+                    "title": "Relay bootstrap",
+                    "relay_id": "workspace_relay",
+                    "agents": [{
+                        "instance_name": "assistant",
+                        "definition": "assistant",
+                        "llm_service": "llm_main",
+                        "params": {"name": "Assistant"},
+                    }],
+                })
+            },
+            "llm_main",
+            ["llm_main"],
+        )
+
+        assert get_default(conv_id) == "workspace_relay"
+        assert get_linked(conv_id) == ["workspace_relay"]
+    finally:
+        from core.conversation_store import ConversationStore
+        from core.resource_store import ResourceStore
+        ConversationStore.reset()
+        ResourceStore.reset()
+        ServiceRegistry.reset()
+
+
 def test_final_tls_config_accepts_provided_cert_files(tmp_path):
     cert = tmp_path / "server.crt"
     key = tmp_path / "server.key"

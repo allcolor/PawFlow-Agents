@@ -2580,14 +2580,22 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
     if action == "deploy_flow":
         template_id = body.get("template_id", "")
         conv_id = body.get("conversation_id", "")
-        deploy_scope = body.get("scope", "user")
+        requested_scope = body.get("scope", "")
+        agent_name = (
+            body.get("_agent_name", "")
+            or body.get("call_agent_name", "")
+            or flowfile.get_attribute("call_agent_name")
+            or getattr(self, "_agent_name", "")
+            or ""
+        )
+        deploy_scope = requested_scope or ("conversation" if conv_id and agent_name else "user")
+        params = body.get("parameters", {})
+        service_overrides = body.get("service_overrides", {})
+        service_configs = body.get("service_configs", {})
         if deploy_scope == "conversation" and not conv_id:
             flowfile.set_content(json.dumps({"error": "Missing conversation_id for conversation scope"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
-        params = body.get("parameters", {})
-        service_overrides = body.get("service_overrides", {})
-        service_configs = body.get("service_configs", {})
         if deploy_scope == "global" and "admin" not in (flowfile.get_attribute("http.auth.roles") or ""):
             flowfile.set_content(json.dumps(
                 {"error": "Requires admin role for global scope"}).encode())
@@ -2628,13 +2636,6 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             params["_flow_scope"] = flow_scope
 
             dr = DeploymentRegistry.get_instance()
-            agent_name = (
-                body.get("_agent_name", "")
-                or body.get("call_agent_name", "")
-                or flowfile.get_attribute("call_agent_name")
-                or getattr(self, "_agent_name", "")
-                or ""
-            )
             iid = dr.deploy(
                 template_path=str(tpath),
                 owner=uid,

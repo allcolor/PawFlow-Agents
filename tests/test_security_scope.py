@@ -319,6 +319,35 @@ class TestGlobalScopeBlocked:
         dr.set_owner.assert_called_once_with("flow1", None)
         assert inst.conversation_id is None
 
+    def test_agent_deploy_flow_without_scope_defaults_to_conversation(self):
+        """Agent flow deployment keeps conversation identity when scope is omitted."""
+        from pathlib import Path
+        from tasks.ai.actions.service_flow import _handle_service_flow
+
+        task = self._get_agent_loop()
+        task._agent_name = "agentA"
+        ff = self._make_flowfile({
+            "action": "deploy_flow",
+            "template_id": "pkg.flow:1.0.0",
+            "conversation_id": "conv1",
+        })
+        dr = MagicMock()
+        dr.deploy.return_value = "flow1"
+        dr.get.return_value = None
+        with patch("tasks.ai.actions.service_flow._resolve_flow_template_path", return_value=Path("/tmp/flow.json")), \
+                patch("pathlib.Path.read_text", return_value=json.dumps({
+                    "id": "flow", "name": "Flow", "scope": "conversation",
+                })), \
+                patch("core.deployment_registry.DeploymentRegistry.get_instance", return_value=dr):
+            result = _handle_service_flow(
+                task, "deploy_flow", json.loads(ff.get_content()), None,
+                "test_user", ff)
+        assert result is not None
+        body = json.loads(result[0].get_content())
+        assert body["scope"] == "conversation"
+        assert dr.deploy.call_args.kwargs["conversation_id"] == "conv1"
+        assert dr.deploy.call_args.kwargs["agent_name"] == "agentA"
+
     def test_demote_global_flow_requires_admin(self):
         """Moving a global flow down to user scope also modifies global state."""
         from types import SimpleNamespace

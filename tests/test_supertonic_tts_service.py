@@ -1,6 +1,7 @@
 """Supertonic local TTS service tests."""
 
 import urllib.error
+import urllib.parse
 
 import pytest
 
@@ -162,15 +163,38 @@ def test_supertonic_connection_starts_managed_daemon(monkeypatch):
         ready["n"] += 1
         return ready["n"] >= 2
 
+    def fake_ensure_runtime():
+        svc._venv_python().parent.mkdir(parents=True, exist_ok=True)
+        svc._venv_python().write_text("", encoding="utf-8")
+
     monkeypatch.setattr(svc, "_server_ready", fake_ready)
+    monkeypatch.setattr(svc, "_ensure_runtime", fake_ensure_runtime)
     monkeypatch.setattr("services.supertonic_tts_service.subprocess.Popen", _Proc)
     monkeypatch.setattr("services.supertonic_tts_service.time.sleep", lambda _s: None)
 
     conn = svc._create_connection()
 
     assert conn["managed"] is True
-    assert conn["process"].args[:3] == [__import__("sys").executable, "-c", "from supertonic.cli import main; raise SystemExit(main())"]
+    assert conn["process"].args[:3] == [str(svc._venv_python()), "-c", "from supertonic.cli import main; raise SystemExit(main())"]
     assert conn["process"].args[3:6] == ["serve", "--host", "127.0.0.1"]
+
+
+def test_supertonic_autostart_prepares_managed_runtime(monkeypatch, tmp_path):
+    svc = SupertonicTTSService({"install_dir": str(tmp_path / "supertonic3")})
+    calls = []
+
+    def fake_ensure_runtime():
+        calls.append("ensure_runtime")
+        svc._venv_python().parent.mkdir(parents=True, exist_ok=True)
+        svc._venv_python().write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(svc, "_ensure_runtime", fake_ensure_runtime)
+    monkeypatch.setattr("services.supertonic_tts_service.subprocess.Popen", lambda *a, **k: a[0])
+
+    cmd = svc._start_server(urllib.parse.urlparse("http://127.0.0.1:7788"))
+
+    assert calls == ["ensure_runtime"]
+    assert cmd[0] == str(svc._venv_python())
 
 
 def test_supertonic_prepare_install_creates_managed_runtime(monkeypatch, tmp_path):

@@ -84,8 +84,8 @@ class SupertonicTTSService(BaseAudioGenerationService, BaseTTSService):
                 "description": "Managed Supertonic runtime directory.",
             },
             "package_spec": {
-                "type": "string", "required": False, "default": "supertonic",
-                "description": "pip package spec installed into the managed runtime when repo_url is empty.",
+                "type": "string", "required": False, "default": "supertonic[serve]>=0.1.0",
+                "description": "pip package spec installed into managed runtime instead of repo_url.",
             },
             "repo_url": {
                 "type": "string", "required": False, "default": "",
@@ -246,9 +246,12 @@ class SupertonicTTSService(BaseAudioGenerationService, BaseTTSService):
         if self.start_command:
             return shlex.split(self.start_command)
         venv_python = self._venv_python()
-        python = str(venv_python) if venv_python.exists() else sys.executable
+        if not venv_python.exists():
+            raise ServiceError(
+                "Supertonic runtime is not prepared. Install the service again "
+                "or configure start_command for an existing Supertonic daemon.")
         return [
-            python,
+            str(venv_python),
             "-c",
             "from supertonic.cli import main; raise SystemExit(main())",
             "serve",
@@ -334,6 +337,8 @@ class SupertonicTTSService(BaseAudioGenerationService, BaseTTSService):
     def _start_server(self, parsed) -> subprocess.Popen:
         host = parsed.hostname or "127.0.0.1"
         port = parsed.port or (443 if parsed.scheme == "https" else 7788)
+        if not self.start_command and self.auto_start and self.auto_install:
+            self._ensure_runtime()
         cmd = self._resolve_start_command() + ["--host", host, "--port", str(port)]
         env = os.environ.copy()
         logger.info("[SUPERTONIC] starting managed daemon: %s", " ".join(cmd))

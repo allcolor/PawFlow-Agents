@@ -62,6 +62,8 @@ dependencies = [
     "jinja2>=3.1.0",
     "apscheduler>=3.10.0",
     "diff-match-patch>=20230501",
+    # Local TTS
+    "supertonic[serve]>=0.1.0",
     # Code structure graph
     "networkx>=3.0",
     # Web scraping

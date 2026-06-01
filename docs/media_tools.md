@@ -207,7 +207,9 @@ For Pixazo model-specific schemas and pricing notes, see [Pixazo](pixazo.md). Fo
 `supertonicTTS` manages a local Supertonic 3 HTTP daemon and is intended for
 fast, private, on-device text-to-speech. PawFlow installs Supertonic through its
 Python requirements and starts the package's `supertonic serve` entrypoint
-automatically when the service connects.
+automatically when the service connects. If the managed runtime is missing and
+`auto_start` plus `auto_install` are enabled, first use prepares the local
+virtualenv before starting the daemon.
 
 Configure the service with `base_url` (default `http://127.0.0.1:7788`),
 `auto_start` (default `true`), `startup_timeout`, `voice` (`M1`-`M5`, `F1`-`F5`,

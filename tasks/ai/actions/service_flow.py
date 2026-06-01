@@ -877,7 +877,15 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         try:
             svc_name = body.get("service_name", "") or body.get("service_id", "")
             conv_id = body.get("conversation_id", "") or flowfile.get_attribute("http.conversation_id") or ""
-            scope = _normalize_service_scope(body.get("scope", "") or ("conv" if conv_id else "user"))
+            agent_name = (
+                body.get("_agent_name", "")
+                or body.get("call_agent_name", "")
+                or flowfile.get_attribute("call_agent_name")
+                or flowfile.get_attribute("agent_name")
+                or ""
+            )
+            scope = _normalize_service_scope(
+                body.get("scope", "") or ("conv" if conv_id and agent_name else "user"))
             if scope == "global" and not _is_admin(flowfile):
                 flowfile.set_content(json.dumps({"error": "Requires admin role for global scope"}).encode())
                 flowfile.set_attribute("http.response.status", "403")
@@ -933,6 +941,9 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 or ""
             )
             scope = requested_scope or ("conversation" if conv_id and agent_name else "user")
+            # Agent tool calls are sandboxed to the conversation, but UI/user
+            # calls must keep the explicitly selected scope even when the UI
+            # carries conversation_id for replies and resolution context.
             if conv_id and agent_name:
                 scope = "conversation"
             profile_name = body.get("profile", "")
@@ -1476,6 +1487,65 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             else:
                 reg.disable(scope, scope_id, sid)
             flowfile.set_content(json.dumps({"ok": True, "enabled": enabled}).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+        return [flowfile]
+
+    if action == "move_service_scope":
+        sid = body.get("service_id", "")
+        from_scope = _normalize_service_scope(body.get("from_scope", "user"))
+        to_scope = _normalize_service_scope(body.get("to_scope", "user"))
+        conv_id = body.get("conversation_id", "") or flowfile.get_attribute("http.conversation_id") or ""
+        if not sid:
+            flowfile.set_content(json.dumps({"error": "Missing service_id"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        if from_scope == to_scope:
+            flowfile.set_content(json.dumps({"ok": True, "scope": to_scope}).encode())
+            return [flowfile]
+        if (from_scope == "conv" or to_scope == "conv") and not conv_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id for conversation scope"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        if (from_scope == "global" or to_scope == "global") and not _is_admin(flowfile):
+            flowfile.set_content(json.dumps({"error": "Requires admin role for global scope"}).encode())
+            flowfile.set_attribute("http.response.status", "403")
+            return [flowfile]
+        try:
+            from core.service_registry import ServiceRegistry
+            registry = ServiceRegistry.get_instance()
+            from_scope_id = _service_scope_id(from_scope, user_id, conv_id)
+            to_scope_id = _service_scope_id(to_scope, user_id, conv_id)
+            sdef = registry.get_definition(from_scope, from_scope_id, sid)
+            if not sdef:
+                flowfile.set_content(json.dumps({"error": f"Service '{sid}' not found."}).encode())
+                flowfile.set_attribute("http.response.status", "404")
+                return [flowfile]
+            config = dict(getattr(sdef, "config", {}) or {})
+            description = getattr(sdef, "description", "") or ""
+            enabled = bool(getattr(sdef, "enabled", True))
+            service_type = getattr(sdef, "service_type", "")
+            registry.uninstall(from_scope, from_scope_id, sid)
+            try:
+                registry.install(
+                    to_scope, to_scope_id, service_id=sid,
+                    service_type=service_type, config=config,
+                    description=description, enabled=enabled)
+            except Exception:
+                try:
+                    registry.install(
+                        from_scope, from_scope_id, service_id=sid,
+                        service_type=service_type, config=config,
+                        description=description, enabled=enabled)
+                except Exception:
+                    logger.debug("Failed to roll back service scope move", exc_info=True)
+                raise
+            flowfile.set_content(json.dumps({
+                "ok": True,
+                "service_id": sid,
+                "from_scope": "conversation" if from_scope == "conv" else from_scope,
+                "scope": "conversation" if to_scope == "conv" else to_scope,
+            }).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
         return [flowfile]
@@ -2510,7 +2580,11 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
     if action == "deploy_flow":
         template_id = body.get("template_id", "")
         conv_id = body.get("conversation_id", "")
-        deploy_scope = "conversation" if conv_id else body.get("scope", "user")
+        deploy_scope = body.get("scope", "user")
+        if deploy_scope == "conversation" and not conv_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id for conversation scope"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
         params = body.get("parameters", {})
         service_overrides = body.get("service_overrides", {})
         service_configs = body.get("service_configs", {})
@@ -2586,12 +2660,22 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
     if action == "promote_flow":
         iid = body.get("instance_id", "")
         target_scope = body.get("target_scope", "user")
+        conv_id = body.get("conversation_id", "") or flowfile.get_attribute("http.conversation_id") or ""
         if not iid:
             flowfile.set_content(json.dumps({"error": "Missing instance_id"}).encode())
+            return [flowfile]
+        if target_scope not in {"conversation", "user", "global"}:
+            flowfile.set_content(json.dumps({"error": "Invalid target_scope"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        if target_scope == "conversation" and not conv_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id for conversation scope"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         if target_scope == "global" and "admin" not in (flowfile.get_attribute("http.auth.roles") or ""):
             flowfile.set_content(json.dumps(
                 {"error": "Requires admin role for global scope"}).encode())
+            flowfile.set_attribute("http.response.status", "403")
             return [flowfile]
         try:
             from core.deployment_registry import DeploymentRegistry
@@ -2600,15 +2684,34 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             if not inst:
                 flowfile.set_content(json.dumps({"error": "Instance not found"}).encode())
                 return [flowfile]
+            if inst.owner is None and target_scope != "global" and not _is_admin(flowfile):
+                flowfile.set_content(json.dumps({"error": "Requires admin role for global scope"}).encode())
+                flowfile.set_attribute("http.response.status", "403")
+                return [flowfile]
             if user_id and inst.owner and inst.owner != user_id:
                 flowfile.set_content(json.dumps({"error": "Permission denied"}).encode())
                 return [flowfile]
-            if not inst.conversation_id:
-                flowfile.set_content(json.dumps({"error": "Flow is already user-scoped"}).encode())
-                return [flowfile]
-            inst.conversation_id = None
-            dr._save_instance(inst)
-            flowfile.set_content(json.dumps({"ok": True, "scope": "user"}).encode())
+            if target_scope == "global":
+                dr.set_owner(iid, None)
+                inst = dr.get(iid)
+                if inst:
+                    inst.conversation_id = None
+                    dr._save_instance(inst)
+            elif target_scope == "conversation":
+                if inst.owner is None:
+                    dr.set_owner(iid, user_id)
+                    inst = dr.get(iid)
+                if inst:
+                    inst.conversation_id = conv_id
+                    dr._save_instance(inst)
+            else:
+                if inst.owner is None:
+                    dr.set_owner(iid, user_id)
+                    inst = dr.get(iid)
+                if inst:
+                    inst.conversation_id = None
+                    dr._save_instance(inst)
+            flowfile.set_content(json.dumps({"ok": True, "scope": target_scope}).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
         return [flowfile]

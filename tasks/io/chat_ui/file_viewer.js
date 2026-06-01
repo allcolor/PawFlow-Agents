@@ -16,12 +16,31 @@ function showParamMenu(e, key, scope, isSecret) {
     d.onclick = () => { menu.remove(); fn(); };
     menu.appendChild(d);
   };
-  item('\u{1F441} ' + t('view'), () => _showParamEditor(key, scope, isSecret, false, true));
+  item('\\u{1F441} ' + t('view'), () => _showParamEditor(key, scope, isSecret, false, true));
   if (_canEditScope(scope)) {
-    item('\u270F ' + t('editWithEllipsis'), () => _showParamEditor(key, scope, isSecret, false));
-    item('\u{1F5D1} ' + t('delete'), () => {
-      if (!confirm(`Delete ${isSecret ? 'secret' : 'variable'} '${key}' (${scope})?`)) return;
-      action$(isSecret ? 'delete_secret' : 'delete_param', { key, scope })
+    item('\\u270F ' + t('editWithEllipsis'), () => _showParamEditor(key, scope, isSecret, false));
+    const sep = () => { const s = document.createElement('div'); s.style.cssText = 'height:1px;background:#333;margin:4px 0;'; menu.appendChild(s); };
+    sep();
+    const move = (toScope) => {
+      const label = (scope === 'conversation' && toScope !== 'conversation') ? 'Promote to ' + toScope
+        : (scope === 'global' && toScope !== 'global') ? 'Demote to ' + toScope
+        : 'Move to ' + toScope;
+      item(label, () => {
+        const payload = { key, from_scope: scope, to_scope: toScope };
+        if ((scope === 'conversation' || toScope === 'conversation') && typeof conversationId !== 'undefined' && conversationId) payload.conversation_id = conversationId;
+        action$(isSecret ? 'move_secret_scope' : 'move_param_scope', payload, { skipConversationId: !(scope === 'conversation' || toScope === 'conversation') })
+          .subscribe({ next: d => { if (d.error) addMsg('error', d.error); else loadResources(); }, error: e => addMsg('error', e.message) });
+      });
+    };
+    if (scope !== 'user') move('user');
+    if (scope !== 'conversation' && typeof conversationId !== 'undefined' && conversationId) move('conversation');
+    if (scope !== 'global' && _isAdmin()) move('global');
+    sep();
+    item('\\u{1F5D1} ' + t('delete'), () => {
+      if (!confirm('Delete ' + (isSecret ? 'secret' : 'variable') + " '" + key + "' (" + scope + ')?')) return;
+      const payload = { key, scope };
+      if (scope === 'conversation' && typeof conversationId !== 'undefined' && conversationId) payload.conversation_id = conversationId;
+      action$(isSecret ? 'delete_secret' : 'delete_param', payload, { skipConversationId: scope !== 'conversation' })
         .subscribe({ next: () => loadResources(), error: e => addMsg('error', e.message) });
     }, true);
   }
@@ -63,7 +82,9 @@ function _saveParam(origKey, origScope, isSecret, isNew) {
   const value = document.getElementById('pv-value').value;
   if (!key) { alert(t('keyRequired')); return; }
   const actionName = isSecret ? 'set_secret' : 'set_param';
-  action$(actionName, { key, value, scope }).subscribe(d => {
+  const payload = { key, value, scope };
+  if (scope === 'conversation' && typeof conversationId !== 'undefined' && conversationId) payload.conversation_id = conversationId;
+  action$(actionName, payload, { skipConversationId: scope !== 'conversation' }).subscribe(d => {
     if (d.error) addMsg('error', d.error);
     else { document.getElementById('resourceEditorOverlay').remove(); loadResources(); }
   });

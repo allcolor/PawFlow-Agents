@@ -567,8 +567,11 @@ function cmdFlow(text, parts) {
     });
   } else if (sub === 'promote') {
     const iid = parts[2];
-    if (!iid) { addMsg('system', t('usageLine', { usage: '/flow promote <instance_id>' })); return true; }
-    action$('promote_flow', { instance_id: iid, target_scope: 'user' }).subscribe(data => {
+    const targetScope = parts[3] || 'user';
+    if (!iid) { addMsg('system', t('usageLine', { usage: '/flow promote <instance_id> [user|conversation|global]' })); return true; }
+    const payload = { instance_id: iid, target_scope: targetScope };
+    if (targetScope === 'conversation' && typeof conversationId !== 'undefined' && conversationId) payload.conversation_id = conversationId;
+    action$('promote_flow', payload, { skipConversationId: targetScope !== 'conversation' }).subscribe(data => {
       if (data.error) { addMsg('error', data.error); }
       else { addMsg('system', t('flowPromotedToUserScope', { id: iid })); }
     });

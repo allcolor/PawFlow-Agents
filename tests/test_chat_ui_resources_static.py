@@ -185,3 +185,27 @@ def test_sse_plan_and_ask_user_events_escape_user_controlled_html():
     assert "document.getElementById(\\'input\\').value=' + jsStringArg(opt)" in js
     assert "'<strong>' + title + '</strong>'" not in js
     assert "opt.replace(/'/g" not in js
+
+
+def test_param_secret_scope_actions_do_not_force_conversation_scope():
+    js = Path("tasks/io/chat_ui/file_viewer.js").read_text(encoding="utf-8")
+
+    assert "skipConversationId: scope !== 'conversation'" in js
+    assert "move_secret_scope" in js
+    assert "move_param_scope" in js
+    assert "from_scope" in js
+    assert "to_scope" in js
+
+
+def test_scoped_resource_menus_send_explicit_source_scope():
+    resources_js = Path("tasks/io/chat_ui/resources.js").read_text(encoding="utf-8")
+    services_js = Path("tasks/io/chat_ui/services.js").read_text(encoding="utf-8")
+
+    assert "function _moveResource" in resources_js
+    assert "from_scope: fromScope" in resources_js
+    assert "skipConversationId: !(fromScope === 'conversation' || targetScope === 'conversation')" in resources_js
+    assert "move_service_scope" in resources_js
+    assert "from_scope: normScope" in resources_js
+    assert "Promote to global" in resources_js
+    assert "target_scope: targetScope" in services_js
+    assert "skipConversationId: !(normScope === 'conversation' || targetScope === 'conversation')" in services_js

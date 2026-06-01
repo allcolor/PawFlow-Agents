@@ -298,7 +298,11 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
         uid = user_id
         data["created_by"] = uid
         requested_scope = data.pop("scope", body.get("scope", "user"))
-        scope = "conversation" if conv_id else requested_scope
+        scope = requested_scope
+        if scope == "conversation" and not conv_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id for conversation scope"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
         try:
             if scope == "conversation" and conv_id:
                 from core.conversation_store import ConversationStore
@@ -356,6 +360,16 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
         if not name:
             flowfile.set_content(json.dumps(
                 {"error": "Missing name"}).encode())
+            return [flowfile]
+        if target_scope not in {"user", "global"}:
+            flowfile.set_content(json.dumps(
+                {"error": "Invalid target_scope"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        if target_scope == "global" and "admin" not in (flowfile.get_attribute("http.auth.roles") or ""):
+            flowfile.set_content(json.dumps(
+                {"error": "Requires admin role for global scope"}).encode())
+            flowfile.set_attribute("http.response.status", "403")
             return [flowfile]
         uid = user_id
         # Read from conversation scope

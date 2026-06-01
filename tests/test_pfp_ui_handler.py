@@ -312,6 +312,35 @@ def test_handle_pfp_ui_dispatches_to_relay_bridge(tmp_path, keypair, monkeypatch
     assert req["context"]["user_id"] == "alice"
 
 
+def test_handle_pfp_ui_respects_explicit_user_scope_with_conversation_id(tmp_path, keypair, monkeypatch):
+    monkeypatch.setattr("core.paths.REPOSITORY_DIR", tmp_path / "repo")
+    _install_pkg(tmp_path, keypair)
+    seen = {}
+
+    def _fake_bridge(request):
+        seen["request"] = request
+        return {
+            "format": pfp_runtime.RUNTIME_RESULT_FORMAT,
+            "ok": True,
+            "result": {"ok": True},
+        }
+
+    monkeypatch.setattr(pfp_runtime, "_invoke_bridge", _fake_bridge)
+
+    from tasks.ai.actions.pfp_ui import _handle_pfp_ui
+    body = {
+        "action": "hello.ping",
+        "_ext": "examples.ui-hello",
+        "conversation_id": "conv1",
+        "scope": "user",
+    }
+    ff = _make_action_ff(body)
+    out = _handle_pfp_ui(None, "hello.ping", body, None, "alice", ff)
+    assert out is not None
+    assert out[0].get_attribute("http.response.status") == "200"
+    assert seen["request"]["context"]["scope"] == "user"
+
+
 def test_handle_pfp_ui_502_when_runtime_raises(tmp_path, keypair, monkeypatch):
     monkeypatch.setattr("core.paths.REPOSITORY_DIR", tmp_path / "repo")
     _install_pkg(tmp_path, keypair)

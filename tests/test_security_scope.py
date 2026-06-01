@@ -159,8 +159,8 @@ class TestGlobalScopeBlocked:
         assert body.get("status") == "accepted"
         store.delete(conv_id)
 
-    def test_set_param_with_conversation_forces_conversation_scope(self):
-        """set_param with an active conversation must not write user scope."""
+    def test_set_param_with_conversation_respects_user_scope(self):
+        """set_param must respect explicit user scope even when conversation_id is present."""
         from core.conversation_store import ConversationStore
         from tasks.ai.actions.secrets_variables import _handle_secrets_variables
 
@@ -172,19 +172,21 @@ class TestGlobalScopeBlocked:
             "action": "set_param", "key": "conv_key", "value": "conv_val",
             "scope": "user", "conversation_id": conv_id,
         })
-        with patch("core.config_store.ConfigStore.save_params") as save_params:
+        with patch("core.config_store.ConfigStore.load_params", return_value={}), \
+                patch("core.config_store.ConfigStore.save_params") as save_params:
             result = _handle_secrets_variables(
                 task, "set_param", json.loads(ff.get_content()), store,
                 "test_user", ff)
         assert result is not None
         body = json.loads(result[0].get_content())
         assert body.get("ok") is True
-        assert store.get_extra(conv_id, "conv_parameters") == {"conv_key": "conv_val"}
-        save_params.assert_not_called()
+        assert body.get("scope") == "user"
+        assert store.get_extra(conv_id, "conv_parameters") in (None, {})
+        save_params.assert_called_once()
         store.delete(conv_id)
 
-    def test_create_resource_with_conversation_passes_conversation_scope(self):
-        """create_resource with an active conversation must not create user resources."""
+    def test_create_resource_with_conversation_respects_user_scope(self):
+        """create_resource must respect explicit user scope even when conversation_id is present."""
         from core.conversation_store import ConversationStore
         from tasks.ai.actions.agent_resource import _handle_agent_resource
 
@@ -205,13 +207,167 @@ class TestGlobalScopeBlocked:
                 "test_user", ff)
         assert result is not None
         body = json.loads(result[0].get_content())
-        assert body == {"ok": True, "scope": "conversation"}
+        assert body == {"ok": True, "scope": "user"}
         rs.create.assert_called_once_with(
             "skill", "conv_skill", "test_user", {
                 "prompt": "test",
                 "review": _SAFE_SKILL_REVIEW,
-            },
+            })
+        store.delete(conv_id)
+
+    def test_create_agent_global_writes_global_scope_for_admin(self):
+        """create_agent has its own path and must honor explicit global scope."""
+        from core.resource_store import GLOBAL_USER_ID
+        from tasks.ai.actions.agent_resource import _handle_agent_resource
+
+        task = self._get_agent_loop()
+        ff = self._make_flowfile({
+            "action": "create_agent",
+            "name": "global_agent",
+            "prompt": "system prompt",
+            "scope": "global",
+        })
+        ff.set_attribute("http.auth.roles", "admin")
+        rs = MagicMock()
+        with patch("core.resource_store.ResourceStore.instance", return_value=rs):
+            result = _handle_agent_resource(
+                task, "create_agent", json.loads(ff.get_content()), None,
+                "test_user", ff)
+        assert result is not None
+        body = json.loads(result[0].get_content())
+        assert "scope: global" in body["result"]
+        rs.create.assert_called_once_with(
+            "agent", "global_agent", GLOBAL_USER_ID, {"prompt": "system prompt"})
+
+    def test_agent_promote_global_requires_admin(self):
+        """agent_promote must require admin for global target scope."""
+        from tasks.ai.actions.agent_resource import _handle_agent_resource
+
+        task = self._get_agent_loop()
+        ff = self._make_flowfile({
+            "action": "agent_promote",
+            "agent_name": "agent1",
+            "target_scope": "global",
+        })
+        rs = MagicMock()
+        rs.get_any.return_value = {"name": "agent1", "prompt": "p", "_scope": "user"}
+        with patch("core.resource_store.ResourceStore.instance", return_value=rs):
+            result = _handle_agent_resource(
+                task, "agent_promote", json.loads(ff.get_content()), None,
+                "test_user", ff)
+        assert result is not None
+        body = json.loads(result[0].get_content())
+        assert "admin" in body["error"].lower()
+        assert result[0].get_attribute("http.response.status") == "403"
+        rs.create.assert_not_called()
+
+    def test_copy_resource_scope_uses_explicit_source_scope(self):
+        """Resource scope moves must read from the displayed source scope, not cascade."""
+        from core.conversation_store import ConversationStore
+        from tasks.ai.actions.agent_resource import _handle_agent_resource
+
+        store = ConversationStore.instance()
+        conv_id = "test_conv_resource_move"
+        store.save(conv_id, [{"role": "user", "content": "hi"}], user_id="test_user")
+        task = self._get_agent_loop()
+        ff = self._make_flowfile({
+            "action": "copy_resource_scope", "resource_type": "skill",
+            "name": "same_name", "from_scope": "user", "target_scope": "conversation",
+            "conversation_id": conv_id,
+        })
+        rs = MagicMock()
+        rs.get.return_value = {"name": "same_name", "prompt": "user copy"}
+        with patch("core.resource_store.ResourceStore.instance", return_value=rs):
+            result = _handle_agent_resource(
+                task, "copy_resource_scope", json.loads(ff.get_content()), store,
+                "test_user", ff)
+        assert result is not None
+        body = json.loads(result[0].get_content())
+        assert body.get("ok") is True
+        assert body.get("from_scope") == "user"
+        rs.get.assert_called_once_with("skill", "same_name", "test_user")
+        rs.get_any.assert_not_called()
+        rs.create.assert_called_once_with(
+            "skill", "same_name", "test_user", {"prompt": "user copy"},
             conversation_id=conv_id)
+        rs.delete.assert_called_once_with("skill", "same_name", "test_user")
+        store.delete(conv_id)
+
+    def test_promote_flow_respects_target_global_scope(self):
+        """Flow promote/demote must use target_scope, with admin required for global."""
+        from types import SimpleNamespace
+        from tasks.ai.actions.service_flow import _handle_service_flow
+
+        task = self._get_agent_loop()
+        ff = self._make_flowfile({
+            "action": "promote_flow",
+            "instance_id": "flow1",
+            "target_scope": "global",
+            "conversation_id": "conv1",
+        })
+        ff.set_attribute("http.auth.roles", "admin")
+        inst = SimpleNamespace(owner="test_user", conversation_id="conv1")
+        dr = MagicMock()
+        dr.get.return_value = inst
+        with patch("core.deployment_registry.DeploymentRegistry.get_instance", return_value=dr):
+            result = _handle_service_flow(
+                task, "promote_flow", json.loads(ff.get_content()), None,
+                "test_user", ff)
+        assert result is not None
+        body = json.loads(result[0].get_content())
+        assert body == {"ok": True, "scope": "global"}
+        dr.set_owner.assert_called_once_with("flow1", None)
+        assert inst.conversation_id is None
+
+    def test_demote_global_flow_requires_admin(self):
+        """Moving a global flow down to user scope also modifies global state."""
+        from types import SimpleNamespace
+        from tasks.ai.actions.service_flow import _handle_service_flow
+
+        task = self._get_agent_loop()
+        ff = self._make_flowfile({
+            "action": "promote_flow",
+            "instance_id": "flow1",
+            "target_scope": "user",
+        })
+        inst = SimpleNamespace(owner=None, conversation_id=None)
+        dr = MagicMock()
+        dr.get.return_value = inst
+        with patch("core.deployment_registry.DeploymentRegistry.get_instance", return_value=dr):
+            result = _handle_service_flow(
+                task, "promote_flow", json.loads(ff.get_content()), None,
+                "test_user", ff)
+        assert result is not None
+        body = json.loads(result[0].get_content())
+        assert "admin" in body["error"].lower()
+        assert result[0].get_attribute("http.response.status") == "403"
+        dr.set_owner.assert_not_called()
+
+    def test_promote_task_def_global_requires_admin(self):
+        """Task definition promotion to global must require admin."""
+        from core.conversation_store import ConversationStore
+        from tasks.ai.actions.scheduling import _handle_scheduling
+
+        store = ConversationStore.instance()
+        conv_id = "test_conv_task_def_promote"
+        store.save(conv_id, [{"role": "user", "content": "hi"}], user_id="test_user")
+        store.set_extra(conv_id, "conversation_task_defs", {
+            "td1": {"prompt": "do it", "criteria": "done"},
+        })
+        task = self._get_agent_loop()
+        ff = self._make_flowfile({
+            "action": "promote_task_def",
+            "name": "td1",
+            "target_scope": "global",
+            "conversation_id": conv_id,
+        })
+        result = _handle_scheduling(
+            task, "promote_task_def", json.loads(ff.get_content()), store,
+            "test_user", ff)
+        assert result is not None
+        body = json.loads(result[0].get_content())
+        assert "admin" in body["error"].lower()
+        assert result[0].get_attribute("http.response.status") == "403"
         store.delete(conv_id)
 
 

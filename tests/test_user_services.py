@@ -855,6 +855,31 @@ class TestAgentServiceActions:
         assert self.reg.get_definition("conv", "conv1", "agentdb") is not None
         assert self.reg.get_definition("global", "", "agentdb") is None
 
+    def test_move_service_scope_uses_explicit_source_scope(self):
+        from tasks.ai.actions.service_flow import _handle_service_flow
+
+        self.reg.install(
+            "user", "testuser", "moveme", SVC_TYPE,
+            config={"host": "user"}, description="Move me")
+        ff = self._make_flowfile({
+            "action": "move_service_scope",
+            "service_id": "moveme",
+            "from_scope": "user",
+            "to_scope": "conversation",
+            "conversation_id": "conv1",
+        })
+
+        result = _handle_service_flow(None, "move_service_scope", json.loads(ff.get_content()), None, "testuser", ff)
+        data = json.loads(result[0].get_content())
+
+        assert data["ok"] is True
+        assert data["from_scope"] == "user"
+        assert data["scope"] == "conversation"
+        assert self.reg.get_definition("user", "testuser", "moveme") is None
+        moved = self.reg.get_definition("conv", "conv1", "moveme")
+        assert moved is not None
+        assert moved.config == {"host": "user"}
+
     def test_service_install_missing_params(self):
         from tasks.ai.agent_loop import AgentLoopTask
         task = AgentLoopTask({"conversation_store": True, "api_key": "test-key"})

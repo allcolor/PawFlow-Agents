@@ -188,7 +188,15 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         conv_id = body.get("conversation_id", "")
         agent = body.get("name", "")
         prompt = body.get("prompt", "")
-        scope = "conversation" if conv_id else body.get("scope", "user")
+        scope = body.get("scope", "user")
+        if scope == "global" and "admin" not in (flowfile.get_attribute("http.auth.roles") or ""):
+            flowfile.set_content(json.dumps({"error": "Requires admin role for global scope"}).encode())
+            flowfile.set_attribute("http.response.status", "403")
+            return [flowfile]
+        if scope == "conversation" and not conv_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id for conversation scope"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
         llm_service = body.get("llm_service", "")
         if not agent or not prompt:
             flowfile.set_content(json.dumps({"error": "Missing name or prompt"}).encode())
@@ -205,7 +213,9 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             add_agent_to_conv(conv_id, agent,
                              llm_service=llm_service, definition=agent)
         else:
-            rs.create("agent", agent, user_id, agent_data)
+            from core.resource_store import GLOBAL_USER_ID
+            target_uid = GLOBAL_USER_ID if scope == "global" else user_id
+            rs.create("agent", agent, target_uid, agent_data)
             if conv_id:
                 from core.conv_agent_config import add_agent_to_conv
                 add_agent_to_conv(conv_id, agent,
@@ -272,6 +282,10 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": f"Agent '{agent}' not found"}).encode())
             return [flowfile]
         current_scope = item.get("_scope", "user")
+        if (target_scope == "global" or current_scope == "global") and "admin" not in (flowfile.get_attribute("http.auth.roles") or ""):
+            flowfile.set_content(json.dumps({"error": "Requires admin role for global scope"}).encode())
+            flowfile.set_attribute("http.response.status", "403")
+            return [flowfile]
         promote_data = {k: v for k, v in item.items() if not k.startswith("_") and k != "name"}
         if target_scope == "user":
             rs.create("agent", agent, user_id, promote_data)
@@ -374,7 +388,15 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             }).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
-        scope = "conversation" if conv_id else body.get("scope", "user")
+        scope = body.get("scope", "user")
+        if scope == "global" and "admin" not in (flowfile.get_attribute("http.auth.roles") or ""):
+            flowfile.set_content(json.dumps({"error": "Requires admin role for global scope"}).encode())
+            flowfile.set_attribute("http.response.status", "403")
+            return [flowfile]
+        if scope == "conversation" and not conv_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id for conversation scope"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
         from core.resource_store import ResourceStore
         rs = ResourceStore.instance()
         uid = user_id
@@ -1829,10 +1851,14 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         rname = body.get("name", "").strip()
         data = body.get("data", {})
         conv_id = body.get("conversation_id", "")
-        scope = "conversation" if conv_id else body.get("scope", "user")
+        scope = body.get("scope", "user")
         if scope == "global" and "admin" not in (flowfile.get_attribute("http.auth.roles") or ""):
             flowfile.set_content(json.dumps({"error": "Requires admin role for global scope"}).encode())
             flowfile.set_attribute("http.response.status", "403")
+            return [flowfile]
+        if scope == "conversation" and not conv_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id for conversation scope"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         if not rtype or not rname:
             flowfile.set_content(json.dumps({"error": "Missing resource_type or name"}).encode())
@@ -2006,6 +2032,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
     if action == "copy_resource_scope":
         rtype = body.get("resource_type", "")
         rname = body.get("name", "").strip()
+        from_scope = body.get("from_scope", "")
         target_scope = body.get("target_scope", "")
         if not rtype or not rname or not target_scope:
             flowfile.set_content(json.dumps({"error": "Missing resource_type, name, or target_scope"}).encode())
@@ -2014,7 +2041,35 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         rs = ResourceStore.instance()
         uid = user_id
         conv_id = body.get("conversation_id", "")
-        item = rs.get_any(rtype, rname, uid, conversation_id=conv_id)
+        if (target_scope == "global" or from_scope == "global") and "admin" not in (flowfile.get_attribute("http.auth.roles") or ""):
+            flowfile.set_content(json.dumps({"error": "Requires admin role for global scope"}).encode())
+            flowfile.set_attribute("http.response.status", "403")
+            return [flowfile]
+        if (target_scope == "conversation" or from_scope == "conversation") and not conv_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id for conversation scope"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        if from_scope == "global":
+            item = rs.get(rtype, rname, "__global__")
+            if item is not None:
+                item["_scope"] = "global"
+        elif from_scope == "user":
+            item = rs.get(rtype, rname, uid)
+            if item is not None:
+                item["_scope"] = "user"
+        elif from_scope == "conversation" and rtype == "task_def" and conv_id:
+            from core.conversation_store import ConversationStore
+            conv_defs = ConversationStore.instance().get_extra(conv_id, "conversation_task_defs") or {}
+            item = dict(conv_defs.get(rname) or {}) if rname in conv_defs else None
+            if item is not None:
+                item["name"] = rname
+                item["_scope"] = "conversation"
+        elif from_scope == "conversation":
+            item = rs.get(rtype, rname, uid, conversation_id=conv_id)
+            if item is not None:
+                item["_scope"] = "conversation"
+        else:
+            item = rs.get_any(rtype, rname, uid, conversation_id=conv_id)
         if not item:
             flowfile.set_content(json.dumps({"error": f"{rtype} '{rname}' not found"}).encode())
             return [flowfile]
@@ -2030,20 +2085,37 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                 conv_defs[rname] = data
                 cs.set_extra(conv_id, "conversation_task_defs", conv_defs)
             else:
-                rs.create(rtype, rname, target_uid, data)
-            # If promoting from conversation scope, remove from there
-            if source_scope == "conversation" and target_scope != "conversation" and conv_id and rtype == "task_def":
-                from core.conversation_store import ConversationStore
-                cs = ConversationStore.instance()
-                conv_defs = cs.get_extra(conv_id, "conversation_task_defs") or {}
-                conv_defs.pop(rname, None)
-                cs.set_extra(conv_id, "conversation_task_defs", conv_defs)
-            flowfile.set_content(json.dumps({"ok": True, "copied_to": target_scope}).encode())
+                scope_kwargs = {"conversation_id": conv_id} if target_scope == "conversation" and conv_id else {}
+                rs.create(rtype, rname, target_uid, data, **scope_kwargs)
+            if from_scope and source_scope != target_scope:
+                if source_scope == "conversation" and conv_id and rtype == "task_def":
+                    from core.conversation_store import ConversationStore
+                    cs = ConversationStore.instance()
+                    conv_defs = cs.get_extra(conv_id, "conversation_task_defs") or {}
+                    conv_defs.pop(rname, None)
+                    cs.set_extra(conv_id, "conversation_task_defs", conv_defs)
+                else:
+                    source_uid = "__global__" if source_scope == "global" else uid
+                    source_kwargs = {"conversation_id": conv_id} if source_scope == "conversation" and conv_id else {}
+                    rs.delete(rtype, rname, source_uid, **source_kwargs)
+            flowfile.set_content(json.dumps({"ok": True, "copied_to": target_scope, "from_scope": source_scope}).encode())
         except Exception as e:
             # If exists, update instead
             try:
-                rs.update(rtype, rname, target_uid, data)
-                flowfile.set_content(json.dumps({"ok": True, "copied_to": target_scope, "updated": True}).encode())
+                scope_kwargs = {"conversation_id": conv_id} if target_scope == "conversation" and conv_id else {}
+                rs.update(rtype, rname, target_uid, data, **scope_kwargs)
+                if from_scope and source_scope != target_scope:
+                    if source_scope == "conversation" and conv_id and rtype == "task_def":
+                        from core.conversation_store import ConversationStore
+                        cs = ConversationStore.instance()
+                        conv_defs = cs.get_extra(conv_id, "conversation_task_defs") or {}
+                        conv_defs.pop(rname, None)
+                        cs.set_extra(conv_id, "conversation_task_defs", conv_defs)
+                    else:
+                        source_uid = "__global__" if source_scope == "global" else uid
+                        source_kwargs = {"conversation_id": conv_id} if source_scope == "conversation" and conv_id else {}
+                        rs.delete(rtype, rname, source_uid, **source_kwargs)
+                flowfile.set_content(json.dumps({"ok": True, "copied_to": target_scope, "from_scope": source_scope, "updated": True}).encode())
             except Exception as e2:
                 flowfile.set_content(json.dumps({"error": str(e2)}).encode())
         return [flowfile]

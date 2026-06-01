@@ -524,7 +524,7 @@ const HELP_DATA = {
       + '  /flow stop <id>                \u2014 Stop a flow\n'
       + '  /flow params <id>              \u2014 View flow parameters\n'
       + '  /flow undeploy <id>            \u2014 Remove a flow\n'
-      + '  /flow promote <id>             \u2014 Promote to user scope',
+      + '  /flow promote <id> [scope]     \u2014 Move to user, conversation, or global scope',
   },
   '/run': {
     usage: '/run <command>',

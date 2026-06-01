@@ -698,12 +698,12 @@ Use `/help call` to list all tools, or `/help call <toolname>` to see parameter 
 |------------|--------|-------------|
 | `list` | `/flow list` | List deployed flows |
 | `templates` | `/flow templates` | List available flow templates |
-| `deploy` | `/flow deploy <id> [scope]` | Deploy a flow (scope: `user` or `conversation`) |
+| `deploy` | `/flow deploy <id> [scope]` | Deploy a flow (scope: `user`, `conversation`, or `global`; global requires admin) |
 | `start` | `/flow start <id> [key=val ...]` | Start a flow with optional parameter overrides |
 | `stop` | `/flow stop <id>` | Stop a running flow |
 | `params` | `/flow params <id>` | View flow parameters |
 | `undeploy` | `/flow undeploy <id>` | Remove a deployed flow |
-| `promote` | `/flow promote <id>` | Promote flow to user scope |
+| `promote` | `/flow promote <id> [scope]` | Move a flow to `user`, `conversation`, or `global` scope; global requires admin |
 
 ---
 

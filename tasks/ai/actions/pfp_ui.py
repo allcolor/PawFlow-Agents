@@ -96,7 +96,27 @@ def _handle_pfp_ui(self, action: str, body: Dict[str, Any], store, user_id: str,
 
     from core import pfp_package, pfp_runtime
 
-    scope = "conversation" if conversation_id else "user"
+    requested_scope = str(body.get("scope") or "user").strip().lower()
+    if requested_scope in {"conv", "conversation"}:
+        scope = "conversation"
+    elif requested_scope == "global":
+        scope = "global"
+    else:
+        scope = "user"
+    if scope == "conversation" and not conversation_id:
+        flowfile.set_content(json.dumps({
+            "error": "conversation_id is required for conversation scope",
+            "_ext": package_id, "action": action,
+        }).encode("utf-8"))
+        flowfile.set_attribute("http.response.status", "400")
+        return [flowfile]
+    if scope == "global":
+        flowfile.set_content(json.dumps({
+            "error": "PFP UI extensions do not support global scope",
+            "_ext": package_id, "action": action,
+        }).encode("utf-8"))
+        flowfile.set_attribute("http.response.status", "400")
+        return [flowfile]
     resolved = pfp_package.resolve_ui_handler(
         package_id, action,
         user_id=user_id, conversation_id=conversation_id, scope=scope)

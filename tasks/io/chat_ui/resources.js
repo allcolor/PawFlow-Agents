@@ -1786,10 +1786,13 @@ function showResourceMenu(e, rtype, name, scope, autoconv) {
     item('\u{1F4DC} ' + t('viewLogMenu'), () => _showTaskDefLog(name));
   }
   sep();
-  // Copy between scopes
-  if (_isAdmin()) item('\u2191 ' + t('copyToGlobal'), () => _copyResource(rtype, name, 'global'));
-  if (scope !== 'user') item('\u2191 ' + t('copyToUser'), () => _copyResource(rtype, name, 'user'));
-  if (scope !== 'conversation') item('\u2191 ' + t('copyToConversation'), () => _copyResource(rtype, name, 'conversation'));
+  // Move between scopes. The source scope is explicit so the backend does
+  // not resolve another resource with the same name through the read cascade.
+  if (_canEditScope(scope)) {
+    if (scope !== 'user') item('\u2191 ' + (scope === 'conversation' ? 'Promote to user' : 'Demote to user'), () => _moveResource(rtype, name, scope, 'user'));
+    if (scope !== 'conversation' && typeof conversationId !== 'undefined' && conversationId) item('\u2193 Move to conversation', () => _moveResource(rtype, name, scope, 'conversation'));
+    if (scope !== 'global' && _isAdmin()) item('\u2191 Promote to global', () => _moveResource(rtype, name, scope, 'global'));
+  }
   if (_canEditScope(scope)) {
     sep();
     item('\u{1F5D1} ' + t('delete'), () => _deleteResource(rtype, name, scope), true);
@@ -1800,13 +1803,18 @@ function showResourceMenu(e, rtype, name, scope, autoconv) {
   }), 0);
 }
 
-function _copyResource(rtype, name, targetScope) {
-  action$('copy_resource_scope', { resource_type: rtype,
-    name, target_scope: targetScope }).subscribe(d => {
+function _moveResource(rtype, name, fromScope, targetScope) {
+  const payload = { resource_type: rtype, name, from_scope: fromScope, target_scope: targetScope };
+  if ((fromScope === 'conversation' || targetScope === 'conversation') && typeof conversationId !== 'undefined' && conversationId) payload.conversation_id = conversationId;
+  action$('copy_resource_scope', payload, { skipConversationId: !(fromScope === 'conversation' || targetScope === 'conversation') }).subscribe(d => {
     if (d.error) addMsg('error', d.error);
     else addMsg('system', t('resourceCopiedToScope', { type: rtype, name: name, scope: targetScope }));
     loadResources();
   });
+}
+
+function _copyResource(rtype, name, targetScope) {
+  _moveResource(rtype, name, '', targetScope);
 }
 
 function _deleteResource(rtype, name, scope) {
@@ -2119,8 +2127,11 @@ function showAgentMenu(e, name, scope, autoconv) {
     item('\u{1F504} ' + t('autoconvOnMenu'), () => { const freq = prompt(t('autoconvFrequencyPrompt'), '6/1m'); if (!freq) return; action$('random_thought', { sub: 'on', agent: name, frequency: freq }).subscribe(d => { addMsg('system', d.error || t('autoconvEnabledFor', { agent: name, freq: freq })); loadResources(); }); });
   }
   sep();
-  if (_isAdmin()) item('\u2191 ' + t('copyToGlobal'), () => _copyResource('agent', name, 'global'));
-  if (scope !== 'user') item('\u2191 ' + t('copyToUser'), () => _copyResource('agent', name, 'user'));
+  if (_canEditScope(scope)) {
+    if (scope !== 'user') item('\u2191 ' + (scope === 'conversation' ? 'Promote to user' : 'Demote to user'), () => _moveResource('agent', name, scope, 'user'));
+    if (scope !== 'conversation' && typeof conversationId !== 'undefined' && conversationId) item('\u2193 Move to conversation', () => _moveResource('agent', name, scope, 'conversation'));
+    if (scope !== 'global' && _isAdmin()) item('\u2191 Promote to global', () => _moveResource('agent', name, scope, 'global'));
+  }
   sep();
   item('\u2716 ' + t('removeFromConversation'), () => _removeAgentFromConv(name), true);
   if (_canEditScope(scope)) {
@@ -3595,6 +3606,21 @@ function showServiceMenu(e, serviceId, scope, enabled) {
     const sep = document.createElement('div');
     sep.style.cssText = 'height:1px;background:var(--pf-border);margin:4px 0;';
     menu.appendChild(sep);
+    const normScope = scope === 'conv' ? 'conversation' : scope;
+    const moveService = (toScope) => {
+      const payload = { service_id: serviceId, from_scope: normScope, to_scope: toScope };
+      if ((normScope === 'conversation' || toScope === 'conversation') && typeof conversationId !== 'undefined' && conversationId) payload.conversation_id = conversationId;
+      action$('move_service_scope', payload, { skipConversationId: !(normScope === 'conversation' || toScope === 'conversation') }).subscribe(d => {
+        if (d.error) addMsg('error', d.error);
+        else { notifyServiceConfigurationChanged(); loadResources(); }
+      });
+    };
+    if (normScope !== 'user') item('\u2191 ' + (normScope === 'conversation' ? 'Promote to user' : 'Demote to user'), () => moveService('user'));
+    if (normScope !== 'conversation' && typeof conversationId !== 'undefined' && conversationId) item('\u2193 Move to conversation', () => moveService('conversation'));
+    if (normScope !== 'global' && _isAdmin()) item('\u2191 Promote to global', () => moveService('global'));
+    const sep2 = document.createElement('div');
+    sep2.style.cssText = 'height:1px;background:var(--pf-border);margin:4px 0;';
+    menu.appendChild(sep2);
     item('\u{1F5D1} ' + t('delete'), () => {
       if (!confirm(t('deleteServiceConfirm', { id: serviceId }))) return;
       action$('delete_service', { service_id: serviceId, scope, conversation_id: conversationId }).subscribe(d => {

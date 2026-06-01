@@ -23,16 +23,22 @@ function showFlowInstanceMenu(e, instanceId, status, scope) {
   }
   item('\u270F ' + t('flowEditParamsMenu'), () => _showFlowStartDialog(instanceId, true));
   item('\ud83d\udcc8 ' + t('flowViewGraph'), () => _openFlowGraphTab(instanceId));
-  if (scope === 'conversation') {
-    item('\u2B06 ' + t('flowPromoteToUser'), () => {
-      action$('promote_flow', { instance_id: instanceId, target_scope: 'user' }).subscribe({
+  const normScope = scope === 'conv' ? 'conversation' : (scope || 'user');
+  if (_canEditScope(normScope)) {
+    const moveFlow = (targetScope) => {
+      const payload = { instance_id: instanceId, target_scope: targetScope };
+      if ((normScope === 'conversation' || targetScope === 'conversation') && typeof conversationId !== 'undefined' && conversationId) payload.conversation_id = conversationId;
+      action$('promote_flow', payload, { skipConversationId: !(normScope === 'conversation' || targetScope === 'conversation') }).subscribe({
         next: (d) => {
           if (d.error) addMsg('error', d.error);
           else { addMsg('system', t('flowPromotedToUser', { id: instanceId })); loadResources(); }
         },
         error: (e) => addMsg('error', e.message),
       });
-    });
+    };
+    if (normScope !== 'user') item('\u2B06 ' + (normScope === 'conversation' ? 'Promote to user' : 'Demote to user'), () => moveFlow('user'));
+    if (normScope !== 'conversation' && typeof conversationId !== 'undefined' && conversationId) item('\u2B07 Move to conversation', () => moveFlow('conversation'));
+    if (normScope !== 'global' && _isAdmin()) item('\u2B06 Promote to global', () => moveFlow('global'));
   }
   const sep = document.createElement('div');
   sep.style.cssText = 'height:1px;background:#333;margin:4px 0;';

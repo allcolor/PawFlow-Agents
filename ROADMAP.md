@@ -55,27 +55,12 @@ Ollama, Mistral, vLLM, LM Studio, Together.ai — most work via the OpenAI-compa
 ### Mobile client (PWA)
 Progressive Web App installable on iOS and Android. Offline caching, push notifications when agents respond, mobile-optimized layout.
 
-### Headless JSON mode
-Single-shot API endpoint that runs an agent and returns structured JSON. No SSE, no streaming — designed for CI/CD, scripts, and webhooks. Optional JSON schema for structured output.
-
 ---
 
 ## Medium Priority
 
 ### Package and marketplace UX hardening
 The PFP package system, decentralized registries, package search/install/update, and external skill imports exist. Continue polishing review surfaces, provenance display, registry management, package dependency explanations, and Resources sidebar workflows.
-
-### Agent YAML definitions
-Define agents as `.yaml` files in your repo (`.pawflow/agents/agent_name.yaml`). Versioned in git, auto-discovered on relay connect.
-
-### Interactive diff viewer
-Side-by-side diff viewer in the web chat for file changes made by agents. Click any edit to see what changed.
-
-### More search providers
-Brave, Perplexity, and Google search APIs alongside the built-in DuckDuckGo.
-
-### Sparse checkout for large repos
-Checkout only specific paths on relay connect (`--sparse-paths src/,tests/`) to reduce noise in monorepos.
 
 ### Voice UX polish
 Text-to-speech and media voice tooling exist; remaining work is tighter web chat playback controls, browser capture polish, and consistent voice UX across web, CLI, and desktop clients.
@@ -87,12 +72,6 @@ Text-to-speech and media voice tooling exist; remaining work is tighter web chat
 ### Public package catalog
 A hosted/community catalog on top of decentralized PFP registries, with better discovery for agents, skills, tools, service providers, flow tasks, flows, UI extensions, and MCP integrations.
 
-### Additional messaging channels
-Microsoft Teams, Matrix, Signal, IRC — building on the existing Telegram/Discord/Slack/WhatsApp channel framework.
-
-### Themes
-User-selectable color themes for the web chat (dark, light, solarized, etc.).
-
 ### OpenTelemetry tracing
 Spans for each task execution in the pipeline engine, exportable to Jaeger, Zipkin, etc.
 
@@ -103,7 +82,6 @@ Spans for each task execution in the pipeline engine, exportable to Jaeger, Zipk
 These were shipped as part of the alpha development cycle:
 
 - Hard cost cap per conversation (budget limits with 80% warning threshold)
-- `@file` mention in PawCode CLI
 - Agent instructions file (`.md`) that survives context compaction
 - Permission modes (read-only / approve-edits / auto) with quick toggle
 - `/call` (direct tool invocation) and `/terminal` (shell commands) in PawCode CLI
@@ -123,6 +101,7 @@ These were shipped as part of the alpha development cycle:
 - PFP packages: signed `.pfp` artifacts, selectable install plans, export/build/dev-load, update/uninstall, and decentralized registries
 - External skill marketplace search/import with package review and provenance
 - Resource sidebar package install/update/uninstall workflows
+- User-selectable web chat themes
 
 ---
 

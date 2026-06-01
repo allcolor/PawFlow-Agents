@@ -3610,7 +3610,7 @@ function showServiceMenu(e, serviceId, scope, enabled) {
 const _svcInputStyle = 'width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;font-size:12px;';
 const _svcLabelStyle = 'color:var(--pf-muted);font-size:11px;';
 const _svcHelpStyle = 'display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border-radius:50%;border:1px solid var(--pf-border);color:var(--pf-muted);font-size:10px;line-height:14px;margin-left:5px;cursor:pointer;background:var(--pf-sidebar);font-weight:700;vertical-align:middle;padding:0;';
-const _svcFillStyle = 'display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:4px;border:1px solid var(--pf-accent);color:var(--pf-accent);font-size:10px;line-height:14px;margin-left:5px;cursor:pointer;background:color-mix(in srgb, var(--pf-accent) 10%, var(--pf-panel));font-weight:700;vertical-align:middle;padding:0;';
+const _svcFillStyle = 'display:inline-flex;align-items:center;justify-content:center;width:34px;min-width:34px;height:28px;border-radius:4px;border:1px solid var(--pf-accent);color:var(--pf-accent);font-size:11px;line-height:14px;cursor:pointer;background:var(--pf-sidebar);font-weight:700;padding:0;margin-top:2px;';
 
 function _renderParamHelp(description, label) {
   if (!description) return '';
@@ -3627,7 +3627,7 @@ function _renderParamFillHelper(pdef, pname, readonly) {
   const title = escapeAttr((pdef.fill_helper && pdef.fill_helper.label) || 'Fill');
   return '<button type="button" class="svc-param-fill" data-param="' + escapeAttr(pname)
     + '" data-helper="' + helper + '" onclick="_openParamFillHelper(this,event)"'
-    + ' aria-label="Fill: ' + title + '" title="' + title + '" style="' + _svcFillStyle + '">\u21E3</button>';
+    + ' aria-label="Fill: ' + title + '" title="' + title + '" style="' + _svcFillStyle + '">[...]</button>';
 }
 
 function _renderHelpMarkdown(markdown) {
@@ -3806,40 +3806,51 @@ function _renderSchemaFields(schema, values, readonly) {
     const escaped = typeof val === 'string' ? val.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') : val;
     const label = escapeHtml(pdef.label || pname);
     const req = pdef.required ? ' data-required="1"' : '';
+    const fillHelper = _renderParamFillHelper(pdef, pname, readonly);
     html += '<div class="svc-field" data-field="' + pname + '"' + req + ' style="margin-bottom:8px;">';
     html += '<label style="' + _svcLabelStyle + '">' + label
       + (pdef.required ? ' <span class="svc-req" style="color:var(--pf-danger)">*</span>' : '')
-      + _renderParamHelp(pdef.description, pdef.label || pname)
-      + _renderParamFillHelper(pdef, pname, readonly) + '</label>';
+      + _renderParamHelp(pdef.description, pdef.label || pname) + '</label>';
     const ptype = pdef.type || 'string';
     if (ptype === 'boolean') {
       html += '<label style="display:flex;align-items:center;gap:6px;margin-top:4px;cursor:pointer;"><input id="svc-p-' + pname + '" type="checkbox"' + (val ? ' checked' : '') + dis + ' style="accent-color:var(--pf-accent);"/> <span style="color:var(--pf-text);font-size:12px;">Enabled</span></label>';
     } else if (ptype === 'select' && pdef.options) {
-      html += '<select id="svc-p-' + pname + '"' + dis + ' style="' + _svcInputStyle + roS + '">';
+      if (fillHelper) html += '<div style="display:flex;gap:4px;align-items:flex-start;">';
+      html += '<select id="svc-p-' + pname + '"' + dis + ' style="' + _svcInputStyle + roS + (fillHelper ? 'flex:1;min-width:0;' : '') + '">';
       for (const opt of pdef.options) {
         html += '<option value="' + opt + '"' + (String(val) === String(opt) ? ' selected' : '') + '>' + opt + '</option>';
       }
       html += '</select>';
+      if (fillHelper) html += fillHelper + '</div>';
     } else if (ptype === 'service_ref') {
       const st = (pdef.service_type || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;');
       const pf = (pdef.provider_field || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;');
       const fp = (pdef.provider || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;');
       const aliases = JSON.stringify(pdef.provider_aliases || {}).replace(/&/g,'&amp;').replace(/'/g,'&#39;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-      html += '<select id="svc-p-' + pname + '" data-service-ref="1" data-service-type="' + st + '" data-provider-field="' + pf + '" data-provider="' + fp + '" data-provider-aliases=\'' + aliases + '\' data-current="' + escaped + '"' + dis + ' style="' + _svcInputStyle + roS + '">';
+      if (fillHelper) html += '<div style="display:flex;gap:4px;align-items:flex-start;">';
+      html += '<select id="svc-p-' + pname + '" data-service-ref="1" data-service-type="' + st + '" data-provider-field="' + pf + '" data-provider="' + fp + '" data-provider-aliases=\'' + aliases + '\' data-current="' + escaped + '"' + dis + ' style="' + _svcInputStyle + roS + (fillHelper ? 'flex:1;min-width:0;' : '') + '">';
       html += '<option value="' + escaped + '">' + (escaped || '(auto)') + '</option>';
       html += '</select>';
+      if (fillHelper) html += fillHelper + '</div>';
     } else if (ptype === 'textarea' || ptype === 'map' || ptype === 'object' || ptype === 'json') {
       const tval = (ptype === 'map' || ptype === 'object' || ptype === 'json') && typeof val === 'object' ? JSON.stringify(val, null, 2) : escaped;
-      html += '<textarea id="svc-p-' + pname + '"' + dis + ' style="' + _svcInputStyle + roS + 'min-height:80px;font-family:monospace;resize:vertical;">' + tval + '</textarea>';
+      if (fillHelper) html += '<div style="display:flex;gap:4px;align-items:flex-start;">';
+      html += '<textarea id="svc-p-' + pname + '"' + dis + ' style="' + _svcInputStyle + roS + 'min-height:80px;font-family:monospace;resize:vertical;' + (fillHelper ? 'flex:1;min-width:0;' : '') + '">' + tval + '</textarea>';
+      if (fillHelper) html += fillHelper + '</div>';
     } else if (ptype === 'integer' || ptype === 'float') {
+      if (fillHelper) html += '<div style="display:flex;gap:4px;align-items:flex-start;">';
       html += '<input id="svc-p-' + pname + '" type="number"' + (ptype === 'float' ? ' step="any"' : '') + ' value="' + escaped + '"' + dis + ' style="' + _svcInputStyle + roS + 'width:120px;"/>';
+      if (fillHelper) html += fillHelper + '</div>';
     } else if (pdef.sensitive) {
       html += '<div style="display:flex;gap:4px;align-items:center;">'
-        + '<input id="svc-p-' + pname + '" type="password" value="' + escaped + '"' + dis + ' style="' + _svcInputStyle + roS + 'flex:1;"/>'
+        + '<input id="svc-p-' + pname + '" type="password" value="' + escaped + '"' + dis + ' style="' + _svcInputStyle + roS + 'flex:1;min-width:0;"/>'
         + '<button type="button" onclick="_togglePwdVis(\'svc-p-' + pname + '\',this)" style="background:none;border:1px solid var(--pf-border);color:var(--pf-muted);border-radius:4px;padding:4px 8px;cursor:pointer;font-size:12px;" title="' + escapeHtml(t('showHide')) + '">\u{1F441}</button>'
+        + fillHelper
         + '</div>';
     } else {
-      html += '<input id="svc-p-' + pname + '" type="text" value="' + escaped + '"' + dis + ' style="' + _svcInputStyle + roS + '"/>';
+      if (fillHelper) html += '<div style="display:flex;gap:4px;align-items:flex-start;">';
+      html += '<input id="svc-p-' + pname + '" type="text" value="' + escaped + '"' + dis + ' style="' + _svcInputStyle + roS + (fillHelper ? 'flex:1;min-width:0;' : '') + '"/>';
+      if (fillHelper) html += fillHelper + '</div>';
     }
     html += '</div>';
   }

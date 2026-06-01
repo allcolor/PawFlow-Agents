@@ -44,7 +44,7 @@ _SECURITY_HEADERS = {
         "https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; "
         "img-src 'self' data: blob:; "
         "media-src 'self' data: blob:; "
-        "connect-src 'self' ws: wss:; "
+        "connect-src 'self' ws: wss: https://cdn.jsdelivr.net; "
         "frame-src 'self' blob: http: https:; "
         "frame-ancestors 'self'; "
         "object-src 'none'; base-uri 'self'"

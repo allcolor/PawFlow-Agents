@@ -1092,10 +1092,10 @@ async function _renderResourcesData(data) {
         liveHtml += '<div data-agent-name="' + aName + '" style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;"'
           + ' oncontextmenu="showAgentMenu(event,\'' + aName + '\',\'' + escapeHtml(a.scope || '') + '\',' + (a.autoconv ? 'true' : 'false') + ');return false;">'
           + '<span style="cursor:pointer;color:' + primaryColor + ';font-size:11px;" title="' + primaryTitle + '"'
-          + ' onclick="cmdAgentSelect(this.dataset.n).then(loadResources)" data-n="' + aName + '">' + primaryArrow + '</span>'
+          + ' onclick="_selectAgentAndRefresh(this.dataset.n)" data-n="' + aName + '">' + primaryArrow + '</span>'
           + _scopeBadge(a.scope)
           + '<span style="color:' + textColor + ';font-size:12px;cursor:pointer;flex:1;"'
-          + ' onclick="cmdAgentSelect(this.dataset.n).then(loadResources)" data-n="' + aName + '">' + aName + '</span>'
+          + ' onclick="_selectAgentAndRefresh(this.dataset.n)" data-n="' + aName + '">' + aName + '</span>'
           + autoconvTag
           + '<span style="cursor:pointer;font-size:11px;color:var(--pf-danger);padding:0 3px;" title="' + escapeHtml(t('removeFromConversation')) + '"'
           + ' onclick="_removeAgentFromConv(this.dataset.n)" data-n="' + aName + '">&times;</span>'
@@ -2023,6 +2023,15 @@ async function _showAgentHooksDialog() {
   document.body.appendChild(overlay);
 }
 
+function _selectAgentAndRefresh(name) {
+  const result = cmdAgentSelect(name);
+  if (result && typeof result.then === 'function') {
+    result.then(loadResources);
+    return;
+  }
+  loadResources();
+}
+
 function _saveAgentHooksDialog() {
   const rows = document.querySelectorAll('#agentHooksOverlay .agent-hook-binding-row');
   const bindings = Array.from(rows).map(function(row) {
@@ -2067,7 +2076,11 @@ function showAgentMenu(e, name, scope, autoconv) {
   if (_canEditScope(scope)) item('\u270F ' + t('editDefinitionMenu'), () => showResourceEditor('agent', name));
   item('\u2699 ' + t('configureConversationMenu'), () => _showAgentConvConfigDialog(name));
   item('\u2699 ' + t('toolsMcpOverrideMenu'), () => _showToolMcpFilterDialog(name, 'agent'));
-  item('\u25B6 ' + t('select'), () => cmdAgentSelect(name).then(loadResources));
+  item('\u25B6 ' + t('select'), () => {
+    const result = cmdAgentSelect(name);
+    if (result && typeof result.then === 'function') result.then(loadResources);
+    else loadResources();
+  });
   item('\u{1F9E9} ' + t('manageSkillsMenu'), () => _showAgentSkillsDialog(name));
   if (autoconv) {
     item('\u23F9 ' + t('autoconvOff'), () => { action$('random_thought', { sub: 'off', agent: name }).subscribe(d => { addMsg('system', d.error || t('autoconvDisabledFor', { agent: name })); loadResources(); }); });

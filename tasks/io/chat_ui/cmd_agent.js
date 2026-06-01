@@ -228,7 +228,7 @@ function updateActiveAgentBadge() {
 function cmdAgentSelect(name) {
   if (!name) {
     addMsg('error', t('bugAgentRequired'));
-    return;
+    return Promise.resolve(false);
   }
   var _prevAgent = selectedAgent;
   if (!conversationId) {
@@ -240,18 +240,21 @@ function cmdAgentSelect(name) {
       window._pawflowExtRuntime.fireHook('agent_changed',
         { oldAgent: _prevAgent || null, newAgent: name, pending: true });
     }
-    return;
+    return Promise.resolve(true);
   }
-  action$('select_agent', { name }).subscribe(data => {
-    if (data.error) { addMsg('error', data.error); return; }
-    selectedAgent = name;
-    updateActiveAgentBadge();
-    addMsg('system', t('agentSelected', { name: name }));
-    loadResources();
-    if (window._pawflowExtRuntime) {
-      window._pawflowExtRuntime.fireHook('agent_changed',
-        { oldAgent: _prevAgent || null, newAgent: name, pending: false });
-    }
+  return new Promise(resolve => {
+    action$('select_agent', { name }).subscribe(data => {
+      if (data.error) { addMsg('error', data.error); resolve(false); return; }
+      selectedAgent = name;
+      updateActiveAgentBadge();
+      addMsg('system', t('agentSelected', { name: name }));
+      loadResources();
+      if (window._pawflowExtRuntime) {
+        window._pawflowExtRuntime.fireHook('agent_changed',
+          { oldAgent: _prevAgent || null, newAgent: name, pending: false });
+      }
+      resolve(true);
+    });
   });
 }
 

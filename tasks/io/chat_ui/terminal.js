@@ -479,12 +479,16 @@ function _initXterm(container, sessionId, token) {
         term.write(Uint8Array.from(atob(msg.data), c => c.charCodeAt(0)));
       } else if (msg.type === 'terminal_exit') {
         term.write('\r\n[' + t('processExited') + ']\r\n');
+        container._terminalExited = true;
+        try { ws.close(); } catch (_) {}
       }
     } catch (err) {}
   };
 
   ws.onclose = () => {
-    term.write('\r\n[' + t('disconnected') + ']\r\n');
+    if (!container._terminalExited) {
+      term.write('\r\n[' + t('disconnected') + ']\r\n');
+    }
   };
 
   term.onData((data) => {

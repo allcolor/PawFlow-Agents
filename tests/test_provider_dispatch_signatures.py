@@ -316,23 +316,23 @@ def test_mcp_bridge_retries_initial_tool_relay_connection():
     assert "result = relay_client.request(\"execute_tool\"" in src
 
 
-def test_mcp_bridge_does_not_connect_tool_relay_before_stdio_handshake():
+def test_mcp_bridge_connects_tool_relay_during_startup():
     src = Path("tools/mcp_bridge.py").read_text(encoding="utf-8")
     boot_block = src[
-        src.index("def main():"):
+        src.index("def main"):
         src.index("# MCP tools: get_tool_schema + use_tool")]
-    assert "ToolRelayClient(" not in boot_block
-    assert "client.connect()" not in boot_block
-    assert "socket.create_connection" not in boot_block
-    assert "The relay client is established lazily" in boot_block
+    assert "# Connect to PawFlow tool relay" in boot_block
+    assert "client = ToolRelayClient(" in boot_block
+    assert "client.connect()" in boot_block
+    assert "Failed to connect to tool relay" in boot_block
 
 
 def test_codex_mcp_config_timeout_is_not_used_for_tool_relay_connect():
     codex_src = Path("core/llm_providers/codex_session.py").read_text(encoding="utf-8")
     bridge_src = Path("tools/mcp_bridge.py").read_text(encoding="utf-8")
     assert '"startup_timeout_sec = 20\\n"' in codex_src
-    assert "TOOL_RELAY_CONNECT_TIMEOUT_SECONDS = 5.0" in bridge_src
-    assert "Keep MCP startup independent from the PawFlow tool relay" in bridge_src
+    assert "TOOL_RELAY_CONNECT_TIMEOUT_SECONDS" not in bridge_src
+    assert "timeout=TOOL_RELAY_CONNECT_TIMEOUT_SECONDS" not in bridge_src
 
 
 def test_tool_relay_info_refreshes_registered_ws_route():

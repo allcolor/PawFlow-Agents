@@ -732,6 +732,29 @@ function _flowPackageSectionId(packageName) {
   return '_flow_pkg_' + raw.replace(/[^a-z0-9_]+/g, '_');
 }
 
+function showFlowTemplateMenu(e, templateId) {
+  e.preventDefault();
+  const old = document.querySelector('.ctx-menu');
+  if (old) old.remove();
+  const menu = document.createElement('div');
+  menu.className = 'ctx-menu';
+  menu.style.cssText = 'position:fixed;z-index:10000;background:var(--pf-panel);border:1px solid var(--pf-border);border-radius:6px;padding:4px 0;min-width:150px;box-shadow:0 4px 12px var(--pf-shadow);';
+  _positionMenu(menu, e);
+  const item = (label, fn) => {
+    const d = document.createElement('div');
+    d.textContent = label;
+    d.style.cssText = 'padding:6px 16px;cursor:pointer;font-size:12px;color:var(--pf-text);';
+    d.onmouseenter = () => d.style.background = 'color-mix(in srgb, var(--pf-accent) 12%, var(--pf-panel))';
+    d.onmouseleave = () => d.style.background = '';
+    d.onclick = () => { menu.remove(); fn(); };
+    menu.appendChild(d);
+  };
+  item('\uD83D\uDCC8 ' + t('flowViewGraph'), () => _openFlowTemplateGraphTab(templateId));
+  document.body.appendChild(menu);
+  _positionMenu(menu, e);
+  setTimeout(() => document.addEventListener('click', function _c() { menu.remove(); document.removeEventListener('click', _c); }), 0);
+}
+
 function _renderFlowPackageGroup(packageName, flows) {
   const sectionId = _flowPackageSectionId(packageName);
   const collapsed = _isSectionCollapsed(sectionId);
@@ -746,7 +769,7 @@ function _renderFlowPackageGroup(packageName, flows) {
   flows.forEach(t => {
     const ver = t.version ? ` v${escapeHtml(t.version)}` : '';
     const desc = t.description ? ` title="${escapeHtml(t.description)}"` : '';
-    html += `<div style="display:flex;align-items:center;gap:4px;margin-left:14px;margin-bottom:2px;cursor:pointer;"${desc} onclick="showDeployFlowDialog('${escapeHtml(t.id)}')">
+    html += `<div style="display:flex;align-items:center;gap:4px;margin-left:14px;margin-bottom:2px;cursor:pointer;"${desc} onclick="showDeployFlowDialog('${escapeHtml(t.id)}')" oncontextmenu="showFlowTemplateMenu(event,'${escapeHtml(t.id)}');return false;">
       ${_scopeBadge(t.scope)}<span style="color:var(--pf-text);font-size:12px;flex:1;">${escapeHtml(t.name)}${ver}</span>
       <span style="color:var(--pf-muted);font-size:10px;">[${t.tasks_count} tasks]</span>
     </div>`;

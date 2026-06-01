@@ -693,6 +693,7 @@ import dagre from '@dagrejs/dagre';
 
 const params = new URLSearchParams(window.location.search);
 const INSTANCE_ID = params.get('instance_id') || window.__PAWFLOW_FLOW_INSTANCE_ID || '';
+const TEMPLATE_ID = params.get('template_id') || window.__PAWFLOW_FLOW_TEMPLATE_ID || '';
 const API_BASE = (window.location.protocol === 'blob:' || window.location.origin === 'null')
   ? window.parent.location.origin
   : window.location.origin;
@@ -802,16 +803,19 @@ function App() {
   const [error, setError] = useState('');
   const layoutDone = useRef(false);
   const timerRef = useRef(null);
-
   const fetchData = useCallback(async () => {
     try {
+      const body = TEMPLATE_ID
+        ? { action: 'flow_runtime_graph', template_id: TEMPLATE_ID }
+        : { action: 'flow_runtime_graph', instance_id: INSTANCE_ID };
       const resp = await fetch(API_BASE + '/api/agent', {
-        method: 'POST', headers: getAuthHeaders(),
-        body: JSON.stringify({ action: 'flow_runtime_graph', instance_id: INSTANCE_ID }),
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify(body),
       });
       const data = await resp.json();
       if (data.error) { setError(data.error); return; }
-      setFlowName(data.flow_name || INSTANCE_ID);
+      setFlowName(data.flow_name || TEMPLATE_ID || INSTANCE_ID);
       setIsRunning(data.is_running);
       setError('');
 
@@ -823,16 +827,13 @@ function App() {
         setNodes(laid);
         layoutDone.current = true;
       } else {
-        // Update data in-place, keep positions
+        // Update in-place, keep positions
         setNodes(prev => {
           const posMap = {};
           prev.forEach(n => { posMap[n.id] = n.position; });
-          // New nodes that weren't in prev need layout
           const newIds = rfNodes.filter(n => !posMap[n.id]);
           if (newIds.length > 0) {
-            // Re-layout everything
             const laid = layoutGraph(rfNodes, rfEdges);
-            // Keep existing positions for known nodes
             return laid.map(n => posMap[n.id] ? { ...n, position: posMap[n.id] } : n);
           }
           return rfNodes.map(n => ({ ...n, position: posMap[n.id] || { x: 0, y: 0 } }));
@@ -845,10 +846,10 @@ function App() {
   }, [setNodes, setEdges]);
 
   useEffect(() => {
-    if (!INSTANCE_ID) { setError('No instance_id parameter'); return; }
+    if (!INSTANCE_ID && !TEMPLATE_ID) { setError('No instance_id or template_id parameter'); return; }
     fetchData();
-    timerRef.current = setInterval(fetchData, POLL_INTERVAL);
-    return () => clearInterval(timerRef.current);
+    if (!TEMPLATE_ID) timerRef.current = setInterval(fetchData, POLL_INTERVAL);
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [fetchData]);
 
   // Hide loading

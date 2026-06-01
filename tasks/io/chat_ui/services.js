@@ -58,6 +58,19 @@ async function _openFlowGraphTab(instanceId) {
   }
 }
 
+async function _openFlowTemplateGraphTab(templateId) {
+  try {
+    const graphUrl = '/chat/js/flow_graph.html?template_id=' + encodeURIComponent(templateId);
+    const resp = await fetch(graphUrl, { credentials: 'same-origin' });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    let html = await resp.text();
+    const bootstrap = '<script>window.__PAWFLOW_FLOW_TEMPLATE_ID=' + JSON.stringify(templateId) + ';<\/script>\n';
+    html = html.replace('<script type="module">', bootstrap + '<script type="module">');
+    addBlobHtmlTab('template-' + templateId, html);
+  } catch (e) {
+    addMsg('error', t('flowGraphOpenFailed', { error: e.message || e }));
+  }
+}
 function _showFlowStartDialog(instanceId, editOnly) {
   let overlay = document.getElementById('resourceEditorOverlay');
   if (overlay) overlay.remove();

@@ -138,7 +138,7 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
         image_blocks = []
         last_user_idx = -1
         for i, m in enumerate(messages):
-            if m.role == "user" and isinstance(m.content, list):
+            if m.role == "user":
                 last_user_idx = i
 
         for idx, m in enumerate(messages):
@@ -213,7 +213,15 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                         logger.info("Loaded image from FileStore for vision: %s (%d bytes)",
                                     fid, len(data))
                     else:
-                        new_content.append({"type": "text", "text": f"[image: {block.get('filename', '?')}]"})
+                        fid = block.get("file_id", "")
+                        fname = block.get("filename", "image") or "image"
+                        if fid:
+                            new_content.append({
+                                "type": "text",
+                                "text": f"Attached image: fs://filestore/{fid}/{fname}",
+                            })
+                        else:
+                            new_content.append({"type": "text", "text": f"[image: {fname}]"})
                     continue
 
                 new_content.append(block)

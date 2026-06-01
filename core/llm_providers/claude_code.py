@@ -597,10 +597,11 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         import base64 as _b64
         image_blocks = []
 
-        # Find the last user message index
+        # Find the current user message index. Only that message may feed
+        # native vision; older image refs stay as FileStore links in text.
         _last_user_idx = -1
         for i, m in enumerate(messages):
-            if m.role == "user" and isinstance(m.content, list):
+            if m.role == "user":
                 _last_user_idx = i
 
         for idx, m in enumerate(messages):
@@ -690,7 +691,15 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                         # Image is in vision — no text placeholder that would
                         # make the agent see()/read() it redundantly.
                     else:
-                        new_content.append({"type": "text", "text": f"[image: {block.get('filename', '?')}]"})
+                        _fid = block.get("file_id", "")
+                        _fname = block.get("filename", "image") or "image"
+                        if _fid:
+                            new_content.append({
+                                "type": "text",
+                                "text": f"Attached image: fs://filestore/{_fid}/{_fname}",
+                            })
+                        else:
+                            new_content.append({"type": "text", "text": f"[image: {_fname}]"})
                     continue
 
                 new_content.append(block)

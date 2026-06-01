@@ -30,12 +30,13 @@ class LLMOpenaiMixin:
         if getattr(self, "_abort", None) and self._abort.is_set():
             raise AgentCancelled()
 
+        api_messages = self._build_openai_messages(
+            messages,
+            user_id=call_user_id,
+            conversation_id=call_conversation_id)
         body = {
             "model": model,
-            "messages": self._build_openai_messages(
-                messages,
-                user_id=call_user_id,
-                conversation_id=call_conversation_id),
+            "messages": api_messages,
             "stream": True,
         }
         if temperature is not None:
@@ -93,7 +94,31 @@ class LLMOpenaiMixin:
 
             if response.status >= 400:
                 error_body = response.read().decode("utf-8")
-                raise LLMClientError(f"LLM API error {response.status}: {error_body[:500]}")
+                if self._is_vision_rejected_error(error_body):
+                    logger.warning(
+                        "OpenAI-compatible endpoint rejected image input; retrying without native vision blocks")
+                    conn.close()
+                    if parsed.scheme == "https":
+                        conn = http.client.HTTPSConnection(host, port, timeout=self.timeout, context=ctx)
+                    else:
+                        conn = http.client.HTTPConnection(host, port, timeout=self.timeout)
+                    self._active_http_conn = conn
+                    body["messages"] = self._build_openai_messages(
+                        messages,
+                        user_id=call_user_id,
+                        conversation_id=call_conversation_id,
+                        allow_vision=False)
+                    json_body = json.dumps(body).encode("utf-8")
+                    headers["Content-Length"] = str(len(json_body))
+                    conn.request("POST", full_path, body=json_body, headers=headers)
+                    response = conn.getresponse()
+                    if response.status < 400:
+                        pass
+                    else:
+                        error_body = response.read().decode("utf-8")
+                        raise LLMClientError(f"LLM API error {response.status}: {error_body[:500]}")
+                else:
+                    raise LLMClientError(f"LLM API error {response.status}: {error_body[:500]}")
 
             # Parse SSE stream
             content_parts: List[str] = []
@@ -248,41 +273,74 @@ class LLMOpenaiMixin:
             self._active_http_conn = None
             conn.close()
 
-    def _resolve_image_ref(self, block: dict, *,
-                           user_id: str, conversation_id: str) -> dict:
-        """Resolve an image_ref block to an image_url block by loading from FileStore.
-
-        user_id + conversation_id are REQUIRED kwargs (per-call, never
-        read from self.*). Concurrent calls would otherwise race on
-        shared client state — see the call_* refactor in
-        LLMClient.complete / complete_stream.
-        """
-        from core.file_store import FileStore
-        import base64 as _b64
-        _fid = block.get("file_id", "")
-        if not _fid:
-            raise ValueError("image_ref block missing file_id — producer bug")
-        _fname, _data, _ct = FileStore.instance().get_required(
-            _fid, user_id=user_id, conversation_id=conversation_id)
-        _data_b64 = _b64.b64encode(_data).decode("ascii")
-        mime = block.get("mime_type", _ct) or "image/png"
+    @staticmethod
+    def _filestore_link_text(part: dict) -> Optional[dict]:
+        file_id = str(part.get("file_id") or "").strip()
+        if not file_id:
+            return None
+        filename = str(part.get("filename") or "image").strip() or "image"
         return {
-            "type": "image_url",
-            "image_url": {"url": f"data:{mime};base64,{_data_b64}"},
+            "type": "text",
+            "text": f"Attached image: fs://filestore/{file_id}/{filename}",
         }
 
+    @staticmethod
+    def _image_text_link(part: dict) -> Optional[dict]:
+        fs_link = LLMOpenaiMixin._filestore_link_text(part)
+        if fs_link:
+            return fs_link
+        if part.get("type") == "image_url":
+            image_url = part.get("image_url") or {}
+            url = image_url.get("url", "") if isinstance(image_url, dict) else str(image_url or "")
+            if url and not url.startswith("data:"):
+                return {"type": "text", "text": f"Attached image: {url}"}
+        return None
+
+    @staticmethod
+    def _vision_image_part(part: dict) -> Optional[dict]:
+        """Return a native vision part without ever emitting data: payloads."""
+        if part.get("type") == "image_ref":
+            file_id = str(part.get("file_id") or "").strip()
+            if not file_id:
+                return None
+            filename = str(part.get("filename") or "image").strip() or "image"
+            return {
+                "type": "image_url",
+                "image_url": {"url": f"fs://filestore/{file_id}/{filename}"},
+            }
+        if part.get("type") == "image_url":
+            image_url = part.get("image_url") or {}
+            url = image_url.get("url", "") if isinstance(image_url, dict) else str(image_url or "")
+            if url and not url.startswith("data:"):
+                return part
+        return None
+
+    @staticmethod
+    def _is_vision_rejected_error(error_text: str) -> bool:
+        text = (error_text or "").lower()
+        markers = (
+            "support image input",
+            "image input",
+            "image inputs",
+            "image_url",
+            "vision",
+            "multimodal",
+        )
+        return any(marker in text for marker in markers)
+
     def _build_openai_messages(self, messages, *,
-                                user_id: str, conversation_id: str) -> List[Dict[str, Any]]:
+                                user_id: str, conversation_id: str,
+                                allow_vision: bool = True) -> List[Dict[str, Any]]:
         """Convert LLMMessage list to OpenAI API message format.
 
         Messages are regrouped first so the split (assistant text / assistant
         tool_calls) pair emitted by agent_core.persist is fused into the
         single assistant message OpenAI expects (content + tool_calls).
 
-        user_id + conversation_id are required call-scoped identity
-        used to resolve image_ref attachments. Passed through from
-        complete / complete_stream rather than read from self.* —
-        same rationale as the CC call_* refactor.
+        Images are native vision only for the latest user message with image
+        attachments and only when vision is enabled. Older images, or all
+        images when vision is disabled/rejected, become links in text context.
+        Raw image payloads, including data: URLs, are never sent.
         """
         from core.llm_message_regroup import regroup_split_assistant_messages
         messages = regroup_split_assistant_messages(messages)
@@ -296,12 +354,11 @@ class LLMOpenaiMixin:
         if _img_count:
             logger.info("build_openai_messages: %d image part(s) in context", _img_count)
 
-        def _vision_disabled_text(block: dict) -> dict:
-            name = block.get("filename") or block.get("file_id") or "attachment"
-            return {
-                "type": "text",
-                "text": f"[Image {name} omitted: LLM service supports_vision is disabled.]",
-            }
+        vision_enabled = bool(self.supports_vision and allow_vision)
+        last_user_idx = -1
+        for idx, msg in enumerate(messages):
+            if msg.role == "user":
+                last_user_idx = idx
 
         # Sanitize: collect tool_call IDs from assistant messages, drop orphan tool messages
         valid_tc_ids: set = set()
@@ -311,7 +368,8 @@ class LLMOpenaiMixin:
                     valid_tc_ids.add(tc.id)
 
         api_messages = []
-        for m in messages:
+        for idx, m in enumerate(messages):
+            is_current_image_user = vision_enabled and idx == last_user_idx
             if m.role == "tool":
                 # Skip orphan tool messages (no matching assistant tool_call)
                 if m.tool_call_id and m.tool_call_id not in valid_tc_ids:
@@ -326,15 +384,15 @@ class LLMOpenaiMixin:
                 if isinstance(m.content, list):
                     img_parts = []
                     for p in m.content:
-                        if p.get("type") == "image_url":
-                            img_parts.append(p if self.supports_vision else _vision_disabled_text(p))
-                        elif p.get("type") == "image_ref":
-                            if self.supports_vision:
-                                img_parts.append(self._resolve_image_ref(
-                                    p, user_id=user_id,
-                                    conversation_id=conversation_id))
-                            else:
-                                img_parts.append(_vision_disabled_text(p))
+                        if p.get("type") in ("image_url", "image_ref"):
+                            if vision_enabled:
+                                vision_part = self._vision_image_part(p)
+                                if vision_part:
+                                    img_parts.append(vision_part)
+                                    continue
+                            link_part = self._image_text_link(p)
+                            if link_part:
+                                img_parts.append(link_part)
                     if img_parts:
                         api_messages.append({
                             "role": "user",
@@ -370,19 +428,28 @@ class LLMOpenaiMixin:
                             "text": f"[Document: {part.get('filename', 'file')}]\n{part.get('text', '')}",
                         })
                     elif pt == "image_ref":
-                        if self.supports_vision:
-                            parts.append(self._resolve_image_ref(
-                                part, user_id=user_id,
-                                conversation_id=conversation_id))
-                        else:
-                            parts.append(_vision_disabled_text(part))
+                        if is_current_image_user:
+                            vision_part = self._vision_image_part(part)
+                            if vision_part:
+                                parts.append(vision_part)
+                                continue
+                        link_part = self._image_text_link(part)
+                        if link_part:
+                            parts.append(link_part)
                     elif pt == "image_url":
-                        parts.append(part if self.supports_vision else _vision_disabled_text(part))
+                        if is_current_image_user:
+                            vision_part = self._vision_image_part(part)
+                            if vision_part:
+                                parts.append(vision_part)
+                                continue
+                        link_part = self._image_text_link(part)
+                        if link_part:
+                            parts.append(link_part)
                     elif pt == "file_ref":
                         parts.append({"type": "text", "text": f"[file: {part.get('filename', '?')}]"})
                     else:
                         parts.append(part)
-                api_messages.append({"role": m.role, "content": parts})
+                api_messages.append({"role": m.role, "content": parts if parts else m.text_content})
             else:
                 api_messages.append({"role": m.role, "content": m.content})
         return api_messages
@@ -452,11 +519,27 @@ class LLMOpenaiMixin:
         if extra_body:
             body.update(extra_body)
 
-        data = self._http_post(
-            self._chat_completions_endpoint(self.base_url),
-            body,
-            headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
-        )
+        try:
+            data = self._http_post(
+                self._chat_completions_endpoint(self.base_url),
+                body,
+                headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+            )
+        except Exception as exc:
+            if not self._is_vision_rejected_error(str(exc)):
+                raise
+            logger.warning(
+                "OpenAI-compatible endpoint rejected image input; retrying without native vision blocks")
+            body["messages"] = self._build_openai_messages(
+                messages,
+                user_id=call_user_id,
+                conversation_id=call_conversation_id,
+                allow_vision=False)
+            data = self._http_post(
+                self._chat_completions_endpoint(self.base_url),
+                body,
+                headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+            )
         choice = data.get("choices", [{}])[0]
         usage = data.get("usage", {})
         message = choice.get("message", {})

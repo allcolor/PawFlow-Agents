@@ -137,10 +137,128 @@ class TestLLMClientMessageBuilding(unittest.TestCase):
             messages, user_id="u", conversation_id="test_conv")
 
         parts = result[0]["content"]
-        assert parts[0] == {"type": "text", "text": "describe"}
-        assert parts[1]["type"] == "text"
-        assert "supports_vision is disabled" in parts[1]["text"]
+        assert parts == [{"type": "text", "text": "describe"}]
         assert all(part.get("type") != "image_url" for part in parts)
+
+    def test_openai_keeps_historical_image_ref_as_filestore_link_only(self):
+        messages = [
+            LLMMessage(
+                role="user",
+                content=[
+                    {"type": "text", "text": "previous image"},
+                    {"type": "image_ref", "file_id": "img123", "filename": "shot.png"},
+                ],
+                conversation_id="test_conv",
+            ),
+            LLMMessage(role="assistant", content="ack", conversation_id="test_conv"),
+            LLMMessage(role="user", content="current text only", conversation_id="test_conv"),
+        ]
+
+        result = self.client._build_openai_messages(
+            messages, user_id="u", conversation_id="test_conv")
+
+        old_parts = result[0]["content"]
+        assert {"type": "text", "text": "previous image"} in old_parts
+        assert {"type": "text", "text": "Attached image: fs://filestore/img123/shot.png"} in old_parts
+        assert "current text only" == result[2]["content"]
+        assert "data:" not in json.dumps(result)
+        assert "image_url" not in json.dumps(result)
+
+    def test_openai_never_sends_data_image_url_as_base64(self):
+        messages = [LLMMessage(
+            role="user",
+            content=[
+                {"type": "text", "text": "current image"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+            ],
+            conversation_id="test_conv",
+        )]
+
+        result = self.client._build_openai_messages(
+            messages, user_id="u", conversation_id="test_conv")
+
+        assert result == [{"role": "user", "content": [{"type": "text", "text": "current image"}]}]
+        assert "data:" not in json.dumps(result)
+        assert "base64" not in json.dumps(result)
+
+    @patch.object(LLMClient, '_http_post')
+    def test_openai_sends_current_attachment_as_vision_when_enabled(self, mock_post):
+        mock_post.return_value = {
+            "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+            "usage": {},
+        }
+        messages = [LLMMessage(
+            role="user",
+            content=[
+                {"type": "text", "text": "look"},
+                {"type": "image_url", "image_url": {"url": "https://example.test/img.png"}},
+            ],
+            conversation_id="test_conv",
+        )]
+
+        response = self.client._complete_openai(
+            messages, "qwen", None, 0, None, call_user_id="u",
+            call_conversation_id="test_conv")
+
+        assert response.content == "ok"
+        body = mock_post.call_args_list[0].args[1]
+        assert body["messages"] == [{"role": "user", "content": [
+            {"type": "text", "text": "look"},
+            {"type": "image_url", "image_url": {"url": "https://example.test/img.png"}},
+        ]}]
+        assert "data:" not in json.dumps(body)
+        assert "base64" not in json.dumps(body)
+
+    def test_openai_sends_current_filestore_attachment_as_vision_link(self):
+        messages = [LLMMessage(
+            role="user",
+            content=[
+                {"type": "text", "text": "look"},
+                {"type": "image_ref", "file_id": "img123", "filename": "shot.png"},
+            ],
+            conversation_id="test_conv",
+        )]
+
+        result = self.client._build_openai_messages(
+            messages, user_id="u", conversation_id="test_conv")
+
+        assert result == [{"role": "user", "content": [
+            {"type": "text", "text": "look"},
+            {"type": "image_url", "image_url": {"url": "fs://filestore/img123/shot.png"}},
+        ]}]
+        assert "data:" not in json.dumps(result)
+        assert "base64" not in json.dumps(result)
+
+    @patch.object(LLMClient, '_http_post')
+    def test_openai_vision_rejection_retries_with_filestore_links(self, mock_post):
+        captured_bodies = []
+
+        def fake_post(_path, body, headers):
+            captured_bodies.append(json.loads(json.dumps(body)))
+            if len(captured_bodies) == 1:
+                raise LLMClientError("LLM API error 404: No endpoints found that support image input")
+            return {"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}], "usage": {}}
+
+        mock_post.side_effect = fake_post
+        messages = [LLMMessage(
+            role="user",
+            content=[
+                {"type": "text", "text": "look"},
+                {"type": "image_ref", "file_id": "img123", "filename": "shot.png"},
+            ],
+            conversation_id="test_conv",
+        )]
+
+        response = self.client._complete_openai(
+            messages, "qwen", None, 0, None, call_user_id="u",
+            call_conversation_id="test_conv")
+
+        assert response.content == "ok"
+        first_body = captured_bodies[0]
+        retry_body = captured_bodies[1]
+        assert {"type": "image_url", "image_url": {"url": "fs://filestore/img123/shot.png"}} in first_body["messages"][0]["content"]
+        assert {"type": "text", "text": "Attached image: fs://filestore/img123/shot.png"} in retry_body["messages"][0]["content"]
+        assert "image_url" not in json.dumps(retry_body)
 
     def test_openai_tool_result_message(self):
         # Tool message must follow an assistant message with matching tool_calls

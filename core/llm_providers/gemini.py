@@ -446,7 +446,7 @@ class LLMGeminiMixin(GeminiSessionMixin):
         image_blocks = []
         last_user_idx = -1
         for i, msg in enumerate(messages):
-            if getattr(msg, "role", "") == "user" and isinstance(getattr(msg, "content", None), list):
+            if getattr(msg, "role", "") == "user":
                 last_user_idx = i
 
         for idx, msg in enumerate(messages):
@@ -513,9 +513,12 @@ class LLMGeminiMixin(GeminiSessionMixin):
                         logger.info("Loaded image from FileStore for Gemini ACP vision: %s (%d bytes)",
                                     fid, len(data))
                     else:
+                        fid = block.get("file_id", "")
+                        fname = block.get("filename", "image") or "image"
                         new_content.append({
                             "type": "text",
-                            "text": f"[image: {block.get('filename', '?')}]",
+                            "text": (f"Attached image: fs://filestore/{fid}/{fname}"
+                                     if fid else f"[image: {fname}]"),
                         })
                     continue
 

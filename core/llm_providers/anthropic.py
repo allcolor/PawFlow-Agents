@@ -317,12 +317,16 @@ class LLMAnthropicMixin:
         system_text = ""
         api_messages: List[Dict[str, Any]] = []
 
-        def _vision_disabled_block(part: dict) -> Dict[str, Any]:
-            name = part.get("filename") or part.get("file_id") or "attachment"
-            return {
-                "type": "text",
-                "text": f"[Image {name} omitted: LLM service supports_vision is disabled.]",
-            }
+        def _image_link_block(part: dict) -> Optional[Dict[str, Any]]:
+            fid = str(part.get("file_id") or "").strip()
+            if fid:
+                name = str(part.get("filename") or "image").strip() or "image"
+                return {"type": "text", "text": f"Attached image: fs://filestore/{fid}/{name}"}
+            if part.get("type") == "image_url":
+                url = part.get("image_url", {}).get("url", "")
+                if url and not url.startswith("data:"):
+                    return {"type": "text", "text": f"Attached image: {url}"}
+            return None
 
         def _tool_result_content(m) -> Any:
             tool_content: Any = m.content
@@ -334,7 +338,9 @@ class LLMAnthropicMixin:
                         blocks.append({"type": "text", "text": part["text"]})
                     elif part.get("type") == "image_url":
                         if not self.supports_vision:
-                            blocks.append(_vision_disabled_block(part))
+                            link = _image_link_block(part)
+                            if link:
+                                blocks.append(link)
                             continue
                         url = part.get("image_url", {}).get("url", "")
                         if url.startswith("data:"):
@@ -344,11 +350,13 @@ class LLMAnthropicMixin:
                                 "type": "image",
                                 "source": {"type": "base64", "media_type": media_type, "data": b64data},
                             })
-                        else:
+                        elif url:
                             blocks.append({"type": "image", "source": {"type": "url", "url": url}})
                     elif part.get("type") == "image_ref":
                         if not self.supports_vision:
-                            blocks.append(_vision_disabled_block(part))
+                            link = _image_link_block(part)
+                            if link:
+                                blocks.append(link)
                             continue
                         from core.file_store import FileStore
                         import base64 as _b64
@@ -361,7 +369,7 @@ class LLMAnthropicMixin:
                             user_id=user_id,
                             conversation_id=conversation_id)
                         logger.info(
-                            "Loaded image from FileStore for Anthropic vision: %s (%d bytes)",
+                            "Loaded tool-result image from FileStore for Anthropic vision: %s (%d bytes)",
                             _fid, len(_data),
                         )
                         _data_b64 = _b64.b64encode(_data).decode("ascii")
@@ -376,6 +384,11 @@ class LLMAnthropicMixin:
                         })
                 tool_content = blocks if blocks else m.text_content
             return tool_content
+
+        last_user_idx = -1
+        for idx, msg in enumerate(messages):
+            if msg.role == "user":
+                last_user_idx = idx
 
         i = 0
         while i < len(messages):
@@ -426,8 +439,10 @@ class LLMAnthropicMixin:
                     if part.get("type") == "text":
                         content_blocks.append({"type": "text", "text": part["text"]})
                     elif part.get("type") == "image_url":
-                        if not self.supports_vision:
-                            content_blocks.append(_vision_disabled_block(part))
+                        if not (self.supports_vision and i == last_user_idx):
+                            link = _image_link_block(part)
+                            if link:
+                                content_blocks.append(link)
                             continue
                         url = part.get("image_url", {}).get("url", "")
                         if url.startswith("data:"):
@@ -449,8 +464,10 @@ class LLMAnthropicMixin:
                                 "source": {"type": "url", "url": url},
                             })
                     elif part.get("type") == "image_ref":
-                        if not self.supports_vision:
-                            content_blocks.append(_vision_disabled_block(part))
+                        if not (self.supports_vision and i == last_user_idx):
+                            link = _image_link_block(part)
+                            if link:
+                                content_blocks.append(link)
                             continue
                         from core.file_store import FileStore
                         import base64 as _b64

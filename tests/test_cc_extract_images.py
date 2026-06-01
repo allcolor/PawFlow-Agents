@@ -93,7 +93,7 @@ def test_older_user_image_keeps_placeholder():
     assert "[image]" in _first_texts
 
 
-def test_older_user_image_ref_keeps_placeholder_with_filename():
+def test_older_user_image_ref_keeps_filestore_link_with_filename():
     msgs = [
         _msg("user", [
             {"type": "text", "text": "earlier"},
@@ -109,7 +109,7 @@ def test_older_user_image_ref_keeps_placeholder_with_filename():
     assert blocks == []
     _old_texts = [b.get("text", "") for b in msgs[0].content
                   if isinstance(b, dict) and b.get("type") == "text"]
-    assert any("[image: old.png]" in t for t in _old_texts)
+    assert any("fs://filestore/xxx/old.png" in t for t in _old_texts)
 
 
 def test_text_only_user_message_unchanged():

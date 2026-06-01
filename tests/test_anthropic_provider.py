@@ -114,8 +114,10 @@ def test_anthropic_omits_image_blocks_when_service_vision_disabled(caplog):
 
     content = api_messages[0]["content"]
     assert content[0] == {"type": "text", "text": "describe"}
-    assert content[1]["type"] == "text"
-    assert "supports_vision is disabled" in content[1]["text"]
+    assert content[1] == {
+        "type": "text",
+        "text": "Attached image: fs://filestore/img_1/screen.png",
+    }
     assert client._count_anthropic_image_blocks(api_messages) == 0
     assert "Anthropic payload includes image blocks" not in caplog.text
 

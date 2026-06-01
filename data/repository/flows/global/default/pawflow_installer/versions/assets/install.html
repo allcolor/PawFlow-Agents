@@ -121,6 +121,28 @@
 </div>
 </section>
 <section class="screen" data-step="5">
+<h2>Voice I/O</h2>
+<p class="muted">Optional. Install local speech services now so chat TTS and microphone transcription are available immediately after setup.</p>
+<div class="panel">
+<label style="display:flex;align-items:center;gap:8px"><input id="voice_tts_enabled" type="checkbox"> Install Supertonic for TTS</label>
+<div class="formgrid" id="voice_tts_fields">
+<div><label>TTS service id</label><input id="voice_tts_service_id" value="supertonic_tts_service"></div>
+<div><label>Scope</label><select id="voice_tts_scope"><option value="global">Global</option><option value="user">Admin user</option></select></div>
+<div><label>Voice</label><input id="voice_tts_voice" value="M1"></div>
+<div><label>Language</label><input id="voice_tts_lang" value="na"></div>
+</div>
+</div>
+<div class="panel">
+<label style="display:flex;align-items:center;gap:8px"><input id="voice_stt_enabled" type="checkbox"> Install Voicebox for STT</label>
+<div class="formgrid" id="voice_stt_fields">
+<div><label>STT service id</label><input id="voice_stt_service_id" value="voicebox_service"></div>
+<div><label>Scope</label><select id="voice_stt_scope"><option value="global">Global</option><option value="user">Admin user</option></select></div>
+<div><label>Client id</label><input id="voice_stt_client_id" value="pawflow"></div>
+<div><label>Whisper model</label><input id="voice_stt_model" value="turbo"></div>
+</div>
+</div>
+</section>
+<section class="screen" data-step="6">
 <h2>First Conversation</h2>
 <div class="formgrid">
 <div><label>Conversation title</label><input id="first_conversation_title" name="first_conversation_title" value="Welcome to PawFlow" required></div>
@@ -131,7 +153,7 @@
 </div>
 <div id="first_conversation_agents"></div>
 </section>
-<section class="screen" data-step="6">
+<section class="screen" data-step="7">
 <h2>Finalize</h2>
 <p>Finalization writes services, optionally starts the managed server relay, deploys the main flow, starts the executor, creates the first conversation, disables the bootstrap gateway, and redirects to chat.</p>
 <pre id="state">Loading installer state...</pre>
@@ -161,7 +183,7 @@
 </div>
 
 <script>
-const names = ['Admin User','OAuth Configuration','Private Gateway','LLM Services','Relay Server','First Conversation','Finalize'];
+const names = ['Admin User','OAuth Configuration','Private Gateway','LLM Services','Relay Server','Voice I/O','First Conversation','Finalize'];
 let step = 0;
 let status = null;
 const form = document.getElementById('wizard');
@@ -174,10 +196,12 @@ function values() {
   const llmPayload = buildLlmServicesPayload();
   const summarizerPayload = buildSummarizerPayload();
   const relayPayload = buildRelayServerPayload();
+  const voicePayload = buildVoiceServicesPayload();
   const firstConversationPayload = buildFirstConversationPayload();
   v.llm_services = JSON.stringify(llmPayload);
   v.summarizer_service = JSON.stringify(summarizerPayload);
   v.relay_server = JSON.stringify(relayPayload);
+  v.voice_services = JSON.stringify(voicePayload);
   v.first_conversation = JSON.stringify(firstConversationPayload);
   if (llmPayload.length) {
     const first = llmPayload[0];
@@ -282,6 +306,10 @@ let llmServices = [{service_id:'codex_appserver_llm_service', scope:'user', cred
 let activeCredentialIndex = 0;
 let summarizerConfig = {};
 let relayServer = {enabled:false, service_id:'workspace_relay', scope:'global', auto_background_after_seconds:0};
+let voiceServices = {
+  tts:{enabled:false, service_id:'supertonic_tts_service', scope:'global', voice:'M1', lang:'na'},
+  stt:{enabled:false, service_id:'voicebox_service', scope:'global', client_id:'pawflow', stt_model:'turbo'}
+};
 let firstConversation = {title:'Welcome to PawFlow', relay_id:'', agents:[{instance_name:'assistant', definition:'assistant', llm_service:'codex_appserver_llm_service', model:'', tools:'', max_depth:1000, params_text:'{\n  "name": "assistant"\n}'}]};
 function drawSteps() {
   steps.innerHTML = names.map((n, i) => {
@@ -290,8 +318,9 @@ function drawSteps() {
   }).join('');
 }
 function show() {
-  if (step === 5) { collectLlmEditorValues(); renderFirstConversation(); }
+  if (step === 6) { collectLlmEditorValues(); renderFirstConversation(); }
   renderRelayServer();
+  renderVoiceServices();
   screens.forEach((s, i) => s.classList.toggle('active', i === step));
   document.getElementById('back').disabled = step === 0;
   document.getElementById('next').style.display = step === names.length - 1 ? 'none' : '';
@@ -591,6 +620,62 @@ function validateRelayServer() {
   if (spec.auto_background_after_seconds < 0) { err.textContent = 'Relay auto-background delay must be greater than or equal to 0.'; return false; }
   return true;
 }
+function renderVoiceServices() {
+  const ttsEnabled = document.getElementById('voice_tts_enabled');
+  const sttEnabled = document.getElementById('voice_stt_enabled');
+  if (!ttsEnabled || !sttEnabled) return;
+  ttsEnabled.checked = !!voiceServices.tts.enabled;
+  sttEnabled.checked = !!voiceServices.stt.enabled;
+  document.getElementById('voice_tts_service_id').value = voiceServices.tts.service_id || 'supertonic_tts_service';
+  document.getElementById('voice_tts_scope').value = voiceServices.tts.scope || 'global';
+  document.getElementById('voice_tts_voice').value = voiceServices.tts.voice || 'M1';
+  document.getElementById('voice_tts_lang').value = voiceServices.tts.lang || 'na';
+  document.getElementById('voice_stt_service_id').value = voiceServices.stt.service_id || 'voicebox_service';
+  document.getElementById('voice_stt_scope').value = voiceServices.stt.scope || 'global';
+  document.getElementById('voice_stt_client_id').value = voiceServices.stt.client_id || 'pawflow';
+  document.getElementById('voice_stt_model').value = voiceServices.stt.stt_model || 'turbo';
+  document.getElementById('voice_tts_fields').style.opacity = voiceServices.tts.enabled ? '1' : '.5';
+  document.getElementById('voice_stt_fields').style.opacity = voiceServices.stt.enabled ? '1' : '.5';
+}
+function collectVoiceServiceValues() {
+  const ttsEnabled = document.getElementById('voice_tts_enabled');
+  const sttEnabled = document.getElementById('voice_stt_enabled');
+  if (!ttsEnabled || !sttEnabled) return;
+  voiceServices.tts.enabled = ttsEnabled.checked;
+  voiceServices.tts.service_id = document.getElementById('voice_tts_service_id').value.trim() || 'supertonic_tts_service';
+  voiceServices.tts.scope = document.getElementById('voice_tts_scope').value || 'global';
+  voiceServices.tts.voice = document.getElementById('voice_tts_voice').value.trim() || 'M1';
+  voiceServices.tts.lang = document.getElementById('voice_tts_lang').value.trim() || 'na';
+  voiceServices.stt.enabled = sttEnabled.checked;
+  voiceServices.stt.service_id = document.getElementById('voice_stt_service_id').value.trim() || 'voicebox_service';
+  voiceServices.stt.scope = document.getElementById('voice_stt_scope').value || 'global';
+  voiceServices.stt.client_id = document.getElementById('voice_stt_client_id').value.trim() || 'pawflow';
+  voiceServices.stt.stt_model = document.getElementById('voice_stt_model').value.trim() || 'turbo';
+}
+function buildVoiceServicesPayload() {
+  collectVoiceServiceValues();
+  return {
+    tts:{
+      enabled:!!voiceServices.tts.enabled,
+      service_id:voiceServices.tts.service_id || 'supertonic_tts_service',
+      scope:voiceServices.tts.scope || 'global',
+      config:{voice:voiceServices.tts.voice || 'M1', lang:voiceServices.tts.lang || 'na'}
+    },
+    stt:{
+      enabled:!!voiceServices.stt.enabled,
+      service_id:voiceServices.stt.service_id || 'voicebox_service',
+      scope:voiceServices.stt.scope || 'global',
+      config:{client_id:voiceServices.stt.client_id || 'pawflow', stt_model:voiceServices.stt.stt_model || 'turbo'}
+    }
+  };
+}
+function validateVoiceServices() {
+  const spec = buildVoiceServicesPayload();
+  if (spec.tts.enabled && !spec.tts.service_id) { err.textContent = 'TTS service id is required when Supertonic setup is enabled.'; return false; }
+  if (spec.stt.enabled && !spec.stt.service_id) { err.textContent = 'STT service id is required when Voicebox setup is enabled.'; return false; }
+  if (spec.tts.enabled && spec.stt.enabled && spec.tts.service_id === spec.stt.service_id) { err.textContent = 'TTS and STT service ids must be different.'; return false; }
+  return true;
+}
 function renderFirstConversation() {
   const llmIds = new Set(llmServices.map(s => s.service_id));
   firstConversation.agents.forEach(agent => { if (!llmIds.has(agent.llm_service)) agent.llm_service = (llmServices[0] || {}).service_id || ''; });
@@ -690,14 +775,16 @@ function validate() {
   }
   if (step === 3 && (!validateLlmServices() || !field('summarizer_service_id').value || !field('summarizer_llm_service').value)) { err.textContent = err.textContent || 'Configure the summarizer service and linked LLM.'; return false; }
   if (step === 4 && !validateRelayServer()) return false;
-  if (step === 5 && !validateFirstConversation()) return false;
+  if (step === 5 && !validateVoiceServices()) return false;
+  if (step === 6 && !validateFirstConversation()) return false;
   return true;
 }
 function renderReview() {
   const v = values();
   const relayText = relayServer.enabled ? relayServer.service_id + ' [' + relayServer.scope + ']' : 'skipped';
+  const voiceText = [voiceServices.tts.enabled ? voiceServices.tts.service_id + ' [TTS/' + voiceServices.tts.scope + ']' : '', voiceServices.stt.enabled ? voiceServices.stt.service_id + ' [STT/' + voiceServices.stt.scope + ']' : ''].filter(Boolean).join(', ') || 'skipped';
   const conversationRelay = firstConversation.relay_id || 'none';
-  document.getElementById('review').innerHTML = ['admin_username','auth_providers','gateway_skin','ssl_certfile','ssl_keyfile'].map(k => '<div>' + escapeHtml(k) + '</div><div>' + escapeHtml(v[k] || '') + '</div>').join('') + '<div>llm_services</div><div>' + escapeHtml(llmServices.map(s => s.service_id + ' [' + s.scope + ']').join(', ')) + '</div><div>summarizer</div><div>' + escapeHtml((field('summarizer_service_id')?.value || '') + ' -> ' + (field('summarizer_llm_service')?.value || '')) + '</div><div>relay_server</div><div>' + escapeHtml(relayText) + '</div><div>conversation_relay</div><div>' + escapeHtml(conversationRelay) + '</div><div>conversation</div><div>' + escapeHtml(firstConversation.title + ' / ' + firstConversation.agents.map(a => a.instance_name + ' -> ' + a.llm_service).join(', ')) + '</div>';
+  document.getElementById('review').innerHTML = ['admin_username','auth_providers','gateway_skin','ssl_certfile','ssl_keyfile'].map(k => '<div>' + escapeHtml(k) + '</div><div>' + escapeHtml(v[k] || '') + '</div>').join('') + '<div>llm_services</div><div>' + escapeHtml(llmServices.map(s => s.service_id + ' [' + s.scope + ']').join(', ')) + '</div><div>summarizer</div><div>' + escapeHtml((field('summarizer_service_id')?.value || '') + ' -> ' + (field('summarizer_llm_service')?.value || '')) + '</div><div>relay_server</div><div>' + escapeHtml(relayText) + '</div><div>voice_services</div><div>' + escapeHtml(voiceText) + '</div><div>conversation_relay</div><div>' + escapeHtml(conversationRelay) + '</div><div>conversation</div><div>' + escapeHtml(firstConversation.title + ' / ' + firstConversation.agents.map(a => a.instance_name + ' -> ' + a.llm_service).join(', ')) + '</div>';
 }
 function loadSkins(skins) {
   const select = document.getElementById('gateway_skin');
@@ -832,6 +919,12 @@ document.getElementById('summarizer_params').addEventListener('input', collectLl
 document.getElementById('relay_server_enabled').addEventListener('change', () => { collectRelayServerValues(); renderRelayServer(); renderFirstConversation(); });
 document.getElementById('relay_server_fields').addEventListener('input', () => { collectRelayServerValues(); renderFirstConversation(); });
 document.getElementById('relay_server_fields').addEventListener('change', () => { collectRelayServerValues(); renderFirstConversation(); });
+document.getElementById('voice_tts_enabled').addEventListener('change', () => { collectVoiceServiceValues(); renderVoiceServices(); });
+document.getElementById('voice_stt_enabled').addEventListener('change', () => { collectVoiceServiceValues(); renderVoiceServices(); });
+document.getElementById('voice_tts_fields').addEventListener('input', collectVoiceServiceValues);
+document.getElementById('voice_tts_fields').addEventListener('change', collectVoiceServiceValues);
+document.getElementById('voice_stt_fields').addEventListener('input', collectVoiceServiceValues);
+document.getElementById('voice_stt_fields').addEventListener('change', collectVoiceServiceValues);
 document.getElementById('add_first_agent').addEventListener('click', () => { collectFirstConversationValues(); firstConversation.agents.push({instance_name:'agent_' + (firstConversation.agents.length + 1), definition:'assistant', llm_service:(llmServices[0] || {}).service_id || '', model:'', tools:'', max_depth:1000, params_text:'{}'}); renderFirstConversation(); });
 document.getElementById('first_conversation_agents').addEventListener('input', collectFirstConversationValues);
 document.getElementById('first_conversation_agents').addEventListener('change', collectFirstConversationValues);
@@ -860,9 +953,10 @@ form.addEventListener('submit', async e => {
 });
 renderLlmServices();
 renderRelayServer();
+renderVoiceServices();
 renderFirstConversation();
 show();
-refresh().then(() => { renderLlmServices(); renderRelayServer(); renderFirstConversation(); show(); }).catch(e => { document.getElementById('state').textContent = String(e); });
+refresh().then(() => { renderLlmServices(); renderRelayServer(); renderVoiceServices(); renderFirstConversation(); show(); }).catch(e => { document.getElementById('state').textContent = String(e); });
 </script>
 </body>
 </html>

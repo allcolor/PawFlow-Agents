@@ -712,6 +712,10 @@ if (typeof hljs !== 'undefined') {
           <span class="ami-icon">U</span>
           <div><div class="ami-label">User Management</div><div class="ami-desc">Manage local users and linked identities</div></div>
         </div>
+        <div class="action-menu-item" onclick="closeAdminSettingsMenu();openOAuthTokensDialog()">
+          <span class="ami-icon">T</span>
+          <div><div class="ami-label">OAuth Tokens</div><div class="ami-desc">Create temporary external-login onboarding tokens</div></div>
+        </div>
         <div class="action-menu-item" onclick="closeAdminSettingsMenu();openSystemParamsDialog()">
           <span class="ami-icon">P</span>
           <div><div class="ami-label">System Parameters</div><div class="ami-desc">Guided global variables and secrets</div></div>

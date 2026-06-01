@@ -38,6 +38,16 @@ def test_service_parameter_fill_helper_is_wired_in_chat_ui():
     assert "button.svc-param-fill, button.svc-param-fill:hover" in html
 
 
+def test_admin_settings_menu_exposes_oauth_onboarding_tokens():
+    template = Path("tasks/io/chat_ui/template.html").read_text(encoding="utf-8")
+    admin_js = Path("tasks/io/chat_ui/admin_settings.js").read_text(encoding="utf-8")
+
+    assert "openOAuthTokensDialog()" in template
+    assert "admin_oauth_token_create" in admin_js
+    assert "admin_oauth_tokens_list" in admin_js
+    assert "Tokens are one-time and disappear when used, expired, or deleted." in admin_js
+
+
 def test_relay_install_hides_token_parameter():
     src = Path("tasks/io/chat_ui/resources.js").read_text(encoding="utf-8")
     relay_src = Path("services/filesystem_service.py").read_text(encoding="utf-8")

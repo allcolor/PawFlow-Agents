@@ -124,9 +124,17 @@ used for no-tool review calls. If no summarizer-backed LLM is available, package
 and skill review fails closed.
 
 The chat header admin gear is intentionally limited to objects that are not
-naturally service instances: user management and a guided view over a small
-manifest of global system parameters such as `embedding_llm_service` and
-`PAWFLOW_USE_RTK`. Fields already owned by a service stay in that service.
+naturally service instances: user management, temporary OAuth onboarding tokens,
+and a guided view over a small manifest of global system parameters such as
+`embedding_llm_service` and `PAWFLOW_USE_RTK`. Fields already owned by a service
+stay in that service.
+
+External OAuth login fails closed after the provider validates the browser user
+unless the provider identity already resolves to an existing PawFlow user. Admins
+can open the gear menu and create a one-time OAuth onboarding token with a TTL.
+The token either creates a new PawFlow user with the configured role or links the
+validated provider identity to a configured existing user. Tokens are stored only
+as hashes and are deleted when used, when revoked, or when their TTL expires.
 
 ### `privateGateway`
 

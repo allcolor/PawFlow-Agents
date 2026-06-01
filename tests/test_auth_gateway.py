@@ -377,5 +377,108 @@ class TestIdentityServiceResolve(unittest.TestCase):
         self.assertEqual(self.ids.resolve("google", "google:bbb"), "bob")
 
 
+def _isolated_auth_paths(tmp_path, monkeypatch):
+    import core.paths as paths
+    from core.identity_service import IdentityService
+    from core.security import SecurityManager
+
+    monkeypatch.setattr(paths, "USERS_FILE", tmp_path / "users.json")
+    monkeypatch.setattr(paths, "SESSIONS_FILE", tmp_path / "sessions.json")
+    monkeypatch.setattr(paths, "SECURITY_FILE", tmp_path / "security.json")
+    monkeypatch.setattr(paths, "USER_CONFIG_DIR", tmp_path / "users")
+    monkeypatch.setattr(paths, "OAUTH_INVITE_TOKENS_FILE", tmp_path / "oauth_invite_tokens.json")
+    SecurityManager._instance = None
+    IdentityService.reset()
+
+
+class _SuccessfulOAuthProvider:
+    def __init__(self, *, provider="github", user_id="ext-1", username="external", email="ext@example.com"):
+        self.provider = provider
+        self.user_id = user_id
+        self.username = username
+        self.email = email
+
+    def exchange_code(self, code, redirect_uri):
+        return AuthResult(
+            success=True,
+            provider=self.provider,
+            user_id=self.user_id,
+            username=self.username,
+            email=self.email,
+            display_name="External User",
+            claims={"email": self.email},
+        )
+
+
+def test_external_oauth_without_existing_user_requires_invite_token(tmp_path, monkeypatch):
+    _isolated_auth_paths(tmp_path, monkeypatch)
+    from services.auth_gateway_service import AuthGatewayService
+
+    gw = AuthGatewayService({"providers": {}})
+    gw._providers["github"] = _SuccessfulOAuthProvider()
+
+    result = gw.authenticate_oauth("github", "code", "https://app.example/auth/callback")
+
+    assert result.success is False
+    assert "onboarding token" in result.error
+    assert getattr(result, "pending_oauth_id", "")
+
+
+def test_invite_token_creates_user_and_is_deleted_after_use(tmp_path, monkeypatch):
+    _isolated_auth_paths(tmp_path, monkeypatch)
+    from core import oauth_invite_tokens
+    from core.security import SecurityManager
+    from services.auth_gateway_service import AuthGatewayService
+
+    gw = AuthGatewayService({"providers": {}})
+    gw._providers["github"] = _SuccessfulOAuthProvider()
+    pending = gw.authenticate_oauth("github", "code", "https://app.example/auth/callback")
+    invite = oauth_invite_tokens.create_token(role="editor", ttl_seconds=3600, created_by="admin")
+
+    completed = gw.complete_pending_oauth(getattr(pending, "pending_oauth_id"), invite["token"])
+
+    assert completed.success is True
+    user = SecurityManager.get_instance().get_user("external")
+    assert user is not None
+    assert user.role.value == "editor"
+    assert oauth_invite_tokens.list_tokens() == []
+
+
+def test_invite_token_links_existing_user_and_is_deleted_after_use(tmp_path, monkeypatch):
+    _isolated_auth_paths(tmp_path, monkeypatch)
+    from core import oauth_invite_tokens
+    from core.identity_service import IdentityService
+    from core.security import SecurityManager, Role
+    from services.auth_gateway_service import AuthGatewayService
+
+    sm = SecurityManager.get_instance()
+    sm.create_user("alice", "pass", Role.OPERATOR, email="alice@example.com")
+    gw = AuthGatewayService({"providers": {}})
+    gw._providers["github"] = _SuccessfulOAuthProvider(username="ignored", user_id="gh-999")
+    pending = gw.authenticate_oauth("github", "code", "https://app.example/auth/callback")
+    invite = oauth_invite_tokens.create_token(
+        role="viewer", link_username="alice", ttl_seconds=3600, created_by="admin")
+
+    completed = gw.complete_pending_oauth(getattr(pending, "pending_oauth_id"), invite["token"])
+
+    assert completed.success is True
+    assert completed.username == "alice"
+    assert IdentityService.instance().resolve("github", "gh-999") == "alice"
+    assert oauth_invite_tokens.list_tokens() == []
+
+
+def test_oauth_invite_tokens_delete_on_expiry_and_revoke(tmp_path, monkeypatch):
+    _isolated_auth_paths(tmp_path, monkeypatch)
+    from core import oauth_invite_tokens
+
+    short = oauth_invite_tokens.create_token(role="viewer", ttl_seconds=60, created_by="admin")
+    active = oauth_invite_tokens.create_token(role="viewer", ttl_seconds=3600, created_by="admin")
+    monkeypatch.setattr(oauth_invite_tokens.time, "time", lambda: short["expires_at"] + 1)
+
+    assert [t["id"] for t in oauth_invite_tokens.list_tokens()] == [active["id"]]
+    assert oauth_invite_tokens.revoke_token(active["id"]) is True
+    assert oauth_invite_tokens.list_tokens() == []
+
+
 if __name__ == "__main__":
     unittest.main()

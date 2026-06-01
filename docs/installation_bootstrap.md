@@ -145,7 +145,9 @@ On a fresh server data volume, PawFlow starts in bootstrap mode:
 5. Persist installer progress in a server-side install state file.
 6. Never create a default user relay implicitly during bootstrap; the wizard
    exposes an explicit opt-in managed server relay step instead.
-7. Use the standalone relay runtime image for server workspaces; local source
+7. Expose an optional Voice I/O step that can install Supertonic as a local TTS
+   service and Voicebox as a local STT service during first-run setup.
+8. Use the standalone relay runtime image for server workspaces; local source
    mounts are opt-in development behavior only.
 
 The server container receives the host Docker socket when available so server
@@ -157,6 +159,12 @@ creation remains blocked until Docker socket access is provided.
 `RoyBetty` is a temporary bootstrap key. The installer must force a replacement
 before finalization. The bootstrap `privateGateway` service is disabled when the
 installer finalizes.
+
+The Voice I/O step is opt-in. When enabled, the installer creates a
+`supertonicTTS` service named `supertonic_tts_service` for chat speech playback
+and a `voicebox` service named `voicebox_service` for browser microphone
+transcription. Both use the services' managed local runtime defaults, so the
+webchat TTS/STT controls can discover them immediately after finalization.
 
 Bootstrap HTTPS is mandatory. A first-run self-signed certificate is generated
 under `data/system/ssl/bootstrap.crt` with key

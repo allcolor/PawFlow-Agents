@@ -52,6 +52,7 @@ INSTALL_STEPS = [
     "llm_services",
     "summarizer_service",
     "relay_server",
+    "voice_services",
     "variables",
     "secrets",
     "cli_credentials",
@@ -265,6 +266,7 @@ def _public_draft(draft: Dict[str, Any]) -> Dict[str, Any]:
         "auth",
         "llm_services",
         "summarizer_service",
+        "voice_services",
         "flows",
         "conversation",
     ):
@@ -900,6 +902,71 @@ def _relay_server_spec(payload: Dict[str, Any]) -> Dict[str, Any] | None:
     }
 
 
+def _bool_payload(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _voice_service_specs(payload: Dict[str, Any]) -> list[Dict[str, Any]]:
+    raw = _json_field(payload, "voice_services", {})
+    if raw and not isinstance(raw, dict):
+        raise ValueError("voice_services must be an object")
+    raw = raw or {}
+
+    specs: list[Dict[str, Any]] = []
+    tts = raw.get("tts") or {}
+    if tts and not isinstance(tts, dict):
+        raise ValueError("voice_services.tts must be an object")
+    if _bool_payload(tts.get("enabled") if tts else payload.get("install_tts_service")):
+        service_id = str(tts.get("service_id") or payload.get("tts_service_id") or "supertonic_tts_service").strip()
+        if not service_id:
+            raise ValueError("TTS service id is required")
+        config = {
+            "base_url": "http://127.0.0.1:7788",
+            "auto_start": True,
+            "auto_install": True,
+            "install_dir": "data/runtime/supertonic3",
+            "voice": "M1",
+            "lang": "na",
+            "response_format": "wav",
+        }
+        config.update(dict(tts.get("config") or {}))
+        specs.append({
+            "kind": "tts",
+            "service_id": service_id,
+            "scope": _normalize_install_scope(str(tts.get("scope") or payload.get("voice_service_scope") or "global")),
+            "service_type": "supertonicTTS",
+            "config": {k: v for k, v in config.items() if v not in ("", None)},
+        })
+
+    stt = raw.get("stt") or {}
+    if stt and not isinstance(stt, dict):
+        raise ValueError("voice_services.stt must be an object")
+    if _bool_payload(stt.get("enabled") if stt else payload.get("install_stt_service")):
+        service_id = str(stt.get("service_id") or payload.get("stt_service_id") or "voicebox_service").strip()
+        if not service_id:
+            raise ValueError("STT service id is required")
+        config = {
+            "base_url": "http://127.0.0.1:17493",
+            "client_id": "pawflow",
+            "stt_model": "turbo",
+            "auto_start": True,
+            "auto_install": True,
+            "install_dir": "data/runtime/voicebox",
+            "preload_stt_model": True,
+        }
+        config.update(dict(stt.get("config") or {}))
+        specs.append({
+            "kind": "stt",
+            "service_id": service_id,
+            "scope": _normalize_install_scope(str(stt.get("scope") or payload.get("voice_service_scope") or "global")),
+            "service_type": "voicebox",
+            "config": {k: v for k, v in config.items() if v not in ("", None)},
+        })
+    return specs
+
+
 def _list_field(value: Any) -> list[str]:
     if isinstance(value, list):
         return [str(item).strip() for item in value if str(item).strip()]
@@ -1243,6 +1310,39 @@ def _install_relay_server(payload: Dict[str, Any], admin_username: str) -> str:
     return service_id
 
 
+def _install_voice_services(payload: Dict[str, Any], admin_username: str) -> list[Dict[str, str]]:
+    specs = _voice_service_specs(payload)
+    if not specs:
+        return []
+    from tasks import _register_all_services
+    from core.service_registry import ServiceRegistry
+
+    _register_all_services()
+    reg = ServiceRegistry.get_instance()
+    installed = []
+    for spec in specs:
+        reg.install(
+            scope=spec["scope"],
+            scope_id=_install_scope_id(spec["scope"], admin_username),
+            service_id=spec["service_id"],
+            service_type=spec["service_type"],
+            config=spec["config"],
+            description=(
+                "Supertonic TTS service installed from first-run bootstrap"
+                if spec["kind"] == "tts"
+                else "Voicebox STT service installed from first-run bootstrap"
+            ),
+            enabled=True,
+        )
+        installed.append({
+            "kind": spec["kind"],
+            "scope": spec["scope"],
+            "service_id": spec["service_id"],
+            "service_type": spec["service_type"],
+        })
+    return installed
+
+
 def _deploy_main_flow(private_gateway_service_id: str,
                       tls_config: Dict[str, str],
                       auth_config: Dict[str, Any],
@@ -1396,6 +1496,8 @@ def _rollback_service_refs(payload: Dict[str, Any]) -> list[Dict[str, str]]:
     relay = _relay_server_spec(payload)
     if relay:
         refs.append({"scope": relay["scope"], "service_id": relay["service_id"]})
+    for spec in _voice_service_specs(payload):
+        refs.append({"scope": spec["scope"], "service_id": spec["service_id"]})
     return refs
 
 
@@ -1474,6 +1576,7 @@ def _run_install_smoke_checks(
     first_conversation_id: str,
     auth_config: Dict[str, Any],
     relay_service_id: str = "",
+    voice_services: list[Dict[str, str]] | None = None,
 ) -> Dict[str, Any]:
     """Run final internal smoke checks before marking first-run install complete."""
     from core.conversation_store import ConversationStore
@@ -1521,6 +1624,20 @@ def _run_install_smoke_checks(
         )
     else:
         record("relay_server", True, skipped=True)
+
+    voice_services = list(voice_services or [])
+    voice_ok = True
+    for item in voice_services:
+        service_id = item.get("service_id") or ""
+        scope = item.get("scope") or "global"
+        expected_type = item.get("service_type") or ""
+        sdef = reg.get_definition(scope, _install_scope_id(scope, admin_user), service_id)
+        ok = sdef is not None and sdef.enabled and sdef.service_type == expected_type
+        voice_ok = voice_ok and ok
+        record(f"voice_{item.get('kind') or service_id}_service", ok,
+               service_id=service_id, service_type=expected_type)
+    record("voice_services", voice_ok, skipped=not voice_services,
+           services=[item.get("service_id", "") for item in voice_services])
 
     llm_def = reg.resolve_definition(llm_service_id, user_id=admin_user)
     record(
@@ -1619,6 +1736,7 @@ def finalize_install(payload: Dict[str, Any]) -> Dict[str, Any]:
     primary_provider = str((llm_specs[0].get("config") or {}).get("provider") or "")
     summarizer_plan = _summarizer_spec(payload, llm_specs[0]["service_id"])
     relay_plan = _relay_server_spec(payload)
+    voice_plan = _voice_service_specs(payload)
     rollback_refs = _rollback_service_refs(payload)
     if not MAIN_TEMPLATE.exists():
         raise ValueError(f"main PawFlow flow template is missing: {MAIN_TEMPLATE}")
@@ -1634,6 +1752,7 @@ def finalize_install(payload: Dict[str, Any]) -> Dict[str, Any]:
     admin_user = str(admin_username)
     llm_service_id = str(payload.get("llm_service_id") or "").strip()
     relay_service_id = ""
+    voice_services: list[Dict[str, str]] = []
     first_conversation_id = ""
     runtime_artifacts_created = False
     try:
@@ -1651,6 +1770,7 @@ def finalize_install(payload: Dict[str, Any]) -> Dict[str, Any]:
         main_instance_id = _deploy_main_flow(final_gateway_service_id, tls_config, auth_config, listener_port)
         _start_main_flow_executor(main_instance_id)
         relay_service_id = _install_relay_server(payload, admin_user)
+        voice_services = _install_voice_services(payload, admin_user)
         first_conversation_id = _create_first_conversation(
             admin_user,
             payload,
@@ -1668,6 +1788,7 @@ def finalize_install(payload: Dict[str, Any]) -> Dict[str, Any]:
             first_conversation_id=first_conversation_id,
             auth_config=auth_config,
             relay_service_id=relay_service_id,
+            voice_services=voice_services,
         )
     except Exception:
         if runtime_artifacts_created or first_conversation_id:
@@ -1704,6 +1825,7 @@ def finalize_install(payload: Dict[str, Any]) -> Dict[str, Any]:
     checks["llm_credential_pool"] = True
     checks["summarizer_service"] = True
     checks["relay_server"] = True
+    checks["voice_services"] = True
     checks["summarizer_llm_resolution"] = True
     checks["main_flow_deployed"] = True
     checks["main_flow_executor"] = True
@@ -1753,6 +1875,18 @@ def finalize_install(payload: Dict[str, Any]) -> Dict[str, Any]:
         "enabled": bool(relay_plan),
         "service_id": relay_plan["service_id"] if relay_plan else "",
         "scope": relay_plan["scope"] if relay_plan else "",
+    }
+    draft["voice_services"] = {
+        "enabled": bool(voice_plan),
+        "services": [
+            {
+                "kind": spec["kind"],
+                "service_id": spec["service_id"],
+                "scope": spec["scope"],
+                "service_type": spec["service_type"],
+            }
+            for spec in voice_plan
+        ],
     }
     draft["flows"] = {"main_instance_id": main_instance_id}
     draft["conversation"] = {

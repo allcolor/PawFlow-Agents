@@ -551,6 +551,16 @@ class TestOAuthCallbackTask(unittest.TestCase):
         })
         state = svc.generate_state()
 
+        from core.identity_service import IdentityService
+        from core.security import SecurityManager, Role
+        sm = SecurityManager.get_instance()
+        try:
+            sm.create_user("oauth_existing_user", "pass", Role.VIEWER,
+                           email="user@example.com")
+        except ValueError:
+            pass
+        IdentityService.instance().link("oauth_existing_user", "google", "google-uid-42")
+
         from tasks.io.oauth_callback import OAuthCallbackTask
         task = OAuthCallbackTask({
             "success_redirect": "/chat",
@@ -638,6 +648,16 @@ class TestOAuthCallbackTask(unittest.TestCase):
         relay_cb = "http://127.0.0.1:54321/callback"
         state = svc.generate_state(metadata={"relay_callback": relay_cb})
 
+        from core.identity_service import IdentityService
+        from core.security import SecurityManager, Role
+        sm = SecurityManager.get_instance()
+        try:
+            sm.create_user("oauth_relay_user", "pass", Role.VIEWER,
+                           email="relay@example.com")
+        except ValueError:
+            pass
+        IdentityService.instance().link("oauth_relay_user", "google", "google-uid-relay")
+
         from tasks.io.oauth_callback import OAuthCallbackTask
         task = OAuthCallbackTask({"success_redirect": "/chat"})
         task._services = {"oauth": svc}
@@ -676,6 +696,16 @@ class TestOAuthCallbackTask(unittest.TestCase):
             "redirect_uri": "http://localhost/cb",
         })
         state = svc.generate_state()
+
+        from core.identity_service import IdentityService
+        from core.security import SecurityManager, Role
+        sm = SecurityManager.get_instance()
+        try:
+            sm.create_user("oauth_github_user", "pass", Role.VIEWER,
+                           email="octocat@github.com")
+        except ValueError:
+            pass
+        IdentityService.instance().link("oauth_github_user", "github", "12345")
 
         from tasks.io.oauth_callback import OAuthCallbackTask
         task = OAuthCallbackTask({})

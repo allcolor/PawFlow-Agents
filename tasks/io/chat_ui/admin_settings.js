@@ -135,6 +135,56 @@ function adminUnlinkIdentity(username, channel) {
     .subscribe(function(d) { if (d.error) addMsg('error', d.error); else { document.querySelector('.exec-overlay').remove(); openAdminUsersDialog(); } });
 }
 
+function openOAuthTokensDialog() {
+  if (!_isAdmin()) return;
+  action$('admin_oauth_tokens_list').subscribe(function(data) {
+    if (data.error) { addMsg('error', data.error); return; }
+    var rows = (data.tokens || []).map(function(tok) {
+      var ttl = Math.max(0, Math.floor(((tok.expires_at || 0) * 1000 - Date.now()) / 1000));
+      return '<tr>'
+        + '<td>' + adminEsc(tok.prefix || '') + '...</td>'
+        + '<td>' + adminEsc(tok.link_username || '') + '</td>'
+        + '<td>' + adminEsc(tok.role || '') + '</td>'
+        + '<td>' + adminEsc(tok.created_by || '') + '</td>'
+        + '<td>' + ttl + 's</td>'
+        + '<td><button onclick=\'adminRevokeOAuthToken(' + adminJsArg(tok.id) + ')\'>Delete</button></td>'
+        + '</tr>';
+    }).join('') || '<tr><td colspan="6" style="color:var(--pf-muted);">No active OAuth onboarding tokens</td></tr>';
+    var body = '<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;align-items:end;">'
+      + '<select id="adm-oauth-role"><option value="viewer">viewer</option><option value="operator">operator</option><option value="editor">editor</option><option value="admin">admin</option></select>'
+      + '<input id="adm-oauth-link" placeholder="link existing user (optional)">'
+      + '<input id="adm-oauth-ttl" type="number" min="60" value="3600" placeholder="TTL seconds">'
+      + '<button onclick="adminCreateOAuthToken()">Create token</button>'
+      + '<div style="color:var(--pf-muted);font-size:11px;">Tokens are one-time and disappear when used, expired, or deleted.</div>'
+      + '</div><div id="adm-oauth-created" style="display:none;padding:8px;border:1px solid var(--pf-border);border-radius:6px;background:var(--pf-sidebar);"></div>'
+      + '<table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr>'
+      + '<th>Prefix</th><th>Link user</th><th>Create role</th><th>Created by</th><th>TTL</th><th></th>'
+      + '</tr></thead><tbody>' + rows + '</tbody></table>';
+    _adminOverlay('OAuth Onboarding Tokens', body, '');
+  });
+}
+
+function adminCreateOAuthToken() {
+  action$('admin_oauth_token_create', {
+    role: document.getElementById('adm-oauth-role').value,
+    link_username: document.getElementById('adm-oauth-link').value,
+    ttl_seconds: parseInt(document.getElementById('adm-oauth-ttl').value || '3600', 10),
+  }).subscribe(function(d) {
+    if (d.error) { addMsg('error', d.error); return; }
+    var box = document.getElementById('adm-oauth-created');
+    if (box && d.token && d.token.token) {
+      box.style.display = '';
+      box.innerHTML = '<strong>New token, copy it now:</strong><br><code style="word-break:break-all;">'
+        + adminEsc(d.token.token) + '</code>';
+    }
+  });
+}
+
+function adminRevokeOAuthToken(tokenId) {
+  action$('admin_oauth_token_revoke', { token_id: tokenId })
+    .subscribe(function(d) { if (d.error) addMsg('error', d.error); else { document.querySelector('.exec-overlay').remove(); openOAuthTokensDialog(); } });
+}
+
 function openSystemParamsDialog() {
   if (!_isAdmin()) return;
   action$('system_params_get').subscribe(function(data) {

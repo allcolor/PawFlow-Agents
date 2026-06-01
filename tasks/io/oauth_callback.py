@@ -179,7 +179,7 @@ class OAuthCallbackTask(BaseTask):
             return [self._error_response(flowfile, 502, "No user ID from provider")]
 
         # Create session via SecurityManager
-        from core.security import SecurityManager, Role
+        from core.security import SecurityManager
         sm = SecurityManager.get_instance()
 
         # Find or create user via IdentityService
@@ -189,18 +189,10 @@ class OAuthCallbackTask(BaseTask):
         user = sm.get_user(username) if username else None
 
         if not user:
-            # Auto-create user
-            username = email.split("@")[0] if email else f"{service.provider}_{oauth_id[:8]}"
-            base = username
-            counter = 1
-            while sm.get_user(username):
-                username = f"{base}_{counter}"
-                counter += 1
-            default_role_str = service.default_role
-            default_role = Role(default_role_str) if default_role_str in [r.value for r in Role] else Role.OPERATOR
-            user = sm.create_user(username, "", default_role,
-                                  email=email, display_name=display_name or username)
-            ids.link(username, service.provider, oauth_id)
+            return [self._error_response(
+                flowfile, 403,
+                "OAuth account is not linked to a PawFlow user. Use the PawFlow auth gateway and an admin onboarding token.",
+            )]
 
         if not user.enabled:
             return [self._error_response(flowfile, 403, "Account disabled")]
@@ -306,7 +298,10 @@ class OAuthCallbackTask(BaseTask):
         result = auth_svc.authenticate_oauth(provider_name, code, redirect_uri, ip=ip)
 
         if not result.success:
-            return [self._login_redirect(flowfile, result.error)]
+            return [self._login_redirect(
+                flowfile, result.error,
+                pending_oauth_id=getattr(result, "pending_oauth_id", ""),
+            )]
 
         # Create session
         from core.security import SecurityManager
@@ -383,10 +378,15 @@ class OAuthCallbackTask(BaseTask):
             return OAuthProviderService(self.config)
         return None
 
-    def _login_redirect(self, flowfile: FlowFile, error: str) -> FlowFile:
+    def _login_redirect(self, flowfile: FlowFile, error: str,
+                        pending_oauth_id: str = "") -> FlowFile:
         """Redirect to login page with error message."""
         logger.warning(f"OAuth login failed: {error}")
-        redirect = f"/auth/login?error={urllib.parse.quote(error)}"
+        params = {"error": error}
+        if pending_oauth_id:
+            params["pending_oauth"] = pending_oauth_id
+        redirect = "/auth/login?" + urllib.parse.urlencode(
+            params, quote_via=urllib.parse.quote)
         flowfile.set_content(b"")
         flowfile.set_attribute("http.response.status", "302")
         flowfile.set_attribute("http.response.header.Location", redirect)

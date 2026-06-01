@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from core import FlowFile, ServiceFactory
@@ -75,3 +77,38 @@ def test_private_gateway_cookie_is_bound_to_secret_refs():
     assert private_gateway._verify_cookie(
         cookie.split(".", 1)[1], "127.0.0.1",
         secret_refs="privategateway.bootstrap") is False
+
+
+def test_admin_can_create_list_and_delete_oauth_onboarding_tokens(tmp_path, monkeypatch):
+    import core.paths as paths
+    from tasks.ai.actions.admin_settings import _handle_admin_settings
+
+    monkeypatch.setattr(paths, "OAUTH_INVITE_TOKENS_FILE", tmp_path / "oauth_tokens.json")
+
+    ff = _admin_flowfile()
+    result = _handle_admin_settings(None, "admin_oauth_token_create", {
+        "role": "operator",
+        "ttl_seconds": 600,
+    }, None, "admin", ff)
+    created = json.loads(result[0].get_content().decode("utf-8"))
+
+    assert created["ok"] is True
+    assert created["token"]["token"].startswith("pfo_")
+
+    ff_list = _admin_flowfile()
+    listed = _handle_admin_settings(
+        None, "admin_oauth_tokens_list", {}, None, "admin", ff_list)
+    payload = json.loads(listed[0].get_content().decode("utf-8"))
+    assert len(payload["tokens"]) == 1
+    assert "token" not in payload["tokens"][0]
+
+    ff_del = _admin_flowfile()
+    deleted = _handle_admin_settings(None, "admin_oauth_token_revoke", {
+        "token_id": payload["tokens"][0]["id"],
+    }, None, "admin", ff_del)
+    assert json.loads(deleted[0].get_content().decode("utf-8"))["ok"] is True
+
+    ff_empty = _admin_flowfile()
+    empty = _handle_admin_settings(
+        None, "admin_oauth_tokens_list", {}, None, "admin", ff_empty)
+    assert json.loads(empty[0].get_content().decode("utf-8"))["tokens"] == []

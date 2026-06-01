@@ -161,9 +161,19 @@ class ServeLoginTask(BaseTask):
         query = flowfile.get_attribute("http.query") or ""
         query_params = urllib.parse.parse_qs(query)
         error = (query_params.get("error") or [""])[0]
+        pending_oauth = (query_params.get("pending_oauth") or [""])[0]
         error_html = ""
         if error:
             error_html = f'<div class="error">{html.escape(error)}</div>\n'
+        token_html = ""
+        if pending_oauth:
+            token_html = f'''
+<form method="POST" action="/auth/login/token" class="login-form">
+  <input name="pending_oauth" type="hidden" value="{html.escape(pending_oauth)}">
+  <input name="token" type="password" placeholder="OAuth onboarding token" required autocomplete="one-time-code">
+  <button type="submit">Complete sign in</button>
+</form>
+'''
 
         divider = '<div class="divider"><span>or</span></div>' if has_builtin and oauth_providers else ''
 
@@ -209,6 +219,7 @@ h1 {{ text-align: center; margin-bottom: 8px; font-size: 24px; color: #fff; }}
   <h1>{title}</h1>
   <p class="subtitle">Sign in to continue</p>
   {error_html}
+  {token_html}
   {builtin_html}
   {divider}
   {buttons_html}

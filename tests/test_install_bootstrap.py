@@ -1205,6 +1205,48 @@ def test_relay_server_spec_ignores_client_token():
     assert spec["config"]["mode"] == "readwrite"
 
 
+def test_install_voice_services_creates_supertonic_and_voicebox():
+    ServiceRegistry.reset()
+    try:
+        from tasks import _register_all_services
+
+        _register_all_services()
+        installed = ib._install_voice_services({
+            "voice_services": json.dumps({
+                "tts": {
+                    "enabled": True,
+                    "service_id": "bootstrap_tts",
+                    "scope": "global",
+                    "config": {"voice": "F1", "lang": "fr"},
+                },
+                "stt": {
+                    "enabled": True,
+                    "service_id": "bootstrap_stt",
+                    "scope": "user",
+                    "config": {"client_id": "installer", "stt_model": "small"},
+                },
+            })
+        }, "alice")
+
+        assert installed == [
+            {"kind": "tts", "scope": "global", "service_id": "bootstrap_tts", "service_type": "supertonicTTS"},
+            {"kind": "stt", "scope": "user", "service_id": "bootstrap_stt", "service_type": "voicebox"},
+        ]
+        reg = ServiceRegistry.get_instance()
+        tts = reg.get_definition(SCOPE_GLOBAL, "", "bootstrap_tts")
+        stt = reg.get_definition("user", "alice", "bootstrap_stt")
+        assert tts is not None
+        assert tts.service_type == "supertonicTTS"
+        assert tts.config["auto_install"] is True
+        assert tts.config["voice"] == "F1"
+        assert stt is not None
+        assert stt.service_type == "voicebox"
+        assert stt.config["preload_stt_model"] is True
+        assert stt.config["stt_model"] == "small"
+    finally:
+        ServiceRegistry.reset()
+
+
 def test_create_first_conversation_links_selected_relay(tmp_path, monkeypatch):
     ServiceRegistry.reset()
     runtime_dir = tmp_path / "runtime"

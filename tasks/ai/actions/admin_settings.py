@@ -176,6 +176,52 @@ def _handle_admin_settings(self, action, body, store, user_id, flowfile):
         ok = IdentityService.instance().unlink(username, channel)
         return _json(flowfile, {"ok": ok})
 
+    if action == "admin_oauth_tokens_list":
+        denied = _require_admin(flowfile)
+        if denied:
+            return denied
+        from core import oauth_invite_tokens
+        return _json(flowfile, {"tokens": oauth_invite_tokens.list_tokens()})
+
+    if action == "admin_oauth_token_create":
+        denied = _require_admin(flowfile)
+        if denied:
+            return denied
+        role = str(body.get("role", "viewer") or "viewer").strip()
+        link_username = str(body.get("link_username", "") or "").strip()
+        try:
+            ttl_seconds = int(body.get("ttl_seconds", 3600) or 3600)
+        except (TypeError, ValueError):
+            return _json(flowfile, {"error": "ttl_seconds must be an integer"}, "400")
+        if ttl_seconds < 60:
+            return _json(flowfile, {"error": "ttl_seconds must be at least 60"}, "400")
+        try:
+            _role(role)
+            if link_username:
+                from core.security import SecurityManager
+                if not SecurityManager.get_instance().get_user(link_username):
+                    return _json(flowfile, {"error": "link user does not exist"}, "400")
+            from core import oauth_invite_tokens
+            token = oauth_invite_tokens.create_token(
+                role=role,
+                link_username=link_username,
+                ttl_seconds=ttl_seconds,
+                created_by=user_id,
+            )
+            return _json(flowfile, {"ok": True, "token": token})
+        except Exception as exc:
+            return _json(flowfile, {"error": str(exc)}, "400")
+
+    if action == "admin_oauth_token_revoke":
+        denied = _require_admin(flowfile)
+        if denied:
+            return denied
+        token_id = str(body.get("token_id", "") or "").strip()
+        if not token_id:
+            return _json(flowfile, {"error": "Missing token_id"}, "400")
+        from core import oauth_invite_tokens
+        return _json(flowfile, {"ok": oauth_invite_tokens.revoke_token(token_id)})
+
     if action == "system_params_get":
         denied = _require_admin(flowfile)
         if denied:

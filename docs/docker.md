@@ -64,6 +64,75 @@ ACME certificate such as Let's Encrypt, or keeping a self-signed certificate for
 private deployments. The Compose healthcheck probes HTTPS with self-signed trust
 disabled first, then falls back to plain HTTP for non-TLS local runs.
 
+### Public HTTPS with Caddy
+
+For a public VPS, keep PawFlow's container port off the public interface and let
+Caddy terminate public HTTPS on ports `80` and `443`. PawFlow serves HTTPS on its
+internal Docker/host port, usually `19990`; Caddy proxies to `127.0.0.1:PORT` and
+keeps long-lived streaming responses open for SSE and tool output.
+
+Example Caddy site block:
+
+```caddyfile
+the.host.name {
+    reverse_proxy https://127.0.0.1:PORT {
+        header_up Host {host}
+        header_up X-Forwarded-Host {host}
+        header_up X-Forwarded-Proto https
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Real-IP {remote_host}
+        flush_interval -1
+
+        transport http {
+            versions 1.1
+            tls_insecure_skip_verify
+            read_timeout 0
+            write_timeout 0
+        }
+    }
+}
+```
+
+Replace `the.host.name` with the public DNS name and `PORT` with the PawFlow
+server port selected during install. `tls_insecure_skip_verify` is required when
+Caddy talks to PawFlow's self-signed local HTTPS endpoint. If you later configure
+PawFlow with a certificate trusted by the host, remove that line.
+
+Firewall rules should expose only Caddy publicly. Allow `80/tcp` and `443/tcp`
+from anywhere. Do not expose the PawFlow application port publicly; if Docker
+containers need to reach it through the Docker bridge, allow that port only on
+`docker0`.
+
+Example UFW setup for PawFlow on port `19990`:
+
+```bash
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
+sudo ufw allow in on docker0 to any port 19990 proto tcp
+sudo ufw enable
+sudo ufw status
+```
+
+Expected shape:
+
+```text
+Status: active
+
+To                         Action      From
+--                         ------      ----
+443/tcp                    ALLOW       Anywhere
+80/tcp                     ALLOW       Anywhere
+19990/tcp on docker0       ALLOW       Anywhere
+443/tcp (v6)               ALLOW       Anywhere (v6)
+80/tcp (v6)                ALLOW       Anywhere (v6)
+19990/tcp (v6) on docker0  ALLOW       Anywhere (v6)
+```
+
+If PawFlow was started with a Docker port publication bound to all interfaces,
+change the run configuration to bind it to localhost only, or restrict the host
+firewall so external clients cannot connect directly to `PORT`. Public users
+should access only `https://the.host.name` through Caddy.
+
 The installer is protected by a temporary `privateGateway` service wired to the
 bootstrap `httpListener`. The initial Private Gateway bootstrap key is:
 

@@ -147,6 +147,10 @@ class OAuthRedirectTask(BaseTask):
         if method == "POST" and path.endswith("/builtin"):
             return self._handle_builtin_login(flowfile, auth_svc, ip)
 
+        # POST /auth/login/token — complete provider-validated OAuth onboarding
+        if method == "POST" and path.endswith("/token"):
+            return self._handle_oauth_token_login(flowfile, auth_svc, ip)
+
         # GET /auth/login/{provider} — OAuth redirect for specific provider
         parts = path.rstrip("/").split("/")
         if len(parts) >= 4 and parts[-1] not in ("login", ""):
@@ -200,6 +204,42 @@ class OAuthRedirectTask(BaseTask):
         cookie_max_age = int(self.config.get("cookie_max_age", 86400))
         flowfile.set_attribute("http.response.header.Set-Cookie",
                                f"{cookie_name}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={cookie_max_age}")
+        return [flowfile]
+
+    def _handle_oauth_token_login(self, flowfile, auth_svc, ip):
+        """Handle POST /auth/login/token after provider validation."""
+        import urllib.parse
+        body = flowfile.get_content().decode("utf-8", errors="replace")
+        params = urllib.parse.parse_qs(body)
+        pending_id = params.get("pending_oauth", [""])[0]
+        token = params.get("token", [""])[0]
+        if not hasattr(auth_svc, "complete_pending_oauth"):
+            flowfile.set_content(b'Auth gateway does not support OAuth onboarding tokens')
+            flowfile.set_attribute("http.response.status", "500")
+            return [flowfile]
+        result = auth_svc.complete_pending_oauth(pending_id, token, ip=ip)
+        if not result.success:
+            qs = urllib.parse.urlencode({"error": result.error, "pending_oauth": pending_id})
+            flowfile.set_content(b"")
+            flowfile.set_attribute("http.response.status", "302")
+            flowfile.set_attribute("http.response.header.Location", f"/auth/login?{qs}")
+            return [flowfile]
+
+        from core.security import SecurityManager
+        sm = SecurityManager.get_instance()
+        user = sm.get_user(result.username)
+        if not user:
+            flowfile.set_content(b'User created but not found')
+            flowfile.set_attribute("http.response.status", "500")
+            return [flowfile]
+        session = sm._create_session(user, oauth_provider=result.provider)
+        cookie_name = self.config.get("cookie_name", "pawflow_token")
+        cookie_max_age = int(self.config.get("cookie_max_age", 86400))
+        flowfile.set_content(b"")
+        flowfile.set_attribute("http.response.status", "302")
+        flowfile.set_attribute("http.response.header.Location", "/chat")
+        flowfile.set_attribute("http.response.header.Set-Cookie",
+                               f"{cookie_name}={session.session_id}; Path=/; HttpOnly; SameSite=Lax; Max-Age={cookie_max_age}")
         return [flowfile]
 
     def _handle_oauth_redirect(self, flowfile, auth_svc, provider_name, ip):

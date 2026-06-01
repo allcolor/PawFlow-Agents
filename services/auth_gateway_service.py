@@ -1,14 +1,15 @@
 """AuthGateway Service — Multi-provider authentication gateway.
 
 Orchestrates multiple auth providers (builtin, Google, GitHub, X, etc.).
-Handles user provisioning, rate limiting, and session management.
+Handles controlled OAuth account onboarding, rate limiting, and session management.
 
 Configured as a global service — flows point their oauthProvider to "pawflow"
 which delegates to this gateway.
 
 Config:
     providers: dict of provider configs (keyed by provider name)
-    auto_provision: rules for creating users from OAuth (expression-based)
+    OAuth invitation tokens: admin-created, temporary, one-time tokens for
+        creating or linking users after an external provider validates them
     session_ttl: session duration in seconds (default: 86400)
 """
 
@@ -78,6 +79,8 @@ class AuthGatewayService(BaseService):
         )
         # CSRF state tokens: {state: {expires, provider, metadata}}
         self._states: Dict[str, Dict] = {}
+        # Provider-validated OAuth results waiting for an admin-issued token.
+        self._pending_oauth: Dict[str, Dict[str, Any]] = {}
         self._lock = threading.Lock()
 
     def get_parameter_schema(self) -> Dict[str, Any]:
@@ -231,6 +234,25 @@ All string values may use `${...}` expressions. They are resolved recursively at
         # Provision user
         return self._provision_user(result, ip)
 
+    def complete_pending_oauth(self, pending_id: str, invite_token: str,
+                               ip: str = "") -> AuthResult:
+        """Complete a provider-validated OAuth login with an admin token."""
+        pending_id = str(pending_id or "").strip()
+        with self._lock:
+            entry = self._pending_oauth.get(pending_id)
+            if entry and time.time() >= float(entry.get("expires", 0)):
+                self._pending_oauth.pop(pending_id, None)
+                entry = None
+        if not entry:
+            return AuthResult(success=False, error="OAuth onboarding session expired")
+
+        result = self._auth_result_from_pending(entry.get("auth_result") or {})
+        completed = self._provision_user(result, ip, invite_token=invite_token)
+        if completed.success:
+            with self._lock:
+                self._pending_oauth.pop(pending_id, None)
+        return completed
+
     @staticmethod
     def _format_oauth_exchange_error(provider_name: str, error: str) -> str:
         raw = (error or "OAuth token exchange failed").strip()
@@ -276,13 +298,17 @@ All string values may use `${...}` expressions. They are resolved recursively at
 
     # ── User provisioning ──────────────────────────────────────────
 
-    def _provision_user(self, auth_result: AuthResult, ip: str = "") -> AuthResult:
-        """Check provisioning rules and create/update user if allowed."""
+    def _provision_user(self, auth_result: AuthResult, ip: str = "",
+                        invite_token: str = "") -> AuthResult:
+        """Resolve, link, or create an OAuth user.
+
+        External OAuth never auto-creates users. A provider identity must match
+        an existing PawFlow user, or an admin-created temporary token must be
+        supplied to create/link exactly once.
+        """
         from core.security import SecurityManager, Role
-        from services.auth_providers.rule_evaluator import evaluate_rule
 
         sm = SecurityManager.get_instance()
-        claims = auth_result.claims
 
         # Check if user already exists (by oauth_id or email)
         existing = self._find_existing_user(sm, auth_result)
@@ -297,47 +323,57 @@ All string values may use `${...}` expressions. They are resolved recursively at
             auth_result.roles = [existing.role.value]
             return auth_result
 
-        # New user — evaluate provisioning rules (from security.json, not flow config)
-        auto_provision = sm.get_auto_provision()
-        rules = auto_provision.get("rules", [])
-        default_action = auto_provision.get("default_action", "deny")
+        if not invite_token:
+            pending_id = self._store_pending_oauth(auth_result)
+            logger.warning("[auth_gateway] OAuth identity %s:%s requires onboarding token",
+                           auth_result.provider, auth_result.user_id)
+            denied = AuthResult(
+                success=False,
+                error="OAuth account is not linked to a PawFlow user. Enter an OAuth onboarding token.",
+            )
+            setattr(denied, "pending_oauth_id", pending_id)
+            return denied
 
-        role_str = None
-        for rule in rules:
-            expr = rule.get("match", "")
-            if evaluate_rule(expr, claims):
-                role_str = rule.get("role", "viewer")
-                logger.info(f"[auth_gateway] Rule matched: {expr} -> role={role_str}")
-                break
+        from core import oauth_invite_tokens
+        invite = oauth_invite_tokens.consume_token(
+            invite_token,
+            used_by=f"{auth_result.provider}:{auth_result.user_id}",
+        )
+        if not invite:
+            return AuthResult(success=False, error="Invalid or expired OAuth onboarding token")
 
-        if role_str is None:
-            # No rule matched — apply default action
-            if default_action == "deny":
-                logger.warning(f"[auth_gateway] Access denied for {auth_result.email} "
-                               f"(no matching rule, default=deny)")
-                return AuthResult(success=False,
-                                  error="Access denied — no matching provisioning rule")
-            elif default_action.startswith("create"):
-                # "create" or "create_viewer" etc.
-                role_str = default_action.replace("create_", "") or "viewer"
-                if role_str == "create":
-                    role_str = ""  # no role = no permissions
+        from core.identity_service import IdentityService
+        ids = IdentityService.instance()
+        link_username = str(invite.get("link_username") or "").strip()
+        if link_username:
+            user = sm.get_user(link_username)
+            if not user:
+                return AuthResult(success=False, error="OAuth onboarding token targets a missing user")
+            if not user.enabled:
+                return AuthResult(success=False, error="Account disabled")
+            if not ids.link(link_username, auth_result.provider, auth_result.user_id):
+                return AuthResult(success=False, error="OAuth identity is already linked to another user")
+            user.last_login = __import__('datetime').datetime.now().isoformat()
+            sm._save_users()
+            auth_result.user_id = link_username
+            auth_result.username = link_username
+            auth_result.roles = [user.role.value]
+            return auth_result
 
-        # Create the user
-        role = Role(role_str) if role_str and role_str in [r.value for r in Role] else Role.VIEWER
+        # Create the user only when an admin-issued token explicitly grants a role.
+        role_str = str(invite.get("role") or "viewer")
+        role = Role(role_str) if role_str in [r.value for r in Role] else Role.VIEWER
         username = self._derive_username(auth_result)
         try:
             user = sm.create_user(
                 username=username,
                 password="",  # OAuth users don't have passwords  # nosec B106
-                role=role if role_str else Role.VIEWER,
+                role=role,
                 email=auth_result.email,
                 display_name=auth_result.display_name or username,
             )
             # Link identity via IdentityService (generic multi-provider)
-            from core.identity_service import IdentityService
-            IdentityService.instance().link(username, auth_result.provider,
-                                             auth_result.user_id)
+            ids.link(username, auth_result.provider, auth_result.user_id)
             logger.info(f"[auth_gateway] Created user {username} "
                         f"(provider={auth_result.provider}, role={role.value})")
         except ValueError:
@@ -350,6 +386,52 @@ All string values may use `${...}` expressions. They are resolved recursively at
         auth_result.username = username
         auth_result.roles = [user.role.value]
         return auth_result
+
+    def _store_pending_oauth(self, auth_result: AuthResult, ttl: int = 600) -> str:
+        pending_id = secrets.token_urlsafe(24)
+        with self._lock:
+            now = time.time()
+            self._pending_oauth[pending_id] = {
+                "expires": now + ttl,
+                "auth_result": self._auth_result_to_pending(auth_result),
+            }
+            self._pending_oauth = {
+                key: value for key, value in self._pending_oauth.items()
+                if float(value.get("expires", 0)) > now
+            }
+        return pending_id
+
+    @staticmethod
+    def _auth_result_to_pending(auth_result: AuthResult) -> Dict[str, Any]:
+        return {
+            "success": True,
+            "user_id": auth_result.user_id,
+            "username": auth_result.username,
+            "email": auth_result.email,
+            "display_name": auth_result.display_name,
+            "roles": list(auth_result.roles or []),
+            "provider": auth_result.provider,
+            "access_token": auth_result.access_token,
+            "refresh_token": auth_result.refresh_token,
+            "token_expires_at": auth_result.token_expires_at,
+            "claims": dict(auth_result.claims or {}),
+        }
+
+    @staticmethod
+    def _auth_result_from_pending(data: Dict[str, Any]) -> AuthResult:
+        return AuthResult(
+            success=True,
+            user_id=str(data.get("user_id") or ""),
+            username=str(data.get("username") or ""),
+            email=str(data.get("email") or ""),
+            display_name=str(data.get("display_name") or ""),
+            roles=list(data.get("roles") or []),
+            provider=str(data.get("provider") or ""),
+            access_token=str(data.get("access_token") or ""),
+            refresh_token=str(data.get("refresh_token") or ""),
+            token_expires_at=float(data.get("token_expires_at") or 0),
+            claims=dict(data.get("claims") or {}),
+        )
 
     def _find_existing_user(self, sm, auth_result: AuthResult):
         """Find existing user by linked identity, username, or email."""

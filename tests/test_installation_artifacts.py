@@ -792,6 +792,14 @@ def test_pawflow_installer_flow_template_exists():
     assert "buildRelayServerPayload" in ui_content
     assert "validateRelayServer" in ui_content
     assert "relay_server = JSON.stringify(relayPayload)" in ui_content
+    assert "Voice I/O" in ui_content
+    assert "id=\"voice_tts_enabled\"" in ui_content
+    assert "id=\"voice_stt_enabled\"" in ui_content
+    assert "supertonic_tts_service" in ui_content
+    assert "voicebox_service" in ui_content
+    assert "buildVoiceServicesPayload" in ui_content
+    assert "validateVoiceServices" in ui_content
+    assert "voice_services = JSON.stringify(voicePayload)" in ui_content
     assert "id=\"first_conversation_relay\"" in ui_content
     assert "conversation_relay" in ui_content
     assert "relay_id: firstConversation.relay_id" in ui_content

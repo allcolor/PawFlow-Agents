@@ -84,6 +84,11 @@ Runs natively -- no container. The relay process runs Python `fs_actions.py` dir
 
 PawFlow runs on the host (or in a container with docker.sock mounted) and spawns child containers.
 
+For a public VPS behind Caddy, expose only Caddy on `80/tcp` and `443/tcp`, keep
+the PawFlow application port private, and proxy to the local PawFlow HTTPS
+endpoint. See [Public HTTPS with Caddy](docker.md#public-https-with-caddy) for a
+Caddyfile example and UFW rules.
+
 ### Requirements
 - Docker installed and running
 - User in `docker` group (Linux): `sudo usermod -aG docker $USER`

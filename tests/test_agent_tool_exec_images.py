@@ -1,3 +1,4 @@
+import inspect
 import json
 
 from core.handlers.meta_tools import UseToolHandler
@@ -112,9 +113,10 @@ def test_deflated_tool_result_image_ref_stays_text_for_later_turns(tmp_path, mon
         LLMMessage(role="user", content="answer from text now", conversation_id="conv-1"),
     ]
 
-    AgentUtilsMixin._deflate_image_messages(
+    changed = AgentUtilsMixin._deflate_image_messages(
         messages, user_id="user-1", conversation_id="conv-1")
 
+    assert changed is True
     assert isinstance(messages[1].content, str)
     assert f"fs://filestore/{file_id}/tool.png" in messages[1].content
     openai_payload = LLMClient(
@@ -127,6 +129,20 @@ def test_deflated_tool_result_image_ref_stays_text_for_later_turns(tmp_path, mon
         provider="anthropic", config={"api_key": "sk-test"})._build_anthropic_messages(
             messages, user_id="user-1", conversation_id="conv-1")
     assert "base64" not in json.dumps(anthropic_payload)
+
+    assert AgentUtilsMixin._deflate_image_messages(
+        messages, user_id="user-1", conversation_id="conv-1") is False
+
+
+def test_agent_loop_persists_deflated_image_context_after_flush():
+    src = inspect.getsource(AgentCoreMixin._run_agent_loop_inner)
+    deflate_idx = src.index("_images_deflated = self._deflate_image_messages")
+    persist_block = src[deflate_idx:src.index("# Apply pending background tool results", deflate_idx)]
+
+    assert "ConversationWriter.for_conversation" in persist_block
+    assert ".flush(timeout=10.0)" in persist_block
+    assert "ConversationStore.instance().save_agent_context" in persist_block
+    assert "self._serialize_messages(messages)" in persist_block
 
 
 def test_context_usage_counts_image_blocks_as_placeholders():

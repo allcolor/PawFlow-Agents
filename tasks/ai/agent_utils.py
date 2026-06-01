@@ -799,7 +799,7 @@ class AgentUtilsMixin:
 
     @staticmethod
     def _deflate_image_messages(messages: List[LLMMessage], keep_last: bool = False,
-                                 user_id: str = "", conversation_id: str = ""):
+                                 user_id: str = "", conversation_id: str = "") -> bool:
         """Replace multimodal image content with text-only references in-place.
 
         Called after the LLM has seen the images so base64 data doesn't
@@ -809,6 +809,7 @@ class AgentUtilsMixin:
         If keep_last=True, the last message with images is preserved
         (for pre-send compaction where the LLM hasn't seen them yet).
         """
+        changed = False
         if keep_last:
             # Find the last message with images and skip it
             last_img_idx = -1
@@ -891,9 +892,13 @@ class AgentUtilsMixin:
             text = "\n".join(text_parts)
             if img_refs:
                 refs_text = "\n".join(f"  - {ref}" for ref in img_refs)
-                m.content = f"{text}\n[{len(img_refs)} image(s) — saved to FileStore:\n{refs_text}\n  Use show_file to view again]"
+                new_content = f"{text}\n[{len(img_refs)} image(s) — saved to FileStore:\n{refs_text}\n  Use show_file to view again]"
             else:
-                m.content = f"{text}\n[images deflated]"
+                new_content = f"{text}\n[images deflated]"
+            if m.content != new_content:
+                m.content = new_content
+                changed = True
+        return changed
 
     # ── Tool result size management ──────────────────────────────────
 

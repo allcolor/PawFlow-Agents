@@ -164,7 +164,7 @@ class TestLLMClientMessageBuilding(unittest.TestCase):
         assert "data:" not in json.dumps(result)
         assert "image_url" not in json.dumps(result)
 
-    def test_openai_never_sends_data_image_url_as_base64(self):
+    def test_openai_keeps_current_data_image_url_for_vision(self):
         messages = [LLMMessage(
             role="user",
             content=[
@@ -177,9 +177,10 @@ class TestLLMClientMessageBuilding(unittest.TestCase):
         result = self.client._build_openai_messages(
             messages, user_id="u", conversation_id="test_conv")
 
-        assert result == [{"role": "user", "content": [{"type": "text", "text": "current image"}]}]
-        assert "data:" not in json.dumps(result)
-        assert "base64" not in json.dumps(result)
+        assert result == [{"role": "user", "content": [
+            {"type": "text", "text": "current image"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+        ]}]
 
     @patch.object(LLMClient, '_http_post')
     def test_openai_sends_current_attachment_as_vision_when_enabled(self, mock_post):
@@ -209,12 +210,23 @@ class TestLLMClientMessageBuilding(unittest.TestCase):
         assert "data:" not in json.dumps(body)
         assert "base64" not in json.dumps(body)
 
-    def test_openai_sends_current_filestore_attachment_as_vision_link(self):
+    def test_openai_sends_current_filestore_attachment_as_vision_data(self):
+        from core.file_store import FileStore
+
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        store = FileStore(base_dir=str(Path(tmp.name) / "files"))
+        old_instance = FileStore._instance
+        FileStore._instance = store
+        self.addCleanup(lambda: setattr(FileStore, "_instance", old_instance))
+        file_id = store.store(
+            "shot.png", b"PNGDATA", "image/png",
+            conversation_id="test_conv", user_id="u")
         messages = [LLMMessage(
             role="user",
             content=[
                 {"type": "text", "text": "look"},
-                {"type": "image_ref", "file_id": "img123", "filename": "shot.png"},
+                {"type": "image_ref", "file_id": file_id, "filename": "shot.png"},
             ],
             conversation_id="test_conv",
         )]
@@ -224,13 +236,23 @@ class TestLLMClientMessageBuilding(unittest.TestCase):
 
         assert result == [{"role": "user", "content": [
             {"type": "text", "text": "look"},
-            {"type": "image_url", "image_url": {"url": "fs://filestore/img123/shot.png"}},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,UE5HREFUQQ=="}},
         ]}]
-        assert "data:" not in json.dumps(result)
-        assert "base64" not in json.dumps(result)
+        assert "fs://filestore" not in json.dumps(result)
 
     @patch.object(LLMClient, '_http_post')
     def test_openai_vision_rejection_retries_with_filestore_links(self, mock_post):
+        from core.file_store import FileStore
+
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        store = FileStore(base_dir=str(Path(tmp.name) / "files"))
+        old_instance = FileStore._instance
+        FileStore._instance = store
+        self.addCleanup(lambda: setattr(FileStore, "_instance", old_instance))
+        file_id = store.store(
+            "shot.png", b"PNGDATA", "image/png",
+            conversation_id="test_conv", user_id="u")
         captured_bodies = []
 
         def fake_post(_path, body, headers):
@@ -244,7 +266,7 @@ class TestLLMClientMessageBuilding(unittest.TestCase):
             role="user",
             content=[
                 {"type": "text", "text": "look"},
-                {"type": "image_ref", "file_id": "img123", "filename": "shot.png"},
+                {"type": "image_ref", "file_id": file_id, "filename": "shot.png"},
             ],
             conversation_id="test_conv",
         )]
@@ -256,8 +278,8 @@ class TestLLMClientMessageBuilding(unittest.TestCase):
         assert response.content == "ok"
         first_body = captured_bodies[0]
         retry_body = captured_bodies[1]
-        assert {"type": "image_url", "image_url": {"url": "fs://filestore/img123/shot.png"}} in first_body["messages"][0]["content"]
-        assert {"type": "text", "text": "Attached image: fs://filestore/img123/shot.png"} in retry_body["messages"][0]["content"]
+        assert {"type": "image_url", "image_url": {"url": "data:image/png;base64,UE5HREFUQQ=="}} in first_body["messages"][0]["content"]
+        assert {"type": "text", "text": f"Attached image: fs://filestore/{file_id}/shot.png"} in retry_body["messages"][0]["content"]
         assert "image_url" not in json.dumps(retry_body)
 
     def test_openai_tool_result_message(self):

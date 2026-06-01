@@ -4,6 +4,7 @@ import json
 import http.client
 import logging
 import ssl
+import base64
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
@@ -297,21 +298,31 @@ class LLMOpenaiMixin:
         return None
 
     @staticmethod
-    def _vision_image_part(part: dict) -> Optional[dict]:
-        """Return a native vision part without ever emitting data: payloads."""
+    def _vision_image_part(part: dict, *, user_id: str = "",
+                           conversation_id: str = "") -> Optional[dict]:
+        """Return a native vision part for the current turn.
+
+        Base64 belongs in the provider vision payload for images the model must
+        inspect now. It must not be persisted into text context for old turns.
+        """
         if part.get("type") == "image_ref":
             file_id = str(part.get("file_id") or "").strip()
             if not file_id:
                 return None
-            filename = str(part.get("filename") or "image").strip() or "image"
+            from core.file_store import FileStore
+            _fname, data, content_type = FileStore.instance().get_required(
+                file_id, user_id=user_id, conversation_id=conversation_id)
+            mime = part.get("mime_type", content_type) or "image/png"
             return {
                 "type": "image_url",
-                "image_url": {"url": f"fs://filestore/{file_id}/{filename}"},
+                "image_url": {
+                    "url": f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
+                },
             }
         if part.get("type") == "image_url":
             image_url = part.get("image_url") or {}
             url = image_url.get("url", "") if isinstance(image_url, dict) else str(image_url or "")
-            if url and not url.startswith("data:"):
+            if url:
                 return part
         return None
 
@@ -338,9 +349,10 @@ class LLMOpenaiMixin:
         single assistant message OpenAI expects (content + tool_calls).
 
         Images are native vision only for the latest user message with image
-        attachments and only when vision is enabled. Older images, or all
-        images when vision is disabled/rejected, become links in text context.
-        Raw image payloads, including data: URLs, are never sent.
+        attachments, and tool-result image messages, when vision is enabled.
+        Older images, or all images when vision is disabled/rejected, become
+        links in text context. Raw image payloads are only emitted on those
+        current native-vision paths, never as historical text context.
         """
         from core.llm_message_regroup import regroup_split_assistant_messages
         messages = regroup_split_assistant_messages(messages)
@@ -386,7 +398,9 @@ class LLMOpenaiMixin:
                     for p in m.content:
                         if p.get("type") in ("image_url", "image_ref"):
                             if vision_enabled:
-                                vision_part = self._vision_image_part(p)
+                                vision_part = self._vision_image_part(
+                                    p, user_id=user_id,
+                                    conversation_id=conversation_id)
                                 if vision_part:
                                     img_parts.append(vision_part)
                                     continue
@@ -429,7 +443,9 @@ class LLMOpenaiMixin:
                         })
                     elif pt == "image_ref":
                         if is_current_image_user:
-                            vision_part = self._vision_image_part(part)
+                            vision_part = self._vision_image_part(
+                                part, user_id=user_id,
+                                conversation_id=conversation_id)
                             if vision_part:
                                 parts.append(vision_part)
                                 continue
@@ -438,7 +454,9 @@ class LLMOpenaiMixin:
                             parts.append(link_part)
                     elif pt == "image_url":
                         if is_current_image_user:
-                            vision_part = self._vision_image_part(part)
+                            vision_part = self._vision_image_part(
+                                part, user_id=user_id,
+                                conversation_id=conversation_id)
                             if vision_part:
                                 parts.append(vision_part)
                                 continue

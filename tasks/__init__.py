@@ -27,6 +27,8 @@ def _register_all_services():
             and "voicebox" in _registered_types
             and "voxcpmTTS" in _registered_types
             and "openaiCompatibleSTT" in _registered_types
+            and "openaiCompatibleImageGeneration" in _registered_types
+            and "openaiCompatibleVideoGeneration" in _registered_types
             and "luxTTS" in _registered_types
             and "summarizer" in _registered_types
             and "ccInteractiveEvents" in _registered_types):
@@ -74,6 +76,7 @@ def _register_all_services():
     import services.grok_image_service        # noqa: F401
     import services.openai_image_service      # noqa: F401
     import services.codex_image_service       # noqa: F401
+    import services.openai_compatible_media_service  # noqa: F401
 
     # Video generation services
     import services.kling_video_service       # noqa: F401

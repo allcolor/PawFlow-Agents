@@ -110,6 +110,23 @@ the `${conv.relay}` URL form for local relay endpoints; set
 `allow_private_base_url=true` only when the endpoint is trusted and must be
 reached directly from the PawFlow server.
 
+`openaiCompatibleImageGeneration` and `openaiCompatibleVideoGeneration` reuse an
+existing `llmConnection` whose provider is `openai`. Configure that LLM service
+with a bare OpenAI base URL such as `https://api.openai.com/v1`, or an
+OpenRouter/OpenAI-compatible base URL such as `https://openrouter.ai/api/v1`.
+The image service supports `protocol=auto`, `openai_images`, and
+`chat_completions`/`openrouter`: bare OpenAI image models normally use
+`POST /images/generations`, while OpenRouter image models such as
+`openai/gpt-5.4-image-2` use chat completions and provider-specific response
+parsing. The video service supports `protocol=auto`, `openai_video`, and
+`chat_completions`/`openrouter`: bare OpenAI-compatible video providers use the
+configurable `submit_path` and `status_path_template`, while OpenRouter-style
+video models such as `kwaivgi/kling-v3.0-pro` use chat completions and, when a
+generation id is returned, poll `openrouter_generation_path_template`. Both
+services expose `max_tokens` and `max_output_tokens` for chat-completions media
+responses, plus provider escape hatches through `extra_body` and
+`extra_headers`.
+
 Relay-aware provider URLs use one standard shape everywhere:
 `http(s)://<relay_id>/<host>:<port>/<path>`. The first path segment containing
 `host:port` marks the URL as a PawFlow relay URL. `${conv.relay}` is only the
@@ -167,6 +184,8 @@ When `service` is omitted, selection is deterministic:
 Supported service families include:
 
 - `openaiImageGeneration`
+- `openaiCompatibleImageGeneration`
+- `openaiCompatibleVideoGeneration`
 - `codexImageGeneration`
 - `grokImageGeneration`
 - `grokVideoGeneration`

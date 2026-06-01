@@ -35,7 +35,7 @@ jobs:
       - name: Build minimal install zip
         run: bash scripts/build-pawflow-install-zip.sh --version "$VERSION"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: pawflow-install-zip
           path: dist/pawflow-installers/*
@@ -74,7 +74,7 @@ jobs:
         shell: bash
         run: python scripts/build-pawcode-installer.py --version "$VERSION"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: pawcode-${{ runner.os }}
           path: |
@@ -113,7 +113,7 @@ jobs:
         shell: bash
         run: python scripts/build-relay-cli-installer.py --version "$VERSION"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: relay-cli-${{ runner.os }}
           path: |
@@ -176,7 +176,7 @@ jobs:
         working-directory: pawflow-relay-desktop
         run: npm run ${{ matrix.npm_script }}
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: relay-desktop-${{ runner.os }}
           path: |
@@ -227,7 +227,7 @@ jobs:
           mkdir -p ../dist/vscode-installers
           node node_modules/@vscode/vsce/vsce package --out "../dist/vscode-installers/pawflow-vscode-${EXTENSION_VERSION}.vsix"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: vscode-extension
           path: dist/vscode-installers/*.vsix
@@ -238,7 +238,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [install-zip, pawcode, relay-cli, relay-desktop, vscode-extension]
     steps:
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v7
         with:
           path: release-assets
           merge-multiple: true

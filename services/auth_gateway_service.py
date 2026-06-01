@@ -72,9 +72,9 @@ class AuthGatewayService(BaseService):
         super().__init__(config)
         self._providers: Dict[str, AuthProvider] = {}
         self._rate_limiter = RateLimiter(
-            max_entries=int(config.get("rate_limit_max_entries", 1000)),
-            ttl=int(config.get("rate_limit_ttl", 3600)),
-            base_delay=float(config.get("rate_limit_base_delay", 30)),
+            max_entries=int(self.config.get("rate_limit_max_entries", 1000)),
+            ttl=int(self.config.get("rate_limit_ttl", 3600)),
+            base_delay=float(self.config.get("rate_limit_base_delay", 30)),
         )
         # CSRF state tokens: {state: {expires, provider, metadata}}
         self._states: Dict[str, Dict] = {}
@@ -181,25 +181,30 @@ class AuthGatewayService(BaseService):
     def authenticate_oauth(self, provider_name: str, code: str,
                             redirect_uri: str, ip: str = "") -> AuthResult:
         """Complete OAuth flow: exchange code, provision user, check rules."""
-        # Rate limit check
-        if ip:
-            allowed, wait = self._rate_limiter.check(ip)
-            if not allowed:
-                return AuthResult(success=False,
-                                  error=f"Too many attempts. Wait {wait}s.")
-
         provider = self._providers.get(provider_name)
         if not provider:
             return AuthResult(success=False, error=f"Provider '{provider_name}' not enabled")
 
         result = provider.exchange_code(code, redirect_uri)
         if not result.success:
-            if ip:
-                self._rate_limiter.record_failure(ip)
+            result.error = self._format_oauth_exchange_error(provider_name, result.error)
             return result
 
         # Provision user
         return self._provision_user(result, ip)
+
+    @staticmethod
+    def _format_oauth_exchange_error(provider_name: str, error: str) -> str:
+        raw = (error or "OAuth token exchange failed").strip()
+        provider_label = provider_name.title() if provider_name else "OAuth provider"
+        lowered = raw.lower()
+        if provider_name == "github" and "client_id" in lowered and "client_secret" in lowered:
+            return (
+                "GitHub accepted the browser authorization, but PawFlow's callback token exchange was rejected. "
+                "This usually means PawFlow sent stale or mismatched OAuth app data at callback time: "
+                "auth gateway service not reloaded, wrong public callback URL, or invalid GitHub OAuth scope/config."
+            )
+        return f"{provider_label} OAuth callback failed during token exchange: {raw}"
 
     def authenticate_builtin(self, username: str, password: str,
                               ip: str = "") -> AuthResult:
@@ -245,14 +250,10 @@ class AuthGatewayService(BaseService):
         existing = self._find_existing_user(sm, auth_result)
         if existing:
             if not existing.enabled:
-                if ip:
-                    self._rate_limiter.record_failure(ip)
                 return AuthResult(success=False, error="Account disabled")
             from datetime import datetime
             existing.last_login = datetime.now().isoformat()
             sm._save_users()
-            if ip:
-                self._rate_limiter.record_success(ip)
             auth_result.user_id = existing.username
             auth_result.username = existing.username
             auth_result.roles = [existing.role.value]
@@ -276,8 +277,6 @@ class AuthGatewayService(BaseService):
             if default_action == "deny":
                 logger.warning(f"[auth_gateway] Access denied for {auth_result.email} "
                                f"(no matching rule, default=deny)")
-                if ip:
-                    self._rate_limiter.record_failure(ip)
                 return AuthResult(success=False,
                                   error="Access denied — no matching provisioning rule")
             elif default_action.startswith("create"):
@@ -309,8 +308,6 @@ class AuthGatewayService(BaseService):
             if not user:
                 return AuthResult(success=False, error="User creation failed")
 
-        if ip:
-            self._rate_limiter.record_success(ip)
         auth_result.user_id = username
         auth_result.username = username
         auth_result.roles = [user.role.value]

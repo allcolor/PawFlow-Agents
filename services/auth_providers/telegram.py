@@ -24,6 +24,10 @@ class TelegramAuthProvider(AuthProvider):
     """Telegram Login Widget provider."""
 
     def __init__(self, config: Dict[str, Any]):
+        from core.expression import LazyResolveDict
+
+        if not isinstance(config, LazyResolveDict):
+            config = LazyResolveDict(config or {})
         self.config = config
 
     @property

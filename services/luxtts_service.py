@@ -52,17 +52,17 @@ class LuxTTSService(BaseAudioGenerationService, BaseVoiceCloneService):
 
     def __init__(self, config):
         super().__init__(config)
-        self.model_id = str(config.get("model_id") or "YatharthS/LuxTTS")
-        self.device = str(config.get("device") or "cpu")
-        self.threads = int(config.get("threads") or 2)
-        self.prompt_audio = str(config.get("prompt_audio") or "")
-        self.rms = safe_float(config.get("rms"), 0.01)
-        self.ref_duration = safe_float(config.get("ref_duration"), 5)
-        self.num_steps = int(config.get("num_steps") or 4)
-        self.t_shift = safe_float(config.get("t_shift"), 0.9)
-        self.speed = safe_float(config.get("speed"), 1.0)
-        self.return_smooth = str(config.get("return_smooth", False)).lower() in {"1", "true", "yes"}
-        self.timeout = int(config.get("timeout") or 120)
+        self.model_id = str(self.config.get("model_id") or "YatharthS/LuxTTS")
+        self.device = str(self.config.get("device") or "cpu")
+        self.threads = int(self.config.get("threads") or 2)
+        self.prompt_audio = str(self.config.get("prompt_audio") or "")
+        self.rms = safe_float(self.config.get("rms"), 0.01)
+        self.ref_duration = safe_float(self.config.get("ref_duration"), 5)
+        self.num_steps = int(self.config.get("num_steps") or 4)
+        self.t_shift = safe_float(self.config.get("t_shift"), 0.9)
+        self.speed = safe_float(self.config.get("speed"), 1.0)
+        self.return_smooth = str(self.config.get("return_smooth", False)).lower() in {"1", "true", "yes"}
+        self.timeout = int(self.config.get("timeout") or 120)
         self._model = None
 
     def _create_connection(self):

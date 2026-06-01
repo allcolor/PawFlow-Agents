@@ -72,6 +72,34 @@ class TestExpression(unittest.TestCase):
         """Sans attributs ni parametres, les expressions restent."""
         self.assertEqual(resolve_expression("${foo}"), "${foo}")
 
+    def test_lazy_resolve_dict_resolves_nested_values(self):
+        """Lazy config resolution recurses through dicts and lists."""
+        from unittest.mock import patch
+        from core.expression import LazyResolveDict
+
+        marker_id = "$" + "{pf_lazy_expr_client_id}"
+        marker_secret = "$" + "{pf_lazy_expr_client_secret}"
+        cfg = LazyResolveDict({
+            "providers": {
+                "github": {
+                    "client_id": marker_id,
+                    "client_secret": marker_secret,
+                }
+            },
+            "headers": ["Bearer " + marker_secret],
+        })
+
+        with patch("core.expression._load_global_parameters",
+                   lambda: {"pf_lazy_expr_client_id": "resolved-id"}), \
+             patch("core.expression._load_global_secrets",
+                   lambda: {"pf_lazy_expr_client_secret": "resolved-secret"}):
+            providers = cfg.get("providers")
+            self.assertEqual(providers["github"]["client_id"], "resolved-id")
+            self.assertEqual(providers["github"]["client_secret"], "resolved-secret")
+            self.assertEqual(cfg["headers"], ["Bearer resolved-secret"])
+            self.assertEqual(dict(cfg.items())["providers"]["github"]["client_secret"],
+                             "resolved-secret")
+
 
 class TestCascadeResolution(unittest.TestCase):
     """Tests for cascading expression resolution."""

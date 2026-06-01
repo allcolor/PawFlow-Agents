@@ -118,6 +118,98 @@ def test_set_instance_config_replaces_public_params_and_service_bindings():
     assert inst.service_configs == {"local_svc": {"model": "qwen"}}
 
 
+def test_update_flow_params_restarts_running_executor(monkeypatch):
+    from tasks.ai.actions.service_flow import _restart_running_flow_instance
+
+    calls = []
+    inst = SimpleNamespace(
+        flow_path="/tmp/flow.json",
+        max_workers=2,
+        max_retries=1,
+        flow_fqn="pkg.flow:1.0.0",
+        flow_scope="global",
+        parameters={"p": "new"},
+        service_overrides={"auth": "global:_auth_gateway"},
+        service_configs={},
+        owner="user1",
+        conversation_id="conv1",
+        agent_name="assistant",
+    )
+
+    class _Executor:
+        is_running = True
+
+        def stop(self):
+            calls.append(("stop",))
+
+    class _Registry:
+        def get(self, instance_id):
+            assert instance_id == "flow1"
+            return _Executor()
+
+        def unregister(self, instance_id):
+            calls.append(("unregister", instance_id))
+
+        def _restore_instance(self, *args, **kwargs):
+            calls.append(("restore", args, kwargs))
+
+    monkeypatch.setattr(
+        "core.executor_registry.ExecutorRegistry.get_instance",
+        staticmethod(lambda: _Registry()),
+    )
+
+    assert _restart_running_flow_instance("flow1", inst) is True
+    assert calls[0] == ("stop",)
+    assert calls[1] == ("unregister", "flow1")
+    restore = calls[2]
+    assert restore[0] == "restore"
+    assert restore[1][0] == "flow1"
+    assert restore[2]["service_overrides"] == {"auth": "global:_auth_gateway"}
+    assert restore[2]["parameters"] == {"p": "new"}
+
+
+def test_updated_global_service_rebinds_running_flow_override(monkeypatch):
+    from tasks.ai.actions.service_flow import _refresh_running_flow_service_bindings
+
+    old_auth = SimpleNamespace(name="old")
+    new_auth = SimpleNamespace(name="new")
+    flow = SimpleNamespace(services={"auth": old_auth, "local": SimpleNamespace()})
+    executor = SimpleNamespace(_flow=flow)
+    deployment = SimpleNamespace(service_overrides={"auth": "global:_auth_gateway"})
+
+    class _Deployments:
+        def get_all(self):
+            return {"pawflow-agent": deployment}
+
+    class _Executors:
+        def get(self, instance_id):
+            assert instance_id == "pawflow-agent"
+            return executor
+
+    class _Services:
+        def get_live_instance(self, scope, scope_id, service_id):
+            assert (scope, scope_id, service_id) == ("global", "", "_auth_gateway")
+            return new_auth
+
+    monkeypatch.setattr(
+        "core.deployment_registry.DeploymentRegistry.get_instance",
+        staticmethod(lambda: _Deployments()),
+    )
+    monkeypatch.setattr(
+        "core.executor_registry.ExecutorRegistry.get_instance",
+        staticmethod(lambda: _Executors()),
+    )
+    monkeypatch.setattr(
+        "core.service_registry.ServiceRegistry.get_instance",
+        staticmethod(lambda: _Services()),
+    )
+
+    refreshed = _refresh_running_flow_service_bindings("global", "", "_auth_gateway")
+
+    assert refreshed == ["pawflow-agent"]
+    assert flow.services["auth"] is new_auth
+
+
 def test_executor_service_bindings_apply_configs_and_overrides(monkeypatch):
     from core.executor_registry import _apply_service_bindings
 

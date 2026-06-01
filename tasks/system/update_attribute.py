@@ -21,9 +21,8 @@ class UpdateAttributeTask(BaseTask):
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
-        # Save original values before resolution
-        self._raw_attributes_to_set = config.get('set', {})
-        self._raw_attributes_to_delete = config.get('delete', [])
+        self._raw_attributes_to_set = self.config.get('set', {})
+        self._raw_attributes_to_delete = self.config.get('delete', [])
 
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
         """Modify FlowFile attributes."""

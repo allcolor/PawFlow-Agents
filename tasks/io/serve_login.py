@@ -158,6 +158,13 @@ class ServeLoginTask(BaseTask):
 </form>
 '''
 
+        query = flowfile.get_attribute("http.query") or ""
+        query_params = urllib.parse.parse_qs(query)
+        error = (query_params.get("error") or [""])[0]
+        error_html = ""
+        if error:
+            error_html = f'<div class="error">{html.escape(error)}</div>\n'
+
         divider = '<div class="divider"><span>or</span></div>' if has_builtin and oauth_providers else ''
 
         return f'''<!DOCTYPE html>
@@ -201,6 +208,7 @@ h1 {{ text-align: center; margin-bottom: 8px; font-size: 24px; color: #fff; }}
 <div class="login-container">
   <h1>{title}</h1>
   <p class="subtitle">Sign in to continue</p>
+  {error_html}
   {builtin_html}
   {divider}
   {buttons_html}

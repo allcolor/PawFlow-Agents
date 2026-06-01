@@ -333,11 +333,11 @@ class ToolRelayService(BaseService):
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
-        self._service_id = config.get("_service_id", "")
+        self._service_id = self.config.get("_service_id", "")
         self._connection = None  # main HTTPListenerService ref (set by connect)
         try:
             self._auto_bg_after_seconds = float(
-                config.get("auto_background_after_seconds", 0) or 0)
+                self.config.get("auto_background_after_seconds", 0) or 0)
         except (TypeError, ValueError):
             self._auto_bg_after_seconds = 0.0
 

@@ -78,13 +78,13 @@ class CCInteractiveEventService(BaseService):
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
-        self._service_id = config.get("_service_id", "")
+        self._service_id = self.config.get("_service_id", "")
         self._connection = None
         self._route_path = ""
         self._sessions: Dict[str, CCInteractiveSessionEvents] = {}
         self._sessions_lock = threading.RLock()
         try:
-            self._max_queue = int(config.get("max_queue", 4096) or 4096)
+            self._max_queue = int(self.config.get("max_queue", 4096) or 4096)
         except (TypeError, ValueError):
             self._max_queue = 4096
 

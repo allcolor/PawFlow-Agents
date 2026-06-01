@@ -216,26 +216,26 @@ class VoiceboxService(BaseVoiceCloneService, BaseSTTService):
             _raw_config(self.config, "base_url", "http://127.0.0.1:17493") or "http://127.0.0.1:17493").rstrip("/")
         self._raw_base_url = self.base_url
         self.allow_private_base_url = str(
-            config.get("allow_private_base_url", False)).lower() in {"1", "true", "yes", "on"}
+            self.config.get("allow_private_base_url", False)).lower() in {"1", "true", "yes", "on"}
         self._runtime_user_id = ""
         self._runtime_conversation_id = ""
         self._runtime_agent_name = ""
-        self.client_id = str(config.get("client_id") or "pawflow")
-        self.stt_model = self._normalize_stt_model(str(config.get("stt_model") or "turbo"))
-        self.default_profile = str(config.get("default_profile") or "")
-        self.timeout = int(config.get("timeout") or 180)
-        self.auto_start = str(config.get("auto_start", True)).lower() not in {"0", "false", "no"}
-        self.auto_install = str(config.get("auto_install", True)).lower() not in {"0", "false", "no"}
-        install_dir = Path(str(config.get("install_dir") or "data/runtime/voicebox")).expanduser()
+        self.client_id = str(self.config.get("client_id") or "pawflow")
+        self.stt_model = self._normalize_stt_model(str(self.config.get("stt_model") or "turbo"))
+        self.default_profile = str(self.config.get("default_profile") or "")
+        self.timeout = int(self.config.get("timeout") or 180)
+        self.auto_start = str(self.config.get("auto_start", True)).lower() not in {"0", "false", "no"}
+        self.auto_install = str(self.config.get("auto_install", True)).lower() not in {"0", "false", "no"}
+        install_dir = Path(str(self.config.get("install_dir") or "data/runtime/voicebox")).expanduser()
         if not install_dir.is_absolute():
             install_dir = Path.cwd() / install_dir
         self.install_dir = install_dir
-        self.repo_url = str(config.get("repo_url") or _VOICEBOX_DEFAULT_REPO_URL)
-        self.repo_ref = str(config.get("repo_ref") or _VOICEBOX_DEFAULT_REPO_REF)
-        self.start_command = str(config.get("start_command") or "").strip()
-        self.startup_timeout = int(config.get("startup_timeout") or 180)
-        self.preload_stt_model = str(config.get("preload_stt_model", True)).lower() not in {"0", "false", "no"}
-        self.preload_timeout = int(config.get("preload_timeout") or 1800)
+        self.repo_url = str(self.config.get("repo_url") or _VOICEBOX_DEFAULT_REPO_URL)
+        self.repo_ref = str(self.config.get("repo_ref") or _VOICEBOX_DEFAULT_REPO_REF)
+        self.start_command = str(self.config.get("start_command") or "").strip()
+        self.startup_timeout = int(self.config.get("startup_timeout") or 180)
+        self.preload_stt_model = str(self.config.get("preload_stt_model", True)).lower() not in {"0", "false", "no"}
+        self.preload_timeout = int(self.config.get("preload_timeout") or 1800)
         self._managed_proc = None
 
     def set_runtime_context(self, user_id: str = "", conversation_id: str = "",

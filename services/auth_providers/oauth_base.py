@@ -16,6 +16,10 @@ class OAuthBaseProvider(AuthProvider):
     """Base class for OAuth2 providers with shared code exchange logic."""
 
     def __init__(self, config: Dict[str, Any]):
+        from core.expression import LazyResolveDict
+
+        if not isinstance(config, LazyResolveDict):
+            config = LazyResolveDict(config or {})
         self.config = config
         self._authorize_url = ""
         self._token_url = ""  # nosec B105
@@ -25,13 +29,20 @@ class OAuthBaseProvider(AuthProvider):
     def is_oauth(self) -> bool:
         return True
 
+    def _config_str(self, key: str) -> str:
+        """Return a normalized string config value for provider requests."""
+        value = str(self.config.get(key, "") or "").strip()
+        if key == "scope" and not value:
+            return str(getattr(self, "DEFAULT_SCOPE", "") or "").strip()
+        return value
+
     def get_authorize_url(self, state: str, redirect_uri: str) -> str:
         """Build the OAuth2 authorization URL."""
         params = {
-            "client_id": self.config.get("client_id", ""),
+            "client_id": self._config_str("client_id"),
             "redirect_uri": redirect_uri,
             "response_type": "code",
-            "scope": self.config.get("scope", ""),
+            "scope": self._config_str("scope"),
             "state": state,
         }
         self._customize_authorize_params(params)
@@ -73,8 +84,8 @@ class OAuthBaseProvider(AuthProvider):
 
         parsed = urllib.parse.urlparse(self._token_url)
         body = urllib.parse.urlencode({
-            "client_id": self.config.get("client_id", ""),
-            "client_secret": self.config.get("client_secret", ""),
+            "client_id": self._config_str("client_id"),
+            "client_secret": self._config_str("client_secret"),
             "grant_type": "refresh_token",
             "refresh_token": refresh_token,
         }).encode()
@@ -105,8 +116,8 @@ class OAuthBaseProvider(AuthProvider):
         """Exchange authorization code for tokens."""
         parsed = urllib.parse.urlparse(self._token_url)
         body = urllib.parse.urlencode({
-            "client_id": self.config.get("client_id", ""),
-            "client_secret": self.config.get("client_secret", ""),
+            "client_id": self._config_str("client_id"),
+            "client_secret": self._config_str("client_secret"),
             "code": code,
             "redirect_uri": redirect_uri,
             "grant_type": "authorization_code",

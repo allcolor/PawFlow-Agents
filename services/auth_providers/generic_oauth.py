@@ -50,6 +50,10 @@ class GenericOAuthProvider(OAuthBaseProvider):
     """Fully configurable OAuth2 provider. Supports presets for Keycloak, Okta, Auth0, GitLab."""
 
     def __init__(self, config: Dict[str, Any]):
+        from core.expression import LazyResolveDict
+
+        if not isinstance(config, LazyResolveDict):
+            config = LazyResolveDict(config or {})
         # Apply preset defaults into config (config values take precedence)
         preset_name = config.get("preset", "")
         preset = _PRESETS.get(preset_name, {})

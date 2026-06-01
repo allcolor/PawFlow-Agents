@@ -576,6 +576,86 @@ def _set_instance_config(inst, parameters=None, service_overrides=None,
                                 if isinstance(v, dict)}
 
 
+def _restart_running_flow_instance(instance_id: str, inst) -> bool:
+    """Restart a currently running executor so saved deployment config applies."""
+    from core.executor_registry import ExecutorRegistry
+    reg = ExecutorRegistry.get_instance()
+    ex = reg.get(instance_id)
+    was_running = bool(ex and getattr(ex, "is_running", False))
+    if not was_running:
+        return False
+    try:
+        ex.stop()
+    finally:
+        reg.unregister(instance_id)
+    reg._restore_instance(
+        instance_id, inst.flow_path,
+        inst.max_workers, inst.max_retries,
+        flow_fqn=getattr(inst, "flow_fqn", "") or "",
+        flow_scope=getattr(inst, "flow_scope", "") or "",
+        parameters=inst.parameters,
+        service_overrides=inst.service_overrides,
+        service_configs=inst.service_configs,
+        owner=inst.owner or "",
+        conversation_id=inst.conversation_id or "",
+        agent_name=getattr(inst, "agent_name", "") or "",
+    )
+    return True
+
+
+def _service_override_matches(ref: str, scope: str, scope_id: str,
+                              service_id: str) -> bool:
+    """Return whether a deployment service override targets a service."""
+    ref = str(ref or "")
+    if scope == "global" and ref == service_id:
+        return True
+    if ref.startswith("global:"):
+        return scope == "global" and ref.split(":", 1)[1] == service_id
+    if ref.startswith("user:"):
+        parts = ref.split(":", 2)
+        return (len(parts) == 3 and scope == "user"
+                and parts[1] == scope_id and parts[2] == service_id)
+    return False
+
+
+def _refresh_running_flow_service_bindings(scope: str, scope_id: str,
+                                           service_id: str) -> list:
+    """Refresh running executors that forward a flow service to this service.
+
+    ServiceRegistry reconnects edited services by replacing the live service
+    object. Running flows that had a forwarded service keep the old object
+    reference unless we rebind them here.
+    """
+    from core.deployment_registry import DeploymentRegistry
+    from core.executor_registry import ExecutorRegistry
+    from core.service_registry import ServiceRegistry
+
+    live = ServiceRegistry.get_instance().get_live_instance(scope, scope_id, service_id)
+    if live is None:
+        return []
+    refreshed = []
+    exec_reg = ExecutorRegistry.get_instance()
+    deployments = DeploymentRegistry.get_instance().get_all()
+    for iid, inst in deployments.items():
+        overrides = getattr(inst, "service_overrides", None) or {}
+        targets = [
+            flow_service_id
+            for flow_service_id, ref in overrides.items()
+            if _service_override_matches(ref, scope, scope_id, service_id)
+        ]
+        if not targets:
+            continue
+        executor = exec_reg.get(iid)
+        flow = getattr(executor, "_flow", None) if executor else None
+        services = getattr(flow, "services", None)
+        if not isinstance(services, dict):
+            continue
+        for flow_service_id in targets:
+            if flow_service_id in services:
+                services[flow_service_id] = live
+        refreshed.append(iid)
+    return refreshed
+
 
 def _handle_service_flow(self, action, body, store, user_id, flowfile):
     """Handle service flow actions. Returns [flowfile] or None."""
@@ -1342,9 +1422,13 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             scope_id = _service_scope_id(scope, user_id, conv_id)
             sdef = registry.get_definition(scope, scope_id, sid)
             registry.update_config(scope, scope_id, sid, config)
+            refreshed = _refresh_running_flow_service_bindings(scope, scope_id, sid)
             if sdef:
                 _notify_remote_mounts_after_service_change(sdef, conv_id, user_id)
-            flowfile.set_content(json.dumps({"ok": True}).encode())
+            flowfile.set_content(json.dumps({
+                "ok": True,
+                "refreshed_flows": refreshed,
+            }).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
         return [flowfile]
@@ -2720,7 +2804,8 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                     inst, service_overrides=service_overrides,
                     service_configs=service_configs)
             dr._save_instance(inst)
-            flowfile.set_content(json.dumps({"ok": True}).encode())
+            restarted = _restart_running_flow_instance(iid, inst)
+            flowfile.set_content(json.dumps({"ok": True, "restarted": restarted}).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
         return [flowfile]

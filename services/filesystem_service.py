@@ -284,7 +284,7 @@ class RelayService(BaseService):
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
-        self._service_id = config.get("_service_id", "")
+        self._service_id = self.config.get("_service_id", "")
 
         self._project_context: Optional[Dict] = None  # auto-fetched on relay connect
         self._relay_shells: List[str] = []  # available shells on the relay system
@@ -321,8 +321,8 @@ class RelayService(BaseService):
         # the path — exact symptom user saw.
         try:
             from core.service_registry import SCOPE_USER
-            if config.get("_scope", "") == SCOPE_USER:
-                self._user_id = str(config.get("_scope_id", "") or "")
+            if self.config.get("_scope", "") == SCOPE_USER:
+                self._user_id = str(self.config.get("_scope_id", "") or "")
             else:
                 self._user_id = ""
         except Exception:

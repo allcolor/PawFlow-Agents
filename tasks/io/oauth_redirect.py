@@ -229,11 +229,6 @@ class OAuthRedirectTask(BaseTask):
                          provider_name, url)
             return oauth_config_error(flowfile, provider_name, url)
 
-        allowed, wait = auth_svc.check_rate_limit(ip)
-        if not allowed:
-            flowfile.set_content(f"Too many attempts. Wait {wait}s.".encode())
-            flowfile.set_attribute("http.response.status", "429")
-            return [flowfile]
         flowfile.set_content(b"")
         flowfile.set_attribute("http.response.status", "302")
         flowfile.set_attribute("http.response.header.Location", url)

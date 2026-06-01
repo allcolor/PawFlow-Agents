@@ -56,6 +56,50 @@ class TestOAuthProviderService(unittest.TestCase):
         assert "github.com" in svc.token_url
         assert "api.github.com" in svc.userinfo_url
 
+    def test_oauth_request_config_values_are_trimmed(self):
+        from services.auth_providers.github import GitHubAuthProvider
+
+        provider = GitHubAuthProvider({
+            "client_id": " gh-id ",
+            "client_secret": " gh-secret\n",
+            "scope": " read:user user:email ",
+        })
+        url = provider.get_authorize_url("state", "https://webchat.example/auth/callback")
+        assert "client_id=gh-id" in url
+        assert "scope=read%3Auser+user%3Aemail" in url
+
+    def test_oauth_provider_resolves_config_expressions(self):
+        from unittest.mock import patch
+        from services.auth_providers.google import GoogleAuthProvider
+        from services.auth_providers.github import GitHubAuthProvider
+
+        marker_id = "$" + "{pf_oauth_expr_client_id}"
+        marker_secret = "$" + "{pf_oauth_expr_client_secret}"
+        with patch("core.expression._load_global_parameters",
+                   lambda: {"pf_oauth_expr_client_id": "resolved-id"}), \
+             patch("core.expression._load_global_secrets",
+                   lambda: {"pf_oauth_expr_client_secret": "resolved-secret"}):
+            for cls in (GoogleAuthProvider, GitHubAuthProvider):
+                provider = cls({
+                    "client_id": marker_id,
+                    "client_secret": marker_secret,
+                })
+                assert provider._config_str("client_id") == "resolved-id"
+                assert provider._config_str("client_secret") == "resolved-secret"
+
+    def test_github_empty_scope_uses_provider_default(self):
+        from services.auth_providers.github import GitHubAuthProvider
+
+        provider = GitHubAuthProvider({
+            "client_id": "gh-id",
+            "client_secret": "gh-secret",
+            "scope": "",
+        })
+
+        url = provider.get_authorize_url("state", "https://webchat.example/auth/callback")
+
+        assert "scope=read%3Auser+user%3Aemail" in url
+
     def test_microsoft_preset(self):
         from services.oauth_provider_service import OAuthProviderService
         svc = OAuthProviderService({
@@ -245,6 +289,66 @@ class TestOAuthRedirectTask(unittest.TestCase):
         assert "OAuth configuration error" in results[0].get_content().decode("utf-8")
         assert results[0].get_attribute("http.response.header.Location") is None
 
+    def test_oauth_redirect_does_not_use_login_rate_limit(self):
+        from tasks.io.oauth_redirect import OAuthRedirectTask
+
+        class Provider:
+            def get_authorize_url(self, state, redirect_uri):
+                return "https://github.com/login/oauth/authorize?state=" + state
+
+        class Auth:
+            def get_provider(self, name):
+                assert name == "github"
+                return Provider()
+
+            def generate_state(self, provider):
+                return "state-123"
+
+            def check_rate_limit(self, ip):
+                raise AssertionError("OAuth provider redirects must not use builtin login rate limit")
+
+        task = OAuthRedirectTask({})
+        task._services = {}
+        ff = FlowFile(content=b"")
+        ff.set_attribute("http.header.host", "webchat.example")
+
+        results = task._handle_oauth_redirect(ff, Auth(), "github", "127.0.0.1")
+
+        assert results[0].get_attribute("http.response.status") == "302"
+        assert "github.com/login/oauth/authorize" in results[0].get_attribute("http.response.header.Location")
+
+    def test_provider_login_state_records_selected_provider(self):
+        from tasks.io.oauth_redirect import OAuthRedirectTask
+
+        seen = []
+
+        class OAuthState:
+            provider = "pawflow"
+
+            def generate_state(self, metadata=None):
+                seen.append(metadata)
+                return "state-gh"
+
+        class Provider:
+            def get_authorize_url(self, state, redirect_uri):
+                assert state == "state-gh"
+                return "https://github.com/login/oauth/authorize?state=" + state
+
+        class Auth:
+            def get_provider(self, name):
+                assert name == "github"
+                return Provider()
+
+        task = OAuthRedirectTask({})
+        task._services = {"oauth": OAuthState()}
+        ff = FlowFile(content=b"")
+        ff.set_attribute("http.header.host", "webchat.example")
+
+        results = task._handle_oauth_redirect(ff, Auth(), "github", "127.0.0.1")
+
+        assert seen == [{"provider": "github"}]
+        assert results[0].get_attribute("http.response.status") == "302"
+
     def test_login_provider_self_redirect_returns_config_error_before_rate_limit(self):
         from tasks.io.oauth_redirect import OAuthRedirectTask
 
@@ -301,6 +405,63 @@ class TestOAuthRedirectTask(unittest.TestCase):
 
         assert results[0].get_attribute("http.response.status") == "500"
         assert "OAuth configuration error" in results[0].get_content().decode("utf-8")
+
+    def test_login_page_renders_callback_error(self):
+        from tasks.io.serve_login import ServeLoginTask
+
+        class Auth:
+            def get_enabled_providers(self):
+                return [{"name": "builtin", "display_name": "Sign in", "icon": "", "is_oauth": False}]
+
+        task = ServeLoginTask({"auth_service_id": "auth"})
+        task._services = {"auth": Auth()}
+        ff = FlowFile(content=b"")
+        ff.set_attribute("http.query", "error=The%20provided%20client%20secret%20is%20invalid.")
+
+        results = task.execute(ff)
+
+        body = results[0].get_content().decode("utf-8")
+        assert "The provided client secret is invalid." in body
+        assert "<div class=\"error\">" in body
+
+    def test_pawflow_callback_exchanges_with_provider_from_state(self):
+        from types import SimpleNamespace
+        from tasks.io.oauth_callback import OAuthCallbackTask
+
+        class OAuthState:
+            provider = "pawflow"
+
+            def validate_state(self, state):
+                assert state == "state-gh"
+                return {"provider": "github"}
+
+        class AuthGateway:
+            def __init__(self):
+                self.providers = []
+
+            def authenticate_oauth(self, provider_name, code, redirect_uri, ip=""):
+                self.providers.append(provider_name)
+                assert provider_name == "github"
+                assert code == "gh-code"
+                assert redirect_uri == "https://webchat.example/auth/callback"
+                return SimpleNamespace(
+                    success=False,
+                    error="github failed after correct provider selection",
+                )
+
+        auth = AuthGateway()
+        task = OAuthCallbackTask({})
+        task._services = {"oauth": OAuthState(), "auth": auth}
+        ff = FlowFile(content=b"")
+        ff.set_attribute("http.query", "code=gh-code&state=state-gh")
+        ff.set_attribute("http.header.host", "webchat.example")
+        ff.set_attribute("http.header.x-forwarded-proto", "https")
+
+        results = task.execute(ff)
+
+        assert auth.providers == ["github"]
+        assert results[0].get_attribute("http.response.status") == "302"
+        assert "github%20failed" in results[0].get_attribute("http.response.header.Location")
 
     def test_builtin_login_sets_pawflow_token_cookie(self):
         from types import SimpleNamespace

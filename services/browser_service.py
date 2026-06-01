@@ -64,14 +64,14 @@ class BrowserService(BaseService):
         self._started = False
         self._stop_event = threading.Event()
         self._cleanup_thread: Optional[threading.Thread] = None
-        self._timeout = int(config.get("timeout",
+        self._timeout = int(self.config.get("timeout",
                             os.environ.get("PAWFLOW_BROWSER_TIMEOUT", "300")))
 
-        allowed = config.get("allowed_domains",
+        allowed = self.config.get("allowed_domains",
                              os.environ.get("PAWFLOW_BROWSER_ALLOWED_DOMAINS", ""))
         self._allowed_domains = {d.strip().lower() for d in allowed.split(",") if d.strip()} if allowed else set()
 
-        blocked = config.get("blocked_domains",
+        blocked = self.config.get("blocked_domains",
                              os.environ.get("PAWFLOW_BROWSER_BLOCKED_DOMAINS", ""))
         self._blocked_domains = {d.strip().lower() for d in blocked.split(",") if d.strip()} if blocked else set()
 

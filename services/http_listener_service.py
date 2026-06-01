@@ -1537,6 +1537,9 @@ class HTTPListenerService(BaseService):
     def __new__(cls, config=None):
         if config is None:
             config = {}
+        from core.expression import LazyResolveDict
+        if not isinstance(config, LazyResolveDict):
+            config = LazyResolveDict(config or {})
         if "port" not in config or config.get("port") in {None, ""}:
             raise ValueError("HTTPListenerService requires port")
         port = int(config.get("port"))

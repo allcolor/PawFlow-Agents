@@ -104,23 +104,29 @@ class LazyResolveDict(dict):
             val = super().__getitem__(key)
             return self._resolve(val)
         except KeyError:
-            return default
+            return self._resolve(default)
+
+    def items(self):
+        for key in super().keys():
+            yield key, self._resolve(super().__getitem__(key))
+
+    def values(self):
+        for key in super().keys():
+            yield self._resolve(super().__getitem__(key))
 
     def _resolve(self, val):
-        if isinstance(val, str) and "${" in val:
-            try:
-                scope = dict.get(self, "_scope", "")
-                scope_id = dict.get(self, "_scope_id", "")
-                owner = scope_id if scope == "user" else None
-                conversation_id = scope_id if scope == "conv" else None
-                return resolve_expression(
-                    val,
-                    owner=owner,
-                    conversation_id=conversation_id,
-                )
-            except Exception:
-                return val
-        return val
+        scope = dict.get(self, "_scope", "")
+        scope_id = dict.get(self, "_scope_id", "")
+        owner = scope_id if scope == "user" else None
+        conversation_id = scope_id if scope == "conv" else None
+        try:
+            return resolve_value(
+                val,
+                owner=owner,
+                conversation_id=conversation_id,
+            )
+        except Exception:
+            return val
 
 
 def resolve_expression(template: str, parameters: Optional[Dict[str, Any]] = None,

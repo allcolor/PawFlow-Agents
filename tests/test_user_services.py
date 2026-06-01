@@ -443,6 +443,49 @@ class TestPersistence:
 
         assert svc.config.get("pass") == "resolved-pass"
 
+    def test_live_auth_gateway_resolves_nested_provider_expressions(self, monkeypatch):
+        marker_google_id = "$" + "{auth.google.client_id}"
+        marker_google_secret = "$" + "{auth.google.client_secret}"
+        marker_github_id = "$" + "{auth.github.client_id}"
+        marker_github_secret = "$" + "{auth.github.client_secret}"
+        monkeypatch.setattr(
+            "core.expression._load_user_secrets",
+            lambda username: {
+                "auth.google.client_id": "google-id",
+                "auth.google.client_secret": "google-secret",
+                "auth.github.client_id": "github-id",
+                "auth.github.client_secret": "github-secret",
+            },
+        )
+
+        self.reg.install(
+            self.SCOPE,
+            "alice",
+            "auth",
+            "authGateway",
+            config={
+                "providers": {
+                    "google": {
+                        "enabled": True,
+                        "client_id": marker_google_id,
+                        "client_secret": marker_google_secret,
+                    },
+                    "github": {
+                        "enabled": True,
+                        "client_id": marker_github_id,
+                        "client_secret": marker_github_secret,
+                    },
+                }
+            },
+            enabled=True,
+        )
+        svc = self.reg.get_live_instance(self.SCOPE, "alice", "auth")
+
+        assert svc.get_provider("google")._config_str("client_id") == "google-id"
+        assert svc.get_provider("google")._config_str("client_secret") == "google-secret"
+        assert svc.get_provider("github")._config_str("client_id") == "github-id"
+        assert svc.get_provider("github")._config_str("client_secret") == "github-secret"
+
     def test_conversation_service_sensitive_fields_are_encrypted_in_extras(self, monkeypatch):
         from core.service_registry import ServiceRegistry, SCOPE_CONV, CONV_EXTRAS_KEY
 

@@ -257,6 +257,37 @@ class TestAuthGatewayService(unittest.TestCase):
         allowed, _ = gw.check_rate_limit("1.2.3.4")
         self.assertTrue(allowed)
 
+    def test_oauth_failures_do_not_increment_builtin_login_rate_limit(self):
+        from services.auth_gateway_service import AuthGatewayService
+        from services.auth_providers.base import AuthResult
+
+        class FailingOAuthProvider:
+            def exchange_code(self, code, redirect_uri):
+                return AuthResult(success=False, error="provider rejected credentials")
+
+        gw = AuthGatewayService({"providers": {}, "rate_limit_base_delay": 1})
+        gw._providers["github"] = FailingOAuthProvider()
+        result = gw.authenticate_oauth("github", "bad-code", "https://webchat.example/auth/callback", ip="1.2.3.4")
+        self.assertFalse(result.success)
+        allowed, _ = gw.check_rate_limit("1.2.3.4")
+        self.assertTrue(allowed)
+
+    def test_github_token_exchange_credential_error_is_contextualized(self):
+        from services.auth_gateway_service import AuthGatewayService
+        from services.auth_providers.base import AuthResult
+
+        class FailingGitHubProvider:
+            def exchange_code(self, code, redirect_uri):
+                return AuthResult(success=False, error="The client_id and/or client_secret passed are incorrect.")
+
+        gw = AuthGatewayService({"providers": {}})
+        gw._providers["github"] = FailingGitHubProvider()
+        result = gw.authenticate_oauth("github", "code", "https://webchat.example/auth/callback")
+        self.assertFalse(result.success)
+        self.assertIn("browser authorization", result.error)
+        self.assertIn("callback token exchange", result.error)
+        self.assertNotEqual(result.error, "The client_id and/or client_secret passed are incorrect.")
+
     def test_builtin_auth(self):
         from core.security import SecurityManager, Role
         sm = SecurityManager.get_instance()

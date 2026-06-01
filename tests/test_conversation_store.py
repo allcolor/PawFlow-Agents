@@ -444,6 +444,32 @@ class TestCreateConversation:
         assert [m["content"] for m in tail] == ["m8", "m9", "m10", "m11"]
         assert len(store.load(cid)) > len(tail)
 
+    def test_load_shared_tail_reads_recent_window_without_tools(self, conv):
+        store, cid, uid = conv
+        for i in range(6):
+            source = ({"type": "agent", "name": "bot"}
+                      if i % 2 else {"type": "user", "target_agent": "bot"})
+            role = "assistant" if source["type"] == "agent" else "user"
+            store.append_message(
+                cid,
+                _msg(role=role, content=f"m{i}", source=source),
+                agent_name="bot",
+                user_id=uid,
+            )
+        store.append_message(
+            cid,
+            _msg(role="tool", content="private tool", tool_call_id="tc1"),
+            agent_name="bot",
+            user_id=uid,
+        )
+
+        tail = store.load_shared_tail(cid, user_id=uid, limit=5)
+
+        assert [m["content"] for m in tail] == [
+            "[User to agent bot]:\nm2", "[Agent bot]:\nm3",
+            "[User to agent bot]:\nm4", "[Agent bot]:\nm5"]
+        assert all(m["role"] == "user" for m in tail)
+
     def test_patch_message_keeps_post_write_hooks_outside_append_lock(
             self, conv, monkeypatch):
         store, cid, uid = conv

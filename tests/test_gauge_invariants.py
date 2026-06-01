@@ -29,6 +29,7 @@ _FLOW_GRAPH_HTML = Path("tasks/io/chat_ui/flow_graph.html").read_text(encoding="
 _MESSAGES_JS = Path("tasks/io/chat_ui/messages.js").read_text(encoding="utf-8")
 _AGENT_CONTEXT_PY = Path("tasks/ai/agent_context.py").read_text(encoding="utf-8")
 _AGENT_CORE_PY = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
+_AGENT_COMPACTION_PY = Path("tasks/ai/agent_compaction.py").read_text(encoding="utf-8")
 _CONTEXT_OPS_PY = Path("tasks/ai/actions/context_ops.py").read_text(encoding="utf-8")
 _CONTEXT_EDITOR_JS = Path(
     "tasks/io/chat_ui/context_editor.js").read_text(encoding="utf-8")
@@ -416,8 +417,32 @@ def test_context_editor_edits_visible_rows_without_full_context_fetch():
         _CONTEXT_EDITOR_JS.index("async function ctxEditMessage"):
         _CONTEXT_EDITOR_JS.index("let _ctxDirty = false")]
     assert "_ctxVisibleById.get(msgId)" in edit_body
-    assert "ctxLoadFull()" in edit_body
-    assert edit_body.index("_ctxVisibleById.get(msgId)") < edit_body.index("ctxLoadFull()")
+    assert "ctxLoadFull()" not in edit_body
+    assert "contextMessageNotFoundRefresh" in edit_body
+
+
+def test_context_editor_never_uses_full_context_loader():
+    assert "action$('get_context_full'" not in _CONTEXT_EDITOR_JS
+    assert "Full context loading is disabled" in _CONTEXT_OPS_PY
+    assert "Full context replacement is disabled" in _CONTEXT_OPS_PY
+
+
+def test_webchat_live_display_window_trims_only_autoscroll():
+    assert "function trimLiveDisplayWindowIfAutoscrolling" in _MESSAGES_JS
+    trim_body = _MESSAGES_JS[
+        _MESSAGES_JS.index("function trimLiveDisplayWindowIfAutoscrolling"):
+        _MESSAGES_JS.index("function addMsg", _MESSAGES_JS.index("function trimLiveDisplayWindowIfAutoscrolling"))]
+    assert "if (!wasAutoscroll) return;" in trim_body
+    assert "LIVE_DISPLAY_WINDOW_MULTIPLIER" in trim_body
+    assert "el.remove()" in trim_body
+
+
+def test_prompt_bar_has_fast_conversation_refresh_button():
+    template = Path("tasks/io/chat_ui/template.html").read_text(encoding="utf-8")
+    assert 'id="refreshConvBtn"' in template
+    assert 'onclick="refreshCurrentConversation()"' in template
+    assert "function refreshCurrentConversation" in Path(
+        "tasks/io/chat_ui/conversations.js").read_text(encoding="utf-8")
 
 
 def test_context_usage_cache_counts_suffix_then_resets():
@@ -1666,13 +1691,26 @@ def test_provider_compact_uses_bounded_transcript_tail():
     end = _AGENT_CORE_PY.index("PawFlow compact done", start)
     body = _AGENT_CORE_PY[start:end]
 
-    assert "_PROVIDER_COMPACT_TAIL_MESSAGES = 250" in _AGENT_CORE_PY
-    assert "load_transcript_tail_for_agent" in body
-    assert "load_transcript_for_agent" in body  # legacy fallback only
-    assert body.index("load_transcript_tail_for_agent") < body.index(
-        "load_transcript_for_agent")
-    assert "Loaded %d recent transcript messages for provider compaction" in body
+    assert "COMPACT_TAIL_MESSAGES = 250" in _AGENT_COMPACTION_PY
+    assert "_compact_context_from_store" in body
+    assert "tail_limit=COMPACT_TAIL_MESSAGES" in body
+    assert "load_transcript_tail_for_agent" not in body
+    assert "load_transcript_for_agent" not in body
+    assert "Loaded %d compact source messages" in _AGENT_COMPACTION_PY
     assert "Loaded %d messages from shared context for compaction" not in body
+
+
+def test_manual_compact_uses_same_bounded_source_loader():
+    start = _CONTEXT_OPS_PY.index('    if action == "compact":')
+    end = _CONTEXT_OPS_PY.index('    if action == "rebuild":', start)
+    body = _CONTEXT_OPS_PY[start:end]
+
+    assert "_compact_context_from_store" in body
+    assert "_get_summarizer_client" in body
+    assert "No summarizer service configured — compaction needs one" not in body
+    assert "load_transcript_for_agent" not in body
+    assert "load_context" not in body
+    assert "store.load(conv_id" not in body
 
 
 def test_context_editor_never_treats_transcript_as_agent_context():

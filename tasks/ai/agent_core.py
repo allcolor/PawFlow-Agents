@@ -11,14 +11,9 @@ from core.llm_client import (
 from core.interrupt_policy import SOFT_INTERRUPT_USER_COMMAND
 from tasks.ai.agent_emitter import AgentEmitter, AgentResult
 from tasks.ai.agent_exceptions import AgentCancelled, _InterruptComplete
+from tasks.ai.agent_compaction import COMPACT_TAIL_MESSAGES
 
 logger = logging.getLogger(__name__)
-
-# Provider-triggered compact only needs raw recent fidelity. Older history is
-# supplied by the shared bucket pyramid inside _compact(); keeping this row cap
-# modest avoids tokenizing hundreds of large tool_result payloads just to walk
-# most of them back out again.
-_PROVIDER_COMPACT_TAIL_MESSAGES = 250
 
 # Context-ack phrases injected as pre-filled assistant messages.
 # The LLM sometimes echoes them as its first output — strip them.
@@ -2156,44 +2151,17 @@ class AgentCoreMixin:
                                 logger.warning(
                                     "[agent:%s] writer flush before compact "
                                     "failed: %s", conversation_id[:8], _fl_err)
-                            # 1. Load a bounded recent transcript tail. Old history
-                            # comes from the shared bucket header assembled inside
-                            # _compact(); provider compact only needs raw fidelity for
-                            # recent messages. Do not materialize the full transcript
-                            # here: long sessions can have tens of thousands of rows
-                            # and millions of token-equivalent chars.
+                            # 1. Run the same compact procedure used by /compact.
+                            # Old history comes from the shared bucket header
+                            # assembled inside _compact(); non-independent compact
+                            # only gets a bounded raw tail here.
                             from core.conversation_store import ConversationStore
                             _store = ConversationStore.instance()
-                            _tail_loader = getattr(
-                                _store, "load_transcript_tail_for_agent", None)
-                            if callable(_tail_loader):
-                                _full_ctx = _tail_loader(
-                                    conversation_id, _agent_name,
-                                    limit=_PROVIDER_COMPACT_TAIL_MESSAGES)
-                            else:
-                                _full_ctx = _store.load_transcript_for_agent(
-                                    conversation_id, _agent_name)
-                            if not _full_ctx:
-                                _full_ctx = _store.load_agent_context(
-                                    conversation_id, _agent_name)
-                            if not _full_ctx:
-                                raise RuntimeError("No context to compact")
-                            _full_messages = self._deserialize_messages(_full_ctx, conversation_id=conversation_id)
-                            logger.info("[agent:%s] Loaded %d recent transcript messages for provider compaction",
-                                        conversation_id[:8], len(_full_messages))
-                            logger.info(
-                                "[compact-restart:%s/%s] context loaded messages=%d elapsed_ms=%.1f",
-                                conversation_id[:8], _agent_name,
-                                len(_full_messages), _compact_restart_ms())
 
                             # 2. FORCE compact — CC said it's saturating, so we compact
                             # unconditionally. PawFlow's token estimate may underestimate
                             # (different tokenizer, tool schemas not counted), leading to
                             # no-op compactions that leave stale summaries in the context.
-                            _sc, _sc_max, _sc_svc = self._get_summarizer_client(user_id, conversation_id=conversation_id)
-                            if not _sc:
-                                raise RuntimeError(
-                                    "No summarizer_service configured. Cannot compact.")
                             # Propagate the agent's configured
                             # `compact_threshold_pct` as `trigger_fraction`
                             # so the [compact] log shows the value the
@@ -2214,18 +2182,24 @@ class AgentCoreMixin:
                                     _ccd_trigger_frac = _ccd_pct / 100.0
                             except (TypeError, ValueError):
                                 pass
-                            _compacted_messages = list(self._compact(
-                                _full_messages, _sc,
-                                max_tokens=ctx.get("max_context_size", 200000),
-                                trigger_fraction=_ccd_trigger_frac,
+                            _compact_stats = {}
+                            _compacted_messages = list(self._compact_context_from_store(
+                                _store,
                                 conversation_id=conversation_id,
                                 agent_name=_agent_name,
+                                user_id=user_id,
+                                max_tokens=ctx.get("max_context_size", 200000),
+                                compact_client=compact_client,
+                                trigger_fraction=_ccd_trigger_frac,
                                 compact_instructions=ctx.get("compact_instructions", ""),
                                 force=True,
-                                user_id=user_id,
                                 budget_config=getattr(ctx.get("resolved_svc"), "config", None),
                                 independent_context=bool(ctx.get("_independent_context")),
                                 post_hooks_async=True,
+                                tool_defs=ctx.get("tool_defs"),
+                                chars_per_token=ctx.get("chars_per_token", 0),
+                                tail_limit=COMPACT_TAIL_MESSAGES,
+                                stats=_compact_stats,
                             ))
                             logger.info(
                                 "[compact-restart:%s/%s] compact returned messages=%d elapsed_ms=%.1f",
@@ -2249,7 +2223,9 @@ class AgentCoreMixin:
                                 conversation_id[:8], _agent_name,
                                 _compact_restart_ms())
                             logger.info("[agent:%s] PawFlow compact: %d → %d messages",
-                                        conversation_id[:8], len(_full_messages), len(messages))
+                                        conversation_id[:8],
+                                        int(_compact_stats.get("before", 0) or 0),
+                                        len(messages))
                             try:
                                 from core.pending_queue import PendingQueue
                                 _compacted_ids = {

@@ -322,6 +322,13 @@ function resumeConv(cid, force) {
     });
 }
 
+function refreshCurrentConversation() {
+  if (!conversationId) return;
+  resumeConv(conversationId, true);
+  const input = document.getElementById('input');
+  if (input) input.focus();
+}
+
 // Empty-state view: no conv selected. Reached after deleting the last
 // conv or when create_conversation fails. Single place owning this UI.
 function renderEmptyState() {

@@ -425,6 +425,28 @@ class SegmentedJsonl:
             return patched
         return None
 
+    def delete_by_msg_ids(self, msg_ids: set) -> int:
+        """Delete rows matching msg_id/trace_id, rewriting touched segments only."""
+        targets = {str(mid) for mid in (msg_ids or set()) if str(mid)}
+        if not targets or not self.exists():
+            return 0
+        paths = self._segment_paths() if self.is_segmented() else (
+            [self.flat_path] if self.flat_path.exists() else [])
+        deleted = 0
+        for path in paths:
+            self.flush_append_handles(path)
+            rows = list(self._iter_file(path))
+            kept = [
+                row for row in rows
+                if row.get("msg_id") not in targets
+                and row.get("trace_id") not in targets
+            ]
+            if len(kept) == len(rows):
+                continue
+            deleted += len(rows) - len(kept)
+            self._replace_rows_in_path(path, kept)
+        return deleted
+
     def total_rows(self) -> int:
         self._flush_own_append_handles()
         if self.is_segmented():

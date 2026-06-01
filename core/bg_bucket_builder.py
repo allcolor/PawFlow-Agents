@@ -607,8 +607,8 @@ class BgBucketBuilder:
         """Block until every in-flight job for this process completes.
 
         Useful in tests to ensure async work settled before inspection.
-        Manual /compact uses build_now_sync instead — it wants a
-        guarantee on a specific conversation, not a global flush.
+        Manual /compact does not call this; the same hot path as provider
+        compact reads the already-built pyramid and a bounded raw tail.
         """
         deadline = time.time() + timeout
         while time.time() < deadline:
@@ -629,10 +629,10 @@ class BgBucketBuilder:
         than left in the agent's tail. The configured partial-min floor
         avoids paying for a tiny LLM call.
 
-        Used by manual /compact on a conv whose pyramid is behind (or
-        empty: import, long-idle). Blocks the caller. Emits
-        compact_progress SSE per bucket built and per rollup fired so
-        the UI can show progression.
+        Used by explicit rebuild/maintenance flows that choose to block until
+        the shared pyramid catches up. Manual /compact must not call this; it
+        uses the provider-trigger path and remains bounded by the current
+        pyramid plus raw tail.
 
         Bulk catchup shortcut: when the pyramid is empty AND the gap
         exceeds l1_trigger_msgs * bulk_catchup_multiplier, the first

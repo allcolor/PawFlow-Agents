@@ -3,9 +3,9 @@
 Covers the concrete scenarios we walked through during design:
   A. Young conv (< L1_TRIGGER): no bg bucket, no pyramid, no compact fire
   B. Auto trigger (80% ctx, force=False): async bg trigger, no hot-path build
-  C. /compact on huge empty-pyramid conv: bulk mode builds SB-like bucket
-  D. /compact with existing pyramid + 80 msgs gap: partial bucket flushed
-  E. /compact with ≥150 msgs gap mid-conv: normal L1 chunking
+  C. Background catchup on huge empty-pyramid conv: bulk mode builds SB-like bucket
+  D. Background catchup with existing pyramid + 80 msgs gap: partial bucket flushed
+  E. Background catchup with ≥150 msgs gap mid-conv: normal L1 chunking
   F. /compact with <37 msgs gap: partial skipped, msgs stay uncovered
   G. Rollup fires when object count exceeds threshold
   H. Memory extractor fires on each bucket build
@@ -73,7 +73,7 @@ def test_young_conv_no_bucket_no_pyramid(fake_builder):
     assert calls == []
 
 
-# ── C. /compact on huge empty-pyramid conv (bulk mode) ─────────────
+# ── C. Background catchup on huge empty-pyramid conv (bulk mode) ───
 
 
 def test_bulk_catchup_absorbs_bulk_and_preserves_tail(fake_builder):

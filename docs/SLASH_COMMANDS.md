@@ -220,7 +220,7 @@ After a force stop, the next Escape press starts the cycle over (graceful again)
 /compact [@agent|ALL]
 ```
 
-Summarize older messages to reduce context size while preserving key information. A compact is a hard context replacement: PawFlow stops any active loop for the target agent, writes the compacted agent context to disk, invalidates CLI runtime sessions, and restarts the next loop from that saved compacted context.
+Summarize older messages to reduce context size while preserving key information. A compact is a hard context replacement: PawFlow stops any active loop for the target agent, writes the compacted agent context to disk, invalidates CLI runtime sessions, and restarts the next loop from that saved compacted context. `/compact` uses the same compaction procedure as automatic provider-triggered compaction: shared bucket header plus a bounded raw tail, then the canonical `_compact` writer.
 
 ```
 /compact               -- compact current agent's context

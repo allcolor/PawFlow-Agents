@@ -20,6 +20,10 @@ from tasks.ai.agent_summarize import AgentSummarizeMixin
 
 logger = logging.getLogger(__name__)
 
+# Compact source is always: shared bucket header (inside _compact) + this
+# bounded raw tail. Do not feed full transcript/shared context into _compact.
+COMPACT_TAIL_MESSAGES = 250
+
 
 
 def _select_recent_messages(
@@ -84,6 +88,97 @@ class AgentCompactionMixin(AgentSummarizeMixin):
 
     # Max chars kept per tool result after compaction truncation
     _TOOL_TRUNC_LIMIT = 800
+
+    def _load_compact_source_messages(self, store, conversation_id: str,
+                                      agent_name: str = "",
+                                      user_id: str = "",
+                                      tail_limit: int = COMPACT_TAIL_MESSAGES
+                                      ) -> List[LLMMessage]:
+        """Load the only valid non-independent compact source.
+
+        _compact() assembles old history from BucketStore. Its message input
+        must be a bounded raw tail only, otherwise /compact and provider
+        compact re-tokenize the entire transcript and defeat the bucket model.
+        """
+        if agent_name and agent_name not in ("", "ALL", "shared"):
+            source_data = store.load_transcript_tail_for_agent(
+                conversation_id, agent_name, limit=tail_limit)
+        else:
+            source_data = store.load_shared_tail(
+                conversation_id, user_id=user_id, limit=tail_limit)
+        source_data = [
+            m for m in (source_data or [])
+            if isinstance(m, dict) and not m.get("display_only")
+        ]
+        if not source_data:
+            raise RuntimeError("No context to compact")
+        return self._deserialize_messages(
+            source_data, conversation_id=conversation_id)
+
+    def _compact_context_from_store(self, store, conversation_id: str,
+                                    agent_name: str = "",
+                                    user_id: str = "",
+                                    max_tokens: int = 200000,
+                                    compact_client: LLMClient | None = None,
+                                    trigger_fraction: float = 0.8,
+                                    compact_instructions: str = "",
+                                    force: bool = True,
+                                    budget_config: dict | None = None,
+                                    independent_context: bool = False,
+                                    post_hooks_async: bool = False,
+                                    tool_defs: list = None,
+                                    chars_per_token: float = 0,
+                                    tail_limit: int = COMPACT_TAIL_MESSAGES,
+                                    stats: dict | None = None,
+                                    ) -> List[LLMMessage]:
+        """Run the canonical PawFlow compaction procedure for a store context.
+
+        Manual /compact and provider-triggered compact both come through here.
+        The only valid shared-context source is the bucket header assembled by
+        _compact() plus this bounded raw tail; independent task contexts keep
+        their isolated full context because they do not use the shared pyramid.
+        """
+        if independent_context:
+            raw = store.load_agent_context(conversation_id, agent_name)
+            if not raw:
+                raise RuntimeError("No context to compact")
+            messages = self._deserialize_messages(
+                raw, conversation_id=conversation_id)
+            if compact_client is None:
+                compact_client, _, _ = self._get_summarizer_client(
+                    user_id, conversation_id=conversation_id)
+            if compact_client is None:
+                raise RuntimeError(
+                    "No summarizer_service configured. Cannot compact.")
+        else:
+            messages = self._load_compact_source_messages(
+                store, conversation_id, agent_name, user_id=user_id,
+                tail_limit=tail_limit)
+
+        logger.info("[agent:%s] Loaded %d compact source messages",
+                    conversation_id[:8], len(messages))
+        try:
+            if stats is not None:
+                stats["before"] = len(messages)
+                stats["tokens_before"] = self._estimate_tokens(
+                    messages, tool_defs=tool_defs,
+                    chars_per_token=chars_per_token)
+        except Exception:
+            logger.debug("compact source metric estimate failed", exc_info=True)
+        return self._compact(
+            messages, compact_client, max_tokens,
+            trigger_fraction=trigger_fraction,
+            conversation_id=conversation_id,
+            agent_name=agent_name,
+            tool_defs=tool_defs,
+            chars_per_token=chars_per_token,
+            compact_instructions=compact_instructions,
+            force=force,
+            user_id=user_id,
+            budget_config=budget_config,
+            independent_context=independent_context,
+            post_hooks_async=post_hooks_async,
+        )
 
     # Circuit breaker — track consecutive NON-FORCED compact failures
     # per (conv_id, agent_name). After _COMPACT_FAIL_CAP in a row the

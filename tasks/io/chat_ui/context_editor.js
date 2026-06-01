@@ -95,14 +95,7 @@ function _ctxScopedMutation(body) {
 }
 
 function ctxLoadFull() {
-  const body = {};
-  if (_ctxAgentFilter) body.agent_name = _ctxAgentFilter;
-  return new Promise(resolve => {
-    action$('get_context_full', body).subscribe(data => {
-      _ctxFullData = data;
-      resolve(_ctxFullData);
-    });
-  });
+  return Promise.resolve({ error: 'Full context loading is disabled; load older pages instead.' });
 }
 
 function ctxRefresh() {
@@ -123,9 +116,8 @@ async function ctxEditMessage(msgId) {
   if (_ctxIsReadonly()) { addMsg('error', t('contextReadonly')); return; }
   let msg = _ctxVisibleById.get(msgId);
   if (!msg) {
-    const full = await ctxLoadFull();
-    if (full.error) { addMsg('error', full.error); return; }
-    msg = (full.context || []).find(m => (m.msg_id || m.trace_id) === msgId);
+    addMsg('error', t('contextMessageNotFoundRefresh'));
+    return;
   }
   if (!msg) { addMsg('error', t('contextMessageNotFoundRefresh')); return; }
   // Scope the row lookup to the context overlay — the chat timeline
@@ -300,32 +292,11 @@ async function ctxReplaceAll() {
     addMsg('error', t('contextTranscriptReplaceBlocked'));
     return;
   }
-  const full = await ctxLoadFull();
-  if (full.error) { addMsg('error', full.error); return; }
-  const overlay = document.getElementById('contextOverlay');
-  if (!overlay) return;
-  const inner = overlay.querySelector('div');
-  inner.innerHTML = '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">'
-    + '<h3 style="margin:0;color:#e0e0e0;font-size:16px">' + t('contextReplaceAll') + '</h3>'
-    + '<button onclick="ctxRefresh()" style="background:none;border:none;color:#aaa;cursor:pointer;font-size:18px;margin-left:auto">&times;</button>'
-    + '</div>'
-    + '<textarea id="ctx-replace-ta" style="flex:1;width:100%;background:#0d1117;color:#c0c0d0;border:1px solid #333;border-radius:6px;padding:10px;font-size:12px;font-family:monospace;resize:none">' + JSON.stringify(full.context, null, 2).replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</textarea>'
-    + '<div style="display:flex;gap:6px;margin-top:10px">'
-    + '<button onclick="ctxSaveReplaceAll()" style="background:#dc2626;color:#fff;border:none;border-radius:6px;padding:6px 16px;cursor:pointer;font-size:13px">' + t('contextSave') + '</button>'
-    + '<button onclick="ctxRefresh()" style="background:#333;color:#ccc;border:none;border-radius:6px;padding:6px 16px;cursor:pointer;font-size:13px">' + t('contextCancel') + '</button>'
-    + '</div>';
+  addMsg('error', 'Full context replacement is disabled; edit or delete loaded rows only.');
 }
 
 async function ctxSaveReplaceAll() {
-  const ta = document.getElementById('ctx-replace-ta');
-  if (!ta) return;
-  let parsed;
-  try { parsed = JSON.parse(ta.value); } catch (e) { addMsg('error', t('contextInvalidJson') + ': ' + e.message); return; }
-  if (!Array.isArray(parsed)) { addMsg('error', t('contextInvalidJson') + ': ' + t('contextExpectedArray')); return; }
-  if (!confirm(t('contextReplaceConfirm'))) return;
-  _ctxMutate(
-    _ctxScopedMutation({action: 'replace_context', context: parsed}),
-    (d) => t('contextSaved', {n: d.message_count, tokens: d.token_estimate}));
+  addMsg('error', 'Full context replacement is disabled; edit or delete loaded rows only.');
 }
 
 function _buildCtxAgentDropdown(data) {
@@ -497,7 +468,6 @@ function showContextOverlay(data) {
     + statusBadge
     + _buildCtxAgentDropdown(data)
     + '<span style="color:#6c6c8a;font-size:12px;margin-left:auto">' + t('contextMessages', {n:data.message_count}) + ' &middot; ' + t('contextTokens', {n:data.token_estimate}) + '</span>'
-    + (_isTranscript || _isReadonly ? '' : '<button onclick="ctxReplaceAll()" style="background:#1e3a5f;color:#4fc3f7;border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600" title="' + t('contextReplaceAll') + '">JSON</button>')
     + (_ctxAgentFilter && !_isTranscript ? '<button onclick="ctxDeleteContext()" style="background:#5a1a1a;color:#e74c3c;border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600" title="' + (_isReadonly ? t('contextInvalidateRuntimeTitle') : t('contextDeleteContextTitle')) + '">\u{1F5D1} ' + (_isReadonly ? t('contextInvalidate') : t('contextDelete')) + '</button>' : '')
     + '<button onclick="ctxClose()" style="background:none;border:none;color:#aaa;cursor:pointer;font-size:18px;margin-left:4px">&times;</button>'
     + '</div>'

@@ -214,6 +214,8 @@ As a last resort, messages are brute-force truncated: per-message character budg
 
 Proactive PawFlow compaction is controlled by the selected LLM service's `compact_threshold_pct`. `0` disables proactive PawFlow compaction; a positive value compacts when the estimated context reaches that percentage of `max_context_size`. Claude Code's own compact boundary can still fire independently, and PawFlow handles provider-triggered compact events by compacting PawFlow context and restarting the provider session.
 
+Manual `/compact` is not a separate compaction implementation. It calls the same store-backed procedure as provider-triggered compaction: `_compact()` assembles the shared pyramid header and a bounded raw tail, persists the replacement context, and the caller only differs in how the trigger was initiated.
+
 Background pyramid buckets are different from hot-path context compaction. They run asynchronously and only submit a summarizer call when the bucket input is useful: at least four times the L1 summary target (`BUCKET_OUTPUT_TARGET`, currently 2000 tokens). This prevents the background worker from spending an LLM call to summarize tiny slices after every few chat messages.
 
 Independent contexts, such as task and isolated delegate sub-conversations, do not use the parent conversation's shared pyramid. When they cross the compact threshold, PawFlow summarizes the older head of that isolated context directly, keeps a raw recent tail, and writes the compacted result to the sub-conversation's private agent context. The transcript remains the faithful audit log; later task iterations resume from the compacted private context when it exists.

@@ -1651,6 +1651,10 @@ class TestContextActionsAsync(unittest.TestCase):
             {"role": "system", "content": "sys"},
             _user_msg,
         ], user_id="testuser")
+        store.save_context("ctx_edit1", [
+            {"role": "system", "content": "sys"},
+            dict(_user_msg),
+        ])
         ack, data = self._exec_async(self._make_task(), {
             "action": "edit_context",
             "conversation_id": "ctx_edit1",
@@ -1691,7 +1695,7 @@ class TestContextActionsAsync(unittest.TestCase):
         assert store.load_agent_context("ctx_edit_transcript", "assistant")[0]["content"] == "modified from transcript"
 
     def test_replace_context_async(self):
-        """replace_context replaces the entire context via async path."""
+        """replace_context is disabled; context editor is paginated only."""
         from core.conversation_store import ConversationStore
         store = ConversationStore.instance()
         store.save("ctx_repl1", [{"role": "user", "content": "old"}], user_id="testuser")
@@ -1706,12 +1710,8 @@ class TestContextActionsAsync(unittest.TestCase):
         })
         assert ack["status"] == "accepted"
         assert data is not None
-        assert data["ok"] is True
-        ctx = store.load_context("ctx_repl1")
-        assert len(ctx) == len(new_ctx)
-        for got, exp in zip(ctx, new_ctx):
-            assert got["role"] == exp["role"]
-            assert got["content"] == exp["content"]
+        assert "error" in data
+        assert "Full context replacement is disabled" in data["error"]
 
     def test_delete_context_message_async(self):
         """delete_context_message removes a message by msg_id via async path."""
@@ -1728,6 +1728,11 @@ class TestContextActionsAsync(unittest.TestCase):
             _user_msg,
             _asst_msg,
         ], user_id="testuser")
+        store.save_context("ctx_del1", [
+            {"role": "system", "content": "sys"},
+            dict(_user_msg),
+            dict(_asst_msg),
+        ])
         ack, data = self._exec_async(self._make_task(), {
             "action": "delete_context_message",
             "conversation_id": "ctx_del1",
@@ -1757,7 +1762,7 @@ class TestContextActionsAsync(unittest.TestCase):
         assert data is not None
         assert data["ok"] is True
         ctx = store.load_context("ctx_add1")
-        assert ctx[1]["content"] == "new message"
+        assert ctx[-1]["content"] == "new message"
 
 
 class TestRandomThought(unittest.TestCase):

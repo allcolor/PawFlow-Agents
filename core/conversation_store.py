@@ -2763,6 +2763,41 @@ class ConversationStore:
         canon = self._canon_agent(agent_name) if agent_name else ""
         return self._personalize_transcript_for_agent(raw, canon)
 
+    def load_transcript_page_for_agent(self, cid: str, agent_name: str,
+                                       limit: int = 50, offset: int = 0
+                                       ) -> Optional[Dict]:
+        """Return a paginated transcript page personalized for one agent."""
+        page = self.load_page(cid, limit=limit, offset=offset) or {}
+        raw = page.get("messages") or []
+        canon = self._canon_agent(agent_name) if agent_name else ""
+        page["messages"] = self._personalize_transcript_for_agent(raw, canon)
+        return page
+
+    def load_shared_tail(self, cid: str, user_id: str = "",
+                         limit: int = 1000) -> Optional[List[Dict]]:
+        """Return a recent transcript tail normalized for shared context.
+
+        Manual compaction combines this bounded raw tail with the shared
+        bucket header. It must not materialize shared.jsonl in long chats just
+        to rebuild the last few rows.
+        """
+        page = self.load_page(cid, limit=limit, offset=0, user_id=user_id) or {}
+        raw = page.get("messages") or []
+        if not raw:
+            return None
+        shared_candidates = self.filter_for_shared(raw)
+        return [self._transform_for_shared(m) for m in shared_candidates]
+
+    def load_shared_page(self, cid: str, user_id: str = "",
+                         limit: int = 50, offset: int = 0) -> Optional[Dict]:
+        """Return a paginated transcript page normalized for shared context."""
+        page = self.load_page(cid, limit=limit, offset=offset, user_id=user_id) or {}
+        raw = page.get("messages") or []
+        shared_candidates = self.filter_for_shared(raw)
+        page["messages"] = [self._transform_for_shared(m)
+                            for m in shared_candidates]
+        return page
+
     def _personalize_transcript_for_agent(self, raw: List[Dict],
                                           canon: str) -> List[Dict]:
         """Personalize already-loaded transcript messages for one agent."""
@@ -2959,6 +2994,85 @@ class ConversationStore:
                 cached = self._cache.get(cid)
                 if cached is not None:
                     cached.setdefault("agents", set()).add(agent_name)
+        return True
+
+    def patch_agent_context_message(self, cid: str, agent_name: str,
+                                    msg_id: str, fields: Dict[str, Any]) -> bool:
+        """Patch one row in one context file without loading the full context."""
+        if not self.exists(cid) or not msg_id or not fields:
+            return False
+        agent_name = self._canon_agent(agent_name) if agent_name else ""
+        path = self._agent_ctx_path(cid, agent_name) if agent_name else self._shared_ctx_path(cid)
+        log = SegmentedJsonl(path)
+        if not log.exists():
+            return False
+        allowed = {"role", "content"}
+        patch_fields = {k: v for k, v in fields.items() if k in allowed}
+        if not patch_fields:
+            return False
+        lock = self._get_conv_lock(cid)
+        with lock:
+            patched = log.patch_first_by_msg_id(msg_id, patch_fields)
+        if not patched:
+            return False
+        self._invalidate_ctx_cache(cid, agent_name)
+        if not agent_name:
+            try:
+                from core.bucket_store import BucketStore
+                seq = int(patched.get("seq") or 0)
+                if seq:
+                    BucketStore.get(self._conv_dir(cid)).invalidate_from_seq(seq)
+                    self._invalidate_pyramid_cache(cid)
+            except Exception:
+                logger.warning(
+                    "[convstore] pyramid invalidation on context patch failed for cid=%s",
+                    cid[:8], exc_info=True)
+        return True
+
+    def delete_agent_context_messages(self, cid: str, agent_name: str,
+                                      msg_ids: List[str]) -> int:
+        """Delete rows from one context file without loading the full context."""
+        if not self.exists(cid) or not msg_ids:
+            return 0
+        agent_name = self._canon_agent(agent_name) if agent_name else ""
+        path = self._agent_ctx_path(cid, agent_name) if agent_name else self._shared_ctx_path(cid)
+        log = SegmentedJsonl(path)
+        if not log.exists():
+            return 0
+        lock = self._get_conv_lock(cid)
+        with lock:
+            deleted = log.delete_by_msg_ids(set(msg_ids))
+        if deleted:
+            self._invalidate_ctx_cache(cid, agent_name)
+            if not agent_name:
+                try:
+                    from core.bucket_store import BucketStore
+                    BucketStore.get(self._conv_dir(cid)).wipe()
+                    self._invalidate_pyramid_cache(cid)
+                except Exception:
+                    logger.warning(
+                        "[convstore] pyramid invalidation on context delete failed for cid=%s",
+                        cid[:8], exc_info=True)
+        return deleted
+
+    def append_agent_context_message(self, cid: str, agent_name: str,
+                                     message: Dict[str, Any]) -> bool:
+        """Append one row to one context file without reading existing rows."""
+        if not self.exists(cid):
+            return False
+        agent_name = self._canon_agent(agent_name) if agent_name else ""
+        from core.llm_client import stamp_message
+        row = stamp_message(dict(message), cid)
+        clean: List[Dict[str, Any]] = []
+        tool_call_parents: Dict[str, str] = {}
+        clean.extend(self._canonical_message_rows(cid, row, tool_call_parents))
+        for item in clean:
+            self._validate_message(item)
+        path = self._agent_ctx_path(cid, agent_name) if agent_name else self._shared_ctx_path(cid)
+        lock = self._get_conv_lock(cid)
+        with lock:
+            SegmentedJsonl(path).append_dicts(clean)
+        self._invalidate_ctx_cache(cid, agent_name)
         return True
 
     def prewarm_agent_context(self, cid: str, agent_name: str) -> None:

@@ -120,12 +120,121 @@ def _rewrite_cc_session(conv_id: str, agent_name: str, store,
                 sum(1 for e in entries if e["_keep"]))
 
 
+def _read_jsonl_tail(path: str, limit: int, offset: int,
+                     convert_entry) -> dict:
+    """Read a newest-first JSONL tail without parsing the whole file."""
+    import os
+    limit_i = max(1, int(limit or 50))
+    offset_i = max(0, int(offset or 0))
+    need = offset_i + limit_i + 1
+    matches = []
+    carry = b""
+    block_size = 65536
+    try:
+        with open(path, "rb") as fh:
+            pos = fh.seek(0, os.SEEK_END)
+            while pos > 0 and len(matches) < need:
+                read_size = min(block_size, pos)
+                pos -= read_size
+                fh.seek(pos)
+                data = fh.read(read_size) + carry
+                lines = data.splitlines()
+                if pos > 0 and data and not data.startswith((b"\n", b"\r")):
+                    carry = lines.pop(0) if lines else data
+                else:
+                    carry = b""
+                for raw in reversed(lines):
+                    if not raw.strip():
+                        continue
+                    try:
+                        entry = json.loads(raw.decode("utf-8", errors="replace"))
+                    except json.JSONDecodeError:
+                        continue
+                    msg = convert_entry(entry)
+                    if msg:
+                        matches.append(msg)
+                        if len(matches) >= need:
+                            break
+            if pos <= 0 and carry.strip() and len(matches) < need:
+                try:
+                    entry = json.loads(carry.decode("utf-8", errors="replace"))
+                    msg = convert_entry(entry)
+                    if msg:
+                        matches.append(msg)
+                except json.JSONDecodeError:
+                    pass
+    except Exception as exc:
+        logger.error("[session-tail] Failed to read JSONL tail %s: %s", path, exc)
+        return {"messages": [], "total_count": 0, "has_more": False}
+
+    has_more = len(matches) > offset_i + limit_i
+    page_newest = matches[offset_i:offset_i + limit_i]
+    page = list(reversed(page_newest))
+    visible_total = offset_i + len(page) + (1 if has_more else 0)
+    return {"messages": page, "total_count": visible_total,
+            "has_more": has_more}
+
+
+def _cc_session_entry_to_msg(entry: dict) -> dict:
+    etype = entry.get("type", "")
+    if etype not in ("user", "assistant"):
+        return {}
+    msg = entry.get("message", {})
+    role = msg.get("role", etype)
+    content_blocks = msg.get("content", "")
+
+    if isinstance(content_blocks, list):
+        parts = []
+        tool_calls = []
+        had_tool_result = False
+        for block in content_blocks:
+            btype = block.get("type", "")
+            if btype == "text":
+                parts.append(block.get("text", ""))
+            elif btype == "thinking":
+                parts.append(f"[thinking: {block.get('thinking', '')[:200]}...]")
+            elif btype == "tool_use":
+                tool_calls.append({
+                    "id": block.get("id", ""),
+                    "name": block.get("name", ""),
+                    "arguments": block.get("input", {}),
+                })
+            elif btype == "tool_result":
+                had_tool_result = True
+                tr_content = block.get("content", "")
+                if isinstance(tr_content, list):
+                    tr_content = " ".join(
+                        b.get("text", "") for b in tr_content
+                        if isinstance(b, dict))
+                parts.append(f"[tool_result: {str(tr_content)[:200]}]")
+        content = "\n".join(parts) if parts else ""
+        display_role = "tool" if (had_tool_result and not any(
+            p and not p.startswith("[tool_result:") for p in parts
+        )) else role
+        msg_entry = {"role": display_role, "content": content}
+        if tool_calls:
+            msg_entry["tool_calls"] = tool_calls
+    elif isinstance(content_blocks, str):
+        msg_entry = {"role": role, "content": content_blocks}
+    else:
+        msg_entry = {"role": role, "content": str(content_blocks)}
+
+    msg_entry["msg_id"] = entry.get("uuid", "")
+    if msg.get("model"):
+        msg_entry["source"] = {"name": "claude-code", "model": msg["model"]}
+    return msg_entry
+
+
 def _load_cc_session_context(conv_id: str, agent_name: str, store,
-                             user_id: str = "") -> list:
+                             user_id: str = "", limit: int = 0,
+                             offset: int = 0):
     """Load Claude Code session JSONL and convert to PawFlow message format."""
     jsonl_path = _find_cc_session_jsonl(conv_id, agent_name, store, user_id=user_id)
     if not jsonl_path:
-        return []
+        return {"messages": [], "total_count": 0, "has_more": False} if limit else []
+
+    if limit:
+        return _read_jsonl_tail(jsonl_path, limit, offset, _cc_session_entry_to_msg)
 
     messages = []
     try:
@@ -138,55 +247,9 @@ def _load_cc_session_context(conv_id: str, agent_name: str, store,
                     entry = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                etype = entry.get("type", "")
-                if etype not in ("user", "assistant"):
-                    continue
-                msg = entry.get("message", {})
-                role = msg.get("role", etype)
-                content_blocks = msg.get("content", "")
-
-                # Convert content blocks to text
-                if isinstance(content_blocks, list):
-                    parts = []
-                    tool_calls = []
-                    _had_tool_result = False
-                    for block in content_blocks:
-                        btype = block.get("type", "")
-                        if btype == "text":
-                            parts.append(block.get("text", ""))
-                        elif btype == "thinking":
-                            parts.append(f"[thinking: {block.get('thinking', '')[:200]}...]")
-                        elif btype == "tool_use":
-                            tool_calls.append({
-                                "id": block.get("id", ""),
-                                "name": block.get("name", ""),
-                                "arguments": block.get("input", {}),
-                            })
-                        elif btype == "tool_result":
-                            _had_tool_result = True
-                            _tr_content = block.get("content", "")
-                            if isinstance(_tr_content, list):
-                                _tr_content = " ".join(
-                                    b.get("text", "") for b in _tr_content
-                                    if isinstance(b, dict))
-                            parts.append(f"[tool_result: {str(_tr_content)[:200]}]")
-                    content = "\n".join(parts) if parts else ""
-                    _display_role = "tool" if (_had_tool_result and not any(
-                        p and not p.startswith("[tool_result:") for p in parts
-                    )) else role
-                    msg_entry = {"role": _display_role, "content": content}
-                    if tool_calls:
-                        msg_entry["tool_calls"] = tool_calls
-                elif isinstance(content_blocks, str):
-                    msg_entry = {"role": role, "content": content_blocks}
-                else:
-                    msg_entry = {"role": role, "content": str(content_blocks)}
-
-                msg_entry["msg_id"] = entry.get("uuid", "")
-                if msg.get("model"):
-                    msg_entry["source"] = {"name": "claude-code", "model": msg["model"]}
-
-                messages.append(msg_entry)
+                msg_entry = _cc_session_entry_to_msg(entry)
+                if msg_entry:
+                    messages.append(msg_entry)
     except Exception as e:
         logger.error("[cc-session] Failed to read session JSONL: %s", e)
         return []
@@ -210,10 +273,11 @@ def _text_from_cli_content(content) -> str:
 
 
 def _load_codex_session_context(conv_id: str, agent_name: str, store,
-                                user_id: str = "") -> list:
+                                user_id: str = "", limit: int = 0,
+                                offset: int = 0):
     thread_id = store.get_extra(conv_id, f"codex_app_server_thread:{agent_name or 'default'}") or ""
     if not thread_id:
-        return []
+        return {"messages": [], "total_count": 0, "has_more": False} if limit else []
     import os
     from core.llm_providers.codex_session import _get_sessions_base
     from core.llm_providers.codex_app_server import LLMCodexAppServerMixin
@@ -221,7 +285,20 @@ def _load_codex_session_context(conv_id: str, agent_name: str, store,
     workdir = os.path.join(_get_sessions_base(), uid, conv_id.replace(":", "_"), agent_name)
     jsonl_path = LLMCodexAppServerMixin._codex_app_rollout_path(workdir, thread_id)
     if not jsonl_path:
-        return []
+        return {"messages": [], "total_count": 0, "has_more": False} if limit else []
+    def _convert(entry):
+        payload = entry.get("payload") if isinstance(entry, dict) else None
+        if not isinstance(payload, dict) or payload.get("type") != "message":
+            return {}
+        role = payload.get("role") or "assistant"
+        content = _text_from_cli_content(payload.get("content"))
+        if not content:
+            return {}
+        msg_id = entry.get("id") or entry.get("msg_id") or f"codex:{thread_id}"
+        return {"role": role, "content": content, "msg_id": msg_id,
+                "source": {"name": "codex-app-server"}}
+    if limit:
+        return _read_jsonl_tail(jsonl_path, limit, offset, _convert)
     messages = []
     try:
         with open(jsonl_path, "r", encoding="utf-8", errors="replace") as fh:
@@ -230,16 +307,11 @@ def _load_codex_session_context(conv_id: str, agent_name: str, store,
                     entry = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                payload = entry.get("payload") if isinstance(entry, dict) else None
-                if not isinstance(payload, dict) or payload.get("type") != "message":
+                msg = _convert(entry)
+                if not msg:
                     continue
-                role = payload.get("role") or "assistant"
-                content = _text_from_cli_content(payload.get("content"))
-                if not content:
-                    continue
-                msg_id = entry.get("id") or entry.get("msg_id") or f"codex:{thread_id}:{line_no}"
-                msg = {"role": role, "content": content, "msg_id": msg_id}
-                msg["source"] = {"name": "codex-app-server"}
+                if msg.get("msg_id") == f"codex:{thread_id}":
+                    msg["msg_id"] = f"codex:{thread_id}:{line_no}"
                 messages.append(msg)
     except Exception as exc:
         logger.error("[codex-session] Failed to read rollout JSONL: %s", exc)
@@ -248,17 +320,38 @@ def _load_codex_session_context(conv_id: str, agent_name: str, store,
 
 
 def _load_gemini_session_context(conv_id: str, agent_name: str, store,
-                                 user_id: str = "") -> list:
+                                 user_id: str = "", limit: int = 0,
+                                 offset: int = 0):
     session_id = store.get_extra(conv_id, f"gemini_acp_session:{agent_name or 'default'}") or ""
     if not session_id:
-        return []
+        return {"messages": [], "total_count": 0, "has_more": False} if limit else []
     import os
     from core.llm_providers.gemini_session import _get_sessions_base
     from core.llm_providers.gemini import LLMGeminiMixin
     uid = user_id or store.get_user_id(conv_id) or "default"
     workdir = os.path.join(_get_sessions_base(), uid, conv_id.replace(":", "_"), agent_name)
     messages = []
-    for path in LLMGeminiMixin._gemini_acp_history_paths(workdir):
+    paths = list(LLMGeminiMixin._gemini_acp_history_paths(workdir))
+    if limit and paths:
+        path = paths[-1]
+        def _convert(rec):
+            if rec.get("sessionId") != session_id:
+                return {}
+            rtype = rec.get("type") or ""
+            if rtype not in ("user", "gemini"):
+                return {}
+            role = "assistant" if rtype == "gemini" else "user"
+            content = _text_from_cli_content(rec.get("content"))
+            if not content:
+                return {}
+            msg_id = rec.get("id") or rec.get("msg_id") or f"gemini:{os.path.basename(path)}"
+            msg = {"role": role, "content": content, "msg_id": msg_id}
+            if rec.get("model"):
+                msg["source"] = {"name": "gemini", "model": rec.get("model")}
+            return msg
+        return _read_jsonl_tail(path, limit, offset, _convert)
+
+    for path in paths:
         try:
             found_session = False
             current = []
@@ -709,57 +802,39 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": _cp_err}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
-        # Compaction always starts from the full transcript (personalized
-        # for the agent). Feeding back an already-compacted agent_context
-        # would layer stale summaries on top of each other.
-        if _ctx_agent and _ctx_agent not in ("", "ALL"):
-            source_data = store.load_transcript_for_agent(conv_id, _ctx_agent)
-        else:
-            source_data = store.load_context(conv_id, user_id=user_id)
-        if source_data is None:
-            source_data = store.load(conv_id, user_id=user_id)
-        # Filter out display-only sub-agent traces
-        if source_data:
-            source_data = [m for m in source_data if not (isinstance(m, dict) and m.get("display_only"))]
-        if not source_data or len(source_data) < 4:
+        if store.message_count(conv_id) < 4:
             flowfile.set_content(json.dumps({"error": "Not enough messages to compact"}).encode())
             return [flowfile]
-        # Resolve client — compaction is driven by summarizer_service,
-        # full stop. No fallback to the agent's llm_service (that would
-        # compact with a model the user didn't choose for summarization)
-        # and no "default" that doesn't actually exist as a service.
-        _compact_client, _, _compact_svc_id = self._get_summarizer_client(user_id, conversation_id=conv_id)
-        if not _compact_client:
-            flowfile.set_content(json.dumps({
-                "error": "No summarizer service configured — compaction needs one.",
-            }).encode())
-            return [flowfile]
+        # Shared-context compaction is the same deterministic hot path as
+        # provider-triggered compact. A summarizer client is only required for
+        # isolated independent contexts; _compact_context_from_store enforces
+        # that case. Do not make /compact a second procedure with a stricter
+        # service prerequisite than the trigger path.
+        _compact_client, _, _compact_svc_id = self._get_summarizer_client(
+            user_id, conversation_id=conv_id)
         _compact_budget_config = _ctx_llm_service_config(conv_id, _ctx_agent)
         _compact_max = _ctx_max_tokens(conv_id, _ctx_agent)
-        _compact_source = source_data
         _compact_conv = conv_id
-        _compact_agent_name = _ctx_agent
-        _compact_keep = int(self.config.get("context_keep_recent", 6))
+        _compact_agent_name = _ctx_agent_name(_ctx_agent)
 
         _compact_instructions = body.get("instructions", "")
 
         def _do_compact():
-            msgs = self._deserialize_messages(_compact_source, conversation_id=conv_id)
-            before = len(msgs)
-            estimated = self._estimate_tokens(msgs)
-            # Single path: _compact now reads the BucketStore and only
-            # summarizes messages since the last bucket. No separate
-            # snapshot mechanism needed — buckets persist across restarts
-            # and are the canonical pre-digested input.
-            compacted = self._compact(
-                msgs, _compact_client, _compact_max,
+            stats = {}
+            compacted = self._compact_context_from_store(
+                store,
                 conversation_id=_compact_conv,
                 agent_name=_compact_agent_name,
+                user_id=user_id,
+                max_tokens=_compact_max,
+                compact_client=_compact_client,
                 compact_instructions=_compact_instructions,
                 force=True,
-                user_id=user_id,
                 budget_config=_compact_budget_config,
+                stats=stats,
             )
+            before = int(stats.get("before", 0) or 0)
+            estimated = int(stats.get("tokens_before", 0) or 0)
             after_tokens = self._estimate_tokens(compacted)
             # CC session invalidation (extra clear + jsonl+companion purge on disk)
             # is handled by `_run_bg_context_op` via `_clear_claude_session` after
@@ -826,19 +901,16 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             total_before = 0
             total_after = 0
             for name in agent_names:
-                source_data = store.load_transcript_for_agent(conv_id, name) or []
-                source_data = [m for m in source_data
-                               if isinstance(m, dict)
-                               and not m.get("display_only")]
-                if len(source_data) < 4:
-                    store.save_agent_context(conv_id, name, list(source_data))
+                msgs = self._load_compact_source_messages(
+                    store, conv_id, name, user_id=user_id)
+                if len(msgs) < 4:
+                    serialized = self._serialize_messages(msgs)
+                    store.save_agent_context(conv_id, name, serialized)
                     compacted_agents[name] = {
-                        "before": len(source_data), "after": len(source_data),
+                        "before": len(msgs), "after": len(msgs),
                         "skipped": "not_enough_messages",
                     }
                 else:
-                    msgs = self._deserialize_messages(
-                        source_data, conversation_id=conv_id)
                     compacted = self._compact(
                         msgs, _compact_client, _ctx_max_tokens(conv_id, name),
                         conversation_id=conv_id,
@@ -851,7 +923,7 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
                     serialized = self._serialize_messages(compacted)
                     store.save_agent_context(conv_id, name, serialized)
                     compacted_agents[name] = {
-                        "before": len(source_data), "after": len(serialized),
+                        "before": len(msgs), "after": len(serialized),
                     }
                 total_before += int(compacted_agents[name]["before"])
                 total_after += int(compacted_agents[name]["after"])
@@ -903,29 +975,38 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             page = store.load_agent_context_page(
                 conv_id, "", limit=_limit, offset=_offset)
             if page is None:
-                page = store.load_page(
-                    conv_id, limit=_limit, offset=_offset, user_id=user_id) or {}
+                page = store.load_shared_page(
+                    conv_id, user_id=user_id, limit=_limit, offset=_offset) or {}
             context_data = page.get("messages") or []
             total_count = page.get("total_count", len(context_data))
             has_more = page.get("has_more", False)
             diverged = True
         elif _ctx_agent.startswith("cc_session:"):
             _cc_agent = _ctx_agent[len("cc_session:"):]
-            context_data = _load_cc_session_context(conv_id, _cc_agent, store, user_id=user_id)
-            total_count = len(context_data)
-            has_more = False
+            page = _load_cc_session_context(
+                conv_id, _cc_agent, store, user_id=user_id,
+                limit=_limit, offset=_offset)
+            context_data = page.get("messages") or []
+            total_count = page.get("total_count", len(context_data))
+            has_more = page.get("has_more", False)
             diverged = True
         elif _ctx_agent.startswith("codex_session:"):
             _codex_agent = _ctx_agent[len("codex_session:"):]
-            context_data = _load_codex_session_context(conv_id, _codex_agent, store, user_id=user_id)
-            total_count = len(context_data)
-            has_more = False
+            page = _load_codex_session_context(
+                conv_id, _codex_agent, store, user_id=user_id,
+                limit=_limit, offset=_offset)
+            context_data = page.get("messages") or []
+            total_count = page.get("total_count", len(context_data))
+            has_more = page.get("has_more", False)
             diverged = True
         elif _ctx_agent.startswith("gemini_session:"):
             _gemini_agent = _ctx_agent[len("gemini_session:"):]
-            context_data = _load_gemini_session_context(conv_id, _gemini_agent, store, user_id=user_id)
-            total_count = len(context_data)
-            has_more = False
+            page = _load_gemini_session_context(
+                conv_id, _gemini_agent, store, user_id=user_id,
+                limit=_limit, offset=_offset)
+            context_data = page.get("messages") or []
+            total_count = page.get("total_count", len(context_data))
+            has_more = page.get("has_more", False)
             diverged = True
         elif _ctx_agent.startswith("task:"):
             _sub_tid = _ctx_agent.split("(")[0].replace("task:", "").strip()
@@ -945,14 +1026,11 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
                 conv_id, _ctx_agent, limit=_limit, offset=_offset)
             diverged = page is not None
             if page is None:
-                context_data = _ctx_load(conv_id, _ctx_agent)
-                if context_data is None:
-                    context_data = []
-                total_count = len(context_data)
-                end = len(context_data) - _offset
-                start = max(0, end - _limit)
-                context_data = context_data[start:end]
-                has_more = start > 0
+                page = store.load_transcript_page_for_agent(
+                    conv_id, _ctx_agent, limit=_limit, offset=_offset) or {}
+                context_data = page.get("messages") or []
+                total_count = page.get("total_count", len(context_data))
+                has_more = page.get("has_more", False)
             else:
                 context_data = page.get("messages") or []
                 total_count = page.get("total_count", len(context_data))
@@ -1057,39 +1135,10 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
         return [flowfile]
 
     if action == "get_context_full":
-        conv_id = body.get("conversation_id", "")
-        _ctx_agent = body.get("agent_name", "")
-        if not conv_id:
-            flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
-            flowfile.set_attribute("http.response.status", "400")
-            return [flowfile]
-        if _ctx_agent == "transcript":
-            context_data = store.load(conv_id, user_id=user_id) or []
-            diverged = False
-        elif not _ctx_agent or _ctx_agent == "shared":
-            context_data = _ctx_load(conv_id, "")
-            diverged = True
-        elif _ctx_agent.startswith("cc_session:"):
-            _cc_agent = _ctx_agent[len("cc_session:"):]
-            context_data = _load_cc_session_context(conv_id, _cc_agent, store, user_id=user_id)
-            diverged = True
-        elif _ctx_agent.startswith("codex_session:"):
-            _codex_agent = _ctx_agent[len("codex_session:"):]
-            context_data = _load_codex_session_context(conv_id, _codex_agent, store, user_id=user_id)
-            diverged = True
-        elif _ctx_agent.startswith("gemini_session:"):
-            _gemini_agent = _ctx_agent[len("gemini_session:"):]
-            context_data = _load_gemini_session_context(conv_id, _gemini_agent, store, user_id=user_id)
-            diverged = True
-        else:
-            private_ctx = store.load_agent_context(conv_id, _ctx_agent)
-            diverged = private_ctx is not None
-            context_data = private_ctx if private_ctx is not None else _ctx_load(conv_id, _ctx_agent)
         flowfile.set_content(json.dumps({
-            "context": context_data,
-            "message_count": len(context_data),
-            "diverged": diverged,
-        }, ensure_ascii=False).encode())
+            "error": "Full context loading is disabled; use paginated get_context.",
+        }).encode())
+        flowfile.set_attribute("http.response.status", "400")
         return [flowfile]
 
     if action == "edit_context":
@@ -1106,30 +1155,27 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "Runtime session context is read-only"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
-        context_data = _ctx_load(conv_id, _ctx_agent)
-        if context_data is None:
-            context_data = store.load(conv_id, user_id=user_id) or []
-        _idx = next(
-            (i for i, m in enumerate(context_data)
-             if m.get("msg_id") == msg_id or m.get("trace_id") == msg_id),
-            -1,
-        )
-        if _idx < 0:
+        if _ctx_agent in ("transcript",):
+            flowfile.set_content(json.dumps({
+                "error": "Use edit_message for transcript rows.",
+            }).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        patched = store.patch_agent_context_message(
+            conv_id, _ctx_agent_name(_ctx_agent), msg_id,
+            {"content": new_content, **({"role": new_role} if new_role else {})})
+        if not patched:
             flowfile.set_content(json.dumps({
                 "error": f"Message {msg_id} not found in context — please refresh.",
             }).encode())
             flowfile.set_attribute("http.response.status", "404")
             return [flowfile]
-        context_data[_idx]["content"] = new_content
-        if new_role:
-            context_data[_idx]["role"] = new_role
-        _ctx_save(conv_id, context_data, _ctx_agent)
-        deserialized = self._deserialize_messages(context_data, conversation_id=conv_id)
-        estimated = self._estimate_tokens(deserialized)
+        page = store.load_agent_context_page(
+            conv_id, _ctx_agent_name(_ctx_agent), limit=1, offset=0) or {}
         flowfile.set_content(json.dumps({
             "ok": True,
-            "message_count": len(context_data),
-            "token_estimate": estimated,
+            "message_count": page.get("total_count", 0),
+            "token_estimate": 0,
         }).encode())
         return [flowfile]
 
@@ -1200,19 +1246,13 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
     if action == "delete_context_messages":
         conv_id = body.get("conversation_id", "")
         _ctx_agent = body.get("agent_name", "")
-        indices = body.get("indices", [])
         msg_ids = body.get("msg_ids", [])
-        # CC session: rewrite JSONL without selected entries
-        if _ctx_agent.startswith("cc_session:"):
-            _cc_agent = _ctx_agent[len("cc_session:"):]
-            try:
-                _rewrite_cc_session(conv_id, _cc_agent, store, remove_indices=set(indices))
-                flowfile.set_content(json.dumps({"ok": True, "deleted": len(indices)}).encode())
-            except Exception as e:
-                flowfile.set_content(json.dumps({"error": str(e)}).encode())
+        if _ctx_agent.startswith(("cc_session:", "codex_session:", "gemini_session:")):
+            flowfile.set_content(json.dumps({"error": "Runtime session context is read-only"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
-        if not conv_id or (not indices and not msg_ids):
-            flowfile.set_content(json.dumps({"error": "Missing conversation_id or indices/msg_ids"}).encode())
+        if not conv_id or not msg_ids:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id or msg_ids"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         if _ctx_agent == "transcript":
@@ -1222,33 +1262,15 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         try:
-            context_data = _ctx_load(conv_id, _ctx_agent)
-            if context_data is None:
-                context_data = store.load(conv_id, user_id=user_id) or []
-            if msg_ids:
-                msg_id_set = set(msg_ids)
-                before = len(context_data)
-                context_data = [
-                    m for m in context_data
-                    if (m.get("msg_id") not in msg_id_set
-                        and m.get("trace_id") not in msg_id_set)
-                ]
-                deleted = before - len(context_data)
-            else:
-                # Remove indices in reverse order to preserve positions
-                deleted = 0
-                for idx in sorted(indices, reverse=True):
-                    if 0 <= idx < len(context_data):
-                        context_data.pop(idx)
-                        deleted += 1
-            _ctx_save(conv_id, context_data, _ctx_agent)
-            deserialized = self._deserialize_messages(context_data, conversation_id=conv_id)
-            estimated = self._estimate_tokens(deserialized)
+            deleted = store.delete_agent_context_messages(
+                conv_id, _ctx_agent_name(_ctx_agent), msg_ids)
+            page = store.load_agent_context_page(
+                conv_id, _ctx_agent_name(_ctx_agent), limit=1, offset=0) or {}
             flowfile.set_content(json.dumps({
                 "ok": True,
                 "deleted": deleted,
-                "message_count": len(context_data),
-                "token_estimate": estimated,
+                "message_count": page.get("total_count", 0),
+                "token_estimate": 0,
             }).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
@@ -1262,54 +1284,32 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "Missing conversation_id or msg_id"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
-        context_data = _ctx_load(conv_id, _ctx_agent)
-        if context_data is None:
-            context_data = store.load(conv_id, user_id=user_id) or []
-        _before = len(context_data)
-        context_data = [
-            m for m in context_data
-            if m.get("msg_id") != msg_id and m.get("trace_id") != msg_id
-        ]
-        if len(context_data) == _before:
+        if _ctx_agent.startswith(("cc_session:", "codex_session:", "gemini_session:")):
+            flowfile.set_content(json.dumps({"error": "Runtime session context is read-only"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        deleted = store.delete_agent_context_messages(
+            conv_id, _ctx_agent_name(_ctx_agent), [msg_id])
+        if not deleted:
             flowfile.set_content(json.dumps({
                 "error": f"Message {msg_id} not found in context — please refresh.",
             }).encode())
             flowfile.set_attribute("http.response.status", "404")
             return [flowfile]
-        _ctx_save(conv_id, context_data, _ctx_agent)
-        deserialized = self._deserialize_messages(context_data, conversation_id=conv_id)
-        estimated = self._estimate_tokens(deserialized)
+        page = store.load_agent_context_page(
+            conv_id, _ctx_agent_name(_ctx_agent), limit=1, offset=0) or {}
         flowfile.set_content(json.dumps({
             "ok": True,
-            "message_count": len(context_data),
-            "token_estimate": estimated,
+            "message_count": page.get("total_count", 0),
+            "token_estimate": 0,
         }).encode())
         return [flowfile]
 
     if action == "replace_context":
-        conv_id = body.get("conversation_id", "")
-        _ctx_agent = body.get("agent_name", "")
-        new_context = body.get("context", [])
-        if not conv_id:
-            flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
-            flowfile.set_attribute("http.response.status", "400")
-            return [flowfile]
-        for msg in new_context:
-            if "role" not in msg or "content" not in msg:
-                flowfile.set_content(json.dumps({"error": "Each message must have 'role' and 'content'"}).encode())
-                flowfile.set_attribute("http.response.status", "400")
-                return [flowfile]
-        from core.llm_client import stamp_message
-        new_context = [stamp_message(dict(msg), conv_id) for msg in new_context]
-        _ctx_save(conv_id, new_context, _ctx_agent)
-        saved_context = _ctx_load(conv_id, _ctx_agent) or new_context
-        deserialized = self._deserialize_messages(saved_context, conversation_id=conv_id)
-        estimated = self._estimate_tokens(deserialized)
         flowfile.set_content(json.dumps({
-            "ok": True,
-            "message_count": len(saved_context),
-            "token_estimate": estimated,
+            "error": "Full context replacement is disabled; use paginated row edits.",
         }).encode())
+        flowfile.set_attribute("http.response.status", "400")
         return [flowfile]
 
     if action == "add_context_message":
@@ -1317,46 +1317,22 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
         _ctx_agent = body.get("agent_name", "")
         role = body.get("role", "user")
         content = body.get("content", "")
-        before_msg_id = body.get("before_msg_id", "")
-        after_msg_id = body.get("after_msg_id", "")
         if not conv_id:
             flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
-        context_data = _ctx_load(conv_id, _ctx_agent)
-        if context_data is None:
-            context_data = store.load(conv_id, user_id=user_id) or []
-        from core.llm_client import stamp_message
-        msg = stamp_message({"role": role, "content": content}, conv_id)
-        if before_msg_id:
-            _idx = next((i for i, m in enumerate(context_data)
-                          if m.get("msg_id") == before_msg_id), -1)
-            if _idx < 0:
-                flowfile.set_content(json.dumps({
-                    "error": f"before_msg_id {before_msg_id} not found — please refresh.",
-                }).encode())
-                flowfile.set_attribute("http.response.status", "404")
-                return [flowfile]
-            context_data.insert(_idx, msg)
-        elif after_msg_id:
-            _idx = next((i for i, m in enumerate(context_data)
-                          if m.get("msg_id") == after_msg_id), -1)
-            if _idx < 0:
-                flowfile.set_content(json.dumps({
-                    "error": f"after_msg_id {after_msg_id} not found — please refresh.",
-                }).encode())
-                flowfile.set_attribute("http.response.status", "404")
-                return [flowfile]
-            context_data.insert(_idx + 1, msg)
-        else:
-            context_data.append(msg)
-        _ctx_save(conv_id, context_data, _ctx_agent)
-        deserialized = self._deserialize_messages(context_data, conversation_id=conv_id)
-        estimated = self._estimate_tokens(deserialized)
+        ok = store.append_agent_context_message(
+            conv_id, _ctx_agent_name(_ctx_agent), {"role": role, "content": content})
+        if not ok:
+            flowfile.set_content(json.dumps({"error": "Context not found"}).encode())
+            flowfile.set_attribute("http.response.status", "404")
+            return [flowfile]
+        page = store.load_agent_context_page(
+            conv_id, _ctx_agent_name(_ctx_agent), limit=1, offset=0) or {}
         flowfile.set_content(json.dumps({
             "ok": True,
-            "message_count": len(context_data),
-            "token_estimate": estimated,
+            "message_count": page.get("total_count", 0),
+            "token_estimate": 0,
         }).encode())
         return [flowfile]
 

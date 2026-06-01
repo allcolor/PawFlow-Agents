@@ -315,8 +315,9 @@ def test_codex_forced_compact_passes_active_budget_config():
     codex appserver service config so compact_target_tokens=50k is honored.
     """
     h_start = _AGENT_CORE.index("PawFlow compact:")
-    handler = _AGENT_CORE[max(0, h_start - 2500):h_start]
-    assert "_full_messages, _sc" in handler
+    handler = _AGENT_CORE[max(0, h_start - 4000):h_start]
+    assert "_compact_context_from_store(" in handler
+    assert "compact_client=compact_client" in handler
     assert "budget_config=getattr(ctx.get(\"resolved_svc\"), \"config\", None)" in handler
 
 
@@ -328,7 +329,7 @@ def test_codex_forced_compact_adopts_persisted_agent_context_before_restart():
     h_end = _AGENT_CORE.index("PawFlow compact done", h_start)
     handler = _AGENT_CORE[h_start:h_end]
     assert "\n                            messages = list(self._compact(" not in handler
-    assert "_compacted_messages = list(self._compact(" in handler
+    assert "_compacted_messages = list(self._compact_context_from_store(" in handler
     assert "_adopt_compacted_context(" in handler
     assert "reason=\"provider_compact\"" in handler
     assert "async_cleanup=True" in handler
@@ -367,7 +368,6 @@ def test_provider_compact_restart_path_has_correlated_timing_logs():
     """The post-compact restart path must be diagnosable from server logs."""
     for marker in (
             "[compact-restart:%s/%s] writer flush done",
-            "[compact-restart:%s/%s] context loaded",
             "[compact-restart:%s/%s] compact returned",
             "[compact-restart:%s/%s] cancellation gate passed",
             "[compact-restart:%s/%s] adopted compacted context",
@@ -375,6 +375,7 @@ def test_provider_compact_restart_path_has_correlated_timing_logs():
             "[compact-restart:%s/%s] post-compact foreground release",
             "[compact-restart:%s/%s] post-compact gauge refresh done"):
         assert marker in _AGENT_CORE
+    assert "Loaded %d compact source messages" in _AGENT_COMPACTION
     assert "elapsed_ms=%.1f" in _AGENT_CORE
     assert "[compact] post hooks scheduled async" in _AGENT_COMPACTION
     assert "[compact] post hooks start" in _AGENT_COMPACTION

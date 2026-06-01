@@ -518,6 +518,32 @@ function findToolCallElement(tcId, root) {
   return null;
 }
 
+const LIVE_DISPLAY_WINDOW_MULTIPLIER = 4;
+
+function trimLiveDisplayWindowIfAutoscrolling(wasAutoscroll) {
+  if (!wasAutoscroll) return;
+  const container = document.getElementById('messages');
+  if (!container) return;
+  const maxVisible = Math.max(displayWindow || 50, 50) * LIVE_DISPLAY_WINDOW_MULTIPLIER;
+  const rows = Array.from(container.children).filter(el => {
+    if (!el.classList || !el.classList.contains('msg')) return false;
+    if (el.dataset && el.dataset.live === '1') return false;
+    if (el.querySelector && el.querySelector('[data-live="1"]')) return false;
+    return true;
+  });
+  let excess = rows.length - maxVisible;
+  if (excess <= 0) return;
+  for (const el of rows) {
+    if (excess <= 0) break;
+    const mid = el.dataset && el.dataset.msgid;
+    if (mid && typeof _selectedMsgIds !== 'undefined' && _selectedMsgIds.has(mid)) continue;
+    el.remove();
+    excess--;
+  }
+  hasMoreMessages = true;
+  if (typeof _updateLoadMoreBanner === 'function') _updateLoadMoreBanner();
+}
+
 function addMsg(role, text, extra) {
   // Dedup by msg_id — if we've already displayed this message, skip
   const msgId = (extra && extra.msg_id) || '';
@@ -573,8 +599,10 @@ function addMsg(role, text, extra) {
       + timeHtml
     );
     const notifContainer = document.getElementById('messages');
+    const notifShouldScroll = isNearBottom();
     _insertMessageChronologically(notifContainer, notifEl, notifSortTs);
-    scrollBottom(true);
+    trimLiveDisplayWindowIfAutoscrolling(notifShouldScroll);
+    scrollBottom(notifShouldScroll);
     return notifEl;
   }
   if (role === 'tool_call' || role === 'tool') {
@@ -891,6 +919,7 @@ function addMsg(role, text, extra) {
   const shouldScroll = isNearBottom();
   const container = document.getElementById('messages');
   _insertMessageChronologically(container, el, _ts);
+  trimLiveDisplayWindowIfAutoscrolling(shouldScroll);
   scrollBottom(shouldScroll);
   // Syntax highlighting via highlight.js (if loaded)
   if (typeof hljs !== 'undefined') {

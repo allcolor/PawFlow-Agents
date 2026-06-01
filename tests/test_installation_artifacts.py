@@ -76,6 +76,7 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     run = Path("scripts/run-pawflow-docker.sh")
     doctor = Path("scripts/doctor-pawflow.sh")
     doctor_ps1 = Path("scripts/doctor-pawflow.ps1")
+    install_ps1 = Path("scripts/install-pawflow.ps1")
 
     for script in (install, install_zip, build, build_server_minimal_relay, run, doctor):
         assert script.exists()
@@ -83,6 +84,7 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
         assert "set -euo pipefail" in script.read_text(encoding="utf-8")
 
     assert doctor_ps1.exists()
+    assert install_ps1.exists()
 
     run_src = run.read_text(encoding="utf-8")
     assert "printenv PAWFLOW_IMAGE" in run_src
@@ -139,6 +141,13 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert "--native" in install_src
     assert "--container" in install_src
     assert "--no-start" in install_src
+    assert "--check-updates" in install_src
+    assert "--self-update" in install_src
+    assert "--keep-old-images" in install_src
+    assert "github_latest_version" in install_src
+    assert "releases?per_page=20" in install_src
+    assert "pawflow-install-$latest.zip" in install_src
+    assert "cleanup_old_pawflow_images" in install_src
     assert "PAWFLOW_VERSION" in install_src
     assert "PAWFLOW_DOCKER_PLATFORM" in install_src
     assert "PAWFLOW_START_TARGET" in install_src
@@ -177,6 +186,8 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert 'docker cp "$cid:/app/$rel" "$out_dir/$rel"' in install_src
     assert "scripts/run-pawflow-docker.sh" in install_src
     assert "scripts/doctor-pawflow.sh" in install_src
+    assert "scripts/doctor-pawflow.ps1" in install_src
+    assert "scripts/install-pawflow.ps1" in install_src
     assert "tools/mcp_bridge.py" in install_src
     assert "docker/pawflow_sdk" in install_src
     assert "pawflow_relay" in install_src
@@ -195,6 +206,23 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert 'PAWFLOW_BOOTSTRAP_GATEWAY_KEY="$bootstrap_gateway_key"' in install_src
     assert "PAWFLOW_SERVER_RELAY_IMAGE" in run_src
     assert "PAWFLOW_SERVER_RELAY_MINIMAL_IMAGE" in run_src
+
+    install_ps1_src = install_ps1.read_text(encoding="utf-8")
+    assert "Install or update PawFlow on Windows" in install_ps1_src
+    assert "CheckUpdates" in install_ps1_src
+    assert "SelfUpdate" in install_ps1_src
+    assert "PullImages" in install_ps1_src
+    assert "Resolve-LatestVersion" in install_ps1_src
+    assert "releases?per_page=20" in install_ps1_src
+    assert "pawflow-install-$latest.zip" in install_ps1_src
+    assert "scripts/doctor-pawflow.ps1" in install_ps1_src
+    assert 'Join-Path $repoDir "scripts\\doctor-pawflow.ps1"' in install_ps1_src
+    assert "docker rm -f $Container" in install_ps1_src
+    assert "Cleanup-OldImages" in install_ps1_src
+    assert "ghcr.io/allcolor/pawflow" in install_ps1_src
+    assert "PAWFLOW_RECREATE_CONTAINER" in run_src
+    assert "recreating it with image" in run_src
+    assert 'docker rm -f "$CONTAINER"' in run_src
 
     build_src = build.read_text(encoding="utf-8")
     assert "printenv PAWFLOW_IMAGE" in build_src
@@ -267,6 +295,7 @@ def test_minimal_install_zip_contains_only_bootstrap_files(tmp_path):
         assert sorted(zf.namelist()) == [
             "LICENSE",
             "README.md",
+            "scripts/install-pawflow.ps1",
             "scripts/install-pawflow.sh",
         ]
 
@@ -397,6 +426,55 @@ def test_run_docker_keeps_container_bind_reachable_when_publish_host_is_loopback
     assert result.returncode == 0, result.stderr
     assert "-p 127.0.0.1:12345:12345" in log
     assert 'python cli.py start --host 0.0.0.0 --port 12345' in log
+
+
+def test_run_docker_recreates_existing_container_for_updates(tmp_path):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    docker_log = tmp_path / "docker.log"
+    fake_docker = bin_dir / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf '%s\\n' \"$*\" >> \"$DOCKER_LOG\"\n"
+        "if [[ \"$1\" == \"ps\" ]]; then printf 'pawflow-server\\n'; exit 0; fi\n"
+        "if [[ \"$1\" == \"rm\" ]]; then exit 0; fi\n"
+        "if [[ \"$1\" == \"run\" ]]; then\n"
+        "  args=\"$*\"\n"
+        "  if [[ \"$args\" == *\"command -v docker && docker --version\"* ]]; then\n"
+        "    printf '/usr/bin/docker\\nDocker version 27.0.0\\n'\n"
+        "    exit 0\n"
+        "  fi\n"
+        "  if [[ \"$args\" == *\"docker version >/dev/null\"* ]]; then exit 0; fi\n"
+        "  printf 'container-id\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+
+    env = {
+        "DOCKER_LOG": str(docker_log),
+        "HOME": str(tmp_path),
+        "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+        "PAWFLOW_HOME": str(tmp_path / "pawflow-home"),
+        "PAWFLOW_IMAGE": "ghcr.io/allcolor/pawflow:1.0.0.prealpha.2",
+        "PAWFLOW_PORT": "19990",
+    }
+    result = subprocess.run(
+        ["bash", "scripts/run-pawflow-docker.sh"],
+        cwd=Path.cwd(),
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=10,
+    )
+
+    log = docker_log.read_text(encoding="utf-8")
+    assert result.returncode == 0, result.stderr
+    assert "rm -f pawflow-server" in log
+    assert "run -d --name pawflow-server" in log
+    assert "ghcr.io/allcolor/pawflow:1.0.0.prealpha.2" in log
 
 
 def test_install_docs_and_agent_prompt_capture_bootstrap_contract():

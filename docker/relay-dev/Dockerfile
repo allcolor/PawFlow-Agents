@@ -252,7 +252,7 @@ RUN mkdir -p /opt/pawflow \
 ENV PYTHONPATH="/opt/pawflow:/workspace/.pylib"
 
 # ── Init script: repair bind-mount permissions, then exec as pawflow ─────
-RUN printf '#!/bin/bash\nset -e\nchronyd 2>/dev/null || true\nfor d in /workspace /cc_sessions /filestore /skills; do\n  mkdir -p "$d"\n  gid=$(stat -c %g "$d" 2>/dev/null || echo 1000)\n  group=$(getent group "$gid" | cut -d: -f1 || true)\n  if [ -z "$group" ]; then group=pfmount_$gid; groupadd -g "$gid" "$group" 2>/dev/null || true; fi\n  usermod -aG "$group" pawflow 2>/dev/null || true\n  chmod g+rwx "$d" 2>/dev/null || true\ndone\nexec sudo -E -u pawflow "$@"\n' > /usr/local/bin/init.sh \
+RUN printf '#!/bin/bash\nset -e\nchronyd 2>/dev/null || true\nfor d in /workspace /cc_sessions /filestore /skills; do\n  mkdir -p "$d"\n  chown -R pawflow:pawflow "$d" 2>/dev/null || true\n  gid=$(stat -c %g "$d" 2>/dev/null || echo 1000)\n  group=$(getent group "$gid" | cut -d: -f1 || true)\n  if [ -z "$group" ]; then group=pfmount_$gid; groupadd -g "$gid" "$group" 2>/dev/null || true; fi\n  usermod -aG "$group" pawflow 2>/dev/null || true\n  chmod g+rwx "$d" 2>/dev/null || true\ndone\nexec sudo -E -u pawflow "$@"\n' > /usr/local/bin/init.sh \
     && chmod +x /usr/local/bin/init.sh
 
 # ── Fix home ownership (usermod -m may keep old uid on preexisting files) ──

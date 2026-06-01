@@ -44,6 +44,12 @@ first:
 bash scripts/install-pawflow.sh --port PORT
 ```
 
+On Windows PowerShell with Docker Desktop Linux containers, use:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/install-pawflow.ps1 -Port PORT -PullImages
+```
+
 When run from a checkout, the installer uses that checkout. When run as a
 downloaded standalone script, it clones
 `https://github.com/allcolor/PawFlow-Agents.git` into `~/pawflow-src`. Without a
@@ -89,6 +95,19 @@ Override values with flags or environment variables:
 bash scripts/install-pawflow.sh --version 1.0.0
 bash scripts/install-pawflow.sh --image ghcr.io/allcolor/pawflow:latest --port PORT
 PAWFLOW_HOME=/srv/pawflow PAWFLOW_PORT=9443 bash scripts/run-pawflow-docker.sh
+```
+
+For release updates, use the installer itself. `--check-updates` queries GitHub
+releases, `--self-update` refreshes the installer scripts from the latest release
+zip, and a versioned `--pull-images` run recreates the existing server container
+on the requested GHCR tag while preserving persistent data. Older PawFlow
+server/relay image tags are removed after a successful update unless
+`--keep-old-images` is set.
+
+```bash
+bash scripts/install-pawflow.sh --check-updates
+bash scripts/install-pawflow.sh --self-update
+bash scripts/install-pawflow.sh --version 1.0.0.prealpha.2 --port PORT --pull-images
 ```
 
 ### Forced source install

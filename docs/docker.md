@@ -83,6 +83,8 @@ agent selected.
 bash scripts/install-pawflow.sh --version 1.0.0
 bash scripts/install-pawflow.sh --from-source --version 1.0.0
 bash scripts/install-pawflow.sh --from-source
+bash scripts/install-pawflow.sh --check-updates
+bash scripts/install-pawflow.sh --self-update
 ```
 
 `--version VERSION` first tries the prebuilt `ghcr.io/allcolor/pawflow:VERSION`,
@@ -99,18 +101,38 @@ health where applicable, source-install Git availability, Docker socket access
 for first-run image builds, selected port availability, and prints OS-specific
 installation instructions for missing prerequisites.
 
-On Windows, PawFlow supports native Windows Bash with Docker Desktop Linux
-containers and WSL2 with Docker Desktop WSL integration. The PowerShell doctor
-is a host prerequisite checker for both paths:
+On Windows, PawFlow supports Docker Desktop Linux containers through the
+PowerShell installer, and WSL2 with Docker Desktop WSL integration through the
+Bash installer. The PowerShell doctor is a host prerequisite checker for both
+paths:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/doctor-pawflow.ps1
+powershell -ExecutionPolicy Bypass -File scripts/install-pawflow.ps1 -Port PORT -PullImages
 ```
 
 It validates Docker Desktop, Linux-container mode, optional WSL2/WSL Docker
 daemon access, and port availability, then explains how to install or enable the
-missing pieces. After those requirements are satisfied, run the Bash installer
-from Git Bash/native Bash or from inside the WSL distro.
+missing pieces. Use the PowerShell installer from native Windows, or the Bash
+installer from inside the WSL distro.
+
+For updates, first check GitHub releases, optionally refresh the installer
+scripts, then run the requested version. The update recreates the server
+container on the new image while preserving `PAWFLOW_HOME` data and removes older
+PawFlow server/relay image tags unless `--keep-old-images` or `-KeepOldImages`
+is set:
+
+```bash
+bash scripts/install-pawflow.sh --check-updates
+bash scripts/install-pawflow.sh --self-update
+bash scripts/install-pawflow.sh --version 1.0.0.prealpha.2 --port 19990 --pull-images
+```
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/install-pawflow.ps1 -CheckUpdates
+powershell -ExecutionPolicy Bypass -File scripts/install-pawflow.ps1 -SelfUpdate
+powershell -ExecutionPolicy Bypass -File scripts/install-pawflow.ps1 -Version 1.0.0.prealpha.2 -Port 19990 -PullImages
+```
 
 ### Agent-assisted install prompt
 
@@ -157,7 +179,17 @@ These are the supported Docker install scenarios and their expected outcomes.
    - Expected result: server and relay images match the requested PawFlow version
      when published tags exist.
 
-3. Native server install
+3. Versioned image update
+   - Run `bash scripts/install-pawflow.sh --version NEW_VERSION --port PORT --pull-images` or the equivalent PowerShell command.
+   - The installer pulls the requested server and relay image tags, extracts the
+     matching runtime artifacts, rebuilds the local CLI LLM image, recreates the
+     existing `pawflow-server` container, and keeps mounted data/config/certs/logs
+     intact.
+   - Expected result: `docker inspect pawflow-server` reports the requested
+     server image, PawFlow runs on the requested version, and older PawFlow
+     server/relay image tags are removed unless image cleanup was disabled.
+
+4. Native server install
    - Run `bash scripts/install-pawflow.sh --native`.
    - The script prepares the same Docker runtime images, creates a local Python
      virtualenv, seeds `~/pawflow/data/repository` when missing, and starts

@@ -18,6 +18,7 @@
 #   PAWFLOW_SOURCE_DIR   Host checkout path used for CLI bridge bind mounts (default: script parent)
 #   PAWFLOW_SERVER_RELAY_IMAGE Full server relay image used by PawFlow (default: pawflow-relay-dev:latest)
 #   PAWFLOW_SERVER_RELAY_MINIMAL_IMAGE Minimal server relay image used by PawFlow (default: pawflow-relay-minimal:latest)
+#   PAWFLOW_RECREATE_CONTAINER Recreate an existing PawFlow container in place (default: 1)
 #
 # The first PawFlow bootstrap gateway key is RoyBetty. The installer wizard
 # must force the user to replace it before finalization.
@@ -39,6 +40,7 @@ RUN_GID="$(printenv PAWFLOW_RUN_GID || true)"
 SOURCE_DIR="$(printenv PAWFLOW_SOURCE_DIR || true)"
 SERVER_RELAY_IMAGE="$(printenv PAWFLOW_SERVER_RELAY_IMAGE || true)"
 SERVER_RELAY_MINIMAL_IMAGE="$(printenv PAWFLOW_SERVER_RELAY_MINIMAL_IMAGE || true)"
+RECREATE_CONTAINER="$(printenv PAWFLOW_RECREATE_CONTAINER || true)"
 if [[ -z "$IMAGE" ]]; then IMAGE="ghcr.io/allcolor/pawflow:latest"; fi
 if [[ -z "$PAWFLOW_HOME" ]]; then PAWFLOW_HOME="$HOME/pawflow"; fi
 if [[ -z "$CONTAINER" ]]; then CONTAINER="pawflow-server"; fi
@@ -56,6 +58,7 @@ if [[ -z "$RUN_GID" ]]; then RUN_GID="$(id -g)"; fi
 if [[ -z "$SOURCE_DIR" ]]; then SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"; fi
 if [[ -z "$SERVER_RELAY_IMAGE" ]]; then SERVER_RELAY_IMAGE="pawflow-relay-dev:latest"; fi
 if [[ -z "$SERVER_RELAY_MINIMAL_IMAGE" ]]; then SERVER_RELAY_MINIMAL_IMAGE="pawflow-relay-minimal:latest"; fi
+if [[ -z "$RECREATE_CONTAINER" ]]; then RECREATE_CONTAINER="1"; fi
 DOCKER_ARGS=()
 
 while [[ $# -gt 0 ]]; do
@@ -80,10 +83,15 @@ mkdir -p \
   "$PAWFLOW_HOME/logs"
 
 if docker ps -a --format '{{.Names}}' | grep -qx "$CONTAINER"; then
-  echo "Container '$CONTAINER' already exists."
-  echo "Start it with: docker start $CONTAINER"
-  echo "Or remove it explicitly before recreating: docker rm -f $CONTAINER"
-  exit 1
+  if [[ "$RECREATE_CONTAINER" == "1" || "$RECREATE_CONTAINER" == "true" || "$RECREATE_CONTAINER" == "yes" ]]; then
+    echo "Container '$CONTAINER' already exists; recreating it with image $IMAGE while keeping persistent volumes."
+    docker rm -f "$CONTAINER" >/dev/null
+  else
+    echo "Container '$CONTAINER' already exists."
+    echo "Start it with: docker start $CONTAINER"
+    echo "Or allow in-place recreation with: PAWFLOW_RECREATE_CONTAINER=1"
+    exit 1
+  fi
 fi
 
 if [[ -S /var/run/docker.sock ]]; then

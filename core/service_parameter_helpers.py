@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -188,13 +189,13 @@ OAUTH_URLS = {
 AUTH_GATEWAY_PROVIDERS_TEMPLATE = {
     "google": {
         "client_id": "${auth.google.client_id}",
-        "client_secret": "${auth.google.client_secret}",
+        "client_secret": "${auth.google.client_secret}",  # nosec B105 - expression-language secret reference placeholder, not a secret value.
         "redirect_uri": "https://webchat.example.org/auth/google/callback",
         "scope": "openid email profile",
     },
     "github": {
         "client_id": "${auth.github.client_id}",
-        "client_secret": "${auth.github.client_secret}",
+        "client_secret": "${auth.github.client_secret}",  # nosec B105 - expression-language secret reference placeholder, not a secret value.
         "redirect_uri": "https://webchat.example.org/auth/github/callback",
         "scope": "read:user user:email",
     },
@@ -325,14 +326,14 @@ def _secret_values(user_id: str, conversation_id: str, store: Any) -> List[Dict[
         if user_id:
             for key in sorted(_load_user_secrets(user_id).keys()):
                 values.append({"value": "${" + key + "}", "label": key + " [user]", "description": "User secret reference."})
-    except Exception:
-        pass
+    except Exception as exc:
+        logging.getLogger(__name__).debug("Could not load global/user secret references", exc_info=exc)
     if conversation_id and store is not None:
         try:
             for key in sorted((store.get_extra(conversation_id, "conv_secrets") or {}).keys()):
                 values.append({"value": "${" + key + "}", "label": key + " [conversation]", "description": "Conversation secret reference."})
-        except Exception:
-            pass
+        except Exception as exc:
+            logging.getLogger(__name__).debug("Could not load conversation secret references", exc_info=exc)
     return values
 
 
@@ -343,7 +344,8 @@ def _catalog_json_models(filename: str, category: str = "") -> List[Dict[str, An
             continue
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
+        except Exception as exc:
+            logging.getLogger(__name__).debug("Could not load model catalog %s", path, exc_info=exc)
             continue
         models = data.get("models") or {}
         out = []

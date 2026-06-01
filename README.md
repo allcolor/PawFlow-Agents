@@ -72,6 +72,25 @@ cd "pawflow-install-$PAWFLOW_VERSION"
 bash scripts/install-pawflow.sh --port PORT --pull-images --version "$PAWFLOW_VERSION"
 ```
 
+On Windows PowerShell with Docker Desktop Linux containers, use the bundled
+PowerShell installer instead:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/install-pawflow.ps1 -Port PORT -PullImages -Version $env:PAWFLOW_VERSION
+```
+
+Check and apply release updates with:
+
+```bash
+bash scripts/install-pawflow.sh --check-updates
+bash scripts/install-pawflow.sh --self-update
+bash scripts/install-pawflow.sh --version NEW_VERSION --port PORT --pull-images
+```
+
+The update command recreates the PawFlow server container on the requested image
+while keeping persistent data under `PAWFLOW_HOME`, then removes older PawFlow
+server/relay image tags unless `--keep-old-images` is set.
+
 Open the installer at:
 
 ```text

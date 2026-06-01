@@ -45,6 +45,7 @@ def test_relay_catalog_has_required_base_runtime():
     assert "/workspace" in post_install
     assert "/cc_sessions" in post_install
     assert "/filestore" in post_install
+    assert 'chown -R pawflow:pawflow "$d"' in post_install
     assert "chmod g+rwx" in post_install
     assert "sudo -E -u pawflow" in post_install
     assert base["runtime"]["requires_fuse"] is True
@@ -137,6 +138,7 @@ def test_generator_resolves_implied_features_and_writes_installer_artifacts(tmp_
     assert "COPY runtime/ /opt/pawflow/" not in dockerfile
     assert "USER root" in dockerfile
     assert "sudo -E -u pawflow" in dockerfile
+    assert 'chown -R pawflow:pawflow "$d"' in dockerfile
     assert "chmod g+rwx" in dockerfile
 
     run_script = (out_dir / "run-relay.sh").read_text(encoding="utf-8")

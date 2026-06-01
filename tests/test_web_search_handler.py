@@ -24,6 +24,7 @@ def test_web_search_defaults_to_google_then_bing_aggregation(monkeypatch):
         return []
 
     monkeypatch.setattr(handler, "_search_provider", fake_search)
+    monkeypatch.setattr("core.handlers.web_fetch.WebSearchHandler._find_default_relay", lambda self: None)
 
     out = handler.execute({"query": "AWS brand color", "max_results": 5})
 
@@ -52,6 +53,7 @@ def test_web_search_provider_override_uses_only_requested_provider(monkeypatch):
         return [{"title": "Result", "url": "https://example.com", "snippet": "Snippet"}]
 
     monkeypatch.setattr(handler, "_search_provider", fake_search)
+    monkeypatch.setattr("core.handlers.web_fetch.WebSearchHandler._find_default_relay", lambda self: None)
 
     out = handler.execute({"query": "test", "provider": "bing"})
 
@@ -106,6 +108,7 @@ def test_web_search_deduplicates_results(monkeypatch):
         }]
 
     monkeypatch.setattr(handler, "_search_provider", fake_search)
+    monkeypatch.setattr("core.handlers.web_fetch.WebSearchHandler._find_default_relay", lambda self: None)
 
     out = handler.execute({"query": "test", "provider": "google,bing"})
 

@@ -120,7 +120,8 @@ class RelayFuseLaunchTests(unittest.TestCase):
         with open(path, 'r') as f:
             src = f.read()
         for needle in ('mkdir -p /workspace /cc_sessions /filestore /skills',
-                       'chown pawflow:pawflow /workspace /cc_sessions /filestore /skills'):
+                       'chown pawflow:pawflow /workspace /cc_sessions /filestore /skills',
+                       'chown -R pawflow:pawflow "$d"'):
             self.assertIn(needle, src,
                           f'docker/relay-dev/Dockerfile must contain: {needle}')
 

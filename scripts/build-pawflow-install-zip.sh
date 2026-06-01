@@ -17,7 +17,7 @@ while [[ $# -gt 0 ]]; do
       cat <<'HELP'
 Usage: bash scripts/build-pawflow-install-zip.sh --version VERSION [--out-dir DIR]
 
-Builds a minimal release zip containing only the bootstrap installer, README,
+Builds a minimal release zip containing only the bootstrap installers, README,
 and license. The installer pulls the PawFlow server image and extracts the
 remaining runtime artifacts from that image.
 HELP
@@ -56,6 +56,7 @@ root = Path(sys.argv[1])
 archive = Path(sys.argv[2])
 files = [
     Path("scripts/install-pawflow.sh"),
+    Path("scripts/install-pawflow.ps1"),
     Path("README.md"),
     Path("LICENSE"),
 ]

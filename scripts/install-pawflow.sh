@@ -13,6 +13,8 @@
 #   bash scripts/install-pawflow.sh --runtime-dir ~/.pawflow/runtime/latest --port PORT
 #   bash scripts/install-pawflow.sh --pull-server --image ghcr.io/allcolor/pawflow:latest --port PORT
 #   bash scripts/install-pawflow.sh --pull-images --version 1.0.0 --port PORT
+#   bash scripts/install-pawflow.sh --check-updates
+#   bash scripts/install-pawflow.sh --self-update
 
 set -euo pipefail
 
@@ -39,6 +41,8 @@ RELAY_DEV_IMAGE="$(printenv PAWFLOW_RELAY_DEV_IMAGE || true)"
 CLI_LLM_IMAGE="$(printenv PAWFLOW_CLI_LLM_IMAGE || true)"
 GHCR_USER="$(printenv PAWFLOW_GHCR_USER || printenv GHCR_USER || true)"
 GHCR_TOKEN="$(printenv PAWFLOW_GHCR_TOKEN || printenv GHCR_TOKEN || true)"
+CONTAINER="$(printenv PAWFLOW_CONTAINER || true)"
+CLEAN_OLD_IMAGES="$(printenv PAWFLOW_CLEAN_OLD_IMAGES || true)"
 
 if [[ -z "$IMAGE_REPO" ]]; then IMAGE_REPO="ghcr.io/allcolor/pawflow"; fi
 if [[ -z "$RELAY_MINIMAL_IMAGE_REPO" ]]; then RELAY_MINIMAL_IMAGE_REPO="ghcr.io/allcolor/pawflow-relay-minimal"; fi
@@ -52,9 +56,13 @@ if [[ -z "$SERVER_MODE" ]]; then SERVER_MODE="auto"; fi
 if [[ -z "$RUNTIME_IMAGE_MODE" ]]; then RUNTIME_IMAGE_MODE="auto"; fi
 if [[ -z "$START_TARGET" ]]; then START_TARGET="container"; fi
 if [[ -z "$CLI_LLM_IMAGE" ]]; then CLI_LLM_IMAGE="pawflow-claude-code:latest"; fi
+if [[ -z "$CONTAINER" ]]; then CONTAINER="pawflow-server"; fi
+if [[ -z "$CLEAN_OLD_IMAGES" ]]; then CLEAN_OLD_IMAGES="1"; fi
 
 RUN_DOCTOR=1
 START_SERVER=1
+CHECK_UPDATES=0
+SELF_UPDATE=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -80,8 +88,11 @@ while [[ $# -gt 0 ]]; do
     --container) START_TARGET="container"; shift ;;
     --skip-doctor) RUN_DOCTOR=0; shift ;;
     --no-start) START_SERVER=0; shift ;;
+    --check-updates) CHECK_UPDATES=1; shift ;;
+    --self-update) SELF_UPDATE=1; shift ;;
+    --keep-old-images) CLEAN_OLD_IMAGES=0; shift ;;
     --help|-h)
-      sed -n '1,15p' "$0"
+      sed -n '1,17p' "$0"
       cat <<'HELP'
 
 Options:
@@ -112,6 +123,9 @@ Options:
   --native           Start PawFlow natively in a Python venv after building runtime images.
   --container        Start PawFlow server in Docker after building runtime images (default).
   --no-start         Build images but do not start the server container.
+  --check-updates    Query GitHub releases, show the installed server image tag, and print the recommended update command.
+  --self-update      Replace installer scripts from the latest release zip, then exit. Rerun the installer afterward.
+  --keep-old-images  Do not remove older PawFlow server/relay image tags after a successful container start.
 
 Default server/runtime mode is auto: try prebuilt images first, then build from
 source if an image is unavailable. The Claude/Codex/Gemini/Antigravity CLI image
@@ -128,6 +142,194 @@ HELP
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
   esac
 done
+
+optional_python_cmd() {
+  if [[ -n "$PYTHON_BIN" ]] && command -v "$PYTHON_BIN" >/dev/null 2>&1; then
+    printf '%s' "$PYTHON_BIN"
+    return 0
+  fi
+  if command -v python3 >/dev/null 2>&1; then
+    printf '%s' "python3"
+    return 0
+  fi
+  if command -v python >/dev/null 2>&1; then
+    printf '%s' "python"
+    return 0
+  fi
+}
+
+http_get() {
+  local url="$1"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$url"
+    return 0
+  fi
+  local py
+  py="$(optional_python_cmd)"
+  if [[ -n "$py" ]]; then
+    "$py" - "$url" <<'PY'
+import sys
+from urllib.request import urlopen
+
+with urlopen(sys.argv[1], timeout=30) as response:
+    sys.stdout.write(response.read().decode("utf-8"))
+PY
+    return 0
+  fi
+  echo "Missing required command: curl or python for GitHub requests." >&2
+  return 1
+}
+
+download_url() {
+  local url="$1" dest="$2"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fL -o "$dest" "$url"
+    return 0
+  fi
+  local py
+  py="$(optional_python_cmd)"
+  if [[ -n "$py" ]]; then
+    "$py" - "$url" "$dest" <<'PY'
+import shutil
+import sys
+from urllib.request import urlopen
+
+with urlopen(sys.argv[1], timeout=120) as response, open(sys.argv[2], "wb") as out:
+    shutil.copyfileobj(response, out)
+PY
+    return 0
+  fi
+  echo "Missing required command: curl or python for downloads." >&2
+  return 1
+}
+
+normalize_version() {
+  local value="$1"
+  value="${value#v}"
+  printf '%s' "$value"
+}
+
+github_latest_version() {
+  local api="https://api.github.com/repos/allcolor/PawFlow-Agents/releases?per_page=20" json latest
+  json="$(http_get "$api")"
+  latest="$(printf '%s' "$json" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
+  if [[ -z "$latest" ]]; then
+    echo "Could not parse latest PawFlow release from GitHub." >&2
+    return 1
+  fi
+  normalize_version "$latest"
+}
+
+installed_server_image() {
+  if ! command -v docker >/dev/null 2>&1; then
+    return 0
+  fi
+  docker inspect -f '{{.Config.Image}}' "$CONTAINER" 2>/dev/null || true
+}
+
+image_tag() {
+  local image="$1"
+  if [[ -z "$image" || "$image" != *:* ]]; then
+    return 0
+  fi
+  normalize_version "${image##*:}"
+}
+
+check_updates() {
+  local latest installed_image installed_tag selected_port
+  latest="$(github_latest_version)"
+  installed_image="$(installed_server_image)"
+  installed_tag="$(image_tag "$installed_image")"
+  selected_port="$PORT"
+  if [[ -z "$selected_port" ]]; then selected_port="PORT"; fi
+
+  echo "Latest PawFlow release: $latest"
+  if [[ -n "$installed_image" ]]; then
+    echo "Installed server image: $installed_image"
+    echo "Installed version: ${installed_tag}"
+  else
+    echo "Installed server image: none detected for container '$CONTAINER'"
+  fi
+
+  if [[ -n "$installed_tag" && "$installed_tag" == "$latest" ]]; then
+    echo "Server update: already on the latest release."
+  else
+    echo "Server update available. Recommended command:"
+    echo "  bash $0 --version $latest --port $selected_port --pull-images"
+  fi
+
+  echo "Installer refresh command:"
+  echo "  bash $0 --self-update"
+}
+
+self_update_installer() {
+  local latest url tmp zip py script_dir rel
+  latest="$(github_latest_version)"
+  url="https://github.com/allcolor/PawFlow-Agents/releases/download/$latest/pawflow-install-$latest.zip"
+  tmp="$(mktemp -d)"
+  zip="$tmp/pawflow-install-$latest.zip"
+  trap "rm -rf '$tmp'" EXIT
+  echo "Downloading PawFlow installer $latest: $url"
+  download_url "$url" "$zip"
+  py="$(optional_python_cmd)"
+  if [[ -z "$py" ]]; then
+    echo "Missing required command: python for installer zip extraction." >&2
+    exit 1
+  fi
+  "$py" - "$zip" "$tmp/extracted" <<'PY'
+from pathlib import Path
+import sys
+import zipfile
+
+archive = Path(sys.argv[1])
+out_dir = Path(sys.argv[2])
+with zipfile.ZipFile(archive) as zf:
+    for name in ("scripts/install-pawflow.sh", "scripts/install-pawflow.ps1"):
+        try:
+            zf.extract(name, out_dir)
+        except KeyError:
+            pass
+PY
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  for rel in scripts/install-pawflow.sh scripts/install-pawflow.ps1; do
+    if [[ -f "$tmp/extracted/$rel" ]]; then
+      cp "$tmp/extracted/$rel" "$script_dir/$(basename "$rel")"
+      if [[ "$rel" == "scripts/install-pawflow.sh" ]]; then chmod +x "$script_dir/$(basename "$rel")"; fi
+      echo "Updated $script_dir/$(basename "$rel")"
+    fi
+  done
+  echo "Installer scripts updated to release $latest. Rerun the installer command you wanted to execute."
+}
+
+cleanup_old_pawflow_images() {
+  if [[ "$CLEAN_OLD_IMAGES" != "1" && "$CLEAN_OLD_IMAGES" != "true" && "$CLEAN_OLD_IMAGES" != "yes" ]]; then
+    return 0
+  fi
+  local current_images image repo tag ref id
+  current_images=" $IMAGE $RELAY_MINIMAL_IMAGE $RELAY_DEV_IMAGE "
+  echo "Cleaning older PawFlow GHCR image tags not used by this install."
+  while read -r repo tag id; do
+    if [[ -z "$repo" || "$repo" == "<none>" || "$tag" == "<none>" ]]; then continue; fi
+    case "$repo" in
+      "$IMAGE_REPO"|"$RELAY_MINIMAL_IMAGE_REPO"|"$RELAY_DEV_IMAGE_REPO") ;;
+      *) continue ;;
+    esac
+    ref="$repo:$tag"
+    if [[ "$current_images" == *" $ref "* ]]; then continue; fi
+    echo "Removing old image tag: $ref"
+    docker rmi "$ref" >/dev/null 2>&1 || true
+  done < <(docker images --format '{{.Repository}} {{.Tag}} {{.ID}}')
+}
+
+if [[ "$SELF_UPDATE" == "1" ]]; then
+  self_update_installer
+  exit 0
+fi
+
+if [[ "$CHECK_UPDATES" == "1" ]]; then
+  check_updates
+  exit 0
+fi
 
 if [[ -z "$PORT" ]]; then
   echo "ERROR: choose a port with --port PORT or PAWFLOW_PORT=PORT." >&2
@@ -258,6 +460,8 @@ extract_image_artifacts() (
   for rel in \
     scripts/run-pawflow-docker.sh \
     scripts/doctor-pawflow.sh \
+    scripts/doctor-pawflow.ps1 \
+    scripts/install-pawflow.ps1 \
     docker/claude-code \
     docker/pawflow_sdk \
     tools/mcp_bridge.py \
@@ -265,7 +469,13 @@ extract_image_artifacts() (
   do
     mkdir -p "$out_dir/$(dirname "$rel")"
     rm -rf "$out_dir/$rel"
-    docker cp "$cid:/app/$rel" "$out_dir/$rel"
+    if ! docker cp "$cid:/app/$rel" "$out_dir/$rel"; then
+      if [[ "$rel" == "scripts/install-pawflow.ps1" ]]; then
+        echo "Warning: $image does not contain $rel; continuing without the PowerShell installer artifact." >&2
+        continue
+      fi
+      return 1
+    fi
   done
 
   chmod +x \
@@ -544,7 +754,8 @@ fi
 if [[ "$START_TARGET" == "native" ]]; then
   run_native_server
 elif [[ "$START_TARGET" == "container" ]]; then
-  PAWFLOW_IMAGE="$IMAGE" PAWFLOW_PORT="$PORT" PAWFLOW_HOST="$HOST" PAWFLOW_HOME="$PAWFLOW_HOME" PAWFLOW_SERVER_RELAY_IMAGE="$RELAY_DEV_IMAGE" PAWFLOW_SERVER_RELAY_MINIMAL_IMAGE="$RELAY_MINIMAL_IMAGE" bash "$REPO_DIR/scripts/run-pawflow-docker.sh"
+  PAWFLOW_IMAGE="$IMAGE" PAWFLOW_CONTAINER="$CONTAINER" PAWFLOW_PORT="$PORT" PAWFLOW_HOST="$HOST" PAWFLOW_HOME="$PAWFLOW_HOME" PAWFLOW_SERVER_RELAY_IMAGE="$RELAY_DEV_IMAGE" PAWFLOW_SERVER_RELAY_MINIMAL_IMAGE="$RELAY_MINIMAL_IMAGE" bash "$REPO_DIR/scripts/run-pawflow-docker.sh"
+  cleanup_old_pawflow_images
 else
   echo "Invalid PAWFLOW_START_TARGET: $START_TARGET (expected container or native)" >&2
   exit 2

@@ -165,7 +165,7 @@ class ServeLoginTask(BaseTask):
         error_html = ""
         if error:
             error_html = f'<div class="error">{html.escape(error)}</div>\n'
-        token_html = ""
+        token_html = ""  # nosec B105 - empty optional HTML block, not a password.
         if pending_oauth:
             token_html = f'''
 <form method="POST" action="/auth/login/token" class="login-form">

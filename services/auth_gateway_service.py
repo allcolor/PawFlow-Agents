@@ -299,7 +299,7 @@ All string values may use `${...}` expressions. They are resolved recursively at
     # ── User provisioning ──────────────────────────────────────────
 
     def _provision_user(self, auth_result: AuthResult, ip: str = "",
-                        invite_token: str = "") -> AuthResult:
+                        invite_token: str = "") -> AuthResult:  # nosec B107 - optional token parameter defaults to absent.
         """Resolve, link, or create an OAuth user.
 
         External OAuth never auto-creates users. A provider identity must match

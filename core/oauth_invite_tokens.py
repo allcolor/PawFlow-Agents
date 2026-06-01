@@ -12,7 +12,7 @@ import core.paths as _paths
 
 
 _LOCK = threading.Lock()
-_TOKEN_PREFIX = "pfo_"
+_TOKEN_PREFIX = "pfo_"  # nosec B105 - public token prefix, not a secret.
 
 
 def _hash_token(token: str) -> str:

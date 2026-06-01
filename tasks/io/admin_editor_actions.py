@@ -79,6 +79,8 @@ def _admin_get_service_schema(body, exec_reg, deploy_reg, gsvc_reg, tmpl_svc):
         try:
             instance = cls({})
             schema = instance.get_parameter_schema()
+            from core.service_parameter_helpers import apply_service_parameter_helpers
+            schema = apply_service_parameter_helpers(svc_type, schema)
         except Exception:
             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
     return {"type": svc_type, "schema": schema}

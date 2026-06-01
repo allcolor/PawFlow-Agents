@@ -833,6 +833,8 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             instance = object.__new__(cls)
             instance.config = {}
             schema = instance.get_parameter_schema()
+            from core.service_parameter_helpers import apply_service_parameter_helpers
+            schema = apply_service_parameter_helpers(svc_type, schema)
             rules = instance.get_parameter_rules() if hasattr(instance, 'get_parameter_rules') else []
             actions = instance.get_service_actions() if hasattr(instance, 'get_service_actions') else []
             flowfile.set_content(json.dumps({
@@ -846,6 +848,29 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
             flowfile.set_attribute("http.response.status", "404")
+        return [flowfile]
+
+    if action == "get_service_parameter_helper":
+        svc_type = body.get("service_type", "")
+        parameter = body.get("parameter", "")
+        if not svc_type or not parameter:
+            flowfile.set_content(json.dumps({"error": "service_type and parameter are required"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        try:
+            from core.service_parameter_helpers import get_service_parameter_helper
+            conv_id = body.get("conversation_id", "") or flowfile.get_attribute("http.conversation_id") or ""
+            payload = get_service_parameter_helper(
+                svc_type,
+                parameter,
+                body.get("config") or {},
+                user_id=user_id,
+                conversation_id=conv_id,
+                store=store,
+            )
+            flowfile.set_content(json.dumps(payload, ensure_ascii=False).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}, ensure_ascii=False).encode())
         return [flowfile]
 
     if action in {"service_install_status", "service_install_log", "service_install_cancel"}:

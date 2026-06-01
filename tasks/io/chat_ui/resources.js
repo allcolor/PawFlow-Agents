@@ -3610,6 +3610,7 @@ function showServiceMenu(e, serviceId, scope, enabled) {
 const _svcInputStyle = 'width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;font-size:12px;';
 const _svcLabelStyle = 'color:var(--pf-muted);font-size:11px;';
 const _svcHelpStyle = 'display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border-radius:50%;border:1px solid var(--pf-border);color:var(--pf-muted);font-size:10px;line-height:14px;margin-left:5px;cursor:pointer;background:var(--pf-sidebar);font-weight:700;vertical-align:middle;padding:0;';
+const _svcFillStyle = 'display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:4px;border:1px solid var(--pf-accent);color:var(--pf-accent);font-size:10px;line-height:14px;margin-left:5px;cursor:pointer;background:color-mix(in srgb, var(--pf-accent) 10%, var(--pf-panel));font-weight:700;vertical-align:middle;padding:0;';
 
 function _renderParamHelp(description, label) {
   if (!description) return '';
@@ -3618,6 +3619,15 @@ function _renderParamHelp(description, label) {
   return '<button type="button" class="svc-param-help" data-help-title="' + title
     + '" data-help="' + help + '" onclick="_openParamHelpWindow(this,event)"'
     + ' aria-label="Help: ' + title + '" style="' + _svcHelpStyle + '">?</button>';
+}
+
+function _renderParamFillHelper(pdef, pname, readonly) {
+  if (readonly || !pdef || !pdef.fill_helper) return '';
+  const helper = escapeAttr(JSON.stringify(pdef.fill_helper));
+  const title = escapeAttr((pdef.fill_helper && pdef.fill_helper.label) || 'Fill');
+  return '<button type="button" class="svc-param-fill" data-param="' + escapeAttr(pname)
+    + '" data-helper="' + helper + '" onclick="_openParamFillHelper(this,event)"'
+    + ' aria-label="Fill: ' + title + '" title="' + title + '" style="' + _svcFillStyle + '">\u21E3</button>';
 }
 
 function _renderHelpMarkdown(markdown) {
@@ -3663,6 +3673,73 @@ function _openParamHelpWindow(btn, ev) {
   win.style.top = top + 'px';
   win.querySelector('.svc-help-close').onclick = () => win.remove();
   _makeParamHelpDraggable(win, win.querySelector('.svc-help-titlebar'));
+}
+
+async function _openParamFillHelper(btn, ev) {
+  if (ev) { ev.preventDefault(); ev.stopPropagation(); }
+  let helper = {};
+  try { helper = JSON.parse(btn.dataset.helper || '{}'); } catch (_) { helper = {}; }
+  const parameter = btn.dataset.param || helper.parameter || '';
+  const panel = btn.closest('#resourceEditorOverlay > div') || document.querySelector('#resourceEditorOverlay > div');
+  let schema = {};
+  try { schema = JSON.parse(panel?.dataset.schema || '{}'); } catch (_) { schema = {}; }
+  const config = _collectSchemaValues(schema);
+  document.querySelectorAll('.svc-fill-window').forEach(el => el.remove());
+  const win = document.createElement('div');
+  win.className = 'svc-fill-window';
+  win.style.cssText = 'position:fixed;z-index:10055;width:min(620px,calc(100vw - 24px));max-height:min(520px,calc(100vh - 24px));display:flex;flex-direction:column;background:var(--pf-panel);color:var(--pf-text);border:1px solid var(--pf-border);border-radius:8px;box-shadow:0 12px 36px rgba(0,0,0,0.55);overflow:hidden;';
+  win.innerHTML = '<div class="svc-fill-titlebar" style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--pf-sidebar);border-bottom:1px solid var(--pf-border);cursor:move;user-select:none;">'
+    + '<strong style="font-size:12px;color:var(--pf-text);flex:1;">' + escapeHtml(helper.label || 'Fill') + '</strong>'
+    + '<button type="button" class="svc-fill-close" aria-label="Close" style="background:none;border:1px solid var(--pf-border);color:var(--pf-muted);border-radius:4px;width:22px;height:22px;line-height:18px;cursor:pointer;">&times;</button>'
+    + '</div><div class="svc-fill-content" style="padding:10px 12px;overflow:auto;font-size:12px;line-height:1.4;color:var(--pf-text);">'
+    + '<div style="color:var(--pf-muted);font-size:11px;">Loading...</div></div>';
+  document.body.appendChild(win);
+  const rect = btn.getBoundingClientRect();
+  const pad = 12;
+  win.style.left = Math.min(Math.max(pad, rect.left + 18), window.innerWidth - win.offsetWidth - pad) + 'px';
+  win.style.top = Math.min(Math.max(pad, rect.bottom + 8), window.innerHeight - win.offsetHeight - pad) + 'px';
+  win.querySelector('.svc-fill-close').onclick = () => win.remove();
+  _makeParamHelpDraggable(win, win.querySelector('.svc-fill-titlebar'));
+  const content = win.querySelector('.svc-fill-content');
+  try {
+    const data = await rxjs.firstValueFrom(action$('get_service_parameter_helper', {
+      service_type: helper.service_type || '',
+      parameter,
+      config,
+      conversation_id: conversationId,
+    }));
+    if (data.error) { content.innerHTML = '<div style="color:var(--pf-danger);">' + escapeHtml(data.error) + '</div>'; return; }
+    const values = data.values || [];
+    let html = '';
+    if (data.warning) html += '<div style="color:var(--pf-warning);border:1px solid color-mix(in srgb, var(--pf-warning) 45%, var(--pf-border));background:color-mix(in srgb, var(--pf-warning) 10%, var(--pf-panel));border-radius:6px;padding:7px;margin-bottom:8px;">' + escapeHtml(data.warning) + '</div>';
+    if (!values.length) html += '<div style="color:var(--pf-muted);">No suggestions.</div>';
+    for (let i = 0; i < values.length; i++) {
+      const item = values[i] || {};
+      const encoded = escapeAttr(JSON.stringify(item.value == null ? '' : item.value));
+      html += '<div style="display:grid;grid-template-columns:1fr auto;gap:8px;align-items:start;border:1px solid var(--pf-border);border-radius:6px;padding:8px;margin-bottom:6px;background:var(--pf-sidebar);">'
+        + '<div><div style="font-weight:600;color:var(--pf-text);word-break:break-word;">' + escapeHtml(item.label || item.value || '') + '</div>'
+        + (item.description ? '<div style="color:var(--pf-muted);font-size:11px;margin-top:3px;word-break:break-word;">' + escapeHtml(item.description) + '</div>' : '') + '</div>'
+        + '<button type="button" data-value="' + encoded + '" onclick="_applyParamFillSuggestion(' + _pfpJsArg(parameter) + ', this); this.closest(\'.svc-fill-window\').remove();" style="background:var(--pf-accent);color:var(--pf-bg);border:none;border-radius:4px;padding:5px 10px;cursor:pointer;font-size:12px;">Use</button>'
+        + '</div>';
+    }
+    content.innerHTML = html;
+  } catch (e) {
+    content.innerHTML = '<div style="color:var(--pf-danger);">' + escapeHtml(e.message) + '</div>';
+  }
+}
+
+function _applyParamFillSuggestion(parameter, valueButton) {
+  const el = document.getElementById('svc-p-' + parameter);
+  if (!el) return;
+  let value = '';
+  try { value = JSON.parse(valueButton.dataset.value || '""'); } catch (_) { value = valueButton.dataset.value || ''; }
+  if (typeof value === 'object') value = JSON.stringify(value, null, 2);
+  if (el.type === 'checkbox') {
+    el.checked = !!value;
+  } else {
+    el.value = String(value == null ? '' : value);
+  }
+  el.dispatchEvent(new Event('change', { bubbles: true }));
 }
 
 function _makeParamHelpDraggable(win, handle) {
@@ -3732,7 +3809,8 @@ function _renderSchemaFields(schema, values, readonly) {
     html += '<div class="svc-field" data-field="' + pname + '"' + req + ' style="margin-bottom:8px;">';
     html += '<label style="' + _svcLabelStyle + '">' + label
       + (pdef.required ? ' <span class="svc-req" style="color:var(--pf-danger)">*</span>' : '')
-      + _renderParamHelp(pdef.description, pdef.label || pname) + '</label>';
+      + _renderParamHelp(pdef.description, pdef.label || pname)
+      + _renderParamFillHelper(pdef, pname, readonly) + '</label>';
     const ptype = pdef.type || 'string';
     if (ptype === 'boolean') {
       html += '<label style="display:flex;align-items:center;gap:6px;margin-top:4px;cursor:pointer;"><input id="svc-p-' + pname + '" type="checkbox"' + (val ? ' checked' : '') + dis + ' style="accent-color:var(--pf-accent);"/> <span style="color:var(--pf-text);font-size:12px;">Enabled</span></label>';
@@ -3750,8 +3828,8 @@ function _renderSchemaFields(schema, values, readonly) {
       html += '<select id="svc-p-' + pname + '" data-service-ref="1" data-service-type="' + st + '" data-provider-field="' + pf + '" data-provider="' + fp + '" data-provider-aliases=\'' + aliases + '\' data-current="' + escaped + '"' + dis + ' style="' + _svcInputStyle + roS + '">';
       html += '<option value="' + escaped + '">' + (escaped || '(auto)') + '</option>';
       html += '</select>';
-    } else if (ptype === 'textarea' || ptype === 'map' || ptype === 'object') {
-      const tval = (ptype === 'map' || ptype === 'object') && typeof val === 'object' ? JSON.stringify(val, null, 2) : escaped;
+    } else if (ptype === 'textarea' || ptype === 'map' || ptype === 'object' || ptype === 'json') {
+      const tval = (ptype === 'map' || ptype === 'object' || ptype === 'json') && typeof val === 'object' ? JSON.stringify(val, null, 2) : escaped;
       html += '<textarea id="svc-p-' + pname + '"' + dis + ' style="' + _svcInputStyle + roS + 'min-height:80px;font-family:monospace;resize:vertical;">' + tval + '</textarea>';
     } else if (ptype === 'integer' || ptype === 'float') {
       html += '<input id="svc-p-' + pname + '" type="number"' + (ptype === 'float' ? ' step="any"' : '') + ' value="' + escaped + '"' + dis + ' style="' + _svcInputStyle + roS + 'width:120px;"/>';
@@ -3826,7 +3904,7 @@ function _collectSchemaValues(schema) {
       config[pname] = parseInt(el.value) || 0;
     } else if (ptype === 'float') {
       config[pname] = parseFloat(el.value) || 0;
-    } else if (ptype === 'map' || ptype === 'object') {
+    } else if (ptype === 'map' || ptype === 'object' || ptype === 'json') {
       try { config[pname] = JSON.parse(el.value || '{}'); } catch { config[pname] = el.value; }
     } else {
       config[pname] = el.value;

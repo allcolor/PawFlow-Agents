@@ -25,6 +25,15 @@ def test_modal_overlays_do_not_close_from_background_clicks():
     assert offenders == []
 
 
+def test_service_parameter_fill_helper_is_wired_in_chat_ui():
+    src = Path("tasks/io/chat_ui/resources.js").read_text(encoding="utf-8")
+
+    assert "get_service_parameter_helper" in src
+    assert "_renderParamFillHelper" in src
+    assert "_openParamFillHelper" in src
+    assert "_applyParamFillSuggestion" in src
+
+
 def test_agent_attach_dialog_has_only_explicit_close_handlers():
     js = Path("tasks/io/chat_ui/resources.js").read_text(encoding="utf-8")
     start = js.index("async function showAddAgentToConvDialog")

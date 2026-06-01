@@ -392,6 +392,7 @@ def _live_model_values(
     family = _provider_family(config)
     api_key = str(config.get("api_key") or "")
     base_url = str(config.get("base_url") or "").rstrip("/")
+    headers: Dict[str, str] = {}
     if "${" in api_key:
         try:
             from core.expression import resolve_value

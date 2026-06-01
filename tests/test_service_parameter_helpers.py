@@ -47,6 +47,32 @@ def test_base_url_helper_accepts_labeled_url_tuples():
     }
 
 
+def test_openrouter_model_helper_allows_public_models_without_api_key(monkeypatch):
+    import core.service_parameter_helpers as helpers
+
+    seen = {}
+
+    def fake_fetch_json(url, headers, timeout=8):
+        seen["url"] = url
+        seen["headers"] = headers
+        return {"data": [{"id": "openai/gpt-5.5", "name": "GPT 5.5"}]}
+
+    monkeypatch.setattr(helpers, "_fetch_json", fake_fetch_json)
+
+    data = helpers.get_service_parameter_helper(
+        "llmConnection",
+        "default_model",
+        {"provider": "openai", "base_url": "https://openrouter.ai/api/v1", "api_key": ""},
+    )
+
+    assert seen == {
+        "url": "https://openrouter.ai/api/v1/models",
+        "headers": {},
+    }
+    assert data["source"] == "live"
+    assert data["values"][0]["value"] == "openai/gpt-5.5"
+
+
 def test_priority_service_helpers_cover_media_oauth_rclone_and_catalogs():
     from core.service_parameter_helpers import apply_service_parameter_helpers
 

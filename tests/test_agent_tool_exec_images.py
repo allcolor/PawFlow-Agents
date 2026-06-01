@@ -1,9 +1,12 @@
+import json
+
 from core.handlers.meta_tools import UseToolHandler
-from core.llm_client import LLMToolCall
+from core.llm_client import LLMClient, LLMMessage, LLMToolCall
 from core.tool_handler import ToolHandler
 from core.tool_registry import ToolRegistry
 from tasks.ai.agent_core import AgentCoreMixin
 from tasks.ai.agent_tool_exec import AgentToolExecMixin
+from tasks.ai.agent_utils import AgentUtilsMixin
 
 
 class ImageHandler(ToolHandler):
@@ -82,6 +85,48 @@ def test_tool_result_images_are_materialized_to_filestore_refs(tmp_path, monkeyp
     assert materialized[2]["type"] == "image_ref"
     assert "data" not in str(materialized)
     assert "base64" not in str(materialized)
+
+
+def test_deflated_tool_result_image_ref_stays_text_for_later_turns(tmp_path, monkeypatch):
+    from core.file_store import FileStore
+
+    store = FileStore(base_dir=str(tmp_path / "files"))
+    monkeypatch.setattr(FileStore, "_instance", store)
+    file_id = store.store(
+        "tool.png", b"PNGDATA", "image/png",
+        user_id="user-1", conversation_id="conv-1")
+    messages = [
+        LLMMessage(
+            role="assistant", content="",
+            tool_calls=[LLMToolCall(id="tc-img", name="see", arguments={})],
+            conversation_id="conv-1"),
+        LLMMessage(
+            role="tool",
+            content=[
+                {"type": "text", "text": "tool image"},
+                {"type": "image_ref", "file_id": file_id,
+                 "filename": "tool.png", "mime_type": "image/png"},
+            ],
+            tool_call_id="tc-img", conversation_id="conv-1"),
+        LLMMessage(role="assistant", content="I saw it.", conversation_id="conv-1"),
+        LLMMessage(role="user", content="answer from text now", conversation_id="conv-1"),
+    ]
+
+    AgentUtilsMixin._deflate_image_messages(
+        messages, user_id="user-1", conversation_id="conv-1")
+
+    assert isinstance(messages[1].content, str)
+    assert f"fs://filestore/{file_id}/tool.png" in messages[1].content
+    openai_payload = LLMClient(
+        provider="openai", config={"api_key": "sk-test"})._build_openai_messages(
+            messages, user_id="user-1", conversation_id="conv-1")
+    assert "data:image" not in json.dumps(openai_payload)
+    assert "image_url" not in json.dumps(openai_payload)
+
+    _, anthropic_payload = LLMClient(
+        provider="anthropic", config={"api_key": "sk-test"})._build_anthropic_messages(
+            messages, user_id="user-1", conversation_id="conv-1")
+    assert "base64" not in json.dumps(anthropic_payload)
 
 
 def test_context_usage_counts_image_blocks_as_placeholders():

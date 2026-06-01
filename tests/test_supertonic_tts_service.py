@@ -197,6 +197,13 @@ def test_supertonic_autostart_prepares_managed_runtime(monkeypatch, tmp_path):
     assert cmd[0] == str(svc._venv_python())
 
 
+def test_supertonic_runtime_package_default_matches_schema():
+    svc = SupertonicTTSService({})
+
+    assert svc.package_spec == "supertonic[serve]>=0.1.0"
+    assert svc.get_parameter_schema()["package_spec"]["default"] == svc.package_spec
+
+
 def test_supertonic_prepare_install_creates_managed_runtime(monkeypatch, tmp_path):
     svc = SupertonicTTSService({
         "install_dir": str(tmp_path / "supertonic3"),

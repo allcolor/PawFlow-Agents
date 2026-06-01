@@ -152,7 +152,7 @@ class SupertonicTTSService(BaseAudioGenerationService, BaseTTSService):
         if not install_dir.is_absolute():
             install_dir = Path.cwd() / install_dir
         self.install_dir = install_dir
-        self.package_spec = str(self.config.get("package_spec") or "supertonic")
+        self.package_spec = str(self.config.get("package_spec") or "supertonic[serve]>=0.1.0")
         self.repo_url = str(self.config.get("repo_url") or "").strip()
         self.repo_ref = str(self.config.get("repo_ref") or "").strip()
         self.start_command = str(self.config.get("start_command") or "").strip()

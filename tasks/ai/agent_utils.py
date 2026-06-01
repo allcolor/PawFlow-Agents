@@ -814,14 +814,16 @@ class AgentUtilsMixin:
             last_img_idx = -1
             for i, m in enumerate(messages):
                 if isinstance(m.content, list) and any(
-                    p.get("type") == "image_url" for p in m.content
+                    p.get("type") in ("image_url", "image_ref", "image")
+                    for p in m.content
                 ):
                     last_img_idx = i
         for idx, m in enumerate(messages):
             if not isinstance(m.content, list):
                 continue
             has_images = any(
-                p.get("type") == "image_url" for p in m.content
+                p.get("type") in ("image_url", "image_ref", "image")
+                for p in m.content
             )
             if not has_images:
                 continue
@@ -858,6 +860,32 @@ class AgentUtilsMixin:
                     elif url.startswith(("http://", "https://")):
                         # Keep full URL — small compared to base64, allows re-fetch
                         img_refs.append(url)
+                    else:
+                        img_refs.append("(image)")
+                elif part.get("type") == "image_ref":
+                    fid = part.get("file_id", "")
+                    fname = part.get("filename", "image") or "image"
+                    img_refs.append(
+                        f"fs://filestore/{fid}/{fname}" if fid else "(image)")
+                elif part.get("type") == "image":
+                    source = part.get("source") if isinstance(part.get("source"), dict) else {}
+                    data_b64 = source.get("data") or part.get("data") or ""
+                    if data_b64:
+                        try:
+                            import base64 as _b64d
+                            mime = (source.get("media_type") or part.get("mimeType")
+                                    or part.get("mime_type") or "image/png")
+                            ext = {"image/png": "png", "image/jpeg": "jpg",
+                                   "image/webp": "webp", "image/gif": "gif"}.get(mime, "png")
+                            from core.file_store import FileStore
+                            import time as _t
+                            fname = part.get("filename") or f"image_{int(_t.time())}_{len(img_refs)}.{ext}"
+                            fid = FileStore.instance().store(
+                                fname, _b64d.b64decode(data_b64), mime,
+                                user_id=user_id, conversation_id=conversation_id)
+                            img_refs.append(f"fs://filestore/{fid}/{fname}")
+                        except Exception:
+                            img_refs.append("(image)")
                     else:
                         img_refs.append("(image)")
             text = "\n".join(text_parts)

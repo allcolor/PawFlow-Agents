@@ -322,7 +322,13 @@ class LLMCliSharedMixin:
                         if pt == "text":
                             _text_parts.append(p.get("text", ""))
                         elif pt == "image_ref":
-                            _text_parts.append(f"[image: {p.get('filename', '?')}]")
+                            fid = p.get("file_id", "")
+                            fname = p.get("filename", "image") or "image"
+                            if fid:
+                                _text_parts.append(
+                                    f"Attached image: fs://filestore/{fid}/{fname}")
+                            else:
+                                _text_parts.append(f"[image: {fname}]")
                         elif pt == "file_ref":
                             _text_parts.append(
                                 f"[attached file: {p.get('filename', '?')} ({p.get('mime_type', '?')}) "

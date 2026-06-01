@@ -2333,8 +2333,8 @@ function _renderFlowSchemaFields(schema, values, cssClass, serviceId) {
       + (serviceId ? ' data-service-id="' + escapeHtml(serviceId) + '"' : '');
     html += '<div style="margin-bottom:8px;">'
       + '<label style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(key)
-      + (spec.required ? ' <span style="color:var(--pf-danger);">*</span>' : '') + '</label>';
-    if (spec.description) html += '<div style="color:var(--pf-muted);font-size:10px;margin-top:1px;">' + escapeHtml(spec.description) + '</div>';
+      + (spec.required ? ' <span style="color:var(--pf-danger);">*</span>' : '')
+      + _renderParamHelp(spec.description, key) + '</label>';
     if (type === 'boolean') {
       html += '<label style="display:flex;align-items:center;gap:6px;margin-top:4px;cursor:pointer;"><input type="checkbox"'
         + dataAttrs + (value ? ' checked' : '') + ' style="accent-color:var(--pf-accent);">'
@@ -3609,7 +3609,86 @@ function showServiceMenu(e, serviceId, scope, enabled) {
 // ── Service schema-based form helpers ─────────────────────────────
 const _svcInputStyle = 'width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;font-size:12px;';
 const _svcLabelStyle = 'color:var(--pf-muted);font-size:11px;';
-const _svcDescStyle = 'color:var(--pf-muted);font-size:10px;margin-top:1px;';
+const _svcHelpStyle = 'display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border-radius:50%;border:1px solid var(--pf-border);color:var(--pf-muted);font-size:10px;line-height:14px;margin-left:5px;cursor:pointer;background:var(--pf-sidebar);font-weight:700;vertical-align:middle;padding:0;';
+
+function _renderParamHelp(description, label) {
+  if (!description) return '';
+  const help = escapeAttr(description);
+  const title = escapeAttr(label || 'Parameter help');
+  return '<button type="button" class="svc-param-help" data-help-title="' + title
+    + '" data-help="' + help + '" onclick="_openParamHelpWindow(this,event)"'
+    + ' aria-label="Help: ' + title + '" style="' + _svcHelpStyle + '">?</button>';
+}
+
+function _renderHelpMarkdown(markdown) {
+  if (typeof renderMarkdown === 'function') return renderMarkdown(markdown || '');
+  return escapeHtml(markdown || '').replace(/\n/g, '<br>');
+}
+
+function _openParamHelpWindow(btn, ev) {
+  if (ev) { ev.preventDefault(); ev.stopPropagation(); }
+  document.querySelectorAll('.svc-help-window').forEach(el => el.remove());
+  const title = btn.dataset.helpTitle || 'Parameter help';
+  const markdown = btn.dataset.help || '';
+  const win = document.createElement('div');
+  win.className = 'svc-help-window';
+  win.style.cssText = 'position:fixed;z-index:10050;width:min(560px,calc(100vw - 24px));max-height:min(460px,calc(100vh - 24px));display:flex;flex-direction:column;background:var(--pf-panel);color:var(--pf-text);border:1px solid var(--pf-border);border-radius:8px;box-shadow:0 12px 36px rgba(0,0,0,0.55);overflow:hidden;';
+  win.innerHTML = '<div class="svc-help-titlebar" style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--pf-sidebar);border-bottom:1px solid var(--pf-border);cursor:move;user-select:none;">'
+    + '<strong style="font-size:12px;color:var(--pf-text);flex:1;">' + escapeHtml(title) + '</strong>'
+    + '<button type="button" class="svc-help-close" aria-label="Close" style="background:none;border:1px solid var(--pf-border);color:var(--pf-muted);border-radius:4px;width:22px;height:22px;line-height:18px;cursor:pointer;">&times;</button>'
+    + '</div><div class="svc-help-content" style="padding:10px 12px;overflow:auto;user-select:text;font-size:12px;line-height:1.45;white-space:normal;">'
+    + _renderHelpMarkdown(markdown) + '</div>';
+  document.body.appendChild(win);
+  const content = win.querySelector('.svc-help-content');
+  content.querySelectorAll('pre').forEach(pre => {
+    pre.style.margin = '8px 0';
+    pre.style.padding = '8px';
+    pre.style.background = 'var(--pf-code-bg)';
+    pre.style.border = '1px solid var(--pf-border)';
+    pre.style.borderRadius = '6px';
+    pre.style.overflow = 'auto';
+    pre.style.userSelect = 'text';
+  });
+  content.querySelectorAll('code').forEach(code => {
+    code.style.userSelect = 'text';
+  });
+  content.querySelectorAll('a').forEach(a => {
+    a.style.color = 'var(--pf-accent-2)';
+  });
+  const rect = btn.getBoundingClientRect();
+  const pad = 12;
+  const left = Math.min(Math.max(pad, rect.left + 18), window.innerWidth - win.offsetWidth - pad);
+  const top = Math.min(Math.max(pad, rect.bottom + 8), window.innerHeight - win.offsetHeight - pad);
+  win.style.left = left + 'px';
+  win.style.top = top + 'px';
+  win.querySelector('.svc-help-close').onclick = () => win.remove();
+  _makeParamHelpDraggable(win, win.querySelector('.svc-help-titlebar'));
+}
+
+function _makeParamHelpDraggable(win, handle) {
+  if (!win || !handle) return;
+  handle.addEventListener('mousedown', function(e) {
+    if (e.target.closest('.svc-help-close')) return;
+    e.preventDefault();
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const startLeft = parseFloat(win.style.left || '0');
+    const startTop = parseFloat(win.style.top || '0');
+    const move = function(ev) {
+      const pad = 8;
+      const nextLeft = Math.min(Math.max(pad, startLeft + ev.clientX - startX), window.innerWidth - win.offsetWidth - pad);
+      const nextTop = Math.min(Math.max(pad, startTop + ev.clientY - startY), window.innerHeight - win.offsetHeight - pad);
+      win.style.left = nextLeft + 'px';
+      win.style.top = nextTop + 'px';
+    };
+    const up = function() {
+      document.removeEventListener('mousemove', move);
+      document.removeEventListener('mouseup', up);
+    };
+    document.addEventListener('mousemove', move);
+    document.addEventListener('mouseup', up);
+  });
+}
 
 function _serviceCategoryLabel(category) {
   const key = 'serviceCategory.' + (category || 'other');
@@ -3649,11 +3728,11 @@ function _renderSchemaFields(schema, values, readonly) {
     const val = (values && values[pname] != null) ? values[pname] : (pdef.default != null ? pdef.default : '');
     const escaped = typeof val === 'string' ? val.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') : val;
     const label = escapeHtml(pdef.label || pname);
-    const desc = pdef.description ? escapeHtml(pdef.description) : '';
     const req = pdef.required ? ' data-required="1"' : '';
     html += '<div class="svc-field" data-field="' + pname + '"' + req + ' style="margin-bottom:8px;">';
-    html += '<label style="' + _svcLabelStyle + '">' + label + (pdef.required ? ' <span class="svc-req" style="color:var(--pf-danger)">*</span>' : '') + '</label>';
-    if (desc) html += '<div style="' + _svcDescStyle + '">' + desc + '</div>';
+    html += '<label style="' + _svcLabelStyle + '">' + label
+      + (pdef.required ? ' <span class="svc-req" style="color:var(--pf-danger)">*</span>' : '')
+      + _renderParamHelp(pdef.description, pdef.label || pname) + '</label>';
     const ptype = pdef.type || 'string';
     if (ptype === 'boolean') {
       html += '<label style="display:flex;align-items:center;gap:6px;margin-top:4px;cursor:pointer;"><input id="svc-p-' + pname + '" type="checkbox"' + (val ? ' checked' : '') + dis + ' style="accent-color:var(--pf-accent);"/> <span style="color:var(--pf-text);font-size:12px;">Enabled</span></label>';

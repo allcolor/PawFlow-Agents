@@ -84,7 +84,45 @@ class AuthGatewayService(BaseService):
         return {
             "providers": {
                 "type": "map", "required": True,
-                "description": "Provider configs: {name: {enabled: true, ...provider-specific}}",
+                "description": """Provider configs keyed by provider name.
+
+All string values may use `${...}` expressions. They are resolved recursively at runtime, including nested provider secrets.
+
+```json
+{
+  "builtin": {"enabled": true},
+  "google": {
+    "enabled": true,
+    "client_id": "${auth.google.client_id}",
+    "client_secret": "${auth.google.client_secret}",
+    "scope": "openid email profile"
+  },
+  "github": {
+    "enabled": true,
+    "client_id": "${auth.github.client_id}",
+    "client_secret": "${auth.github.client_secret}",
+    "scope": "read:user user:email"
+  },
+  "microsoft": {"enabled": true, "tenant": "common", "client_id": "...", "client_secret": "..."},
+  "x": {"enabled": true, "client_id": "...", "client_secret": "..."},
+  "facebook": {"enabled": true, "client_id": "...", "client_secret": "..."},
+  "amazon": {"enabled": true, "client_id": "...", "client_secret": "..."},
+  "telegram": {
+    "enabled": true,
+    "bot_token": "${auth.telegram.bot_token}",
+    "bot_username": "YourBot"
+  },
+  "my_sso": {
+    "enabled": true,
+    "authorize_url": "https://idp/auth",
+    "token_url": "https://idp/token",
+    "userinfo_url": "https://idp/userinfo",
+    "client_id": "...",
+    "client_secret": "...",
+    "scope": "openid email profile"
+  }
+}
+```""",
                 "default": {"builtin": {"enabled": True}},
             },
             "session_ttl": {

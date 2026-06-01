@@ -43,6 +43,12 @@ MCP servers can request user input during tool execution. The web chat shows a d
 ### PawFlow as MCP server
 Expose PawFlow's tools via the Model Context Protocol so other agents (Claude Code, other PawFlow instances) can use them. `pawflow mcp serve --port 8765`.
 
+### A2A agent interoperability
+Support the Agent2Agent protocol for both serving PawFlow agents and consuming remote agents. PawFlow should publish Agent Cards, expose conversation agents as A2A servers, route A2A tasks into the existing conversation/agent queue, and allow remote A2A agents to appear as first-class conversation participants. See [docs/a2a_integration.md](docs/a2a_integration.md).
+
+### x402 payments
+Support x402 for payment-gated HTTP, tool, flow, package, and A2A agent endpoints. Start with server-side `402 Payment Required` policies for published APIs, then add client-side payment handling so PawFlow agents can pay for external x402-protected resources under explicit budgets and approval policies. See [docs/x402_integration.md](docs/x402_integration.md).
+
 ### Filesystem hooks
 React to file changes automatically — run tests, lint, trigger flows, or ask agents to review modified files. Configured via `.pawflow/hooks.yaml`.
 

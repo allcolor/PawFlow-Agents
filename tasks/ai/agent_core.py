@@ -2564,26 +2564,8 @@ class AgentCoreMixin:
                                 "agent_name": ctx.get("active_agent_name", ""),
                             })
 
-                    _images_deflated = self._deflate_image_messages(
+                    self._deflate_image_messages(
                         messages, user_id=user_id, conversation_id=conversation_id)
-                    if (_images_deflated and use_conv_store and conversation_id
-                            and ctx.get("active_agent_name")):
-                        try:
-                            from core.conversation_writer import ConversationWriter
-                            from core.conversation_store import ConversationStore
-                            ConversationWriter.for_conversation(
-                                conversation_id).flush(timeout=10.0)
-                            ConversationStore.instance().save_agent_context(
-                                conversation_id, ctx.get("active_agent_name", ""),
-                                self._serialize_messages(messages))
-                            logger.info(
-                                "[agent:%s] persisted deflated image context for %s",
-                                conversation_id[:8], ctx.get("active_agent_name", ""))
-                        except Exception:
-                            logger.warning(
-                                "[agent:%s] failed to persist deflated image context for %s",
-                                conversation_id[:8], ctx.get("active_agent_name", ""),
-                                exc_info=True)
                     # Apply pending background tool results to in-memory messages
                     import core.background_tool as _bg_mod
                     _apply_bg_results(messages, conversation_id)

@@ -205,10 +205,15 @@ TOKEN_MULTIPLIERS = [("1.0", "OpenAI-compatible default."), ("1.1", "Typical Cla
 PRICING_HINTS = [("0", "No local cost tracking."), ("0.15", "Low-cost input token price example."), ("1.25", "Mid-range input token price example."), ("10", "High-end input token price example.")]
 
 
-def _values(items: List[Tuple[str, str]], *, labels: Optional[Dict[str, str]] = None) -> List[Dict[str, str]]:
+def _values(items: List[Tuple[str, ...]], *, labels: Optional[Dict[str, str]] = None) -> List[Dict[str, str]]:
     out = []
-    for value, description in items:
-        out.append({"value": value, "label": (labels or {}).get(value, value), "description": description})
+    for item in items:
+        if len(item) == 3:
+            label, value, description = item
+        else:
+            value, description = item
+            label = (labels or {}).get(value, value)
+        out.append({"value": value, "label": (labels or {}).get(value, label), "description": description})
     return out
 
 

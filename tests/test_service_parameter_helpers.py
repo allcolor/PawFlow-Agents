@@ -31,6 +31,22 @@ def test_service_parameter_helper_returns_llm_fallback_without_api_key():
     assert any(v["value"] == "gpt-5.5" for v in data["values"])
 
 
+def test_base_url_helper_accepts_labeled_url_tuples():
+    from core.service_parameter_helpers import get_service_parameter_helper
+
+    data = get_service_parameter_helper(
+        "llmConnection",
+        "base_url",
+        {"provider": "openai"},
+    )
+
+    assert data["values"][0] == {
+        "value": "https://api.openai.com/v1",
+        "label": "OpenAI",
+        "description": "Native OpenAI API.",
+    }
+
+
 def test_priority_service_helpers_cover_media_oauth_rclone_and_catalogs():
     from core.service_parameter_helpers import apply_service_parameter_helpers
 

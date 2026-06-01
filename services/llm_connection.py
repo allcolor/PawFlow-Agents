@@ -394,22 +394,22 @@ class LLMConnectionService(BaseService):
                 "description": "Context window in tokens (0 = model default)",
             },
             "compact_target_tokens": {
-                "type": "integer", "default": 0,
+                "type": "integer", "default": 25000,
                 "description": (
                     "Absolute cap on compact output, in tokens. "
-                    "0 = use 25% of max_context_size (the legacy default). "
+                    "Default 25000. Set 0 to use 25% of max_context_size. "
                     "Must be ≤ 40% of max_context_size (rejected at install time "
                     "otherwise) so the post-compact context still has room to grow."
                 ),
             },
             "compact_threshold_pct": {
-                "type": "integer", "default": 0,
+                "type": "integer", "default": 95,
                 "description": (
                     "Proactive compact trigger, in percent of max_context_size. "
                     "PawFlow checks at the start of every agent iteration: if "
                     "the current messages-token count exceeds this threshold, "
                     "PawFlow compacts BEFORE the next LLM call. "
-                    "0 = no proactive compact (defer to the underlying CLI's "
+                    "Default 95. Set 0 for no proactive compact (defer to the underlying CLI's "
                     "mechanism, e.g. CC's compact_boundary). With CC + "
                     "threshold > 0, both triggers stay active — whichever "
                     "fires first wins. With codex/gemini the CLI never "

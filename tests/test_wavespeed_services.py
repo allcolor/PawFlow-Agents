@@ -1,5 +1,7 @@
 """WaveSpeedAI catalog-driven media services."""
 
+import json
+
 import pytest
 
 from services._wavespeed_base import models_for_category
@@ -10,6 +12,28 @@ from services.wavespeed_capability_services import (
 from services.wavespeed_image_service import WaveSpeedImageService
 from services.wavespeed_video_service import WaveSpeedVideoService
 from services.wavespeed_voice_clone_service import WaveSpeedVoiceCloneService
+
+
+class _FakeRequest:
+    def __init__(self, body):
+        self.body = body
+        self.completed = None
+
+    def complete(self, status, headers, body):
+        self.completed = (status, headers, body)
+
+
+class _FakeListener:
+    def __init__(self):
+        self.routes = []
+        self.unregistered = []
+
+    def register_route(self, method, pattern, owner_id, callback,
+                       ws_handler=None, public=False, private_only=False):
+        self.routes.append({"callback": callback, "pattern": pattern, "public": public})
+
+    def unregister_routes(self, owner_id):
+        self.unregistered.append(owner_id)
 
 
 def _image(model: str = "wavespeed-ai/flux-dev") -> WaveSpeedImageService:
@@ -78,6 +102,44 @@ def test_image_generate_submits_prediction_and_polls_result():
     assert captured["body"]["size"] == "1024*768"
     assert captured["body"]["num_inference_steps"] == 20
     assert captured["body"]["enable_sync_mode"] is False
+
+
+def test_image_generate_can_wait_for_wavespeed_webhook(monkeypatch):
+    listener = _FakeListener()
+    monkeypatch.setattr(
+        "services.http_listener_service.HTTPListenerService.all_instances",
+        lambda: {9090: listener},
+    )
+    svc = WaveSpeedImageService({
+        "api_key": "k",
+        "model": "wavespeed-ai/flux-dev",
+        "poll_interval": 0,
+        "timeout": 5,
+        "use_webhook": True,
+    })
+    svc.set_callback_base_url("https://webchat.example.org")
+    captured = {}
+
+    def fake_post(endpoint, body):
+        captured["endpoint"] = endpoint
+        assert "webhook=https%3A%2F%2Fwebchat.example.org%2Fwebhooks%2Fmedia%2Fwavespeed%2F" in endpoint
+        req = _FakeRequest(json.dumps({
+            "status": "completed",
+            "outputs": ["https://cdn/i.png"],
+        }).encode())
+        listener.routes[-1]["callback"](req)
+        assert req.completed[0] == 200
+        return {"data": {"id": "p1", "status": "processing"}}
+
+    svc._post = fake_post  # type: ignore[assignment]
+    svc._get = lambda endpoint: (_ for _ in ()).throw(AssertionError("polling used"))  # type: ignore[assignment]
+    svc._download_media = lambda url, default_mime="": (b"PNG", "image/png")  # type: ignore[assignment]
+
+    out = svc.generate(prompt="a fox")
+
+    assert out["image_bytes"] == b"PNG"
+    assert out["source_url"] == "https://cdn/i.png"
+    assert listener.unregistered
 
 
 def test_video_image_to_video_uses_wavespeed_image_field():

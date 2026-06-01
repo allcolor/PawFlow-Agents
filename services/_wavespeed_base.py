@@ -17,6 +17,7 @@ import logging
 import os
 import ssl
 import time
+import urllib.parse
 import urllib.request
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -120,6 +121,23 @@ class _WaveSpeedBaseService(BaseService):
                 "type": "integer", "required": False, "default": 3,
                 "description": "Submit/poll retry count for transient 5xx responses.",
             },
+            "use_webhook": {
+                "type": "boolean", "required": False, "default": False,
+                "description": (
+                    "Use WaveSpeedAI's webhook query parameter instead of "
+                    "polling. Requires PawFlow to be reachable from the "
+                    "internet through public_callback_base_url or the agent "
+                    "file_base_url."
+                ),
+            },
+            "public_callback_base_url": {
+                "type": "string", "required": False, "default": "",
+                "description": (
+                    "Public HTTPS base URL that WaveSpeedAI can POST "
+                    "callbacks to, e.g. https://webchat.example.org. Falls "
+                    "back to the agent runtime file_base_url when omitted."
+                ),
+            },
         }
 
     def __init__(self, config):
@@ -130,6 +148,16 @@ class _WaveSpeedBaseService(BaseService):
         self.poll_interval = int(self.config.get("poll_interval", 3))
         self.timeout = int(self.config.get("timeout", 120))
         self.max_retries = int(self.config.get("max_retries", 3))
+        self.use_webhook = (
+            str(self.config.get("use_webhook", False)).strip().lower()
+            in {"1", "true", "yes", "on"}
+        )
+        self.public_callback_base_url = (
+            self.config.get("public_callback_base_url", "") or "").strip().rstrip("/")
+        self._callback_base_url = ""
+
+    def set_callback_base_url(self, base_url: str):
+        self._callback_base_url = (base_url or "").strip().rstrip("/")
 
     def _default_model_for_category(self) -> str:
         defaults = {
@@ -325,6 +353,36 @@ class _WaveSpeedBaseService(BaseService):
                 "[WAVESPEED] poll %s (%ds): status=%s",
                 prediction_id or poll_endpoint, elapsed, self._status(data))
 
+    def _wait_webhook(self, ticket, output_path: str = "") -> str:
+        try:
+            from services.tool_relay_service import current_cancel_event
+            cancel_event = current_cancel_event()
+        except Exception:
+            cancel_event = None
+        data = ticket.wait(
+            timeout=self.timeout, cancel_event=cancel_event,
+            poll_interval=self.poll_interval)
+        status = self._status(data)
+        if status == "failed":
+            payload = self._prediction_payload(data)
+            msg = payload.get("error") or data.get("message") or str(data)[:200]
+            raise ServiceError(f"WaveSpeed generation failed: {msg}")
+        url = _extract_output_url(data, output_path=output_path)
+        if not url:
+            raise ServiceError(
+                f"WaveSpeed webhook completed but no output URL: "
+                f"{json.dumps(data)[:300]}")
+        return url
+
+    @staticmethod
+    def _with_webhook_query(endpoint: str, webhook_url: str) -> str:
+        parts = urllib.parse.urlsplit(endpoint)
+        query = urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
+        query.append(("webhook", webhook_url))
+        return urllib.parse.urlunsplit((
+            parts.scheme, parts.netloc, parts.path,
+            urllib.parse.urlencode(query), parts.fragment))
+
     def _download_media(self, url: str,
                         *, default_mime: str = "application/octet-stream"
                         ) -> Tuple[bytes, str]:
@@ -340,15 +398,30 @@ class _WaveSpeedBaseService(BaseService):
         endpoint = op.get("endpoint", "")
         if not endpoint:
             raise ServiceError(f"Operation '{op_name}' has no endpoint configured")
+        webhook_ticket = None
+        if self.use_webhook:
+            base_url = self.public_callback_base_url or self._callback_base_url
+            from services.media_webhook_registry import MediaWebhookRegistry
+            webhook_ticket = MediaWebhookRegistry.instance().register(
+                "wavespeed", base_url)
+            endpoint = self._with_webhook_query(endpoint, webhook_ticket.url)
         logger.info("[WAVESPEED] %s/%s -> %s",
                     model_id or self._model_id, op_name, endpoint)
-        data = self._post(endpoint, body)
-        status = self._status(data)
-        if status == "completed":
-            url = _extract_output_url(
-                data, output_path=op.get("output_path", "data.outputs.0"))
-        else:
-            url = self._poll(data, output_path=op.get("output_path", "data.outputs.0"))
+        output_path = op.get("output_path", "data.outputs.0")
+        try:
+            data = self._post(endpoint, body)
+            status = self._status(data)
+            if status == "completed":
+                url = _extract_output_url(data, output_path=output_path)
+            elif webhook_ticket is not None:
+                url = _extract_output_url(data, output_path=output_path)
+                if not url:
+                    url = self._wait_webhook(webhook_ticket, output_path=output_path)
+            else:
+                url = self._poll(data, output_path=output_path)
+        finally:
+            if webhook_ticket is not None:
+                webhook_ticket.close()
         default_mime = {
             "video": "video/mp4",
             "audio": "audio/mpeg",

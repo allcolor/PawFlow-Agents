@@ -61,6 +61,16 @@ _BROWSER_UA = (
 )
 
 
+def _as_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on", "y"}
+    return False
+
+
 def _catalog_path() -> str:
     """Locate the Pixazo catalog JSON in the repository."""
     import core.paths as _p
@@ -236,6 +246,23 @@ class _PixazoBaseService(BaseService):
                     "headers). Mandatory when cf_clearance is set."
                 ),
             },
+            "use_webhook": {
+                "type": "boolean", "required": False, "default": False,
+                "description": (
+                    "Use Pixazo's X-Webhook-URL callback instead of polling "
+                    "for async models. Requires PawFlow to be reachable from "
+                    "the internet through public_callback_base_url or the "
+                    "agent file_base_url."
+                ),
+            },
+            "public_callback_base_url": {
+                "type": "string", "required": False, "default": "",
+                "description": (
+                    "Public HTTPS base URL that providers can POST callbacks "
+                    "to, e.g. https://webchat.example.org. Falls back to the "
+                    "agent runtime file_base_url when omitted."
+                ),
+            },
         }
         base.update(self._extra_parameter_schema())
         return base
@@ -256,6 +283,13 @@ class _PixazoBaseService(BaseService):
         # cf_clearance is HMAC'd to it on Cloudflare's side.
         self._cf_cookie = (self.config.get("cf_clearance", "") or "").strip()
         self._cf_ua = (self.config.get("cf_user_agent", "") or "").strip()
+        self.use_webhook = _as_bool(self.config.get("use_webhook", False))
+        self.public_callback_base_url = (
+            self.config.get("public_callback_base_url", "") or "").strip().rstrip("/")
+        self._callback_base_url = ""
+
+    def set_callback_base_url(self, base_url: str):
+        self._callback_base_url = (base_url or "").strip().rstrip("/")
 
     # ── Catalog accessors ─────────────────────────────────────────────
 
@@ -326,7 +360,9 @@ class _PixazoBaseService(BaseService):
     # ── HTTP primitives ────────────────────────────────────────────────
 
     def _make_headers(self, body_bytes: bytes,
-                      *, multipart_boundary: str = "") -> Dict[str, str]:
+                      *, multipart_boundary: str = "",
+                      extra_headers: Optional[Dict[str, str]] = None
+                      ) -> Dict[str, str]:
         if multipart_boundary:
             ctype = f"multipart/form-data; boundary={multipart_boundary}"
         else:
@@ -340,6 +376,10 @@ class _PixazoBaseService(BaseService):
         }
         if self._cf_cookie:
             h["Cookie"] = f"cf_clearance={self._cf_cookie}"
+        if extra_headers:
+            for key, value in extra_headers.items():
+                if key and value:
+                    h[str(key)] = str(value)
         return h
 
     @staticmethod
@@ -367,14 +407,17 @@ class _PixazoBaseService(BaseService):
         return b"\r\n".join(lines), boundary
 
     def _post(self, endpoint: str, body: Dict[str, Any],
-              *, multipart: bool = False) -> Dict[str, Any]:
+              *, multipart: bool = False,
+              extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         """POST to Pixazo gateway with retry on 5xx."""
         if multipart:
             body_bytes, boundary = self._encode_multipart(body)
-            headers = self._make_headers(body_bytes, multipart_boundary=boundary)
+            headers = self._make_headers(
+                body_bytes, multipart_boundary=boundary,
+                extra_headers=extra_headers)
         else:
             body_bytes = json.dumps(body).encode("utf-8")
-            headers = self._make_headers(body_bytes)
+            headers = self._make_headers(body_bytes, extra_headers=extra_headers)
         ctx = ssl.create_default_context()
         resp_body = ""
         resp_status = 0
@@ -678,6 +721,43 @@ class _PixazoBaseService(BaseService):
                 if u:
                     return u
 
+    def _webhook_media_url(self, payload: Dict[str, Any],
+                           op: Dict[str, Any]) -> str:
+        """Extract the generated media URL from a Pixazo webhook payload."""
+        output_path = op.get("output_path", "")
+        url_field = op.get("url_field", "")
+        candidates = [payload]
+        for key in ("data", "payload", "result", "response", "output"):
+            nested = payload.get(key) if isinstance(payload, dict) else None
+            if isinstance(nested, dict):
+                candidates.append(nested)
+        for candidate in candidates:
+            url = _extract_media_url(
+                candidate, output_path=output_path, url_field=url_field)
+            if url:
+                return url
+        status = str(payload.get("status") or payload.get("state") or "").lower()
+        if status in ("failed", "error"):
+            msg = payload.get("message", "") or payload.get("error", "") or str(payload)[:200]
+            raise ServiceError(f"Pixazo generation failed: {msg}")
+        raise ServiceError(
+            f"Pixazo webhook completed but no media URL: {json.dumps(payload)[:300]}")
+
+    def _wait_webhook(self, ticket, op: Dict[str, Any]) -> str:
+        try:
+            from services.tool_relay_service import current_cancel_event
+            cancel_event = current_cancel_event()
+        except Exception:
+            cancel_event = None
+        payload = ticket.wait(
+            timeout=float(self.timeout or 0), cancel_event=cancel_event,
+            poll_interval=max(0.1, float(self.poll_interval or 1)))
+        if not isinstance(payload, dict):
+            raise ServiceError(
+                f"Pixazo webhook returned non-JSON payload: {str(payload)[:200]}")
+        logger.info("[PIXAZO] Webhook received for %s", ticket.route_path.rsplit("/", 1)[0])
+        return self._webhook_media_url(payload, op)
+
     # ── Generic operation dispatch ─────────────────────────────────────
 
     def _invoke(self, op_name: str, body: Dict[str, Any],
@@ -703,6 +783,15 @@ class _PixazoBaseService(BaseService):
         id_field = op.get("id_field", "request_id")
         status_url_field = op.get("status_url_field", "polling_url")
         multipart = bool(op.get("multipart_form_data", False))
+        webhook_ticket = None
+        webhook_headers: Optional[Dict[str, str]] = None
+
+        if convention != "sync" and self.use_webhook:
+            base_url = self.public_callback_base_url or self._callback_base_url
+            from services.media_webhook_registry import MediaWebhookRegistry
+            webhook_ticket = MediaWebhookRegistry.instance().register(
+                "pixazo", base_url)
+            webhook_headers = {"X-Webhook-URL": webhook_ticket.url}
 
         logger.info("[PIXAZO] %s/%s → %s",
                     model_id or self._model_id, op_name,
@@ -713,39 +802,54 @@ class _PixazoBaseService(BaseService):
         body = self._reshape_body(body, op.get("body_shape", "flat"))
         # Stay call-compatible with patched _post(endpoint, body) in tests:
         # only pass multipart kwarg when actually needed.
-        if multipart:
-            data = self._post(endpoint, body, multipart=True)
-        else:
-            data = self._post(endpoint, body)
-        logger.debug("[PIXAZO] Response: %s", json.dumps(data, default=str)[:300])
+        try:
+            if multipart:
+                if webhook_headers:
+                    data = self._post(endpoint, body, multipart=True,
+                                      extra_headers=webhook_headers)
+                else:
+                    data = self._post(endpoint, body, multipart=True)
+            elif webhook_headers:
+                data = self._post(endpoint, body, extra_headers=webhook_headers)
+            else:
+                data = self._post(endpoint, body)
+            logger.debug("[PIXAZO] Response: %s", json.dumps(data, default=str)[:300])
 
-        if convention == "sync":
-            url = _extract_media_url(
-                data, output_path=output_path, url_field=url_field)
-            if not url:
-                raise ServiceError(
-                    f"No media URL in sync response: {json.dumps(data)[:300]}")
-        else:
-            request_id = ""
-            for f in (id_field, "request_id", "requestId", "id",
-                      "taskId", "task_id", "video_id", "prediction_id"):
-                v = data.get(f, "")
-                if v:
-                    request_id = v
-                    break
-            if not request_id:
-                # Some endpoints return the URL inline even on async.
+            if convention == "sync":
                 url = _extract_media_url(
                     data, output_path=output_path, url_field=url_field)
                 if not url:
                     raise ServiceError(
-                        f"No request_id and no URL in response: "
-                        f"{json.dumps(data)[:300]}")
+                        f"No media URL in sync response: {json.dumps(data)[:300]}")
+            elif webhook_ticket is not None:
+                url = _extract_media_url(
+                    data, output_path=output_path, url_field=url_field)
+                if not url:
+                    url = self._wait_webhook(webhook_ticket, op)
             else:
-                polling_url = ""
-                if convention == "polling_url":
-                    polling_url = data.get(status_url_field, "") or ""
-                url = self._poll(op, request_id, polling_url=polling_url)
+                request_id = ""
+                for f in (id_field, "request_id", "requestId", "id",
+                          "taskId", "task_id", "video_id", "prediction_id"):
+                    v = data.get(f, "")
+                    if v:
+                        request_id = v
+                        break
+                if not request_id:
+                    # Some endpoints return the URL inline even on async.
+                    url = _extract_media_url(
+                        data, output_path=output_path, url_field=url_field)
+                    if not url:
+                        raise ServiceError(
+                            f"No request_id and no URL in response: "
+                            f"{json.dumps(data)[:300]}")
+                else:
+                    polling_url = ""
+                    if convention == "polling_url":
+                        polling_url = data.get(status_url_field, "") or ""
+                    url = self._poll(op, request_id, polling_url=polling_url)
+        finally:
+            if webhook_ticket is not None:
+                webhook_ticket.close()
 
         default_mime = {
             "video": "video/mp4",

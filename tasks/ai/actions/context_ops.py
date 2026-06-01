@@ -14,6 +14,10 @@ from core.tool_registry import ToolRegistry
 logger = logging.getLogger(__name__)
 
 
+def _estimate_unavailable() -> int:
+    return 0
+
+
 def _find_cc_session_jsonl(conv_id: str, agent_name: str, store,
                            user_id: str = "") -> str:
     """Find the JSONL file path for an active Claude Code session."""
@@ -1175,7 +1179,7 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
         flowfile.set_content(json.dumps({
             "ok": True,
             "message_count": page.get("total_count", 0),
-            "token_estimate": 0,
+            "token_estimate": _estimate_unavailable(),
         }).encode())
         return [flowfile]
 
@@ -1270,7 +1274,7 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
                 "ok": True,
                 "deleted": deleted,
                 "message_count": page.get("total_count", 0),
-                "token_estimate": 0,
+                "token_estimate": _estimate_unavailable(),
             }).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
@@ -1301,7 +1305,7 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
         flowfile.set_content(json.dumps({
             "ok": True,
             "message_count": page.get("total_count", 0),
-            "token_estimate": 0,
+            "token_estimate": _estimate_unavailable(),
         }).encode())
         return [flowfile]
 
@@ -1332,7 +1336,7 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
         flowfile.set_content(json.dumps({
             "ok": True,
             "message_count": page.get("total_count", 0),
-            "token_estimate": 0,
+            "token_estimate": _estimate_unavailable(),
         }).encode())
         return [flowfile]
 

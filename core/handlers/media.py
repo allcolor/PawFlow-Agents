@@ -203,6 +203,8 @@ class ImageGenerationHandler(ToolHandler):
                     conversation_id=getattr(self, "_conversation_id", "") or "",
                     agent_name=getattr(self, "_agent_name", "") or "",
                 )
+            if hasattr(service, "set_callback_base_url"):
+                service.set_callback_base_url(self._base_url)
             gen_args = {k: v for k, v in arguments.items()
                         if k not in ("destination", "path", "service", "image_service")}
             result = service.generate(**gen_args)
@@ -378,6 +380,8 @@ class EditImageHandler(ToolHandler):
                     conversation_id=getattr(self, "_conversation_id", "") or "",
                     agent_name=getattr(self, "_agent_name", "") or "",
                 )
+            if hasattr(service, "set_callback_base_url"):
+                service.set_callback_base_url(self._base_url)
             edit_kwargs = {k: v for k, v in arguments.items()
                            if k not in ("destination", "path", "image_urls", "service", "image_service")}
             edit_kwargs["image_urls"] = image_urls
@@ -613,6 +617,8 @@ class VideoGenerationHandler(ToolHandler):
                     conversation_id=getattr(self, "_conversation_id", "") or "",
                     agent_name=getattr(self, "_agent_name", "") or "",
                 )
+            if hasattr(service, "set_callback_base_url"):
+                service.set_callback_base_url(self._base_url)
             gen_args = {k: v for k, v in arguments.items()
                         if k not in ("destination", "path", "image_url",
                                      "video_url", "end_image_url", "service", "video_service")}

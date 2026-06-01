@@ -127,6 +127,36 @@ services expose `max_tokens` and `max_output_tokens` for chat-completions media
 responses, plus provider escape hatches through `extra_body` and
 `extra_headers`.
 
+## Provider Webhooks
+
+Some media providers can POST the final async result to PawFlow instead of being
+polled. PawFlow exposes this as an opt-in service setting only for providers
+whose callback field is known and tested. `pixazo*` services support
+`use_webhook=true`; PawFlow sends Pixazo an `X-Webhook-URL` header and waits for
+the temporary callback route instead of polling the status URL. WaveSpeed media
+services also support `use_webhook=true`; PawFlow passes the one-shot route as
+WaveSpeedAI's `webhook` query parameter and reads the final URL from the callback
+payload's `outputs[]` fields. `openaiCompatibleVideoGeneration` supports
+`use_webhook=true` for `protocol=openai_video` endpoints that accept
+`callback_url`, including OpenRouter's video generation endpoint. Chat
+completions media paths keep polling or parsing the immediate response because
+they do not expose a per-request callback contract.
+
+Webhook mode requires the PawFlow HTTP listener to be reachable from the public
+internet through HTTPS. Configure `public_callback_base_url` on the media service
+or rely on the agent `file_base_url`; the value should be the public root of the
+PawFlow server, for example `https://webchat.example.org`. Reverse proxies must
+route the whole host to PawFlow, not only `/chat`, so provider POSTs such as
+`https://webchat.example.org/webhooks/media/pixazo/<token>` reach the listener.
+`localhost`, `127.0.0.1`, Docker-internal hostnames, and LAN/private IPs cannot
+receive callbacks from external providers.
+
+Each webhook URL contains a high-entropy one-shot token and is registered as a
+public route only for the lifetime of the media job. The route bypasses session
+auth because providers cannot hold a PawFlow browser session, but the token is
+unpredictable and the route is removed after success, failure, cancellation, or
+timeout.
+
 Relay-aware provider URLs use one standard shape everywhere:
 `http(s)://<relay_id>/<host>:<port>/<path>`. The first path segment containing
 `host:port` marks the URL as a PawFlow relay URL. `${conv.relay}` is only the

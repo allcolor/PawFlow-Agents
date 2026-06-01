@@ -406,6 +406,23 @@ class OpenAICompatibleVideoGenerationService(_OpenAICompatibleMediaMixin, BaseVi
             "submit_path": {"type": "string", "required": False, "default": "/videos/generations", "description": "OpenAI-video submit endpoint override."},
             "status_path_template": {"type": "string", "required": False, "default": "/videos/{id}", "description": "Async status endpoint template; {id} is replaced with the generation id."},
             "openrouter_generation_path_template": {"type": "string", "required": False, "default": "/generation?id={id}", "description": "OpenRouter-style async generation status endpoint."},
+            "use_webhook": {
+                "type": "boolean", "required": False, "default": False,
+                "description": (
+                    "Use the endpoint's callback_url field for openai_video "
+                    "requests instead of polling. Requires PawFlow to be "
+                    "reachable from the internet through public_callback_base_url "
+                    "or the agent file_base_url."
+                ),
+            },
+            "public_callback_base_url": {
+                "type": "string", "required": False, "default": "",
+                "description": (
+                    "Public HTTPS base URL that video providers can POST "
+                    "callbacks to, e.g. https://webchat.example.org. Falls "
+                    "back to the agent runtime file_base_url when omitted."
+                ),
+            },
             "extra_body": {"type": "json", "required": False, "default": {}, "description": "Additional provider-specific JSON body fields."},
             "extra_headers": {"type": "json", "required": False, "default": {}, "description": "Additional HTTP headers such as OpenRouter attribution headers."},
         }
@@ -418,6 +435,13 @@ class OpenAICompatibleVideoGenerationService(_OpenAICompatibleMediaMixin, BaseVi
         self.submit_path = (self.config.get("submit_path", "/videos/generations") or "/videos/generations").strip()
         self.status_path_template = (self.config.get("status_path_template", "/videos/{id}") or "/videos/{id}").strip()
         self.openrouter_generation_path_template = (self.config.get("openrouter_generation_path_template", "/generation?id={id}") or "/generation?id={id}").strip()
+        self.use_webhook = _truthy(self.config.get("use_webhook", False))
+        self.public_callback_base_url = (
+            self.config.get("public_callback_base_url", "") or "").strip().rstrip("/")
+        self._callback_base_url = ""
+
+    def set_callback_base_url(self, base_url: str):
+        self._callback_base_url = (base_url or "").strip().rstrip("/")
 
     def _select_protocol(self, svc, model: str) -> str:
         if self.protocol in ("chat_completions", "openrouter"):
@@ -457,13 +481,26 @@ class OpenAICompatibleVideoGenerationService(_OpenAICompatibleMediaMixin, BaseVi
         selected_model = model or self._model_for(svc)
         protocol = self._select_protocol(svc, selected_model)
         bounded_duration = max(1, min(int(duration or 5), self.max_duration))
-        if protocol == "openai_video":
-            data = self._submit_openai_video(svc, selected_model, prompt, bounded_duration, width, height, image_url, end_image_url, kwargs)
-            status_template = self.status_path_template
-        else:
+        webhook_ticket = None
+        if protocol != "openai_video":
             data = self._submit_chat_video(svc, selected_model, prompt, bounded_duration, width, height, image_url, end_image_url, kwargs)
             status_template = self.openrouter_generation_path_template
-        return self._resolve_video_result(svc, data, status_template)
+            return self._resolve_video_result(svc, data, status_template)
+
+        status_template = self.status_path_template
+        try:
+            if self.use_webhook:
+                base_url = self.public_callback_base_url or self._callback_base_url
+                from services.media_webhook_registry import MediaWebhookRegistry
+                webhook_ticket = MediaWebhookRegistry.instance().register(
+                    "openrouter", base_url)
+                kwargs = dict(kwargs)
+                kwargs["callback_url"] = webhook_ticket.url
+            data = self._submit_openai_video(svc, selected_model, prompt, bounded_duration, width, height, image_url, end_image_url, kwargs)
+            return self._resolve_video_result(svc, data, status_template, webhook_ticket=webhook_ticket)
+        finally:
+            if webhook_ticket is not None:
+                webhook_ticket.close()
 
     def _submit_openai_video(self, svc, model: str, prompt: str, duration: int,
                              width, height, image_url: str, end_image_url: str,
@@ -482,6 +519,8 @@ class OpenAICompatibleVideoGenerationService(_OpenAICompatibleMediaMixin, BaseVi
             if key in kwargs and kwargs[key] not in (None, ""):
                 body[key] = kwargs[key]
         body.update(self.extra_body)
+        if kwargs.get("callback_url"):
+            body["callback_url"] = kwargs["callback_url"]
         return self._request_json(svc, "POST", self.submit_path, body)
 
     def _submit_chat_video(self, svc, model: str, prompt: str, duration: int,
@@ -512,11 +551,28 @@ class OpenAICompatibleVideoGenerationService(_OpenAICompatibleMediaMixin, BaseVi
         body.update(self.extra_body)
         return self._request_json(svc, "POST", self._chat_path(svc), body)
 
-    def _resolve_video_result(self, svc, data: dict, status_template: str) -> dict:
+    def _resolve_video_result(self, svc, data: dict, status_template: str, *, webhook_ticket=None) -> dict:
         video_url = self._extract_video_url(data)
         if video_url:
             payload, content_type = self._download_url(video_url, "video/mp4", self.timeout)
             return {"video_bytes": payload, "content_type": content_type}
+        if webhook_ticket is not None:
+            try:
+                from services.tool_relay_service import current_cancel_event
+                cancel_event = current_cancel_event()
+            except Exception:
+                cancel_event = None
+            payload = webhook_ticket.wait(
+                timeout=self.timeout, cancel_event=cancel_event,
+                poll_interval=self.poll_interval)
+            state = self._extract_state(payload)
+            if state in {"failed", "error", "cancelled", "canceled", "expired"}:
+                raise ServiceError(f"OpenAI-compatible video generation {state}: {json.dumps(payload)[:500]}")
+            video_url = self._extract_video_url(payload)
+            if not video_url:
+                raise ServiceError(f"No video URL in webhook payload: {json.dumps(payload)[:500]}")
+            payload_bytes, content_type = self._download_url(video_url, "video/mp4", self.timeout)
+            return {"video_bytes": payload_bytes, "content_type": content_type}
         generation_id = self._extract_generation_id(data)
         if generation_id:
             return self._poll_video(svc, generation_id, status_template)

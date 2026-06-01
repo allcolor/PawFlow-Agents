@@ -133,6 +133,8 @@ class _CapabilityHandlerBase(ToolHandler):
                     conversation_id=self._conversation_id,
                     agent_name=self._agent_name,
                 )
+            if hasattr(svc, "set_callback_base_url"):
+                svc.set_callback_base_url(self._base_url)
             return svc, ""
         if not self._service_resolver:
             return None, "no service resolver configured"
@@ -143,6 +145,8 @@ class _CapabilityHandlerBase(ToolHandler):
                 conversation_id=self._conversation_id,
                 agent_name=self._agent_name,
             )
+        if svc and hasattr(svc, "set_callback_base_url"):
+            svc.set_callback_base_url(self._base_url)
         return svc, err
 
     def _rewrite(self, url: str, service=None) -> str:

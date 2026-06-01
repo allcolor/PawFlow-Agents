@@ -1,4 +1,5 @@
 import base64
+import json
 
 from core import ServiceFactory
 from services.openai_compatible_media_service import (
@@ -24,6 +25,28 @@ class FakeLLMService:
         self.base_url = base_url
         self.default_model = default_model
         self._client = FakeClient()
+
+
+class FakeRequest:
+    def __init__(self, body):
+        self.body = body
+        self.completed = None
+
+    def complete(self, status, headers, body):
+        self.completed = (status, headers, body)
+
+
+class FakeListener:
+    def __init__(self):
+        self.routes = []
+        self.unregistered = []
+
+    def register_route(self, method, pattern, owner_id, callback,
+                       ws_handler=None, public=False, private_only=False):
+        self.routes.append({"callback": callback, "pattern": pattern, "public": public})
+
+    def unregister_routes(self, owner_id):
+        self.unregistered.append(owner_id)
 
 
 def test_image_service_uses_openai_images_for_bare_openai(monkeypatch):
@@ -155,6 +178,52 @@ def test_video_service_polls_generation_id(monkeypatch):
     assert result["video_bytes"] == b"MP4"
     assert calls[1][0] == "GET"
     assert calls[1][1] == "/generation?id=gen_123"
+
+
+def test_video_service_openrouter_video_webhook_uses_callback_url(monkeypatch):
+    listener = FakeListener()
+    monkeypatch.setattr(
+        "services.http_listener_service.HTTPListenerService.all_instances",
+        lambda: {9090: listener},
+    )
+    svc = OpenAICompatibleVideoGenerationService({
+        "llm_service": "openrouter_llm",
+        "model": "google/veo-3.1",
+        "protocol": "openai_video",
+        "submit_path": "/videos",
+        "poll_interval": 0,
+        "timeout": 5,
+        "use_webhook": True,
+    })
+    svc.set_callback_base_url("https://webchat.example.org")
+    llm = FakeLLMService("https://openrouter.ai/api/v1", "google/veo-3.1")
+    calls = []
+
+    def fake_request(resolved, method, path, body=None):
+        calls.append((method, path, body))
+        assert body["callback_url"].startswith(
+            "https://webchat.example.org/webhooks/media/openrouter/")
+        req = FakeRequest(json.dumps({
+            "status": "completed",
+            "outputs": ["https://cdn.example.com/final.mp4"],
+        }).encode())
+        listener.routes[-1]["callback"](req)
+        assert req.completed[0] == 200
+        return {"id": "vid_123", "status": "queued"}
+
+    monkeypatch.setattr(svc, "_resolve_llm_service", lambda: llm)
+    monkeypatch.setattr(svc, "_request_json", fake_request)
+    monkeypatch.setattr(
+        svc,
+        "_download_url",
+        lambda url, default_content_type, timeout: (b"MP4", "video/mp4"),
+    )
+
+    result = svc.generate(prompt="waves")
+
+    assert result == {"video_bytes": b"MP4", "content_type": "video/mp4"}
+    assert calls[0][1] == "/videos"
+    assert listener.unregistered
 
 
 def test_openai_compatible_media_services_are_registered():

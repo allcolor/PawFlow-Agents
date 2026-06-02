@@ -4369,6 +4369,65 @@ class ConversationStore:
             "gemini": _paths.GEMINI_SESSIONS_DIR,
         }
 
+    def cleanup_orphan_claude_sessions(self, prune_live: bool = True) -> int:
+        """Remove orphan Claude session dirs and stale live-session JSONLs.
+
+        Claude Code stores per-session JSONL files under a live conversation
+        directory. The directory itself is kept while the conversation exists,
+        but JSONLs not named by `claude_session:*` extras are stale and can be
+        removed. If no Claude session extras exist for a live conversation, keep
+        its JSONLs because there is no authoritative current session id.
+        """
+        removed = self.cleanup_orphan_cli_sessions(providers=["claude"])
+        if not prune_live:
+            return removed
+
+        from core import paths as _paths
+        base = _paths.CLAUDE_SESSIONS_DIR
+        if not base.is_dir():
+            return removed
+
+        self._ensure_loaded()
+        live: List[tuple[str, str, set[str]]] = []
+        with self._cache_lock:
+            for cid in self._cache.keys():
+                owner = self._cid_user.get(cid, "")
+                if not owner:
+                    continue
+                extras = dict(self._cache.get(cid, {}).get("extras") or {})
+                live_sids = {
+                    str(value)
+                    for key, value in extras.items()
+                    if key.startswith("claude_session:") and value
+                }
+                live.append((cid, owner, live_sids))
+
+        for cid, owner, live_sids in live:
+            if not live_sids:
+                continue
+            safe_owner = self._safe_name(owner)
+            candidate_names = {
+                self._safe_name(cid),
+                cid.replace(":", "_"),
+                cid.replace(":", "__"),
+            }
+            for conv_name in candidate_names:
+                sess_dir = base / safe_owner / conv_name
+                if not sess_dir.is_dir():
+                    continue
+                for jf in list(sess_dir.rglob("projects/*/*.jsonl")):
+                    if jf.stem in live_sids:
+                        continue
+                    try:
+                        jf.unlink()
+                        removed += 1
+                    except OSError:
+                        continue
+                    companion = jf.with_suffix("")
+                    if companion.is_dir():
+                        shutil.rmtree(companion, ignore_errors=True)
+        return removed
+
     def cleanup_orphan_cli_sessions(self, providers: Optional[List[str]] = None) -> int:
         """Remove CLI provider session dirs whose conversation no longer exists.
 

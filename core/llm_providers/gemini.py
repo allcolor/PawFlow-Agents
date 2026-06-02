@@ -737,12 +737,21 @@ class LLMGeminiMixin(GeminiSessionMixin):
         store = None
         session_id = ""
         session_key = f"gemini_acp_session:{agent_name or 'default'}"
+        session_version_key = f"gemini_acp_session_version:{agent_name or 'default'}"
         pool_key = f"gemini_acp_pool_idx:{agent_name or 'default'}"
         if conv_id and not is_ephemeral:
             try:
                 from core.conversation_store import ConversationStore
                 store = ConversationStore.instance()
                 session_id = store.get_extra(conv_id, session_key) or ""
+                session_version = store.get_extra(conv_id, session_version_key) or ""
+                if session_id and session_version != "2":
+                    logger.info(
+                        "[gemini-acp] clearing legacy stored session %s version=%s",
+                        session_id[:12], session_version or "?")
+                    store.set_extra(conv_id, session_key, "")
+                    store.set_extra(conv_id, session_version_key, "")
+                    session_id = ""
             except Exception:
                 logger.debug("[gemini-acp] failed to restore session id", exc_info=True)
 
@@ -899,6 +908,7 @@ class LLMGeminiMixin(GeminiSessionMixin):
                         if conv_id and store is not None and not is_ephemeral:
                             try:
                                 store.set_extra(conv_id, session_key, "")
+                                store.set_extra(conv_id, session_version_key, "")
                             except Exception:
                                 logger.debug("[gemini-acp] failed to clear stale session id", exc_info=True)
                         session_id = ""
@@ -1208,6 +1218,7 @@ class LLMGeminiMixin(GeminiSessionMixin):
             if session_id and conv_id and store is not None and not is_ephemeral:
                 try:
                     store.set_extra(conv_id, session_key, session_id)
+                    store.set_extra(conv_id, session_version_key, "2")
                 except Exception:
                     logger.debug("[gemini-acp] failed to persist session id", exc_info=True)
             return LLMResponse(
@@ -1278,6 +1289,7 @@ class LLMGeminiMixin(GeminiSessionMixin):
                     try:
                         if (store.get_extra(conv_id, session_key) or "") == session_id:
                             store.set_extra(conv_id, session_key, "")
+                            store.set_extra(conv_id, session_version_key, "")
                     except Exception:
                         logger.debug("[gemini-acp] failed to clear failed fresh session", exc_info=True)
                 if live_reg is not None and live_key is not None:
@@ -1673,9 +1685,17 @@ class LLMGeminiMixin(GeminiSessionMixin):
             "ui": {"inlineThinkingMode": "full", "loadingPhrases": "off"},
             "tools": {"exclude": excluded_core_tools},
             "mcp": {"allowed": ["pawflow"]},
+            "allowMCPServers": ["pawflow"],
+            "excludeTools": excluded_core_tools,
             "useWriteTodos": False,
             "modelConfigs": {
                 "overrides": [
+                    {
+                        "match": {},
+                        "modelConfig": {"generateContentConfig": generation_config},
+                    }
+                ],
+                "customOverrides": [
                     {
                         "match": {},
                         "modelConfig": {"generateContentConfig": generation_config},

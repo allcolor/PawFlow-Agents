@@ -136,14 +136,26 @@ def _derive_ids(path: Path) -> tuple[str, str]:
 
 def _load_rows(path: Path) -> list[dict[str, Any]]:
     log = SegmentedJsonl(path)
-    if not log.exists():
+    if log.exists():
+        raw_rows = log.iter_rows()
+    elif path.exists():
+        raw_rows = (
+            json.loads(line)
+            for line in path.read_text(encoding="utf-8", errors="replace").splitlines()
+            if line.strip()
+        )
+    else:
         return []
     rows: list[dict[str, Any]] = []
-    for row in log.iter_rows():
+    for row in raw_rows:
         if not isinstance(row, dict):
             raise ValueError(f"non-object JSON row in {_safe_rel(path)}")
         rows.append(row)
     return rows
+
+
+def _stream_exists(path: Path) -> bool:
+    return path.exists() or SegmentedJsonl(path).exists()
 
 
 def _backup_rows(conv_dir: Path, logical_name: str,
@@ -405,7 +417,7 @@ def _normalize_stream(path: Path, logical_name: str, conv_dir: Path,
                       apply: bool) -> StreamStats:
     stats = StreamStats(path=path, logical_name=logical_name)
     log = SegmentedJsonl(path)
-    if not log.exists():
+    if not _stream_exists(path):
         stats.status = "missing"
         return stats
 
@@ -421,6 +433,13 @@ def _normalize_stream(path: Path, logical_name: str, conv_dir: Path,
         return stats
 
     if after == before:
+        if apply and path.exists() and not log.exists():
+            try:
+                log.replace_dicts(before)
+            except Exception as exc:
+                stats.status = "error"
+                stats.error = str(exc)
+                return stats
         stats.status = "unchanged"
         return stats
     if not apply:

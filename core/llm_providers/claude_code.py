@@ -64,6 +64,59 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
     # _get_tool_relay_info, _DISALLOWED_BUILTIN_TOOLS
 
     @staticmethod
+    def _scrub_legacy_image_placeholders(session_file: str) -> None:
+        """Remove stale inline image placeholders from user turns on disk."""
+        if not session_file or not os.path.exists(session_file):
+            return
+        import re as _re
+
+        image_re = _re.compile(
+            r"\s*\[image:\s*image_\d+_\d+\.(?:png|jpe?g|webp|gif)\]\s*",
+            _re.IGNORECASE,
+        )
+
+        def _scrub_text(text: str) -> str:
+            return _re.sub(r"\s+", " ", image_re.sub(" ", text)).strip()
+
+        changed = False
+        output = []
+        with open(session_file, "r", encoding="utf-8", errors="replace") as fh:
+            for line in fh.read().splitlines():
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    output.append(line)
+                    continue
+                msg = entry.get("message") if isinstance(entry, dict) else None
+                if not isinstance(msg, dict):
+                    output.append(line)
+                    continue
+                if entry.get("type") != "user" and msg.get("role") != "user":
+                    output.append(line)
+                    continue
+                content = msg.get("content")
+                if isinstance(content, str):
+                    scrubbed = _scrub_text(content)
+                    if scrubbed != content:
+                        msg["content"] = scrubbed
+                        changed = True
+                elif isinstance(content, list):
+                    for part in content:
+                        if not isinstance(part, dict) or part.get("type") != "text":
+                            continue
+                        text = part.get("text", "")
+                        if not isinstance(text, str):
+                            continue
+                        scrubbed = _scrub_text(text)
+                        if scrubbed != text:
+                            part["text"] = scrubbed
+                            changed = True
+                output.append(json.dumps(entry, ensure_ascii=False) if changed else line)
+        if changed:
+            with open(session_file, "w", encoding="utf-8") as fh:
+                fh.write("\n".join(output) + ("\n" if output else ""))
+
+    @staticmethod
     def _cc_namespace_workdir(workdir: str) -> str:
         """Return the session path as seen inside claude_code_pool's namespace."""
         rel = os.path.relpath(workdir, _get_sessions_base()).replace("\\", "/")

@@ -1055,6 +1055,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             _umid = flowfile.get_attribute("_user_msg_id") or (body_json.get("msg_id", "") if body_json else "")
             _umsg = LLMMessage(role="user", content=user_content, source=user_source,
                                conversation_id=conversation_id)
+            _umsg._pawflow_current_user_message = True
             if _umid:
                 _umsg.msg_id = _umid
             _append_user_message = True

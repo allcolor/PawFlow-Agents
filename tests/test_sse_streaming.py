@@ -738,6 +738,58 @@ class TestAgentLoopStreaming(unittest.TestCase):
 
         PendingQueue.drop_cache()
 
+    def test_pending_user_message_is_marked_as_current_turn(self):
+        from tasks.ai.agent_emitter import StreamEmitter
+        from core.pending_queue import PendingQueue
+        from core.llm_client import stamp_message
+
+        conversation_id = "test-conv-pending-current-turn"
+        agent_name = "assistant"
+
+        class _FakeStore:
+            def __init__(self, root):
+                self._store_dir = root / "convs"
+
+            def _conv_dir(self, cid, user_id=""):
+                path = self._store_dir / "u" / cid
+                path.mkdir(parents=True, exist_ok=True)
+                return path
+
+        class _FakeAgent:
+            _drain_pending = None
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_store = _FakeStore(root)
+            with patch("core.conversation_store.ConversationStore.instance",
+                       return_value=fake_store):
+                PendingQueue.drop_cache()
+                msg = stamp_message({
+                    "role": "user",
+                    "content": "message after stop",
+                    "source": {"type": "user", "target_agent": agent_name},
+                    "msg_id": "m-after-stop",
+                }, conversation_id)
+                PendingQueue.for_agent(conversation_id, agent_name).enqueue(
+                    msg, source="agent_msg")
+                emitter = StreamEmitter(
+                    conversation_id,
+                    ConversationEventBus.instance(),
+                    {"active_agent_name": agent_name},
+                    _FakeAgent(),
+                    f"{conversation_id}:{agent_name}",
+                    0,
+                )
+                appended = []
+
+                emitter.drain_pending([], appended.append, 0)
+
+                assert len(appended) == 1
+                assert appended[0].content == "message after stop"
+                assert appended[0]._pawflow_current_user_message is True
+
+        PendingQueue.drop_cache()
+
     def test_user_message_during_preparing_turn_queues_before_thread_visible(self):
         from tasks.ai.agent_loop import AgentLoopTask
         from core.pending_queue import PendingQueue

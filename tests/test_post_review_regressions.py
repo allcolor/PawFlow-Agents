@@ -95,6 +95,43 @@ def test_route_pattern_path_plus_does_not_match_empty_segment():
     assert reg.match("GET", "/code/s/t/") is not None
 
 
+def test_code_server_routes_use_request_listener_port(monkeypatch):
+    from core import FlowFile
+    from services import http_listener_service as hls
+    from tasks.ai.actions.service_flow import _ensure_code_server_routes
+
+    class FakeListener:
+        def __init__(self):
+            self.routes = []
+
+        def get_routes(self):
+            return [
+                {"method": method, "pattern": pattern, "owner": owner}
+                for method, pattern, owner, _, _, _ in self.routes
+            ]
+
+        def register_route(self, method, pattern, owner, callback,
+                           ws_handler=None, public=False):
+            self.routes.append((method, pattern, owner, callback, ws_handler, public))
+
+    request_listener = FakeListener()
+    other_listener = FakeListener()
+    monkeypatch.setattr(hls, "_instances", {
+        8080: other_listener,
+        9090: request_listener,
+    })
+    ff = FlowFile()
+    ff.set_attribute("http.listener.port", "9090")
+
+    _ensure_code_server_routes(ff)
+
+    request_patterns = {(route[0], route[1]) for route in request_listener.routes}
+    assert ("GET", "/code/{session_id}/{token}/") in request_patterns
+    assert ("GET", "/code/{session_id}/{token}/{path+}") in request_patterns
+    assert all(route[5] is True for route in request_listener.routes)
+    assert other_listener.routes == []
+
+
 def test_fwd_root_url_requires_explicit_trailing_slash_route():
     from services.http_listener_service import RouteRegistry
     reg = RouteRegistry()

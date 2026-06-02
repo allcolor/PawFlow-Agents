@@ -645,6 +645,8 @@ class StreamEmitter(AgentEmitter):
             )
             _msg._pending_source = _qmsg.get("_pending_source", "") or ""
             _msg._pending_enqueued_at = _qmsg.get("_pending_enqueued_at") or 0.0
+            if _role == "user" and _msg._pending_source in {"http", "agent_msg", "resume_agent"}:
+                _msg._pawflow_current_user_message = True
             append_fn(_msg)
 
         # Source 3 (transcript scan) removed. Cross-channel and cross-agent

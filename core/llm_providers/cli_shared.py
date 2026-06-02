@@ -153,6 +153,14 @@ class LLMCliSharedMixin:
     def _cli_current_turn_text(self, messages: List[Any]) -> str:
         if not messages:
             return ""
+        for idx in range(len(messages) - 1, -1, -1):
+            msg = messages[idx]
+            if (getattr(msg, "role", "") == "user"
+                    and getattr(msg, "_pawflow_current_user_message", False)):
+                rendered = textualize_message(msg, tool_result_trunc=None)
+                if rendered:
+                    return self._cli_message_block("user", rendered) + "\n\nContinue from this latest turn."
+                return ""
         last_user_idx = -1
         for idx in range(len(messages) - 1, -1, -1):
             if getattr(messages[idx], "role", "") == "user":

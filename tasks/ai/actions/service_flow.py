@@ -99,6 +99,54 @@ def _ensure_terminal_routes(flowfile: FlowFile) -> None:
         logger.warning("[terminal] Route registration failed: %s", e)
 
 
+def _ensure_code_server_routes(flowfile: FlowFile) -> None:
+    """Ensure /code/ routes exist on the request's HTTP listener."""
+    _req_port = flowfile.get_attribute("http.listener.port") or ""
+    if not _req_port:
+        logger.warning("[code-server] No http.listener.port on flowfile — cannot target listener")
+        return
+    try:
+        from services.code_server_proxy import code_http_proxy, code_ws_proxy
+        from services.http_listener_service import _instances
+        _http_svc = _instances.get(int(_req_port))
+        if not _http_svc:
+            logger.warning("[code-server] No live listener on port %s (instances: %s)",
+                           _req_port, list(_instances.keys()))
+            return
+        _owner = "_code_server_proxy"
+        existing = {
+            (r.get("method"), r.get("pattern"))
+            for r in _http_svc.get_routes()
+            if r.get("owner") == _owner
+        }
+
+        def _register_missing(method, pattern, callback, ws_handler=None):
+            if (method, pattern) in existing:
+                return
+            _http_svc.register_route(
+                method, pattern, _owner,
+                callback=callback,
+                ws_handler=ws_handler,
+                public=True,
+            )
+            existing.add((method, pattern))
+
+        _register_missing(
+            "GET", "/code/{session_id}/{token}/",
+            code_http_proxy, ws_handler=code_ws_proxy)
+        _register_missing(
+            "GET", "/code/{session_id}/{token}/{path+}",
+            code_http_proxy, ws_handler=code_ws_proxy)
+        for _method in ("POST", "PUT", "DELETE", "PATCH", "OPTIONS"):
+            _register_missing(
+                _method, "/code/{session_id}/{token}/", code_http_proxy)
+            _register_missing(
+                _method, "/code/{session_id}/{token}/{path+}", code_http_proxy)
+        logger.info("[code-server] Registered code-server routes on port %s", _req_port)
+    except Exception as e:
+        logger.warning("[code-server] Route registration failed: %s", e)
+
+
 def _publish_command_result(conversation_id: str, result: dict):
     """Publish a command result via SSE (background thread → frontend)."""
     from core.conversation_event_bus import ConversationEventBus
@@ -3411,7 +3459,6 @@ finally:
             # be started with the exact public base path it will be served at.
             from services.code_server_proxy import (
                 register_code_server, update_code_server_port,
-                code_http_proxy, code_ws_proxy,
             )
             _cs_session_id, _cs_token = register_code_server(
                 relay_id, 0, svc,
@@ -3437,48 +3484,7 @@ finally:
                 return [flowfile]
             update_code_server_port(_cs_session_id, port)
 
-            _owner = "_code_server_proxy"
-            http_svc = None
-            from core.service_registry import ServiceRegistry
-            greg = ServiceRegistry.get_instance()
-            for _sid, _sdef in greg.get_all("global", "").items():
-                if getattr(_sdef, "service_type", "") == "httpListener":
-                    http_svc = greg.get_live_instance("global", "", _sid)
-                    if http_svc:
-                        break
-            logger.debug("[open_code_server] http_svc=%s", http_svc)
-            if http_svc:
-                existing = [r for r in http_svc.get_routes() if r.get("owner") == _owner]
-                logger.debug("[open_code_server] existing code routes: %s", existing)
-                if not existing:
-                    # Root route (trailing slash, empty path) — matches
-                    # the URL we hand to the user (`/code/<sid>/<tok>/`).
-                    # The `{path+}` pattern alone requires at least one
-                    # segment after the slash, so without this entry the
-                    # iframe lands on a 404.
-                    http_svc.register_route(
-                        "GET", "/code/{session_id}/{token}/",
-                        _owner,
-                        callback=code_http_proxy,
-                        ws_handler=code_ws_proxy,
-                    )
-                    http_svc.register_route(
-                        "GET", "/code/{session_id}/{token}/{path+}",
-                        _owner,
-                        callback=code_http_proxy,
-                        ws_handler=code_ws_proxy,
-                    )
-                    for _m in ("POST", "PUT", "DELETE", "PATCH", "OPTIONS"):
-                        http_svc.register_route(
-                            _m, "/code/{session_id}/{token}/",
-                            _owner,
-                            callback=code_http_proxy,
-                        )
-                        http_svc.register_route(
-                            _m, "/code/{session_id}/{token}/{path+}",
-                            _owner,
-                            callback=code_http_proxy,
-                        )
+            _ensure_code_server_routes(flowfile)
 
             conv_id = body.get("conversation_id", "")
             _rl = relay_id

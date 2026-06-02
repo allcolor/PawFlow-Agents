@@ -156,6 +156,56 @@ class TestSerializeMessages(unittest.TestCase):
         self.assertIn("## Bootstrap Contract", body)
         self.assertGreater(body.index("## Latest User Request"), body.index("## Bootstrap Contract"))
 
+    def test_cli_initial_context_keeps_compact_tail_without_current_user_marker(self):
+        msgs = [
+            LLMMessage(role="user", content="compacted user", conversation_id="test_conv"),
+            LLMMessage(role="assistant", content="compacted assistant tail", conversation_id="test_conv"),
+        ]
+        system_prompt, user_text = self.client._serialize_messages_for_cli(msgs, None)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self.client._build_cli_initial_context_prompt(
+                msgs,
+                system_prompt=system_prompt,
+                user_text=user_text,
+                workdir=tmp,
+                provider_workdir="/cc_sessions/u/c/a",
+            )
+            with open(f"{tmp}/.pawflow_cli/initial_context.md", encoding="utf-8") as fh:
+                body = fh.read()
+
+        latest = body.split("## Latest User Request", 1)[1]
+        self.assertIn("compacted user", latest)
+        self.assertIn("compacted assistant tail", latest)
+
+    def test_cli_initial_context_uses_marked_current_user_message_only(self):
+        current = LLMMessage(role="user", content="message after stop", conversation_id="test_conv")
+        current._pawflow_current_user_message = True
+        msgs = [
+            LLMMessage(role="user", content="old stop request", conversation_id="test_conv"),
+            LLMMessage(role="assistant", content="old stop answer", conversation_id="test_conv"),
+            current,
+            LLMMessage(role="assistant", content="cancelled tail", conversation_id="test_conv"),
+        ]
+        system_prompt, user_text = self.client._serialize_messages_for_cli(msgs, None)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            prompt = self.client._build_cli_initial_context_prompt(
+                msgs,
+                system_prompt=system_prompt,
+                user_text=user_text,
+                workdir=tmp,
+                provider_workdir="/cc_sessions/u/c/a",
+            )
+            with open(f"{tmp}/.pawflow_cli/initial_context.md", encoding="utf-8") as fh:
+                body = fh.read()
+
+        latest = body.split("## Latest User Request", 1)[1]
+        self.assertIn("message after stop", latest)
+        self.assertNotIn("cancelled tail", latest)
+        self.assertIn("message after stop", prompt)
+        self.assertNotIn("cancelled tail", prompt.split("Latest turn to answer now:", 1)[1])
+
     def test_claude_code_namespace_provider_workdir_drops_user_segment(self):
         with tempfile.TemporaryDirectory() as tmp:
             workdir = f"{tmp}/user1/conv1/assistant"

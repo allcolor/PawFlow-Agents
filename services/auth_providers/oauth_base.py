@@ -11,6 +11,8 @@ from services.auth_providers.base import AuthProvider, AuthResult
 
 logger = logging.getLogger(__name__)
 
+OAUTH_HTTP_USER_AGENT = "PawFlow-OAuth/1.0 (+https://github.com/allcolor/PawFlow-Agents)"
+
 
 class OAuthBaseProvider(AuthProvider):
     """Base class for OAuth2 providers with shared code exchange logic."""
@@ -128,6 +130,7 @@ class OAuthBaseProvider(AuthProvider):
             headers = {
                 "Content-Type": "application/x-www-form-urlencoded",
                 "Accept": "application/json",
+                "User-Agent": OAUTH_HTTP_USER_AGENT,
             }
             conn.request("POST", parsed.path, body=body, headers=headers)
             resp = conn.getresponse()
@@ -144,7 +147,8 @@ class OAuthBaseProvider(AuthProvider):
             conn = self._make_conn(parsed)
             conn.request("GET", parsed.path,
                          headers={"Authorization": f"Bearer {access_token}",
-                                  "Accept": "application/json"})
+                                  "Accept": "application/json",
+                                  "User-Agent": OAUTH_HTTP_USER_AGENT})
             resp = conn.getresponse()
             data = json.loads(resp.read().decode())
             conn.close()

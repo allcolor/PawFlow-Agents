@@ -18,6 +18,8 @@ from core.base_task import BaseTask
 
 logger = logging.getLogger(__name__)
 
+OAUTH_HTTP_USER_AGENT = "PawFlow-OAuth/1.0 (+https://github.com/allcolor/PawFlow-Agents)"
+
 
 def _http_post(url: str, data: Dict, headers: Optional[Dict] = None,
                timeout: int = 15) -> Dict:
@@ -29,6 +31,7 @@ def _http_post(url: str, data: Dict, headers: Optional[Dict] = None,
     req = urllib.request.Request(url, data=encoded, method="POST")
     req.add_header("Content-Type", "application/x-www-form-urlencoded")
     req.add_header("Accept", "application/json")
+    req.add_header("User-Agent", OAUTH_HTTP_USER_AGENT)
     if headers:
         for k, v in headers.items():
             req.add_header(k, v)
@@ -51,6 +54,7 @@ def _http_get(url: str, token: str, timeout: int = 15) -> Dict:
     req = urllib.request.Request(url, method="GET")
     req.add_header("Authorization", f"Bearer {token}")
     req.add_header("Accept", "application/json")
+    req.add_header("User-Agent", OAUTH_HTTP_USER_AGENT)
 
     ctx = ssl.create_default_context()
     with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:  # nosec B310 - OAuth provider userinfo endpoint.

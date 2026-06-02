@@ -100,6 +100,64 @@ class TestOAuthProviderService(unittest.TestCase):
 
         assert "scope=read%3Auser+user%3Aemail" in url
 
+    def test_oauth_provider_userinfo_sends_user_agent(self):
+        from services.auth_providers.github import GitHubAuthProvider
+        from services.auth_providers.oauth_base import OAUTH_HTTP_USER_AGENT
+
+        captured = {}
+
+        class Response:
+            def read(self):
+                return b'{"id": 123, "login": "octocat"}'
+
+        class Conn:
+            def request(self, method, path, headers=None, **_kwargs):
+                captured["method"] = method
+                captured["path"] = path
+                captured["headers"] = headers or {}
+
+            def getresponse(self):
+                return Response()
+
+            def close(self):
+                pass
+
+        provider = GitHubAuthProvider({
+            "client_id": "gh-id",
+            "client_secret": "gh-secret",
+        })
+        provider._make_conn = lambda _parsed: Conn()
+
+        assert provider._fetch_userinfo("gh-token")["login"] == "octocat"
+        assert captured["headers"]["User-Agent"] == OAUTH_HTTP_USER_AGENT
+
+    def test_oauth_callback_http_get_sends_user_agent(self):
+        from tasks.io.oauth_callback import _http_get, OAUTH_HTTP_USER_AGENT
+
+        captured = {}
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return b'{"id": 123, "login": "octocat"}'
+
+        def fake_urlopen(req, **_kwargs):
+            captured["user_agent"] = req.get_header("User-agent")
+            captured["authorization"] = req.get_header("Authorization")
+            return Response()
+
+        with patch("urllib.request.urlopen", fake_urlopen):
+            data = _http_get("https://api.github.com/user", "gh-token")
+
+        assert data["login"] == "octocat"
+        assert captured["authorization"] == "Bearer gh-token"
+        assert captured["user_agent"] == OAUTH_HTTP_USER_AGENT
+
     def test_microsoft_preset(self):
         from services.oauth_provider_service import OAuthProviderService
         svc = OAuthProviderService({

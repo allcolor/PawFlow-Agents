@@ -256,10 +256,8 @@ result = client.execute_task("log", config, content, attributes)
 
 | Role | Permissions |
 |------|-------------|
-| **admin** | All: users, plugins, settings, flows, execute, monitor |
-| **editor** | flows CRUD, execute, monitor, services |
-| **operator** | execute, monitor |
-| **viewer** | monitor (read-only) |
+| **admin** | User management, settings, and create/update/delete access for global resources |
+| **user** | Own conversations and create/update/delete access for user- and conversation-scoped resources |
 
 ### SecurityManager
 

@@ -1,15 +1,13 @@
 """Tests for P10 security hardening.
 
 Covers:
-- Password hashing (PBKDF2) and backward compatibility
+- Password hashing (PBKDF2)
 - CORS configuration
 - SecretsManager encrypt/decrypt
 - Input validation middleware
 - ExecuteScript sandboxing
 """
 
-import hashlib
-import hmac
 import os
 import sys
 import unittest
@@ -22,7 +20,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 # ── Password hashing ──────────────────────────────────────────────
 
 class TestPasswordHashing(unittest.TestCase):
-    """Test PBKDF2 password hashing and legacy backward compatibility."""
+    """Test PBKDF2 password hashing."""
 
     def test_hash_returns_pbkdf2_format(self):
         from core.security import _hash_password
@@ -50,34 +48,15 @@ class TestPasswordHashing(unittest.TestCase):
         h = _hash_password("my_pass")
         self.assertFalse(_verify_password("wrong", h))
 
-    def test_legacy_hash_still_verifies(self):
-        from core.security import _hash_password_legacy, _verify_password
-        legacy = _hash_password_legacy("admin", "admin")
-        self.assertFalse(legacy.startswith("pbkdf2:"))
-        self.assertTrue(_verify_password("admin", legacy, "admin"))
-
-    def test_legacy_wrong_password_fails(self):
-        from core.security import _hash_password_legacy, _verify_password
-        legacy = _hash_password_legacy("admin", "admin")
-        self.assertFalse(_verify_password("wrong", legacy, "admin"))
+    def test_non_pbkdf2_hash_fails(self):
+        from core.security import _verify_password
+        self.assertFalse(_verify_password("admin", "not-pbkdf2"))
 
     def test_user_check_password_pbkdf2(self):
         from core.security import User, Role, _hash_password
-        user = User(username="bob", password_hash=_hash_password("pass123"), role=Role.VIEWER)
+        user = User(username="bob", password_hash=_hash_password("pass123"), role=Role.USER)
         self.assertTrue(user.check_password("pass123"))
         self.assertFalse(user.check_password("wrong"))
-
-    def test_user_auto_upgrade_on_login(self):
-        from core.security import User, Role, _hash_password_legacy
-        legacy = _hash_password_legacy("secret", "alice")
-        user = User(username="alice", password_hash=legacy, role=Role.VIEWER)
-        self.assertFalse(user.password_hash.startswith("pbkdf2:"))
-        # Successful login should auto-upgrade
-        self.assertTrue(user.check_password("secret"))
-        self.assertTrue(user.password_hash.startswith("pbkdf2:"))
-        # Still works after upgrade
-        self.assertTrue(user.check_password("secret"))
-
 
 # ── CORS configuration ────────────────────────────────────────────
 

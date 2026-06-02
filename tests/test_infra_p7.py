@@ -78,7 +78,7 @@ class TestAuditLog:
         from core.audit import AuditLog
         audit = AuditLog.get_instance()
         audit.log("flow.create", user="admin", resource_type="flow", resource_id="f1")
-        audit.log("flow.delete", user="editor", resource_type="flow", resource_id="f2")
+        audit.log("flow.delete", user="alice", resource_type="flow", resource_id="f2")
 
         stats = audit.get_stats()
         assert stats["total"] == 2

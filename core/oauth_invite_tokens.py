@@ -58,7 +58,7 @@ def _public_record(record: Dict[str, Any], now: Optional[float] = None) -> Dict[
     }
 
 
-def create_token(*, role: str = "viewer", link_username: str = "",
+def create_token(*, role: str = "user", link_username: str = "",
                  ttl_seconds: int = 3600, created_by: str = "") -> Dict[str, Any]:
     """Create a one-time OAuth onboarding token.
 
@@ -71,7 +71,7 @@ def create_token(*, role: str = "viewer", link_username: str = "",
         "id": secrets.token_urlsafe(12),
         "token_hash": _hash_token(raw),
         "prefix": raw[:12],
-        "role": str(role or "viewer"),
+        "role": str(role or "user"),
         "link_username": str(link_username or ""),
         "created_by": str(created_by or ""),
         "created_at": now,

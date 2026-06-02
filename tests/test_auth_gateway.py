@@ -153,7 +153,7 @@ class TestBuiltinProvider(unittest.TestCase):
         self.sm = SecurityManager.get_instance()
         # Create test user
         try:
-            self.sm.create_user("testauth", "pass123", Role.OPERATOR,
+            self.sm.create_user("testauth", "pass123", Role.USER,
                                 email="test@example.com")
         except ValueError:
             pass  # already exists
@@ -165,7 +165,7 @@ class TestBuiltinProvider(unittest.TestCase):
         self.assertTrue(result.success)
         self.assertEqual(result.username, "testauth")
         self.assertEqual(result.provider, "builtin")
-        self.assertIn("operator", result.roles)
+        self.assertIn("user", result.roles)
 
     def test_wrong_password(self):
         from services.auth_providers.builtin import BuiltinAuthProvider
@@ -292,7 +292,7 @@ class TestAuthGatewayService(unittest.TestCase):
         from core.security import SecurityManager, Role
         sm = SecurityManager.get_instance()
         try:
-            sm.create_user("gw_test", "pass", Role.VIEWER)
+            sm.create_user("gw_test", "pass", Role.USER)
         except ValueError:
             pass
 
@@ -436,7 +436,7 @@ def test_pending_oauth_can_complete_only_when_invite_token_exists(tmp_path, monk
 
     assert gw.can_complete_pending_oauth(pending_id) is False
 
-    oauth_invite_tokens.create_token(role="viewer", ttl_seconds=3600, created_by="admin")
+    oauth_invite_tokens.create_token(role="user", ttl_seconds=3600, created_by="admin")
 
     assert gw.can_complete_pending_oauth(pending_id) is True
     assert gw.can_complete_pending_oauth("missing") is False
@@ -469,14 +469,14 @@ def test_invite_token_creates_user_and_is_deleted_after_use(tmp_path, monkeypatc
     gw = AuthGatewayService({"providers": {}})
     gw._providers["github"] = _SuccessfulOAuthProvider()
     pending = gw.authenticate_oauth("github", "code", "https://app.example/auth/callback")
-    invite = oauth_invite_tokens.create_token(role="editor", ttl_seconds=3600, created_by="admin")
+    invite = oauth_invite_tokens.create_token(role="user", ttl_seconds=3600, created_by="admin")
 
     completed = gw.complete_pending_oauth(getattr(pending, "pending_oauth_id"), invite["token"])
 
     assert completed.success is True
     user = SecurityManager.get_instance().get_user("external")
     assert user is not None
-    assert user.role.value == "editor"
+    assert user.role.value == "user"
     assert oauth_invite_tokens.list_tokens() == []
 
 
@@ -488,12 +488,12 @@ def test_invite_token_links_existing_user_and_is_deleted_after_use(tmp_path, mon
     from services.auth_gateway_service import AuthGatewayService
 
     sm = SecurityManager.get_instance()
-    sm.create_user("alice", "pass", Role.OPERATOR, email="alice@example.com")
+    sm.create_user("alice", "pass", Role.USER, email="alice@example.com")
     gw = AuthGatewayService({"providers": {}})
     gw._providers["github"] = _SuccessfulOAuthProvider(username="ignored", user_id="gh-999")
     pending = gw.authenticate_oauth("github", "code", "https://app.example/auth/callback")
     invite = oauth_invite_tokens.create_token(
-        role="viewer", link_username="alice", ttl_seconds=3600, created_by="admin")
+        role="user", link_username="alice", ttl_seconds=3600, created_by="admin")
 
     completed = gw.complete_pending_oauth(getattr(pending, "pending_oauth_id"), invite["token"])
 
@@ -507,8 +507,8 @@ def test_oauth_invite_tokens_delete_on_expiry_and_revoke(tmp_path, monkeypatch):
     _isolated_auth_paths(tmp_path, monkeypatch)
     from core import oauth_invite_tokens
 
-    short = oauth_invite_tokens.create_token(role="viewer", ttl_seconds=60, created_by="admin")
-    active = oauth_invite_tokens.create_token(role="viewer", ttl_seconds=3600, created_by="admin")
+    short = oauth_invite_tokens.create_token(role="user", ttl_seconds=60, created_by="admin")
+    active = oauth_invite_tokens.create_token(role="user", ttl_seconds=3600, created_by="admin")
     monkeypatch.setattr(oauth_invite_tokens.time, "time", lambda: short["expires_at"] + 1)
 
     assert [t["id"] for t in oauth_invite_tokens.list_tokens()] == [active["id"]]

@@ -142,7 +142,7 @@ token is still valid, then the temporary cookie is cleared.
 External OAuth login fails closed after the provider validates the browser user
 unless the provider identity already resolves to an existing PawFlow user. Admins
 can open the gear menu and create a one-time OAuth onboarding token with a TTL.
-The token either creates a new PawFlow user with the configured role or links the
+The token either creates a new PawFlow user as `user`/`admin` or links the
 validated provider identity to a configured existing user. Tokens are stored only
 as hashes and are deleted when used, when revoked, or when their TTL expires.
 The login page shows the onboarding-token form only while the provider-validated

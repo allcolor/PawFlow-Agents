@@ -16,7 +16,7 @@ Config:
 FlowFile attributes set on success:
     http.auth.valid       — "true"
     http.auth.principal   — username
-    http.auth.roles       — role name (admin/editor/operator/viewer)
+    http.auth.roles       — role name (admin/user)
     http.auth.session_id  — session ID
 
 FlowFile attributes set on failure:
@@ -90,14 +90,14 @@ class ValidateSessionAuthTask(BaseTask):
                     _level = FileStore.instance().get_access_level(_file_id)
                     if _level == ACCESS_PUBLIC:
                         flowfile.set_attribute("http.auth.principal", "")
-                        flowfile.set_attribute("http.auth.roles", "viewer")
+                        flowfile.set_attribute("http.auth.roles", "user")
                         return [flowfile]
                     if _level == ACCESS_GATEWAY_KEY:
                         _key = flowfile.get_attribute("http.query.k") or ""
                         if _key and FileStore.instance().check_access(
                                 _file_id, gateway_key=_key):
                             flowfile.set_attribute("http.auth.principal", "")
-                            flowfile.set_attribute("http.auth.roles", "viewer")
+                            flowfile.set_attribute("http.auth.roles", "user")
                             return [flowfile]
                 except Exception:
                     logging.getLogger(__name__).debug("Ignored exception", exc_info=True)

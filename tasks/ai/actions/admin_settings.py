@@ -52,10 +52,10 @@ def _require_admin(flowfile: FlowFile):
 
 def _role(value: str):
     from core.security import Role
-    try:
-        return Role(str(value or "viewer"))
-    except ValueError:
+    raw = str(value or "user").strip().lower()
+    if raw not in {"admin", "user"}:
         raise ValueError(f"Invalid role '{value}'")
+    return Role(raw)
 
 
 def _users_with_identities():
@@ -104,7 +104,7 @@ def _handle_admin_settings(self, action, body, store, user_id, flowfile):
             from core.security import SecurityManager
             sm = SecurityManager.get_instance()
             user = sm.create_user(
-                username, password, _role(body.get("role", "viewer")),
+                username, password, _role(body.get("role", "user")),
                 email=str(body.get("email", "") or ""),
                 display_name=str(body.get("display_name", "") or ""),
             )
@@ -212,7 +212,7 @@ def _handle_admin_settings(self, action, body, store, user_id, flowfile):
         denied = _require_admin(flowfile)
         if denied:
             return denied
-        role = str(body.get("role", "viewer") or "viewer").strip()
+        role = str(body.get("role", "user") or "user").strip()
         link_username = str(body.get("link_username", "") or "").strip()
         try:
             ttl_seconds = int(body.get("ttl_seconds", 3600) or 3600)

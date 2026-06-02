@@ -12,7 +12,7 @@ Config:
     authorize_url: str     — Authorization endpoint (auto-set from provider preset)
     token_url: str         — Token endpoint (auto-set from provider preset)
     userinfo_url: str      — UserInfo endpoint (auto-set from provider preset)
-    default_role: str      — Default role for new OAuth users (default: "operator")
+    default_role: str      — Default role for new OAuth users (default: "user")
 """
 
 import logging
@@ -107,8 +107,8 @@ class OAuthProviderService(BaseService):
                 "description": "UserInfo endpoint URL (auto-set from preset)",
             },
             "default_role": {
-                "type": "select", "required": False, "default": "operator",
-                "options": ["admin", "editor", "operator", "viewer"],
+                "type": "select", "required": False, "default": "user",
+                "options": ["admin", "user"],
                 "description": "Default role assigned to new OAuth users",
             },
         }
@@ -126,7 +126,8 @@ class OAuthProviderService(BaseService):
         self.authorize_url = self.config.get("authorize_url", preset.get("authorize_url", ""))
         self.token_url = self.config.get("token_url", preset.get("token_url", ""))
         self.userinfo_url = self.config.get("userinfo_url", preset.get("userinfo_url", ""))
-        self.default_role = self.config.get("default_role", "operator")
+        from core.security import Role
+        self.default_role = Role(self.config.get("default_role", "user")).value
 
         # CSRF state tokens: {state: expires_at}
         self._states: Dict[str, float] = {}
@@ -144,7 +145,8 @@ class OAuthProviderService(BaseService):
         self.authorize_url = self.config.get("authorize_url", preset.get("authorize_url", ""))
         self.token_url = self.config.get("token_url", preset.get("token_url", ""))
         self.userinfo_url = self.config.get("userinfo_url", preset.get("userinfo_url", ""))
-        self.default_role = self.config.get("default_role", "operator")
+        from core.security import Role
+        self.default_role = Role(self.config.get("default_role", "user")).value
         return True
 
     def _close_connection(self):

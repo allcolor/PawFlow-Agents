@@ -772,10 +772,8 @@ security.set_oauth_config("google", {
 
 | Role | Permissions |
 |------|-------------|
-| **admin** | Everything: users, plugins, settings, flows, execute, monitor |
-| **editor** | Flows CRUD, execute, monitor, services |
-| **operator** | Execute, monitor |
-| **viewer** | Monitor (read-only) |
+| **admin** | User management, settings, and create/update/delete access for global resources |
+| **user** | Own conversations and create/update/delete access for user- and conversation-scoped resources |
 
 ### 15.3. Listener Auth
 

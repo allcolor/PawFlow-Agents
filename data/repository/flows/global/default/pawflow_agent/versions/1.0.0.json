@@ -10,7 +10,7 @@
     "oauth_client_id": "",
     "oauth_client_secret": "",
     "oauth_redirect_uri": "",
-    "oauth_default_role": "operator",
+    "oauth_default_role": "user",
     "private_gateway_service_id": "",
     "poll_interval": 30,
     "poll_recheck_delay": 7200,

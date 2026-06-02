@@ -1498,7 +1498,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         # returning cache immediately and refreshing it off the request path.
         result["flow_templates"] = _get_flow_templates_cached(user_id)
         # Include user role so frontend can enable admin features
-        _user_role = flowfile.get_attribute("http.auth.roles") or "viewer"
+        _user_role = flowfile.get_attribute("http.auth.roles") or "user"
         result["user_role"] = _user_role
 
         flowfile.set_content(json.dumps(result, ensure_ascii=False).encode())

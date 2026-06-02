@@ -13,6 +13,7 @@ Tests cover:
 """
 
 import json
+import pytest
 import time
 import unittest
 from pathlib import Path
@@ -255,9 +256,20 @@ class TestOAuthProviderService(unittest.TestCase):
             "client_id": "id",
             "client_secret": "sec",
             "redirect_uri": "http://localhost/cb",
-            "default_role": "editor",
+            "default_role": "user",
         })
-        assert svc.default_role == "editor"
+        assert svc.default_role == "user"
+
+    def test_default_role_rejects_invalid_role(self):
+        from services.oauth_provider_service import OAuthProviderService
+        with pytest.raises(ValueError):
+            OAuthProviderService({
+                "provider": "google",
+                "client_id": "id",
+                "client_secret": "sec",
+                "redirect_uri": "http://localhost/cb",
+                "default_role": "invalid_role",
+            })
 
 
 # ── OAuthRedirectTask ───────────────────────────────────────────────
@@ -689,7 +701,7 @@ class TestOAuthCallbackTask(unittest.TestCase):
         username = "oauth_link_target"
         sm = SecurityManager.get_instance()
         try:
-            sm.create_user(username, "pass", Role.VIEWER, email="link@example.com")
+            sm.create_user(username, "pass", Role.USER, email="link@example.com")
         except ValueError:
             pass
 
@@ -722,7 +734,7 @@ class TestOAuthCallbackTask(unittest.TestCase):
                     provider="github",
                     user_id=username,
                     username=username,
-                    roles=["viewer"],
+                    roles=["user"],
                 )
 
         auth = AuthGateway()
@@ -766,7 +778,7 @@ class TestOAuthCallbackTask(unittest.TestCase):
         from core.security import SecurityManager, Role
         sm = SecurityManager.get_instance()
         try:
-            sm.create_user("oauth_existing_user", "pass", Role.VIEWER,
+            sm.create_user("oauth_existing_user", "pass", Role.USER,
                            email="user@example.com")
         except ValueError:
             pass
@@ -863,7 +875,7 @@ class TestOAuthCallbackTask(unittest.TestCase):
         from core.security import SecurityManager, Role
         sm = SecurityManager.get_instance()
         try:
-            sm.create_user("oauth_relay_user", "pass", Role.VIEWER,
+            sm.create_user("oauth_relay_user", "pass", Role.USER,
                            email="relay@example.com")
         except ValueError:
             pass
@@ -912,7 +924,7 @@ class TestOAuthCallbackTask(unittest.TestCase):
         from core.security import SecurityManager, Role
         sm = SecurityManager.get_instance()
         try:
-            sm.create_user("oauth_github_user", "pass", Role.VIEWER,
+            sm.create_user("oauth_github_user", "pass", Role.USER,
                            email="octocat@github.com")
         except ValueError:
             pass
@@ -978,7 +990,7 @@ class TestValidateSessionAuthTask(unittest.TestCase):
         self.session = Session(
             session_id="valid-session-123",
             username="testuser",
-            role=Role.EDITOR,
+            role=Role.USER,
             expires_at=time.time() + 3600,
         )
         self.sm._sessions["valid-session-123"] = self.session
@@ -999,7 +1011,7 @@ class TestValidateSessionAuthTask(unittest.TestCase):
         results = task.execute(ff)
         assert results[0].get_attribute("http.auth.valid") == "true"
         assert results[0].get_attribute("http.auth.principal") == "testuser"
-        assert results[0].get_attribute("http.auth.roles") == "editor"
+        assert results[0].get_attribute("http.auth.roles") == "user"
 
     def test_valid_cookie(self):
         from tasks.io.validate_session_auth import ValidateSessionAuthTask
@@ -1032,7 +1044,7 @@ class TestValidateSessionAuthTask(unittest.TestCase):
         expired = Session(
             session_id="expired-session",
             username="old",
-            role=Role.VIEWER,
+            role=Role.USER,
             expires_at=time.time() - 100,
         )
         self.sm._sessions["expired-session"] = expired
@@ -1080,18 +1092,18 @@ class TestToolFilteringByRole(unittest.TestCase):
         h2.allowed_roles = ["admin"]
 
         h3 = MagicMock(spec=ToolHandler)
-        h3.name = "editor_tool"
-        h3.allowed_roles = ["admin", "editor"]
+        h3.name = "user_tool"
+        h3.allowed_roles = ["admin", "user"]
 
         registry.register(h1)
         registry.register(h2)
         registry.register(h3)
 
-        # Editor can see public + editor tools
-        filtered = task._filter_tools_by_role(registry, "editor")
+        # User can see public + user tools
+        filtered = task._filter_tools_by_role(registry, "user")
         names = [h.name for h in filtered.list_tools()]
         assert "public_tool" in names
-        assert "editor_tool" in names
+        assert "user_tool" in names
         assert "admin_tool" not in names
 
     def test_filter_admin_sees_all(self):
@@ -1107,17 +1119,17 @@ class TestToolFilteringByRole(unittest.TestCase):
         filtered = task._filter_tools_by_role(registry, "admin")
         assert len(filtered.list_tools()) == 1
 
-    def test_filter_viewer_restricted(self):
+    def test_filter_user_restricted(self):
         from tasks.ai.agent_loop import AgentLoopTask
         task = AgentLoopTask({"api_key": "test"})
 
         registry = ToolRegistry()
         h1 = MagicMock(spec=ToolHandler)
         h1.name = "restricted"
-        h1.allowed_roles = ["admin", "editor"]
+        h1.allowed_roles = ["admin"]
         registry.register(h1)
 
-        filtered = task._filter_tools_by_role(registry, "viewer")
+        filtered = task._filter_tools_by_role(registry, "user")
         assert len(filtered.list_tools()) == 0
 
     def test_no_role_no_filtering(self):

@@ -37,56 +37,56 @@ class TestSecurity:
         _paths.USERS_FILE = self._orig_users
         SecurityManager._instance = None
 
-    def test_default_admin_created(self):
+    def test_no_default_admin_created(self):
         sm = SecurityManager()
-        user = sm.get_user("admin")
-        assert user is not None
-        assert user.role == Role.ADMIN
+        assert sm.get_user("admin") is None
 
     def test_create_and_authenticate_user(self):
         sm = SecurityManager()
-        sm.create_user("bob", "secret123", Role.EDITOR, email="bob@test.com")
+        sm.create_user("bob", "secret123", Role.USER, email="bob@test.com")
 
         session = sm.authenticate("bob", "secret123")
         assert session is not None
         assert session.username == "bob"
-        assert session.role == Role.EDITOR
+        assert session.role == Role.USER
 
     def test_wrong_password_fails(self):
         sm = SecurityManager()
-        sm.create_user("alice", "correct", Role.VIEWER)
+        sm.create_user("alice", "correct", Role.USER)
         session = sm.authenticate("alice", "wrong")
         assert session is None
 
     def test_disabled_user_fails(self):
         sm = SecurityManager()
-        sm.create_user("charlie", "pass", Role.VIEWER)
+        sm.create_user("charlie", "pass", Role.USER)
         sm.update_user("charlie", enabled=False)
         session = sm.authenticate("charlie", "pass")
         assert session is None
 
     def test_role_permissions(self):
         sm = SecurityManager()
-        sm.create_user("editor", "pass", Role.EDITOR)
-        session = sm.authenticate("editor", "pass")
+        sm.create_user("user", "pass", Role.USER)
+        session = sm.authenticate("user", "pass")
 
-        assert sm.check_permission(session, "flow.edit")
-        assert sm.check_permission(session, "flow.execute")
+        assert sm.check_permission(session, "monitor.view")
+        assert not sm.check_permission(session, "flow.edit")
+        assert not sm.check_permission(session, "flow.execute")
         assert not sm.check_permission(session, "user.manage")
         assert not sm.check_permission(session, "plugin.install")
 
     def test_admin_has_all_permissions(self):
         sm = SecurityManager()
+        sm.create_user("admin", "admin", Role.ADMIN)
         session = sm.authenticate("admin", "admin")
         assert session is not None
 
         for perm in ROLE_PERMISSIONS[Role.ADMIN]:
             assert sm.check_permission(session, perm)
 
-    def test_viewer_readonly(self):
+    def test_user_not_admin(self):
         sm = SecurityManager()
-        sm.create_user("viewer", "pass", Role.VIEWER)
-        session = sm.authenticate("viewer", "pass")
+        sm.create_user("regular", "pass", Role.USER)
+        session = sm.authenticate("regular", "pass")
 
         assert sm.check_permission(session, "monitor.view")
         assert not sm.check_permission(session, "flow.edit")
@@ -94,7 +94,7 @@ class TestSecurity:
 
     def test_session_logout(self):
         sm = SecurityManager()
-        sm.create_user("temp", "pass", Role.VIEWER)
+        sm.create_user("temp", "pass", Role.USER)
         session = sm.authenticate("temp", "pass")
         assert sm.get_session(session.session_id) is not None
 
@@ -112,7 +112,7 @@ class TestSecurity:
 
     def test_delete_user(self):
         sm = SecurityManager()
-        sm.create_user("todelete", "pass", Role.VIEWER)
+        sm.create_user("todelete", "pass", Role.USER)
         session = sm.authenticate("todelete", "pass")
         assert session is not None
 
@@ -123,9 +123,9 @@ class TestSecurity:
 
     def test_duplicate_user_raises(self):
         sm = SecurityManager()
-        sm.create_user("unique", "pass", Role.VIEWER)
+        sm.create_user("unique", "pass", Role.USER)
         with pytest.raises(ValueError, match="already exists"):
-            sm.create_user("unique", "pass", Role.VIEWER)
+            sm.create_user("unique", "pass", Role.USER)
 
     def test_oauth_config(self):
         sm = SecurityManager()
@@ -140,7 +140,7 @@ class TestSecurity:
 
     def test_persistence(self, tmp_path):
         sm = SecurityManager()
-        sm.create_user("persistent", "pass123", Role.OPERATOR)
+        sm.create_user("persistent", "pass123", Role.USER)
         sm.generate_api_key("persistent key")
 
         # Create new instance (simulates restart)
@@ -148,8 +148,12 @@ class TestSecurity:
         sm2 = SecurityManager()
         user = sm2.get_user("persistent")
         assert user is not None
-        assert user.role == Role.OPERATOR
+        assert user.role == Role.USER
         assert len(sm2.list_api_keys()) >= 1
+
+    def test_unknown_roles_are_rejected(self):
+        with pytest.raises(ValueError):
+            User.from_dict({"username": "bad", "role": "invalid_role"})
 
 
 # ============================================================================

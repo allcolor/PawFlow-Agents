@@ -1,17 +1,15 @@
 """Security Module - Authentication, authorization, and permissions.
 
 Provides:
-- User management with roles (admin, editor, viewer, operator)
-- Permission checks for operations (create/edit/delete flows, execute, admin)
+- User management with roles (admin, user)
+- Permission checks for operations (admin-only global changes, user scoped work)
 - Session-based auth for the Streamlit GUI
 - API key management for worker endpoints
 - OAuth2 support via pluggable providers (Google, GitHub, custom OIDC)
 
 Roles:
-    admin    - Full access: manage users, plugins, settings, all operations
-    editor   - Create/edit/delete flows, execute, view monitoring
-    operator - Execute flows, view monitoring, inject FlowFiles
-    viewer   - Read-only: view flows, monitoring, history
+    admin - Settings and global resource create/update/delete access
+    user  - Own conversations and user/conversation-scoped resources
 """
 
 import hashlib
@@ -35,9 +33,7 @@ import core.paths as _paths
 
 class Role(Enum):
     ADMIN = "admin"
-    EDITOR = "editor"
-    OPERATOR = "operator"
-    VIEWER = "viewer"
+    USER = "user"
 
 
 # Permission definitions per role
@@ -50,17 +46,7 @@ ROLE_PERMISSIONS = {
         "settings.edit", "user.manage",
         "worker.manage", "service.manage",
     },
-    Role.EDITOR: {
-        "flow.create", "flow.edit", "flow.delete", "flow.execute",
-        "flow.import", "flow.export",
-        "monitor.view",
-        "service.manage",
-    },
-    Role.OPERATOR: {
-        "flow.execute",
-        "monitor.view",
-    },
-    Role.VIEWER: {
+    Role.USER: {
         "monitor.view",
     },
 }
@@ -71,7 +57,7 @@ class User:
     """A system user."""
     username: str
     password_hash: str = ""
-    role: Role = Role.VIEWER
+    role: Role = Role.USER
     email: str = ""
     display_name: str = ""
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
@@ -79,11 +65,7 @@ class User:
     enabled: bool = True
 
     def check_password(self, password: str) -> bool:
-        ok = _verify_password(password, self.password_hash, self.username)
-        # Auto-upgrade legacy hashes to PBKDF2 on successful login
-        if ok and not self.password_hash.startswith("pbkdf2:"):
-            self.password_hash = _hash_password(password)
-        return ok
+        return _verify_password(password, self.password_hash, self.username)
 
     def has_permission(self, permission: str) -> bool:
         return permission in ROLE_PERMISSIONS.get(self.role, set())
@@ -105,7 +87,7 @@ class User:
         return User(
             username=data["username"],
             password_hash=data.get("password_hash", ""),
-            role=Role(data.get("role", "viewer")),
+            role=Role(data.get("role", "user")),
             email=data.get("email", ""),
             display_name=data.get("display_name", ""),
             created_at=data.get("created_at", ""),
@@ -130,11 +112,6 @@ class Session:
         return self.expires_at > 0 and time.time() > self.expires_at
 
 
-def _hash_password_legacy(password: str, salt: str = "") -> str:
-    """Legacy hash: SHA-256 + salt (kept for backward compatibility)."""
-    return hashlib.sha256(f"{salt}:{password}".encode()).hexdigest()
-
-
 def _hash_password(password: str, salt: str = "") -> str:
     """Hash a password with PBKDF2-HMAC-SHA256.
 
@@ -147,21 +124,16 @@ def _hash_password(password: str, salt: str = "") -> str:
 
 
 def _verify_password(password: str, stored_hash: str, username: str = "") -> bool:
-    """Verify a password against a stored hash.
-
-    Supports both the new PBKDF2 format and the legacy SHA-256 format.
-    """
-    if stored_hash.startswith("pbkdf2:"):
-        parts = stored_hash.split(":")
-        if len(parts) != 3:
-            return False
-        salt_bytes = bytes.fromhex(parts[1])
-        expected = parts[2]
-        dk = hashlib.pbkdf2_hmac('sha256', password.encode(), salt_bytes, 600_000)
-        return hmac.compare_digest(dk.hex(), expected)
-    else:
-        # Legacy SHA-256 verification
-        return hmac.compare_digest(stored_hash, _hash_password_legacy(password, username))
+    """Verify a password against a PBKDF2 stored hash."""
+    if not stored_hash.startswith("pbkdf2:"):
+        return False
+    parts = stored_hash.split(":")
+    if len(parts) != 3:
+        return False
+    salt_bytes = bytes.fromhex(parts[1])
+    expected = parts[2]
+    dk = hashlib.pbkdf2_hmac('sha256', password.encode(), salt_bytes, 600_000)
+    return hmac.compare_digest(dk.hex(), expected)
 
 
 class SecurityManager:
@@ -178,7 +150,7 @@ class SecurityManager:
             security.logout(session.session_id)
 
         # User management
-        security.create_user("bob", "pass123", Role.EDITOR)
+        security.create_user("bob", "pass123", Role.USER)
     """
 
     _instance = None
@@ -206,7 +178,7 @@ class SecurityManager:
 
     # -- User management --
 
-    def create_user(self, username: str, password: str, role: Role = Role.VIEWER,
+    def create_user(self, username: str, password: str, role: Role = Role.USER,
                     email: str = "", display_name: str = "") -> User:
         if username in self._users:
             raise ValueError(f"User '{username}' already exists")
@@ -440,16 +412,6 @@ class SecurityManager:
                     self._users[user.username] = user
             except Exception as e:
                 logger.error(f"Failed to load users: {e}")
-
-        # Ensure default admin exists
-        if "admin" not in self._users:
-            self._users["admin"] = User(
-                username="admin",
-                password_hash=_hash_password("admin"),
-                role=Role.ADMIN,
-                display_name="Administrator",
-            )
-            self._save_users()
 
     def _save_users(self):
         path = _paths.USERS_FILE

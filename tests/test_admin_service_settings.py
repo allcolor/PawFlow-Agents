@@ -26,13 +26,14 @@ def test_system_params_manifest_excludes_service_owned_defaults():
 
 def test_last_enabled_admin_cannot_be_deleted_or_disabled(tmp_path, monkeypatch):
     import core.paths as paths
-    from core.security import SecurityManager
+    from core.security import SecurityManager, Role
 
     monkeypatch.setattr(paths, "USERS_FILE", tmp_path / "users.json")
     monkeypatch.setattr(paths, "SESSIONS_FILE", tmp_path / "sessions.json")
     monkeypatch.setattr(paths, "SECURITY_FILE", tmp_path / "security.json")
     SecurityManager._instance = None
     sm = SecurityManager.get_instance()
+    sm.create_user("admin", "admin-password", Role.ADMIN)
 
     with pytest.raises(ValueError, match="last enabled admin"):
         sm.delete_user("admin")
@@ -87,7 +88,7 @@ def test_admin_can_create_list_and_delete_oauth_onboarding_tokens(tmp_path, monk
 
     ff = _admin_flowfile()
     result = _handle_admin_settings(None, "admin_oauth_token_create", {
-        "role": "operator",
+        "role": "user",
         "ttl_seconds": 600,
     }, None, "admin", ff)
     created = json.loads(result[0].get_content().decode("utf-8"))
@@ -127,8 +128,8 @@ def test_admin_can_add_update_and_delete_user_identity_links(tmp_path, monkeypat
     SecurityManager._instance = None
     IdentityService.reset()
     sm = SecurityManager.get_instance()
-    sm.create_user("alice", "pass", Role.VIEWER, email="alice@example.com")
-    sm.create_user("bob", "pass", Role.VIEWER, email="bob@example.com")
+    sm.create_user("alice", "pass", Role.USER, email="alice@example.com")
+    sm.create_user("bob", "pass", Role.USER, email="bob@example.com")
 
     created = _handle_admin_settings(None, "admin_identity_link", {
         "username": "alice",

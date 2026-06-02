@@ -54,7 +54,7 @@ function openAdminUsersDialog() {
     if (data.error) { addMsg('error', data.error); return; }
     var users = data.users || [];
     var rows = users.map(function(u) {
-      var roles = ['admin', 'editor', 'operator', 'viewer'].map(function(r) {
+      var roles = ['admin', 'user'].map(function(r) {
         return '<option value="' + r + '"' + (u.role === r ? ' selected' : '') + '>' + r + '</option>';
       }).join('');
       var links = Object.entries(u.identities || {}).map(function(pair) {
@@ -89,7 +89,7 @@ function openAdminUsersDialog() {
       + '<input id="adm-new-password" type="password" placeholder="password">'
       + '<input id="adm-new-display" placeholder="display name">'
       + '<input id="adm-new-email" placeholder="email">'
-      + '<select id="adm-new-role"><option value="viewer">viewer</option><option value="operator">operator</option><option value="editor">editor</option><option value="admin">admin</option></select>'
+      + '<select id="adm-new-role"><option value="user">user</option><option value="admin">admin</option></select>'
       + '<button onclick="adminCreateUser()">Create</button></div>'
       + '<table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr>'
       + '<th>Username</th><th>Name</th><th>Email</th><th>Role</th><th>Enabled</th><th>Created</th><th>Last login</th><th>Identities</th><th></th>'
@@ -180,7 +180,7 @@ function openOAuthTokensDialog() {
         + '</tr>';
     }).join('') || '<tr><td colspan="6" style="color:var(--pf-muted);">No active OAuth onboarding tokens</td></tr>';
     var body = '<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;align-items:end;">'
-      + '<select id="adm-oauth-role"><option value="viewer">viewer</option><option value="operator">operator</option><option value="editor">editor</option><option value="admin">admin</option></select>'
+      + '<select id="adm-oauth-role"><option value="user">user</option><option value="admin">admin</option></select>'
       + '<input id="adm-oauth-link" placeholder="link existing user (optional)">'
       + '<input id="adm-oauth-ttl" type="number" min="60" value="3600" placeholder="TTL seconds">'
       + '<button onclick="adminCreateOAuthToken()">Create token</button>'

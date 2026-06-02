@@ -471,7 +471,7 @@ def is_owner_or_admin(
 
     Returns True if the requester is the resource owner OR an admin. The
     role string is whatever the auth layer puts on PendingRequest.auth_role
-    — conventionally "admin" / "editor" / "viewer". Only the literal
+    — conventionally "admin" / "user". Only the literal
     'admin' grants override; everything else falls back to strict
     ownership equality.
     """

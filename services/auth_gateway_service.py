@@ -321,7 +321,7 @@ All string values may use `${...}` expressions. They are resolved recursively at
         an existing PawFlow user, or an admin-created temporary token must be
         supplied to create/link exactly once.
         """
-        from core.security import SecurityManager, Role
+        from core.security import SecurityManager
 
         sm = SecurityManager.get_instance()
 
@@ -376,8 +376,9 @@ All string values may use `${...}` expressions. They are resolved recursively at
             return auth_result
 
         # Create the user only when an admin-issued token explicitly grants a role.
-        role_str = str(invite.get("role") or "viewer")
-        role = Role(role_str) if role_str in [r.value for r in Role] else Role.VIEWER
+        from core.security import Role
+        role_str = str(invite.get("role") or "user")
+        role = Role(role_str)
         username = self._derive_username(auth_result)
         try:
             user = sm.create_user(

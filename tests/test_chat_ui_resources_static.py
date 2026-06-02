@@ -46,6 +46,7 @@ def test_admin_settings_menu_exposes_oauth_onboarding_tokens():
     assert "admin_oauth_token_create" in admin_js
     assert "admin_oauth_tokens_list" in admin_js
     assert "Tokens are one-time and disappear when used, expired, or deleted." in admin_js
+    assert '<option value="user">user</option><option value="admin">admin</option>' in admin_js
 
 
 def test_admin_user_management_can_edit_identity_links():

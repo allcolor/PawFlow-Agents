@@ -20,7 +20,7 @@ def _handle_account_linking(self, action, body, store, user_id, flowfile):
         ttl_seconds = 600
         from core import oauth_invite_tokens
         invite = oauth_invite_tokens.create_token(
-            role="viewer",
+            role="user",
             link_username=user_id,
             ttl_seconds=ttl_seconds,
             created_by=user_id,

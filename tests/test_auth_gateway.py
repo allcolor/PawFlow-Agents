@@ -346,6 +346,45 @@ class TestAuthGatewayService(unittest.TestCase):
             IdentityService.reset()
             SecurityManager._instance = None
 
+    def test_existing_oauth_only_user_matches_by_email_and_gets_linked(self):
+        from core.identity_service import IdentityService
+        from core.security import SecurityManager, Role
+        from services.auth_gateway_service import AuthGatewayService
+
+        IdentityService.reset()
+        SecurityManager._instance = None
+        sm = SecurityManager.get_instance()
+        try:
+            legacy_user = sm.create_user(
+                "quentin.anciaux",
+                "",
+                Role.ADMIN,
+                email="quentin.anciaux@allcolor.org",
+                display_name="Quentin Anciaux",
+            )
+            legacy_user.password_hash = ""
+            sm._save_users()
+            gw = AuthGatewayService({"providers": {}})
+            result = AuthResult(
+                success=True,
+                provider="google",
+                user_id="google-sub-123",
+                email="quentin.anciaux@allcolor.org",
+                username="quentin.anciaux",
+            )
+
+            user = gw._find_existing_user(sm, result)
+
+            self.assertIsNotNone(user)
+            self.assertEqual(user.username, "quentin.anciaux")
+            self.assertEqual(
+                IdentityService.instance().resolve("google", "google-sub-123"),
+                "quentin.anciaux",
+            )
+        finally:
+            IdentityService.reset()
+            SecurityManager._instance = None
+
 
 class TestIdentityServiceResolve(unittest.TestCase):
     """Test IdentityService.resolve for account linking."""

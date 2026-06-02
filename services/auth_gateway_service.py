@@ -463,7 +463,7 @@ All string values may use `${...}` expressions. They are resolved recursively at
         )
 
     def _find_existing_user(self, sm, auth_result: AuthResult):
-        """Find an existing user only through an explicit provider link."""
+        """Find an existing user for a provider-validated OAuth identity."""
         from core.identity_service import IdentityService
         ids = IdentityService.instance()
 
@@ -491,6 +491,23 @@ All string values may use `${...}` expressions. They are resolved recursively at
                 user = sm.get_user(linked_username) if linked_username else None
                 if user:
                     ids.link(linked_username, auth_result.provider, auth_result.user_id)
+                    return user
+
+        # 3. Backward-compatible OAuth-only users created before IdentityService
+        # linking existed: match an existing passwordless PawFlow account by
+        # verified provider email, then persist the explicit link for subsequent
+        # logins. Password-backed users still require an onboarding/link token.
+        email = str(auth_result.email or "").strip().lower()
+        if email:
+            for listed_user in sm.list_users():
+                user_email = str(listed_user.get("email") or "").strip().lower()
+                if user_email == email:
+                    user = sm.get_user(str(listed_user.get("username") or ""))
+                    if not user:
+                        continue
+                    if getattr(user, "password_hash", ""):
+                        continue
+                    ids.link(user.username, auth_result.provider, auth_result.user_id)
                     return user
 
         return None

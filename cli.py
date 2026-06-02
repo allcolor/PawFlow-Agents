@@ -15,6 +15,7 @@ Usage:
 """
 
 import argparse
+import getpass
 import json
 import logging
 import os
@@ -663,6 +664,72 @@ def cmd_re_embed(args):
     return 0
 
 
+def _read_admin_password(args) -> str:
+    password = args.password or ""
+    if args.password_env:
+        password = os.environ.get(args.password_env, "")
+    if not password:
+        password = getpass.getpass("Admin password: ")
+        confirm = getpass.getpass("Confirm admin password: ")
+        if password != confirm:
+            print("ERROR: passwords do not match")
+            return ""
+    if not password:
+        print("ERROR: password is required")
+        return ""
+    return password
+
+
+def cmd_admin_user(args):
+    """Create or repair a local PawFlow admin account."""
+    from core.security import SecurityManager, Role
+
+    username = (args.username or "").strip()
+    if not username:
+        print("ERROR: username is required")
+        return 1
+
+    password = _read_admin_password(args)
+    if not password:
+        return 1
+
+    sm = SecurityManager.get_instance()
+    if args.action == "create":
+        existing = sm.get_user(username)
+        if existing:
+            sm.update_user(
+                username,
+                role=Role.ADMIN,
+                password=password,
+                enabled=True,
+                email=args.email or None,
+                display_name=args.display_name or None,
+            )
+            print(f"Admin user '{username}' updated and enabled.")
+            return 0
+        sm.create_user(
+            username,
+            password,
+            Role.ADMIN,
+            email=args.email or "",
+            display_name=args.display_name or username,
+        )
+        print(f"Admin user '{username}' created.")
+        return 0
+
+    if args.action == "reset-password":
+        user = sm.get_user(username)
+        if not user:
+            print(f"ERROR: user '{username}' does not exist")
+            return 1
+        sm.update_user(username, role=Role.ADMIN, password=password, enabled=True)
+        print(f"Admin user '{username}' password reset and account enabled.")
+        return 0
+
+    print(f"ERROR: unsupported admin-user action '{args.action}'")
+    return 1
+
+
 def main():
     from core import __version__ as _pf_version
     parser = argparse.ArgumentParser(
@@ -736,6 +803,21 @@ def main():
                                 default='auto', help='Embedding provider (default: auto)')
     reembed_parser.add_argument('--api-key', dest='api_key', help='OpenAI API key (optional, uses env var)')
 
+    # admin-user
+    admin_user_parser = subparsers.add_parser(
+        'admin-user',
+        help='Create or repair a local admin account for recovery'
+    )
+    admin_user_parser.add_argument('action', choices=['create', 'reset-password'],
+                                   help='Create/repair an admin, or reset an existing user password')
+    admin_user_parser.add_argument('--username', required=True, help='PawFlow username')
+    admin_user_parser.add_argument('--password', help='Password value. Prefer --password-env or interactive prompt.')
+    admin_user_parser.add_argument('--password-env', dest='password_env',
+                                   help='Environment variable containing the password')
+    admin_user_parser.add_argument('--email', default='', help='Optional user email for create/update')
+    admin_user_parser.add_argument('--display-name', dest='display_name', default='',
+                                   help='Optional display name for create/update')
+
     args = parser.parse_args()
 
     if args.command == 'run':
@@ -756,6 +838,8 @@ def main():
         sys.exit(cmd_cluster(args))
     elif args.command == 're-embed-memories':
         sys.exit(cmd_re_embed(args))
+    elif args.command == 'admin-user':
+        sys.exit(cmd_admin_user(args))
     else:
         parser.print_help()
 

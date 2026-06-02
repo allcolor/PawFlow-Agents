@@ -98,5 +98,75 @@ class TestClusterCommand(unittest.TestCase):
         self.assertIn('Cannot reach API', call_str)
 
 
+class TestAdminUserCommand(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        import core.paths as paths
+        from core.security import SecurityManager
+
+        self.tmp = tempfile.TemporaryDirectory()
+        self._orig_users_file = paths.USERS_FILE
+        paths.USERS_FILE = Path(self.tmp.name) / "users.json"
+        SecurityManager._instance = None
+
+    def tearDown(self):
+        import core.paths as paths
+        from core.security import SecurityManager
+
+        SecurityManager._instance = None
+        paths.USERS_FILE = self._orig_users_file
+        self.tmp.cleanup()
+
+    def test_admin_user_create_from_empty_users_file(self):
+        from core.security import SecurityManager
+
+        args = argparse.Namespace(
+            action="create",
+            username="rescue",
+            password="Rescue-password-123",
+            password_env="",
+            email="rescue@example.com",
+            display_name="Rescue Admin",
+        )
+
+        with patch('builtins.print'):
+            result = cli.cmd_admin_user(args)
+
+        self.assertEqual(result, 0)
+        user = SecurityManager.get_instance().get_user("rescue")
+        self.assertIsNotNone(user)
+        self.assertEqual(user.role.value, "admin")
+        self.assertTrue(user.enabled)
+        self.assertTrue(user.check_password("Rescue-password-123"))
+        self.assertEqual(user.email, "rescue@example.com")
+
+    def test_admin_user_create_repairs_passwordless_existing_admin(self):
+        from core.security import SecurityManager, Role
+
+        sm = SecurityManager.get_instance()
+        user = sm.create_user("quentin.anciaux", "", Role.ADMIN,
+                              email="quentin.anciaux@allcolor.org")
+        user.password_hash = ""
+        user.enabled = False
+        sm._save_users()
+        args = argparse.Namespace(
+            action="create",
+            username="quentin.anciaux",
+            password="New-admin-password-123",
+            password_env="",
+            email="quentin.anciaux@allcolor.org",
+            display_name="Quentin Anciaux",
+        )
+
+        with patch('builtins.print'):
+            result = cli.cmd_admin_user(args)
+
+        self.assertEqual(result, 0)
+        repaired = SecurityManager.get_instance().get_user("quentin.anciaux")
+        self.assertEqual(repaired.role.value, "admin")
+        self.assertTrue(repaired.enabled)
+        self.assertTrue(repaired.check_password("New-admin-password-123"))
+
+
 if __name__ == '__main__':
     unittest.main()

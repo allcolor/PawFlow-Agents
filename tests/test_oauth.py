@@ -101,6 +101,46 @@ class TestOAuthProviderService(unittest.TestCase):
 
         assert "scope=read%3Auser+user%3Aemail" in url
 
+    def test_x_token_exchange_uses_basic_auth(self):
+        import base64
+        import urllib.parse
+        from services.auth_providers.x_twitter import XTwitterAuthProvider
+
+        captured = {}
+
+        class Response:
+            def read(self):
+                return b'{"access_token":"x-token"}'
+
+        class Conn:
+            def request(self, method, path, body=None, headers=None, **_kwargs):
+                captured["method"] = method
+                captured["path"] = path
+                captured["body"] = body or b""
+                captured["headers"] = headers or {}
+
+            def getresponse(self):
+                return Response()
+
+            def close(self):
+                pass
+
+        provider = XTwitterAuthProvider({
+            "client_id": "x-client",
+            "client_secret": "x-secret",
+        })
+        provider._code_verifier = "verifier"
+        provider._make_conn = lambda _parsed: Conn()
+
+        assert provider._request_token(
+            "code", "https://webchat.example/auth/callback") == {"access_token": "x-token"}
+        expected = base64.b64encode(b"x-client:x-secret").decode("ascii")
+        assert captured["headers"]["Authorization"] == f"Basic {expected}"
+        form = dict(urllib.parse.parse_qsl(captured["body"].decode()))
+        assert form["client_id"] == "x-client"
+        assert form["code_verifier"] == "verifier"
+        assert "client_secret" not in form
+
     def test_oauth_provider_userinfo_sends_user_agent(self):
         from services.auth_providers.github import GitHubAuthProvider
         from services.auth_providers.oauth_base import OAUTH_HTTP_USER_AGENT

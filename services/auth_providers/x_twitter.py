@@ -50,21 +50,26 @@ class XTwitterAuthProvider(OAuthBaseProvider):
 
     def _request_token(self, code: str, redirect_uri: str) -> dict:
         """Override to include code_verifier for PKCE."""
+        import base64
         import urllib.parse
         parsed = urllib.parse.urlparse(self._token_url)
+        client_id = self.config.get("client_id", "")
+        client_secret = self.config.get("client_secret", "")
         body = urllib.parse.urlencode({
-            "client_id": self.config.get("client_id", ""),
-            "client_secret": self.config.get("client_secret", ""),
+            "client_id": client_id,
             "code": code,
             "redirect_uri": redirect_uri,
             "grant_type": "authorization_code",
             "code_verifier": self._code_verifier,
         }).encode()
+        basic = base64.b64encode(
+            f"{client_id}:{client_secret}".encode()).decode("ascii")
         try:
             import json
             conn = self._make_conn(parsed)
             conn.request("POST", parsed.path, body=body,
                          headers={"Content-Type": "application/x-www-form-urlencoded",
+                                  "Authorization": f"Basic {basic}",
                                   "Accept": "application/json"})
             resp = conn.getresponse()
             data = json.loads(resp.read().decode())

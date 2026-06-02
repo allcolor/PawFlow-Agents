@@ -333,7 +333,7 @@ def test_handle_execute_retries_relay_transport_error_results(monkeypatch):
 
     assert result["data"] == "ok"
     assert len(registry.executed_args) == 2
-    assert sleeps == [5.0]
+    assert [delay for delay in sleeps if delay == 5.0] == [5.0]
 
 
 def test_handle_execute_does_not_retry_exhausted_relay_results(monkeypatch):

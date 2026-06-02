@@ -282,6 +282,52 @@ def test_code_server_http_proxy_preserves_base_path_and_unwraps_relay_data(tmp_p
     assert relay.kwargs["req_path"] == f"/code/{session_id}/{token}/static/app.js?v=1"
 
 
+def test_code_server_http_proxy_accepts_public_capability_url(tmp_path):
+    from core.capability_auth import init_db
+    from services import code_server_proxy as csp
+
+    init_db(tmp_path / "capabilities.json")
+
+    class FakeRelay:
+        def __init__(self):
+            self.called = False
+
+        def _request(self, action, **kwargs):
+            assert action == "http_proxy"
+            self.called = True
+            return {"status": 200, "headers": {}, "body": "T0s="}
+
+    class FakeReq:
+        method = "GET"
+        query_string = ""
+        headers = {}
+        body = b""
+        auth_user_id = ""
+        auth_session_id = ""
+        remote_addr = "127.0.0.1"
+
+        def complete(self, status, headers, body):
+            self.status = status
+            self.headers = headers
+            self.body = body
+
+    with csp._lock:
+        csp._sessions.clear()
+        csp._relay_to_session.clear()
+
+    relay = FakeRelay()
+    session_id, token = csp.register_code_server(
+        "relay-1", 8765, relay, owner_user_id="alice")
+
+    req = FakeReq()
+    req.path_params = {"session_id": session_id, "token": token, "path": ""}
+    csp.code_http_proxy(req)
+
+    assert req.status == 200
+    assert req.body == b"OK"
+    assert relay.called is True
+
+
 def test_code_server_worker_passes_base_path_to_process():
     src = open("pawflow_relay/worker.py", encoding="utf-8").read()
     start = src.index('if action == "start_code_server":')

@@ -106,7 +106,8 @@ def code_http_proxy(pending_req):
     token = pending_req.path_params.get("token", "")
     from core.capability_routes import verify_route_request
     claims, err = verify_route_request(
-        pending_req, "code_server", session_id, token)
+        pending_req, "code_server", session_id, token,
+        allow_bearer_only=True)
     if err is not None:
         pending_req.complete(
             err["status"], err["headers"], err["body"].encode("utf-8"))
@@ -184,7 +185,9 @@ def code_ws_proxy(client_sock, path_params: dict, meta: dict):
     session_id = path_params.get("session_id", "")
     token = path_params.get("token", "")
     from core.capability_routes import verify_route_ws
-    claims, err = verify_route_ws(meta or {}, "code_server", session_id, token)
+    claims, err = verify_route_ws(
+        meta or {}, "code_server", session_id, token,
+        allow_bearer_only=True)
     if err is not None:
         try:
             client_sock.sendall(err)

@@ -87,6 +87,26 @@ def _handle_media(self, action, body, store, user_id, flowfile):
             conv_id[:8] if conv_id else "",
         )
 
+        stt_file_id = ""
+        stt_audio_path = ""
+        if user_id and conv_id:
+            try:
+                from core.file_store import FileStore
+                ttl = int(self.config.get("stt_transient_ttl")
+                          or os.environ.get("PAWFLOW_WEBCHAT_STT_TTL_SECONDS", "300"))
+                stt_file_id = FileStore.instance().store(
+                    filename, audio_bytes, mime_type,
+                    conversation_id=conv_id,
+                    user_id=user_id,
+                    ttl=max(60, ttl),
+                    agent_name=agent_name,
+                    category="webchat_stt",
+                )
+                disk_path = FileStore.instance().get_disk_path(stt_file_id, user_id=user_id)
+                stt_audio_path = str(disk_path) if disk_path else ""
+            except Exception as exc:
+                logger.debug("[STT] transient FileStore staging skipped: %s", exc)
+
         if service_name:
             try:
                 from core.service_registry import ServiceRegistry
@@ -109,7 +129,8 @@ def _handle_media(self, action, body, store, user_id, flowfile):
                     user_id=user_id, conversation_id=conv_id,
                     agent_name=agent_name)
             result = svc.transcribe(
-                audio_bytes=audio_bytes,
+                audio_bytes=b"" if stt_audio_path else audio_bytes,
+                audio_path=stt_audio_path,
                 mime_type=mime_type,
                 filename=filename,
                 language=body.get("language", "") or "",
@@ -131,6 +152,13 @@ def _handle_media(self, action, body, store, user_id, flowfile):
             }, ensure_ascii=False).encode())
         except Exception as exc:
             flowfile.set_content(json.dumps({"error": str(exc)}).encode())
+        finally:
+            if stt_file_id:
+                try:
+                    from core.file_store import FileStore
+                    FileStore.instance().delete(stt_file_id, user_id=user_id)
+                except Exception as exc:
+                    logger.debug("[STT] transient FileStore cleanup failed: %s", exc)
         return [flowfile]
 
     if action == "tts_synthesize":

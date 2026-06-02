@@ -865,14 +865,25 @@ class _RequestHandler(BaseHTTPRequestHandler):
         header = f"Content-Type: {ct}\r\n\r\n".encode()
         msg = BytesParser().parsebytes(header + body)
 
-        # Extract optional conversation_id from form fields
+        # Extract optional conversation_id and explicit TTL from form fields
         conv_id = ""
+        ttl = 0
         for part in msg.walk():
             if part.get_content_disposition() == "form-data" and not part.get_filename():
                 name = part.get_param("name", header="content-disposition") or ""
                 if name == "conversation_id":
                     conv_id = (part.get_payload(decode=True) or b"").decode().strip()
-                    break
+                elif name == "ttl":
+                    try:
+                        ttl = int((part.get_payload(decode=True) or b"").decode().strip() or "0")
+                    except ValueError:
+                        ttl = 0
+        if ttl <= 0:
+            try:
+                ttl = int(os.environ.get("PAWFLOW_WEBCHAT_UPLOAD_TTL_SECONDS", "3600"))
+            except ValueError:
+                ttl = 3600
+        ttl = max(60, ttl)
 
         store = FileStore.instance()
         results = []
@@ -891,6 +902,7 @@ class _RequestHandler(BaseHTTPRequestHandler):
                 filename, raw, mime,
                 user_id=user_id or "_anonymous",
                 conversation_id=conv_id or "_upload",
+                ttl=ttl,
                 category="upload",
             )
             results.append({

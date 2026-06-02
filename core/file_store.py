@@ -482,6 +482,7 @@ class FileStore:
     # Internal categories hidden from user file listing
     _INTERNAL_CATEGORIES = frozenset({
         "tool_result", "checkpoint", "checkpoint_bin", "checkpoint_diff",
+        "webchat_stt", "webchat_tts",
     })
 
     def list_files(self, user_id: str = "",
@@ -501,6 +502,10 @@ class FileStore:
                 if conversation_id and entry.get("conversation_id") != conversation_id:
                     continue
                 if not include_internal and entry.get("category") in self._INTERNAL_CATEGORIES:
+                    continue
+                if (not include_internal
+                        and entry.get("category") == "voice_clone_tts"
+                        and entry.get("ttl", 0) > 0):
                     continue
                 result.append({
                     "file_id": fid,

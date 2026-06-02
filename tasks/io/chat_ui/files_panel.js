@@ -1,4 +1,7 @@
 // ── File context menu ──────────────────────────────────────────
+var _convFilesSelected = new Set();
+var _convFilesLastSelected = '';
+
 function showFileMenu(e, fileId, filename) {
   e.preventDefault();
   closeFileMenu();
@@ -29,6 +32,84 @@ function deleteFile(fileId) {
       addMsg('system', t('deleteFailedUnknown'));
     }
   });
+}
+
+function deleteSelectedFiles() {
+  const ids = Array.from(_convFilesSelected || []);
+  if (!ids.length) return;
+  if (!confirm(t('deleteItemsConfirm', { label: t('itemsSelected', { n: ids.length }) }))) return;
+  action$('delete_files', { file_ids: ids, conversation_id: conversationId }).subscribe(data => {
+    if (data.error) addMsg('system', t('deleteFailed', { error: data.error || t('unknownError') }));
+    else loadConvFiles();
+  });
+}
+
+function clearAllConversationFiles() {
+  if (!conversationId) return;
+  if (!confirm(t('clearFileStoreConfirm'))) return;
+  action$('clear_store', { conversation_id: conversationId }).subscribe(data => {
+    if (data.error) addMsg('error', data.error);
+    else {
+      _convFilesSelected.clear();
+      addMsg('system', t('fileStoreDeleted', { n: data.deleted || 0, scope: data.scope ? ' (' + data.scope + ')' : '' }));
+      loadConvFiles();
+    }
+  });
+}
+
+function updateFileSelectionBar() {
+  const bar = document.getElementById('fileSelectBar');
+  if (!bar) return;
+  const count = _convFilesSelected.size;
+  const label = bar.querySelector('[data-file-selection-count]');
+  if (label) label.textContent = t('itemsSelected', { n: count });
+  bar.style.display = count > 0 ? 'flex' : 'none';
+}
+
+function clearFileSelection() {
+  _convFilesSelected.clear();
+  _convFilesLastSelected = '';
+  document.querySelectorAll('#filesList tr.file-selected').forEach(row => row.classList.remove('file-selected'));
+  document.querySelectorAll('#filesList input[data-file-select]').forEach(cb => { cb.checked = false; });
+  updateFileSelectionBar();
+}
+
+function toggleFileSelection(fileId, row, checked) {
+  if (!fileId || !row) return;
+  if (checked) {
+    _convFilesSelected.add(fileId);
+    row.classList.add('file-selected');
+  } else {
+    _convFilesSelected.delete(fileId);
+    row.classList.remove('file-selected');
+  }
+  const cb = row.querySelector('input[data-file-select]');
+  if (cb) cb.checked = checked;
+  updateFileSelectionBar();
+}
+
+function handleFileRowSelection(e, fileId) {
+  const row = e.currentTarget && e.currentTarget.closest
+    ? e.currentTarget.closest('tr[data-file-id]') : null;
+  if (!row || !fileId) return;
+  const rows = Array.from(document.querySelectorAll('#filesList tbody tr[data-file-id]'));
+  if (e.shiftKey && _convFilesLastSelected) {
+    const start = rows.findIndex(r => r.dataset.fileId === _convFilesLastSelected);
+    const end = rows.findIndex(r => r.dataset.fileId === fileId);
+    if (start >= 0 && end >= 0) {
+      const lo = Math.min(start, end);
+      const hi = Math.max(start, end);
+      for (let i = lo; i <= hi; i++) toggleFileSelection(rows[i].dataset.fileId, rows[i], true);
+      return;
+    }
+  }
+  if (e.ctrlKey || e.metaKey || e.shiftKey || e.target.matches('input[data-file-select]')) {
+    toggleFileSelection(fileId, row, !_convFilesSelected.has(fileId));
+  } else {
+    clearFileSelection();
+    toggleFileSelection(fileId, row, true);
+  }
+  _convFilesLastSelected = fileId;
 }
 
 // ── Flow context menu ──────────────────────────────────────────
@@ -128,6 +209,9 @@ async function uploadFileToStore(file) {
   const fd = new FormData();
   fd.append('file', file);
   if (typeof currentConvId !== 'undefined' && currentConvId) fd.append('conversation_id', currentConvId);
+  const ttlSelect = document.getElementById('ttlSelect');
+  const ttlVal = ttlSelect ? parseInt(ttlSelect.value, 10) : 0;
+  if (ttlVal > 0) fd.append('ttl', String(ttlVal));
   const resp = await fetch('/api/upload', { method: 'POST', body: fd, headers: {'Authorization': getAuthHeaders()['Authorization'] || ''}, credentials: 'same-origin' });
   const data = await resp.json();
   if (!data.ok || !data.files || !data.files.length) throw new Error(data.error || t('uploadFailed'));

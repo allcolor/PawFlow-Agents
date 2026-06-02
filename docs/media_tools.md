@@ -80,7 +80,9 @@ used.
 Webchat playback audio is transient. `tts_synthesize` passes an internal storage
 TTL to `speak`, and the browser calls `tts_delete` as soon as playback ends,
 fails, is skipped, or live speech is stopped. The TTL is only a short fallback
-for interrupted browser sessions; it is not the normal cleanup path.
+for interrupted browser sessions; it is not the normal cleanup path. Transient
+webchat TTS files are hidden from the conversation FileStore list while they wait
+for playback cleanup or TTL expiry.
 Agent-facing `speak` calls remain durable by default because their URLs are
 often reused by media tools such as `lipsync` and `speech_to_video`.
 
@@ -97,7 +99,9 @@ overrides are `pawflow_stt_language` and `pawflow_stt_auto_send`.
 
 Webchat STT audio is not persisted to FileStore. The browser sends the captured
 blob directly as base64, and any server-side conversion files are temporary and
-unlinked after conversion/transcription.
+unlinked after conversion/transcription. When PawFlow stages the decoded audio for
+a provider, it uses a hidden transient FileStore entry and deletes it in the same
+`stt_transcribe` request after the provider returns or fails.
 
 `openaiCompatibleSTT` is the generic HTTP transcription provider for OpenAI-style
 `POST /audio/transcriptions` endpoints. It supports OpenAI, Groq, local

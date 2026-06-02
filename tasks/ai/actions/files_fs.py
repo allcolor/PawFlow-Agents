@@ -149,6 +149,43 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
         flowfile.set_content(json.dumps({"ok": True, "file_id": file_id}).encode())
         return [flowfile]
 
+    if action == "delete_files":
+        file_ids = body.get("file_ids") or []
+        conv_id = body.get("conversation_id", "")
+        if not isinstance(file_ids, list) or not file_ids:
+            flowfile.set_content(json.dumps({"error": "Missing file_ids"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        from core.file_store import FileStore
+        fstore = FileStore.instance()
+        deleted = []
+        skipped = []
+        for raw_id in file_ids:
+            file_id = str(raw_id or "").strip()
+            if not file_id:
+                continue
+            meta = fstore.get_metadata(file_id)
+            if not meta or not fstore.exists(file_id):
+                skipped.append({"file_id": file_id, "error": "File not found"})
+                continue
+            if user_id and not fstore.check_access(file_id, user_id=user_id):
+                skipped.append({"file_id": file_id, "error": "Access denied"})
+                continue
+            if conv_id and meta.get("conversation_id") != conv_id:
+                skipped.append({"file_id": file_id, "error": "File not in this conversation"})
+                continue
+            if fstore.delete(file_id, user_id=user_id):
+                deleted.append(file_id)
+            else:
+                skipped.append({"file_id": file_id, "error": "Access denied"})
+        flowfile.set_content(json.dumps({
+            "ok": True,
+            "deleted": len(deleted),
+            "file_ids": deleted,
+            "skipped": skipped,
+        }).encode())
+        return [flowfile]
+
     if action == "flow_runtime_graph":
         instance_id = body.get("instance_id", "")
         template_id = body.get("template_id", "")

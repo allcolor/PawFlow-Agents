@@ -15,6 +15,9 @@ AGENT_CORE = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
 TASK_MANAGEMENT = Path("core/handlers/task_management.py").read_text(encoding="utf-8")
 MEDIA_ACTIONS = Path("tasks/ai/actions/media.py").read_text(encoding="utf-8")
 ATTACHMENTS_JS = Path("tasks/io/chat_ui/attachments.js").read_text(encoding="utf-8")
+FILES_PANEL_JS = Path("tasks/io/chat_ui/files_panel.js").read_text(encoding="utf-8")
+SECRETS_JS = Path("tasks/io/chat_ui/secrets.js").read_text(encoding="utf-8")
+HTTP_LISTENER = Path("services/http_listener_service.py").read_text(encoding="utf-8")
 
 
 def test_add_msg_inserts_by_message_timestamp():
@@ -177,6 +180,22 @@ def test_live_conversation_tts_button_and_sse_hooks_are_wired():
     assert "document.querySelectorAll('#messages [data-msgid]')" in CONVERSATION_TTS_JS
     assert "src.type && src.type !== 'agent'" not in CONVERSATION_TTS_JS
     assert "['agent_delegate', 'tool', 'tool_call', 'tool_result', 'system', 'user'].includes(src.type)" in CONVERSATION_TTS_JS
+
+
+def test_files_panel_supports_batch_delete_clear_and_upload_ttl():
+    assert "var _convFilesSelected = new Set();" in FILES_PANEL_JS
+    assert "function deleteSelectedFiles()" in FILES_PANEL_JS
+    assert "action$('delete_files'" in FILES_PANEL_JS
+    assert "function clearAllConversationFiles()" in FILES_PANEL_JS
+    assert "action$('clear_store'" in FILES_PANEL_JS
+    assert "fd.append('ttl', String(ttlVal));" in FILES_PANEL_JS
+    assert "handleFileRowSelection(e, f.file_id)" in SECRETS_JS
+    assert "id=\"fileSelectBar\"" in SECRETS_JS
+    assert "clearFileStore" in SECRETS_JS
+    assert "tr.file-selected" in TEMPLATE_HTML
+    assert "file-panel-actions" in TEMPLATE_HTML
+    assert "clearFileStoreConfirm" in Path("tasks/io/chat_ui/i18n/en.json").read_text(encoding="utf-8")
+    assert 'PAWFLOW_WEBCHAT_UPLOAD_TTL_SECONDS", "3600"' in HTTP_LISTENER
 
 
 def test_autoscroll_only_stops_on_user_scroll_intent():

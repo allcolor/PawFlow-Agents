@@ -313,12 +313,15 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
                   color: #8a8aa0; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; }
 .files-table td { padding: 4px 8px; border-bottom: 1px solid #16213e; vertical-align: middle; }
 .files-table tbody tr:hover { background: #16213e; }
+.files-table tbody tr.file-selected { background: #1a2744; outline: 1px solid #4ecdc4; outline-offset: -1px; }
 .files-table tbody tr.unavailable td { opacity: 0.45; }
+.files-table .col-select { width: 28px; text-align: center; }
 .files-table .col-name a { color: #4ecdc4; text-decoration: none; }
 .files-table .col-name a:hover { text-decoration: underline; }
 .files-table .col-type { font-family: ui-monospace, Menlo, Consolas, monospace; color: #8a8aa0; }
 .files-table .col-size { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .files-table .col-date { white-space: nowrap; color: #8a8aa0; font-variant-numeric: tabular-nums; }
+.file-panel-actions { display: flex; align-items: center; gap: 8px; margin: 0 0 8px 0; width: 100%; }
 .file-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 4px;
              font-size: 12px; background: #1a1a2e; border: 1px solid #0f3460; color: #c0c0d0; }
 .file-chip a { color: #4ecdc4; text-decoration: none; }

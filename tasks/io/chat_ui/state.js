@@ -154,7 +154,16 @@ function getAuthHeaders() {
 }
 // Page is behind validateSessionAuth, so if we're here, we're logged in
 if (LOGIN_URL) {
+  document.getElementById('linkAccountBtn').style.display = '';
   document.getElementById('logoutBtn').style.display = '';
+}
+function beginOAuthAccountLink() {
+  if (!confirm('You will be signed out, then asked to sign in with the account to link. Continue?')) return;
+  if (eventSource) { eventSource.close(); eventSource = null; }
+  action$('begin_oauth_account_link', {}, { skipConversationId: true }).subscribe(data => {
+    if (data && data.error) { addMsg('error', data.error); return; }
+    window.location.href = (data && data.login_url) || '/auth/login';
+  });
 }
 function doLogout() {
   if (eventSource) { eventSource.close(); eventSource = null; }

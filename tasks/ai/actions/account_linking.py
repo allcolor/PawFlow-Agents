@@ -12,6 +12,48 @@ logger = logging.getLogger(__name__)
 def _handle_account_linking(self, action, body, store, user_id, flowfile):
     """Handle account linking actions. Returns [flowfile] or None."""
 
+    if action == "begin_oauth_account_link":
+        if not user_id:
+            flowfile.set_content(json.dumps({"error": "Authentication required"}).encode())
+            flowfile.set_attribute("http.response.status", "401")
+            return [flowfile]
+        ttl_seconds = 600
+        from core import oauth_invite_tokens
+        invite = oauth_invite_tokens.create_token(
+            role="viewer",
+            link_username=user_id,
+            ttl_seconds=ttl_seconds,
+            created_by=user_id,
+        )
+        cookie_name = "pawflow_token"
+        session_token = flowfile.get_attribute("http.cookie." + cookie_name) or ""
+        if not session_token:
+            cookie_header = flowfile.get_attribute("http.header.cookie") or ""
+            for part in cookie_header.split(";"):
+                part = part.strip()
+                if part.startswith(cookie_name + "="):
+                    session_token = part[len(cookie_name) + 1:]
+                    break
+        if session_token:
+            try:
+                from core.security import SecurityManager
+                SecurityManager.get_instance()._sessions.pop(session_token, None)
+            except Exception:
+                logger.debug("Ignored exception", exc_info=True)
+        link_cookie = (
+            f"pawflow_oauth_link_token={invite['token']}; Path=/; "
+            f"Max-Age={ttl_seconds}; HttpOnly; SameSite=Lax"
+        )
+        clear_session = f"{cookie_name}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax"
+        flowfile.set_attribute("http.response.header.Set-Cookie",
+                               link_cookie + "\n" + clear_session)
+        flowfile.set_content(json.dumps({
+            "ok": True,
+            "login_url": "/auth/login",
+            "ttl_seconds": ttl_seconds,
+        }).encode())
+        return [flowfile]
+
     if action == "link_account":
         provider = body.get("provider", "").strip()
         provider_id = body.get("provider_id", "").strip()

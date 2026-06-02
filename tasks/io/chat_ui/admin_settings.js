@@ -59,10 +59,16 @@ function openAdminUsersDialog() {
       }).join('');
       var links = Object.entries(u.identities || {}).map(function(pair) {
         var ch = pair[0], id = pair[1];
-        return '<span style="display:inline-flex;gap:4px;align-items:center;margin-right:6px;">'
-          + adminEsc(ch) + ':' + adminEsc(id)
-          + '<button style="padding:1px 5px;font-size:11px;" onclick=\'adminUnlinkIdentity(' + adminJsArg(u.username) + ',' + adminJsArg(ch) + ')\'>x</button></span>';
-      }).join('') || '<span style="color:var(--pf-muted);">none</span>';
+        return '<div class="adm-identity-link" data-channel="' + adminEsc(ch) + '" style="display:grid;grid-template-columns:80px minmax(140px,1fr) auto auto;gap:4px;align-items:center;margin-bottom:4px;">'
+          + '<input class="adm-id-channel" value="' + adminEsc(ch) + '" placeholder="provider">'
+          + '<input class="adm-id-value" value="' + adminEsc(id) + '" placeholder="identity id">'
+          + '<button style="padding:1px 5px;font-size:11px;" onclick=\'adminSaveIdentity(this,' + adminJsArg(u.username) + ',' + adminJsArg(ch) + ')\'>Save</button>'
+          + '<button style="padding:1px 5px;font-size:11px;" onclick=\'adminUnlinkIdentity(' + adminJsArg(u.username) + ',' + adminJsArg(ch) + ')\'>Delete</button></div>';
+      }).join('') || '<div style="color:var(--pf-muted);margin-bottom:4px;">none</div>';
+      links += '<div style="display:grid;grid-template-columns:80px minmax(140px,1fr) auto;gap:4px;align-items:center;">'
+        + '<input class="adm-new-id-channel" placeholder="provider">'
+        + '<input class="adm-new-id-value" placeholder="identity id">'
+        + '<button style="padding:1px 5px;font-size:11px;" onclick=\'adminAddIdentity(this,' + adminJsArg(u.username) + ')\'>Add</button></div>';
       return '<tr data-user="' + adminEsc(u.username) + '">'
         + '<td>' + adminEsc(u.username) + '</td>'
         + '<td><input class="adm-display" value="' + adminEsc(u.display_name || '') + '"></td>'
@@ -128,6 +134,29 @@ function adminDeleteUser(username) {
   if (!confirm('Delete user ' + username + '?')) return;
   action$('admin_user_delete', { username: username })
     .subscribe(function(d) { if (d.error) addMsg('error', d.error); else { document.querySelector('.exec-overlay').remove(); openAdminUsersDialog(); } });
+}
+
+function adminSaveIdentity(btn, username, oldChannel) {
+  var wrap = btn.closest('.adm-identity-link');
+  var channel = wrap.querySelector('.adm-id-channel').value.trim();
+  var channelId = wrap.querySelector('.adm-id-value').value.trim();
+  action$('admin_identity_link', {
+    username: username,
+    old_channel: oldChannel,
+    channel: channel,
+    channel_id: channelId,
+  }).subscribe(function(d) { if (d.error) addMsg('error', d.error); else { document.querySelector('.exec-overlay').remove(); openAdminUsersDialog(); } });
+}
+
+function adminAddIdentity(btn, username) {
+  var wrap = btn.parentElement;
+  var channel = wrap.querySelector('.adm-new-id-channel').value.trim();
+  var channelId = wrap.querySelector('.adm-new-id-value').value.trim();
+  action$('admin_identity_link', {
+    username: username,
+    channel: channel,
+    channel_id: channelId,
+  }).subscribe(function(d) { if (d.error) addMsg('error', d.error); else { document.querySelector('.exec-overlay').remove(); openAdminUsersDialog(); } });
 }
 
 function adminUnlinkIdentity(username, channel) {

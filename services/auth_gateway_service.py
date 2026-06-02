@@ -253,6 +253,21 @@ All string values may use `${...}` expressions. They are resolved recursively at
                 self._pending_oauth.pop(pending_id, None)
         return completed
 
+    def can_complete_pending_oauth(self, pending_id: str) -> bool:
+        """Return True only when the pending OAuth session can accept a token."""
+        pending_id = str(pending_id or "").strip()
+        if not pending_id:
+            return False
+        with self._lock:
+            entry = self._pending_oauth.get(pending_id)
+            if entry and time.time() >= float(entry.get("expires", 0)):
+                self._pending_oauth.pop(pending_id, None)
+                entry = None
+        if not entry:
+            return False
+        from core import oauth_invite_tokens
+        return bool(oauth_invite_tokens.list_tokens())
+
     @staticmethod
     def _format_oauth_exchange_error(provider_name: str, error: str) -> str:
         raw = (error or "OAuth token exchange failed").strip()

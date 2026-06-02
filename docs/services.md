@@ -129,12 +129,25 @@ and a guided view over a small manifest of global system parameters such as
 `embedding_llm_service` and `PAWFLOW_USE_RTK`. Fields already owned by a service
 stay in that service.
 
+User management includes the explicit identity links used by
+`IdentityService`. Admins can add, edit, or delete links such as
+`github:<provider-user-id>` or `google:<provider-user-id>` for an existing
+PawFlow user. A provider identity cannot be assigned to two users at once.
+Users can also start the same OAuth-link flow from the chat header. PawFlow
+creates a short-lived onboarding token targeted at the current user, stores it
+in an HttpOnly cookie, clears the active session, and sends the browser back to
+login. The next unlinked OAuth identity is linked automatically if that cookie
+token is still valid, then the temporary cookie is cleared.
+
 External OAuth login fails closed after the provider validates the browser user
 unless the provider identity already resolves to an existing PawFlow user. Admins
 can open the gear menu and create a one-time OAuth onboarding token with a TTL.
 The token either creates a new PawFlow user with the configured role or links the
 validated provider identity to a configured existing user. Tokens are stored only
 as hashes and are deleted when used, when revoked, or when their TTL expires.
+The login page shows the onboarding-token form only while the provider-validated
+pending OAuth session still exists and at least one active onboarding token is
+available; otherwise it shows only the OAuth error.
 
 ### `privateGateway`
 

@@ -19,6 +19,23 @@ from core.base_task import BaseTask
 logger = logging.getLogger(__name__)
 
 OAUTH_HTTP_USER_AGENT = "PawFlow-OAuth/1.0 (+https://github.com/allcolor/PawFlow-Agents)"
+OAUTH_LINK_COOKIE = "pawflow_oauth_link_token"  # nosec B105 - public cookie name, not a token value.
+
+
+def _cookie_value(flowfile: FlowFile, name: str) -> str:
+    value = flowfile.get_attribute("http.cookie." + name) or ""
+    if value:
+        return urllib.parse.unquote(value)
+    cookie_header = flowfile.get_attribute("http.header.cookie") or ""
+    for part in cookie_header.split(";"):
+        part = part.strip()
+        if part.startswith(name + "="):
+            return urllib.parse.unquote(part[len(name) + 1:])
+    return ""
+
+
+def _clear_cookie(name: str) -> str:
+    return f"{name}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax"
 
 
 def _http_post(url: str, data: Dict, headers: Optional[Dict] = None,
@@ -299,7 +316,25 @@ class OAuthCallbackTask(BaseTask):
         host = flowfile.get_attribute("http.header.host") or "localhost:9090"
         scheme = self._detect_scheme(flowfile)
         redirect_uri = f"{scheme}://{host}/auth/callback"
+        link_token = _cookie_value(flowfile, OAUTH_LINK_COOKIE)
         result = auth_svc.authenticate_oauth(provider_name, code, redirect_uri, ip=ip)
+
+        if not result.success:
+            pending_id = getattr(result, "pending_oauth_id", "")
+            if link_token and pending_id and hasattr(auth_svc, "complete_pending_oauth"):
+                result = auth_svc.complete_pending_oauth(pending_id, link_token, ip=ip)
+            if not result.success:
+                redirected = self._login_redirect(
+                    flowfile, result.error,
+                    pending_oauth_id=pending_id,
+                )
+                if link_token:
+                    redirected.set_attribute("http.response.header.Set-Cookie",
+                                             _clear_cookie(OAUTH_LINK_COOKIE))
+                return [redirected]
+
+        if link_token:
+            flowfile.set_attribute("_oauth_link_cookie_seen", "true")
 
         if not result.success:
             return [self._login_redirect(
@@ -352,8 +387,10 @@ class OAuthCallbackTask(BaseTask):
             flowfile.set_attribute("http.response.header.Location", cb_url)
         else:
             flowfile.set_attribute("http.response.header.Location", redirect)
-        flowfile.set_attribute("http.response.header.Set-Cookie",
-                               f"{cookie}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age}")
+        set_cookie = f"{cookie}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age}"
+        if flowfile.get_attribute("_oauth_link_cookie_seen") == "true":
+            set_cookie += "\n" + _clear_cookie(OAUTH_LINK_COOKIE)
+        flowfile.set_attribute("http.response.header.Set-Cookie", set_cookie)
         return [flowfile]
 
     @staticmethod

@@ -482,6 +482,58 @@ class TestOAuthRedirectTask(unittest.TestCase):
         assert "The provided client secret is invalid." in body
         assert "<div class=\"error\">" in body
 
+    def test_login_page_hides_oauth_token_form_when_pending_cannot_complete(self):
+        from tasks.io.serve_login import ServeLoginTask
+
+        class Auth:
+            def get_enabled_providers(self):
+                return [{"name": "builtin", "display_name": "Sign in", "icon": "", "is_oauth": False}]
+
+            def can_complete_pending_oauth(self, pending_id):
+                assert pending_id == "pending-123"
+                return False
+
+        task = ServeLoginTask({"auth_service_id": "auth"})
+        task._services = {"auth": Auth()}
+        ff = FlowFile(content=b"")
+        ff.set_attribute(
+            "http.query",
+            "error=OAuth%20account%20is%20not%20linked&pending_oauth=pending-123",
+        )
+
+        results = task.execute(ff)
+
+        body = results[0].get_content().decode("utf-8")
+        assert "OAuth account is not linked" in body
+        assert "OAuth onboarding token" not in body
+        assert "Complete sign in" not in body
+
+    def test_login_page_renders_oauth_token_form_only_when_pending_can_complete(self):
+        from tasks.io.serve_login import ServeLoginTask
+
+        class Auth:
+            def get_enabled_providers(self):
+                return [{"name": "builtin", "display_name": "Sign in", "icon": "", "is_oauth": False}]
+
+            def can_complete_pending_oauth(self, pending_id):
+                assert pending_id == "pending-123"
+                return True
+
+        task = ServeLoginTask({"auth_service_id": "auth"})
+        task._services = {"auth": Auth()}
+        ff = FlowFile(content=b"")
+        ff.set_attribute(
+            "http.query",
+            "error=OAuth%20account%20is%20not%20linked&pending_oauth=pending-123",
+        )
+
+        results = task.execute(ff)
+
+        body = results[0].get_content().decode("utf-8")
+        assert "OAuth onboarding token" in body
+        assert "Complete sign in" in body
+        assert 'name="pending_oauth" type="hidden" value="pending-123"' in body
+
     def test_pawflow_callback_exchanges_with_provider_from_state(self):
         from types import SimpleNamespace
         from tasks.io.oauth_callback import OAuthCallbackTask
@@ -589,6 +641,68 @@ class TestOAuthCallbackTask(unittest.TestCase):
         ff.set_attribute("http.query", "code=auth-code-123&state=invalid-state")
         results = task.execute(ff)
         assert results[0].get_attribute("http.response.status") == "403"
+
+    def test_pawflow_callback_auto_completes_pending_oauth_from_link_cookie(self):
+        from services.auth_providers.base import AuthResult
+        from tasks.io.oauth_callback import OAuthCallbackTask
+        from core.security import SecurityManager, Role
+
+        username = "oauth_link_target"
+        sm = SecurityManager.get_instance()
+        try:
+            sm.create_user(username, "pass", Role.VIEWER, email="link@example.com")
+        except ValueError:
+            pass
+
+        class OAuthState:
+            provider = "pawflow"
+
+            def validate_state(self, state):
+                assert state == "state-link"
+                return {"provider": "github"}
+
+        class AuthGateway:
+            def __init__(self):
+                self.completed = []
+
+            def validate_state(self, state):
+                return None
+
+            def authenticate_oauth(self, provider_name, code, redirect_uri, ip=""):
+                result = AuthResult(
+                    success=False,
+                    error="OAuth account is not linked to a PawFlow user. Enter an OAuth onboarding token.",
+                )
+                setattr(result, "pending_oauth_id", "pending-link")
+                return result
+
+            def complete_pending_oauth(self, pending_id, invite_token, ip=""):
+                self.completed.append((pending_id, invite_token))
+                return AuthResult(
+                    success=True,
+                    provider="github",
+                    user_id=username,
+                    username=username,
+                    roles=["viewer"],
+                )
+
+        auth = AuthGateway()
+        task = OAuthCallbackTask({"success_redirect": "/chat"})
+        task._services = {"oauth": OAuthState(), "auth": auth}
+        task.config["oauth_service_id"] = "oauth"
+        ff = FlowFile(content=b"")
+        ff.set_attribute("http.query", "code=gh-code&state=state-link")
+        ff.set_attribute("http.header.host", "webchat.example")
+        ff.set_attribute("http.header.cookie", "pawflow_oauth_link_token=pfo_link_token")
+
+        results = task.execute(ff)
+
+        assert auth.completed == [("pending-link", "pfo_link_token")]
+        assert results[0].get_attribute("http.response.status") == "302"
+        assert results[0].get_attribute("http.response.header.Location") == "/chat"
+        cookie = results[0].get_attribute("http.response.header.Set-Cookie")
+        assert "pawflow_token=" in cookie
+        assert "pawflow_oauth_link_token=; Path=/; Max-Age=0" in cookie
 
     @patch("tasks.io.oauth_callback._http_post")
     @patch("tasks.io.oauth_callback._http_get")

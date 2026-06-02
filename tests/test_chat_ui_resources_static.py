@@ -48,6 +48,26 @@ def test_admin_settings_menu_exposes_oauth_onboarding_tokens():
     assert "Tokens are one-time and disappear when used, expired, or deleted." in admin_js
 
 
+def test_admin_user_management_can_edit_identity_links():
+    admin_js = Path("tasks/io/chat_ui/admin_settings.js").read_text(encoding="utf-8")
+
+    assert "admin_identity_link" in admin_js
+    assert "function adminSaveIdentity" in admin_js
+    assert "function adminAddIdentity" in admin_js
+    assert "adm-id-channel" in admin_js
+    assert "adm-new-id-channel" in admin_js
+
+
+def test_chat_ui_exposes_oauth_link_account_button():
+    template = Path("tasks/io/chat_ui/template.html").read_text(encoding="utf-8")
+    state_js = Path("tasks/io/chat_ui/state.js").read_text(encoding="utf-8")
+
+    assert "linkAccountBtn" in template
+    assert "function beginOAuthAccountLink" in state_js
+    assert "begin_oauth_account_link" in state_js
+    assert "skipConversationId: true" in state_js
+
+
 def test_relay_install_hides_token_parameter():
     src = Path("tasks/io/chat_ui/resources.js").read_text(encoding="utf-8")
     relay_src = Path("services/filesystem_service.py").read_text(encoding="utf-8")

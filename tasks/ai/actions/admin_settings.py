@@ -164,6 +164,31 @@ def _handle_admin_settings(self, action, body, store, user_id, flowfile):
         except Exception as exc:
             return _json(flowfile, {"error": str(exc)}, "400")
 
+    if action == "admin_identity_link":
+        denied = _require_admin(flowfile)
+        if denied:
+            return denied
+        username = str(body.get("username", "") or "").strip()
+        channel = str(body.get("channel", "") or "").strip()
+        channel_id = str(body.get("channel_id", "") or "").strip()
+        old_channel = str(body.get("old_channel", "") or "").strip()
+        if not username or not channel or not channel_id:
+            return _json(flowfile, {"error": "username, channel, and channel_id are required"}, "400")
+        from core.security import SecurityManager
+        if not SecurityManager.get_instance().get_user(username):
+            return _json(flowfile, {"error": "user does not exist"}, "400")
+        from core.identity_service import IdentityService
+        ids = IdentityService.instance()
+        old_channel_id = ids.get_channel_id(username, old_channel) if old_channel else ""
+        if old_channel and old_channel != channel and old_channel_id == channel_id:
+            ids.unlink(username, old_channel)
+        ok = ids.link(username, channel, channel_id)
+        if not ok:
+            return _json(flowfile, {"error": "identity is already linked to another user"}, "409")
+        if old_channel and old_channel != channel and old_channel_id != channel_id:
+            ids.unlink(username, old_channel)
+        return _json(flowfile, {"ok": True})
+
     if action == "admin_identity_unlink":
         denied = _require_admin(flowfile)
         if denied:

@@ -424,6 +424,24 @@ def test_external_oauth_without_existing_user_requires_invite_token(tmp_path, mo
     assert getattr(result, "pending_oauth_id", "")
 
 
+def test_pending_oauth_can_complete_only_when_invite_token_exists(tmp_path, monkeypatch):
+    _isolated_auth_paths(tmp_path, monkeypatch)
+    from core import oauth_invite_tokens
+    from services.auth_gateway_service import AuthGatewayService
+
+    gw = AuthGatewayService({"providers": {}})
+    gw._providers["github"] = _SuccessfulOAuthProvider()
+    pending = gw.authenticate_oauth("github", "code", "https://app.example/auth/callback")
+    pending_id = getattr(pending, "pending_oauth_id")
+
+    assert gw.can_complete_pending_oauth(pending_id) is False
+
+    oauth_invite_tokens.create_token(role="viewer", ttl_seconds=3600, created_by="admin")
+
+    assert gw.can_complete_pending_oauth(pending_id) is True
+    assert gw.can_complete_pending_oauth("missing") is False
+
+
 def test_external_oauth_existing_username_or_email_still_requires_link_token(tmp_path, monkeypatch):
     _isolated_auth_paths(tmp_path, monkeypatch)
     from core.security import SecurityManager, Role

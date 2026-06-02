@@ -115,6 +115,20 @@ class IdentityService:
             principal_data = self._read_mapping(user_id)
             principal_data.setdefault("principal", user_id)
             channels = principal_data.setdefault("channels", {})
+            previous_channel_id = channels.get(channel)
+            if previous_channel_id and previous_channel_id != channel_id:
+                previous = self._read_mapping(previous_channel_id)
+                if previous.get("principal") == user_id:
+                    alias_dir = _paths.USER_CONFIG_DIR / self._safe_id(previous_channel_id)
+                    alias_file = alias_dir / "identity_mapping.json"
+                    if alias_file.exists():
+                        alias_file.unlink()
+                        with self._mapping_cache_lock:
+                            self._mapping_cache.pop(self._safe_id(previous_channel_id), None)
+                        try:
+                            alias_dir.rmdir()
+                        except OSError:
+                            pass
             channels[channel] = channel_id
             if bot_token:
                 tokens = principal_data.setdefault("bot_tokens", {})

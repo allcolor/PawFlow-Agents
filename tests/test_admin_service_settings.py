@@ -112,3 +112,56 @@ def test_admin_can_create_list_and_delete_oauth_onboarding_tokens(tmp_path, monk
     empty = _handle_admin_settings(
         None, "admin_oauth_tokens_list", {}, None, "admin", ff_empty)
     assert json.loads(empty[0].get_content().decode("utf-8"))["tokens"] == []
+
+
+def test_admin_can_add_update_and_delete_user_identity_links(tmp_path, monkeypatch):
+    import core.paths as paths
+    from core.identity_service import IdentityService
+    from core.security import SecurityManager, Role
+    from tasks.ai.actions.admin_settings import _handle_admin_settings
+
+    monkeypatch.setattr(paths, "USERS_FILE", tmp_path / "users.json")
+    monkeypatch.setattr(paths, "SESSIONS_FILE", tmp_path / "sessions.json")
+    monkeypatch.setattr(paths, "SECURITY_FILE", tmp_path / "security.json")
+    monkeypatch.setattr(paths, "USER_CONFIG_DIR", tmp_path / "users")
+    SecurityManager._instance = None
+    IdentityService.reset()
+    sm = SecurityManager.get_instance()
+    sm.create_user("alice", "pass", Role.VIEWER, email="alice@example.com")
+    sm.create_user("bob", "pass", Role.VIEWER, email="bob@example.com")
+
+    created = _handle_admin_settings(None, "admin_identity_link", {
+        "username": "alice",
+        "channel": "github",
+        "channel_id": "gh-1",
+    }, None, "admin", _admin_flowfile())
+    assert json.loads(created[0].get_content().decode("utf-8"))["ok"] is True
+    ids = IdentityService.instance()
+    assert ids.resolve("github", "gh-1") == "alice"
+
+    updated = _handle_admin_settings(None, "admin_identity_link", {
+        "username": "alice",
+        "old_channel": "github",
+        "channel": "github",
+        "channel_id": "gh-2",
+    }, None, "admin", _admin_flowfile())
+    assert json.loads(updated[0].get_content().decode("utf-8"))["ok"] is True
+    assert ids.resolve("github", "gh-1") is None
+    assert ids.resolve("github", "gh-2") == "alice"
+
+    conflict = _handle_admin_settings(None, "admin_identity_link", {
+        "username": "bob",
+        "channel": "github",
+        "channel_id": "gh-2",
+    }, None, "admin", _admin_flowfile())
+    assert conflict[0].get_attribute("http.response.status") == "409"
+
+    deleted = _handle_admin_settings(None, "admin_identity_unlink", {
+        "username": "alice",
+        "channel": "github",
+    }, None, "admin", _admin_flowfile())
+    assert json.loads(deleted[0].get_content().decode("utf-8"))["ok"] is True
+    assert ids.resolve("github", "gh-2") is None
+
+    SecurityManager._instance = None
+    IdentityService.reset()

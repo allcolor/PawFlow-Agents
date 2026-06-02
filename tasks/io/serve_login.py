@@ -166,7 +166,10 @@ class ServeLoginTask(BaseTask):
         if error:
             error_html = f'<div class="error">{html.escape(error)}</div>\n'
         token_html = ""  # nosec B105 - empty optional HTML block, not a password.
-        if pending_oauth:
+        can_complete_pending = False
+        if pending_oauth and hasattr(auth_svc, "can_complete_pending_oauth"):
+            can_complete_pending = auth_svc.can_complete_pending_oauth(pending_oauth)
+        if can_complete_pending:
             token_html = f'''
 <form method="POST" action="/auth/login/token" class="login-form">
   <input name="pending_oauth" type="hidden" value="{html.escape(pending_oauth)}">

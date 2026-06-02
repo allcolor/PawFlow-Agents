@@ -53,6 +53,7 @@ class TestIdentityService(unittest.TestCase):
         self.assertTrue(ok)
         user = self.ids.resolve_user("telegram", "222")
         self.assertEqual(user, "alice@test.com")
+        self.assertIsNone(self.ids.resolve_user("telegram", "111"))
 
     def test_unlink(self):
         self.ids.link("alice@test.com", "telegram", "123456")
@@ -184,6 +185,8 @@ class TestTelegramConvCommands(unittest.TestCase):
         self.tmp = tempfile.mkdtemp()
         IdentityService.reset()
         import core.paths as _p; self._orig_ucd = _p.USER_CONFIG_DIR; _p.USER_CONFIG_DIR = __import__("pathlib").Path(self.tmp); self.ids = IdentityService()
+        self._orig_oauth_tokens = _p.OAUTH_INVITE_TOKENS_FILE
+        _p.OAUTH_INVITE_TOKENS_FILE = __import__("pathlib").Path(self.tmp) / "oauth_tokens.json"
         IdentityService._instance = self.ids
         ConversationStore.reset()
         self.store = ConversationStore(store_dir=os.path.join(self.tmp, "convs"))
@@ -194,6 +197,8 @@ class TestTelegramConvCommands(unittest.TestCase):
     def tearDown(self):
         IdentityService.reset()
         ConversationStore.reset()
+        import core.paths as _p
+        _p.OAUTH_INVITE_TOKENS_FILE = self._orig_oauth_tokens
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def _make_ff(self, text):
@@ -329,6 +334,30 @@ class TestAgentLoopAccountLinking(unittest.TestCase):
     def test_get_links_empty(self):
         resp = self._action({"action": "list_linked_accounts"})
         self.assertEqual(resp["links"], {})
+
+    def test_begin_oauth_account_link_sets_link_cookie_and_clears_session(self):
+        from core import oauth_invite_tokens
+        from core.security import SecurityManager
+        from tasks.ai.agent_loop import AgentLoopTask
+        task = AgentLoopTask({"api_key": "test", "conversation_store": True})
+        ff = FlowFile(content=json.dumps({
+            "action": "begin_oauth_account_link",
+        }).encode("utf-8"))
+        ff.set_attribute("http.auth.principal", "alice@test.com")
+        ff.set_attribute("http.cookie.pawflow_token", "session-abc")
+        SecurityManager.get_instance()._sessions["session-abc"] = object()
+
+        result = task.execute(ff)[0]
+        resp = json.loads(result.get_content().decode("utf-8"))
+
+        self.assertTrue(resp["ok"])
+        self.assertEqual(resp["login_url"], "/auth/login")
+        cookie = result.get_attribute("http.response.header.Set-Cookie")
+        self.assertIn("pawflow_oauth_link_token=pfo_", cookie)
+        self.assertIn("pawflow_token=; Path=/; Max-Age=0", cookie)
+        self.assertNotIn("session-abc", SecurityManager.get_instance()._sessions)
+        tokens = oauth_invite_tokens.list_tokens()
+        self.assertEqual(tokens[0]["link_username"], "alice@test.com")
 
 
 class TestMessageChannelField(unittest.TestCase):

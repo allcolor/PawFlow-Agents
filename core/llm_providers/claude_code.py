@@ -11,7 +11,6 @@ import json
 import logging
 import os
 import queue
-import re
 import subprocess  # nosec B404
 import threading
 import time
@@ -431,71 +430,6 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                 logger.debug("exception suppressed", exc_info=True)
         return stderr
 
-    # ── Legacy session scrub ────────────────────────────────────────
-
-    # Matches placeholders the agent used to write into user text before the
-    # vision channel was wired properly, e.g. "[image: image_1234567890_2.png]".
-    # The image bytes travel via the native vision path now, so the text
-    # reference is stale — keeping it would make the agent pattern-match
-    # "image attached → call see('image_1234567890_2.png')" on every resume.
-    _LEGACY_IMAGE_RE = re.compile(
-        r'\s*\[image:\s*image_\d+_\d+\.[A-Za-z0-9]+\s*\]\s*')
-
-    def _scrub_legacy_image_placeholders(self, session_file: str) -> None:
-        """Rewrite a claude-code .jsonl session file in place, stripping
-        legacy ``[image: image_<ts>_<n>.<ext>]`` markers from user text.
-
-        Only user-authored text is touched. Lines that aren't valid JSON or
-        that aren't user messages pass through unchanged. No-op if nothing
-        matches, so repeated resumes on a clean file cost only a read.
-        """
-        import json
-        try:
-            with open(session_file, "r", encoding="utf-8") as _f:
-                _raw_lines = _f.readlines()
-        except OSError:
-            return
-
-        _pat = self._LEGACY_IMAGE_RE
-        _changed = False
-        _out = []
-        for _line in _raw_lines:
-            try:
-                _obj = json.loads(_line)
-            except (json.JSONDecodeError, ValueError):
-                _out.append(_line)
-                continue
-            if isinstance(_obj, dict) and _obj.get("type") == "user":
-                _msg = _obj.get("message")
-                if isinstance(_msg, dict):
-                    _content = _msg.get("content")
-                    if isinstance(_content, str):
-                        _new = _pat.sub(" ", _content).strip()
-                        if _new != _content:
-                            _msg["content"] = _new
-                            _changed = True
-                    elif isinstance(_content, list):
-                        for _part in _content:
-                            if isinstance(_part, dict) and _part.get("type") == "text":
-                                _t = _part.get("text", "")
-                                _new = _pat.sub(" ", _t).strip()
-                                if _new != _t:
-                                    _part["text"] = _new
-                                    _changed = True
-                _out.append(json.dumps(_obj, ensure_ascii=False) + "\n")
-            else:
-                _out.append(_line)
-
-        if not _changed:
-            return
-
-        # Atomic rewrite: write .tmp then rename so a crash mid-scrub
-        # doesn't leave the session file truncated.
-        _tmp = session_file + ".scrubtmp"
-        with open(_tmp, "w", encoding="utf-8") as _f:
-            _f.writelines(_out)
-        os.replace(_tmp, session_file)
-
     # ── Non-streaming (complete) ────────────────────────────────────
 
     @staticmethod
@@ -822,9 +756,8 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         This is a pure move; behavior is identical when called.
 
         Writes .mcp.json + mints an internal-auth token, computes the
-        effective --resume session id (dropped if the jsonl is missing),
-        scrubs legacy image placeholders in the resumed jsonl, builds the
-        CLI command, and launches via the pool.
+        effective --resume session id (dropped if the jsonl is missing), builds
+        the CLI command, and launches via the pool.
 
         Side effects:
             - self._claude_proc  (unless _ephemeral_stream)
@@ -884,22 +817,6 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
 
         logger.info("claude-code stream: cwd=%s cmd=%s",
                      workdir, " ".join(str(c) for c in cmd[:20]))
-        # Scrub legacy [image: image_<ts>_<n>.<ext>] placeholders from
-        # user text fields. These were written before the vision-
-        # placeholder fix and make the agent pattern-match "image
-        # attached → call see() with this filename" on every new
-        # user turn. The image bytes are still forwarded via the
-        # native vision channel, so stripping the text reference is
-        # purely cosmetic for the transcript AND prevents the bogus
-        # see() calls. Only meaningful when we actually --resume an
-        # existing jsonl; skip for NEW sessions.
-        if session_id and _exists:
-            try:
-                self._scrub_legacy_image_placeholders(_expected_session_file)
-            except Exception as _scrub_err:
-                logger.warning("[claude-code] session scrub failed (%s): %s",
-                               session_id[:8], _scrub_err)
-
         # Track pool container for cleanup
         self._pool_container_name = None
 

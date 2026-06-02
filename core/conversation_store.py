@@ -391,10 +391,6 @@ class ConversationStore:
                         return conv_dir
         raise ValueError(f"Conversation {cid[:16]} not found and no user_id provided")
 
-    def _conv_path(self, cid: str) -> Path:
-        """Legacy compat: points to transcript.jsonl for exists() checks."""
-        return self._conv_dir(cid) / "transcript.jsonl"
-
     def _transcript_path(self, cid: str) -> Path:
         return self._conv_dir(cid) / "transcript.jsonl"
 
@@ -1776,26 +1772,6 @@ class ConversationStore:
                     "[convstore] failed to prune invalid context dir %s/%s",
                     cid[:8], agent, exc_info=True)
 
-    def _agent_context_dirs(self, cid: str) -> set:
-        """Return agents with an existing context dir without transcript scan."""
-        try:
-            conv_dir = self._conv_dir(cid)
-        except ValueError:
-            return set()
-        if not conv_dir.is_dir():
-            return set()
-        skip = {".git", "transcript", "shared", "summaries",
-                "_jsonl_migration_backup"}
-        agents = set()
-        for entry in conv_dir.iterdir():
-            if not entry.is_dir() or entry.name in skip:
-                continue
-            if not (self._jsonl_exists(entry / "context.jsonl")
-                    or (entry / "context").is_dir()):
-                continue
-            agents.add(self._canon_agent(entry.name.replace("__", ":")))
-        return agents
-
     def _cache_agents_for_append(self, cid: str) -> set:
         """Return known agents without rescanning the transcript hot path."""
         with self._cache_lock:
@@ -1808,13 +1784,8 @@ class ConversationStore:
                 if agents:
                     self._append_agents_cache[cid] = set(agents)
                     return agents
-                extras = cached.get("extras") or {}
-                if "conv_agents" not in extras:
-                    agents = self._agent_context_dirs(cid)
-                    if agents:
-                        cached.setdefault("agents", set()).update(agents)
-                    self._append_agents_cache[cid] = set(agents)
-                    return agents
+                self._append_agents_cache[cid] = set()
+                return set()
                 self._append_agents_cache[cid] = set()
                 return set()
 
@@ -1828,11 +1799,6 @@ class ConversationStore:
         agents = set()
         if isinstance(conv_agents, dict) and conv_agents:
             agents.update(self._canon_agent(a) for a in conv_agents if a)
-        elif "conv_agents" not in extras_data:
-            # Legacy/imported conversations may have context dirs but no
-            # conv_agents sidecar yet. Directory listing is bounded by agent
-            # count and preserves old fan-out without scanning transcript rows.
-            agents.update(self._agent_context_dirs(cid))
         with self._cache_lock:
             self._append_agents_cache[cid] = set(agents)
         return agents
@@ -4265,8 +4231,8 @@ class ConversationStore:
         def _rewrite_jsonl(path: Path) -> int:
             """Rewrite a logical JSONL stream, removing rows with matching msg_id.
 
-            Also removes sub_agent_trace messages and append-only trace_update
-            events whose trace_id matches an id in `ids`.
+            Also removes append-only trace_update events whose trace_id matches
+            an id in `ids`.
             """
             log = SegmentedJsonl(path)
             if not log.exists():
@@ -4275,11 +4241,6 @@ class ConversationStore:
             def _transform(line: Dict[str, Any]) -> Optional[Dict[str, Any]]:
                 nonlocal count
                 if line.get("msg_id") in ids:
-                    count += 1
-                    return None
-                # Legacy sub_agent_trace without msg_id — match on trace_id
-                if (line.get("role") == "sub_agent_trace"
-                        and line.get("trace_id") in ids):
                     count += 1
                     return None
                 if (line.get("t") == "trace_update"
@@ -4396,7 +4357,6 @@ class ConversationStore:
         for cid in expired:
             self.delete(cid)
             removed += 1
-        removed += self.cleanup_orphan_claude_sessions()
         removed += self.cleanup_orphan_cli_sessions()
         return removed
 
@@ -4409,21 +4369,15 @@ class ConversationStore:
             "gemini": _paths.GEMINI_SESSIONS_DIR,
         }
 
-    def cleanup_orphan_cli_sessions(self, providers: Optional[List[str]] = None,
-                                    prune_live: bool = False) -> int:
+    def cleanup_orphan_cli_sessions(self, providers: Optional[List[str]] = None) -> int:
         """Remove CLI provider session dirs whose conversation no longer exists.
 
         Runtime session roots all use the same top-level shape:
           sessions/<provider>/<user>/<conversation>/...
 
-        The startup cleanup intentionally only inspects those first two
-        directory levels. If the matching conversation directory exists, the
-        provider session is still linked and the whole tree is kept. If it does
-        not exist, the provider session directory is removed. No session files
-        are read.
-
-        prune_live=True keeps the legacy Claude-only stale-jsonl pruning path
-        for explicit maintenance/invalidation callers; startup uses False.
+        If the matching conversation directory exists, the provider session is
+        still linked and the whole tree is kept. If it does not exist, the
+        provider session directory is removed. No session files are read.
         """
         roots = self._cli_session_roots()
         if providers:
@@ -4490,13 +4444,6 @@ class ConversationStore:
                                 logger.debug(
                                     "Failed to remove nested one-shot %s session %s: %s",
                                     provider, agent_dir, exc)
-                        if prune_live and provider == "claude":
-                            recovered_cid = sess_dir.name.replace("__", ":")
-                            try:
-                                removed += self._prune_stale_cc_sessions(
-                                    sess_dir, recovered_cid)
-                            except Exception:
-                                logger.debug("exception suppressed", exc_info=True)
                         continue
                     try:
                         stale = sess_dir.with_name(
@@ -4520,77 +4467,6 @@ class ConversationStore:
                                      provider, sess_dir, exc)
         return removed
 
-    def cleanup_orphan_claude_sessions(self, prune_live: bool = True) -> int:
-        """Remove Claude Code session workdirs whose conversation no
-        longer exists.
-
-        Task sub-convs used to leak their session dirs when the sub-conv
-        was deleted but the corresponding sessions/claude/<user>/<cid>/
-        tree was left behind (credentials, project jsonl, mcp_bridge
-        log). We now clean up on delete(), but existing installs may
-        still have piles of orphans — this method reclaims them.
-
-        When prune_live is False, live conversation dirs are not scanned with
-        rglob; this is the startup mode, where reclaiming true orphans matters
-        but a deep prune of live sessions can take seconds on Windows/WSL.
-
-        Returns the number of orphan session dirs or stale jsonls removed.
-        """
-        return self.cleanup_orphan_cli_sessions(
-            providers=["claude"], prune_live=prune_live)
-
-    def _prune_stale_cc_sessions(self, sess_dir: Path, cid: str,
-                                  wipe_all: bool = False) -> int:
-        """Delete CC session jsonls that are no longer the current session.
-
-        CC writes session transcripts to
-          <sess_dir>/<agent>/projects/-workspace/<session_id>.jsonl
-        and often drops a companion workdir <session_id>/ next to it.
-        Current sessions are listed as extras["claude_session:<agent>"].
-        Anything else is dead weight and can go - both the .jsonl and
-        the companion dir sharing the same stem.
-
-        wipe_all=True: ignore extras (live_sids={}) for explicit maintenance
-        callers that have already killed the current session(s) and want to
-        nuke all jsonls + companion dirs for this conv.
-
-        Source of truth: extras["claude_session:<agent>"].
-        No mtime heuristic. A hardcoded grace window would be arbitrary AND
-        wrong: too short, it wipes a live session whose stall budget is larger;
-        too long, it keeps real orphans forever. extras is authoritative -
-        trust it.
-        """
-        import shutil
-        # Collect live session ids from extras (one per agent).
-        live_sids = set()
-        if not wipe_all:
-            try:
-                extras = self.get_extras(cid) or {}
-                for k, v in extras.items():
-                    if isinstance(k, str) and k.startswith("claude_session:") and v:
-                        live_sids.add(str(v))
-            except Exception:
-                return 0
-            if not live_sids:
-                return 0  # nothing known - don't guess, leave alone
-        removed = 0
-        for jf in sess_dir.rglob("projects/*/*.jsonl"):
-            try:
-                stem = jf.stem
-                if stem in live_sids:
-                    continue
-                jf.unlink()
-                removed += 1
-                # Companion workdir <sid>/ next to <sid>.jsonl
-                companion = jf.with_suffix("")
-                if companion.is_dir():
-                    shutil.rmtree(companion, ignore_errors=True)
-            except Exception:
-                logger.debug("exception suppressed", exc_info=True)
-        if removed:
-            logger.info("Pruned %d stale CC session jsonl(s) in %s",
-                        removed, sess_dir.name)
-        return removed
 
     def count(self) -> int:
         self._ensure_loaded()

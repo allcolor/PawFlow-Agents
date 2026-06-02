@@ -1,4 +1,4 @@
-"""Tests for segmented JSONL storage compatibility."""
+"""Tests for segmented JSONL storage."""
 
 import json
 import os
@@ -32,7 +32,7 @@ def test_default_segment_size_has_byte_cap():
     assert DEFAULT_MAX_BYTES == 8 * 1024 * 1024
 
 
-def test_segmented_jsonl_reads_legacy_and_rewrites_to_segments(tmp_path):
+def test_segmented_jsonl_ignores_flat_file_and_writes_segments(tmp_path):
     path = tmp_path / "transcript.jsonl"
     path.write_text(
         json.dumps({"seq": 1, "content": "one"}) + "\n"
@@ -41,7 +41,8 @@ def test_segmented_jsonl_reads_legacy_and_rewrites_to_segments(tmp_path):
     )
     log = SegmentedJsonl(path, max_rows=2)
 
-    assert [row["seq"] for row in log.iter_rows()] == [1, 2]
+    assert list(log.iter_rows()) == []
+    assert not log.exists()
 
     log.replace_dicts({"seq": i, "content": str(i)} for i in range(1, 6))
 

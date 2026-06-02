@@ -167,16 +167,10 @@ class ProcessGroup:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ProcessGroup":
-        """Deserialize from dict.
-
-        Handles both:
-        - New format: full ProcessGroup dict with id, name, tasks, etc.
-        - Legacy format: {"color": "#hex", "tasks": ["id1", "id2"]}
-        """
-        # Detect legacy format: tasks is a list of IDs, not a dict
+        """Deserialize from a full ProcessGroup dict."""
         tasks_val = data.get("tasks", {})
         if isinstance(tasks_val, list):
-            return cls._from_legacy_dict(data)
+            raise ValueError("ProcessGroup tasks must be a dict")
 
         group = cls(
             group_id=data.get("id"),
@@ -195,27 +189,6 @@ class ProcessGroup:
             group.child_groups[gid] = cls.from_dict(gdata)
         return group
 
-    @classmethod
-    def _from_legacy_dict(cls, data: Dict[str, Any]) -> "ProcessGroup":
-        """Convert legacy group format {"color", "tasks": [ids]} to ProcessGroup.
-
-        The legacy format only had visual grouping — no real tasks dict.
-        We create a ProcessGroup with empty tasks/relations; the actual task
-        definitions remain in the parent flow's tasks dict.
-        """
-        group_id = data.get("id", str(uuid.uuid4())[:8])
-        group = cls(
-            group_id=group_id,
-            name=data.get("name", group_id),
-            description=data.get("description", ""),
-            color=data.get("color", "#4285f4"),
-        )
-        # Legacy tasks is a list of task IDs — store them so the canvas knows
-        # which tasks belong to this group, but the actual task definitions
-        # are in the parent flow.
-        group._legacy_task_ids = data.get("tasks", [])
-        return group
-
     def flatten(self) -> Dict[str, Any]:
         """Flatten to a flow-compatible dict (tasks + relations), including nested groups."""
         all_tasks = dict(self.tasks)
@@ -227,9 +200,7 @@ class ProcessGroup:
         return {"tasks": all_tasks, "relations": all_relations}
 
     def get_member_task_ids(self) -> List[str]:
-        """Get all task IDs that belong to this group (including legacy)."""
-        if hasattr(self, '_legacy_task_ids'):
-            return list(self._legacy_task_ids)
+        """Get all task IDs that belong to this group."""
         return list(self.tasks.keys())
 
     def __repr__(self):

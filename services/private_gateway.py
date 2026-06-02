@@ -280,12 +280,6 @@ def verify_secret(submitted: str, secret_refs: Any = None) -> bool:
     return False
 
 
-def is_enabled() -> bool:
-    """Legacy module helper: standalone module state is never enabled."""
-    return False
-
-
-
 def render_challenge(error="", cooldown=0, next_url="/", skin="matrix"):
     try:
         from core.private_gateway_skins import render_skin

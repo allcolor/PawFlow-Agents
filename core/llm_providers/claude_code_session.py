@@ -38,11 +38,16 @@ def _find_cc_service_id(service_id: str = "", user_id: str = "",
                         conv_id: str = "") -> str:
     """Find the credential-pool owner for Claude Code OAuth."""
     try:
-        from services.llm_credential_oauth import resolve_credential_service_id
-        return resolve_credential_service_id(
+        from services.llm_credential_oauth import (
+            credential_service_id_from_llm_service,
+            resolve_credential_service_id,
+        )
+        return (resolve_credential_service_id(
             "claude-code", service_id, user_id=user_id, conv_id=conv_id)
+            or credential_service_id_from_llm_service(
+                "claude-code", service_id, user_id=user_id, conv_id=conv_id))
     except Exception:
-        return service_id or ""
+        return ""
 
 
 def _load_credentials_pool(service_id: str = "", user_id: str = "",
@@ -179,7 +184,7 @@ def _persist_tokens_to_service(access_token: str, refresh_token: str,
     """Update a credential in the pool (after refresh).
 
     If pool_index >= 0, updates that specific slot. Otherwise finds
-    the matching credential by access_token.
+    the matching credential by refresh_token.
 
     Refuses to persist a token that fails basic validation (empty
     fields, expires_at in the past) — better to keep the old broken
@@ -214,10 +219,10 @@ def _persist_tokens_to_service(access_token: str, refresh_token: str,
                 cred["expires_at"] = int(expires_at)
                 break
         else:
-            # Not found — update first credential (legacy compat)
-            pool[0]["access_token"] = access_token
-            pool[0]["refresh_token"] = refresh_token
-            pool[0]["expires_at"] = int(expires_at)
+            logger.warning(
+                "[claude-code] refusing to persist refreshed token: "
+                "no matching credential in pool '%s'", sid)
+            return
 
     _save_credentials_pool(pool, sid, user_id=user_id, conv_id=conv_id)
     logger.info("[claude-code] credential updated in pool for '%s'", sid)

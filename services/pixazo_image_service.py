@@ -7,8 +7,8 @@ public API (`generate`, `edit_image`) every image provider implements.
 
 Models and their operations (text_to_image, edit_image, …) are
 declared in `data/repository/configs/pixazo_catalog.json`. Adding a
-new image provider with one of the three supported conventions
-(sync / legacy_poll / polling_url) never requires Python changes.
+new image provider with a supported convention (sync / polling_url)
+never requires Python changes.
 """
 
 import logging

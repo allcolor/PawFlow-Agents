@@ -148,7 +148,7 @@ def test_code_server_ws_registers_browser_socket_under_session_id(tmp_path, monk
     from core.capability_auth import init_db
     from services import code_server_proxy as csp
 
-    init_db(tmp_path / "capabilities.db")
+    init_db(tmp_path / "capabilities.json")
 
     class FakeSock:
         closed = False

@@ -161,9 +161,6 @@ TOKEN_USAGE_FILE = RUNTIME_DIR / "token_usage.json"
 # active VNC / terminal / code-server / port-forward sessions survive a
 # server restart). See core/capability_auth.py.
 CAPABILITIES_FILE = RUNTIME_DIR / "capabilities.json"
-# Backward-compatible name for older callers/tests. `capability_auth.init_db()`
-# also accepts legacy `.db` paths and maps them to the JSON store.
-CAPABILITIES_DB = CAPABILITIES_FILE
 POLL_SCHEDULE_FILE = RUNTIME_DIR / "poll_schedule.json"
 GATEWAY_BANS_FILE = RUNTIME_DIR / "gateway_bans.json"
 

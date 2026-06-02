@@ -22,8 +22,6 @@ from engine.continuous_executor import ContinuousFlowExecutor
 
 logger = logging.getLogger(__name__)
 
-STATE_FILE = "continuous_state.json"  # kept for cleanup only
-
 def _get_deployment_registry():
     """Lazy import to avoid circular imports."""
     try:
@@ -261,10 +259,6 @@ class ExecutorRegistry:
                 logger.info("[startup-timing] restore instance %s: %.1fms",
                             iid, (time.monotonic() - _inst_t0) * 1000)
 
-        # Clean up legacy state file if present
-        legacy = Path(STATE_FILE)
-        if legacy.exists():
-            legacy.unlink(missing_ok=True)
         logger.info("[startup-timing] executor registry restore total: %.1fms",
                     (time.monotonic() - _restore_t0) * 1000)
 

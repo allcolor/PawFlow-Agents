@@ -459,17 +459,15 @@ function connectSSE(cid, onReady, opts) {
   eventSource.addEventListener('token', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
-    const agent = data.agent_name || streamingAgent || '';
+    const agent = data.agent_name || '';
     if (typeof conversationTTSOnToken === 'function') {
       try { conversationTTSOnToken(data); } catch (_ttsErr) {}
     }
     // Finalize thinking block when first text token arrives
     finalizeThinking(agent, 'token');
-    streamingAgent = agent;  // legacy global
     const s = getStream(agent);
     s.text += data.text;
     s.msg_id = data.msg_id || s.msg_id || '';  // track msg_id from tokens
-    streamingText = s.text;  // legacy global
     // Always have a source — every response comes from an agent
     const src = data.source || {type: 'agent', name: agent};
     if (!s.el) {
@@ -488,8 +486,6 @@ function connectSSE(cid, onReady, opts) {
         }
       }
       s.chunks.push(s.el);
-      streamingEl = s.el;  // legacy global
-      streamingChunks = s.chunks;
     }
     // Update content with badge — strip identity prefix if LLM echoed it
     const badge = sourceBadge(src);
@@ -965,7 +961,7 @@ function connectSSE(cid, onReady, opts) {
       }
       scrollBottom();
     } else {
-      // Fallback: no delegate block — render as standalone message (legacy)
+      // Fallback: no delegate block — render as standalone message.
       const svcInfo = data.llm_service ? ' via ' + data.llm_service : '';
       if (data.response && !_CONTEXT_ACKS.has((data.response || '').trim())) {
         const extra = { source: { type: 'agent', name: agent, llm_service: data.llm_service || '' } };

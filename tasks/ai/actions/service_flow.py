@@ -3751,20 +3751,15 @@ finally:
 
     if action == "port_forward_remove":
         forward_id = body.get("forward_id", "") or ""
-        relay_id = body.get("relay_id", "")
-        ext_port = body.get("ext_port", 0) or body.get("port", 0)
-        if not forward_id and (not relay_id or not ext_port):
+        if not forward_id:
             flowfile.set_content(json.dumps({
-                "error": "Missing forward_id (or relay_id+port for legacy)",
+                "error": "Missing forward_id",
             }).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         try:
             from services.port_forward_proxy import remove_forward, _ROUTE_OWNER
-            if forward_id:
-                last = remove_forward(forward_id=forward_id)
-            else:
-                last = remove_forward(relay_id=relay_id, ext_port=int(ext_port))
+            last = remove_forward(forward_id=forward_id)
             if last:
                 http_svc = _find_http_listener()
                 if http_svc:

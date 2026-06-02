@@ -1,8 +1,8 @@
 """Pixazo video + audio services — catalog-driven dispatch.
 
 Same mocking pattern as test_pixazo_image.py (patch _post / _get_url /
-_download_media on the instance). The base class wires the three
-conventions (sync / legacy_poll / polling_url) for every category, so
+_download_media on the instance). The base class wires sync and polling_url
+conventions for every category, so
 these tests only assert the service honours `category` filtering and
 calls the right ops.
 """

@@ -44,19 +44,19 @@
     </div>
   </div>
   <form method="POST" action="/_gateway" id="f">
-    <input type="hidden" name="next" value="%(next_url)s">
+    <input type="hidden" name="next" value="{{ next_url }}">
     <div class="field">
       <label>Verification code</label>
       <input type="text" name="secret" id="s" autocomplete="off" autofocus>
     </div>
-    <div class="err" id="e">%(error)s</div>
+    <div class="err" id="e">{{ error }}</div>
     <button type="submit" id="b">Verify</button>
   </form>
   <div class="cd" id="cd"></div>
 </div>
 <script>
 (function(){
-  var cd = %(cooldown)d, b = document.getElementById('b'),
+  var cd = {{ cooldown }}, b = document.getElementById('b'),
       cdEl = document.getElementById('cd');
   function tick() {
     if (cd <= 0) { b.disabled = false; cdEl.textContent = ''; return; }

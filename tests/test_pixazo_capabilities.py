@@ -31,7 +31,7 @@ def _inject_capability_catalog(monkeypatch):
                 "image_to_3d": {
                     "endpoint": "/hunyuan3d/v1/generate",
                     "poll_endpoint": "/hunyuan3d/v1/status",
-                    "convention": "legacy_poll",
+                    "convention": "polling_url",
                     "id_field": "request_id",
                     "input_field": "image_url",
                 },
@@ -44,7 +44,7 @@ def _inject_capability_catalog(monkeypatch):
                 "upscale": {
                     "endpoint": "/seedvr/v1/upscale",
                     "poll_endpoint": "/seedvr/v1/status",
-                    "convention": "legacy_poll",
+                    "convention": "polling_url",
                     "id_field": "request_id",
                     "input_field": "image_url",
                 },
@@ -57,7 +57,7 @@ def _inject_capability_catalog(monkeypatch):
                 "try_on": {
                     "endpoint": "/fashn/v1/tryon",
                     "poll_endpoint": "/fashn/v1/status",
-                    "convention": "legacy_poll",
+                    "convention": "polling_url",
                     "id_field": "request_id",
                     "person_field": "person_image",
                     "garment_field": "garment_image",
@@ -71,7 +71,7 @@ def _inject_capability_catalog(monkeypatch):
                 "lipsync": {
                     "endpoint": "/omnihuman/v1/lipsync",
                     "poll_endpoint": "/omnihuman/v1/status",
-                    "convention": "legacy_poll",
+                    "convention": "polling_url",
                     "id_field": "request_id",
                 },
             },
@@ -83,7 +83,7 @@ def _inject_capability_catalog(monkeypatch):
                 "train": {
                     "endpoint": "/flux-lora/v1/train",
                     "poll_endpoint": "/flux-lora/v1/status",
-                    "convention": "legacy_poll",
+                    "convention": "polling_url",
                     "id_field": "request_id",
                     "input_field": "image_data_url",
                 },
@@ -102,21 +102,6 @@ def _mk(cls, model: str):
     return s
 
 
-def _mock_legacy_poll(s, id_field="request_id", url_key="video_url"):
-    """Wire _post + _download_media for a legacy_poll round-trip."""
-    calls = []
-
-    def _fake_post(ep, body):
-        calls.append((ep, body))
-        if len(calls) == 1:
-            return {id_field: "r-1"}
-        return {"status": "completed", url_key: "https://cdn/out.bin"}
-
-    s._post = _fake_post  # type: ignore[assignment]
-    s._download_media = lambda u, default_mime="": (b"OK", default_mime or "application/octet-stream")  # type: ignore[assignment]
-    return calls
-
-
 def test_3d_dispatches_and_uses_input_field():
     s = _mk(Pixazo3DService, "hunyuan3d-test")
     captured = {}
@@ -125,11 +110,10 @@ def test_3d_dispatches_and_uses_input_field():
         if "ep" not in captured:
             captured["ep"] = ep
             captured["body"] = body
-        if ep.endswith("/v1/generate"):
-            return {"request_id": "r-1"}
-        return {"status": "completed", "output": "https://cdn/x.glb"}
+        return {"request_id": "r-1", "polling_url": "https://gw/status/r-1"}
 
     s._post = _fake_post  # type: ignore[assignment]
+    s._get_url = lambda u: {"status": "completed", "output": "https://cdn/x.glb"}  # type: ignore[assignment]
     s._download_media = lambda u, default_mime="": (b"GLB", "model/gltf-binary")  # type: ignore[assignment]
 
     out = s.generate_3d(image_url="https://src/in.png")
@@ -145,11 +129,10 @@ def test_upscale_dispatches_with_scale():
         if "ep" not in captured:
             captured["ep"] = ep
             captured["body"] = body
-        if ep.endswith("/v1/upscale"):
-            return {"request_id": "r-1"}
-        return {"status": "completed", "output": "https://cdn/up.png"}
+        return {"request_id": "r-1", "polling_url": "https://gw/status/r-1"}
 
     s._post = _fake_post  # type: ignore[assignment]
+    s._get_url = lambda u: {"status": "completed", "output": "https://cdn/up.png"}  # type: ignore[assignment]
     s._download_media = lambda u, default_mime="": (b"PNG", "image/png")  # type: ignore[assignment]
     out = s.upscale(image_url="https://src/in.png", scale=4)
     assert out["bytes"] == b"PNG"
@@ -165,11 +148,10 @@ def test_tryon_dispatches_with_person_and_garment():
         if "ep" not in captured:
             captured["ep"] = ep
             captured["body"] = body
-        if ep.endswith("/v1/tryon"):
-            return {"request_id": "r-1"}
-        return {"status": "completed", "output": "https://cdn/tryon.png"}
+        return {"request_id": "r-1", "polling_url": "https://gw/status/r-1"}
 
     s._post = _fake_post  # type: ignore[assignment]
+    s._get_url = lambda u: {"status": "completed", "output": "https://cdn/tryon.png"}  # type: ignore[assignment]
     s._download_media = lambda u, default_mime="": (b"T", "image/png")  # type: ignore[assignment]
     out = s.try_on(person_image="https://p/p.png",
                     garment_image="https://g/g.png")
@@ -186,11 +168,10 @@ def test_lipsync_dispatches_with_audio_and_video():
         if "ep" not in captured:
             captured["ep"] = ep
             captured["body"] = body
-        if ep.endswith("/v1/lipsync"):
-            return {"request_id": "r-1"}
-        return {"status": "completed", "output": "https://cdn/ls.mp4"}
+        return {"request_id": "r-1", "polling_url": "https://gw/status/r-1"}
 
     s._post = _fake_post  # type: ignore[assignment]
+    s._get_url = lambda u: {"status": "completed", "output": "https://cdn/ls.mp4"}  # type: ignore[assignment]
     s._download_media = lambda u, default_mime="": (b"MP4", "video/mp4")  # type: ignore[assignment]
     out = s.lipsync(video_url="https://v/v.mp4", audio_url="https://a/a.mp3")
     assert out["bytes"] == b"MP4"
@@ -202,11 +183,10 @@ def test_trainer_returns_lora_url():
     s = _mk(PixazoTrainerService, "flux-lora-trainer-test")
 
     def _fake_post(ep, body):
-        if ep.endswith("/v1/train"):
-            return {"request_id": "r-1"}
-        return {"status": "completed", "output": "https://cdn/lora.safetensors"}
+        return {"request_id": "r-1", "polling_url": "https://gw/status/r-1"}
 
     s._post = _fake_post  # type: ignore[assignment]
+    s._get_url = lambda u: {"status": "completed", "output": "https://cdn/lora.safetensors"}  # type: ignore[assignment]
     s._download_media = lambda u, default_mime="": (b"LORA", "application/octet-stream")  # type: ignore[assignment]
     out = s.train(dataset_url="https://ds/data.zip",
                    base_model="flux-dev", steps=1000)

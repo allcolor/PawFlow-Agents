@@ -276,9 +276,8 @@ class TestCreateConversation:
 
         assert store.exists(cid) is True
 
-    def test_cache_agents_for_append_memoizes_directory_scan(self, conv, monkeypatch):
+    def test_cache_agents_for_append_requires_conv_agents_sidecar(self, conv, monkeypatch):
         store, cid, _uid = conv
-        calls = {"dirs": 0}
 
         with store._cache_lock:
             store._cache.pop(cid, None)
@@ -286,15 +285,8 @@ class TestCreateConversation:
 
         monkeypatch.setattr(store, "_read_extras", lambda _cid: {})
 
-        def scan_dirs(_cid):
-            calls["dirs"] += 1
-            return {"bot"}
-
-        monkeypatch.setattr(store, "_agent_context_dirs", scan_dirs)
-
-        assert store._cache_agents_for_append(cid) == {"bot"}
-        assert store._cache_agents_for_append(cid) == {"bot"}
-        assert calls["dirs"] == 1
+        assert store._cache_agents_for_append(cid) == set()
+        assert store._cache_agents_for_append(cid) == set()
 
     def test_new_conversations_mark_empty_conv_agents(self, store):
         cid = store.generate_id()

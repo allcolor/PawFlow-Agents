@@ -94,43 +94,40 @@ def is_credential_service_def(sdef: Any, provider: str = "") -> bool:
 
 def resolve_credential_service_id(provider: str, service_id: str = "",
                                   user_id: str = "", conv_id: str = "") -> str:
-    """Resolve the service id whose encrypted pool should be used.
-
-    `service_id` may be either the new credential service id or a legacy LLM
-    service id. If a matching LLM service references `credential_service_id`,
-    that referenced id wins. Otherwise we return the legacy LLM id so existing
-    pools keep working until migration has run.
-    """
+    """Resolve the credential service id whose encrypted pool should be used."""
     provider = normalize_provider(provider)
     if service_id:
         sdef = get_service_def(service_id, user_id=user_id, conv_id=conv_id)
         if is_credential_service_def(sdef, provider):
             return service_id
-        if sdef and getattr(sdef, "service_type", "") == "llmConnection":
-            cfg = getattr(sdef, "config", {}) or {}
-            if normalize_provider(cfg.get("provider", "")) == provider:
-                cred_id = (cfg.get("credential_service_id") or "").strip()
-                if cred_id:
-                    return cred_id
-                return service_id
-        # Unknown id: preserve legacy behavior and let the old key lookup fail
-        # naturally if there is no pool.
-        return service_id
+        return ""
 
     # No explicit id: prefer LLM services that already reference a credential
-    # provider, then standalone credential services, then legacy LLM services.
-    legacy = ""
+    # provider, then standalone credential services.
     for sdef in _all_service_defs(user_id=user_id, conv_id=conv_id):
         cfg = getattr(sdef, "config", {}) or {}
         if getattr(sdef, "service_type", "") == "llmConnection" and normalize_provider(cfg.get("provider", "")) == provider:
             cred_id = (cfg.get("credential_service_id") or "").strip()
             if cred_id:
                 return cred_id
-            legacy = legacy or getattr(sdef, "service_id", "")
     for sdef in _all_service_defs(user_id=user_id, conv_id=conv_id):
         if is_credential_service_def(sdef, provider):
             return getattr(sdef, "service_id", "")
-    return legacy
+    return ""
+
+
+def credential_service_id_from_llm_service(provider: str, llm_service_id: str,
+                                           user_id: str = "", conv_id: str = "") -> str:
+    """Return the credential service referenced by an LLM service config."""
+    provider = normalize_provider(provider)
+    sdef = get_service_def(llm_service_id, user_id=user_id, conv_id=conv_id)
+    if not sdef or getattr(sdef, "service_type", "") != "llmConnection":
+        return ""
+    cfg = getattr(sdef, "config", {}) or {}
+    if normalize_provider(cfg.get("provider", "")) != provider:
+        return ""
+    cred_id = (cfg.get("credential_service_id") or "").strip()
+    return resolve_credential_service_id(provider, cred_id, user_id=user_id, conv_id=conv_id)
 
 
 def credential_pool_secret_key(service_id: str) -> str:

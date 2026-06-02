@@ -23,12 +23,6 @@ DEFAULT_SKIN = "matrix"
 FALLBACK_SKIN = "default"
 
 
-_LEGACY_PLACEHOLDERS = {
-    "%(next_url)s": "next_url",
-    "%(error)s": "error",
-    "%(cooldown)d": "cooldown",
-    "%(cooldown)s": "cooldown",
-}
 _BRACE_PLACEHOLDER_RE = re.compile(r"\{\{\s*(next_url|error|cooldown)\s*\}\}")
 
 
@@ -154,10 +148,7 @@ def _context(error: str = "", cooldown: int = 0, next_url: str = "/") -> Dict[st
 
 def render_template(template: str, error: str = "", cooldown: int = 0, next_url: str = "/") -> str:
     ctx = _context(error=error, cooldown=cooldown, next_url=next_url)
-    out = template
-    for placeholder, key in _LEGACY_PLACEHOLDERS.items():
-        out = out.replace(placeholder, ctx[key])
-    return _BRACE_PLACEHOLDER_RE.sub(lambda m: ctx[m.group(1)], out)
+    return _BRACE_PLACEHOLDER_RE.sub(lambda m: ctx[m.group(1)], template)
 
 
 def render_skin(ref: str, error: str = "", cooldown: int = 0, next_url: str = "/",

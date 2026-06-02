@@ -1,10 +1,4 @@
-"""Segmented JSONL storage helpers.
-
-A logical JSONL file can be stored either as a legacy flat file
-(`transcript.jsonl`) or as a directory of bounded segments (`transcript/`).
-The runtime reads both formats, while new/migrated conversations write the
-segmented format.
-"""
+"""Segmented JSONL storage helpers."""
 
 from __future__ import annotations
 import logging
@@ -63,13 +57,11 @@ class SegmentedJsonl:
         return self.index_path.exists() or self.segment_dir.is_dir()
 
     def exists(self) -> bool:
-        return self.is_segmented() or self.flat_path.exists()
+        return self.is_segmented()
 
     def iter_paths(self) -> List[Path]:
         self._flush_own_append_handles()
-        if self.is_segmented():
-            return self._segment_paths()
-        return [self.flat_path] if self.flat_path.exists() else []
+        return self._segment_paths()
 
     def iter_rows(self) -> Iterator[Dict[str, Any]]:
         for path in self.iter_paths():
@@ -77,7 +69,7 @@ class SegmentedJsonl:
 
     def iter_rows_reverse(self) -> Iterator[Dict[str, Any]]:
         self._flush_own_append_handles()
-        paths = self._segment_paths() if self.is_segmented() else ([self.flat_path] if self.flat_path.exists() else [])
+        paths = self._segment_paths()
         for path in reversed(paths):
             yield from self._iter_file_reverse(path)
 
@@ -112,20 +104,11 @@ class SegmentedJsonl:
         # append itself is sub-millisecond.
         index_exists = False
         index_missing = False
-        flat_exists = False
         segment_dir_exists = False
         if cached is None:
             index_exists = self.index_path.exists()
             index_missing = not index_exists
-            flat_exists = self.flat_path.exists()
             segment_dir_exists = self.segment_dir.is_dir()
-        if cached is None and flat_exists and not (index_exists or segment_dir_exists):
-            self.flat_path.parent.mkdir(parents=True, exist_ok=True)
-            t0 = time.monotonic()
-            self._append_lines_to_path(self.flat_path, lines)
-            mark("flat_write", t0)
-            self._log_append_diag(started, len(lines), total_bytes, timings)
-            return
 
         if cached is None:
             t0 = time.monotonic()
@@ -189,7 +172,7 @@ class SegmentedJsonl:
             "cache=%.1f load_index=%.1f current_segment=%.1f "
             "write=%.1f handle_cache=%.1f handle_open=%.1f "
             "handle_lock_wait=%.1f write_call=%.1f buffer_flush=%.1f "
-            "flat_write=%.1f remember_index=%.1f index_write=%.1f",
+            "remember_index=%.1f index_write=%.1f",
             str(self.flat_path), rows, total_bytes, total_ms,
             timings.get("cache", 0.0),
             timings.get("load_index", 0.0),
@@ -200,7 +183,6 @@ class SegmentedJsonl:
             timings.get("handle_lock_wait", 0.0),
             timings.get("write_call", 0.0),
             timings.get("buffer_flush", 0.0),
-            timings.get("flat_write", 0.0),
             timings.get("remember_index", 0.0),
             timings.get("index_write", 0.0),
         )
@@ -221,21 +203,6 @@ class SegmentedJsonl:
             return {"found": False, "kept_rows": 0, "boundary": None}
 
         self._flush_own_append_handles()
-
-        if not self.is_segmented():
-            rows = []
-            boundary = None
-            found = False
-            for row in self._iter_file(self.flat_path):
-                rows.append(row)
-                if row.get("msg_id") == msg_id:
-                    boundary = row
-                    found = True
-                    break
-            if not found:
-                return {"found": False, "kept_rows": 0, "boundary": None}
-            self.replace_dicts(rows)
-            return {"found": True, "kept_rows": len(rows), "boundary": boundary}
 
         paths = sorted(self.segment_dir.glob("*.jsonl")) if self.segment_dir.is_dir() else []
         if not paths:
@@ -319,10 +286,6 @@ class SegmentedJsonl:
             cached = _INDEX_CACHE.get(cache_key)
             index = cached["index"] if cached is not None else None
         if index is None:
-            if self.flat_path.exists() and not self.is_segmented():
-                self.flat_path.parent.mkdir(parents=True, exist_ok=True)
-                self._append_lines_to_path(self.flat_path, [])
-                return
             self.segment_dir.mkdir(parents=True, exist_ok=True)
             index = self._load_index()
         else:
@@ -402,8 +365,7 @@ class SegmentedJsonl:
         """Patch one message row without rewriting every segment."""
         if not msg_id or not fields or not self.exists():
             return None
-        paths = self._segment_paths() if self.is_segmented() else (
-            [self.flat_path] if self.flat_path.exists() else [])
+        paths = self._segment_paths()
         for path in reversed(paths):
             self.flush_append_handles(path)
             rows = list(self._iter_file(path))
@@ -430,8 +392,7 @@ class SegmentedJsonl:
         targets = {str(mid) for mid in (msg_ids or set()) if str(mid)}
         if not targets or not self.exists():
             return 0
-        paths = self._segment_paths() if self.is_segmented() else (
-            [self.flat_path] if self.flat_path.exists() else [])
+        paths = self._segment_paths()
         deleted = 0
         for path in paths:
             self.flush_append_handles(path)
@@ -449,9 +410,7 @@ class SegmentedJsonl:
 
     def total_rows(self) -> int:
         self._flush_own_append_handles()
-        if self.is_segmented():
-            return int(self._rebuild_index_from_segments().get("total_rows") or 0)
-        return sum(1 for _ in self._iter_file(self.flat_path)) if self.flat_path.exists() else 0
+        return int(self._rebuild_index_from_segments().get("total_rows") or 0)
 
     def latest_mtime(self) -> float:
         self._flush_own_append_handles()

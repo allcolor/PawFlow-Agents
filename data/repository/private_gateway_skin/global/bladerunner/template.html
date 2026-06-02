@@ -64,19 +64,19 @@
 <div class="rain"></div>
 <div class="wrap">
   <form class="card" method="POST" action="/_gateway">
-    <input type="hidden" name="next" value="%(next_url)s">
+    <input type="hidden" name="next" value="{{ next_url }}">
     <div class="eyebrow">Private Gateway</div>
     <h1>Blade Runner</h1>
     <p class="copy">Access is restricted. Submit the key before the signal fades.</p>
     <input type="password" name="secret" placeholder="Voight-Kampff code" autocomplete="off" autofocus>
     <button type="submit" id="b">Enter</button>
-    <div class="err">%(error)s</div>
+    <div class="err">{{ error }}</div>
     <div class="cd" id="cd"></div>
   </form>
 </div>
 <script>
 (function(){
-  var cd=%(cooldown)d,b=document.getElementById('b'),cdEl=document.getElementById('cd');
+  var cd={{ cooldown }},b=document.getElementById('b'),cdEl=document.getElementById('cd');
   function tick(){
     if(cd<=0){b.disabled=false;cdEl.textContent='';return;}
     b.disabled=true;cdEl.textContent='Signal locked. Retry in '+Math.ceil(cd)+'s';

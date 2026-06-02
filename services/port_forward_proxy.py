@@ -77,19 +77,12 @@ def add_forward(relay_id: str, int_port: int, relay_service,
     return first, forward_id, token
 
 
-def remove_forward(forward_id: str = "", *,
-                   relay_id: str = "", ext_port: int = 0) -> bool:
-    """Remove a forward. Either pass `forward_id` (preferred) or the
-    legacy (relay_id, ext_port) pair. Returns True when no forwards
-    remain (caller signal to unregister the HTTP route).
+def remove_forward(forward_id: str) -> bool:
+    """Remove a forward by id.
+
+    Returns True when no forwards remain (caller signal to unregister the HTTP route).
     """
     with _lock:
-        if not forward_id:
-            for fid, entry in list(_forwards.items()):
-                if (entry.get("relay_id") == relay_id
-                        and entry.get("ext_port") == ext_port):
-                    forward_id = fid
-                    break
         entry = _forwards.pop(forward_id, None) if forward_id else None
         last = entry is not None and len(_forwards) == 0
     if entry:

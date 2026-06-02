@@ -225,20 +225,11 @@ def init_db(db_path) -> None:
     times (creates the parent dir + JSON file if missing, no-ops otherwise)
     and resets the in-memory rate-limit counters.
 
-    The argument name is `db_path` for backwards compatibility with the
-    SQLite-era callers; we transparently use the same path with a `.json`
-    extension if the caller gave us `.db`.
-
     Must be called once at server boot before any issue/verify/revoke.
     """
     global _STORE_PATH
     with _LOCK:
-        p = Path(db_path)
-        # Migrate the legacy .db extension transparently — the caller
-        # (cli.py) was hard-coded to `capabilities.db` from the SQLite era.
-        if p.suffix == ".db":
-            p = p.with_suffix(".json")
-        _STORE_PATH = p
+        _STORE_PATH = Path(db_path)
         _STORE_PATH.parent.mkdir(parents=True, exist_ok=True)
         _ROWS.clear()
         _ROWS.update(_load_from_disk())

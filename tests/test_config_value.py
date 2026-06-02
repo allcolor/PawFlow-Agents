@@ -195,7 +195,7 @@ class TestConfigStoreParams:
         assert str(loaded["small"]) == "tiny"
         assert loaded["large"].is_large
 
-    def test_backward_compat_plain_json(self, tmp_path):
+    def test_inline_plain_json(self, tmp_path):
         """Loading a JSON without $ref works (all values become small ConfigValues)."""
         p = tmp_path / "params.json"
         p.write_text(json.dumps({"a": "one", "b": "two"}))
@@ -256,8 +256,8 @@ class TestConfigStoreSecrets:
         raw = json.loads(p.read_text())
         assert raw["small"].startswith("enc:")
 
-    def test_backward_compat_encrypted(self, tmp_path):
-        """Loading existing encrypted JSON without $ref works."""
+    def test_inline_encrypted(self, tmp_path):
+        """Loading encrypted JSON without $ref works."""
         from core.secrets import get_secrets_manager
         sm = get_secrets_manager()
         p = tmp_path / "secrets.json"
@@ -266,15 +266,11 @@ class TestConfigStoreSecrets:
         loaded = ConfigStore.load_secrets(p)
         assert str(loaded["key1"]) == "mypass"
 
-    def test_backward_compat_dict_entry(self, tmp_path):
-        """Loading existing dict-style entries {value: enc:...} works."""
-        from core.secrets import get_secrets_manager
-        sm = get_secrets_manager()
+    def test_invalid_dict_entry_is_dropped(self, tmp_path):
         p = tmp_path / "secrets.json"
-        encrypted = sm.encrypt("dictpass")
-        p.write_text(json.dumps({"key1": {"value": encrypted}}))
+        p.write_text(json.dumps({"key1": {"value": "invalid"}}))
         loaded = ConfigStore.load_secrets(p)
-        assert str(loaded["key1"]) == "dictpass"
+        assert str(loaded["key1"]) == ""
 
     def test_sidecar_cleanup_secrets(self, tmp_path):
         p = tmp_path / "secrets.json"
@@ -394,8 +390,7 @@ class TestSecretsManagerBytes:
             sm.decrypt_bytes(tampered)
 
     def test_too_short(self):
-        """Bytes too short to be a legacy XOR payload (no PFSEC2\\0
-        magic header) raise SecretDecryptError — same ValueError-tree."""
+        """Bytes without the PFSEC2\\0 magic header raise SecretDecryptError."""
         from core.secrets import SecretDecryptError, SecretsManager
         sm = SecretsManager(key="test_key")
         with pytest.raises(SecretDecryptError):

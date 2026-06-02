@@ -16,21 +16,19 @@ from core import capability_auth as ca
 def db(tmp_path):
     """Fresh capability DB in tmp_path; cleaned up between tests."""
     ca._reset_for_tests()
-    db_path = tmp_path / "capabilities.db"
+    db_path = tmp_path / "capabilities.json"
     ca.init_db(db_path)
     yield db_path
     ca._reset_for_tests()
 
 
-def test_init_db_materializes_json_store(tmp_path):
+def test_init_db_materializes_store(tmp_path):
     ca._reset_for_tests()
-    db_path = tmp_path / "capabilities.db"
+    db_path = tmp_path / "capabilities.json"
     ca.init_db(db_path)
 
-    assert not db_path.exists()
-    json_path = tmp_path / "capabilities.json"
-    assert json_path.exists()
-    assert json_path.read_text(encoding="utf-8") == "[]"
+    assert db_path.exists()
+    assert db_path.read_text(encoding="utf-8") == "[]"
     ca._reset_for_tests()
 
 
@@ -158,7 +156,7 @@ def test_persistence_survives_reinit(tmp_path):
     """Server-restart simulation: issue, _reset_for_tests (drops in-mem),
     init_db on the same file, verify still works."""
     ca._reset_for_tests()
-    db_path = tmp_path / "capabilities.db"
+    db_path = tmp_path / "capabilities.json"
     ca.init_db(db_path)
     token = ca.issue_capability(
         "vnc", "sess1", "alice",
@@ -177,7 +175,7 @@ def test_persistence_survives_reinit(tmp_path):
 
 def test_init_purges_expired_at_boot(tmp_path):
     ca._reset_for_tests()
-    db_path = tmp_path / "capabilities.db"
+    db_path = tmp_path / "capabilities.json"
     ca.init_db(db_path)
     expired = ca.issue_capability("vnc", "sess-old", "alice", ttl_seconds=1)
     fresh = ca.issue_capability("vnc", "sess-new", "alice", ttl_seconds=3600)

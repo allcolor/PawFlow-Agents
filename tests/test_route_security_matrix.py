@@ -43,7 +43,7 @@ class _FakePendingReq:
 @pytest.fixture()
 def cap_db(tmp_path):
     ca._reset_for_tests()
-    ca.init_db(tmp_path / "caps.db")
+    ca.init_db(tmp_path / "caps.json")
     yield
     ca._reset_for_tests()
 
@@ -288,16 +288,17 @@ def test_terminal_registers_server_pipe_command(cap_db):
     unregister_terminal("term-server")
 
 
-def test_port_forward_legacy_remove_path_works(cap_db):
+def test_port_forward_remove_requires_forward_id(cap_db):
     from services.port_forward_proxy import (
         add_forward, remove_forward, list_forwards,
     )
-    first, fid, tok = add_forward(
+    first, fid, _tok = add_forward(
         "relay-A", 9000, None, ext_port=9000,
         owner_user_id="alice")
     assert first is True
     assert any(e["forward_id"] == fid for e in list_forwards())
-    last = remove_forward(relay_id="relay-A", ext_port=9000)
+    assert remove_forward("") is False
+    last = remove_forward(fid)
     assert last is True
     assert list_forwards() == []
 

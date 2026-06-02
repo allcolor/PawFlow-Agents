@@ -9,8 +9,7 @@ What it does NOT do:
 - It does NOT override existing catalog entries. Manually curated
   entries stay as-is; the ingester only fills in missing ones.
 - It does NOT invent conventions. If the doc doesn't show a response
-  payload with `polling_url`, the entry falls back to `legacy_poll`
-  with the matching /prediction or /result endpoint when present.
+  payload with `polling_url`, the operation is skipped.
 
 Run: `python scripts/ingest_pixazo_catalog.py --write`
 (omit --write to preview to stdout).
@@ -301,21 +300,11 @@ def build_patch(existing: dict) -> dict:
                 if len(ep) < len(ops[op_name]["endpoint"]):
                     ops[op_name]["endpoint"] = ep
                 continue
+            if not info["has_polling_url"]:
+                continue
             entry = {"endpoint": ep,
-                      "convention": "polling_url" if info["has_polling_url"]
-                                    else "legacy_poll",
+                      "convention": "polling_url",
                       "id_field": "request_id"}
-            if not info["has_polling_url"] and info["poll_endpoints"]:
-                # Pick the most plausible poll endpoint for this op.
-                # Prefer /prediction, then /status, then /result.
-                prefs = ["/prediction", "/status", "/getStatus",
-                         "/result", "/getResult"]
-                sorted_polls = sorted(
-                    info["poll_endpoints"],
-                    key=lambda p: min(
-                        (i for i, s in enumerate(prefs) if p.endswith(s)),
-                        default=99))
-                entry["poll_endpoint"] = sorted_polls[0]
             ops[op_name] = entry
         if not ops:
             continue

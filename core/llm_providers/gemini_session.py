@@ -38,11 +38,16 @@ def _find_gemini_service_id(service_id: str = "", user_id: str = "",
                             conv_id: str = "") -> str:
     """Find the credential-pool owner for Gemini OAuth."""
     try:
-        from services.llm_credential_oauth import resolve_credential_service_id
-        return resolve_credential_service_id(
+        from services.llm_credential_oauth import (
+            credential_service_id_from_llm_service,
+            resolve_credential_service_id,
+        )
+        return (resolve_credential_service_id(
             "gemini", service_id, user_id=user_id, conv_id=conv_id)
+            or credential_service_id_from_llm_service(
+                "gemini", service_id, user_id=user_id, conv_id=conv_id))
     except Exception:
-        return service_id or ""
+        return ""
 
 
 def _load_credentials_pool(service_id: str = "", user_id: str = "",

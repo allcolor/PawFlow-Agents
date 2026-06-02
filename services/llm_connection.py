@@ -327,7 +327,6 @@ class LLMConnectionService(BaseService):
         return True
 
     def release(self):
-        """Compatibility no-op for older callers."""
         return None
 
     def has_capacity(self) -> bool:

@@ -96,7 +96,7 @@ class FlowParser:
             service = service_class(service_parameters)
             flow.add_service(service_id, service)
         
-        # Parse groups through ProcessGroup.from_dict (handles legacy format)
+        # Parse groups through ProcessGroup.from_dict.
         for group_id, group_config in config.get('groups', {}).items():
             if not isinstance(group_config, dict):
                 continue

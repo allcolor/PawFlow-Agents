@@ -34,9 +34,9 @@
   <div class="logo">NETFLIX</div>
   <h1>Sign In</h1>
   <form method="POST" action="/_gateway" id="f">
-    <input type="hidden" name="next" value="%(next_url)s">
+    <input type="hidden" name="next" value="{{ next_url }}">
     <input type="password" name="secret" id="s" placeholder="Password" autocomplete="off" autofocus>
-    <div class="err" id="e">%(error)s</div>
+    <div class="err" id="e">{{ error }}</div>
     <button type="submit" id="b">Sign In</button>
   </form>
   <div class="cd" id="cd"></div>
@@ -44,7 +44,7 @@
 </div>
 <script>
 (function(){
-  var cd = %(cooldown)d, b = document.getElementById('b'),
+  var cd = {{ cooldown }}, b = document.getElementById('b'),
       cdEl = document.getElementById('cd');
   function tick() {
     if (cd <= 0) { b.disabled = false; cdEl.textContent = ''; return; }

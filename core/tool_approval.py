@@ -369,9 +369,7 @@ class ToolApprovalGate:
                 agent_perms = store.get_extra(
                     conversation_id, cls._perm_key(agent_name)
                 ) or {}
-                if agent_perms:
-                    return agent_perms
-            # Fallback to conversation-level (legacy / no agent specified)
+                return agent_perms
             return store.get_extra(
                 conversation_id, "tool_permissions"
             ) or {}

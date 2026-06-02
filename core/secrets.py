@@ -2,15 +2,10 @@
 
 Format
 ------
-New strings:    `enc:v2:<base64>` where the bytes decode to JSON
-                `{"v":2,"alg":"aesgcm"|"chacha20poly1305","kid":<id>,
-                  "salt":<b64 or empty>,"nonce":<b64>,"ct":<b64>}`.
-New bytes:      `b"PFSEC2\0" + json_payload_bytes` (sidecar files).
-Legacy strings: `enc:<base64>` (XOR+HMAC). Read-only — we never
-                write this format anymore. `encrypt()` always emits
-                v2.
-Legacy bytes:   no magic header; `decrypt_bytes` falls back to the
-                old XOR-stream layout when the magic isn't present.
+Strings: `enc:v2:<base64>` where the bytes decode to JSON
+         `{"v":2,"alg":"aesgcm"|"chacha20poly1305","kid":<id>,
+           "salt":<b64 or empty>,"nonce":<b64>,"ct":<b64>}`.
+Bytes:   `b"PFSEC2\0" + json_payload_bytes` (sidecar files).
 
 Key management
 --------------
@@ -21,9 +16,8 @@ The master key is resolved in order:
                                      first boot when neither env is set.
 
 Key rotation: `add_key(kid, key)` registers an extra key and
-`set_current(kid)` switches new writes to it. `decrypt()` tries
-the payload's kid against the keyring and falls back to legacy
-XOR if the format is `enc:<v1>`. CLI: `python -m core.secrets`.
+`set_current(kid)` switches new writes to it. `decrypt()` uses the
+payload's kid against the keyring. CLI: `python -m core.secrets`.
 
 Failure mode
 ------------
@@ -94,54 +88,21 @@ class SecretsManager:
         self._lock = threading.RLock()
         self._keyring: dict[str, bytes] = {}
         self._current_kid = _DEFAULT_KID
-        self._legacy_xor_key: Optional[bytes] = None
         self._init_default_key(key)
 
     # --- Key management -------------------------------------------------
 
     def _init_default_key(self, override: Optional[str]) -> None:
-        """Resolve the boot key and seed the keyring with it.
-
-        The legacy XOR scheme used a *different* KDF profile from the
-        new v2 scrypt path: PBKDF2-HMAC-SHA256 against the salt
-        b'pawflow-salt' with 100_000 iterations. We must derive the
-        legacy key with that exact recipe from the same password the
-        user already had set as `PAWFLOW_SECRET_KEY`, otherwise
-        upgrading the binary breaks every existing secret.
-        """
-        key, password_for_legacy = self._resolve_boot_key(override)
+        """Resolve the boot key and seed the keyring with it."""
+        key = self._resolve_boot_key(override)
         self._keyring[_DEFAULT_KID] = key
-        if password_for_legacy is not None:
-            self._legacy_xor_key = self._derive_legacy_xor_key(
-                password_for_legacy)
-            logger.info(
-                "[secrets] master key derived from password (scrypt for v2, "
-                "PBKDF2 for legacy v1 read-back)")
-        else:
-            # Raw 32-byte env key or generated file: there is no
-            # password to re-derive the legacy key from. Best-effort:
-            # use the raw key bytes for legacy read-back too. New
-            # deployments set PAWFLOW_SECRET_KEY_B64 and never had
-            # legacy payloads, so this branch is rarely the read path.
-            self._legacy_xor_key = key
 
     @staticmethod
-    def _derive_legacy_xor_key(password: str) -> bytes:
-        """Reproduce the pre-v2 KDF exactly so old `enc:<v1>` payloads
-        still decrypt under the same password."""
-        return hashlib.pbkdf2_hmac(
-            "sha256", password.encode("utf-8"), b"pawflow-salt", 100000)
-
-    @staticmethod
-    def _resolve_boot_key(override: Optional[str]) -> tuple[bytes, Optional[str]]:
-        """Return (v2_key, password_for_legacy_kdf). The second element
-        is the original password string when the boot key came from a
-        password (override or PAWFLOW_SECRET_KEY) so the legacy XOR
-        helper can re-derive its own KDF profile from it. None when
-        no password is in play (raw env key or random file)."""
+    def _resolve_boot_key(override: Optional[str]) -> bytes:
+        """Return the 32-byte boot key."""
         # 1) Direct override (used by tests / CLI rotation).
         if override is not None:
-            return SecretsManager._derive_from_password(override), override
+            return SecretsManager._derive_from_password(override)
         # 2) PAWFLOW_SECRET_KEY_B64 — raw 32-byte key.
         b64_env = os.environ.get("PAWFLOW_SECRET_KEY_B64")
         if b64_env:
@@ -153,18 +114,18 @@ class SecretsManager:
             if len(raw) != 32:
                 raise SecretDecryptError(
                     f"PAWFLOW_SECRET_KEY_B64 must decode to 32 bytes, got {len(raw)}")
-            return raw, None
+            return raw
         # 3) PAWFLOW_SECRET_KEY — plaintext password.
         pwd = os.environ.get("PAWFLOW_SECRET_KEY")
         if pwd:
-            return SecretsManager._derive_from_password(pwd), pwd
+            return SecretsManager._derive_from_password(pwd)
         # 4) Generated key file fallback.
         from core.paths import SECRET_KEY_FILE
         path = SECRET_KEY_FILE
         if path.exists():
             data = path.read_bytes()
             if len(data) >= 32:
-                return data[:32], None
+                return data[:32]
         path.parent.mkdir(parents=True, exist_ok=True)
         generated = os.urandom(32)
         path.write_bytes(generated)
@@ -176,7 +137,7 @@ class SecretsManager:
             "[secrets] generated new random master key at %s — set "
             "PAWFLOW_SECRET_KEY_B64 in production to avoid relying on "
             "this on-disk file.", path)
-        return generated, None
+        return generated
 
     @staticmethod
     def _derive_from_password(password: str) -> bytes:
@@ -243,7 +204,6 @@ class SecretsManager:
         Accepts:
           - bare strings (no `enc:` prefix) — returned as-is.
           - `enc:v2:<base64>` — AEAD path.
-          - `enc:<base64>` — legacy XOR path (read-only).
 
         Raises SecretDecryptError if a payload looks encrypted but
         cannot be authenticated against the keyring. Never falls back
@@ -254,8 +214,7 @@ class SecretsManager:
         if ciphertext.startswith("enc:v2:"):
             return self._decrypt_v2(ciphertext[len("enc:v2:"):]).decode(
                 "utf-8")
-        # Legacy XOR (`enc:<b64>`).
-        return self._decrypt_legacy(ciphertext[4:])
+        raise SecretDecryptError("unsupported secret format")
 
     def encrypt_bytes(self, data: bytes) -> bytes:
         """Encrypt raw bytes (sidecar files). Output is
@@ -273,18 +232,15 @@ class SecretsManager:
         return _MAGIC + payload
 
     def decrypt_bytes(self, data: bytes) -> bytes:
-        """Decrypt sidecar bytes. Reads v2 if magic header present,
-        falls back to legacy XOR layout otherwise. Any parse / AEAD
-        failure surfaces as SecretDecryptError — we never silently
-        return ciphertext."""
-        if data[:len(_MAGIC)] == _MAGIC:
-            try:
-                payload = json.loads(data[len(_MAGIC):].decode("utf-8"))
-            except Exception as e:
-                raise SecretDecryptError(
-                    f"v2 sidecar envelope is corrupted: {e}")
-            return self._decrypt_v2_payload(payload)
-        return self._decrypt_bytes_legacy(data)
+        """Decrypt sidecar bytes with the v2 magic header."""
+        if data[:len(_MAGIC)] != _MAGIC:
+            raise SecretDecryptError("unsupported sidecar secret format")
+        try:
+            payload = json.loads(data[len(_MAGIC):].decode("utf-8"))
+        except Exception as e:
+            raise SecretDecryptError(
+                f"v2 sidecar envelope is corrupted: {e}")
+        return self._decrypt_v2_payload(payload)
 
     @staticmethod
     def is_encrypted(value: str) -> bool:
@@ -331,55 +287,6 @@ class SecretsManager:
         except Exception as e:
             raise SecretDecryptError(
                 f"AEAD decrypt failed (kid={kid}): {e}")
-
-    # --- Internal: legacy XOR (read-only) -------------------------------
-
-    def _decrypt_legacy(self, b64_payload: str) -> str:
-        if self._legacy_xor_key is None:
-            raise SecretDecryptError(
-                "legacy ciphertext encountered but no legacy key available")
-        try:
-            raw = base64.b64decode(b64_payload)
-            iv = raw[:16]
-            mac = raw[-16:]
-            encrypted = raw[16:-16]
-            expected = hmac.new(
-                self._legacy_xor_key, iv + encrypted,
-                hashlib.sha256).digest()[:16]
-            if not hmac.compare_digest(mac, expected):
-                raise SecretDecryptError("legacy HMAC mismatch")
-            stream = self._legacy_stream(iv, len(encrypted))
-            return bytes(a ^ b for a, b in zip(encrypted, stream)).decode("utf-8")
-        except SecretDecryptError:
-            raise
-        except Exception as e:
-            raise SecretDecryptError(f"legacy decrypt failed: {e}")
-
-    def _decrypt_bytes_legacy(self, data: bytes) -> bytes:
-        if self._legacy_xor_key is None or len(data) < 32:
-            raise SecretDecryptError("legacy bytes payload too short / no key")
-        iv = data[:16]
-        mac = data[-16:]
-        encrypted = data[16:-16]
-        expected = hmac.new(
-            self._legacy_xor_key, iv + encrypted,
-            hashlib.sha256).digest()[:16]
-        if not hmac.compare_digest(mac, expected):
-            raise SecretDecryptError("legacy bytes HMAC mismatch")
-        stream = self._legacy_stream(iv, len(encrypted))
-        return bytes(a ^ b for a, b in zip(encrypted, stream))
-
-    def _legacy_stream(self, iv: bytes, length: int) -> bytes:
-        stream = b""
-        counter = 0
-        while len(stream) < length:
-            block = hashlib.pbkdf2_hmac(
-                "sha256", self._legacy_xor_key + iv,
-                counter.to_bytes(4, "big"), 1)
-            stream += block
-            counter += 1
-        return stream[:length]
-
 
 # --- Singleton ----------------------------------------------------------
 

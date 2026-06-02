@@ -736,25 +736,13 @@ class LLMGeminiMixin(GeminiSessionMixin):
 
         store = None
         session_id = ""
-        legacy_session_cleared = False
         session_key = f"gemini_acp_session:{agent_name or 'default'}"
         pool_key = f"gemini_acp_pool_idx:{agent_name or 'default'}"
-        session_version_key = f"gemini_acp_session_version:{agent_name or 'default'}"
         if conv_id and not is_ephemeral:
             try:
                 from core.conversation_store import ConversationStore
                 store = ConversationStore.instance()
                 session_id = store.get_extra(conv_id, session_key) or ""
-                session_version = store.get_extra(conv_id, session_version_key) or ""
-                if session_id and session_version != "2":
-                    logger.info(
-                        "[gemini-acp-live] clearing legacy stored session %s",
-                        session_id[:12])
-                    store.set_extra(conv_id, session_key, "")
-                    store.set_extra(conv_id, pool_key, "")
-                    store.set_extra(conv_id, session_version_key, "")
-                    session_id = ""
-                    legacy_session_cleared = True
             except Exception:
                 logger.debug("[gemini-acp] failed to restore session id", exc_info=True)
 
@@ -790,9 +778,6 @@ class LLMGeminiMixin(GeminiSessionMixin):
                     idle_ttl_seconds=int(_idle_ttl) if _idle_ttl else None)
                 live_key = (user_id, conv_id, agent_name or "default", svc_id)
                 live_session = live_reg.get(live_key)
-                if live_session is not None and legacy_session_cleared:
-                    live_reg.evict(live_key, "legacy_session")
-                    live_session = None
                 if live_session is not None and not live_session.is_container_alive():
                     live_reg.evict(live_key, "dead_container")
                     live_session = None
@@ -914,7 +899,6 @@ class LLMGeminiMixin(GeminiSessionMixin):
                         if conv_id and store is not None and not is_ephemeral:
                             try:
                                 store.set_extra(conv_id, session_key, "")
-                                store.set_extra(conv_id, session_version_key, "")
                             except Exception:
                                 logger.debug("[gemini-acp] failed to clear stale session id", exc_info=True)
                         session_id = ""
@@ -1224,7 +1208,6 @@ class LLMGeminiMixin(GeminiSessionMixin):
             if session_id and conv_id and store is not None and not is_ephemeral:
                 try:
                     store.set_extra(conv_id, session_key, session_id)
-                    store.set_extra(conv_id, session_version_key, "2")
                 except Exception:
                     logger.debug("[gemini-acp] failed to persist session id", exc_info=True)
             return LLMResponse(
@@ -1295,7 +1278,6 @@ class LLMGeminiMixin(GeminiSessionMixin):
                     try:
                         if (store.get_extra(conv_id, session_key) or "") == session_id:
                             store.set_extra(conv_id, session_key, "")
-                            store.set_extra(conv_id, session_version_key, "")
                     except Exception:
                         logger.debug("[gemini-acp] failed to clear failed fresh session", exc_info=True)
                 if live_reg is not None and live_key is not None:
@@ -1699,18 +1681,7 @@ class LLMGeminiMixin(GeminiSessionMixin):
                         "modelConfig": {"generateContentConfig": generation_config},
                     }
                 ],
-                # Legacy v1 compatibility for older Gemini CLI builds.
-                "customOverrides": [
-                    {
-                        "match": {"model": model} if model else {},
-                        "modelConfig": {"generateContentConfig": generation_config},
-                    }
-                ],
             },
-            # Legacy v1 compatibility for older Gemini CLI builds.
-            "autoAccept": True,
-            "allowMCPServers": ["pawflow"],
-            "excludeTools": excluded_core_tools,
         }
         if model:
             settings["model"] = {"name": model}

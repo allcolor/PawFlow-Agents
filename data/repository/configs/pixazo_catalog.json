@@ -1,5 +1,5 @@
 {
-  "_comment": "Pixazo model catalog. Each model declares one or more operations (text_to_image, edit_image, ...). Conventions: 'sync' = response carries the image URL directly; 'legacy_poll' = POST returns request_id, status is fetched by POSTing to poll_endpoint with the id; 'polling_url' = POST returns an absolute polling_url that we GET to fetch status (output.media_url[0]).",
+  "_comment": "Pixazo model catalog. Each model declares one or more operations (text_to_image, edit_image, ...). Conventions: 'sync' = response carries the media URL directly; 'polling_url' = POST returns an absolute polling_url that we GET to fetch status (output.media_url[0]).",
   "models": {
     "sdxl": {
       "label": "SDXL (Stable Diffusion XL)",

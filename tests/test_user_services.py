@@ -533,13 +533,15 @@ class TestServiceDef:
         )
         d = sdef.to_dict()
         assert d["service_id"] == "mydb"
-        assert d["user_id"] == "alice"  # backwards compat output
+        assert d["scope"] == "user"
+        assert d["scope_id"] == "alice"
         assert d["config"]["host"] == "localhost"
 
     def test_from_dict(self):
         from core.service_registry import ServiceDef
         d = {
-            "service_id": "mydb", "service_type": SVC_TYPE, "user_id": "alice",
+            "service_id": "mydb", "service_type": SVC_TYPE,
+            "scope": "user", "scope_id": "alice",
             "config": {"host": "localhost"}, "enabled": True,
             "description": "test", "created_at": 1000.0,
         }
@@ -551,7 +553,8 @@ class TestServiceDef:
     def test_from_dict_ignores_unknown_keys(self):
         from core.service_registry import ServiceDef
         d = {
-            "service_id": "mydb", "service_type": SVC_TYPE, "user_id": "alice",
+            "service_id": "mydb", "service_type": SVC_TYPE,
+            "scope": "user", "scope_id": "alice",
             "config": {}, "extra_field": "ignored", "created_at": 1000.0,
         }
         sdef = ServiceDef.from_dict(d)

@@ -2,10 +2,9 @@
 
 Covers:
   - JSON catalog loading.
-  - text_to_image dispatch for sync, legacy_poll, polling_url conventions.
+  - text_to_image dispatch for sync and polling_url conventions.
   - edit_image dispatch (nano-banana convention='polling_url').
   - polling_url branch: POST returns absolute URL → GET it.
-  - legacy_poll branch: POST request_id → POST {request_id} to poll_endpoint.
   - URL extraction from output.media_url[0] (new convention).
   - Unknown model / unknown operation error paths.
 """
@@ -146,21 +145,11 @@ def test_polling_status_uppercase_treated_as_completed():
     assert s.generate(prompt="x")["source_url"] == "https://cdn/upper.png"
 
 
-def test_legacy_poll_in_progress_then_completed():
+def test_unknown_convention_is_rejected():
     s = _svc("nano-banana")
-    posts = []
-
-    def _fake_post(ep, body):
-        posts.append(ep)
-        if ep.endswith("generateTextToImageRequest"):
-            return {"request_id": "rid"}
-        if len(posts) <= 2:
-            return {"status": "PROCESSING"}
-        return {"status": "completed", "imageUrl": "https://cdn/nb.png"}
-
-    s._post = _fake_post  # type: ignore[assignment]
-    s._download_image = lambda u: (b"NB", "image/png")  # type: ignore[assignment]
-    assert s.generate(prompt="x")["source_url"] == "https://cdn/nb.png"
+    s._model()["operations"]["text_to_image"]["convention"] = "request_id_poll"
+    with pytest.raises(Exception, match="Unsupported Pixazo convention"):
+        s.generate(prompt="x")
 
 
 # ── edit_image ─────────────────────────────────────────────────────────
@@ -233,7 +222,7 @@ def test_extract_url_from_nested_output_media_url():
     assert url == "https://cdn/x.png"
 
 
-def test_extract_url_from_legacy_imageUrl_field():
+def test_extract_url_from_imageUrl_field():
     url = PixazoImageService._extract_image_url({"imageUrl": "https://cdn/y.png"})
     assert url == "https://cdn/y.png"
 

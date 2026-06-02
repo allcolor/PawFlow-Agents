@@ -24,7 +24,6 @@ from typing import Any, Dict, List, Optional
 THEME_RTYPE = "theme"
 THEME_META = "theme.json"
 DEFAULT_THEME_REF = "global:pawflow_dark"
-LEGACY_BUILTIN_PREFIX = "builtin:"
 
 
 def _ref(scope: str, name: str) -> str:
@@ -237,8 +236,6 @@ def _scope_lookup(scope: str, name: str, user_id: str, conversation_id: str) -> 
 def resolve_theme(ref: str, user_id: str, conversation_id: str = "") -> Optional[Dict[str, Any]]:
     if not ref:
         ref = DEFAULT_THEME_REF
-    if ref.startswith(LEGACY_BUILTIN_PREFIX):
-        ref = "global:" + ref.split(":", 1)[1]
     if ":" in ref:
         scope, name = ref.split(":", 1)
     else:
@@ -287,8 +284,6 @@ def create_theme(name: str, scope: str, user_id: str, conversation_id: str,
 def delete_theme(ref: str, user_id: str, conversation_id: str = "") -> bool:
     if not ref or ":" not in ref:
         raise ValueError("theme ref is required")
-    if ref.startswith(LEGACY_BUILTIN_PREFIX):
-        ref = "global:" + ref.split(":", 1)[1]
     scope, name = ref.split(":", 1)
     if scope == "global":
         target = _theme_dir("global", name)

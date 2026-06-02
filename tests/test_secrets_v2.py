@@ -1,4 +1,4 @@
-"""Phase 7 tests: AEAD secrets v2 + legacy compatibility + key rotation."""
+"""Phase 7 tests: AEAD secrets v2 + key rotation."""
 
 import base64
 import os
@@ -105,95 +105,10 @@ def test_v2_unknown_kid_raises():
         sm.decrypt(enc)
 
 
-# ---------------------------------------------------------------------------
-# Legacy compatibility (XOR + HMAC)
-# ---------------------------------------------------------------------------
-
-
-def _make_legacy_payload(key: bytes, plaintext: str) -> str:
-    """Recreate the pre-v2 `enc:<b64>` payload format so we can verify
-    that the new manager still reads payloads written by the old one."""
-    import hashlib
-    import hmac
-    iv = os.urandom(16)
-    data = plaintext.encode("utf-8")
-    stream = b""
-    counter = 0
-    while len(stream) < len(data):
-        stream += hashlib.pbkdf2_hmac(
-            "sha256", key + iv, counter.to_bytes(4, "big"), 1)
-        counter += 1
-    encrypted = bytes(a ^ b for a, b in zip(data, stream[:len(data)]))
-    mac = hmac.new(key, iv + encrypted, hashlib.sha256).digest()[:16]
-    return "enc:" + base64.b64encode(iv + encrypted + mac).decode()
-
-
-def test_legacy_string_decrypt_via_same_password():
-    """Legacy XOR payload encrypted with password P decrypts under a v2
-    manager built with the same P. The legacy KDF profile (PBKDF2 +
-    pawflow-salt) is reproduced from the boot password so existing
-    deployments don't lose access on upgrade."""
-    sm = SecretsManager("shared-password")
-    key = sm._legacy_xor_key
-    legacy = _make_legacy_payload(key, "old data")
-    assert sm.decrypt(legacy) == "old data"
-
-
-def test_legacy_xor_key_uses_pbkdf2_pawflow_salt():
-    """Regression guard: the legacy XOR key MUST be derived with the
-    pre-v2 KDF (PBKDF2-HMAC-SHA256 + b'pawflow-salt' + 100k iters)
-    when the boot key comes from a password. The first cut of v2
-    used the scrypt-derived key for legacy too, which silently broke
-    every existing `enc:<v1>` payload at upgrade."""
-    import hashlib
-    sm = SecretsManager("some-password")
-    expected = hashlib.pbkdf2_hmac(
-        "sha256", b"some-password", b"pawflow-salt", 100000)
-    assert sm._legacy_xor_key == expected
-
-
-def test_legacy_payload_made_by_pre_v2_code_decrypts():
-    """Concrete reproduction: build a payload exactly like the
-    pre-v2 SecretsManager would have, then read it back from the
-    new manager initialised with the same password."""
-    import hashlib
-    import hmac
-    import os
-    pwd = "the-old-password"
-    legacy_key = hashlib.pbkdf2_hmac(
-        "sha256", pwd.encode("utf-8"), b"pawflow-salt", 100000)
-    plaintext = b"old-style-secret"
-    iv = os.urandom(16)
-    stream = b""
-    counter = 0
-    while len(stream) < len(plaintext):
-        stream += hashlib.pbkdf2_hmac(
-            "sha256", legacy_key + iv,
-            counter.to_bytes(4, "big"), 1)
-        counter += 1
-    ct = bytes(a ^ b for a, b in zip(plaintext, stream[:len(plaintext)]))
-    mac = hmac.new(legacy_key, iv + ct, hashlib.sha256).digest()[:16]
-    payload = "enc:" + base64.b64encode(iv + ct + mac).decode()
-    sm = SecretsManager(pwd)
-    assert sm.decrypt(payload) == "old-style-secret"
-
-
-def test_legacy_string_wrong_key_raises():
-    a = SecretsManager("key-A")
-    b = SecretsManager("key-B")
-    legacy = _make_legacy_payload(a._legacy_xor_key, "hi")
-    with pytest.raises(SecretDecryptError):
-        b.decrypt(legacy)
-
-
-def test_legacy_string_corrupt_raises():
+def test_non_v2_secret_format_raises():
     sm = SecretsManager("p")
-    legacy = _make_legacy_payload(sm._legacy_xor_key, "abc")
-    raw = bytearray(base64.b64decode(legacy[4:]))
-    raw[-1] ^= 0xFF
-    corrupt = "enc:" + base64.b64encode(bytes(raw)).decode()
     with pytest.raises(SecretDecryptError):
-        sm.decrypt(corrupt)
+        sm.decrypt("enc:not-v2")
 
 
 # ---------------------------------------------------------------------------
@@ -235,29 +150,14 @@ def test_add_key_validates_length():
 
 
 # ---------------------------------------------------------------------------
-# Bytes (sidecar) legacy + magic header
+# Bytes sidecars
 # ---------------------------------------------------------------------------
 
 
-def test_bytes_legacy_no_magic_decrypts():
-    """Old sidecars have no magic header — we must still read them."""
+def test_bytes_without_magic_header_raises():
     sm = SecretsManager("shared")
-    # Reproduce the old `iv + encrypted + mac` layout.
-    import hashlib
-    import hmac
-    key = sm._legacy_xor_key
-    iv = os.urandom(16)
-    data = b"sidecar payload bytes"
-    stream = b""
-    counter = 0
-    while len(stream) < len(data):
-        stream += hashlib.pbkdf2_hmac(
-            "sha256", key + iv, counter.to_bytes(4, "big"), 1)
-        counter += 1
-    encrypted = bytes(a ^ b for a, b in zip(data, stream[:len(data)]))
-    mac = hmac.new(key, iv + encrypted, hashlib.sha256).digest()[:16]
-    legacy = iv + encrypted + mac
-    assert sm.decrypt_bytes(legacy) == data
+    with pytest.raises(SecretDecryptError):
+        sm.decrypt_bytes(b"sidecar payload bytes")
 
 
 def test_bytes_v2_with_magic_decrypts():

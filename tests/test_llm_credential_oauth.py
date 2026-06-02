@@ -5,6 +5,7 @@ import inspect
 from services.llm_connection import LLMConnectionService
 from services.llm_credential_oauth import (
     LLMCredentialOAuthProviderService,
+    credential_service_id_from_llm_service,
     normalize_provider,
     resolve_credential_service_id,
 )
@@ -62,7 +63,7 @@ def test_credential_pool_resolution_prefers_llm_reference(monkeypatch):
         lambda user_id="", conv_id="": list(by_id.values()),
     )
 
-    assert resolve_credential_service_id("codex-app-server", llm.service_id) == cred.service_id
+    assert credential_service_id_from_llm_service("codex-app-server", llm.service_id) == cred.service_id
     assert resolve_credential_service_id("codex-app-server", cred.service_id) == cred.service_id
 
 
@@ -121,7 +122,7 @@ def test_cli_pool_helpers_resolve_user_scoped_credential_services(monkeypatch):
 
     for finder, _, llm_id, cred_id in cases:
         assert finder(llm_id, user_id="alice", conv_id="conv-1") == cred_id
-        assert finder(llm_id) == llm_id
+        assert finder(llm_id) == ""
 
 
 def test_cli_runtime_token_resolution_passes_scope_to_pool_loaders(monkeypatch):
@@ -182,7 +183,7 @@ def test_claude_code_interactive_reuses_claude_code_credentials(monkeypatch):
         lambda user_id="", conv_id="": list(by_id.values()),
     )
 
-    assert resolve_credential_service_id("claude-code-interactive", llm.service_id) == cred.service_id
+    assert credential_service_id_from_llm_service("claude-code-interactive", llm.service_id) == cred.service_id
     assert resolve_credential_service_id("claude-code-interactive", cred.service_id) == cred.service_id
 
 
@@ -208,18 +209,13 @@ def test_antigravity_interactive_reuses_gemini_credentials(monkeypatch):
         lambda user_id="", conv_id="": list(by_id.values()),
     )
 
-    assert resolve_credential_service_id("antigravity-interactive", llm.service_id) == cred.service_id
+    assert credential_service_id_from_llm_service("antigravity-interactive", llm.service_id) == cred.service_id
     assert resolve_credential_service_id("antigravity-interactive", cred.service_id) == cred.service_id
 
 
-def test_service_registry_has_startup_migration_for_legacy_llm_oauth():
-    src = inspect.getsource(ServiceRegistry._migrate_llm_oauth_credentials)
-    assert "credential_service_id" in src
-    assert "default_credential_service_id" in src
-    assert "llmCredentialOAuthProvider" in src or "SERVICE_TYPE" in src
-    assert "_copy_legacy_llm_pool_secrets" in src
-    assert "_migrate_llm_oauth_credentials" in inspect.getsource(ServiceRegistry._ensure_loaded)
-    assert "_migrate_llm_oauth_credentials" in inspect.getsource(ServiceRegistry.reload_scope)
+def test_service_registry_does_not_rewrite_credential_services_on_load():
+    assert "_migrate_llm_oauth_credentials" not in inspect.getsource(ServiceRegistry._ensure_loaded)
+    assert "_migrate_llm_oauth_credentials" not in inspect.getsource(ServiceRegistry.reload_scope)
 
 
 def test_credential_dialog_filters_provider_actions_without_parameter_rules():

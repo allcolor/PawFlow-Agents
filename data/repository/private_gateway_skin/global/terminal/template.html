@@ -28,9 +28,9 @@
   <div class="line">Last login: Thu Jan  1 00:00:00 1970 from 127.0.0.1</div>
   <div class="line">&nbsp;</div>
   <div class="line">$ sudo su -</div>
-  <div class="line err" id="e">%(error)s</div>
+  <div class="line err" id="e">{{ error }}</div>
   <form method="POST" action="/_gateway" id="f">
-    <input type="hidden" name="next" value="%(next_url)s">
+    <input type="hidden" name="next" value="{{ next_url }}">
     <div class="prompt">
       <span>[sudo] password: </span>
       <input type="password" name="secret" id="s" autocomplete="off" autofocus>
@@ -40,7 +40,7 @@
 </div>
 <script>
 (function(){
-  var cd = %(cooldown)d, cdEl = document.getElementById('cd'),
+  var cd = {{ cooldown }}, cdEl = document.getElementById('cd'),
       inp = document.getElementById('s');
   function tick() {
     if (cd <= 0) { inp.disabled = false; cdEl.textContent = ''; return; }

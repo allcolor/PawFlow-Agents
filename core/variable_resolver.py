@@ -61,13 +61,6 @@ class VariableResolverMixin:
         def replace_var(match):
             var_path = match.group(1)
 
-            # Support parameters (legacy flow.parameters. prefix removed)
-            if var_path.startswith('flow.parameters.'):
-                param_name = var_path.replace('flow.parameters.', '')
-                # NOTE: legacy prefix — new expressions use ${var} directly
-                # This requires a global context; return the string unchanged
-                return match.group(0)
-
             # Cannot be resolved at config time; keep unchanged
             return match.group(0)
 

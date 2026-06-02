@@ -50,11 +50,6 @@ function _togglePwdVis(inputId, btn) {
 // Per-agent streaming state — prevents cross-agent clobbering when multiple
 // agents (random thoughts, sub-agents) stream concurrently.
 let streams = {};  // agentName → { el, text, chunks }
-// Legacy aliases for backward compat with code that reads these globals
-let streamingEl = null;
-let streamingText = '';
-let streamingChunks = [];
-let streamingAgent = '';
 
 function getStream(agent) {
   const key = (agent || '').toLowerCase();
@@ -64,10 +59,6 @@ function getStream(agent) {
 function clearStream(agent) {
   const key = (agent || '').toLowerCase();
   delete streams[key];
-  // Sync legacy globals if this was the active stream
-  if (!streamingAgent || streamingAgent.toLowerCase() === key) {
-    streamingEl = null; streamingText = ''; streamingChunks = []; streamingAgent = '';
-  }
 }
 function clearAllStreams() {
   for (const a of Object.keys(streams)) {
@@ -75,11 +66,9 @@ function clearAllStreams() {
     for (const c of s.chunks) { if (c && c.parentNode) c.remove(); }
   }
   streams = {};
-  streamingEl = null; streamingText = ''; streamingChunks = []; streamingAgent = '';
 }
 function clearAllStreamsKeepDOM() {
   streams = {};
-  streamingEl = null; streamingText = ''; streamingChunks = []; streamingAgent = '';
 }
 let permissionMode = 'default';  // current tool permission mode
 

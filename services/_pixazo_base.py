@@ -3,11 +3,9 @@
 `_PixazoBaseService` is the engine every `PixazoXxxService` (image,
 video, audio, 3D, upscale, try-on, lipsync, trainer) extends. It
 reads `data/repository/configs/pixazo_catalog.json` and drives the
-three supported conventions end-to-end:
+supported conventions end-to-end:
 
   - "sync"          — POST returns the media URL directly in the body.
-  - "legacy_poll"   — POST returns request_id; status is fetched by
-                      POSTing {request_id} to the model's poll_endpoint.
   - "polling_url"   — POST returns an absolute polling_url; status is
                       fetched by GETing that URL. Completion payload
                       surfaces the URL at the op-configurable
@@ -648,8 +646,7 @@ class _PixazoBaseService(BaseService):
 
     # ── Polling ────────────────────────────────────────────────────────
 
-    def _poll(self, op: Dict[str, Any], request_id: str,
-              *, polling_url: str = "") -> str:
+    def _poll(self, op: Dict[str, Any], *, polling_url: str) -> str:
         """Drive polling per convention until completion; return media URL.
 
         No timeout — waits forever. Cancellation comes from the active
@@ -659,10 +656,8 @@ class _PixazoBaseService(BaseService):
         """
         output_path = op.get("output_path", "")
         url_field = op.get("url_field", "")
-        id_field = op.get("id_field", "request_id")
-        poll_endpoint = op.get("poll_endpoint", "")
-        prediction_endpoint = op.get("prediction_endpoint", "")
-        use_url = bool(polling_url)
+        if not polling_url:
+            raise ServiceError("Pixazo polling_url convention requires polling_url")
         start = time.time()
         # Pulled lazily so direct service tests (which run outside a
         # tool dispatch) don't need to fake the thread-local.
@@ -676,23 +671,7 @@ class _PixazoBaseService(BaseService):
                 raise ServiceError(
                     "Pixazo polling cancelled by user")
             time.sleep(self.poll_interval)
-            if use_url:
-                data = self._get_url(polling_url)
-            elif prediction_endpoint:
-                # Some models expose status on a separate endpoint with
-                # a different id field (Runway, FireRed).
-                data = self._post(prediction_endpoint, {
-                    id_field: request_id,
-                    "request_id": request_id,
-                    "requestId": request_id,
-                    "prediction_id": request_id,
-                })
-            else:
-                data = self._post(poll_endpoint, {
-                    id_field: request_id,
-                    "request_id": request_id,
-                    "requestId": request_id,
-                })
+            data = self._get_url(polling_url)
             status = (data.get("status", "") or "").lower()
             elapsed = int(time.time() - start)
             # Polling is chatty (1 line every poll_interval s for the
@@ -702,7 +681,7 @@ class _PixazoBaseService(BaseService):
             # 50+ lines per generation.
             (logger.info if elapsed <= self.poll_interval else logger.debug)(
                 "[PIXAZO] Poll %s (%ds): status=%s",
-                self._short_url(polling_url or poll_endpoint),
+                self._short_url(polling_url),
                 elapsed, status)
             if status in ("completed", "done", "success", "ready"):
                 u = _extract_media_url(
@@ -778,9 +757,11 @@ class _PixazoBaseService(BaseService):
         if not endpoint:
             raise ServiceError(f"Operation '{op_name}' has no endpoint configured")
         convention = op.get("convention", "sync")
+        if convention not in {"sync", "polling_url"}:
+            raise ServiceError(
+                f"Unsupported Pixazo convention '{convention}' for operation '{op_name}'")
         output_path = op.get("output_path", "")
         url_field = op.get("url_field", "")
-        id_field = op.get("id_field", "request_id")
         status_url_field = op.get("status_url_field", "polling_url")
         multipart = bool(op.get("multipart_form_data", False))
         webhook_ticket = None
@@ -827,26 +808,16 @@ class _PixazoBaseService(BaseService):
                 if not url:
                     url = self._wait_webhook(webhook_ticket, op)
             else:
-                request_id = ""
-                for f in (id_field, "request_id", "requestId", "id",
-                          "taskId", "task_id", "video_id", "prediction_id"):
-                    v = data.get(f, "")
-                    if v:
-                        request_id = v
-                        break
-                if not request_id:
-                    # Some endpoints return the URL inline even on async.
+                polling_url = data.get(status_url_field, "") or ""
+                if polling_url:
+                    url = self._poll(op, polling_url=polling_url)
+                else:
                     url = _extract_media_url(
                         data, output_path=output_path, url_field=url_field)
                     if not url:
                         raise ServiceError(
-                            f"No request_id and no URL in response: "
+                            f"No polling_url and no URL in response: "
                             f"{json.dumps(data)[:300]}")
-                else:
-                    polling_url = ""
-                    if convention == "polling_url":
-                        polling_url = data.get(status_url_field, "") or ""
-                    url = self._poll(op, request_id, polling_url=polling_url)
         finally:
             if webhook_ticket is not None:
                 webhook_ticket.close()

@@ -117,7 +117,13 @@ class ConfigStore:
                     result[key] = ConfigValue(value="")
             else:
                 # Inline encrypted string
-                encrypted = value.get("value", "") if isinstance(value, dict) else value
+                if not isinstance(value, str):
+                    logger.warning(
+                        "Invalid secret entry '%s': expected encrypted string or sidecar ref",
+                        key)
+                    result[key] = ConfigValue(value="")
+                    continue
+                encrypted = value
                 try:
                     decrypted = sm.decrypt(encrypted)
                 except Exception as e:
@@ -180,7 +186,7 @@ class ConfigStore:
 
     @staticmethod
     def save_secrets_raw(path: Path, data: Dict[str, str]) -> None:
-        """Save raw (encrypted) secret values. For backward compat with GUI."""
+        """Save raw encrypted secret values for GUI display/edit flows."""
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
             json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"

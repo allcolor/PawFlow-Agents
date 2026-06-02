@@ -132,6 +132,10 @@ def test_generator_resolves_implied_features_and_writes_installer_artifacts(tmp_
     assert "apt-get install -y --no-install-recommends" in dockerfile
     assert "chromium" in dockerfile
     assert "/usr/bin/chromium --no-sandbox" in dockerfile
+    assert "update-alternatives --set x-www-browser /usr/local/bin/chromium" in dockerfile
+    assert "WebBrowser=chromium" in dockerfile
+    assert "X-XFCE-CommandsWithParameter=/usr/local/bin/chromium" in dockerfile
+    assert "x-scheme-handler/https=chromium.desktop" in dockerfile
     assert "/ms-playwright" not in dockerfile
     assert "google-chrome" not in dockerfile
     assert "packages.microsoft.com/repos/code" not in dockerfile

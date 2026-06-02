@@ -59,6 +59,10 @@ def test_server_dockerfile_supports_bootstrap_docker_builds():
     assert "ppa:xtradeb/apps" in relay_dev
     assert "apt-get install -y --no-install-recommends chromium" in relay_dev
     assert "/usr/bin/chromium --no-sandbox" in relay_dev
+    assert "update-alternatives --set x-www-browser /usr/local/bin/chromium" in relay_dev
+    assert "WebBrowser=chromium" in relay_dev
+    assert "X-XFCE-CommandsWithParameter=/usr/local/bin/chromium" in relay_dev
+    assert "x-scheme-handler/https=chromium.desktop" in relay_dev
     assert "google-chrome" not in relay_dev
     assert "PAWFLOW_CHROMIUM_EXECUTABLE" not in relay_dev
     assert "python3 -m playwright install" not in relay_dev

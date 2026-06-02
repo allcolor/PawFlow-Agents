@@ -213,6 +213,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends software-proper
     && mkdir -p /usr/local/share/applications \
     && printf '[Desktop Entry]\nType=Application\nName=Chromium\nExec=/usr/local/bin/chromium %%U\nMimeType=text/html;x-scheme-handler/http;x-scheme-handler/https;\n' \
        > /usr/local/share/applications/chromium.desktop \
+    && update-alternatives --install /usr/bin/x-www-browser x-www-browser /usr/local/bin/chromium 200 \
+    && update-alternatives --set x-www-browser /usr/local/bin/chromium \
+    && mkdir -p /etc/xdg /etc/xdg/xfce4 /usr/share/xfce4/helpers \
+    && printf '[Default Applications]\ntext/html=chromium.desktop\nx-scheme-handler/http=chromium.desktop\nx-scheme-handler/https=chromium.desktop\n' \
+       > /etc/xdg/mimeapps.list \
+    && printf 'WebBrowser=chromium\n' > /etc/xdg/xfce4/helpers.rc \
+    && printf '[Desktop Entry]\nNoDisplay=true\nType=X-XFCE-Helper\nName=Chromium\nX-XFCE-Category=WebBrowser\nX-XFCE-Commands=/usr/local/bin/chromium\nX-XFCE-CommandsWithParameter=/usr/local/bin/chromium "%%s"\nIcon=chromium\n' \
+       > /usr/share/xfce4/helpers/chromium.desktop \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* /root/.cache/ms-playwright
 
 # ── Docker CLI (for DinD — exec shells via docker.sock) ────────────

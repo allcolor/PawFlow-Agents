@@ -424,6 +424,24 @@ def test_external_oauth_without_existing_user_requires_invite_token(tmp_path, mo
     assert getattr(result, "pending_oauth_id", "")
 
 
+def test_external_oauth_existing_username_or_email_still_requires_link_token(tmp_path, monkeypatch):
+    _isolated_auth_paths(tmp_path, monkeypatch)
+    from core.security import SecurityManager, Role
+    from services.auth_gateway_service import AuthGatewayService
+
+    sm = SecurityManager.get_instance()
+    sm.create_user("external", "pass", Role.ADMIN, email="ext@example.com")
+    gw = AuthGatewayService({"providers": {}})
+    gw._providers["github"] = _SuccessfulOAuthProvider(
+        user_id="gh-unlinked", username="external", email="ext@example.com")
+
+    result = gw.authenticate_oauth("github", "code", "https://app.example/auth/callback")
+
+    assert result.success is False
+    assert "onboarding token" in result.error
+    assert getattr(result, "pending_oauth_id", "")
+
+
 def test_invite_token_creates_user_and_is_deleted_after_use(tmp_path, monkeypatch):
     _isolated_auth_paths(tmp_path, monkeypatch)
     from core import oauth_invite_tokens

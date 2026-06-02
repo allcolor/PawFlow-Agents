@@ -1893,6 +1893,82 @@ class TestCleanupCliRuntimeSessions:
         assert not codex_agent.exists()
         assert not gemini_agent.exists()
 
+    def test_invalidate_all_renames_runtime_conv_dir_once_before_async_delete(
+            self, store, tmp_path, monkeypatch):
+        codex, _gemini = self._setup(tmp_path, monkeypatch)
+        cid = store.generate_id()
+        store.save(cid, [], user_id="alice")
+        sanitized = cid.replace(":", "_")
+        conv_dir = codex / "alice" / sanitized
+        for idx in range(138):
+            leaf = conv_dir / f"agent-{idx}" / ".codex" / "sessions"
+            leaf.mkdir(parents=True, exist_ok=True)
+            (leaf / "rollout.jsonl").write_text("{}\n", encoding="utf-8")
+
+        started = []
+
+        class _Thread:
+            def __init__(self, *, target, args, daemon, name):
+                started.append((target, args, daemon, name))
+
+            def start(self):
+                pass
+
+        monkeypatch.setattr("core.conversation_store.threading.Thread", _Thread)
+
+        removed = store._delete_cli_runtime_session_dirs(
+            cid, "codex", async_cleanup=True)
+
+        assert removed == 1
+        assert len(started) == 1
+        stale = started[0][1][0]
+        assert stale.name.startswith(f".stale-codex-{sanitized}-")
+        assert not conv_dir.exists()
+        assert stale.exists()
+
+    def test_whole_conv_runtime_cleanup_renames_once_for_each_cli_provider(
+            self, store, tmp_path, monkeypatch):
+        from core import paths as _paths
+
+        roots = {}
+        for provider, attr in (
+                ("claude", "CLAUDE_SESSIONS_DIR"),
+                ("codex", "CODEX_SESSIONS_DIR"),
+                ("gemini", "GEMINI_SESSIONS_DIR")):
+            root = tmp_path / "sessions" / provider
+            root.mkdir(parents=True)
+            monkeypatch.setattr(_paths, attr, root)
+            roots[provider] = root
+        cid = store.generate_id()
+        store.save(cid, [], user_id="alice")
+        sanitized = cid.replace(":", "_")
+        for provider, root in roots.items():
+            payload = root / "alice" / sanitized / "assistant" / f".{provider}"
+            payload.mkdir(parents=True)
+            (payload / "state.txt").write_text("x", encoding="utf-8")
+
+        started = []
+
+        class _Thread:
+            def __init__(self, *, target, args, daemon, name):
+                started.append((args, name))
+
+            def start(self):
+                pass
+
+        monkeypatch.setattr("core.conversation_store.threading.Thread", _Thread)
+
+        for provider in ("claude", "codex", "gemini"):
+            assert store._delete_cli_runtime_session_dirs(
+                cid, provider, async_cleanup=True) == 1
+
+        assert len(started) == 3
+        for provider, root in roots.items():
+            conv_dir = root / "alice" / sanitized
+            assert not conv_dir.exists()
+            stale_dir = next((root / "alice").glob(f".stale-{provider}-{sanitized}-*"))
+            assert stale_dir.exists()
+
     def test_invalidate_one_agent_removes_only_matching_cli_dirs(self, store, tmp_path, monkeypatch):
         codex, gemini = self._setup(tmp_path, monkeypatch)
         cid = store.generate_id()

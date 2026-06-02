@@ -3623,6 +3623,7 @@ class ConversationStore:
             return 0
         from core import paths as _paths
         base_map = {
+            "claude": _paths.CLAUDE_SESSIONS_DIR,
             "codex": _paths.CODEX_SESSIONS_DIR,
             "gemini": _paths.GEMINI_SESSIONS_DIR,
         }
@@ -3634,18 +3635,16 @@ class ConversationStore:
         if agent_name:
             targets = [conv_dir / agent_name]
         else:
-            try:
-                targets = [p for p in conv_dir.iterdir() if p.is_dir()]
-            except OSError:
-                targets = []
+            targets = [conv_dir]
         removed = 0
         for target in targets:
             try:
                 if not target.is_dir():
                     continue
                 if async_cleanup:
-                    stale = target.with_name(
-                        f".stale-{target.name}-{uuid.uuid4().hex[:8]}")
+                    stale_name = (f".stale-{provider}-{target.name}-"
+                                  f"{uuid.uuid4().hex[:8]}")
+                    stale = target.with_name(stale_name)
                     try:
                         target.replace(stale)
                         cleanup_target = stale
@@ -3672,8 +3671,10 @@ class ConversationStore:
             except Exception:
                 logger.debug("exception suppressed", exc_info=True)
         if removed:
-            logger.info("Deleted %d %s runtime session dir(s) for %s%s",
-                        removed, provider, cid[:8], f"/{agent_name}" if agent_name else "")
+            action = "Scheduled deletion of" if async_cleanup else "Deleted"
+            logger.info("%s %d %s runtime session dir(s) for %s%s",
+                        action, removed, provider, cid[:8],
+                        f"/{agent_name}" if agent_name else "")
         return removed
 
     @staticmethod
@@ -3720,20 +3721,15 @@ class ConversationStore:
                 self.set_extra(cid, key, "")
                 logger.info("Invalidated %s for conv %s", key, cid[:8])
                 _had_any = True
-        # Wipe stale session files on disk (all jsonls + companion dirs
-        # for this conv). Safe: we just cleared the "current" flags,
-        # so every jsonl under sess_dir is now obsolete.
+        # Move stale provider runtime dirs out of the active path immediately;
+        # recursive deletion runs in background so restart_from stays hot.
         try:
-            owner = self._cid_user.get(cid, "") or self.get_user_id(cid) or ""
-            if owner:
-                from core import paths as _paths
-                safe_owner = owner.replace(":", "_").replace("/", "_").replace("\\", "_")
-                sanitized_cid = cid.replace(":", "_")
-                sess_dir = _paths.CLAUDE_SESSIONS_DIR / safe_owner / sanitized_cid
-                if sess_dir.is_dir():
-                    self._prune_stale_cc_sessions(sess_dir, cid, wipe_all=True)
-            self._delete_cli_runtime_session_dirs(cid, "codex")
-            self._delete_cli_runtime_session_dirs(cid, "gemini")
+            self._delete_cli_runtime_session_dirs(
+                cid, "claude", async_cleanup=True)
+            self._delete_cli_runtime_session_dirs(
+                cid, "codex", async_cleanup=True)
+            self._delete_cli_runtime_session_dirs(
+                cid, "gemini", async_cleanup=True)
         except Exception as _e:
             logger.debug("invalidate_claude_sessions disk prune failed for %s: %s",
                          cid[:8], _e)
@@ -4554,19 +4550,15 @@ class ConversationStore:
         Anything else is dead weight and can go - both the .jsonl and
         the companion dir sharing the same stem.
 
-        wipe_all=True: ignore extras (live_sids={}) - used by
-        invalidate_claude_sessions when the caller has deliberately
-        killed the current session(s) and wants to nuke all jsonls +
-        companion dirs for this conv.
+        wipe_all=True: ignore extras (live_sids={}) for explicit maintenance
+        callers that have already killed the current session(s) and want to
+        nuke all jsonls + companion dirs for this conv.
 
         Source of truth: extras["claude_session:<agent>"].
-        No mtime heuristic - the only callers are (a) the boot-time
-        orphan sweep, where no live CC process exists, and (b)
-        invalidate_claude_sessions with wipe_all=True, where the caller
-        has already killed the session. A hardcoded grace window would
-        be arbitrary AND wrong: too short, it wipes a live session
-        whose stall budget is larger; too long, it keeps real orphans
-        forever. extras is authoritative - trust it.
+        No mtime heuristic. A hardcoded grace window would be arbitrary AND
+        wrong: too short, it wipes a live session whose stall budget is larger;
+        too long, it keeps real orphans forever. extras is authoritative -
+        trust it.
         """
         import shutil
         # Collect live session ids from extras (one per agent).

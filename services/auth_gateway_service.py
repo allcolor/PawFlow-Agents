@@ -310,7 +310,7 @@ All string values may use `${...}` expressions. They are resolved recursively at
 
         sm = SecurityManager.get_instance()
 
-        # Check if user already exists (by oauth_id or email)
+        # Check if user already exists by an explicit OAuth link.
         existing = self._find_existing_user(sm, auth_result)
         if existing:
             if not existing.enabled:
@@ -434,7 +434,7 @@ All string values may use `${...}` expressions. They are resolved recursively at
         )
 
     def _find_existing_user(self, sm, auth_result: AuthResult):
-        """Find existing user by linked identity, username, or email."""
+        """Find an existing user only through an explicit provider link."""
         from core.identity_service import IdentityService
         ids = IdentityService.instance()
 
@@ -463,23 +463,6 @@ All string values may use `${...}` expressions. They are resolved recursively at
                 if user:
                     ids.link(linked_username, auth_result.provider, auth_result.user_id)
                     return user
-
-        # 3. Search by username (OAuth username or derived)
-        if auth_result.username:
-            user = sm.get_user(auth_result.username)
-            if user:
-                return user
-
-        # 4. Search by email
-        if auth_result.email:
-            for udict in sm.list_users():
-                if udict.get("email", "").lower() == auth_result.email.lower():
-                    return sm.get_user(udict["username"])
-            # Also match username == email-derived name
-            email_user = auth_result.email.split("@")[0]
-            user = sm.get_user(email_user)
-            if user:
-                return user
 
         return None
 

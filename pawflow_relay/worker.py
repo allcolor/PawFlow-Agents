@@ -581,12 +581,15 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
         if action == "start_code_server":
             if not allow_exec:
                 return {"ok": False, "error": "Exec not allowed"}
+            _base_path = msg.get("base_path", "")
             if hasattr(_execute_command, '_code_server_proc') and _execute_command._code_server_proc:
                 p = _execute_command._code_server_proc
                 if p.poll() is None:
-                    return {"ok": True, "data": {"port": _execute_command._code_server_port, "already_running": True}}
+                    _running_base = getattr(_execute_command, '_code_server_base_path', "")
+                    if _running_base == _base_path:
+                        return {"ok": True, "data": {"port": _execute_command._code_server_port, "already_running": True}}
+                    p.terminate()
             _cs_port = msg.get("port", 0)
-            _base_path = msg.get("base_path", "")
             if not _cs_port:
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as _s:
                     _s.bind(("", 0))
@@ -597,6 +600,8 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 "--auth", "none",
                 "--disable-telemetry",
             ]
+            if _base_path:
+                _cs_args.extend(["--base-path", _base_path])
             _cs_args.append(root_dir)
             try:
                 _cs_log = open("/tmp/code-server.log", "w")  # nosec B108 - relay-local service log.
@@ -604,6 +609,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                     _cs_args, stdout=_cs_log, stderr=_cs_log)
                 _execute_command._code_server_proc = _cs_proc
                 _execute_command._code_server_port = _cs_port
+                _execute_command._code_server_base_path = _base_path
                 sys.stderr.write(f"[FSRelay] code-server started on port {_cs_port} base_path={_base_path}\n")
                 return {"ok": True, "data": {"port": _cs_port, "pid": _cs_proc.pid}}
             except FileNotFoundError:

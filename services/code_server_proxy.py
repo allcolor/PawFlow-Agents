@@ -54,6 +54,7 @@ def register_code_server(relay_id: str, port: int, relay_service,
             "relay_service": relay_service,
             "owner_user_id": owner_user_id,
             "capability_token": token,
+            "base_path": f"/code/{session_id}/{token}/",
             "cs_ws_sessions": {},
         }
         _relay_to_session[relay_id] = session_id
@@ -61,6 +62,14 @@ def register_code_server(relay_id: str, port: int, relay_service,
         "Code-server registered: session=%s relay=%s port=%d owner=%s",
         session_id, relay_id, port, owner_user_id)
     return session_id, token
+
+
+def update_code_server_port(session_id: str, port: int) -> None:
+    """Update the upstream port after a reserved code-server session starts."""
+    with _lock:
+        sess = _sessions.get(session_id)
+        if sess is not None:
+            sess["port"] = port
 
 
 def unregister_code_server(relay_id: str):
@@ -95,12 +104,6 @@ def code_http_proxy(pending_req):
     """
     session_id = pending_req.path_params.get("session_id", "")
     token = pending_req.path_params.get("token", "")
-    sub_path = pending_req.path_params.get("path", "")
-    proxied_path = "/" + sub_path
-    query = pending_req.query_string
-    if query:
-        proxied_path += "?" + query
-
     from core.capability_routes import verify_route_request
     claims, err = verify_route_request(
         pending_req, "code_server", session_id, token)
@@ -116,6 +119,13 @@ def code_http_proxy(pending_req):
                              b'{"error": "Code server session not found"}')
         return
     relay_id = sess["relay_id"]
+
+    sub_path = pending_req.path_params.get("path", "")
+    base_path = sess.get("base_path") or f"/code/{session_id}/{token}/"
+    proxied_path = base_path + sub_path
+    query = pending_req.query_string
+    if query:
+        proxied_path += "?" + query
 
     relay_service = sess["relay_service"]
     port = sess["port"]
@@ -139,6 +149,8 @@ def code_http_proxy(pending_req):
             req_headers=fwd_headers,
             req_body=base64.b64encode(pending_req.body).decode("ascii") if pending_req.body else "",
         )
+        if isinstance(result, dict) and isinstance(result.get("data"), dict):
+            result = result["data"]
         if not isinstance(result, dict) or "status" not in result:
             pending_req.complete(502, {"Content-Type": "text/plain"},
                                  f"Bad proxy response: {result}".encode())
@@ -171,12 +183,6 @@ def code_ws_proxy(client_sock, path_params: dict, meta: dict):
     """
     session_id = path_params.get("session_id", "")
     token = path_params.get("token", "")
-    sub_path = path_params.get("path", "")
-    proxied_path = "/" + sub_path
-    query = meta.get("query", "")
-    if query:
-        proxied_path += "?" + query
-
     from core.capability_routes import verify_route_ws
     claims, err = verify_route_ws(meta or {}, "code_server", session_id, token)
     if err is not None:
@@ -196,6 +202,13 @@ def code_ws_proxy(client_sock, path_params: dict, meta: dict):
         _ws_close(client_sock, 4001, "Code server session not found")
         return
     relay_id = sess["relay_id"]
+
+    sub_path = path_params.get("path", "")
+    base_path = sess.get("base_path") or f"/code/{session_id}/{token}/"
+    proxied_path = base_path + sub_path
+    query = meta.get("query", "")
+    if query:
+        proxied_path += "?" + query
 
     relay_service = sess["relay_service"]
     port = sess["port"]

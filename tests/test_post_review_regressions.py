@@ -191,3 +191,64 @@ def test_code_server_ws_registers_browser_socket_under_session_id(tmp_path, monk
 
     assert seen == {"count": 1, "sock": sock}
     assert sock.closed is True
+
+
+def test_code_server_http_proxy_preserves_base_path_and_unwraps_relay_data(tmp_path):
+    from core.capability_auth import init_db
+    from services import code_server_proxy as csp
+
+    init_db(tmp_path / "capabilities.json")
+
+    class FakeRelay:
+        def __init__(self):
+            self.kwargs = None
+
+        def _request(self, action, **kwargs):
+            assert action == "http_proxy"
+            self.kwargs = kwargs
+            return {"ok": True, "data": {
+                "status": 200,
+                "headers": {"Content-Type": "text/html"},
+                "body": "SGVsbG8=",
+            }}
+
+    class FakeReq:
+        method = "GET"
+        query_string = "v=1"
+        headers = {}
+        body = b""
+        auth_user_id = "alice"
+        auth_session_id = ""
+        remote_addr = "127.0.0.1"
+
+        def complete(self, status, headers, body):
+            self.status = status
+            self.headers = headers
+            self.body = body
+
+    with csp._lock:
+        csp._sessions.clear()
+        csp._relay_to_session.clear()
+
+    relay = FakeRelay()
+    session_id, token = csp.register_code_server(
+        "relay-1", 0, relay, owner_user_id="alice")
+    csp.update_code_server_port(session_id, 8765)
+
+    req = FakeReq()
+    req.path_params = {"session_id": session_id, "token": token, "path": "static/app.js"}
+    csp.code_http_proxy(req)
+
+    assert req.status == 200
+    assert req.body == b"Hello"
+    assert relay.kwargs["port"] == 8765
+    assert relay.kwargs["req_path"] == f"/code/{session_id}/{token}/static/app.js?v=1"
+
+
+def test_code_server_worker_passes_base_path_to_process():
+    src = open("pawflow_relay/worker.py", encoding="utf-8").read()
+    start = src.index('if action == "start_code_server":')
+    stop = src.index('# -- Code-server WS tunnel --', start)
+    start_block = src[start:stop]
+    assert '_base_path = msg.get("base_path", "")' in start_block
+    assert '_cs_args.extend(["--base-path", _base_path])' in start_block

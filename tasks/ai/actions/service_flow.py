@@ -3407,23 +3407,35 @@ finally:
             if not svc:
                 flowfile.set_content(json.dumps({"error": f"Relay '{relay_id}' not found"}).encode())
                 return [flowfile]
-            _cs_action = "start_local_code_server" if local else "start_code_server"
-            logger.info("[open_code_server] Starting %s on relay %s", _cs_action, relay_id)
-            result = svc._request(_cs_action)
-            logger.debug("[open_code_server] start_code_server result: %s", result)
-            port = result.get("port") if isinstance(result, dict) else None
-            if not port:
-                flowfile.set_content(json.dumps({"error": "Failed to get code-server port", "detail": str(result)}).encode())
-                return [flowfile]
-
-            # Register HTTP/WS proxy routes (tunneled via relay)
+            # Register HTTP/WS proxy session before launch so code-server can
+            # be started with the exact public base path it will be served at.
             from services.code_server_proxy import (
-                register_code_server, code_http_proxy, code_ws_proxy,
+                register_code_server, update_code_server_port,
+                code_http_proxy, code_ws_proxy,
             )
             _cs_session_id, _cs_token = register_code_server(
-                relay_id, port, svc,
+                relay_id, 0, svc,
                 owner_user_id=user_id,
                 login_session_id=flowfile.get_attribute("auth.session_id") or "")
+
+            _cs_action = "start_local_code_server" if local else "start_code_server"
+            _base_path = f"/code/{_cs_session_id}/{_cs_token}/"
+            logger.info("[open_code_server] Starting %s on relay %s", _cs_action, relay_id)
+            result = svc._request(_cs_action, base_path=_base_path)
+            logger.debug("[open_code_server] start_code_server result: %s", result)
+            result_data = result.get("data") if isinstance(result, dict) else None
+            if not isinstance(result_data, dict):
+                result_data = result if isinstance(result, dict) else {}
+            port = result_data.get("port")
+            if not port:
+                try:
+                    from services.code_server_proxy import unregister_code_server
+                    unregister_code_server(relay_id)
+                except Exception:
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+                flowfile.set_content(json.dumps({"error": "Failed to get code-server port", "detail": str(result)}).encode())
+                return [flowfile]
+            update_code_server_port(_cs_session_id, port)
 
             _owner = "_code_server_proxy"
             http_svc = None

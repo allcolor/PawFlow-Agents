@@ -1225,14 +1225,29 @@ class RelayThread:
             return {"error": "code-server not installed on host. Install with: npm install -g code-server"}
 
         port = find_free_port()
+        base_path = req.get("base_path", "")
+        if hasattr(self, '_local_code_server'):
+            for old_port, old_proc in list(self._local_code_server.items()):
+                if old_proc.poll() is None:
+                    old_base = getattr(self, '_local_code_server_base_path', {}).get(old_port, "")
+                    if old_base != base_path:
+                        old_proc.terminate()
+                        self._local_code_server.pop(old_port, None)
+        args = [code_server, "--port", str(port), "--auth", "none",
+                "--bind-addr", f"127.0.0.1:{port}"]
+        if base_path:
+            args.extend(["--base-path", base_path])
+        args.append(self.directory)
         try:
             proc = _sp.Popen(  # nosec B603
-                [code_server, "--port", str(port), "--auth", "none",
-                 "--bind-addr", f"127.0.0.1:{port}", self.directory],
+                args,
                 stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
             if not hasattr(self, '_local_code_server'):
                 self._local_code_server = {}
             self._local_code_server[port] = proc
+            if not hasattr(self, '_local_code_server_base_path'):
+                self._local_code_server_base_path = {}
+            self._local_code_server_base_path[port] = base_path
             return {"port": port}
         except Exception as e:
             return {"error": f"Failed to start code-server: {e}"}

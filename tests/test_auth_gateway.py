@@ -410,6 +410,19 @@ class _SuccessfulOAuthProvider:
         )
 
 
+class _SuccessfulTelegramProvider:
+    def validate_telegram_data(self, data):
+        assert data["id"] == "123"
+        return AuthResult(
+            success=True,
+            provider="telegram",
+            user_id="telegram:123",
+            username="tg_user",
+            display_name="Telegram User",
+            claims={"telegram_id": "123"},
+        )
+
+
 def test_external_oauth_without_existing_user_requires_invite_token(tmp_path, monkeypatch):
     _isolated_auth_paths(tmp_path, monkeypatch)
     from services.auth_gateway_service import AuthGatewayService
@@ -418,6 +431,20 @@ def test_external_oauth_without_existing_user_requires_invite_token(tmp_path, mo
     gw._providers["github"] = _SuccessfulOAuthProvider()
 
     result = gw.authenticate_oauth("github", "code", "https://app.example/auth/callback")
+
+    assert result.success is False
+    assert "onboarding token" in result.error
+    assert getattr(result, "pending_oauth_id", "")
+
+
+def test_telegram_auth_without_existing_user_requires_invite_token(tmp_path, monkeypatch):
+    _isolated_auth_paths(tmp_path, monkeypatch)
+    from services.auth_gateway_service import AuthGatewayService
+
+    gw = AuthGatewayService({"providers": {}})
+    gw._providers["telegram"] = _SuccessfulTelegramProvider()
+
+    result = gw.authenticate_telegram({"id": "123"})
 
     assert result.success is False
     assert "onboarding token" in result.error

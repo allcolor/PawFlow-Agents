@@ -546,6 +546,40 @@ class TestOAuthRedirectTask(unittest.TestCase):
         assert "Complete sign in" in body
         assert 'name="pending_oauth" type="hidden" value="pending-123"' in body
 
+    def test_login_page_renders_telegram_widget_provider(self):
+        from tasks.io.serve_login import ServeLoginTask
+
+        class TelegramProvider:
+            def get_widget_html(self, callback_url):
+                return (
+                    '<script data-telegram-login="PawFlowBot" '
+                    f'data-auth-url="{callback_url}"></script>'
+                )
+
+        class Auth:
+            def get_enabled_providers(self):
+                return [
+                    {"name": "builtin", "display_name": "Sign in", "icon": "", "is_oauth": False},
+                    {"name": "telegram", "display_name": "Sign in with Telegram", "icon": "", "is_oauth": False},
+                ]
+
+            def get_provider(self, name):
+                assert name == "telegram"
+                return TelegramProvider()
+
+        task = ServeLoginTask({"auth_service_id": "auth"})
+        task._services = {"auth": Auth()}
+        ff = FlowFile(content=b"")
+        ff.set_attribute("http.header.host", "webchat.example")
+        ff.set_attribute("http.header.x-forwarded-proto", "https")
+
+        results = task.execute(ff)
+
+        body = results[0].get_content().decode("utf-8")
+        assert 'data-telegram-login="PawFlowBot"' in body
+        assert 'data-auth-url="https://webchat.example/auth/callback"' in body
+        assert '<div class="divider"><span>or</span></div>' in body
+
     def test_pawflow_callback_exchanges_with_provider_from_state(self):
         from types import SimpleNamespace
         from tasks.io.oauth_callback import OAuthCallbackTask
@@ -584,6 +618,61 @@ class TestOAuthRedirectTask(unittest.TestCase):
         assert auth.providers == ["github"]
         assert results[0].get_attribute("http.response.status") == "302"
         assert "github%20failed" in results[0].get_attribute("http.response.header.Location")
+
+    def test_pawflow_callback_accepts_telegram_widget_data(self):
+        from services.auth_providers.base import AuthResult
+        from types import SimpleNamespace
+        from tasks.io.oauth_callback import OAuthCallbackTask
+        from core.security import SecurityManager
+
+        class OAuthState:
+            provider = "pawflow"
+
+        class AuthGateway:
+            def __init__(self):
+                self.telegram_data = None
+
+            def authenticate_oauth(self, provider_name, code, redirect_uri, ip=""):
+                raise AssertionError("Telegram widget callbacks do not use OAuth code exchange")
+
+            def authenticate_telegram(self, data, ip=""):
+                self.telegram_data = dict(data)
+                assert ip == "127.0.0.1"
+                return AuthResult(
+                    success=True,
+                    provider="telegram",
+                    user_id="telegram:123",
+                    username="tg_user",
+                )
+
+        class FakeSecurity:
+            def get_user(self, username):
+                return SimpleNamespace(username=username, role=SimpleNamespace(value="user"))
+
+            def _create_session(self, user, oauth_provider=""):
+                assert user.username == "tg_user"
+                assert oauth_provider == "telegram"
+                return SimpleNamespace(session_id="session-tg")
+
+        auth = AuthGateway()
+        task = OAuthCallbackTask({})
+        task._services = {"oauth": OAuthState(), "auth": auth}
+        ff = FlowFile(content=b"")
+        ff.set_attribute(
+            "http.query",
+            "id=123&first_name=Ada&username=ada&auth_date=123456&hash=signed",
+        )
+        ff.set_attribute("http.remote.addr", "127.0.0.1")
+
+        monkey = patch.object(SecurityManager, "get_instance", return_value=FakeSecurity())
+        with monkey:
+            results = task.execute(ff)
+
+        assert auth.telegram_data["id"] == "123"
+        assert results[0].get_attribute("http.response.status") == "302"
+        assert results[0].get_attribute("http.response.header.Location") == "/chat"
+        cookie = results[0].get_attribute("http.response.header.Set-Cookie")
+        assert cookie.startswith("pawflow_token=session-tg;")
 
     def test_builtin_login_sets_pawflow_token_cookie(self):
         from types import SimpleNamespace

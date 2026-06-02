@@ -23,6 +23,12 @@ The chat service installer receives service type metadata grouped by category an
 | `fileTracking` | Tracks processed files for list/watch flows. |
 | `packageRuntime` | Runtime proxy for PFP `service_provider` objects executed through the relay package runner. |
 
+`authGateway` supports standard OAuth providers through `/auth/callback` and
+Telegram through the Telegram Login Widget. Telegram requires a BotFather bot
+token and bot username; its signed callback data is validated by the gateway and
+then follows the same explicit identity link or OAuth onboarding token flow as
+the other external providers.
+
 ## Filesystem and Relay Services
 
 | Type | Purpose |

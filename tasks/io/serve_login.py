@@ -113,6 +113,10 @@ class ServeLoginTask(BaseTask):
         redirect_uri = self._build_redirect_uri(flowfile, callback)
         has_builtin = any(p["name"] == "builtin" for p in providers)
         oauth_providers = [p for p in providers if p["is_oauth"]]
+        widget_providers = [
+            p for p in providers
+            if p["name"] != "builtin" and not p["is_oauth"]
+        ]
 
         # Find oauth_service for state generation (shared with callback)
         oauth_svc = None
@@ -147,6 +151,16 @@ class ServeLoginTask(BaseTask):
                 f'</a>\n'
             )
 
+        # Build non-OAuth provider widgets, currently Telegram Login Widget.
+        widgets_html = ""
+        for p in widget_providers:
+            provider_obj = auth_svc.get_provider(p["name"])
+            if not provider_obj or not hasattr(provider_obj, "get_widget_html"):
+                continue
+            widget_html = provider_obj.get_widget_html(redirect_uri)
+            if widget_html:
+                widgets_html += f'<div class="provider-widget">{widget_html}</div>\n'
+
         # Build builtin form
         builtin_html = ""
         if has_builtin:
@@ -178,7 +192,8 @@ class ServeLoginTask(BaseTask):
 </form>
 '''
 
-        divider = '<div class="divider"><span>or</span></div>' if has_builtin and oauth_providers else ''
+        external_html = buttons_html + widgets_html
+        divider = '<div class="divider"><span>or</span></div>' if has_builtin and external_html else ''
 
         return f'''<!DOCTYPE html>
 <html lang="en">
@@ -212,6 +227,7 @@ h1 {{ text-align: center; margin-bottom: 8px; font-size: 24px; color: #fff; }}
                  text-decoration: none; font-size: 14px; transition: background 0.2s; }}
 .provider-btn:hover {{ background: #252550; border-color: #6c5ce7; }}
 .provider-icon {{ font-size: 18px; }}
+.provider-widget {{ display: flex; justify-content: center; margin-bottom: 8px; }}
 .error {{ background: #3d1f1f; border: 1px solid #e94560; color: #e94560;
           padding: 8px 12px; border-radius: 6px; margin-bottom: 16px; font-size: 13px;
           text-align: center; }}
@@ -225,7 +241,7 @@ h1 {{ text-align: center; margin-bottom: 8px; font-size: 24px; color: #fff; }}
   {token_html}
   {builtin_html}
   {divider}
-  {buttons_html}
+  {external_html}
 </div>
 </body>
 </html>'''

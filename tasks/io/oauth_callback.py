@@ -294,6 +294,8 @@ class OAuthCallbackTask(BaseTask):
         code = params.get("code", "")
         state = params.get("state", "")
 
+        if not code and self._looks_like_telegram_callback(params):
+            return self._handle_telegram_callback(flowfile, auth_svc, params)
         if not code:
             return [self._error_response(flowfile, 400, "Missing authorization code")]
 
@@ -342,6 +344,42 @@ class OAuthCallbackTask(BaseTask):
                 pending_oauth_id=getattr(result, "pending_oauth_id", ""),
             )]
 
+        return self._finish_pawflow_auth(flowfile, result, provider_name, state_data)
+
+    @staticmethod
+    def _looks_like_telegram_callback(params: Dict[str, str]) -> bool:
+        return all(params.get(key) for key in ("id", "auth_date", "hash"))
+
+    def _handle_telegram_callback(self, flowfile: FlowFile, auth_svc,
+                                  params: Dict[str, str]) -> List[FlowFile]:
+        """Handle signed Telegram Login Widget callbacks through AuthGateway."""
+        if not hasattr(auth_svc, "authenticate_telegram"):
+            return [self._error_response(flowfile, 500, "Telegram auth is not configured")]
+
+        ip = flowfile.get_attribute("http.remote.addr") or ""
+        link_token = _cookie_value(flowfile, OAUTH_LINK_COOKIE)
+        result = auth_svc.authenticate_telegram(params, ip=ip)
+        if not result.success:
+            pending_id = getattr(result, "pending_oauth_id", "")
+            if link_token and pending_id and hasattr(auth_svc, "complete_pending_oauth"):
+                result = auth_svc.complete_pending_oauth(pending_id, link_token, ip=ip)
+            if not result.success:
+                redirected = self._login_redirect(
+                    flowfile, result.error,
+                    pending_oauth_id=pending_id,
+                )
+                if link_token:
+                    redirected.set_attribute("http.response.header.Set-Cookie",
+                                             _clear_cookie(OAUTH_LINK_COOKIE))
+                return [redirected]
+
+        if link_token:
+            flowfile.set_attribute("_oauth_link_cookie_seen", "true")
+        return self._finish_pawflow_auth(flowfile, result, "telegram", {})
+
+    def _finish_pawflow_auth(self, flowfile: FlowFile, result,
+                             provider_name: str, state_data: Dict[str, Any]) -> List[FlowFile]:
+        """Create the PawFlow session after AuthGateway validates an identity."""
         # Create session
         from core.security import SecurityManager
         sm = SecurityManager.get_instance()

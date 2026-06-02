@@ -234,6 +234,19 @@ All string values may use `${...}` expressions. They are resolved recursively at
         # Provision user
         return self._provision_user(result, ip)
 
+    def authenticate_telegram(self, data: Dict[str, str], ip: str = "") -> AuthResult:
+        """Validate Telegram Login Widget data and resolve/provision the user."""
+        provider = self._providers.get("telegram")
+        if not provider:
+            return AuthResult(success=False, error="Provider 'telegram' not enabled")
+        if not hasattr(provider, "validate_telegram_data"):
+            return AuthResult(success=False, error="Telegram provider is invalid")
+
+        result = provider.validate_telegram_data(data)
+        if not result.success:
+            return result
+        return self._provision_user(result, ip)
+
     def complete_pending_oauth(self, pending_id: str, invite_token: str,
                                ip: str = "") -> AuthResult:
         """Complete a provider-validated OAuth login with an admin token."""

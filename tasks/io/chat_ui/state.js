@@ -160,10 +160,16 @@ if (LOGIN_URL) {
 function beginOAuthAccountLink() {
   if (!confirm('You will be signed out, then asked to sign in with the account to link. Continue?')) return;
   if (eventSource) { eventSource.close(); eventSource = null; }
-  action$('begin_oauth_account_link', {}, { skipConversationId: true }).subscribe(data => {
+  const _uiUrl = API.replace(/\/api\/agent$/, '/api/ui');
+  fetch(_uiUrl, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ action: 'begin_oauth_account_link' }),
+    credentials: 'same-origin',
+  }).then(resp => resp.json()).then(data => {
     if (data && data.error) { addMsg('error', data.error); return; }
     window.location.href = (data && data.login_url) || '/auth/login';
-  });
+  }).catch(err => addMsg('error', err.message || 'Failed to start account linking'));
 }
 function doLogout() {
   if (eventSource) { eventSource.close(); eventSource = null; }

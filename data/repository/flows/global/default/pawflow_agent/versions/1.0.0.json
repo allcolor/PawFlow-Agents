@@ -116,6 +116,12 @@
             "public": true
           },
           {
+            "method": "POST",
+            "pattern": "/auth/login/token",
+            "relationship": "POST:/auth/login/token",
+            "public": true
+          },
+          {
             "method": "GET",
             "pattern": "/auth/login/{provider}",
             "relationship": "GET:/auth/login/provider",
@@ -380,6 +386,11 @@
       "from": "http_in",
       "to": "oauth_login",
       "type": "POST:/auth/login/builtin"
+    },
+    {
+      "from": "http_in",
+      "to": "oauth_login",
+      "type": "POST:/auth/login/token"
     },
     {
       "from": "http_in",

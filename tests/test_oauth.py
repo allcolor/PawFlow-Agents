@@ -602,6 +602,45 @@ class TestOAuthRedirectTask(unittest.TestCase):
         assert cookie.startswith("pawflow_token=session-123;")
         assert "session=" not in cookie
 
+    def test_oauth_token_login_sets_session_cookie(self):
+        from types import SimpleNamespace
+        from tasks.io.oauth_redirect import OAuthRedirectTask
+        from core.security import SecurityManager
+
+        class FakeAuth:
+            def __init__(self):
+                self.completed = []
+
+            def complete_pending_oauth(self, pending_id, token, ip=""):
+                self.completed.append((pending_id, token, ip))
+                return SimpleNamespace(
+                    success=True,
+                    username="linked-user",
+                    provider="github",
+                )
+
+        class FakeSecurity:
+            def get_user(self, username):
+                return SimpleNamespace(username=username)
+
+            def _create_session(self, user, oauth_provider=""):
+                assert user.username == "linked-user"
+                assert oauth_provider == "github"
+                return SimpleNamespace(session_id="session-linked")
+
+        auth = FakeAuth()
+        task = OAuthRedirectTask({})
+        ff = FlowFile(content=b"pending_oauth=pending-123&token=pfo_manual")
+        monkey = patch.object(SecurityManager, "get_instance", return_value=FakeSecurity())
+        with monkey:
+            results = task._handle_oauth_token_login(ff, auth, "127.0.0.1")
+
+        assert auth.completed == [("pending-123", "pfo_manual", "127.0.0.1")]
+        assert results[0].get_attribute("http.response.status") == "302"
+        assert results[0].get_attribute("http.response.header.Location") == "/chat"
+        cookie = results[0].get_attribute("http.response.header.Set-Cookie")
+        assert cookie.startswith("pawflow_token=session-linked;")
+
 
 # ── OAuthCallbackTask ──────────────────────────────────────────────
 

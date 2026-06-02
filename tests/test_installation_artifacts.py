@@ -884,6 +884,7 @@ def test_pawflow_agent_auth_routes_cover_login_forms():
     route_keys = {(route["method"], route["pattern"]) for route in routes}
     assert ("GET", "/auth/login") in route_keys
     assert ("POST", "/auth/login/builtin") in route_keys
+    assert ("POST", "/auth/login/token") in route_keys
     assert ("GET", "/auth/login/{provider}") in route_keys
 
     relation_keys = {

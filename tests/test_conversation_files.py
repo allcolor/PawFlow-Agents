@@ -440,6 +440,7 @@ class TestAgentFlowStructure(unittest.TestCase):
         assert "/chat" in patterns
         assert "/files/{file_id}" in patterns
         assert "/auth/login/builtin" in patterns
+        assert "/auth/login/token" in patterns
         assert "/auth/login/{provider}" in patterns
 
         # Check relations

@@ -65,7 +65,9 @@ def test_chat_ui_exposes_oauth_link_account_button():
     assert "linkAccountBtn" in template
     assert "function beginOAuthAccountLink" in state_js
     assert "begin_oauth_account_link" in state_js
-    assert "skipConversationId: true" in state_js
+    assert "fetch(_uiUrl" in state_js
+    assert "credentials: 'same-origin'" in state_js
+    assert "_reply_conversation_id" not in state_js[state_js.index("function beginOAuthAccountLink"):state_js.index("function doLogout")]
 
 
 def test_relay_install_hides_token_parameter():

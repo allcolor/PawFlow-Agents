@@ -46,6 +46,8 @@ def _archive_manifest(zf) -> Dict[str, Any]:
 
 def _extract_conversation_members(zf, conv_dir: Path) -> None:
     """Extract conversation files while excluding manifest/FileStore payloads."""
+    from core.segmented_jsonl import SegmentedJsonl
+
     names = zf.namelist()
     prefix = "conversation/" if any(n.startswith("conversation/") for n in names) else ""
     for name in names:
@@ -54,6 +56,11 @@ def _extract_conversation_members(zf, conv_dir: Path) -> None:
             continue
         dest = conv_dir / rel
         dest.parent.mkdir(parents=True, exist_ok=True)
+        if rel.suffix == ".jsonl":
+            text = zf.read(name).decode("utf-8", errors="replace")
+            SegmentedJsonl(dest).replace_lines(
+                line + "\n" for line in text.splitlines() if line.strip())
+            continue
         with zf.open(name) as src, dest.open("wb") as out:
             shutil.copyfileobj(src, out, length=1024 * 1024)
 

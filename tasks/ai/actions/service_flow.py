@@ -102,47 +102,56 @@ def _ensure_terminal_routes(flowfile: FlowFile) -> None:
 def _ensure_code_server_routes(flowfile: FlowFile) -> None:
     """Ensure /code/ routes exist on the request's HTTP listener."""
     _req_port = flowfile.get_attribute("http.listener.port") or ""
-    if not _req_port:
-        logger.warning("[code-server] No http.listener.port on flowfile — cannot target listener")
-        return
     try:
         from services.code_server_proxy import code_http_proxy, code_ws_proxy
         from services.http_listener_service import _instances
-        _http_svc = _instances.get(int(_req_port))
-        if not _http_svc:
-            logger.warning("[code-server] No live listener on port %s (instances: %s)",
-                           _req_port, list(_instances.keys()))
+        targets = []
+        if _req_port:
+            try:
+                _http_svc = _instances.get(int(_req_port))
+            except (TypeError, ValueError):
+                _http_svc = None
+            if _http_svc:
+                targets.append((int(_req_port), _http_svc))
+            else:
+                logger.warning("[code-server] No live listener on port %s (instances: %s); registering on all listeners",
+                               _req_port, list(_instances.keys()))
+        if not targets:
+            targets = list(_instances.items())
+        if not targets:
+            logger.warning("[code-server] No live HTTP listeners; cannot register /code routes")
             return
-        _owner = "_code_server_proxy"
-        existing = {
-            (r.get("method"), r.get("pattern"))
-            for r in _http_svc.get_routes()
-            if r.get("owner") == _owner
-        }
+        for _port, _http_svc in targets:
+            _owner = "_code_server_proxy"
+            existing = {
+                (r.get("method"), r.get("pattern"))
+                for r in _http_svc.get_routes()
+                if r.get("owner") == _owner
+            }
 
-        def _register_missing(method, pattern, callback, ws_handler=None):
-            if (method, pattern) in existing:
-                return
-            _http_svc.register_route(
-                method, pattern, _owner,
-                callback=callback,
-                ws_handler=ws_handler,
-                public=True,
-            )
-            existing.add((method, pattern))
+            def _register_missing(method, pattern, callback, ws_handler=None):
+                if (method, pattern) in existing:
+                    return
+                _http_svc.register_route(
+                    method, pattern, _owner,
+                    callback=callback,
+                    ws_handler=ws_handler,
+                    public=True,
+                )
+                existing.add((method, pattern))
 
-        _register_missing(
-            "GET", "/code/{session_id}/{token}/",
-            code_http_proxy, ws_handler=code_ws_proxy)
-        _register_missing(
-            "GET", "/code/{session_id}/{token}/{path+}",
-            code_http_proxy, ws_handler=code_ws_proxy)
-        for _method in ("POST", "PUT", "DELETE", "PATCH", "OPTIONS"):
             _register_missing(
-                _method, "/code/{session_id}/{token}/", code_http_proxy)
+                "GET", "/code/{session_id}/{token}/",
+                code_http_proxy, ws_handler=code_ws_proxy)
             _register_missing(
-                _method, "/code/{session_id}/{token}/{path+}", code_http_proxy)
-        logger.info("[code-server] Registered code-server routes on port %s", _req_port)
+                "GET", "/code/{session_id}/{token}/{path+}",
+                code_http_proxy, ws_handler=code_ws_proxy)
+            for _method in ("POST", "PUT", "DELETE", "PATCH", "OPTIONS"):
+                _register_missing(
+                    _method, "/code/{session_id}/{token}/", code_http_proxy)
+                _register_missing(
+                    _method, "/code/{session_id}/{token}/{path+}", code_http_proxy)
+            logger.info("[code-server] Registered code-server routes on port %s", _port)
     except Exception as e:
         logger.warning("[code-server] Route registration failed: %s", e)
 

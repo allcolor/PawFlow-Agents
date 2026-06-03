@@ -132,6 +132,41 @@ def test_code_server_routes_use_request_listener_port(monkeypatch):
     assert other_listener.routes == []
 
 
+def test_code_server_routes_fallback_to_all_listeners_without_request_port(monkeypatch):
+    from core import FlowFile
+    from services import http_listener_service as hls
+    from tasks.ai.actions.service_flow import _ensure_code_server_routes
+
+    class FakeListener:
+        def __init__(self):
+            self.routes = []
+
+        def get_routes(self):
+            return [
+                {"method": method, "pattern": pattern, "owner": owner}
+                for method, pattern, owner, _, _, _ in self.routes
+            ]
+
+        def register_route(self, method, pattern, owner, callback,
+                           ws_handler=None, public=False):
+            self.routes.append((method, pattern, owner, callback, ws_handler, public))
+
+    listener_a = FakeListener()
+    listener_b = FakeListener()
+    monkeypatch.setattr(hls, "_instances", {
+        8080: listener_a,
+        9090: listener_b,
+    })
+
+    _ensure_code_server_routes(FlowFile())
+
+    for listener in (listener_a, listener_b):
+        patterns = {(route[0], route[1]) for route in listener.routes}
+        assert ("GET", "/code/{session_id}/{token}/") in patterns
+        assert ("GET", "/code/{session_id}/{token}/{path+}") in patterns
+        assert all(route[5] is True for route in listener.routes)
+
+
 def test_fwd_root_url_requires_explicit_trailing_slash_route():
     from services.http_listener_service import RouteRegistry
     reg = RouteRegistry()

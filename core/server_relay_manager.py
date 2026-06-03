@@ -323,6 +323,10 @@ class ServerRelayManager:
             "--env", "PAWFLOW_SKILLS_MOUNT=/skills",
             "--env", "HOME=/home/pawflow",
             "--env", "USER=pawflow",
+            "--env", "CARGO_HOME=/opt/local/rust/cargo",
+            "--env", "RUSTUP_HOME=/opt/local/rust/rustup",
+            "--env", "GOPATH=/opt/local/go-path",
+            "--env", "GOBIN=/opt/local/bin",
             "--env", "PATH=/opt/local/bin:/opt/local/rust/cargo/bin:/usr/local/go/bin:/opt/kotlinc/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
         ]
         if kind_cfg["publish_desktop"]:
@@ -488,6 +492,10 @@ class ServerRelayManager:
             "--env", "PAWFLOW_SKILLS_MOUNT=/skills",
             "--env", "HOME=/home/pawflow",
             "--env", "USER=pawflow",
+            "--env", "CARGO_HOME=/opt/local/rust/cargo",
+            "--env", "RUSTUP_HOME=/opt/local/rust/rustup",
+            "--env", "GOPATH=/opt/local/go-path",
+            "--env", "GOBIN=/opt/local/bin",
             "--env", "PATH=/opt/local/bin:/opt/local/rust/cargo/bin:/usr/local/go/bin:/opt/kotlinc/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
         ]
         if kind_cfg["publish_desktop"]:

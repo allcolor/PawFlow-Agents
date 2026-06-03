@@ -46,6 +46,7 @@ def test_server_dockerfile_supports_bootstrap_docker_builds():
     assert "stays a clean dependency image" in relay_dev
     assert "npm cache clean --force" in relay_dev
     assert 'CARGO_HOME="/opt/local/rust/cargo"' in relay_dev
+    assert "--profile minimal" in relay_dev
     assert "/home/pawflow/.cargo" not in relay_dev
     assert 'GOPATH="/opt/local/go-path"' in relay_dev
     assert 'GOBIN="/opt/local/bin"' in relay_dev
@@ -54,6 +55,14 @@ def test_server_dockerfile_supports_bootstrap_docker_builds():
     assert "golangci-lint" not in relay_dev
     assert "dotnet-install.sh" not in relay_dev
     assert "kotlin-compiler" not in relay_dev
+
+    server_relay = Path("core/server_relay_manager.py").read_text(encoding="utf-8")
+    relay_thread = Path("pawflow_relay/thread.py").read_text(encoding="utf-8")
+    for src in (server_relay, relay_thread):
+        assert "CARGO_HOME=/opt/local/rust/cargo" in src
+        assert "RUSTUP_HOME=/opt/local/rust/rustup" in src
+        assert "GOPATH=/opt/local/go-path" in src
+        assert "GOBIN=/opt/local/bin" in src
     assert "ziglang.org" not in relay_dev
     for heavy_app in ("blender", "libreoffice-calc", "vlc", "audacity"):
         assert heavy_app not in relay_dev

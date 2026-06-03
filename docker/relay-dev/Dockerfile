@@ -118,7 +118,7 @@ RUN mkdir -p "$CARGO_HOME" "$RUSTUP_HOME" \
     && chown -R pawflow:pawflow /opt/local/rust
 USER pawflow
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
-    sh -s -- -y --default-toolchain stable --profile default
+    sh -s -- -y --default-toolchain stable --profile minimal
 ENV PATH="/opt/local/rust/cargo/bin:/usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 RUN cargo install cargo-watch cargo-edit cargo-expand \
     && rustup component add clippy rustfmt rust-analyzer \

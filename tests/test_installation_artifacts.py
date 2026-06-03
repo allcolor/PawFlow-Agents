@@ -874,11 +874,12 @@ def test_server_relay_desktop_uses_container_ip_without_published_host():
     assert "host=backend_host" in open_desktop
     assert 'register_audio_source(_sid, "127.0.0.1", _ahp' not in open_desktop
     assert 'register_audio_source(session_id, "127.0.0.1", _audio_host_port' not in open_desktop
-    assert 'status.get("novnc_port")' not in open_desktop
-    assert 'backend_port = novnc_port' not in open_desktop
-    assert 'status.get("audio_port")' not in open_desktop
-    assert 'if not _audio_port and isinstance(result, dict) and result.get("audio_port")' not in open_desktop
-    assert 'Desktop started but backend port not found' in open_desktop
+    assert 'status.get("novnc_port")' in open_desktop
+    assert 'backend_port = novnc_port' in open_desktop
+    assert 'status.get("audio_port")' in open_desktop
+    assert 'if not _audio_port and isinstance(result, dict) and result.get("audio_port")' in open_desktop
+    assert 'use_relay_proxy' not in open_desktop
+    assert 'Desktop started but backend port not found' not in open_desktop
 
 
 def test_pawflow_agent_auth_routes_cover_login_forms():

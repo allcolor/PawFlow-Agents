@@ -323,7 +323,7 @@ class ServerRelayManager:
             "--env", "PAWFLOW_SKILLS_MOUNT=/skills",
             "--env", "HOME=/home/pawflow",
             "--env", "USER=pawflow",
-            "--env", "PATH=/home/pawflow/.cargo/bin:/home/pawflow/go/bin:/usr/local/go/bin:/opt/kotlinc/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+            "--env", "PATH=/opt/local/bin:/opt/local/rust/cargo/bin:/usr/local/go/bin:/opt/kotlinc/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
         ]
         if kind_cfg["publish_desktop"]:
             docker_run_args.extend([
@@ -488,7 +488,7 @@ class ServerRelayManager:
             "--env", "PAWFLOW_SKILLS_MOUNT=/skills",
             "--env", "HOME=/home/pawflow",
             "--env", "USER=pawflow",
-            "--env", "PATH=/home/pawflow/.cargo/bin:/home/pawflow/go/bin:/usr/local/go/bin:/opt/kotlinc/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+            "--env", "PATH=/opt/local/bin:/opt/local/rust/cargo/bin:/usr/local/go/bin:/opt/kotlinc/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
         ]
         if kind_cfg["publish_desktop"]:
             docker_run_args.extend([

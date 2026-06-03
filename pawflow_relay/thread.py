@@ -587,7 +587,7 @@ class RelayThread:
                 "-e", f"PAWFLOW_HOST_WORKDIR={self.directory.replace(chr(92), '/')}",
                 "-e", "HOME=/home/pawflow",
                 "-e", "USER=pawflow",
-                "-e", "PATH=/home/pawflow/.cargo/bin:/home/pawflow/go/bin:/usr/local/go/bin:/opt/kotlinc/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                "-e", "PATH=/opt/local/bin:/opt/local/rust/cargo/bin:/usr/local/go/bin:/opt/kotlinc/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
                 self.docker_image,
                 "python3", "-u", "/opt/pawflow/pawflow_relay_launcher.py",
                 "--server", ws_url,

@@ -226,6 +226,7 @@ function Cleanup-OldImages {
     }
 }
 
+
 if ($SelfUpdate) { Self-UpdateInstaller; exit 0 }
 if ($CheckUpdates) { Check-Updates; exit 0 }
 if ($Port -le 0) { Fail "Choose a port with -Port PORT or PAWFLOW_PORT=PORT." }

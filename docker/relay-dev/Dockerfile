@@ -111,23 +111,28 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && rm -rf /root/.npm /tmp/* /var/tmp/* \
     && rm -rf /var/lib/apt/lists/*
 
-# ── Rust (installed as pawflow user → /home/pawflow/.cargo) ────────
+# ── Rust ───────────────────────────────────────────────────────────
+ENV CARGO_HOME="/opt/local/rust/cargo"
+ENV RUSTUP_HOME="/opt/local/rust/rustup"
+RUN mkdir -p "$CARGO_HOME" "$RUSTUP_HOME" \
+    && chown -R pawflow:pawflow /opt/local/rust
 USER pawflow
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
     sh -s -- -y --default-toolchain stable --profile default
-ENV PATH="/home/pawflow/.cargo/bin:${PATH}"
+ENV PATH="/opt/local/rust/cargo/bin:/usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 RUN cargo install cargo-watch cargo-edit cargo-expand \
     && rustup component add clippy rustfmt rust-analyzer \
-    && rm -rf /home/pawflow/.cargo/registry /home/pawflow/.cargo/git /tmp/* /var/tmp/*
+    && rm -rf "$CARGO_HOME/registry" "$CARGO_HOME/git" /tmp/* /var/tmp/*
 USER root
 
 # ── Go ──────────────────────────────────────────────────────────────
 RUN curl -fsSL https://go.dev/dl/go1.23.6.linux-amd64.tar.gz | \
     tar -C /usr/local -xzf -
-ENV PATH="/usr/local/go/bin:${PATH}"
-ENV GOPATH="/home/pawflow/go"
-ENV PATH="${GOPATH}/bin:${PATH}"
-# Go dev tools (as pawflow so binaries land in /home/pawflow/go/bin)
+ENV PATH="/usr/local/go/bin:/usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ENV GOPATH="/opt/local/go-path"
+ENV GOBIN="/opt/local/bin"
+RUN mkdir -p "$GOPATH" "$GOBIN" \
+    && chown -R pawflow:pawflow "$GOPATH" "$GOBIN"
 USER pawflow
 RUN go install golang.org/x/tools/gopls@latest \
     && go install gotest.tools/gotestsum@latest \

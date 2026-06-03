@@ -45,7 +45,10 @@ def test_server_dockerfile_supports_bootstrap_docker_builds():
     assert "COPY pawflow_relay/ /opt/pawflow/pawflow_relay/" not in relay_dev
     assert "stays a clean dependency image" in relay_dev
     assert "npm cache clean --force" in relay_dev
-    assert "/home/pawflow/.cargo/registry" in relay_dev
+    assert 'CARGO_HOME="/opt/local/rust/cargo"' in relay_dev
+    assert "/home/pawflow/.cargo" not in relay_dev
+    assert 'GOPATH="/opt/local/go-path"' in relay_dev
+    assert 'GOBIN="/opt/local/bin"' in relay_dev
     assert "chmod -R u+w \"$GOPATH/pkg/mod\"" in relay_dev
     assert '"$GOPATH/pkg/mod"' in relay_dev
     assert "golangci-lint" not in relay_dev

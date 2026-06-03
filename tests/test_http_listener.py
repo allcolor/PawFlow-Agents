@@ -12,7 +12,7 @@ import pytest
 from services.http_listener_service import (
     HTTPListenerService, PendingRequest, RouteRegistry,
     RouteConflictError, RouteEntry, _HTTPServerWithRegistry,
-    _emit_timing_summary, _request_action_label, _SECURITY_HEADERS,
+    _RequestHandler, _emit_timing_summary, _request_action_label, _SECURITY_HEADERS,
     _GlobalRateLimiter, _rate_limit_policy,
 )
 from services.http_auth_service import HTTPAuthService, AuthValidationResult
@@ -102,6 +102,34 @@ def test_security_headers_and_global_rate_limit_policy_are_present():
     ok, retry_after = limiter.allow("ip", "api", 2, 60.0)
     assert ok is False
     assert retry_after > 0
+
+
+def test_code_routes_do_not_inject_x_frame_options():
+    import io
+
+    class FakeHandler(_RequestHandler):
+        def send_header(self, name, value):
+            self.sent_headers.append((name, value))
+            self._headers_buffer.append(f"{name}: {value}".encode("latin-1"))
+
+    def make_handler(path):
+        handler = object.__new__(FakeHandler)
+        handler.path = path
+        handler._headers_buffer = []
+        handler.sent_headers = []
+        handler.request_version = "HTTP/1.1"
+        handler.wfile = io.BytesIO()
+        return handler
+
+    normal = make_handler("/chat")
+    normal.end_headers()
+    assert ("X-Frame-Options", "SAMEORIGIN") in normal.sent_headers
+
+    code = make_handler("/code/session/token/")
+    code.end_headers()
+    assert not any(name == "X-Frame-Options" for name, _ in code.sent_headers)
+    assert ("Cross-Origin-Embedder-Policy", "require-corp") in code.sent_headers
+    assert ("Cross-Origin-Opener-Policy", "same-origin") in code.sent_headers
 
 
 def test_request_action_label_extracts_api_ui_action_only():

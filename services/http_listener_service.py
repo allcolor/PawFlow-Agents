@@ -402,9 +402,17 @@ class _RequestHandler(BaseHTTPRequestHandler):
                    for line in getattr(self, "_headers_buffer", []))
 
     def end_headers(self):
+        path = getattr(self, "path", "").split("?", 1)[0]
         for name, value in _SECURITY_HEADERS.items():
+            if path.startswith("/code/") and name.lower() == "x-frame-options":
+                continue
             if not self._header_sent(name):
                 self.send_header(name, value)
+        if path.startswith("/code/"):
+            if not self._header_sent("Cross-Origin-Embedder-Policy"):
+                self.send_header("Cross-Origin-Embedder-Policy", "require-corp")
+            if not self._header_sent("Cross-Origin-Opener-Policy"):
+                self.send_header("Cross-Origin-Opener-Policy", "same-origin")
         super().end_headers()
 
     def _check_global_rate_limit(self, path: str) -> bool:

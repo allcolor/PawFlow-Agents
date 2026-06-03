@@ -107,12 +107,14 @@ def test_code_server_routes_use_request_listener_port(monkeypatch):
         def get_routes(self):
             return [
                 {"method": method, "pattern": pattern, "owner": owner}
-                for method, pattern, owner, _, _, _ in self.routes
+                for method, pattern, owner, _, _, _, _ in self.routes
             ]
 
         def register_route(self, method, pattern, owner, callback,
-                           ws_handler=None, public=False):
-            self.routes.append((method, pattern, owner, callback, ws_handler, public))
+                           ws_handler=None, public=False,
+                           private_only=False):
+            self.routes.append((method, pattern, owner, callback, ws_handler,
+                                public, private_only))
 
     request_listener = FakeListener()
     other_listener = FakeListener()
@@ -129,6 +131,7 @@ def test_code_server_routes_use_request_listener_port(monkeypatch):
     assert ("GET", "/code/{session_id}/{token}/") in request_patterns
     assert ("GET", "/code/{session_id}/{token}/{path+}") in request_patterns
     assert all(route[5] is True for route in request_listener.routes)
+    assert all(route[6] is True for route in request_listener.routes)
     assert other_listener.routes == []
 
 
@@ -144,12 +147,14 @@ def test_code_server_routes_fallback_to_all_listeners_without_request_port(monke
         def get_routes(self):
             return [
                 {"method": method, "pattern": pattern, "owner": owner}
-                for method, pattern, owner, _, _, _ in self.routes
+                for method, pattern, owner, _, _, _, _ in self.routes
             ]
 
         def register_route(self, method, pattern, owner, callback,
-                           ws_handler=None, public=False):
-            self.routes.append((method, pattern, owner, callback, ws_handler, public))
+                           ws_handler=None, public=False,
+                           private_only=False):
+            self.routes.append((method, pattern, owner, callback, ws_handler,
+                                public, private_only))
 
     listener_a = FakeListener()
     listener_b = FakeListener()
@@ -165,6 +170,7 @@ def test_code_server_routes_fallback_to_all_listeners_without_request_port(monke
         assert ("GET", "/code/{session_id}/{token}/") in patterns
         assert ("GET", "/code/{session_id}/{token}/{path+}") in patterns
         assert all(route[5] is True for route in listener.routes)
+        assert all(route[6] is True for route in listener.routes)
 
 
 def test_fwd_root_url_requires_explicit_trailing_slash_route():

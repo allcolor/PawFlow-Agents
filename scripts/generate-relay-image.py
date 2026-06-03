@@ -152,6 +152,11 @@ def _render_dockerfile(catalog: dict[str, Any], feature_ids: list[str], image_na
         "ENV LANG=C.UTF-8",
         "ENV LC_ALL=C.UTF-8",
         "ENV PATH=\"/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\"",
+        "ENV XDG_CACHE_HOME=\"/tmp/pawflow-cache\"",
+        "ENV HF_HOME=\"/tmp/pawflow-cache/huggingface\"",
+        "ENV HUGGINGFACE_HUB_CACHE=\"/tmp/pawflow-cache/huggingface/hub\"",
+        "ENV SENTENCE_TRANSFORMERS_HOME=\"/tmp/pawflow-cache/sentence-transformers\"",
+        "ENV TRANSFORMERS_CACHE=\"/tmp/pawflow-cache/huggingface/transformers\"",
         "",
         "RUN apt-get update && apt-get install -y --no-install-recommends sudo \\",
         "    && rm -rf /var/lib/apt/lists/* \\",
@@ -167,6 +172,11 @@ def _render_dockerfile(catalog: dict[str, Any], feature_ids: list[str], image_na
         "    && chmod 440 /etc/sudoers.d/pawflow",
         "",
     ]
+    for key, value in env.items():
+        lines.append(f"ENV {key}=\"{value}\"")
+    if env:
+        lines.append("")
+
     lines.extend(_render_apt(required_apt))
     lines.append("")
     lines.extend(_render_run(pre_apt))
@@ -190,12 +200,11 @@ def _render_dockerfile(catalog: dict[str, Any], feature_ids: list[str], image_na
     if post_install:
         lines.append("")
 
-    for key, value in env.items():
-        lines.append(f"ENV {key}=\"{value}\"")
     lines.extend([
         f"ENV PAWFLOW_DOCKER_IMAGE=\"{image_name}\"",
         "RUN apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*",
-        "RUN chown -R pawflow:pawflow /opt/pawflow /home/pawflow \\",
+        "RUN rm -rf /home/pawflow/.rustup /home/pawflow/.cache/go-build /home/pawflow/.cache/huggingface /home/pawflow/.chromium-profile /home/pawflow/.config/chromium \\",
+        "    && chown -R pawflow:pawflow /opt/pawflow /home/pawflow \\",
         "    && find /home/pawflow -maxdepth 1 ! -user pawflow -exec chown -R pawflow:pawflow {} +",
         "USER root",
         "ENV HOME=\"/home/pawflow\"",

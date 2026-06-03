@@ -7,7 +7,7 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 # Force clean PATH — Docker Desktop WSL2 injects host PATH otherwise
 ENV PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
-# ── System user (created early so Rust/Go install into /home/pawflow) ──
+# ── System user ───────────────────────────────────────────────────────
 # ubuntu:24.04 ships with a default user 'ubuntu' at UID 1000. We rename it to
 # 'pawflow' so our user owns UID 1000 — this matches the typical Linux/WSL
 # first-user uid, so bind-mounted host files aren't stuck as a different uid
@@ -131,15 +131,24 @@ RUN curl -fsSL https://go.dev/dl/go1.23.6.linux-amd64.tar.gz | \
 ENV PATH="/usr/local/go/bin:/usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 ENV GOPATH="/opt/local/go-path"
 ENV GOBIN="/opt/local/bin"
+ENV GOCACHE="/tmp/pawflow-go-build"
+ENV GOMODCACHE="/tmp/pawflow-go-mod"
 RUN mkdir -p "$GOPATH" "$GOBIN" \
     && chown -R pawflow:pawflow "$GOPATH" "$GOBIN"
 USER pawflow
 RUN go install golang.org/x/tools/gopls@latest \
     && go install gotest.tools/gotestsum@latest \
     && go install github.com/air-verse/air@latest \
-    && (chmod -R u+w "$GOPATH/pkg/mod" "$GOPATH/pkg/sumdb" 2>/dev/null || true) \
-    && rm -rf "$GOPATH/pkg/mod" "$GOPATH/pkg/sumdb" /tmp/* /var/tmp/*
+    && (chmod -R u+w "$GOMODCACHE" "$GOPATH/pkg/sumdb" 2>/dev/null || true) \
+    && rm -rf "$GOMODCACHE" "$GOPATH/pkg/sumdb" /tmp/* /var/tmp/*
 USER root
+
+# Runtime caches must stay out of the persistent /home/pawflow Docker volume.
+ENV XDG_CACHE_HOME="/tmp/pawflow-cache"
+ENV HF_HOME="/tmp/pawflow-cache/huggingface"
+ENV HUGGINGFACE_HUB_CACHE="/tmp/pawflow-cache/huggingface/hub"
+ENV SENTENCE_TRANSFORMERS_HOME="/tmp/pawflow-cache/sentence-transformers"
+ENV TRANSFORMERS_CACHE="/tmp/pawflow-cache/huggingface/transformers"
 
 # ── Java (OpenJDK) + Kotlin ─────────────────────────────────────────
 # ── Java (OpenJDK) ─────────────────────────────────────────────────
@@ -211,7 +220,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN apt-get update && apt-get install -y --no-install-recommends software-properties-common \
     && add-apt-repository -y ppa:xtradeb/apps \
     && apt-get update && apt-get install -y --no-install-recommends chromium \
-    && printf '#!/bin/bash\nset -e\nexec /usr/bin/chromium --no-sandbox --disable-dev-shm-usage --user-data-dir="$HOME/.chromium-profile" "$@"\n' \
+    && printf '#!/bin/bash\nset -e\nprofile_dir="$PAWFLOW_CHROMIUM_USER_DATA_DIR"\ncache_dir="$PAWFLOW_CHROMIUM_CACHE_DIR"\nif [ -z "$profile_dir" ]; then profile_dir=/tmp/pawflow-chromium-profile; fi\nif [ -z "$cache_dir" ]; then cache_dir=/tmp/pawflow-chromium-cache; fi\nmkdir -p "$profile_dir" "$cache_dir"\nexec /usr/bin/chromium --no-sandbox --disable-dev-shm-usage --user-data-dir="$profile_dir" --disk-cache-dir="$cache_dir" "$@"\n' \
        > /usr/local/bin/chromium \
     && chmod +x /usr/local/bin/chromium \
     && ln -sf /usr/local/bin/chromium /usr/local/bin/chromium-browser \
@@ -265,7 +274,7 @@ RUN mkdir -p /opt/pawflow \
 ENV PYTHONPATH="/opt/pawflow:/workspace/.pylib"
 
 # ── Init script: repair bind-mount permissions, then exec as pawflow ─────
-RUN printf '#!/bin/bash\nset -e\nchronyd 2>/dev/null || true\nfor d in /workspace /cc_sessions /filestore /skills; do\n  mkdir -p "$d"\n  chown -R pawflow:pawflow "$d" 2>/dev/null || true\n  gid=$(stat -c %g "$d" 2>/dev/null || echo 1000)\n  group=$(getent group "$gid" | cut -d: -f1 || true)\n  if [ -z "$group" ]; then group=pfmount_$gid; groupadd -g "$gid" "$group" 2>/dev/null || true; fi\n  usermod -aG "$group" pawflow 2>/dev/null || true\n  chmod g+rwx "$d" 2>/dev/null || true\ndone\nexec sudo -E -u pawflow "$@"\n' > /usr/local/bin/init.sh \
+RUN printf '#!/bin/bash\nset -e\nchronyd 2>/dev/null || true\nrm -rf /home/pawflow/.rustup /home/pawflow/.cache/go-build /home/pawflow/.cache/huggingface /home/pawflow/.chromium-profile /home/pawflow/.config/chromium 2>/dev/null || true\nfor d in /workspace /cc_sessions /filestore /skills; do\n  mkdir -p "$d"\n  chown -R pawflow:pawflow "$d" 2>/dev/null || true\n  gid=$(stat -c %g "$d" 2>/dev/null || echo 1000)\n  group=$(getent group "$gid" | cut -d: -f1 || true)\n  if [ -z "$group" ]; then group=pfmount_$gid; groupadd -g "$gid" "$group" 2>/dev/null || true; fi\n  usermod -aG "$group" pawflow 2>/dev/null || true\n  chmod g+rwx "$d" 2>/dev/null || true\ndone\nexec sudo -E -u pawflow "$@"\n' > /usr/local/bin/init.sh \
     && chmod +x /usr/local/bin/init.sh
 
 # ── Fix home ownership (usermod -m may keep old uid on preexisting files) ──

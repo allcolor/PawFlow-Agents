@@ -50,8 +50,15 @@ def test_server_dockerfile_supports_bootstrap_docker_builds():
     assert "/home/pawflow/.cargo" not in relay_dev
     assert 'GOPATH="/opt/local/go-path"' in relay_dev
     assert 'GOBIN="/opt/local/bin"' in relay_dev
-    assert "chmod -R u+w \"$GOPATH/pkg/mod\"" in relay_dev
-    assert '"$GOPATH/pkg/mod"' in relay_dev
+    assert 'GOCACHE="/tmp/pawflow-go-build"' in relay_dev
+    assert 'GOMODCACHE="/tmp/pawflow-go-mod"' in relay_dev
+    assert 'XDG_CACHE_HOME="/tmp/pawflow-cache"' in relay_dev
+    assert 'HF_HOME="/tmp/pawflow-cache/huggingface"' in relay_dev
+    assert "/home/pawflow/.rustup" in relay_dev
+    assert "/home/pawflow/.cache/go-build" in relay_dev
+    assert "/home/pawflow/.cache/huggingface" in relay_dev
+    assert "chmod -R u+w \"$GOMODCACHE\"" in relay_dev
+    assert '"$GOMODCACHE"' in relay_dev
     assert "golangci-lint" not in relay_dev
     assert "dotnet-install.sh" not in relay_dev
     assert "kotlin-compiler" not in relay_dev
@@ -63,6 +70,10 @@ def test_server_dockerfile_supports_bootstrap_docker_builds():
         assert "RUSTUP_HOME=/opt/local/rust/rustup" in src
         assert "GOPATH=/opt/local/go-path" in src
         assert "GOBIN=/opt/local/bin" in src
+        assert "GOCACHE=/tmp/pawflow-go-build" in src
+        assert "GOMODCACHE=/tmp/pawflow-go-mod" in src
+        assert "XDG_CACHE_HOME=/tmp/pawflow-cache" in src
+        assert "HF_HOME=/tmp/pawflow-cache/huggingface" in src
     assert "ziglang.org" not in relay_dev
     for heavy_app in ("blender", "libreoffice-calc", "vlc", "audacity"):
         assert heavy_app not in relay_dev
@@ -71,6 +82,8 @@ def test_server_dockerfile_supports_bootstrap_docker_builds():
     assert "ppa:xtradeb/apps" in relay_dev
     assert "apt-get install -y --no-install-recommends chromium" in relay_dev
     assert "/usr/bin/chromium --no-sandbox" in relay_dev
+    assert "--disk-cache-dir=\"$cache_dir\"" in relay_dev
+    assert "/tmp/pawflow-chromium-profile" in relay_dev
     assert "update-alternatives --set x-www-browser /usr/local/bin/chromium" in relay_dev
     assert "WebBrowser=chromium" in relay_dev
     assert "X-XFCE-CommandsWithParameter=/usr/local/bin/chromium" in relay_dev

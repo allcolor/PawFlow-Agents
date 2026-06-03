@@ -132,6 +132,8 @@ def test_generator_resolves_implied_features_and_writes_installer_artifacts(tmp_
     assert "apt-get install -y --no-install-recommends" in dockerfile
     assert "chromium" in dockerfile
     assert "/usr/bin/chromium --no-sandbox" in dockerfile
+    assert "/tmp/pawflow-chromium-profile" in dockerfile
+    assert "--disk-cache-dir=\"$cache_dir\"" in dockerfile
     assert "update-alternatives --set x-www-browser /usr/local/bin/chromium" in dockerfile
     assert "WebBrowser=chromium" in dockerfile
     assert "X-XFCE-CommandsWithParameter=/usr/local/bin/chromium" in dockerfile
@@ -144,6 +146,8 @@ def test_generator_resolves_implied_features_and_writes_installer_artifacts(tmp_
     assert "sudo -E -u pawflow" in dockerfile
     assert 'chown -R pawflow:pawflow "$d"' in dockerfile
     assert "chmod g+rwx" in dockerfile
+    assert "XDG_CACHE_HOME=\"/tmp/pawflow-cache\"" in dockerfile
+    assert "HF_HOME=\"/tmp/pawflow-cache/huggingface\"" in dockerfile
 
     run_script = (out_dir / "run-relay.sh").read_text(encoding="utf-8")
     assert "PAWFLOW_RELAY_TOKEN" in run_script

@@ -327,6 +327,13 @@ class ServerRelayManager:
             "--env", "RUSTUP_HOME=/opt/local/rust/rustup",
             "--env", "GOPATH=/opt/local/go-path",
             "--env", "GOBIN=/opt/local/bin",
+            "--env", "GOCACHE=/tmp/pawflow-go-build",
+            "--env", "GOMODCACHE=/tmp/pawflow-go-mod",
+            "--env", "XDG_CACHE_HOME=/tmp/pawflow-cache",
+            "--env", "HF_HOME=/tmp/pawflow-cache/huggingface",
+            "--env", "HUGGINGFACE_HUB_CACHE=/tmp/pawflow-cache/huggingface/hub",
+            "--env", "SENTENCE_TRANSFORMERS_HOME=/tmp/pawflow-cache/sentence-transformers",
+            "--env", "TRANSFORMERS_CACHE=/tmp/pawflow-cache/huggingface/transformers",
             "--env", "PATH=/opt/local/bin:/opt/local/rust/cargo/bin:/usr/local/go/bin:/opt/kotlinc/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
         ]
         if kind_cfg["publish_desktop"]:
@@ -496,6 +503,13 @@ class ServerRelayManager:
             "--env", "RUSTUP_HOME=/opt/local/rust/rustup",
             "--env", "GOPATH=/opt/local/go-path",
             "--env", "GOBIN=/opt/local/bin",
+            "--env", "GOCACHE=/tmp/pawflow-go-build",
+            "--env", "GOMODCACHE=/tmp/pawflow-go-mod",
+            "--env", "XDG_CACHE_HOME=/tmp/pawflow-cache",
+            "--env", "HF_HOME=/tmp/pawflow-cache/huggingface",
+            "--env", "HUGGINGFACE_HUB_CACHE=/tmp/pawflow-cache/huggingface/hub",
+            "--env", "SENTENCE_TRANSFORMERS_HOME=/tmp/pawflow-cache/sentence-transformers",
+            "--env", "TRANSFORMERS_CACHE=/tmp/pawflow-cache/huggingface/transformers",
             "--env", "PATH=/opt/local/bin:/opt/local/rust/cargo/bin:/usr/local/go/bin:/opt/kotlinc/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
         ]
         if kind_cfg["publish_desktop"]:

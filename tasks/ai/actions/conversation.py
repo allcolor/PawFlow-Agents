@@ -119,6 +119,37 @@ def _patch_conversation_files(conv_dir: Path, cid: str, user_id: str,
                 path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def _ensure_import_summarizer_binding(cid: str, user_id: str) -> Dict[str, str]:
+    """Bind an available summarizer on imported conversations.
+
+    Archives can carry a summarizer_binding from another install. If that
+    explicit binding is unavailable locally, summarizer resolution stops there
+    instead of falling back to user/global services. Normalize the imported
+    conversation to the first locally available summarizer.
+    """
+    try:
+        from core.summarizer_bindings import list_available, set_binding, summary
+        current = summary(user_id, cid)
+        effective = current.get("effective") or {}
+        if current.get("explicit") and effective.get("service_id"):
+            return {
+                "scope": effective.get("scope", ""),
+                "service_id": effective.get("service_id", ""),
+            }
+        available = list_available(user_id, cid)
+        if not available:
+            return {}
+        chosen = available[0]
+        scope = chosen.get("scope", "")
+        service_id = chosen.get("service_id", "")
+        if scope and service_id:
+            set_binding(cid, scope, service_id)
+            return {"scope": scope, "service_id": service_id}
+    except Exception:
+        logger.debug("failed to bind summarizer for imported conversation %s", cid[:8], exc_info=True)
+    return {}
+
+
 def _write_filestore_archive(zf, conv_id: str, user_id: str) -> Dict[str, Any]:
     """Write FileStore files for a conversation into an archive."""
     from core.file_store import FileStore
@@ -1263,6 +1294,10 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
                 "user_id": user_id,
                 "title": title,
                 "selectedAgent": agent_name,
+                "_meta_user_id": user_id,
+                "_meta_created_at": now_ts,
+                "_meta_updated_at": now_ts,
+                "_meta_status": "idle",
                 "conv_agents": {
                     agent_name: {
                         "definition": agent_cfg.get("definition", "claude"),
@@ -1277,6 +1312,7 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
         store._cid_user[cid] = user_id
         store._git_init(cid)
         store._reload_cache(cid)
+        summarizer_binding = _ensure_import_summarizer_binding(cid, user_id)
         # Relay bindings (mirrors create_conversation in agent_resource.py).
         if relay_ids:
             from core.relay_bindings import link_relay, set_default_relay
@@ -1288,6 +1324,8 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
         import shutil
         shutil.rmtree(temp_dir, ignore_errors=True)
         result = {"ok": True, "conversation_id": cid}
+        if summarizer_binding:
+            result["summarizer_binding"] = summarizer_binding
         if fmt == "pawflow":
             result["filestore_restored"] = filestore_result.get("restored", 0)
             result["filestore_bytes"] = filestore_result.get("bytes", 0)

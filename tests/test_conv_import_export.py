@@ -129,6 +129,35 @@ def test_export_pawflow_excludes_git(conv):
             assert '.git' not in name
 
 
+def test_pawflow_import_rebinds_broken_summarizer(conv, monkeypatch):
+    store, cid = conv
+    store.set_extra(cid, "summarizer_binding", {
+        "scope": "user",
+        "service_id": "source-only-summarizer",
+    })
+    raw = _export_pawflow_zip(store, cid)
+
+    import core.summarizer_bindings as sb
+
+    monkeypatch.setattr(sb, "summary", lambda user_id, conv_id: {
+        "explicit": True,
+        "effective": None,
+        "available": [{"scope": "user", "service_id": "local-summarizer"}],
+        "binding": {"scope": "user", "service_id": "source-only-summarizer"},
+    })
+    monkeypatch.setattr(sb, "list_available", lambda user_id, conv_id: [
+        {"scope": "user", "service_id": "local-summarizer"},
+    ])
+    monkeypatch.setattr(sb, "set_binding", lambda conv_id, scope, service_id: store.set_extra(
+        conv_id, "summarizer_binding", {"scope": scope, "service_id": service_id}))
+
+    imported_cid, res, _info = _execute_pawflow_import(store, raw)
+
+    assert res["summarizer_binding"] == {"scope": "user", "service_id": "local-summarizer"}
+    extras = json.loads((store._conv_dir(imported_cid) / "extras.json").read_text(encoding="utf-8"))
+    assert extras["summarizer_binding"] == {"scope": "user", "service_id": "local-summarizer"}
+
+
 def test_export_pawflow_full_includes_context_buckets_and_filestore(store, tmp_path):
     from core.bucket_store import BucketStore
     from core.file_store import FileStore
@@ -500,6 +529,19 @@ def test_cc_import_real_format_user_assistant(store):
     assert msgs[3]["parent_message_id"] == msgs[2]["msg_id"]
     assert msgs[3]["content"] == "match"
     assert msgs[4]["content"] == "Done."
+
+
+def test_cc_import_sets_owner_metadata(store):
+    cid = _cc_execute(store, json.dumps({
+        "type": "user",
+        "message": {"role": "user", "content": "Hello"},
+    }) + "\n")
+    extras = json.loads((store._conv_dir(cid) / "extras.json").read_text(encoding="utf-8"))
+    assert extras["user_id"] == "testuser"
+    assert extras["_meta_user_id"] == "testuser"
+    assert extras["_meta_status"] == "idle"
+    assert extras["_meta_created_at"] > 0
+    assert extras["_meta_updated_at"] > 0
 
 
 def test_cc_import_drops_empty_assistant_stub(store):

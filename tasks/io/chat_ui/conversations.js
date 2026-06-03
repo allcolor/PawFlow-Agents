@@ -1007,12 +1007,15 @@ function _showImportConvDialog(info, fmt) {
       }).subscribe(result => {
         if (result.error) { addMsg('error', t('importFailed', { error: result.error })); document.getElementById('status').textContent = t('ready'); return; }
         addMsg('system', t('importSuccess'));
-        // Open the new conv FIRST (opens its SSE, sets conversationId),
-        // THEN refresh the sidebar. Reverse order races: the
-        // list_conversations reply gets scoped to the OLD conv and is
-        // dropped when resumeConv() closes that SSE.
-        resumeConv(result.conversation_id);
+        // Imported conversations should become the active chat immediately.
+        // Refresh once now and once after the route switch so VPS-side cache or
+        // SSE timing cannot leave the sidebar stale until a hard reload.
+        resumeConv(result.conversation_id, true);
         loadConversations();
+        setTimeout(function() {
+          loadConversations();
+          if (conversationId === result.conversation_id) highlightConv(result.conversation_id);
+        }, 250);
         document.getElementById('status').textContent = t('ready');
       });
     };

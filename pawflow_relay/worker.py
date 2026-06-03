@@ -620,7 +620,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                         _tail = ""
                         try:
-                            with open("/tmp/code-server.log", "r", encoding="utf-8", errors="replace") as _lf:
+                            with open(_cs_log.name, "r", encoding="utf-8", errors="replace") as _lf:
                                 _tail = _lf.read()[-1200:]
                         except Exception:
                             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)

@@ -203,7 +203,7 @@ def _render_dockerfile(catalog: dict[str, Any], feature_ids: list[str], image_na
     lines.extend([
         f"ENV PAWFLOW_DOCKER_IMAGE=\"{image_name}\"",
         "RUN apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*",
-        "RUN rm -rf /home/pawflow/.rustup /home/pawflow/.cache/go-build /home/pawflow/.cache/huggingface /home/pawflow/.chromium-profile /home/pawflow/.config/chromium \\",
+        "RUN rm -rf /home/pawflow/.rustup /home/pawflow/.cache/go-build /home/pawflow/.cache/huggingface /home/pawflow/.config/chromium \\",
         "    && chown -R pawflow:pawflow /opt/pawflow /home/pawflow \\",
         "    && find /home/pawflow -maxdepth 1 ! -user pawflow -exec chown -R pawflow:pawflow {} +",
         "USER root",

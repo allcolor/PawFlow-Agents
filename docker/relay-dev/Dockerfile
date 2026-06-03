@@ -220,7 +220,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN apt-get update && apt-get install -y --no-install-recommends software-properties-common \
     && add-apt-repository -y ppa:xtradeb/apps \
     && apt-get update && apt-get install -y --no-install-recommends chromium \
-    && printf '#!/bin/bash\nset -e\nprofile_dir="$PAWFLOW_CHROMIUM_USER_DATA_DIR"\ncache_dir="$PAWFLOW_CHROMIUM_CACHE_DIR"\nif [ -z "$profile_dir" ]; then profile_dir=/tmp/pawflow-chromium-profile; fi\nif [ -z "$cache_dir" ]; then cache_dir=/tmp/pawflow-chromium-cache; fi\nmkdir -p "$profile_dir" "$cache_dir"\nexec /usr/bin/chromium --no-sandbox --disable-dev-shm-usage --user-data-dir="$profile_dir" --disk-cache-dir="$cache_dir" "$@"\n' \
+    && printf '#!/bin/bash\nset -e\nprofile_dir="$PAWFLOW_CHROMIUM_USER_DATA_DIR"\ncache_dir="$PAWFLOW_CHROMIUM_CACHE_DIR"\nif [ -z "$profile_dir" ]; then profile_dir="$HOME/.chromium-profile"; fi\nif [ -z "$cache_dir" ]; then cache_dir=/tmp/pawflow-chromium-cache; fi\nmkdir -p "$profile_dir" "$cache_dir"\nexec /usr/bin/chromium --no-sandbox --disable-dev-shm-usage --user-data-dir="$profile_dir" --disk-cache-dir="$cache_dir" "$@"\n' \
        > /usr/local/bin/chromium \
     && chmod +x /usr/local/bin/chromium \
     && ln -sf /usr/local/bin/chromium /usr/local/bin/chromium-browser \
@@ -274,7 +274,7 @@ RUN mkdir -p /opt/pawflow \
 ENV PYTHONPATH="/opt/pawflow:/workspace/.pylib"
 
 # ── Init script: repair bind-mount permissions, then exec as pawflow ─────
-RUN printf '#!/bin/bash\nset -e\nchronyd 2>/dev/null || true\nrm -rf /home/pawflow/.rustup /home/pawflow/.cache/go-build /home/pawflow/.cache/huggingface /home/pawflow/.chromium-profile /home/pawflow/.config/chromium 2>/dev/null || true\nfor d in /workspace /cc_sessions /filestore /skills; do\n  mkdir -p "$d"\n  chown -R pawflow:pawflow "$d" 2>/dev/null || true\n  gid=$(stat -c %g "$d" 2>/dev/null || echo 1000)\n  group=$(getent group "$gid" | cut -d: -f1 || true)\n  if [ -z "$group" ]; then group=pfmount_$gid; groupadd -g "$gid" "$group" 2>/dev/null || true; fi\n  usermod -aG "$group" pawflow 2>/dev/null || true\n  chmod g+rwx "$d" 2>/dev/null || true\ndone\nexec sudo -E -u pawflow "$@"\n' > /usr/local/bin/init.sh \
+RUN printf '#!/bin/bash\nset -e\nchronyd 2>/dev/null || true\nrm -rf /home/pawflow/.rustup /home/pawflow/.cache/go-build /home/pawflow/.cache/huggingface /home/pawflow/.config/chromium 2>/dev/null || true\nfor d in /workspace /cc_sessions /filestore /skills; do\n  mkdir -p "$d"\n  chown -R pawflow:pawflow "$d" 2>/dev/null || true\n  gid=$(stat -c %g "$d" 2>/dev/null || echo 1000)\n  group=$(getent group "$gid" | cut -d: -f1 || true)\n  if [ -z "$group" ]; then group=pfmount_$gid; groupadd -g "$gid" "$group" 2>/dev/null || true; fi\n  usermod -aG "$group" pawflow 2>/dev/null || true\n  chmod g+rwx "$d" 2>/dev/null || true\ndone\nexec sudo -E -u pawflow "$@"\n' > /usr/local/bin/init.sh \
     && chmod +x /usr/local/bin/init.sh
 
 # ── Fix home ownership (usermod -m may keep old uid on preexisting files) ──

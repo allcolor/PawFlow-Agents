@@ -109,7 +109,11 @@ function addVSCodeTab(relayId, iframeSrc) {
   if (existingPanel) {
     const iframe = existingPanel.querySelector('iframe');
     if (iframe && iframeSrc && iframe.src !== iframeSrc) {
-      iframe.src = iframeSrc;
+      const nextIframe = document.createElement('iframe');
+      nextIframe.src = iframeSrc;
+      nextIframe.style.cssText = iframe.style.cssText || 'flex:1;border:none;width:100%;height:100%;';
+      nextIframe.allow = iframe.allow || 'clipboard-read; clipboard-write';
+      iframe.replaceWith(nextIframe);
     }
     switchTab(tabId);
     return tabId;

@@ -119,7 +119,8 @@ def test_existing_vscode_tab_refreshes_new_capability_url():
         _TABS_JS.index("function addVSCodeTab"):
         _TABS_JS.index("/** Close a VSCode tab.")]
     assert "existingPanel.querySelector('iframe')" in block
-    assert "iframe.src = iframeSrc" in block
+    assert "document.createElement('iframe')" in block
+    assert "iframe.replaceWith(nextIframe)" in block
     assert "switchTab(tabId)" in block
 
 

@@ -3,6 +3,62 @@ from pathlib import Path
 from services import private_gateway
 
 
+class _GatewayHandler:
+    def __init__(self, registry, path):
+        import io
+
+        self.command = "GET"
+        self.path = path
+        self.client_address = ("203.0.113.10", 12345)
+        self.headers = {}
+        self.server = type("Server", (), {"_route_registry": registry})()
+        self.wfile = io.BytesIO()
+        self.status = None
+        self.sent_headers = []
+
+    def send_response(self, status):
+        self.status = status
+
+    def send_header(self, name, value):
+        self.sent_headers.append((name, value))
+
+    def end_headers(self):
+        pass
+
+
+def test_private_gateway_bypasses_public_code_capability_route():
+    from services.http_listener_service import RouteRegistry
+
+    registry = RouteRegistry()
+    registry.register(
+        "GET", "/code/{session_id}/{token}/", "code",
+        callback=lambda req: None, public=True)
+    handler = _GatewayHandler(registry, "/code/sid/token/")
+
+    handled = private_gateway._check_request_inner(
+        handler, {"enabled": True, "secret_refs": "gateway_key"})
+
+    assert handled is False
+    assert handler.status is None
+
+
+def test_private_gateway_still_challenges_plain_public_routes():
+    from services.http_listener_service import RouteRegistry
+
+    registry = RouteRegistry()
+    registry.register(
+        "GET", "/public", "public",
+        callback=lambda req: None, public=True)
+    handler = _GatewayHandler(registry, "/public")
+
+    handled = private_gateway._check_request_inner(
+        handler, {"enabled": True, "secret_refs": "gateway_key"})
+
+    assert handled is True
+    assert handler.status == 200
+    assert b"<html" in handler.wfile.getvalue()
+
+
 def test_bladerunner_private_gateway_skin_renders():
     html = private_gateway.render_challenge(
         error="Denied", cooldown=3, next_url="/chat?x=1&y=2",

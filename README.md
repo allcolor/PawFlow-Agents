@@ -278,15 +278,15 @@ Expressions resolve through a cascade: secrets → flow parameters → conversat
 
 | Provider | Status |
 |----------|--------|
-| Built-in (username/password) | Ready |
+| Built-in (username/password) | Ready, tested |
+| Generic OAuth2 | Ready, tested |
 | Google | Ready, tested |
-| GitHub | Ready, not tested |
+| GitHub | Ready, tested |
+| X (Twitter) | Ready, tested |
+| Telegram | Ready, tested |
 | Microsoft | Ready, not tested |
-| X (Twitter) | Ready, not tested |
 | Facebook | Ready, not tested |
 | Amazon | Ready, not tested |
-| Telegram | Ready, not tested |
-| Generic OAuth2 | Ready, tested |
 
 ## Configuration
 

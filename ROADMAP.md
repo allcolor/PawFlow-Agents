@@ -61,6 +61,9 @@ Ollama, Mistral, vLLM, LM Studio, Together.ai — most work via the OpenAI-compa
 ### Mobile client (PWA)
 Progressive Web App installable on iOS and Android. Offline caching, push notifications when agents respond, mobile-optimized layout.
 
+### External webchat clients
+Telegram, Discord, Slack, and WhatsApp clients that attach to PawFlow conversations with shared history, agent selection, streaming updates, and identity linking.
+
 ---
 
 ## Medium Priority

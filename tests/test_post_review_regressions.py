@@ -724,4 +724,6 @@ def test_code_server_worker_does_not_pass_base_path_to_process():
     start_block = src[start:stop]
     assert '_public_base_path = msg.get("base_path", "")' in start_block
     assert '"--base-path"' not in start_block
+    assert '"--folder-uri", Path(root_dir).resolve().as_uri()' in start_block
+    assert '"--disable-workspace-trust"' in start_block
     assert '"upstream_base_path": _upstream_base_path' in start_block

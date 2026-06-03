@@ -1234,9 +1234,15 @@ class RelayThread:
                     if old_base != base_path:
                         old_proc.terminate()
                         self._local_code_server.pop(old_port, None)
-        args = [code_server, "--port", str(port), "--auth", "none",
-                "--bind-addr", f"127.0.0.1:{port}"]
-        args.append(self.directory)
+        args = [
+            code_server,
+            "--port", str(port),
+            "--auth", "none",
+            "--disable-telemetry",
+            "--disable-workspace-trust",
+            "--bind-addr", f"127.0.0.1:{port}",
+            "--folder-uri", Path(self.directory).resolve().as_uri(),
+        ]
         try:
             proc = _sp.Popen(  # nosec B603
                 args,

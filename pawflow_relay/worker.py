@@ -601,8 +601,9 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 "--bind-addr", f"0.0.0.0:{_cs_port}",
                 "--auth", "none",
                 "--disable-telemetry",
+                "--disable-workspace-trust",
+                "--folder-uri", Path(root_dir).resolve().as_uri(),
             ]
-            _cs_args.append(root_dir)
             try:
                 _cs_log = open("/tmp/code-server.log", "w")  # nosec B108 - relay-local service log.
                 _cs_proc = subprocess.Popen(  # nosec B603

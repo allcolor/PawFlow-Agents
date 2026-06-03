@@ -55,6 +55,7 @@ def register_code_server(relay_id: str, port: int, relay_service,
             "owner_user_id": owner_user_id,
             "capability_token": token,
             "base_path": f"/code/{session_id}/{token}/",
+            "upstream_base_path": "/",
             "cs_ws_sessions": {},
         }
         _relay_to_session[relay_id] = session_id

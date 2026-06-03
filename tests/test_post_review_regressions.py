@@ -265,7 +265,7 @@ def test_code_server_ws_registers_browser_socket_under_session_id(tmp_path, monk
     assert sock.closed is True
 
 
-def test_code_server_http_proxy_preserves_base_path_and_unwraps_relay_data(tmp_path):
+def test_code_server_http_proxy_strips_public_prefix_by_default(tmp_path):
     from core.capability_auth import init_db
     from services import code_server_proxy as csp
 
@@ -314,7 +314,7 @@ def test_code_server_http_proxy_preserves_base_path_and_unwraps_relay_data(tmp_p
     assert req.status == 200
     assert req.body == b"Hello"
     assert relay.kwargs["port"] == 8765
-    assert relay.kwargs["req_path"] == f"/code/{session_id}/{token}/static/app.js?v=1"
+    assert relay.kwargs["req_path"] == "/static/app.js?v=1"
 
 
 def test_code_server_http_proxy_accepts_public_capability_url(tmp_path):

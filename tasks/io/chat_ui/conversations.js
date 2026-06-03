@@ -1044,7 +1044,7 @@ function exportPawflow(includeFilestore, cid) {
   const targetCid = cid || conversationId;
   if (!targetCid) return;
   document.getElementById('status').textContent = t('exporting');
-  action$('conv_export_pawflow', { conversation_id: targetCid, include_filestore: !!includeFilestore }).subscribe(data => {
+  action$('conv_export_pawflow', { conversation_id: targetCid, include_filestore: !!includeFilestore }, { label: includeFilestore ? t('exportingWithImages') : t('exporting') }).subscribe(data => {
     if (data.error) { addMsg('error', t('exportFailed', { error: data.error })); }
     else { const a = document.createElement('a'); a.href = data.url; a.download = data.filename; a.click(); addMsg('system', t('exportedFile', { file: data.filename })); }
     document.getElementById('status').textContent = t('ready');
@@ -1055,7 +1055,7 @@ function exportClaudeCode(cid) {
   const targetCid = cid || conversationId;
   if (!targetCid) return;
   document.getElementById('status').textContent = t('exporting');
-  action$('conv_export_claude_code', { conversation_id: targetCid }).subscribe(data => {
+  action$('conv_export_claude_code', { conversation_id: targetCid }, { label: t('exporting') }).subscribe(data => {
     if (data.error) { addMsg('error', t('exportFailed', { error: data.error })); }
     else { const a = document.createElement('a'); a.href = data.url; a.download = data.filename; a.click(); addMsg('system', t('exportedFile', { file: data.filename })); }
     document.getElementById('status').textContent = t('ready');

@@ -8,7 +8,7 @@
 //
 //   fireAction('compact', {conversation_id: cid});  // fire-and-forget, no result needed
 
-const { filter, take, map, catchError, of, EMPTY, first, tap } = rxjs;
+const { filter, take, map, catchError, of, EMPTY, first, finalize } = rxjs;
 
 // Central command-result bus. Replay a short window so an SSE replay or
 // ultra-fast inline response cannot be lost before action$ subscribers attach.
@@ -113,12 +113,59 @@ function _ensureUIActionSSE(force) {
   };
 }
 
-// Track pending action count for loading indicator
+// Track pending UI actions for the loading indicator. Silent action$ calls are
+// excluded so background polling does not flicker the header.
 let _pendingActions = 0;
+const _pendingActionItems = new Map();
+const _PENDING_ACTION_SHOW_AFTER_MS = 500;
+
+function _formatActionLabel(actionName, opts) {
+  if (opts && opts.label) return String(opts.label);
+  return String(actionName || 'action')
+    .replace(/^conv_/, '')
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, ch => ch.toUpperCase());
+}
+
+function _trackPendingAction(callId, actionName, opts) {
+  _pendingActions++;
+  _pendingActionItems.set(callId, {
+    action: actionName,
+    label: _formatActionLabel(actionName, opts),
+    startedAt: Date.now(),
+    visible: false,
+  });
+  window.setTimeout(() => {
+    const item = _pendingActionItems.get(callId);
+    if (!item) return;
+    item.visible = true;
+    _updateLoadingState();
+  }, _PENDING_ACTION_SHOW_AFTER_MS);
+  _updateLoadingState();
+}
+
+function _untrackPendingAction(callId) {
+  if (!_pendingActionItems.has(callId)) return;
+  _pendingActionItems.delete(callId);
+  _pendingActions = Math.max(0, _pendingActions - 1);
+  _updateLoadingState();
+}
 
 function _updateLoadingState() {
   const el = document.getElementById('actionLoading');
-  if (el) el.style.display = _pendingActions > 0 ? 'block' : 'none';
+  if (!el) return;
+  const visibleItems = Array.from(_pendingActionItems.values()).filter(item => item.visible);
+  if (!visibleItems.length) {
+    el.style.display = 'none';
+    el.textContent = '';
+    return;
+  }
+  const label = visibleItems.length === 1
+    ? visibleItems[0].label
+    : visibleItems.length + ' actions';
+  const working = (typeof t === 'function') ? t('working') : 'Working';
+  el.textContent = working + ': ' + label;
+  el.style.display = 'inline-flex';
 }
 
 /**
@@ -154,8 +201,7 @@ function action$(actionName, params = {}, opts = {}) {
   body._reply_conversation_id = _uiActionConversationId();
   const _trackPending = !opts.silent;
   if (_trackPending) {
-    _pendingActions++;
-    _updateLoadingState();
+    _trackPendingAction(_callId, actionName, opts);
   }
 
   // UI commands go to /api/ui (dedicated task slot, isolated from
@@ -219,11 +265,8 @@ function action$(actionName, params = {}, opts = {}) {
       return r.result || r;
     }),
     catchError(err => of({ error: err.message || String(err) })),
-    tap(() => {
-      if (_trackPending) {
-        _pendingActions = Math.max(0, _pendingActions - 1);
-        _updateLoadingState();
-      }
+    finalize(() => {
+      if (_trackPending) _untrackPendingAction(_callId);
     }),
   );
 }

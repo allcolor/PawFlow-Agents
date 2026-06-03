@@ -12,6 +12,7 @@ import json
 import logging
 import struct
 import threading
+import time
 import uuid
 
 logger = logging.getLogger(__name__)
@@ -232,6 +233,21 @@ def code_http_proxy(pending_req):
                 req_body=base64.b64encode(pending_req.body).decode("ascii") if pending_req.body else "",
             )
 
+        def _proxy_until_ready(target_port: int, wait_seconds: float = 8.0):
+            deadline = time.time() + wait_seconds
+            last_result = None
+            while True:
+                try:
+                    last_result = _proxy_result_payload(_proxy_once(target_port))
+                except Exception as exc:
+                    if not _proxy_connection_refused(exc) or time.time() >= deadline:
+                        raise
+                    time.sleep(0.2)
+                    continue
+                if not _proxy_connection_refused(last_result) or time.time() >= deadline:
+                    return last_result
+                time.sleep(0.2)
+
         try:
             result = _proxy_result_payload(_proxy_once(port))
         except Exception as first_error:
@@ -242,14 +258,14 @@ def code_http_proxy(pending_req):
             if not restarted_port:
                 raise
             port = restarted_port
-            result = _proxy_result_payload(_proxy_once(port))
+            result = _proxy_until_ready(port)
 
         if _proxy_connection_refused(result):
             restarted_port = _restart_code_server_session(
                 session_id, relay_service, base_path)
             if restarted_port:
                 port = restarted_port
-                result = _proxy_result_payload(_proxy_once(port))
+                result = _proxy_until_ready(port)
 
         if not isinstance(result, dict) or "status" not in result:
             pending_req.complete(502, {"Content-Type": "text/plain"},

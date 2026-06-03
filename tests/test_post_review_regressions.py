@@ -515,6 +515,63 @@ def test_code_server_http_proxy_restarts_after_proxy_exception(tmp_path):
         "http_proxy", "start_code_server", "http_proxy"]
 
 
+def test_code_server_http_proxy_waits_after_restart_refusal(tmp_path, monkeypatch):
+    from core.capability_auth import init_db
+    from services import code_server_proxy as csp
+
+    init_db(tmp_path / "capabilities.json")
+    monkeypatch.setattr(csp.time, "sleep", lambda _seconds: None)
+
+    class FakeRelay:
+        def __init__(self):
+            self.calls = []
+            self.new_port_attempts = 0
+
+        def _request(self, action, **kwargs):
+            self.calls.append((action, kwargs))
+            if action == "http_proxy" and kwargs["port"] == 8765:
+                return {"ok": False, "error": "Proxy error: [Errno 111] Connection refused"}
+            if action == "start_code_server":
+                return {"ok": True, "data": {"port": 9876, "upstream_base_path": "/"}}
+            if action == "http_proxy" and kwargs["port"] == 9876:
+                self.new_port_attempts += 1
+                if self.new_port_attempts == 1:
+                    return {"ok": False, "error": "Proxy error: [Errno 111] Connection refused"}
+                return {"status": 200, "headers": {}, "body": "T0s="}
+            raise AssertionError((action, kwargs))
+
+    class FakeReq:
+        method = "GET"
+        query_string = ""
+        headers = {}
+        body = b""
+        auth_user_id = "alice"
+        auth_session_id = ""
+        remote_addr = "127.0.0.1"
+
+        def complete(self, status, headers, body):
+            self.status = status
+            self.headers = headers
+            self.body = body
+
+    with csp._lock:
+        csp._sessions.clear()
+        csp._relay_to_session.clear()
+
+    relay = FakeRelay()
+    session_id, token = csp.register_code_server(
+        "relay-1", 8765, relay, owner_user_id="alice")
+
+    req = FakeReq()
+    req.path_params = {"session_id": session_id, "token": token, "path": ""}
+    csp.code_http_proxy(req)
+
+    assert req.status == 200
+    assert req.body == b"OK"
+    assert [action for action, _ in relay.calls] == [
+        "http_proxy", "start_code_server", "http_proxy", "http_proxy"]
+
+
 def test_code_server_proxy_serves_missing_vsda_assets_without_upstream(tmp_path):
     from core.capability_auth import init_db
     from services import code_server_proxy as csp

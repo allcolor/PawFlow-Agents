@@ -719,6 +719,21 @@ class RelayService(BaseService):
                 dispatch_cs_ws_close(service._service_id, msg.get('session_id', ''))
             except Exception as e:
                 logger.debug('cs_ws_close dispatch failed: %s', e, exc_info=True)
+        elif mtype == 'desktop_ws_data':
+            try:
+                from services.vnc_proxy import dispatch_desktop_ws_data
+                dispatch_desktop_ws_data(service._service_id,
+                                         msg.get('session_id', ''),
+                                         msg.get('data', ''),
+                                         msg.get('opcode', 2))
+            except Exception as e:
+                logger.debug('desktop_ws_data dispatch failed: %s', e, exc_info=True)
+        elif mtype == 'desktop_ws_close':
+            try:
+                from services.vnc_proxy import dispatch_desktop_ws_close
+                dispatch_desktop_ws_close(service._service_id, msg.get('session_id', ''))
+            except Exception as e:
+                logger.debug('desktop_ws_close dispatch failed: %s', e, exc_info=True)
         elif mtype == 'ping':
             async with send_lock:
                 await _ws_send_frame(

@@ -3605,6 +3605,9 @@ finally:
                     if not _backend_port and status.get("novnc_port"):
                         _backend_host = getattr(svc, '_relay_addr', None) or '127.0.0.1'
                         _backend_port = status.get("novnc_port")
+                        _use_relay_proxy = True
+                    else:
+                        _use_relay_proxy = False
                     if _backend_port:
                         _sid = f"{_session_prefix}_{relay_id}"
                         from services.vnc_proxy import register_session
@@ -3612,7 +3615,10 @@ finally:
                             _sid, _backend_port,
                             owner_user_id=user_id,
                             login_session_id=_login_sid,
-                            host=_backend_host)
+                            host=_backend_host,
+                            relay_id=relay_id,
+                            relay_service=svc if _use_relay_proxy else None,
+                            use_relay_proxy=_use_relay_proxy)
                         _ensure_vnc_routes(flowfile)
                         # Re-register audio for already-running desktop
                         _audio_token = ""  # nosec B105
@@ -3668,13 +3674,19 @@ finally:
                 if not backend_port:
                     backend_host = getattr(svc, '_relay_addr', None) or '127.0.0.1'
                     backend_port = novnc_port
+                    use_relay_proxy = True
+                else:
+                    use_relay_proxy = False
                 session_id = f"{_session_prefix}_{relay_id}"
                 from services.vnc_proxy import register_session
                 _vtok = register_session(
                     session_id, backend_port,
                     owner_user_id=user_id,
                     login_session_id=_login_sid,
-                    host=backend_host)
+                    host=backend_host,
+                    relay_id=relay_id,
+                    relay_service=svc if use_relay_proxy else None,
+                    use_relay_proxy=use_relay_proxy)
 
             _ensure_vnc_routes(flowfile)
 

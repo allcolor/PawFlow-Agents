@@ -127,6 +127,11 @@ function _formatActionLabel(actionName, opts) {
     .replace(/\b\w/g, ch => ch.toUpperCase());
 }
 
+function _escapeActionHtml(text) {
+  if (typeof escapeHtml === 'function') return escapeHtml(String(text || ''));
+  return String(text || '').replace(/[&<>"']/g, ch => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[ch]));
+}
+
 function _trackPendingAction(callId, actionName, opts) {
   _pendingActions++;
   _pendingActionItems.set(callId, {
@@ -164,7 +169,9 @@ function _updateLoadingState() {
     ? visibleItems[0].label
     : visibleItems.length + ' actions';
   const working = (typeof t === 'function') ? t('working') : 'Working';
-  el.textContent = working + ': ' + label;
+  el.innerHTML = '<span class="ual-spinner">✻</span>'
+    + '<span class="ual-text">' + _escapeActionHtml(working) + ': ' + _escapeActionHtml(label) + '<span class="ual-dots"></span></span>'
+    + '<span class="ual-bar" aria-hidden="true"></span>';
   el.style.display = 'inline-flex';
 }
 

@@ -76,6 +76,21 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
            display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
 .header h1 { font-size: 18px; color: #e94560; }
 .header .status { font-size: 12px; color: #6c6c8a; }
+.ui-action-loading { align-items: center; gap: 7px; max-width: min(360px, 38vw); padding: 4px 9px;
+                     border: 1px solid rgba(78,205,196,0.45); border-radius: 999px;
+                     background: rgba(15,52,96,0.72); color: #d7fffb; font-size: 12px;
+                     box-shadow: 0 0 0 1px rgba(78,205,196,0.12), 0 0 14px rgba(78,205,196,0.16);
+                     white-space: nowrap; overflow: hidden; }
+.ui-action-loading .ual-spinner { flex: 0 0 auto; color: #4ecdc4; animation: spin 1.1s linear infinite; }
+.ui-action-loading .ual-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.ui-action-loading .ual-dots::after { content: ''; animation: uiActionDots 1.2s steps(4, end) infinite; }
+.ui-action-loading .ual-bar { position: relative; flex: 0 0 54px; height: 4px; border-radius: 999px;
+                              background: rgba(0,0,0,0.35); overflow: hidden; }
+.ui-action-loading .ual-bar::before { content: ''; position: absolute; inset: 0; width: 38%; border-radius: inherit;
+                                      background: linear-gradient(90deg, #4ecdc4, #e94560);
+                                      animation: uiActionSlide 1.05s ease-in-out infinite; }
+@keyframes uiActionDots { 0% { content: ''; } 25% { content: '.'; } 50% { content: '..'; } 75%, 100% { content: '...'; } }
+@keyframes uiActionSlide { 0% { transform: translateX(-120%); } 100% { transform: translateX(270%); } }
 .active-agent-badge { font-size: 11px; padding: 2px 10px; border-radius: 12px; cursor: pointer; margin-left: 8px; font-weight: 600; white-space: nowrap; }
 .active-agent-badge:hover { filter: brightness(1.3); }
 .header .btn { background: #0f3460; color: #e0e0e0; border: 1px solid #e94560;
@@ -598,7 +613,7 @@ if (typeof hljs !== 'undefined') {
 <div class="header">
   <h1>PawFlow Agent</h1>
   <span class="status" id="status" data-i18n="ready">Ready</span>
-  <span id="actionLoading" style="display:none;align-items:center;gap:4px;color:var(--pf-muted);font-size:12px;white-space:nowrap;"></span>
+  <span id="actionLoading" class="ui-action-loading" style="display:none"></span>
   <span class="active-agent-badge" id="activeAgentBadge" onclick="cmdAgentSelect('')" style="display:none" title="Click to switch back to assistant" data-i18n-title="activeAgentSwitchTitle"></span>
   <div class="actions">
     <span class="user-info" id="userInfo"></span>

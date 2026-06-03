@@ -388,7 +388,12 @@ def code_ws_proxy(client_sock, path_params: dict, meta: dict):
 
     try:
         while True:
-            opcode, payload, frame = _ws_recv_frame(client_sock)
+            received = _ws_recv(client_sock)
+            if len(received) == 3:
+                opcode, payload, frame = received
+            else:
+                opcode, payload = received
+                frame = _ws_build_frame(payload, opcode=opcode)
             if opcode == 0x08:  # close
                 _send_command_to_relay(relay_service, {
                     "action": "cs_ws_send",
@@ -501,6 +506,10 @@ def _send_command_to_relay(relay_service, cmd: dict):
 # —— WS frame helpers ——
 
 def _ws_send(sock, data: bytes, opcode=0x01):
+    sock.sendall(_ws_build_frame(data, opcode=opcode))
+
+
+def _ws_build_frame(data: bytes, opcode=0x01) -> bytes:
     length = len(data)
     frame = bytes([0x80 | opcode])
     if length < 126:
@@ -510,12 +519,11 @@ def _ws_send(sock, data: bytes, opcode=0x01):
     else:
         frame += bytes([127]) + struct.pack("!Q", length)
     frame += data
-    sock.sendall(frame)
+    return frame
 
 
 def _ws_recv(sock):
-    opcode, payload, _frame = _ws_recv_frame(sock)
-    return opcode, payload
+    return _ws_recv_frame(sock)
 
 
 def _ws_recv_frame(sock):

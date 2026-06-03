@@ -103,8 +103,14 @@ function closeTerminalTab(tabId) {
 /** Add a VSCode tab (one per relay). Returns the tab id. */
 function addVSCodeTab(relayId, iframeSrc) {
   const tabId = 'vscode-' + relayId;
-  // If already exists for this relay, just switch to it
-  if (document.getElementById('tabContent_' + tabId)) {
+  // If already exists for this relay, refresh it with the newly minted
+  // capability URL before switching to it.
+  const existingPanel = document.getElementById('tabContent_' + tabId);
+  if (existingPanel) {
+    const iframe = existingPanel.querySelector('iframe');
+    if (iframe && iframeSrc && iframe.src !== iframeSrc) {
+      iframe.src = iframeSrc;
+    }
     switchTab(tabId);
     return tabId;
   }

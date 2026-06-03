@@ -114,6 +114,15 @@ def test_flow_graph_opens_reactflow_via_blob_to_avoid_frame_refusal():
     assert "zoomOnScroll: true" in _FLOW_GRAPH_HTML
 
 
+def test_existing_vscode_tab_refreshes_new_capability_url():
+    block = _TABS_JS[
+        _TABS_JS.index("function addVSCodeTab"):
+        _TABS_JS.index("/** Close a VSCode tab.")]
+    assert "existingPanel.querySelector('iframe')" in block
+    assert "iframe.src = iframeSrc" in block
+    assert "switchTab(tabId)" in block
+
+
 def test_core_dialog_labels_use_i18n_catalogs():
     catalogs = [
         json.loads(Path("tasks/io/chat_ui/i18n/en.json").read_text(encoding="utf-8")),

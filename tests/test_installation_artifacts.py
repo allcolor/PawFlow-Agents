@@ -869,7 +869,9 @@ def test_server_relay_desktop_uses_container_ip_without_published_host():
     assert "_server_relay_proxy_target(relay_id, 6080" in open_desktop
     assert "_server_relay_proxy_target(relay_id, 6180" in open_desktop
     assert "return container_ip, container_port" in src
-    assert "published_host_port" not in src
+    assert "def _get_relay_published_port" in src
+    assert '_dkr_cmd() + ["port", cname, str(container_port)]' in src
+    assert "return _docker_published_host(), published_port" in src
     assert "host=_backend_host" in open_desktop
     assert "host=backend_host" in open_desktop
     assert 'register_audio_source(_sid, "127.0.0.1", _ahp' not in open_desktop

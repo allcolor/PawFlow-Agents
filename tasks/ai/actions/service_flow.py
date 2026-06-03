@@ -3063,11 +3063,57 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         return ""
 
+    def _get_relay_published_port(relay_id, container_port):
+        """Return the Docker-published host port for a relay container port."""
+        import subprocess  # nosec B404
+        from core.docker_utils import docker_cmd as _dkr_cmd
+        candidates = []
+        try:
+            from core.server_relay_manager import ServerRelayManager
+            for entry in ServerRelayManager.get_instance().list_all():
+                if entry.get("relay_id") != relay_id:
+                    continue
+                cname = entry.get("container_id") or entry.get("container_name") or ""
+                if cname:
+                    candidates.append(cname)
+        except Exception:
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+        try:
+            svc = _find_relay_svc(relay_id)
+            info = getattr(svc, '_relay_info', {}) if svc else {}
+            cfg = getattr(svc, "config", {}) if svc else {}
+            for cname in (
+                str(info.get("container_id") or ""),
+                str(info.get("container_name") or ""),
+                str(cfg.get("server_container_id") or ""),
+                str(cfg.get("server_container_name") or ""),
+                f"pawflow-relay-srv-{relay_id}",
+            ):
+                if cname and cname not in candidates:
+                    candidates.append(cname)
+        except Exception:
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+        for cname in candidates:
+            try:
+                r = subprocess.run(  # nosec B603
+                    _dkr_cmd() + ["port", cname, str(container_port)],
+                    capture_output=True, text=True, timeout=5)
+                if r.returncode != 0 or not r.stdout.strip():
+                    continue
+                endpoint = r.stdout.strip().splitlines()[0]
+                return int(endpoint.rsplit(":", 1)[-1])
+            except Exception:
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+        return 0
+
     def _server_relay_proxy_target(relay_id, container_port):
         """Return host/port the server container should use for relay desktop ports."""
         container_ip = _get_server_relay_container_ip(relay_id)
         if container_ip:
             return container_ip, container_port
+        published_port = _get_relay_published_port(relay_id, container_port)
+        if published_port:
+            return _docker_published_host(), published_port
         return "", 0
 
     if action == "open_terminal":

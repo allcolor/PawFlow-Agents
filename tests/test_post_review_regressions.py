@@ -572,6 +572,55 @@ def test_code_server_http_proxy_waits_after_restart_refusal(tmp_path, monkeypatc
         "http_proxy", "start_code_server", "http_proxy", "http_proxy"]
 
 
+def test_code_server_ws_open_retries_connection_refused(tmp_path, monkeypatch):
+    from core.capability_auth import init_db
+    from services import code_server_proxy as csp
+
+    init_db(tmp_path / "capabilities.json")
+    monkeypatch.setattr(csp.time, "sleep", lambda _seconds: None)
+
+    class FakeRelay:
+        def __init__(self):
+            self.calls = []
+
+        def _request(self, action, **kwargs):
+            self.calls.append((action, kwargs))
+            if action == "cs_ws_open" and len(self.calls) == 1:
+                return {"ok": False, "error": "cs_ws_open error: [Errno 111] Connection refused"}
+            if action == "cs_ws_open":
+                return {"ok": True}
+            raise AssertionError((action, kwargs))
+
+    class FakeSock:
+        def __init__(self):
+            self.sent = []
+
+        def recv(self, _n):
+            raise ConnectionError("WS connection closed (0 bytes)")
+
+        def sendall(self, data):
+            self.sent.append(data)
+
+        def close(self):
+            pass
+
+    with csp._lock:
+        csp._sessions.clear()
+        csp._relay_to_session.clear()
+
+    relay = FakeRelay()
+    session_id, token = csp.register_code_server(
+        "relay-1", 8765, relay, owner_user_id="alice")
+
+    csp.code_ws_proxy(
+        FakeSock(),
+        {"session_id": session_id, "token": token, "path": "static/ws"},
+        {"headers": {}, "query": ""},
+    )
+
+    assert [action for action, _ in relay.calls] == ["cs_ws_open", "cs_ws_open"]
+
+
 def test_code_server_proxy_serves_missing_vsda_assets_without_upstream(tmp_path):
     from core.capability_auth import init_db
     from services import code_server_proxy as csp

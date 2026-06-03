@@ -354,13 +354,21 @@ def code_ws_proxy(client_sock, path_params: dict, meta: dict):
     logger.debug("Code WS proxy: opening relay WS session=%s path=%s", ws_session_id, proxied_path)
 
     try:
-        result = relay_service._request(
-            "cs_ws_open",
-            session_id=ws_session_id,
-            port=port,
-            ws_path=proxied_path,
-            headers=fwd_headers,
-        )
+        deadline = time.time() + 8.0
+        result = None
+        while True:
+            result = relay_service._request(
+                "cs_ws_open",
+                session_id=ws_session_id,
+                port=port,
+                ws_path=proxied_path,
+                headers=fwd_headers,
+            )
+            if isinstance(result, dict) and result.get("ok"):
+                break
+            if not _proxy_connection_refused(result) or time.time() >= deadline:
+                break
+            time.sleep(0.2)
         if not isinstance(result, dict) or not result.get("ok"):
             err = result.get("error", "Unknown") if isinstance(result, dict) else str(result)
             with _lock:

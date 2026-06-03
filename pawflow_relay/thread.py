@@ -1218,6 +1218,7 @@ class RelayThread:
     def _host_start_local_code_server(self, req):
         """Start code-server on the host machine."""
         import subprocess as _sp  # nosec B404
+        import http.client
         import shutil
 
         code_server = shutil.which("code-server")
@@ -1235,19 +1236,43 @@ class RelayThread:
                         self._local_code_server.pop(old_port, None)
         args = [code_server, "--port", str(port), "--auth", "none",
                 "--bind-addr", f"127.0.0.1:{port}"]
-        if base_path:
-            args.extend(["--base-path", base_path])
         args.append(self.directory)
         try:
             proc = _sp.Popen(  # nosec B603
                 args,
                 stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
+            ready_path = "/"
+            deadline = time.time() + 10
+            ready = False
+            last_err = ""
+            while time.time() < deadline:
+                rc = proc.poll()
+                if rc is not None:
+                    return {"error": f"code-server exited with status {rc}"}
+                try:
+                    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=0.5)
+                    conn.request("GET", ready_path)
+                    resp = conn.getresponse()
+                    resp.read(1024)
+                    conn.close()
+                    if resp.status < 500:
+                        ready = True
+                        break
+                except Exception as e:
+                    last_err = str(e)
+                time.sleep(0.2)
+            if not ready:
+                try:
+                    proc.terminate()
+                except Exception:
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+                return {"error": f"code-server did not become ready on port {port}: {last_err}"}
             if not hasattr(self, '_local_code_server'):
                 self._local_code_server = {}
             self._local_code_server[port] = proc
             if not hasattr(self, '_local_code_server_base_path'):
                 self._local_code_server_base_path = {}
             self._local_code_server_base_path[port] = base_path
-            return {"port": port}
+            return {"port": port, "upstream_base_path": "/"}
         except Exception as e:
             return {"error": f"Failed to start code-server: {e}"}

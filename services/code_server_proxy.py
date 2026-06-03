@@ -64,12 +64,32 @@ def register_code_server(relay_id: str, port: int, relay_service,
     return session_id, token
 
 
-def update_code_server_port(session_id: str, port: int) -> None:
+def update_code_server_port(session_id: str, port: int,
+                            upstream_base_path: str | None = None) -> None:
     """Update the upstream port after a reserved code-server session starts."""
     with _lock:
         sess = _sessions.get(session_id)
         if sess is not None:
             sess["port"] = port
+            if upstream_base_path is not None:
+                sess["upstream_base_path"] = upstream_base_path
+
+
+def _upstream_path(sess: dict, public_base_path: str, sub_path: str,
+                   query: str = "") -> str:
+    upstream_base = sess.get("upstream_base_path")
+    if upstream_base is None:
+        upstream_base = public_base_path
+    upstream_base = str(upstream_base or "/")
+    if not upstream_base.endswith("/"):
+        upstream_base += "/"
+    if upstream_base == "/":
+        path = "/" + sub_path.lstrip("/")
+    else:
+        path = upstream_base + sub_path.lstrip("/")
+    if query:
+        path += "?" + query
+    return path
 
 
 def unregister_code_server(relay_id: str):
@@ -123,10 +143,8 @@ def code_http_proxy(pending_req):
 
     sub_path = pending_req.path_params.get("path", "")
     base_path = sess.get("base_path") or f"/code/{session_id}/{token}/"
-    proxied_path = base_path + sub_path
-    query = pending_req.query_string
-    if query:
-        proxied_path += "?" + query
+    proxied_path = _upstream_path(sess, base_path, sub_path,
+                                  pending_req.query_string)
 
     relay_service = sess["relay_service"]
     port = sess["port"]
@@ -208,10 +226,8 @@ def code_ws_proxy(client_sock, path_params: dict, meta: dict):
 
     sub_path = path_params.get("path", "")
     base_path = sess.get("base_path") or f"/code/{session_id}/{token}/"
-    proxied_path = base_path + sub_path
-    query = meta.get("query", "")
-    if query:
-        proxied_path += "?" + query
+    proxied_path = _upstream_path(sess, base_path, sub_path,
+                                  meta.get("query", ""))
 
     relay_service = sess["relay_service"]
     port = sess["port"]

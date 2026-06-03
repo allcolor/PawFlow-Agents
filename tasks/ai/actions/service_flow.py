@@ -3475,14 +3475,17 @@ finally:
                 result_data = result if isinstance(result, dict) else {}
             port = result_data.get("port")
             if not port:
+                detail = result_data.get("error") or result_data.get("detail") or str(result)
                 try:
                     from services.code_server_proxy import unregister_code_server
                     unregister_code_server(relay_id)
                 except Exception:
                     logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-                flowfile.set_content(json.dumps({"error": "Failed to get code-server port", "detail": str(result)}).encode())
+                flowfile.set_content(json.dumps({"error": f"Failed to start code-server: {detail}", "detail": str(result)}).encode())
                 return [flowfile]
-            update_code_server_port(_cs_session_id, port)
+            update_code_server_port(
+                _cs_session_id, port,
+                upstream_base_path=result_data.get("upstream_base_path"))
 
             _ensure_code_server_routes(flowfile)
 

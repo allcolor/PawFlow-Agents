@@ -581,12 +581,14 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
         if action == "start_code_server":
             if not allow_exec:
                 return {"ok": False, "error": "Exec not allowed"}
-            _base_path = msg.get("base_path", "")
+            import http.client
+            _public_base_path = msg.get("base_path", "")
+            _upstream_base_path = "/"
             if hasattr(_execute_command, '_code_server_proc') and _execute_command._code_server_proc:
                 p = _execute_command._code_server_proc
                 if p.poll() is None:
                     _running_base = getattr(_execute_command, '_code_server_base_path', "")
-                    if _running_base == _base_path:
+                    if _running_base == _public_base_path:
                         return {"ok": True, "data": {"port": _execute_command._code_server_port, "already_running": True}}
                     p.terminate()
             _cs_port = msg.get("port", 0)
@@ -600,18 +602,52 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 "--auth", "none",
                 "--disable-telemetry",
             ]
-            if _base_path:
-                _cs_args.extend(["--base-path", _base_path])
             _cs_args.append(root_dir)
             try:
                 _cs_log = open("/tmp/code-server.log", "w")  # nosec B108 - relay-local service log.
                 _cs_proc = subprocess.Popen(  # nosec B603
                     _cs_args, stdout=_cs_log, stderr=_cs_log)
+                _ready_path = _upstream_base_path
+                _deadline = time.time() + 10
+                _ready = False
+                _last_err = ""
+                while time.time() < _deadline:
+                    _rc = _cs_proc.poll()
+                    if _rc is not None:
+                        try:
+                            _cs_log.flush()
+                        except Exception:
+                            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+                        _tail = ""
+                        try:
+                            with open("/tmp/code-server.log", "r", encoding="utf-8", errors="replace") as _lf:
+                                _tail = _lf.read()[-1200:]
+                        except Exception:
+                            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+                        return {"ok": False, "error": f"code-server exited with status {_rc}: {_tail}"}
+                    try:
+                        _conn = http.client.HTTPConnection("127.0.0.1", _cs_port, timeout=0.5)
+                        _conn.request("GET", _ready_path)
+                        _resp = _conn.getresponse()
+                        _resp.read(1024)
+                        _conn.close()
+                        if _resp.status < 500:
+                            _ready = True
+                            break
+                    except Exception as _e:
+                        _last_err = str(_e)
+                    time.sleep(0.2)
+                if not _ready:
+                    try:
+                        _cs_proc.terminate()
+                    except Exception:
+                        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+                    return {"ok": False, "error": f"code-server did not become ready on port {_cs_port}: {_last_err}"}
                 _execute_command._code_server_proc = _cs_proc
                 _execute_command._code_server_port = _cs_port
-                _execute_command._code_server_base_path = _base_path
-                sys.stderr.write(f"[FSRelay] code-server started on port {_cs_port} base_path={_base_path}\n")
-                return {"ok": True, "data": {"port": _cs_port, "pid": _cs_proc.pid}}
+                _execute_command._code_server_base_path = _public_base_path
+                sys.stderr.write(f"[FSRelay] code-server started on port {_cs_port} public_base_path={_public_base_path} upstream_base_path={_upstream_base_path}\n")
+                return {"ok": True, "data": {"port": _cs_port, "pid": _cs_proc.pid, "upstream_base_path": _upstream_base_path}}
             except FileNotFoundError:
                 return {"ok": False, "error": "code-server not installed"}
             except Exception as e:

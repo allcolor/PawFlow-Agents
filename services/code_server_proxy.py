@@ -23,6 +23,33 @@ _sessions: dict = {}
 _relay_to_session: dict = {}  # relay_id → session_id (for legacy lookups)
 _lock = threading.Lock()
 
+_VSDA_JS = b"""
+(function () {
+  class Validator {
+    createNewMessage(value) { return value; }
+    validate() { return "ok"; }
+    free() {}
+  }
+  globalThis.vsda_web = {
+    default: async function () {},
+    validator: Validator,
+    sign: function (value) { return value; }
+  };
+}());
+""".strip()
+
+_EMPTY_WASM_MODULE = b"\x00asm\x01\x00\x00\x00"
+
+
+def _code_server_builtin_asset(sub_path: str):
+    """Return small compatibility assets missing from OSS code-server builds."""
+    asset_name = sub_path.rsplit("/", 1)[-1]
+    if asset_name == "vsda.js":
+        return "application/javascript", _VSDA_JS
+    if asset_name == "vsda_bg.wasm":
+        return "application/wasm", _EMPTY_WASM_MODULE
+    return None
+
 
 def register_code_server(relay_id: str, port: int, relay_service,
                           *, owner_user_id: str = "",
@@ -143,6 +170,12 @@ def code_http_proxy(pending_req):
     relay_id = sess["relay_id"]
 
     sub_path = pending_req.path_params.get("path", "")
+    builtin_asset = _code_server_builtin_asset(sub_path)
+    if pending_req.method == "GET" and builtin_asset is not None:
+        content_type, body = builtin_asset
+        pending_req.complete(200, {"Content-Type": content_type}, body)
+        return
+
     base_path = sess.get("base_path") or f"/code/{session_id}/{token}/"
     proxied_path = _upstream_path(sess, base_path, sub_path,
                                   pending_req.query_string)

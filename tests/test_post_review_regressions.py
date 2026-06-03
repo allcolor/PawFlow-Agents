@@ -409,6 +409,52 @@ def test_code_server_proxy_strips_public_prefix_for_root_upstream(tmp_path):
     assert relay.kwargs["req_path"] == "/static/app.js?v=1"
 
 
+def test_code_server_proxy_serves_missing_vsda_assets_without_upstream(tmp_path):
+    from core.capability_auth import init_db
+    from services import code_server_proxy as csp
+
+    init_db(tmp_path / "capabilities.json")
+
+    class FakeRelay:
+        def _request(self, action, **kwargs):
+            raise AssertionError("VSDA compatibility assets must not hit upstream")
+
+    class FakeReq:
+        method = "GET"
+        query_string = ""
+        headers = {}
+        body = b""
+        auth_user_id = "alice"
+        auth_session_id = ""
+        remote_addr = "127.0.0.1"
+
+        def complete(self, status, headers, body):
+            self.status = status
+            self.headers = headers
+            self.body = body
+
+    with csp._lock:
+        csp._sessions.clear()
+        csp._relay_to_session.clear()
+
+    session_id, token = csp.register_code_server(
+        "relay-1", 8765, FakeRelay(), owner_user_id="alice")
+
+    js_req = FakeReq()
+    js_req.path_params = {"session_id": session_id, "token": token, "path": "vsda.js"}
+    csp.code_http_proxy(js_req)
+    assert js_req.status == 200
+    assert js_req.headers["Content-Type"] == "application/javascript"
+    assert b"globalThis.vsda_web" in js_req.body
+
+    wasm_req = FakeReq()
+    wasm_req.path_params = {"session_id": session_id, "token": token, "path": "vsda_bg.wasm"}
+    csp.code_http_proxy(wasm_req)
+    assert wasm_req.status == 200
+    assert wasm_req.headers["Content-Type"] == "application/wasm"
+    assert wasm_req.body.startswith(b"\x00asm")
+
+
 def test_code_server_worker_does_not_pass_base_path_to_process():
     src = open("pawflow_relay/worker.py", encoding="utf-8").read()
     start = src.index('if action == "start_code_server":')

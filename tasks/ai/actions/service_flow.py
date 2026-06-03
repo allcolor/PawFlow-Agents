@@ -3602,6 +3602,9 @@ finally:
                     _backend_host, _backend_port = _server_relay_proxy_target(relay_id, 6080)
                     logger.info("[open_desktop] already running, backend=%s:%s for %s",
                                 _backend_host, _backend_port, relay_id)
+                    if not _backend_port and status.get("novnc_port"):
+                        _backend_host = getattr(svc, '_relay_addr', None) or '127.0.0.1'
+                        _backend_port = status.get("novnc_port")
                     if _backend_port:
                         _sid = f"{_session_prefix}_{relay_id}"
                         from services.vnc_proxy import register_session
@@ -3616,6 +3619,9 @@ finally:
                         try:
                             from services.audio_proxy import register_audio_source
                             _audio_host, _audio_port = _server_relay_proxy_target(relay_id, 6180)
+                            if not _audio_port and status.get("audio_port"):
+                                _audio_host = getattr(svc, '_relay_addr', None) or '127.0.0.1'
+                                _audio_port = status.get("audio_port")
                             if _audio_port:
                                 _audio_token = register_audio_source(_sid, _audio_host, _audio_port,
                                                                      owner_user_id=user_id,
@@ -3656,11 +3662,12 @@ finally:
                     login_session_id=_login_sid,
                     host=_relay_addr)
             else:
-                # Managed relay container: proxy directly over Docker network.
+                # Prefer managed relay Docker networking; local relays fall
+                # back to the relay's connected address and returned noVNC port.
                 backend_host, backend_port = _server_relay_proxy_target(relay_id, 6080)
                 if not backend_port:
-                    flowfile.set_content(json.dumps({"error": "Desktop started but backend port not found"}).encode())
-                    return [flowfile]
+                    backend_host = getattr(svc, '_relay_addr', None) or '127.0.0.1'
+                    backend_port = novnc_port
                 session_id = f"{_session_prefix}_{relay_id}"
                 from services.vnc_proxy import register_session
                 _vtok = register_session(
@@ -3684,6 +3691,9 @@ finally:
                                                              login_session_id=_login_sid)
                 else:
                     _audio_host, _audio_port = _server_relay_proxy_target(relay_id, 6180)
+                    if not _audio_port and isinstance(result, dict) and result.get("audio_port"):
+                        _audio_host = getattr(svc, '_relay_addr', None) or '127.0.0.1'
+                        _audio_port = result.get("audio_port")
                     if _audio_port:
                         _audio_token = register_audio_source(session_id, _audio_host, _audio_port,
                                                              owner_user_id=user_id,

@@ -388,16 +388,24 @@ def code_ws_proxy(client_sock, path_params: dict, meta: dict):
 
     try:
         while True:
-            opcode, payload = _ws_recv(client_sock)
+            opcode, payload, frame = _ws_recv_frame(client_sock)
             if opcode == 0x08:  # close
+                _send_command_to_relay(relay_service, {
+                    "action": "cs_ws_send",
+                    "session_id": ws_session_id,
+                    "frame": base64.b64encode(frame).decode("ascii"),
+                    "opcode": opcode,
+                })
                 break
             if opcode == 0x09:  # ping
-                _ws_send(client_sock, payload, opcode=0x0A)
-                continue
+                # Browser-to-code-server frames are already masked exactly as
+                # the upstream expects. Preserve them instead of rebuilding.
+                pass
 
             _send_command_to_relay(relay_service, {
                 "action": "cs_ws_send",
                 "session_id": ws_session_id,
+                "frame": base64.b64encode(frame).decode("ascii"),
                 "data": base64.b64encode(payload).decode("ascii"),
                 "opcode": opcode,
             })
@@ -435,8 +443,12 @@ def dispatch_cs_ws_data(relay_id: str, ws_session_id: str, data_b64: str, opcode
         logger.debug("cs_ws_data: no browser sock for ws_session %s", ws_session_id)
         return
     try:
-        payload = base64.b64decode(data_b64)
-        _ws_send(ws_sess["browser_sock"], payload, opcode=opcode)
+        frame_b64 = data_b64 if opcode == -1 else ""
+        if frame_b64:
+            ws_sess["browser_sock"].sendall(base64.b64decode(frame_b64))
+        else:
+            payload = base64.b64decode(data_b64)
+            _ws_send(ws_sess["browser_sock"], payload, opcode=opcode)
     except Exception as e:
         logger.warning("cs_ws_data: send error: %s", e)
 
@@ -502,6 +514,11 @@ def _ws_send(sock, data: bytes, opcode=0x01):
 
 
 def _ws_recv(sock):
+    opcode, payload, _frame = _ws_recv_frame(sock)
+    return opcode, payload
+
+
+def _ws_recv_frame(sock):
     def _recv_exact(n):
         data = b""
         while len(data) < n:
@@ -511,20 +528,30 @@ def _ws_recv(sock):
             data += chunk
         return data
 
+    parts = []
     hdr = _recv_exact(2)
+    parts.append(hdr)
     opcode = hdr[0] & 0x0F
     masked = bool(hdr[1] & 0x80)
     length = hdr[1] & 0x7F
     if length == 126:
-        length = struct.unpack("!H", _recv_exact(2))[0]
+        ext = _recv_exact(2)
+        parts.append(ext)
+        length = struct.unpack("!H", ext)[0]
     elif length == 127:
-        length = struct.unpack("!Q", _recv_exact(8))[0]
+        ext = _recv_exact(8)
+        parts.append(ext)
+        length = struct.unpack("!Q", ext)[0]
     if masked:
         mask = _recv_exact(4)
-        payload = bytes(b ^ mask[i % 4] for i, b in enumerate(_recv_exact(length)))
+        parts.append(mask)
+        masked_payload = _recv_exact(length)
+        parts.append(masked_payload)
+        payload = bytes(b ^ mask[i % 4] for i, b in enumerate(masked_payload))
     else:
         payload = _recv_exact(length)
-    return opcode, payload
+        parts.append(payload)
+    return opcode, payload, b"".join(parts)
 
 
 def _ws_close(sock, code=1000, reason=""):

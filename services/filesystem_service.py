@@ -709,7 +709,7 @@ class RelayService(BaseService):
                 from services.code_server_proxy import dispatch_cs_ws_data
                 dispatch_cs_ws_data(service._service_id,
                                      msg.get('session_id', ''),
-                                     msg.get('data', ''),
+                                     msg.get('frame') or msg.get('data', ''),
                                      msg.get('opcode', 1))
             except Exception as e:
                 logger.debug('cs_ws_data dispatch failed: %s', e, exc_info=True)

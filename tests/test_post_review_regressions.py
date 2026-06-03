@@ -717,6 +717,55 @@ def test_code_server_command_send_uses_relay_ws_frame(monkeypatch):
     assert sent[0][1]["session_id"] == "sid"
 
 
+def test_code_server_ws_recv_preserves_raw_masked_frame():
+    from services import code_server_proxy as csp
+
+    class FakeSocket:
+        def __init__(self, data):
+            self.data = bytearray(data)
+
+        def recv(self, n):
+            chunk = self.data[:n]
+            del self.data[:n]
+            return bytes(chunk)
+
+    raw = b"\x81\x85\x01\x02\x03\x04" + bytes(
+        b ^ [1, 2, 3, 4][i % 4] for i, b in enumerate(b"hello"))
+    opcode, payload, frame = csp._ws_recv_frame(FakeSocket(raw))
+
+    assert opcode == 1
+    assert payload == b"hello"
+    assert frame == raw
+
+
+def test_code_server_dispatch_can_forward_raw_backend_frame():
+    import base64
+    from services import code_server_proxy as csp
+
+    class FakeBrowserSocket:
+        def __init__(self):
+            self.sent = b""
+
+        def sendall(self, data):
+            self.sent += data
+
+    sock = FakeBrowserSocket()
+    frame = b"\x82\x03abc"
+    relay_id = "relay-raw"
+    session_id = "session-raw"
+    csp._relay_to_session[relay_id] = session_id
+    csp._sessions[session_id] = {
+        "cs_ws_sessions": {"ws-raw": {"browser_sock": sock}},
+    }
+    try:
+        csp.dispatch_cs_ws_data(
+            relay_id, "ws-raw", base64.b64encode(frame).decode("ascii"), opcode=-1)
+        assert sock.sent == frame
+    finally:
+        csp._sessions.pop(session_id, None)
+        csp._relay_to_session.pop(relay_id, None)
+
+
 def test_code_server_worker_does_not_pass_base_path_to_process():
     src = open("pawflow_relay/worker.py", encoding="utf-8").read()
     start = src.index('if action == "start_code_server":')

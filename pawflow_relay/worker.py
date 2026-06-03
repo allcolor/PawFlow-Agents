@@ -703,7 +703,6 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                     sys.stderr.write(f"[FSRelay] cs_ws_reader started for {_sid}\n")
                     try:
                         while True:
-                            _data = b""
                             # Read WS frame header
                             _hdr2 = b""
                             while len(_hdr2) < 2:
@@ -717,12 +716,14 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                             _op = _hdr2[0] & 0x0F
                             _masked = bool(_hdr2[1] & 0x80)
                             _plen = _hdr2[1] & 0x7F
+                            _frame_parts = [_hdr2]
                             if _plen == 126:
                                 _lb = b""
                                 while len(_lb) < 2:
                                     _c = _sock.recv(2 - len(_lb))
                                     if not _c: break
                                     _lb += _c
+                                _frame_parts.append(_lb)
                                 _plen = struct.unpack("!H", _lb)[0]
                             elif _plen == 127:
                                 _lb = b""
@@ -730,6 +731,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                                     _c = _sock.recv(8 - len(_lb))
                                     if not _c: break
                                     _lb += _c
+                                _frame_parts.append(_lb)
                                 _plen = struct.unpack("!Q", _lb)[0]
                             if _masked:
                                 _mask = b""
@@ -737,37 +739,31 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                                     _c = _sock.recv(4 - len(_mask))
                                     if not _c: break
                                     _mask += _c
+                                _frame_parts.append(_mask)
                             _payload = b""
                             while len(_payload) < _plen:
                                 _c = _sock.recv(min(65536, _plen - len(_payload)))
                                 if not _c: break
                                 _payload += _c
+                            _frame_parts.append(_payload)
                             if _masked:
                                 _payload = bytes(b ^ _mask[i % 4] for i, b in enumerate(_payload))
-                            if _op == 0x08:  # close
-                                break
-                            if _op == 0x09:  # ping -> pong
-                                _pong = bytes([0x80 | 0x0A])
-                                if len(_payload) < 126:
-                                    _pong += bytes([len(_payload)])
-                                _pong += _payload
-                                try:
-                                    _sock.sendall(_pong)
-                                except Exception:
-                                    break
-                                continue
+                            _raw_frame = b"".join(_frame_parts)
                             # Forward to server
                             sys.stderr.write(f"[FSRelay] cs_ws_data: sid={_sid} op={_op} len={len(_payload)}\n")
                             _fwd = json.dumps({
                                 "type": "cs_ws_data",
                                 "session_id": _sid,
+                                "frame": base64.b64encode(_raw_frame).decode("ascii"),
                                 "data": base64.b64encode(_payload).decode("ascii"),
-                                "opcode": _op,
+                                "opcode": -1,
                                 "fin": _fin,
                             })
                             with _send_lock:
                                 _ws_frame_send(ws_sock_ref[0], _fwd.encode("utf-8"))
                             sys.stderr.write(f"[FSRelay] cs_ws_data sent ok\n")
+                            if _op == 0x08:  # close
+                                break
                     except Exception:
                         logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                     finally:
@@ -805,6 +801,12 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             if not _ws_sess:
                 return {"ok": False, "error": f"WS session not found: {_ws_sid}"}
             try:
+                _ws_frame = msg.get("frame", "")
+                if _ws_frame:
+                    _frame = base64.b64decode(_ws_frame)
+                    sys.stderr.write(f"[FSRelay] cs_ws_send frame: sid={_ws_sid} len={len(_frame)}\n")
+                    _ws_sess["sock"].sendall(_frame)
+                    return {"ok": True}
                 _raw = base64.b64decode(_ws_data)
                 sys.stderr.write(f"[FSRelay] cs_ws_send: sid={_ws_sid} op={_ws_op} len={len(_raw)}\n")
                 # Build WS frame (masked, client->server)

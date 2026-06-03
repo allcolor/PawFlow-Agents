@@ -63,6 +63,7 @@ RUN_DOCTOR=1
 START_SERVER=1
 CHECK_UPDATES=0
 SELF_UPDATE=0
+OLD_PAWFLOW_IMAGE_IDS=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -319,6 +320,35 @@ cleanup_old_pawflow_images() {
     echo "Removing old image tag: $ref"
     docker rmi "$ref" >/dev/null 2>&1 || true
   done < <(docker images --format '{{.Repository}} {{.Tag}} {{.ID}}')
+}
+
+capture_existing_pawflow_image_ids() {
+  local cli_repo="${CLI_LLM_IMAGE%%}"
+  OLD_PAWFLOW_IMAGE_IDS="$(docker images --format '{{.Repository}} {{.Tag}} {{.ID}}' | while read -r repo tag id; do
+    case "$repo" in
+      "$IMAGE_REPO"|"$RELAY_MINIMAL_IMAGE_REPO"|"$RELAY_DEV_IMAGE_REPO") printf '%s\n' "$id" ;;
+      "$cli_repo") printf '%s\n' "$id" ;;
+    esac
+  done | sort -u)"
+}
+
+cleanup_retagged_pawflow_images() {
+  if [[ "$CLEAN_OLD_IMAGES" != "1" && "$CLEAN_OLD_IMAGES" != "true" && "$CLEAN_OLD_IMAGES" != "yes" ]]; then
+    return 0
+  fi
+  if [[ -z "$OLD_PAWFLOW_IMAGE_IDS" ]]; then
+    return 0
+  fi
+  local current_ids old_id repo tag
+  current_ids="$(docker images --format '{{.ID}}' | sort -u)"
+  while read -r old_id; do
+    if [[ -z "$old_id" ]]; then continue; fi
+    if ! grep -qx "$old_id" <<<"$current_ids"; then continue; fi
+    read -r repo tag < <(docker image inspect -f '{{index .RepoTags 0}}' "$old_id" 2>/dev/null | awk -F: '{print $1, $2}') || true
+    if [[ "$repo" != "<none>" && "$tag" != "<none>" && -n "$repo" && -n "$tag" ]]; then continue; fi
+    echo "Removing old untagged PawFlow image id: $old_id"
+    docker rmi "$old_id" >/dev/null 2>&1 || true
+  done <<<"$OLD_PAWFLOW_IMAGE_IDS"
 }
 
 if [[ "$SELF_UPDATE" == "1" ]]; then
@@ -669,6 +699,8 @@ fi
 if [[ -z "$DOCKER_PLATFORM" && "$HOST_OS" == "macos" ]]; then
   DOCKER_PLATFORM="linux/amd64"
 fi
+
+capture_existing_pawflow_image_ids
 if [[ -n "$DOCKER_PLATFORM" ]]; then
   export PAWFLOW_DOCKER_PLATFORM="$DOCKER_PLATFORM"
 fi
@@ -747,15 +779,20 @@ ensure_runtime_image "server minimal relay" "$RELAY_MINIMAL_IMAGE" build_minimal
 ensure_runtime_image "full server relay" "$RELAY_DEV_IMAGE" build_full_relay_image
 
 if [[ "$START_SERVER" != "1" ]]; then
+  cleanup_old_pawflow_images
+  cleanup_retagged_pawflow_images
   echo "Image build complete. Server start skipped because --no-start was set."
   exit 0
 fi
 
 if [[ "$START_TARGET" == "native" ]]; then
+  cleanup_old_pawflow_images
+  cleanup_retagged_pawflow_images
   run_native_server
 elif [[ "$START_TARGET" == "container" ]]; then
   PAWFLOW_IMAGE="$IMAGE" PAWFLOW_CONTAINER="$CONTAINER" PAWFLOW_PORT="$PORT" PAWFLOW_HOST="$HOST" PAWFLOW_HOME="$PAWFLOW_HOME" PAWFLOW_SERVER_RELAY_IMAGE="$RELAY_DEV_IMAGE" PAWFLOW_SERVER_RELAY_MINIMAL_IMAGE="$RELAY_MINIMAL_IMAGE" bash "$REPO_DIR/scripts/run-pawflow-docker.sh"
   cleanup_old_pawflow_images
+  cleanup_retagged_pawflow_images
 else
   echo "Invalid PAWFLOW_START_TARGET: $START_TARGET (expected container or native)" >&2
   exit 2

@@ -32,6 +32,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$OldPawFlowImageIds = @()
 
 function Info($msg) { Write-Host $msg -ForegroundColor Cyan }
 function Ok($msg) { Write-Host $msg -ForegroundColor Green }
@@ -225,6 +226,30 @@ function Cleanup-OldImages {
         & docker rmi $ref *> $null
     }
 }
+function Capture-ExistingPawFlowImageIds {
+    $script:OldPawFlowImageIds = @()
+    $cliRepo = if ($CliLlmImage.Contains(':')) { $CliLlmImage.Substring(0, $CliLlmImage.LastIndexOf(':')) } else { $CliLlmImage }
+    $repos = @($ImageRepo, $RelayMinimalImageRepo, $RelayDevImageRepo, $cliRepo)
+    $rows = & docker images --format '{{.Repository}}|{{.ID}}'
+    foreach ($row in $rows) {
+        $parts = $row.Split('|')
+        if ($parts.Count -ne 2) { continue }
+        if ($repos -contains $parts[0]) { $script:OldPawFlowImageIds += $parts[1] }
+    }
+    $script:OldPawFlowImageIds = @($script:OldPawFlowImageIds | Sort-Object -Unique)
+}
+function Cleanup-RetaggedPawFlowImages {
+    if ($KeepOldImages) { return }
+    foreach ($oldId in $script:OldPawFlowImageIds) {
+        if (-not $oldId) { continue }
+        $exists = & docker image inspect $oldId 2>$null
+        if ($LASTEXITCODE -ne 0) { continue }
+        $tags = & docker image inspect -f '{{range .RepoTags}}{{.}}{{end}}' $oldId 2>$null
+        if ($tags -and $tags -ne '<none>:<none>') { continue }
+        Info "Removing old untagged PawFlow image id: $oldId"
+        & docker rmi $oldId *> $null
+    }
+}
 
 
 if ($SelfUpdate) { Self-UpdateInstaller; exit 0 }
@@ -240,6 +265,8 @@ $tag = if ($Version) { $Version } else { "latest" }
 if (-not $Image) { $Image = "${ImageRepo}:${tag}" }
 if (-not $RelayMinimalImage) { $RelayMinimalImage = "${RelayMinimalImageRepo}:${tag}" }
 if (-not $RelayDevImage) { $RelayDevImage = "${RelayDevImageRepo}:${tag}" }
+
+Capture-ExistingPawFlowImageIds
 
 Info "Host: Windows / PowerShell"
 Info "Version: $Version"
@@ -262,9 +289,12 @@ if (-not $SkipDoctor) {
 Build-CliImage $repoDir
 
 if ($NoStart) {
+    Cleanup-OldImages
+    Cleanup-RetaggedPawFlowImages
     Ok "Image preparation complete. Server start skipped because -NoStart was set."
     exit 0
 }
 
 Run-ServerContainer $repoDir
 Cleanup-OldImages
+Cleanup-RetaggedPawFlowImages

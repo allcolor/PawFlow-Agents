@@ -137,7 +137,6 @@ def _ensure_code_server_routes(flowfile: FlowFile) -> None:
                     callback=callback,
                     ws_handler=ws_handler,
                     public=True,
-                    private_only=True,
                 )
                 existing.add((method, pattern))
 

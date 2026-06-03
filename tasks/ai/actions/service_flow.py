@@ -3659,8 +3659,8 @@ finally:
                 # Managed relay container: proxy directly over Docker network.
                 backend_host, backend_port = _server_relay_proxy_target(relay_id, 6080)
                 if not backend_port:
-                    backend_host = getattr(svc, '_relay_addr', None) or '127.0.0.1'
-                    backend_port = novnc_port
+                    flowfile.set_content(json.dumps({"error": "Desktop started but backend port not found"}).encode())
+                    return [flowfile]
                 session_id = f"{_session_prefix}_{relay_id}"
                 from services.vnc_proxy import register_session
                 _vtok = register_session(

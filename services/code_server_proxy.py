@@ -388,6 +388,7 @@ def dispatch_cs_ws_close(relay_id: str, ws_session_id: str):
 def _send_command_to_relay(relay_service, cmd: dict):
     """Send a command to the relay via the command pipeline (fire-and-forget)."""
     import asyncio
+    from services.filesystem_service import _ws_send_frame
 
     with relay_service._relay_pool_lock:
         pool = relay_service._relay_pool[:]
@@ -397,18 +398,21 @@ def _send_command_to_relay(relay_service, cmd: dict):
     request_id = uuid.uuid4().hex[:8]
     msg = {"type": "command", "request_id": request_id, **cmd}
     payload = json.dumps(msg).encode("utf-8")
-    conn = pool[0]
-    writer, loop = conn["writer"], conn["loop"]
+    last_err = None
+    for conn in reversed(pool):
+        writer, loop = conn["writer"], conn["loop"]
 
-    async def _send(w=writer):
-        listener = relay_service._connection
-        if listener:
-            await listener._ws_send(w, payload)
+        async def _send(w=writer):
+            await _ws_send_frame(w, payload)
 
-    try:
-        asyncio.run_coroutine_threadsafe(_send(), loop).result(timeout=5)
-    except Exception as e:
-        logger.warning("Code proxy command send error: %s", e)
+        try:
+            asyncio.run_coroutine_threadsafe(_send(), loop).result(timeout=5)
+            return
+        except Exception as e:
+            last_err = e
+            continue
+    if last_err is not None:
+        logger.warning("Code proxy command send error: %s", last_err)
 
 
 # —— WS frame helpers ——

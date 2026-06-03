@@ -455,6 +455,56 @@ def test_code_server_proxy_serves_missing_vsda_assets_without_upstream(tmp_path)
     assert wasm_req.body.startswith(b"\x00asm")
 
 
+def test_code_server_command_send_uses_relay_ws_frame(monkeypatch):
+    import asyncio
+    import json
+
+    from services import code_server_proxy as csp
+    import services.filesystem_service as fs
+
+    class FakeLock:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class BadListener:
+        pass
+
+    loop = object()
+    sent = []
+
+    async def fake_ws_send_frame(writer, payload):
+        sent.append((writer, json.loads(payload.decode("utf-8"))))
+
+    monkeypatch.setattr(fs, "_ws_send_frame", fake_ws_send_frame)
+
+    class FakeFuture:
+        def __init__(self, coro):
+            self.coro = coro
+
+        def result(self, timeout=None):
+            asyncio.run(self.coro)
+
+    monkeypatch.setattr(
+        asyncio, "run_coroutine_threadsafe",
+        lambda coro, target_loop: FakeFuture(coro),
+    )
+
+    class FakeRelay:
+        _connection = BadListener()
+        _relay_pool_lock = FakeLock()
+        _relay_pool = [{"writer": "writer-1", "loop": loop}]
+
+    csp._send_command_to_relay(FakeRelay(), {"action": "cs_ws_close", "session_id": "sid"})
+
+    assert sent[0][0] == "writer-1"
+    assert sent[0][1]["type"] == "command"
+    assert sent[0][1]["action"] == "cs_ws_close"
+    assert sent[0][1]["session_id"] == "sid"
+
+
 def test_code_server_worker_does_not_pass_base_path_to_process():
     src = open("pawflow_relay/worker.py", encoding="utf-8").read()
     start = src.index('if action == "start_code_server":')

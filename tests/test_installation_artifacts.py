@@ -239,6 +239,12 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert 'PAWFLOW_BOOTSTRAP_GATEWAY_KEY="$bootstrap_gateway_key"' in install_src
     assert "PAWFLOW_SERVER_RELAY_IMAGE" in run_src
     assert "PAWFLOW_SERVER_RELAY_MINIMAL_IMAGE" in run_src
+    assert "remove_managed_relay_containers" in run_src
+    assert "sync_persistent_relay_runtime" in run_src
+    assert "data/runtime/relay_runtime/current" in run_src
+    assert "pawflow-relay-srv|pawflow-relay-min" in run_src
+    assert "Relay home volumes and workspace directories are preserved." in run_src
+    assert 'docker rm -f "${names[@]}"' in run_src
 
     install_ps1_src = install_ps1.read_text(encoding="utf-8")
     assert "Install or update PawFlow on Windows" in install_ps1_src
@@ -247,6 +253,11 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert "PullImages" in install_ps1_src
     assert "Resolve-LatestVersion" in install_ps1_src
     assert "releases?per_page=20" in install_ps1_src
+    assert "Remove-ManagedRelayContainers" in install_ps1_src
+    assert "Sync-PersistentRelayRuntime" in install_ps1_src
+    assert "data\\runtime\\relay_runtime\\current" in install_ps1_src
+    assert "pawflow-relay-srv|pawflow-relay-min" in install_ps1_src
+    assert "Relay home volumes and workspace directories are preserved." in install_ps1_src
     assert "pawflow-install-$latest.zip" in install_ps1_src
     assert "scripts/doctor-pawflow.ps1" in install_ps1_src
     assert 'Join-Path $repoDir "scripts\\doctor-pawflow.ps1"' in install_ps1_src

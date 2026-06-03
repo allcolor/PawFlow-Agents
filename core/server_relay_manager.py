@@ -158,9 +158,15 @@ def _relay_runtime_host_dir(runtime_dir: Path) -> str:
 def _prepare_relay_code_dir(runtime_dir: Path) -> Path:
     """Stage relay runtime code from this PawFlow server image for bind-mounting."""
     root = Path(__file__).resolve().parents[1]
-    tools_dir = root / "tools"
-    relay_pkg = root / "pawflow_relay"
-    sdk_file = root / "docker" / "pawflow_sdk" / "pawflow.py"
+    persistent_runtime = Path(os.environ.get("PAWFLOW_DATA_DIR") or "data") / "runtime" / "relay_runtime" / "current"
+    if (persistent_runtime / "pawflow_relay").exists() and (persistent_runtime / "pawflow.py").exists():
+        tools_dir = persistent_runtime
+        relay_pkg = persistent_runtime / "pawflow_relay"
+        sdk_file = persistent_runtime / "pawflow.py"
+    else:
+        tools_dir = root / "tools"
+        relay_pkg = root / "pawflow_relay"
+        sdk_file = root / "docker" / "pawflow_sdk" / "pawflow.py"
     for required in (tools_dir, relay_pkg, sdk_file):
         if not required.exists():
             raise RuntimeError(f"Missing relay runtime source: {required}")
@@ -168,6 +174,9 @@ def _prepare_relay_code_dir(runtime_dir: Path) -> Path:
     code_dir = runtime_dir / ".pawflow-runtime"
     if code_dir.exists():
         shutil.rmtree(code_dir)
+    if tools_dir == persistent_runtime:
+        shutil.copytree(persistent_runtime, code_dir)
+        return code_dir
     shutil.copytree(tools_dir, code_dir)
     shutil.copytree(relay_pkg, code_dir / "pawflow_relay")
     shutil.copy2(sdk_file, code_dir / "pawflow.py")

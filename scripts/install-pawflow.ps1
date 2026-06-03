@@ -166,11 +166,37 @@ function Ensure-Dirs {
         New-Item -ItemType Directory -Path (Join-Path $PawFlowHome $rel) -Force | Out-Null
     }
 }
+function Remove-ManagedRelayContainers {
+    $names = @(& docker ps -a --format '{{.Names}}' | Where-Object { $_ -match '^(pawflow-relay-srv|pawflow-relay-min)' })
+    if ($names.Count -eq 0) { return }
+    Info "Removing managed PawFlow relay containers so they restart with current runtime code: $($names -join ', ')"
+    Info "Relay home volumes and workspace directories are preserved."
+    & docker rm -f @names | Out-Null
+    if ($LASTEXITCODE -ne 0) { Fail "Could not remove managed PawFlow relay containers" }
+}
+function Sync-PersistentRelayRuntime($repoDir) {
+    $runtimeDir = Join-Path $PawFlowHome "data\runtime\relay_runtime\current"
+    $tools = Join-Path $repoDir "tools"
+    $relayPkg = Join-Path $repoDir "pawflow_relay"
+    $sdk = Join-Path $repoDir "docker\pawflow_sdk\pawflow.py"
+    if (-not (Test-Path $tools) -or -not (Test-Path $relayPkg) -or -not (Test-Path $sdk)) {
+        Write-Warning "Cannot sync relay runtime from $repoDir; required runtime sources are missing."
+        return
+    }
+    Info "Syncing relay runtime code into persistent data: $runtimeDir"
+    if (Test-Path $runtimeDir) { Remove-Item $runtimeDir -Recurse -Force }
+    New-Item -ItemType Directory -Path $runtimeDir -Force | Out-Null
+    Copy-Item -Recurse -Force -Path (Join-Path $tools '*') -Destination $runtimeDir
+    Copy-Item -Recurse -Force -Path $relayPkg -Destination (Join-Path $runtimeDir 'pawflow_relay')
+    Copy-Item -Force -Path $sdk -Destination (Join-Path $runtimeDir 'pawflow.py')
+}
 function Run-ServerContainer($repoDir) {
     Ensure-Dirs
+    Sync-PersistentRelayRuntime $repoDir
     $existing = & docker ps -a --format '{{.Names}}' | Where-Object { $_ -eq $Container }
     if ($existing) {
         Info "Container '$Container' already exists; recreating it with image $Image while keeping persistent volumes."
+        Remove-ManagedRelayContainers
         & docker rm -f $Container | Out-Null
         if ($LASTEXITCODE -ne 0) { Fail "Could not remove existing container: $Container" }
     }

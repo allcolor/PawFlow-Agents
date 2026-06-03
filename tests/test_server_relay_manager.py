@@ -111,6 +111,32 @@ def test_prepare_relay_code_dir_stages_runtime_from_server_image(monkeypatch, tm
     assert (code_dir / "pawflow.py").read_text(encoding="utf-8") == "sdk"
 
 
+def test_prepare_relay_code_dir_prefers_persistent_synced_runtime(monkeypatch, tmp_path):
+    root = tmp_path / "app"
+    (root / "tools").mkdir(parents=True)
+    (root / "pawflow_relay").mkdir()
+    (root / "docker" / "pawflow_sdk").mkdir(parents=True)
+    (root / "tools" / "pawflow_relay_launcher.py").write_text("image-launcher", encoding="utf-8")
+    (root / "pawflow_relay" / "__init__.py").write_text("image-pkg", encoding="utf-8")
+    (root / "docker" / "pawflow_sdk" / "pawflow.py").write_text("image-sdk", encoding="utf-8")
+    (root / "core").mkdir()
+    monkeypatch.setattr(srm, "__file__", str(root / "core" / "server_relay_manager.py"))
+
+    data_dir = tmp_path / "data"
+    persistent = data_dir / "runtime" / "relay_runtime" / "current"
+    (persistent / "pawflow_relay").mkdir(parents=True)
+    (persistent / "pawflow_relay" / "__init__.py").write_text("synced-pkg", encoding="utf-8")
+    (persistent / "pawflow_relay_launcher.py").write_text("synced-launcher", encoding="utf-8")
+    (persistent / "pawflow.py").write_text("synced-sdk", encoding="utf-8")
+    monkeypatch.setenv("PAWFLOW_DATA_DIR", str(data_dir))
+
+    code_dir = srm._prepare_relay_code_dir(tmp_path / "runtime")
+
+    assert (code_dir / "pawflow_relay_launcher.py").read_text(encoding="utf-8") == "synced-launcher"
+    assert (code_dir / "pawflow_relay" / "__init__.py").read_text(encoding="utf-8") == "synced-pkg"
+    assert (code_dir / "pawflow.py").read_text(encoding="utf-8") == "synced-sdk"
+
+
 def test_ensure_minimal_reuses_running_server_execution_relay(monkeypatch):
     mgr = srm.ServerRelayManager()
     existing = {"relay_id": "srv_min_abcdef1234567890", "container_id": "cid"}

@@ -725,7 +725,8 @@ class RelayService(BaseService):
                 dispatch_desktop_ws_data(service._service_id,
                                          msg.get('session_id', ''),
                                          msg.get('data', ''),
-                                         msg.get('opcode', 2))
+                                         msg.get('opcode', 2),
+                                         msg.get('fin', True))
             except Exception as e:
                 logger.debug('desktop_ws_data dispatch failed: %s', e, exc_info=True)
         elif mtype == 'desktop_ws_close':

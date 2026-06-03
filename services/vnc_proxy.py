@@ -199,7 +199,7 @@ def _vnc_relay_ws_proxy(client_sock, session_id: str, session: dict, meta: dict)
 
     try:
         while True:
-            opcode, payload = _ws_recv(client_sock)
+            opcode, payload, fin = _ws_recv(client_sock)
             if opcode == 0x08:
                 break
             if opcode == 0x09:
@@ -210,6 +210,7 @@ def _vnc_relay_ws_proxy(client_sock, session_id: str, session: dict, meta: dict)
                 "session_id": ws_session_id,
                 "data": base64.b64encode(payload).decode("ascii"),
                 "opcode": opcode,
+                "fin": fin,
             })
     except Exception as e:
         logger.debug("VNC relay WS loop ended: %s (session=%s)", e, ws_session_id)
@@ -230,7 +231,7 @@ def _vnc_relay_ws_proxy(client_sock, session_id: str, session: dict, meta: dict)
             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
 
-def dispatch_desktop_ws_data(relay_id: str, ws_session_id: str, data_b64: str, opcode: int = 2):
+def dispatch_desktop_ws_data(relay_id: str, ws_session_id: str, data_b64: str, opcode: int = 2, fin: bool = True):
     import base64
     with _lock:
         match = None
@@ -242,7 +243,7 @@ def dispatch_desktop_ws_data(relay_id: str, ws_session_id: str, data_b64: str, o
     if not match or not match.get("browser_sock"):
         return
     try:
-        _ws_send(match["browser_sock"], base64.b64decode(data_b64), opcode=opcode)
+        _ws_send(match["browser_sock"], base64.b64decode(data_b64), opcode=opcode, fin=fin)
     except Exception as e:
         logger.warning("desktop_ws_data send error: %s", e)
 
@@ -588,9 +589,9 @@ def vnc_http_proxy(pending_req):
                              json.dumps({"error": str(e)}).encode())
 
 
-def _ws_send(sock, data: bytes, opcode=0x01):
+def _ws_send(sock, data: bytes, opcode=0x01, fin: bool = True):
     length = len(data)
-    frame = bytes([0x80 | opcode])
+    frame = bytes([(0x80 if fin else 0) | opcode])
     if length < 126:
         frame += bytes([length])
     elif length < 65536:
@@ -612,6 +613,7 @@ def _ws_recv(sock):
         return data
 
     hdr = _recv_exact(2)
+    fin = bool(hdr[0] & 0x80)
     opcode = hdr[0] & 0x0F
     masked = bool(hdr[1] & 0x80)
     length = hdr[1] & 0x7F
@@ -624,7 +626,7 @@ def _ws_recv(sock):
         payload = bytes(b ^ mask[i % 4] for i, b in enumerate(_recv_exact(length)))
     else:
         payload = _recv_exact(length)
-    return opcode, payload
+    return opcode, payload, fin
 
 
 def _ws_close(sock, code: int, reason: str):

@@ -712,6 +712,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                                 _hdr2 += _c
                             if len(_hdr2) < 2:
                                 break
+                            _fin = bool(_hdr2[0] & 0x80)
                             _op = _hdr2[0] & 0x0F
                             _masked = bool(_hdr2[1] & 0x80)
                             _plen = _hdr2[1] & 0x7F
@@ -761,6 +762,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                                 "session_id": _sid,
                                 "data": base64.b64encode(_payload).decode("ascii"),
                                 "opcode": _op,
+                                "fin": _fin,
                             })
                             with _send_lock:
                                 _ws_frame_send(ws_sock_ref[0], _fwd.encode("utf-8"))
@@ -1356,6 +1358,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             _ws_sid = msg.get("session_id", "")
             _ws_data = msg.get("data", "")
             _ws_op = msg.get("opcode", 2)  # binary by default for VNC
+            _ws_fin = bool(msg.get("fin", True))
             if not hasattr(_execute_command, '_desktop_ws_sessions'):
                 return {"ok": False, "error": "No desktop WS sessions"}
             _ws_sess = _execute_command._desktop_ws_sessions.get(_ws_sid)
@@ -1363,7 +1366,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 return {"ok": False, "error": f"Desktop WS session not found: {_ws_sid}"}
             try:
                 _raw = base64.b64decode(_ws_data)
-                _frame = bytes([0x80 | _ws_op])
+                _frame = bytes([(_ws_op | 0x80) if _ws_fin else _ws_op])
                 if len(_raw) < 126:
                     _frame += bytes([0x80 | len(_raw)])
                 elif len(_raw) < 65536:

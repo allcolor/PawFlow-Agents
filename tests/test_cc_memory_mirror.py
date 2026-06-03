@@ -115,8 +115,12 @@ class TestMirrorUpsertDelete(unittest.TestCase):
 
     def setUp(self):
         self._store_tmp = _isolated_store()
+        self._embed_patch = unittest.mock.patch.object(
+            cc_memory_mirror, "_embed", return_value=None)
+        self._embed_patch.start()
 
     def tearDown(self):
+        self._embed_patch.stop()
         self._store_tmp.cleanup()
         MemoryStore.reset()
 
@@ -192,11 +196,13 @@ class TestMirrorUpsertDelete(unittest.TestCase):
         # must still land in the store — just tagged for backfill.
         from unittest.mock import patch
         rel = f"{MEMDIR_REL}/no_embed.md"
+        self._embed_patch.stop()
         with patch.object(cc_memory_mirror, "_embed", return_value=None):
             cc_memory_mirror.mirror_write(
                 USER, rel,
                 _write_frontmatter("x", "user", "body without vector")
             )
+        self._embed_patch.start()
         entries = MemoryStore.instance().list_all(USER)
         assert len(entries) == 1
         assert entries[0].embedding is None
@@ -205,12 +211,14 @@ class TestMirrorUpsertDelete(unittest.TestCase):
     def test_embed_success_no_needs_embedding_tag(self):
         from unittest.mock import patch
         rel = f"{MEMDIR_REL}/with_embed.md"
+        self._embed_patch.stop()
         with patch.object(cc_memory_mirror, "_embed",
                           return_value=[0.1, 0.2, 0.3]):
             cc_memory_mirror.mirror_write(
                 USER, rel,
                 _write_frontmatter("x", "user", "body with vector")
             )
+        self._embed_patch.start()
         entries = MemoryStore.instance().list_all(USER)
         assert len(entries) == 1
         assert entries[0].embedding == [0.1, 0.2, 0.3]
@@ -224,11 +232,15 @@ class TestRelayServerFsIntegration(unittest.TestCase):
     def setUp(self):
         self._fs_tmp = tempfile.TemporaryDirectory()
         self._store_tmp = _isolated_store()
+        self._embed_patch = unittest.mock.patch.object(
+            cc_memory_mirror, "_embed", return_value=None)
+        self._embed_patch.start()
         self.fs = RelayServerFs(user_id=USER, root_dir=Path(self._fs_tmp.name))
         # Make sure the memory dir exists inside the slot
         (Path(self._fs_tmp.name) / USER / MEMDIR_REL).mkdir(parents=True)
 
     def tearDown(self):
+        self._embed_patch.stop()
         self.fs.close()
         self._fs_tmp.cleanup()
         self._store_tmp.cleanup()

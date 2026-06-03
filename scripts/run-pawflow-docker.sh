@@ -19,7 +19,6 @@
 #   PAWFLOW_SERVER_RELAY_IMAGE Full server relay image used by PawFlow (default: pawflow-relay-dev:latest)
 #   PAWFLOW_SERVER_RELAY_MINIMAL_IMAGE Minimal server relay image used by PawFlow (default: pawflow-relay-minimal:latest)
 #   PAWFLOW_RECREATE_CONTAINER Recreate an existing PawFlow container in place (default: 1)
-#   PAWFLOW_SYNC_RELAY_RUNTIME Copy current relay runtime into persistent data before start (default: 1)
 #
 # The first PawFlow bootstrap gateway key is RoyBetty. The installer wizard
 # must force the user to replace it before finalization.
@@ -42,7 +41,6 @@ SOURCE_DIR="$(printenv PAWFLOW_SOURCE_DIR || true)"
 SERVER_RELAY_IMAGE="$(printenv PAWFLOW_SERVER_RELAY_IMAGE || true)"
 SERVER_RELAY_MINIMAL_IMAGE="$(printenv PAWFLOW_SERVER_RELAY_MINIMAL_IMAGE || true)"
 RECREATE_CONTAINER="$(printenv PAWFLOW_RECREATE_CONTAINER || true)"
-SYNC_RELAY_RUNTIME="$(printenv PAWFLOW_SYNC_RELAY_RUNTIME || true)"
 if [[ -z "$IMAGE" ]]; then IMAGE="ghcr.io/allcolor/pawflow:latest"; fi
 if [[ -z "$PAWFLOW_HOME" ]]; then PAWFLOW_HOME="$HOME/pawflow"; fi
 if [[ -z "$CONTAINER" ]]; then CONTAINER="pawflow-server"; fi
@@ -61,7 +59,6 @@ if [[ -z "$SOURCE_DIR" ]]; then SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")
 if [[ -z "$SERVER_RELAY_IMAGE" ]]; then SERVER_RELAY_IMAGE="pawflow-relay-dev:latest"; fi
 if [[ -z "$SERVER_RELAY_MINIMAL_IMAGE" ]]; then SERVER_RELAY_MINIMAL_IMAGE="pawflow-relay-minimal:latest"; fi
 if [[ -z "$RECREATE_CONTAINER" ]]; then RECREATE_CONTAINER="1"; fi
-if [[ -z "$SYNC_RELAY_RUNTIME" ]]; then SYNC_RELAY_RUNTIME="1"; fi
 DOCKER_ARGS=()
 
 remove_managed_relay_containers() {
@@ -73,23 +70,6 @@ remove_managed_relay_containers() {
   echo "Removing managed PawFlow relay containers so they restart with current runtime code: ${names[*]}"
   echo "Relay home volumes and workspace directories are preserved."
   docker rm -f "${names[@]}" >/dev/null
-}
-
-sync_persistent_relay_runtime() {
-  if [[ "$SYNC_RELAY_RUNTIME" != "1" && "$SYNC_RELAY_RUNTIME" != "true" && "$SYNC_RELAY_RUNTIME" != "yes" ]]; then
-    return 0
-  fi
-  local runtime_dir="$PAWFLOW_HOME/data/runtime/relay_runtime/current"
-  if [[ ! -d "$SOURCE_DIR/tools" || ! -d "$SOURCE_DIR/pawflow_relay" || ! -f "$SOURCE_DIR/docker/pawflow_sdk/pawflow.py" ]]; then
-    echo "Warning: cannot sync relay runtime from $SOURCE_DIR; required runtime sources are missing." >&2
-    return 0
-  fi
-  echo "Syncing relay runtime code into persistent data: $runtime_dir"
-  rm -rf "$runtime_dir"
-  mkdir -p "$runtime_dir"
-  cp -R "$SOURCE_DIR/tools/." "$runtime_dir/"
-  cp -R "$SOURCE_DIR/pawflow_relay" "$runtime_dir/pawflow_relay"
-  cp "$SOURCE_DIR/docker/pawflow_sdk/pawflow.py" "$runtime_dir/pawflow.py"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -112,8 +92,6 @@ mkdir -p \
   "$PAWFLOW_HOME/config" \
   "$PAWFLOW_HOME/certs" \
   "$PAWFLOW_HOME/logs"
-
-sync_persistent_relay_runtime
 
 if docker ps -a --format '{{.Names}}' | grep -qx "$CONTAINER"; then
   if [[ "$RECREATE_CONTAINER" == "1" || "$RECREATE_CONTAINER" == "true" || "$RECREATE_CONTAINER" == "yes" ]]; then

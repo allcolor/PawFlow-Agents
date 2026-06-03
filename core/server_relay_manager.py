@@ -19,6 +19,8 @@ Metadata is stored in ConversationStore extra:
 Max 1 server relay of each kind per conversation (enforced in spawn).
 """
 
+import hashlib
+import json
 import logging
 import os
 import secrets
@@ -155,31 +157,53 @@ def _relay_runtime_host_dir(runtime_dir: Path) -> str:
     return to_host_path(str(runtime_abs))
 
 
+def _relay_runtime_source_hash(tools_dir: Path, relay_pkg: Path, sdk_file: Path) -> str:
+    digest = hashlib.sha256()
+    sources = (("tools", tools_dir), ("pawflow_relay", relay_pkg))
+    for label, directory in sources:
+        for path in sorted(p for p in directory.rglob("*") if p.is_file()):
+            rel = f"{label}/{path.relative_to(directory).as_posix()}".encode("utf-8")
+            digest.update(rel + b"\0")
+            digest.update(path.read_bytes())
+            digest.update(b"\0")
+    digest.update(b"pawflow.py\0")
+    digest.update(sdk_file.read_bytes())
+    return digest.hexdigest()
+
+
 def _prepare_relay_code_dir(runtime_dir: Path) -> Path:
     """Stage relay runtime code from this PawFlow server image for bind-mounting."""
     root = Path(__file__).resolve().parents[1]
-    persistent_runtime = Path(os.environ.get("PAWFLOW_DATA_DIR") or "data") / "runtime" / "relay_runtime" / "current"
-    if (persistent_runtime / "pawflow_relay").exists() and (persistent_runtime / "pawflow.py").exists():
-        tools_dir = persistent_runtime
-        relay_pkg = persistent_runtime / "pawflow_relay"
-        sdk_file = persistent_runtime / "pawflow.py"
-    else:
-        tools_dir = root / "tools"
-        relay_pkg = root / "pawflow_relay"
-        sdk_file = root / "docker" / "pawflow_sdk" / "pawflow.py"
+    tools_dir = root / "tools"
+    relay_pkg = root / "pawflow_relay"
+    sdk_file = root / "docker" / "pawflow_sdk" / "pawflow.py"
     for required in (tools_dir, relay_pkg, sdk_file):
         if not required.exists():
             raise RuntimeError(f"Missing relay runtime source: {required}")
 
+    source_hash = _relay_runtime_source_hash(tools_dir, relay_pkg, sdk_file)
     code_dir = runtime_dir / ".pawflow-runtime"
+    marker_file = code_dir / ".pawflow-runtime-source.json"
     if code_dir.exists():
+        try:
+            marker = json.loads(marker_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            marker = {}
+        if (
+            marker.get("source_hash") == source_hash
+            and (code_dir / "pawflow_relay").exists()
+            and (code_dir / "pawflow.py").exists()
+            and (code_dir / "pawflow_relay_launcher.py").exists()
+        ):
+            return code_dir
         shutil.rmtree(code_dir)
-    if tools_dir == persistent_runtime:
-        shutil.copytree(persistent_runtime, code_dir)
-        return code_dir
     shutil.copytree(tools_dir, code_dir)
     shutil.copytree(relay_pkg, code_dir / "pawflow_relay")
     shutil.copy2(sdk_file, code_dir / "pawflow.py")
+    marker_file.write_text(
+        json.dumps({"source": str(root), "source_hash": source_hash}, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     return code_dir
 
 

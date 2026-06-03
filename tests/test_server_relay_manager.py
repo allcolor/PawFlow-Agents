@@ -1,3 +1,5 @@
+import json
+
 from core import server_relay_manager as srm
 
 
@@ -109,9 +111,12 @@ def test_prepare_relay_code_dir_stages_runtime_from_server_image(monkeypatch, tm
     assert (code_dir / "pawflow_relay_launcher.py").read_text(encoding="utf-8") == "launcher"
     assert (code_dir / "pawflow_relay" / "__init__.py").read_text(encoding="utf-8") == "pkg"
     assert (code_dir / "pawflow.py").read_text(encoding="utf-8") == "sdk"
+    marker = json.loads((code_dir / ".pawflow-runtime-source.json").read_text(encoding="utf-8"))
+    assert marker["source"] == str(root)
+    assert len(marker["source_hash"]) == 64
 
 
-def test_prepare_relay_code_dir_prefers_persistent_synced_runtime(monkeypatch, tmp_path):
+def test_prepare_relay_code_dir_ignores_persistent_synced_runtime(monkeypatch, tmp_path):
     root = tmp_path / "app"
     (root / "tools").mkdir(parents=True)
     (root / "pawflow_relay").mkdir()
@@ -132,9 +137,36 @@ def test_prepare_relay_code_dir_prefers_persistent_synced_runtime(monkeypatch, t
 
     code_dir = srm._prepare_relay_code_dir(tmp_path / "runtime")
 
-    assert (code_dir / "pawflow_relay_launcher.py").read_text(encoding="utf-8") == "synced-launcher"
-    assert (code_dir / "pawflow_relay" / "__init__.py").read_text(encoding="utf-8") == "synced-pkg"
-    assert (code_dir / "pawflow.py").read_text(encoding="utf-8") == "synced-sdk"
+    assert (code_dir / "pawflow_relay_launcher.py").read_text(encoding="utf-8") == "image-launcher"
+    assert (code_dir / "pawflow_relay" / "__init__.py").read_text(encoding="utf-8") == "image-pkg"
+    assert (code_dir / "pawflow.py").read_text(encoding="utf-8") == "image-sdk"
+
+
+def test_prepare_relay_code_dir_replaces_stale_staging(monkeypatch, tmp_path):
+    root = tmp_path / "app"
+    (root / "tools").mkdir(parents=True)
+    (root / "pawflow_relay").mkdir()
+    (root / "docker" / "pawflow_sdk").mkdir(parents=True)
+    (root / "tools" / "pawflow_relay_launcher.py").write_text("image-launcher", encoding="utf-8")
+    (root / "pawflow_relay" / "__init__.py").write_text("image-pkg", encoding="utf-8")
+    (root / "docker" / "pawflow_sdk" / "pawflow.py").write_text("image-sdk", encoding="utf-8")
+    (root / "core").mkdir()
+    monkeypatch.setattr(srm, "__file__", str(root / "core" / "server_relay_manager.py"))
+
+    stale = tmp_path / "runtime" / ".pawflow-runtime"
+    (stale / "pawflow_relay").mkdir(parents=True)
+    (stale / "pawflow_relay_launcher.py").write_text("old-launcher", encoding="utf-8")
+    (stale / "pawflow.py").write_text("old-sdk", encoding="utf-8")
+    (stale / ".pawflow-runtime-source.json").write_text(
+        json.dumps({"source": str(root), "source_hash": "old"}) + "\n",
+        encoding="utf-8",
+    )
+
+    code_dir = srm._prepare_relay_code_dir(tmp_path / "runtime")
+
+    assert (code_dir / "pawflow_relay_launcher.py").read_text(encoding="utf-8") == "image-launcher"
+    marker = json.loads((code_dir / ".pawflow-runtime-source.json").read_text(encoding="utf-8"))
+    assert marker["source_hash"] != "old"
 
 
 def test_ensure_minimal_reuses_running_server_execution_relay(monkeypatch):

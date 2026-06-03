@@ -240,8 +240,8 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert "PAWFLOW_SERVER_RELAY_IMAGE" in run_src
     assert "PAWFLOW_SERVER_RELAY_MINIMAL_IMAGE" in run_src
     assert "remove_managed_relay_containers" in run_src
-    assert "sync_persistent_relay_runtime" in run_src
-    assert "data/runtime/relay_runtime/current" in run_src
+    assert "sync_persistent_relay_runtime" not in run_src
+    assert "data/runtime/relay_runtime/current" not in run_src
     assert "pawflow-relay-srv|pawflow-relay-min" in run_src
     assert "Relay home volumes and workspace directories are preserved." in run_src
     assert 'docker rm -f "${names[@]}"' in run_src
@@ -254,8 +254,8 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert "Resolve-LatestVersion" in install_ps1_src
     assert "releases?per_page=20" in install_ps1_src
     assert "Remove-ManagedRelayContainers" in install_ps1_src
-    assert "Sync-PersistentRelayRuntime" in install_ps1_src
-    assert "data\\runtime\\relay_runtime\\current" in install_ps1_src
+    assert "Sync-PersistentRelayRuntime" not in install_ps1_src
+    assert "data\\runtime\\relay_runtime\\current" not in install_ps1_src
     assert "pawflow-relay-srv|pawflow-relay-min" in install_ps1_src
     assert "Relay home volumes and workspace directories are preserved." in install_ps1_src
     assert "pawflow-install-$latest.zip" in install_ps1_src
@@ -954,5 +954,7 @@ def test_server_relay_always_injects_runtime_code_from_server_image():
     assert "code_mount_args" not in src
     assert "_prepare_relay_code_dir" in src
     assert '.pawflow-runtime' in src
+    assert '.pawflow-runtime-source.json' in src
+    assert 'source_hash' in src
     assert ':{_TOOLS_IN_CONTAINER}:ro' in src
     assert "pawflow_relay_launcher.py" in src

@@ -29,7 +29,6 @@ logger = logging.getLogger(__name__)
 
 _COOKIE_NAME = "_pf_gw"
 _COOKIE_MAX_AGE = 30 * 86400  # 30 days
-_PUBLIC_CAPABILITY_PREFIXES = {"audio", "code", "terminal", "vnc"}
 
 
 def _truthy(value: Any) -> bool:
@@ -185,14 +184,6 @@ def _get_ip_state(ip: str) -> dict:
         if ip not in _ip_state:
             _ip_state[ip] = {"failures": 0, "last_attempt": 0.0, "banned_until": 0.0}
         return _ip_state[ip]
-
-
-def _is_public_capability_route(entry, path: str) -> bool:
-    """True for browser proxy routes guarded by URL capability tokens."""
-    if entry is None or not getattr(entry, "public", False):
-        return False
-    first_segment = (path or "").strip("/").split("/", 1)[0]
-    return first_segment in _PUBLIC_CAPABILITY_PREFIXES
 
 
 def is_banned(ip: str) -> bool:
@@ -361,13 +352,19 @@ def _check_request_inner(handler, config: Dict[str, Any]) -> bool:
     if path in _EXEMPT_PATHS:
         return False
 
-    # Capability-token proxy routes must bypass this human-oriented
-    # challenge page. Otherwise browser iframes and automated clients
-    # receive the gateway HTML instead of the proxied resource; the route
-    # handler still verifies the URL token before serving anything.
-    # `public+private_only` keeps the old LAN-only bypass for internal
-    # proxy endpoints.
-
+    # Routes flagged `public=True AND private_only=True` carry their own
+    # credential (usually a URL-embedded ephemeral token) AND restrict
+    # themselves to RFC1918 source IPs. They must bypass this human-
+    # oriented challenge page — otherwise automated LAN-only clients
+    # (CC container hitting /relay-proxy/, service-to-service callbacks,
+    # …) get the HTML challenge instead of their actual response and
+    # can't parse it. Repro: CC surfaced
+    #   "API returned an empty or malformed response (HTTP 200) —
+    #    check for a proxy or gateway intercepting the request"
+    # while the Matrix-themed challenge page was what actually flew
+    # back (container has no _gw cookie). The private_only flag is
+    # the guarantee that this bypass can't be abused from the public
+    # internet.
     try:
         _server = getattr(handler, "server", None)
         _registry = getattr(_server, "_route_registry", None)
@@ -375,9 +372,8 @@ def _check_request_inner(handler, config: Dict[str, Any]) -> bool:
             _match = _registry.match(handler.command, path)
             _entry = _match[0] if _match else None
             if (_entry is not None
-                    and ((getattr(_entry, "public", False)
-                          and getattr(_entry, "private_only", False))
-                         or _is_public_capability_route(_entry, path))):
+                    and getattr(_entry, "public", False)
+                    and getattr(_entry, "private_only", False)):
                 return False
     except Exception:
         logger.debug(

@@ -602,7 +602,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 "--auth", "none",
                 "--disable-telemetry",
                 "--disable-workspace-trust",
-                "--folder-uri", Path(root_dir).resolve().as_uri(),
+                str(Path(root_dir).resolve()),
             ]
             try:
                 _cs_log = open("/tmp/code-server.log", "w")  # nosec B108 - relay-local service log.

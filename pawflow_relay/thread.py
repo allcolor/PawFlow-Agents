@@ -1252,7 +1252,7 @@ class RelayThread:
             "--disable-telemetry",
             "--disable-workspace-trust",
             "--bind-addr", f"127.0.0.1:{port}",
-            "--folder-uri", Path(self.directory).resolve().as_uri(),
+            str(Path(self.directory).resolve()),
         ]
         try:
             proc = _sp.Popen(  # nosec B603

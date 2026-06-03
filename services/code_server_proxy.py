@@ -120,6 +120,33 @@ def _upstream_path(sess: dict, public_base_path: str, sub_path: str,
     return path
 
 
+def _proxy_result_payload(result):
+    if isinstance(result, dict) and isinstance(result.get("data"), dict):
+        return result["data"]
+    return result
+
+
+def _proxy_connection_refused(result) -> bool:
+    if isinstance(result, dict):
+        text = str(result.get("error") or result.get("detail") or result)
+    else:
+        text = str(result)
+    return "connection refused" in text.lower() or "errno 111" in text.lower()
+
+
+def _restart_code_server_session(session_id: str, relay_service, base_path: str):
+    result = relay_service._request("start_code_server", base_path=base_path)
+    data = _proxy_result_payload(result)
+    if not isinstance(data, dict):
+        return None
+    port = data.get("port")
+    if not port:
+        return None
+    update_code_server_port(
+        session_id, port, upstream_base_path=data.get("upstream_base_path"))
+    return port
+
+
 def unregister_code_server(relay_id: str):
     with _lock:
         session_id = _relay_to_session.pop(relay_id, "")
@@ -194,16 +221,36 @@ def code_http_proxy(pending_req):
     fwd_headers["Host"] = f"127.0.0.1:{port}"
 
     try:
-        result = relay_service._request(
-            "http_proxy",
-            port=port,
-            method=pending_req.method,
-            req_path=proxied_path,
-            req_headers=fwd_headers,
-            req_body=base64.b64encode(pending_req.body).decode("ascii") if pending_req.body else "",
-        )
-        if isinstance(result, dict) and isinstance(result.get("data"), dict):
-            result = result["data"]
+        def _proxy_once(target_port: int):
+            fwd_headers["Host"] = f"127.0.0.1:{target_port}"
+            return relay_service._request(
+                "http_proxy",
+                port=target_port,
+                method=pending_req.method,
+                req_path=proxied_path,
+                req_headers=fwd_headers,
+                req_body=base64.b64encode(pending_req.body).decode("ascii") if pending_req.body else "",
+            )
+
+        try:
+            result = _proxy_result_payload(_proxy_once(port))
+        except Exception as first_error:
+            if not _proxy_connection_refused(first_error):
+                raise
+            restarted_port = _restart_code_server_session(
+                session_id, relay_service, base_path)
+            if not restarted_port:
+                raise
+            port = restarted_port
+            result = _proxy_result_payload(_proxy_once(port))
+
+        if _proxy_connection_refused(result):
+            restarted_port = _restart_code_server_session(
+                session_id, relay_service, base_path)
+            if restarted_port:
+                port = restarted_port
+                result = _proxy_result_payload(_proxy_once(port))
+
         if not isinstance(result, dict) or "status" not in result:
             pending_req.complete(502, {"Content-Type": "text/plain"},
                                  f"Bad proxy response: {result}".encode())

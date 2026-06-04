@@ -282,7 +282,7 @@ def _make_handler_class(root_dir: str, secret: str, readonly: bool,
 
 def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=False,  # nosec B107
                 allow_automation=False, allow_local_screen=False, allow_local=False,
-                gateway_cookie="", session_token="", server_mount="",
+                gateway_cookie="", gateway_key="", session_token="", server_mount="",
                 filestore_mount="", skills_mount=""):
     """Connect to the PawFlow server via WebSocket and process filesystem commands.
 
@@ -1701,6 +1701,8 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             _extra_hdrs = ''
             if _cookies:
                 _extra_hdrs = 'Cookie: ' + '; '.join(_cookies) + '\r\n'
+            if gateway_key:
+                _extra_hdrs += f'X-PawFlow-Gateway-Key: {gateway_key}\r\n'
             handshake = (
                 f"GET {path} HTTP/1.1\r\n"
                 f"Host: {host}:{port}\r\n"

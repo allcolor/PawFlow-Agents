@@ -291,6 +291,8 @@ def worker_main():
         ]
         if gateway_cookie:
             docker_run_args += ["-e", f"PAWFLOW_GATEWAY_COOKIE={gateway_cookie}"]
+        if args.gateway_key:
+            docker_run_args += ["-e", f"PAWFLOW_GATEWAY_KEY={args.gateway_key}"]
         if session_token:
             docker_run_args += ["-e", f"PAWFLOW_SESSION_TOKEN={session_token}"]
         if os.environ.get("PAWFLOW_RELAY_INSECURE") == "1":
@@ -348,6 +350,7 @@ def worker_main():
                         allow_local_screen=args.allow_local_screen,
                         allow_local=args.allow_local,
                         gateway_cookie=gateway_cookie,
+                        gateway_key=args.gateway_key,
                         session_token=session_token,
                         server_mount=args.server_mount,
                         filestore_mount=args.filestore_mount,

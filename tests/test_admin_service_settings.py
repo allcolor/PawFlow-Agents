@@ -66,6 +66,34 @@ def test_private_gateway_service_registered_and_uses_explicit_secret_refs(monkey
     assert private_gateway.verify_secret("RoyBetty", "privategateway.legacy") is False
 
 
+def test_private_gateway_ws_accepts_gateway_key_header(monkeypatch):
+    import services.private_gateway as private_gateway
+    from core.config_value import ConfigValue
+
+    monkeypatch.setattr(
+        "core.expression._load_global_secrets",
+        lambda: {"relay_gateway": ConfigValue(value="open-sesame")},
+    )
+
+    svc = private_gateway.PrivateGateway({
+        "enabled": True,
+        "secret_refs": "relay_gateway",
+        "skin": "matrix",
+    })
+
+    assert svc.check_ws(
+        "/ws/relay/fs_client",
+        {"X-PawFlow-Gateway-Key": "open-sesame"},
+        ("172.17.0.2", 50000),
+    ) is False
+    assert svc.check_ws(
+        "/ws/relay/fs_client",
+        {"X-PawFlow-Gateway-Key": "wrong"},
+        ("172.17.0.2", 50000),
+    ) is True
+
+
+
 def test_private_gateway_cookie_is_bound_to_secret_refs():
     import services.private_gateway as private_gateway
 

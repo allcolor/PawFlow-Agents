@@ -31,15 +31,24 @@ _COOKIE_NAME = "_pf_gw"
 _COOKIE_MAX_AGE = 30 * 86400  # 30 days
 
 
+def _raw_value(value: Any) -> Any:
+    if hasattr(value, "value"):
+        return value.value
+    if isinstance(value, dict) and "value" in value:
+        return value.get("value")
+    return value
+
+
 def _truthy(value: Any) -> bool:
-    return str(value).strip().lower() in ("true", "1", "yes", "on")
+    return str(_raw_value(value)).strip().lower() in ("true", "1", "yes", "on")
 
 
 def _split_refs(raw: Any) -> List[str]:
+    raw = _raw_value(raw)
     if raw is None:
         return []
     if isinstance(raw, (list, tuple, set)):
-        return [str(item).strip() for item in raw if str(item).strip()]
+        return [str(_raw_value(item)).strip() for item in raw if str(_raw_value(item)).strip()]
     return [part.strip() for part in str(raw).split(",") if part.strip()]
 
 
@@ -344,9 +353,9 @@ def _check_request_inner(handler, config: Dict[str, Any]) -> bool:
 
     ip = handler.client_address[0] if handler.client_address else "0.0.0.0"  # nosec B104 - client IP fallback, not a bind.
     path = handler.path.split('?', 1)[0]
-    cookie_name = str(config.get("cookie_name") or _COOKIE_NAME)
-    cookie_max_age = int(config.get("cookie_max_age") or _COOKIE_MAX_AGE)
-    skin = str(config.get("skin") or "matrix").strip().lower()
+    cookie_name = str(_raw_value(config.get("cookie_name")) or _COOKIE_NAME)
+    cookie_max_age = int(_raw_value(config.get("cookie_max_age")) or _COOKIE_MAX_AGE)
+    skin = str(_raw_value(config.get("skin")) or "matrix").strip().lower()
     secret_refs = config.get("secret_refs", "")
 
     if path in _EXEMPT_PATHS:
@@ -504,6 +513,10 @@ class PrivateGateway(BaseService):
     def _close_connection(self):
         pass
 
+    def _secret_refs(self):
+        return (getattr(self, "_original_config", {}) or {}).get(
+            "secret_refs", self.config.get("secret_refs", ""))
+
     def get_parameter_schema(self) -> Dict[str, Any]:
         return {
             "enabled": {
@@ -556,14 +569,18 @@ class PrivateGateway(BaseService):
         ip = client_address[0] if client_address else "0.0.0.0"  # nosec B104 - client IP fallback, not a bind.
         if is_banned(ip):
             return True
-        cookie_name = str(self.config.get("cookie_name") or _COOKIE_NAME)
-        cookie_max_age = int(self.config.get("cookie_max_age") or _COOKIE_MAX_AGE)
+        gateway_key = headers.get("X-PawFlow-Gateway-Key", "")
+        if gateway_key and verify_secret(gateway_key, self._secret_refs()):
+            return False
+        cookie_name = str(_raw_value(self.config.get("cookie_name")) or _COOKIE_NAME)
+        cookie_max_age = int(_raw_value(self.config.get("cookie_max_age")) or _COOKIE_MAX_AGE)
         cookie_header = headers.get("Cookie", "")
         for part in cookie_header.split(";"):
             part = part.strip()
             if part.startswith(cookie_name + "="):
                 cookie_val = part[len(cookie_name) + 1:]
-                if _verify_cookie(cookie_val, ip, max_age=cookie_max_age):
+                if _verify_cookie(cookie_val, ip, max_age=cookie_max_age,
+                                  secret_refs=self._secret_refs()):
                     return False
         return True
 

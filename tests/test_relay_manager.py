@@ -262,7 +262,18 @@ def test_relay_docker_launcher_passes_token_as_equals_arg():
 
     assert 'f"--token={self.ws_token}"' in source
     assert '"--token", self.ws_token' not in source
+    assert 'PAWFLOW_GATEWAY_KEY={self.gateway_key or \'\'}' in source
     assert '"python3", "-u", "/opt/pawflow/pawflow_relay_launcher.py"' in source
+
+
+def test_relay_worker_sends_gateway_key_header_for_ws_private_gateway():
+    worker_source = Path("pawflow_relay/worker.py").read_text(encoding="utf-8")
+    cli_source = Path("pawflow_relay/cli.py").read_text(encoding="utf-8")
+
+    assert "gateway_cookie=\"\", gateway_key=\"\"" in worker_source
+    assert "X-PawFlow-Gateway-Key: {gateway_key}" in worker_source
+    assert "gateway_key=args.gateway_key" in cli_source
+    assert "PAWFLOW_GATEWAY_KEY={args.gateway_key}" in cli_source
 
 
 def test_relay_manager_start_requires_logged_in_server(monkeypatch, tmp_path):

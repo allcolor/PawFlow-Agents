@@ -109,10 +109,10 @@ class RelayFuseLaunchTests(unittest.TestCase):
     # ── Dockerfile prep (mountpoints created at build time) ───────────
 
     def test_dockerfile_precreates_fuse_mountpoints(self):
-        # /cc_sessions and /filestore must exist + be owned by pawflow at
-        # image build time. The unprivileged pawflow user can't mkdir at
-        # FS root at runtime (root-owned /), so os.makedirs in the FUSE
-        # mount path would fail — see commit log for the original repro.
+        # /cc_sessions, /filestore, and /skills must exist + be writable by
+        # pawflow. The image creates the root-level mountpoints at build time,
+        # then init.sh repairs ownership after runtime UID/GID remapping so
+        # bind mounts with host-owned groups remain usable.
         import os
         path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -121,7 +121,9 @@ class RelayFuseLaunchTests(unittest.TestCase):
             src = f.read()
         for needle in ('mkdir -p /workspace /cc_sessions /filestore /skills',
                        'chown pawflow:pawflow /workspace /cc_sessions /filestore /skills',
-                       'chown -R pawflow:pawflow "$d"'):
+                       'chown -R pawflow:$(id -gn pawflow) "$d"',
+                       'usermod -aG "$group" pawflow',
+                       'chmod g+rwx "$d"'):
             self.assertIn(needle, src,
                           f'docker/relay-dev/Dockerfile must contain: {needle}')
 
@@ -145,8 +147,12 @@ class RelayFuseLaunchTests(unittest.TestCase):
         self.assertNotIn('/usr/local/bin/rtk', src)
 
     def test_worker_forwards_local_flag_to_host_helper(self):
-        from pawflow_relay import worker
-        src = inspect.getsource(worker)
+        import os
+        path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            'pawflow_relay', 'worker.py')
+        with open(path, 'r') as f:
+            src = f.read()
         self.assertIn('msg.get("local", False)', src)
         self.assertIn('Start relay with --allow-local', src)
         self.assertIn('Local execution requested but host helper is unavailable', src)

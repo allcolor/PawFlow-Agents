@@ -1045,18 +1045,21 @@ class AgentUtilsMixin:
         # Precise counting via tiktoken — strip image data first
         try:
             from core.token_counter import count_messages_tokens
+            from tasks.ai.context_usage_cache import _scrub_image_payloads
             _stripped = []
             for m in messages:
                 c = m.content if hasattr(m, 'content') else str(m)
                 if isinstance(c, list):
-                    # Replace image_url parts with a small placeholder
+                    # Replace image parts with a small placeholder.
                     c = " ".join(
                         p.get("text", "") if p.get("type") == "text"
-                        else "[image]" if p.get("type") == "image_url"
+                        else "[image]" if p.get("type") in ("image_url", "image_ref", "image")
                         else p.get("text", "") if p.get("type") == "document"
                         else ""
                         for p in c
                     )
+                elif isinstance(c, str):
+                    c = _scrub_image_payloads(c)
                 _stripped.append({"content": c})
             return count_messages_tokens(_stripped, multiplier=token_multiplier)
         except Exception:

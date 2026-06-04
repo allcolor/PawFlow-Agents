@@ -5,8 +5,23 @@ import logging
 
 import hashlib
 import json
+import re
 import time
 from typing import Any, Dict, Iterable, List, Optional
+
+
+_DATA_URI_RE = re.compile(r'data:image/[^;\s]+;base64,[A-Za-z0-9+/=]+')
+_IMAGE_MARKER_RE = re.compile(r'__image_data__:image/[^:\s]+:[A-Za-z0-9+/=]+')
+_JSON_IMAGE_DATA_RE = re.compile(
+    r'(["\'](?:data|content)["\']\s*:\s*["\'])[A-Za-z0-9+/=]{1000,}(["\'])')
+
+
+def _scrub_image_payloads(text: str) -> str:
+    if not text:
+        return text
+    text = _DATA_URI_RE.sub('[image]', text)
+    text = _IMAGE_MARKER_RE.sub('[image]', text)
+    return _JSON_IMAGE_DATA_RE.sub(r'\1[image]\2', text)
 
 
 def _message_content(msg: Any) -> Any:
@@ -29,12 +44,13 @@ def _message_id(msg: Any) -> str:
 
 def _content_text(content: Any) -> str:
     if isinstance(content, str):
-        return content
+        return _scrub_image_payloads(content)
     if isinstance(content, dict):
         ptype = content.get("type")
         if ptype in ("image", "image_url", "image_ref"):
             return "[image]"
-        return str(content.get("text", "") or content.get("content", "") or "")
+        return _scrub_image_payloads(
+            str(content.get("text", "") or content.get("content", "") or ""))
     if isinstance(content, list):
         parts: List[str] = []
         for part in content:

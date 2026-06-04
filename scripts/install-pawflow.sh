@@ -347,8 +347,11 @@ cleanup_retagged_pawflow_images() {
     read -r repo tag < <(docker image inspect -f '{{index .RepoTags 0}}' "$old_id" 2>/dev/null | awk -F: '{print $1, $2}') || true
     if [[ "$repo" != "<none>" && "$tag" != "<none>" && -n "$repo" && -n "$tag" ]]; then continue; fi
     echo "Removing old untagged PawFlow image id: $old_id"
-    docker rmi "$old_id" >/dev/null 2>&1 || true
+    if ! docker rmi -f "$old_id" >/dev/null 2>&1; then
+      echo "Warning: failed to remove old untagged PawFlow image id: $old_id" >&2
+    fi
   done <<<"$OLD_PAWFLOW_IMAGE_IDS"
+  docker image prune -f --filter "dangling=true" >/dev/null 2>&1 || true
 }
 
 if [[ "$SELF_UPDATE" == "1" ]]; then

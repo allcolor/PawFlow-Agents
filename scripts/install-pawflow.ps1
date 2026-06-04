@@ -256,8 +256,10 @@ function Cleanup-RetaggedPawFlowImages {
         $tags = & docker image inspect -f '{{range .RepoTags}}{{.}}{{end}}' $oldId 2>$null
         if ($tags -and $tags -ne '<none>:<none>') { continue }
         Info "Removing old untagged PawFlow image id: $oldId"
-        & docker rmi $oldId *> $null
+        & docker rmi -f $oldId *> $null
+        if ($LASTEXITCODE -ne 0) { Warn "Failed to remove old untagged PawFlow image id: $oldId" }
     }
+    & docker image prune -f --filter "dangling=true" *> $null
 }
 
 

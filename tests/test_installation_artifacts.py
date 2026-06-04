@@ -181,6 +181,8 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert "capture_existing_pawflow_image_ids" in install_src
     assert "cleanup_retagged_pawflow_images" in install_src
     assert "Removing old untagged PawFlow image id" in install_src
+    assert 'docker rmi -f "$old_id"' in install_src
+    assert 'docker image prune -f --filter "dangling=true"' in install_src
     assert "PAWFLOW_VERSION" in install_src
     assert "PAWFLOW_DOCKER_PLATFORM" in install_src
     assert "PAWFLOW_START_TARGET" in install_src
@@ -265,6 +267,8 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert "Cleanup-OldImages" in install_ps1_src
     assert "Capture-ExistingPawFlowImageIds" in install_ps1_src
     assert "Cleanup-RetaggedPawFlowImages" in install_ps1_src
+    assert "docker rmi -f $oldId" in install_ps1_src
+    assert 'docker image prune -f --filter "dangling=true"' in install_ps1_src
     assert "ghcr.io/allcolor/pawflow" in install_ps1_src
     assert "PAWFLOW_RECREATE_CONTAINER" in run_src
     assert "recreating it with image" in run_src

@@ -2149,6 +2149,13 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                         except Exception:
                             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
+                elif msg.get("type") == "cs_ws_command":
+                    try:
+                        _execute_command(msg)
+                    except Exception as _e:
+                        sys.stderr.write(
+                            f"[FSRelay] cs_ws_command failed: {_e}\n")
+
                 elif msg.get("type") == "command":
                     request_id = msg.get("request_id", "")
                     sys.stderr.write(f"[FSRelay] Command: {msg.get('action', '?')}\n")

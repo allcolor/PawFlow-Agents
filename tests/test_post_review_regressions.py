@@ -524,13 +524,7 @@ def test_code_server_http_proxy_accepts_tokenless_static_asset(tmp_path):
             self.kwargs = None
 
         def _request(self, action, **kwargs):
-            assert action == "http_proxy"
-            self.kwargs = kwargs
-            return {
-                "status": 200,
-                "headers": {"Content-Type": "font/woff"},
-                "body": "Zm9udA==",
-            }
+            raise AssertionError("seti.woff compatibility asset must not hit upstream")
 
     class FakeReq:
         method = "GET"
@@ -563,8 +557,9 @@ def test_code_server_http_proxy_accepts_tokenless_static_asset(tmp_path):
     csp.code_http_proxy(req)
 
     assert req.status == 200
-    assert relay.kwargs["req_path"] == "/_i/icons/seti.woff"
-    assert req.body == b"font"
+    assert relay.kwargs is None
+    assert req.headers["Content-Type"] == "font/woff"
+    assert req.body == b""
     assert token != "_i"
 
 
@@ -881,6 +876,55 @@ def test_code_server_command_send_uses_relay_ws_frame(monkeypatch):
     assert sent[0][1]["session_id"] == "sid"
 
 
+def test_code_server_ws_traffic_uses_no_result_relay_message(monkeypatch):
+    import asyncio
+    import json
+
+    from services import code_server_proxy as csp
+    import services.filesystem_service as fs
+
+    class FakeLock:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    loop = object()
+    sent = []
+
+    async def fake_ws_send_frame(writer, payload):
+        sent.append((writer, json.loads(payload.decode("utf-8"))))
+
+    monkeypatch.setattr(fs, "_ws_send_frame", fake_ws_send_frame)
+
+    class FakeFuture:
+        def __init__(self, coro):
+            self.coro = coro
+
+        def result(self, timeout=None):
+            asyncio.run(self.coro)
+
+    monkeypatch.setattr(
+        asyncio, "run_coroutine_threadsafe",
+        lambda coro, target_loop: FakeFuture(coro),
+    )
+
+    class FakeRelay:
+        _relay_pool_lock = FakeLock()
+        _relay_pool = [{"writer": "writer-1", "loop": loop}]
+
+    csp._send_cs_ws_command_to_relay(
+        FakeRelay(), {"action": "cs_ws_send", "session_id": "sid"})
+
+    assert sent[0][0] == "writer-1"
+    assert sent[0][1] == {
+        "type": "cs_ws_command",
+        "action": "cs_ws_send",
+        "session_id": "sid",
+    }
+
+
 def test_code_server_ws_recv_preserves_raw_masked_frame():
     from services import code_server_proxy as csp
 
@@ -967,3 +1011,14 @@ def test_code_server_worker_strips_browser_headers_from_backend_ws_handshake():
     assert '_hdr_lines.append(f"{_hk}: {_hv}")' not in ws_open_block
     assert '_ws_protocol = (_ws_headers.get("Sec-WebSocket-Protocol")' in ws_open_block
     assert '_hdr_lines.append(f"Sec-WebSocket-Protocol: {_ws_protocol}")' in ws_open_block
+
+
+def test_code_server_worker_handles_ws_traffic_without_command_result():
+    src = open("pawflow_relay/worker.py", encoding="utf-8").read()
+    cs_ws_pos = src.index('msg.get("type") == "cs_ws_command"')
+    command_pos = src.index('msg.get("type") == "command"')
+    cs_ws_block = src[cs_ws_pos:command_pos]
+
+    assert cs_ws_pos < command_pos
+    assert "_execute_command(msg)" in cs_ws_block
+    assert '"type": "result"' not in cs_ws_block

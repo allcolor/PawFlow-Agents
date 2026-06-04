@@ -88,6 +88,8 @@ def _code_server_builtin_asset(sub_path: str):
         return "application/javascript", _VSDA_JS
     if asset_name == "vsda_bg.wasm":
         return "application/wasm", _EMPTY_WASM_MODULE
+    if asset_name == "seti.woff":
+        return "font/woff", b""
     return None
 
 
@@ -388,8 +390,7 @@ def code_ws_proxy(client_sock, path_params: dict, meta: dict):
     for k, v in meta.get("headers", {}).items():
         kl = k.lower()
         if kl in ("sec-websocket-key", "sec-websocket-accept",
-                  "sec-websocket-extensions",
-                  "upgrade", "connection"):
+                  "sec-websocket-extensions", "upgrade", "connection"):
             continue
         fwd_headers[k] = v
     fwd_headers["Host"] = f"127.0.0.1:{port}"
@@ -448,7 +449,7 @@ def code_ws_proxy(client_sock, path_params: dict, meta: dict):
                 opcode, payload = received
                 frame = _ws_build_frame(payload, opcode=opcode)
             if opcode == 0x08:  # close
-                _send_command_to_relay(relay_service, {
+                _send_cs_ws_command_to_relay(relay_service, {
                     "action": "cs_ws_send",
                     "session_id": ws_session_id,
                     "frame": base64.b64encode(frame).decode("ascii"),
@@ -460,7 +461,7 @@ def code_ws_proxy(client_sock, path_params: dict, meta: dict):
                 # the upstream expects. Preserve them instead of rebuilding.
                 pass
 
-            _send_command_to_relay(relay_service, {
+            _send_cs_ws_command_to_relay(relay_service, {
                 "action": "cs_ws_send",
                 "session_id": ws_session_id,
                 "frame": base64.b64encode(frame).decode("ascii"),
@@ -471,7 +472,7 @@ def code_ws_proxy(client_sock, path_params: dict, meta: dict):
         logger.debug("Code WS proxy read loop ended: %s (session=%s)", e, ws_session_id)
     finally:
         try:
-            _send_command_to_relay(relay_service, {
+            _send_cs_ws_command_to_relay(relay_service, {
                 "action": "cs_ws_close",
                 "session_id": ws_session_id,
             })
@@ -528,6 +529,17 @@ def dispatch_cs_ws_close(relay_id: str, ws_session_id: str):
 
 def _send_command_to_relay(relay_service, cmd: dict):
     """Send a command to the relay via the command pipeline (fire-and-forget)."""
+    request_id = uuid.uuid4().hex[:8]
+    _send_relay_message(relay_service, {"type": "command", "request_id": request_id, **cmd})
+
+
+def _send_cs_ws_command_to_relay(relay_service, cmd: dict):
+    """Send code-server WS traffic without generating per-frame results."""
+    _send_relay_message(relay_service, {"type": "cs_ws_command", **cmd})
+
+
+def _send_relay_message(relay_service, msg: dict):
+    """Send a JSON message to the relay over its command WebSocket."""
     import asyncio
     from services.filesystem_service import _ws_send_frame
 
@@ -536,8 +548,6 @@ def _send_command_to_relay(relay_service, cmd: dict):
     if not pool:
         return
 
-    request_id = uuid.uuid4().hex[:8]
-    msg = {"type": "command", "request_id": request_id, **cmd}
     payload = json.dumps(msg).encode("utf-8")
     last_err = None
     for conn in reversed(pool):

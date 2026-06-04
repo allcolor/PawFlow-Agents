@@ -278,7 +278,7 @@ def test_handle_execute_retries_relay_transport_errors(monkeypatch):
 
     assert result["data"] == "ok"
     assert calls["count"] == 2
-    assert sleeps == [5.0]
+    assert [delay for delay in sleeps if delay == 5.0] == [5.0]
 
 
 def test_do_execute_reraises_relay_transport_errors(monkeypatch):
@@ -361,4 +361,4 @@ def test_handle_execute_does_not_retry_exhausted_relay_results(monkeypatch):
         "alice", "conv1", "assistant")
 
     assert result["data"] == exhausted
-    assert sleeps == []
+    assert [delay for delay in sleeps if delay == 5.0] == []

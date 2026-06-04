@@ -56,6 +56,42 @@ def test_voicebox_transcribe_posts_multipart(monkeypatch):
     assert b'name="language"' in captured["body"]
 
 
+def test_voicebox_installs_backend_runner_when_missing(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_run(cmd, **_kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 1)
+
+    def fake_check_call(cmd, **_kwargs):
+        calls.append(cmd)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(subprocess, "check_call", fake_check_call)
+    python = tmp_path / "backend" / "venv" / "bin" / "python"
+    python.parent.mkdir(parents=True)
+    python.write_text("", encoding="utf-8")
+
+    svc = VoiceboxService({"install_dir": str(tmp_path)})
+    svc._ensure_backend_runner(python)
+
+    assert [str(python), "-m", "uvicorn", "--version"] in calls
+    assert [str(python), "-m", "pip", "install", "uvicorn[standard]>=0.30"] in calls
+
+
+def test_voicebox_startup_error_reads_backend_log(tmp_path):
+    svc = VoiceboxService({"install_dir": str(tmp_path), "startup_timeout": 1})
+    svc._managed_log_path.parent.mkdir(parents=True)
+    svc._managed_log_path.write_text("line 1\nNo module named uvicorn\n", encoding="utf-8")
+
+    class DeadProc:
+        def poll(self):
+            return 1
+
+    with pytest.raises(ServiceError, match="No module named uvicorn"):
+        svc._wait_ready(DeadProc())
+
+
 def test_voicebox_external_relay_url_uses_proxy_route(monkeypatch):
     captured = {}
     monkeypatch.setattr(_hl_mod, "_instances", {9090: _Listener()})

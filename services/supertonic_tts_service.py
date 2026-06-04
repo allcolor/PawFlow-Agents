@@ -158,6 +158,7 @@ class SupertonicTTSService(BaseAudioGenerationService, BaseTTSService):
         self.start_command = str(self.config.get("start_command") or "").strip()
         self.startup_timeout = int(self.config.get("startup_timeout") or 60)
         self._managed_proc = None
+        self._managed_log_path = self.install_dir / "supertonic-pawflow.log"
         self._connect_lock = threading.Lock()
 
     def set_runtime_context(self, user_id: str = "", conversation_id: str = "",
@@ -260,6 +261,7 @@ class SupertonicTTSService(BaseAudioGenerationService, BaseTTSService):
     def _ensure_runtime(self, reporter=None):
         python = self._venv_python()
         if python.exists():
+            self._ensure_serve_runtime(python, reporter=reporter)
             if reporter:
                 reporter.step("validating", "Supertonic managed runtime already exists")
             return
@@ -286,6 +288,26 @@ class SupertonicTTSService(BaseAudioGenerationService, BaseTTSService):
             run_checked([str(python), "-m", "pip", "install", "-e", str(src)], reporter=reporter, phase="installing_python_requirements")
         else:
             run_checked([str(python), "-m", "pip", "install", self.package_spec], reporter=reporter, phase="installing_python_requirements")
+        self._ensure_serve_runtime(python, reporter=reporter)
+
+    def _ensure_serve_runtime(self, python: Path, reporter=None):
+        """Ensure the managed Supertonic venv can run the HTTP server."""
+        probe = (
+            "import fastapi, uvicorn; "
+            "from supertonic.cli import main"
+        )
+        try:
+            if subprocess.run(  # nosec B603 - Python executable path is from the managed venv.
+                    [str(python), "-c", probe],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False).returncode == 0:
+                return
+        except OSError:
+            pass
+        if reporter:
+            reporter.step("installing_python_requirements", "Installing Supertonic server extras")
+        run_checked([str(python), "-m", "pip", "install", self.package_spec], reporter=reporter, phase="installing_python_requirements")
 
     def ensure_connected(self):
         with self._connect_lock:
@@ -342,12 +364,14 @@ class SupertonicTTSService(BaseAudioGenerationService, BaseTTSService):
         cmd = self._resolve_start_command() + ["--host", host, "--port", str(port)]
         env = os.environ.copy()
         logger.info("[SUPERTONIC] starting managed daemon: %s", " ".join(cmd))
+        self._managed_log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_file = self._managed_log_path.open("ab")
         try:
             return subprocess.Popen(  # nosec B603 - argv is constructed locally and shell=False is the default.
                 cmd,
                 stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
                 env=env,
                 start_new_session=True,
             )
@@ -359,12 +383,13 @@ class SupertonicTTSService(BaseAudioGenerationService, BaseTTSService):
         last_error = ""
         while time.time() < deadline:
             if proc.poll() is not None:
-                stderr = b""
+                detail = ""
                 try:
-                    stderr = proc.stderr.read(1000) if proc.stderr else b""
+                    if self._managed_log_path.exists():
+                        detail = self._managed_log_path.read_text(
+                            encoding="utf-8", errors="replace")[-4000:].strip()
                 except Exception:
-                    stderr = b""
-                detail = stderr.decode("utf-8", errors="replace").strip()
+                    detail = ""
                 raise ServiceError(f"Supertonic daemon exited during startup: {detail}")
             if self._server_ready():
                 return

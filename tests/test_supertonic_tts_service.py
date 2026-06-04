@@ -2,6 +2,7 @@
 
 import urllib.error
 import urllib.parse
+import subprocess
 
 import pytest
 
@@ -195,6 +196,44 @@ def test_supertonic_autostart_prepares_managed_runtime(monkeypatch, tmp_path):
 
     assert calls == ["ensure_runtime"]
     assert cmd[0] == str(svc._venv_python())
+
+
+def test_supertonic_existing_runtime_repairs_missing_serve_extras(monkeypatch, tmp_path):
+    svc = SupertonicTTSService({
+        "install_dir": str(tmp_path / "supertonic3"),
+        "package_spec": "supertonic-test[serve]",
+    })
+    python = svc._venv_python()
+    python.parent.mkdir(parents=True)
+    python.write_text("", encoding="utf-8")
+    calls = []
+
+    def fake_run(cmd, **_kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 1)
+
+    def fake_run_checked(cmd, **_kwargs):
+        calls.append(cmd)
+
+    monkeypatch.setattr("services.supertonic_tts_service.subprocess.run", fake_run)
+    monkeypatch.setattr("services.supertonic_tts_service.run_checked", fake_run_checked)
+
+    svc._ensure_runtime()
+
+    assert [str(python), "-m", "pip", "install", "supertonic-test[serve]"] in calls
+
+
+def test_supertonic_startup_error_reads_managed_log(tmp_path):
+    svc = SupertonicTTSService({"install_dir": str(tmp_path / "supertonic3"), "startup_timeout": 1})
+    svc._managed_log_path.parent.mkdir(parents=True)
+    svc._managed_log_path.write_text("missing model file\n", encoding="utf-8")
+
+    class DeadProc:
+        def poll(self):
+            return 1
+
+    with pytest.raises(ServiceError, match="missing model file"):
+        svc._wait_ready(DeadProc())
 
 
 def test_supertonic_runtime_package_default_matches_schema():

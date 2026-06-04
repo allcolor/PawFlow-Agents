@@ -237,6 +237,7 @@ class VoiceboxService(BaseVoiceCloneService, BaseSTTService):
         self.preload_stt_model = str(self.config.get("preload_stt_model", True)).lower() not in {"0", "false", "no"}
         self.preload_timeout = int(self.config.get("preload_timeout") or 1800)
         self._managed_proc = None
+        self._managed_log_path = self.install_dir / "backend" / "pawflow-voicebox.log"
 
     def set_runtime_context(self, user_id: str = "", conversation_id: str = "",
                             agent_name: str = "", **_: object):
@@ -396,13 +397,15 @@ class VoiceboxService(BaseVoiceCloneService, BaseSTTService):
         logger.info("[VOICEBOX] starting managed backend: %s", " ".join(cmd))
         env = os.environ.copy()
         env.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+        self._managed_log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_file = self._managed_log_path.open("ab")
         self._managed_proc = subprocess.Popen(  # nosec B603 - managed backend argv is resolved locally and shell=False is the default.
             cmd,
             cwd=str(cwd) if cwd else None,
             env=env,
             stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
             start_new_session=True,
         )
         self._wait_ready(self._managed_proc)
@@ -493,6 +496,7 @@ class VoiceboxService(BaseVoiceCloneService, BaseSTTService):
             ])
         python = repo / "backend" / "venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
         if python.exists():
+            self._ensure_backend_runner(python, reporter=reporter)
             self._patch_managed_checkout()
             return
         just = shutil.which("just")
@@ -500,6 +504,7 @@ class VoiceboxService(BaseVoiceCloneService, BaseSTTService):
             if reporter:
                 reporter.step("installing_python_requirements", "Running Voicebox just setup-python")
             subprocess.check_call([just, "setup-python"], cwd=str(repo))  # nosec B603 - local setup tool argv without shell.
+            self._ensure_backend_runner(python, reporter=reporter)
             self._patch_managed_checkout()
             return
         backend = repo / "backend"
@@ -513,7 +518,25 @@ class VoiceboxService(BaseVoiceCloneService, BaseSTTService):
             reporter.step("installing_python_requirements", "Installing Voicebox Python requirements")
         subprocess.check_call([str(python), "-m", "pip", "install", "--upgrade", "pip", "-q"])  # nosec B603 - venv pip argv without shell.
         subprocess.check_call([str(python), "-m", "pip", "install", "-r", str(backend / "requirements.txt")])  # nosec B603 - requirements path is inside managed checkout.
+        self._ensure_backend_runner(python, reporter=reporter)
         self._patch_managed_checkout()
+
+    def _ensure_backend_runner(self, python: Path, reporter=None):
+        """Ensure the managed backend can be launched through uvicorn."""
+        try:
+            if subprocess.run(  # nosec B603 - Python executable path is from the managed venv.
+                    [str(python), "-m", "uvicorn", "--version"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False).returncode == 0:
+                return
+        except OSError:
+            pass
+        if reporter:
+            reporter.step("installing_python_requirements", "Installing Voicebox backend runner")
+        subprocess.check_call([  # nosec B603 - fixed pip argv for the managed venv.
+            str(python), "-m", "pip", "install", "uvicorn[standard]>=0.30",
+        ])
 
     def _patch_managed_checkout(self):
         """Apply local hardening patches to the managed Voicebox checkout."""
@@ -605,6 +628,11 @@ class VoiceboxService(BaseVoiceCloneService, BaseSTTService):
                 distro,
                 f"test -x {shlex.quote(linux_python)} && "
                 f"{shlex.quote(linux_python)} -m pip --version >/dev/null"):
+            subprocess.check_call(self._wsl_argv(  # nosec B603 - fixed WSL argv; Python path is shell-quoted.
+                distro,
+                f"{shlex.quote(linux_python)} -m uvicorn --version >/dev/null 2>&1 || "
+                f"{shlex.quote(linux_python)} -m pip install 'uvicorn[standard]>=0.30'",
+            ))
             self._patch_managed_checkout_wsl(target)
             return
         if not backend.exists():
@@ -623,6 +651,7 @@ class VoiceboxService(BaseVoiceCloneService, BaseSTTService):
                 "  backend/venv/bin/python -m pip install --upgrade pip -q",
                 "  backend/venv/bin/python -m pip install -r backend/requirements.txt",
                 "fi",
+                "backend/venv/bin/python -m uvicorn --version >/dev/null 2>&1 || backend/venv/bin/python -m pip install 'uvicorn[standard]>=0.30'",
             ]),
         ))
         self._patch_managed_checkout_wsl(target)
@@ -635,8 +664,9 @@ class VoiceboxService(BaseVoiceCloneService, BaseSTTService):
             if proc is not None and proc.poll() not in {None, 0}:
                 detail = ""
                 try:
-                    detail = (proc.stderr.read(1000) if proc.stderr else b"").decode(
-                        "utf-8", errors="replace").strip()
+                    if self._managed_log_path.exists():
+                        detail = self._managed_log_path.read_text(
+                            encoding="utf-8", errors="replace")[-4000:].strip()
                 except Exception:
                     detail = ""
                 raise ServiceError(f"Voicebox backend exited during startup: {detail}")

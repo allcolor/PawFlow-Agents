@@ -428,6 +428,10 @@ class RelayService(BaseService):
 
     def is_connected(self) -> bool:
         with self._relay_pool_lock:
+            self._relay_pool = [
+                conn for conn in self._relay_pool
+                if not getattr(conn.get("writer"), "_closed", False)
+            ]
             return len(self._relay_pool) > 0
 
     def disconnect(self):

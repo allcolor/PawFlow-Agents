@@ -129,3 +129,47 @@ def test_fs_read_file_resolves_filesystem_service(monkeypatch):
 
     assert result == [ff]
     assert _payload(ff) == {"content": "png-bytes", "encoding": "utf-8", "size": 9}
+
+
+def test_fs_list_services_returns_only_conversation_linked_relays(monkeypatch):
+    class ServiceDef:
+        def __init__(self, service_id, service_type="relay", scope="user"):
+            self.service_id = service_id
+            self.service_type = service_type
+            self.scope = scope
+
+    class Registry:
+        def resolve_definition(self, service_id, *, user_id="", conv_id=""):
+            assert user_id == "alice"
+            assert conv_id == "conv1"
+            if service_id == "linked-relay":
+                return ServiceDef("linked-relay")
+            if service_id == "linked-tool-relay":
+                return ServiceDef("linked-tool-relay", "toolRelay")
+            if service_id == "unlinked-relay":
+                return ServiceDef("unlinked-relay")
+            return None
+
+    import core.relay_bindings as relay_bindings
+    import core.service_registry as service_registry
+
+    monkeypatch.setattr(service_registry.ServiceRegistry, "get_instance", lambda: Registry())
+    monkeypatch.setattr(relay_bindings, "get_linked", lambda cid, agent="": ["linked-relay", "linked-tool-relay"])
+
+    ff = FlowFile(content=b"")
+    result = _handle_files_fs(
+        None, "fs_list_services",
+        {"conversation_id": "conv1"},
+        None, "alice", ff)
+
+    assert result == [ff]
+    assert _payload(ff) == {"services": [{"id": "linked-relay", "type": "relay", "scope": "user"}]}
+
+
+def test_fs_list_services_without_conversation_returns_empty():
+    ff = FlowFile(content=b"")
+    result = _handle_files_fs(
+        None, "fs_list_services", {}, None, "alice", ff)
+
+    assert result == [ff]
+    assert _payload(ff) == {"services": []}

@@ -27,7 +27,7 @@ function closeExplorer(){
 }
 
 function _feLoadSvcs(){
-  action$('fs_list_services').subscribe(d => {
+  action$('fs_list_services',{conversation_id:conversationId}).subscribe(d => {
     _fe.svcs=d.services||[];
     const sel=document.getElementById('feSvcSel');if(!sel)return;
     sel.innerHTML=_fe.svcs.map(s=>`<option value="${s.id}">${s.id} (${s.type})</option>`).join('');
@@ -88,9 +88,9 @@ function _feStatus(){
   const c=document.getElementById('feCount');
   const cl=document.getElementById('feClip');
   if(c){
-    let t=t('itemsCount', { n: _fe.entries.length });
-    if(_fe.sel.size>0)t+=' (' + t('itemsSelected', { n: _fe.sel.size }) + ')';
-    c.textContent=t;
+    let statusText=t('itemsCount', { n: _fe.entries.length });
+    if(_fe.sel.size>0)statusText+=' (' + t('itemsSelected', { n: _fe.sel.size }) + ')';
+    c.textContent=statusText;
   }
   if(cl){
     if(_fe.clip&&_fe.clip.items){

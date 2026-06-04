@@ -454,14 +454,37 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
     from core.handlers._fs_base import find_fs_service as _find_svc, _FS_TYPES
 
     if action == "fs_list_services":
-        from core.handlers._fs_base import find_fs_service as _find_svc, _FS_TYPES
         services = []
+        conv_id = body.get("conversation_id", "")
+        agent_name = body.get("agent_name", "")
         try:
             from core.service_registry import ServiceRegistry
             reg = ServiceRegistry.get_instance()
-            for fs_type in _FS_TYPES:
-                for sdef in reg.resolve_by_type(fs_type, user_id=user_id):
+            seen = set()
+            if conv_id:
+                from core.relay_bindings import get_linked
+                for sid in get_linked(conv_id, agent_name):
+                    if sid in seen:
+                        continue
+                    sdef = reg.resolve_definition(sid, user_id=user_id, conv_id=conv_id)
+                    if not sdef or sdef.service_type not in ("relay", "filesystem"):
+                        continue
+                    seen.add(sid)
                     services.append({"id": sdef.service_id, "type": sdef.service_type, "scope": sdef.scope})
+                try:
+                    from core.remote_fs_bindings import list_tool_filesystems
+                    for item in list_tool_filesystems(user_id, conv_id):
+                        sid = item.get("id", "")
+                        if not sid or sid in seen:
+                            continue
+                        seen.add(sid)
+                        services.append({
+                            "id": sid,
+                            "type": item.get("type", "filesystem"),
+                            "scope": item.get("scope", ""),
+                        })
+                except Exception:
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         except Exception:
             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         flowfile.set_content(json.dumps({"services": services}).encode())

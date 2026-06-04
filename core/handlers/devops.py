@@ -154,7 +154,7 @@ class RunTestsHandler(ToolHandler):
             return "Error: no test files specified"
 
         from core.handlers._fs_base import find_fs_service
-        svc = find_fs_service(self._user_id, service_name)
+        svc = find_fs_service(self._user_id, service_name, self._conversation_id)
         if not svc:
             return "Error: no filesystem service available to run tests"
 

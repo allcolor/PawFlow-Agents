@@ -713,9 +713,14 @@ def test_code_server_proxy_serves_missing_vsda_assets_without_upstream(tmp_path)
     assert js_req.status == 200
     assert js_req.headers["Content-Type"] == "application/javascript"
     assert b"globalThis.vsda_web" in js_req.body
+    assert b"define([], function ()" in js_req.body
 
     wasm_req = FakeReq()
-    wasm_req.path_params = {"session_id": session_id, "token": token, "path": "vsda_bg.wasm"}
+    wasm_req.path_params = {
+        "session_id": session_id,
+        "token": token,
+        "path": "static/node_modules/vsda/rust/web/vsda_bg.wasm",
+    }
     csp.code_http_proxy(wasm_req)
     assert wasm_req.status == 200
     assert wasm_req.headers["Content-Type"] == "application/wasm"

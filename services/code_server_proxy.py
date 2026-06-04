@@ -36,6 +36,9 @@ _VSDA_JS = b"""
     validator: Validator,
     sign: function (value) { return value; }
   };
+  if (typeof define === "function" && define.amd) {
+    define([], function () { return globalThis.vsda_web; });
+  }
 }());
 """.strip()
 

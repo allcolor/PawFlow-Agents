@@ -812,7 +812,7 @@ function _showRelayLinkDialog() {
     document.body.appendChild(overlay);
   });
 }
-function _showRelayInfoDialog(relayId, details) {
+function _showRelayInfoDialog(relayId, details, isDefault) {
   if (typeof details === 'string') try { details = JSON.parse(details); } catch(e) { details = {}; }
   var d = details || {};
   var dl = d._default_local || {};
@@ -874,10 +874,14 @@ function _showRelayInfoDialog(relayId, details) {
 
   var overlay = document.createElement('div');
   overlay.className = 'exec-overlay';
+  var defaultBtn = isDefault ? '' : '<button class="exec-approve" onclick="fireAction(\'relay_default\',{relay_id:' + _pfpJsArg(relayId) + '}); this.closest(\'.exec-overlay\').remove(); setTimeout(loadResources, 500)">' + escapeHtml(t('setDefaultRelay')) + '</button>';
   overlay.innerHTML = '<div class="exec-dialog" style="min-width:340px;">'
     + '<h3>' + escapeHtml(t('relayTitle', { id: relayId })) + '</h3>'
     + infoHtml + localHtml
-    + '<div class="exec-btns"><button class="exec-deny" onclick="this.closest(\'.exec-overlay\').remove()">' + escapeHtml(t('close')) + '</button></div>'
+    + '<div class="exec-btns">'
+    + '<button class="exec-deny" onclick="fireAction(\'relay_unlink\',{relay_id:' + _pfpJsArg(relayId) + '}); this.closest(\'.exec-overlay\').remove(); setTimeout(loadResources, 500)">' + escapeHtml(t('unlink')) + '</button>'
+    + defaultBtn
+    + '<button class="exec-deny" onclick="this.closest(\'.exec-overlay\').remove()">' + escapeHtml(t('close')) + '</button></div>'
     + '</div>';
   document.body.appendChild(overlay);
 }
@@ -1294,7 +1298,7 @@ async function _renderResourcesData(data) {
       if (_relayIds.length) {
         _relayIds.forEach(function(rid) {
           var scopes = _allRelays[rid];
-          var isConvDefault = _rbDefaults['*'] === rid;
+          var isConvDefault = _rbDefaults['*'] === rid || (!_rbDefaults['*'] && _relayIds.length === 1);
           var agentDefaults = [];
           Object.keys(_rbDefaults).forEach(function(scope) {
             if (scope !== '*' && _rbDefaults[scope] === rid) agentDefaults.push(scope);
@@ -1310,7 +1314,7 @@ async function _renderResourcesData(data) {
           var color = isConvDefault ? 'var(--pf-success)' : 'var(--pf-muted)';
           var icon = isConvDefault ? '\u25C9' : '\u25CB';
           var titleText = isConvDefault ? t('defaultRelay') : t('setDefaultRelay');
-          var clickDefault = isConvDefault ? '' : ' onclick="fireAction(\'relay_default\',{relay_id:' + _pfpJsArg(rid) + '}); setTimeout(loadResources, 500)"';
+          var clickDefault = isConvDefault ? '' : ' onclick="event.stopPropagation(); fireAction(\'relay_default\',{relay_id:' + _pfpJsArg(rid) + '}); setTimeout(loadResources, 500)"';
           var det = _rbDetails[rid] || {};
           var connDot = det.connected ? '\u{1F7E2}' : '\u{1F534}';
           var pathInfo = '';
@@ -1319,13 +1323,14 @@ async function _renderResourcesData(data) {
           var _rbDefaultLocal = (_rb.default_local || {})[rid] || {};
           var _detWithLocal = Object.assign({}, det, {_default_local: _rbDefaultLocal});
           var _detJson = _pfpAttr(JSON.stringify(_detWithLocal));
-          liveHtml += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="_showRelayInfoDialog(' + _pfpJsArg(rid) + ',' + _detJson + ');return false;">'
+          var defaultBadge = isConvDefault ? ' <span style="font-size:9px;color:var(--pf-success);">' + escapeHtml(t('defaultRelay')) + '</span>' : '';
+          liveHtml += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" onclick="_showRelayInfoDialog(' + _pfpJsArg(rid) + ',' + _detJson + ',' + (isConvDefault ? 'true' : 'false') + ');return false;" oncontextmenu="_showRelayInfoDialog(' + _pfpJsArg(rid) + ',' + _detJson + ',' + (isConvDefault ? 'true' : 'false') + ');return false;">'
             + '<span style="color:' + color + ';font-size:11px;cursor:pointer;" title="' + _pfpAttr(titleText) + '"' + clickDefault + '>' + icon + '</span>'
             + '<span style="font-size:11px;">' + connDot + '</span>'
-            + '<span style="color:' + color + ';font-size:12px;">' + escapeHtml(rid) + star + '</span>'
+            + '<span style="color:' + color + ';font-size:12px;">' + escapeHtml(rid) + star + '</span>' + defaultBadge
             + agentTags
             + '<span style="cursor:pointer;font-size:11px;color:var(--pf-danger);padding:0 3px;" title="' + _pfpAttr(t('unlink')) + '"'
-            + ' onclick="fireAction(\'relay_unlink\',{relay_id:' + _pfpJsArg(rid) + '}); setTimeout(loadResources, 500)">&times;</span>'
+            + ' onclick="event.stopPropagation(); fireAction(\'relay_unlink\',{relay_id:' + _pfpJsArg(rid) + '}); setTimeout(loadResources, 500)">&times;</span>'
             + '</div>' + pathInfo;
         });
       } else {

@@ -22,7 +22,7 @@ def _handler():
 def test_run_tests_uses_rtk_rewrite_when_enabled(monkeypatch):
     relay = RunTestsRelay()
     monkeypatch.setenv("PAWFLOW_USE_RTK", "true")
-    monkeypatch.setattr("core.handlers._fs_base.find_fs_service", lambda user_id, service_name="": relay)
+    monkeypatch.setattr("core.handlers._fs_base.find_fs_service", lambda user_id, service_name="", conversation_id="": relay)
 
     result = _handler().execute({"test_files": ["tests/test_example.py"]})
 
@@ -36,7 +36,7 @@ def test_run_tests_uses_rtk_rewrite_when_enabled(monkeypatch):
 def test_run_tests_does_not_use_rtk_without_env(monkeypatch):
     relay = RunTestsRelay()
     monkeypatch.delenv("PAWFLOW_USE_RTK", raising=False)
-    monkeypatch.setattr("core.handlers._fs_base.find_fs_service", lambda user_id, service_name="": relay)
+    monkeypatch.setattr("core.handlers._fs_base.find_fs_service", lambda user_id, service_name="", conversation_id="": relay)
 
     result = _handler().execute({"test_files": ["tests/test_example.py"]})
 
@@ -49,7 +49,7 @@ def test_run_tests_does_not_use_rtk_without_env(monkeypatch):
 def test_run_tests_forwards_explicit_timeout(monkeypatch):
     relay = RunTestsRelay()
     monkeypatch.delenv("PAWFLOW_USE_RTK", raising=False)
-    monkeypatch.setattr("core.handlers._fs_base.find_fs_service", lambda user_id, service_name="": relay)
+    monkeypatch.setattr("core.handlers._fs_base.find_fs_service", lambda user_id, service_name="", conversation_id="": relay)
 
     result = _handler().execute({"test_files": ["tests/test_example.py"], "timeout": 240})
 
@@ -65,7 +65,7 @@ def test_run_tests_accepts_max_output_schema_and_truncates(monkeypatch):
 
     relay = LongRelay()
     monkeypatch.delenv("PAWFLOW_USE_RTK", raising=False)
-    monkeypatch.setattr("core.handlers._fs_base.find_fs_service", lambda user_id, service_name="": relay)
+    monkeypatch.setattr("core.handlers._fs_base.find_fs_service", lambda user_id, service_name="", conversation_id="": relay)
 
     handler = _handler()
     result = handler.execute({"test_files": ["tests/test_example.py"], "max_output": 10})
@@ -74,3 +74,20 @@ def test_run_tests_accepts_max_output_schema_and_truncates(monkeypatch):
     assert "x" * 10 in result
     assert "x" * 11 not in result
     assert "... (truncated)" in result
+
+
+def test_run_tests_resolves_filesystem_in_conversation_scope(monkeypatch):
+    relay = RunTestsRelay()
+    seen = {}
+
+    def fake_find(user_id, service_name="", conversation_id=""):
+        seen["args"] = (user_id, service_name, conversation_id)
+        return relay
+
+    monkeypatch.delenv("PAWFLOW_USE_RTK", raising=False)
+    monkeypatch.setattr("core.handlers._fs_base.find_fs_service", fake_find)
+
+    result = _handler().execute({"test_files": ["tests/test_example.py"]})
+
+    assert "Tests PASSED" in result
+    assert seen["args"] == ("user-1", "", "conv-1")

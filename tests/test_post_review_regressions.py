@@ -777,3 +777,16 @@ def test_code_server_worker_does_not_pass_base_path_to_process():
     assert 'str(Path(root_dir).resolve())' in start_block
     assert '"--disable-workspace-trust"' in start_block
     assert '"upstream_base_path": _upstream_base_path' in start_block
+
+
+def test_code_server_worker_forwards_leftover_backend_ws_frames():
+    src = open("pawflow_relay/worker.py", encoding="utf-8").read()
+    start = src.index('if action == "cs_ws_open":')
+    stop = src.index('if action == "cs_ws_send":', start)
+    ws_open_block = src[start:stop]
+
+    assert "pass  # Leftover bytes will be read by the reader thread" not in ws_open_block
+    assert "def _forward_cs_ws_frame" in ws_open_block
+    assert "if _leftover:" in ws_open_block
+    assert "_forward_cs_ws_frame(_ws_sid, _leftover" in ws_open_block
+    assert ws_open_block.index("if _leftover:") < ws_open_block.index("_t.start()")

@@ -699,6 +699,20 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                     _execute_command._cs_ws_sessions = {}
                 _execute_command._cs_ws_sessions[_ws_sid] = {"sock": _cs_sock}
 
+                def _forward_cs_ws_frame(_sid, _raw_frame, _op, _payload, _fin=True):
+                    sys.stderr.write(f"[FSRelay] cs_ws_data: sid={_sid} op={_op} len={len(_payload)}\n")
+                    _fwd = json.dumps({
+                        "type": "cs_ws_data",
+                        "session_id": _sid,
+                        "frame": base64.b64encode(_raw_frame).decode("ascii"),
+                        "data": base64.b64encode(_payload).decode("ascii"),
+                        "opcode": -1,
+                        "fin": _fin,
+                    })
+                    with _send_lock:
+                        _ws_frame_send(ws_sock_ref[0], _fwd.encode("utf-8"))
+                    sys.stderr.write(f"[FSRelay] cs_ws_data sent ok\n")
+
                 def _cs_ws_reader(_sock, _sid):
                     sys.stderr.write(f"[FSRelay] cs_ws_reader started for {_sid}\n")
                     try:
@@ -749,19 +763,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                             if _masked:
                                 _payload = bytes(b ^ _mask[i % 4] for i, b in enumerate(_payload))
                             _raw_frame = b"".join(_frame_parts)
-                            # Forward to server
-                            sys.stderr.write(f"[FSRelay] cs_ws_data: sid={_sid} op={_op} len={len(_payload)}\n")
-                            _fwd = json.dumps({
-                                "type": "cs_ws_data",
-                                "session_id": _sid,
-                                "frame": base64.b64encode(_raw_frame).decode("ascii"),
-                                "data": base64.b64encode(_payload).decode("ascii"),
-                                "opcode": -1,
-                                "fin": _fin,
-                            })
-                            with _send_lock:
-                                _ws_frame_send(ws_sock_ref[0], _fwd.encode("utf-8"))
-                            sys.stderr.write(f"[FSRelay] cs_ws_data sent ok\n")
+                            _forward_cs_ws_frame(_sid, _raw_frame, _op, _payload, _fin)
                             if _op == 0x08:  # close
                                 break
                     except Exception:
@@ -779,14 +781,14 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                         except Exception:
                             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
-                _t = _threading.Thread(target=_cs_ws_reader, args=(_cs_sock, _ws_sid), daemon=True)
-                _t.start()
-                _execute_command._cs_ws_sessions[_ws_sid]["reader"] = _t
                 # Forward any leftover data after handshake
                 _hdr_end = _resp.index(b"\r\n\r\n") + 4
                 _leftover = _resp[_hdr_end:]
                 if _leftover:
-                    pass  # Leftover bytes will be read by the reader thread
+                    _forward_cs_ws_frame(_ws_sid, _leftover, _leftover[0] & 0x0F, b"", bool(_leftover[0] & 0x80))
+                _t = _threading.Thread(target=_cs_ws_reader, args=(_cs_sock, _ws_sid), daemon=True)
+                _t.start()
+                _execute_command._cs_ws_sessions[_ws_sid]["reader"] = _t
                 return {"ok": True}
             except Exception as e:
                 return {"ok": False, "error": f"cs_ws_open error: {e}"}

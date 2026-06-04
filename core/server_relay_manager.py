@@ -72,6 +72,35 @@ def _cfg(key: str) -> str:
         return _DEFAULTS[key]
 
 
+def _host_run_uid_gid() -> tuple[int, int] | None:
+    """Return the host UID/GID that should own managed relay files."""
+    try:
+        uid = int(os.environ.get("PAWFLOW_RUN_UID", "").strip())
+        gid = int(os.environ.get("PAWFLOW_RUN_GID", "").strip())
+    except (TypeError, ValueError):
+        return None
+    if uid < 0 or gid < 0:
+        return None
+    return uid, gid
+
+
+def _chown_for_host_runner(path: Path) -> None:
+    """Keep bind-mounted relay runtime paths owned by the PawFlow host user."""
+    owner = _host_run_uid_gid()
+    if owner is None:
+        return
+    uid, gid = owner
+    try:
+        for root, dirs, files in os.walk(path):
+            os.chown(root, uid, gid)
+            for name in dirs:
+                os.chown(os.path.join(root, name), uid, gid)
+            for name in files:
+                os.chown(os.path.join(root, name), uid, gid)
+    except PermissionError:
+        logger.warning("Could not chown relay runtime path %s to %s:%s", path, uid, gid)
+
+
 from core.docker_utils import docker_cmd, get_host_ip, to_host_path
 
 
@@ -204,6 +233,7 @@ def _prepare_relay_code_dir(runtime_dir: Path) -> Path:
         json.dumps({"source": str(root), "source_hash": source_hash}, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+    _chown_for_host_runner(code_dir)
     return code_dir
 
 
@@ -284,6 +314,7 @@ class ServerRelayManager:
         volume = _volume_name(conv_id, kind)
         runtime_dir = _relay_runtime_dir(user_id, conv_id, kind)
         runtime_dir.mkdir(parents=True, exist_ok=True)
+        _chown_for_host_runner(runtime_dir)
         runtime_host_dir = _relay_runtime_host_dir(runtime_dir)
         host_ip = get_host_ip()
 
@@ -348,6 +379,8 @@ class ServerRelayManager:
             "--env", f"PAWFLOW_RELAY_TOKEN={token}",
             "--env", f"PAWFLOW_RELAY_ID={relay_id}",
             "--env", f"PAWFLOW_RELAY_DIR={relay_workspace}",
+            "--env", f"PAWFLOW_RUN_UID={os.environ.get('PAWFLOW_RUN_UID', '')}",
+            "--env", f"PAWFLOW_RUN_GID={os.environ.get('PAWFLOW_RUN_GID', '')}",
             "--env", "PAWFLOW_RELAY_ALLOW_EXEC=1",
             "--env", "PAWFLOW_RELAY_INSECURE=1",
             "--env", f"PAWFLOW_INTERNAL_TOKEN={internal_token}",
@@ -482,6 +515,7 @@ class ServerRelayManager:
         volume = _relay_volume_name(relay_id, kind)
         runtime_dir = _relay_runtime_dir_for_scope(scope, user_id, scope_id, kind)
         runtime_dir.mkdir(parents=True, exist_ok=True)
+        _chown_for_host_runner(runtime_dir)
         runtime_host_dir = _relay_runtime_host_dir(runtime_dir)
         host_ip = get_host_ip()
 
@@ -524,6 +558,8 @@ class ServerRelayManager:
             "--env", f"PAWFLOW_RELAY_TOKEN={token}",
             "--env", f"PAWFLOW_RELAY_ID={relay_id}",
             "--env", f"PAWFLOW_RELAY_DIR={relay_workspace}",
+            "--env", f"PAWFLOW_RUN_UID={os.environ.get('PAWFLOW_RUN_UID', '')}",
+            "--env", f"PAWFLOW_RUN_GID={os.environ.get('PAWFLOW_RUN_GID', '')}",
             "--env", "PAWFLOW_RELAY_ALLOW_EXEC=1",
             "--env", "PAWFLOW_RELAY_INSECURE=1",
             "--env", f"PAWFLOW_INTERNAL_TOKEN={internal_token}",

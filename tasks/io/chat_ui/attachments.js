@@ -292,7 +292,7 @@ async function send() {
   renderAttachments();
 
   // Allow stacking: don't block on 'sending', just track pending count
-  if (typeof _ensureSSEBeforeUserAction === 'function') _ensureSSEBeforeUserAction();
+  if (typeof _ensureSSEBeforeUserAction === 'function') await _ensureSSEBeforeUserAction();
   sending = true;
   document.getElementById('status').textContent = t('sending');
   input.value = '';

@@ -1,6 +1,7 @@
 // Connect SSE for a conversation
 var _sseOnReadyCallback = null;
 var _sseClientId = null;
+var _sseCreatedAt = 0;
 
 function getSSEClientId() {
   if (_sseClientId) return _sseClientId;
@@ -64,6 +65,7 @@ function connectSSE(cid, onReady, opts) {
     + '&client_id=' + encodeURIComponent(getSSEClientId())
     + (token ? '&token=' + encodeURIComponent(token) : '')
     + (_noReplay ? '&replay=false' : '');
+  _sseCreatedAt = Date.now();
   eventSource = new EventSource(url);
   _wrapSseForExtensions(eventSource);
 
@@ -1800,11 +1802,34 @@ function _forceSSEReconnect(cid, opts) {
   connectSSE(cid, null, opts || { noReplay: true });
 }
 
+function _waitForSSEOpen(timeoutMs) {
+  if (!eventSource) return Promise.resolve(false);
+  if (eventSource.readyState === EventSource.OPEN) return Promise.resolve(true);
+  const es = eventSource;
+  return new Promise(resolve => {
+    let done = false;
+    const finish = ok => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve(!!ok && es === eventSource && eventSource.readyState === EventSource.OPEN);
+    };
+    const timer = setTimeout(() => finish(false), timeoutMs || 2000);
+    es.addEventListener('open', () => finish(true), { once: true });
+    es.addEventListener('error', () => finish(false), { once: true });
+  });
+}
+
 function _ensureSSEBeforeUserAction() {
-  if (!conversationId) return;
-  if (_sseIsHealthy()) return;
+  if (!conversationId) return Promise.resolve(false);
+  if (_sseIsHealthy()) return Promise.resolve(true);
+  if (eventSource && eventSource.readyState === EventSource.CONNECTING
+      && Date.now() - _sseCreatedAt < 3000) {
+    return _waitForSSEOpen(2000);
+  }
   console.warn('[SSE] user action while stream is stale — reconnecting before send');
-  _forceSSEReconnect(conversationId, { noReplay: true });
+  _forceSSEReconnect(conversationId, {});
+  return _waitForSSEOpen(2000);
 }
 
 // SSE liveness watchdog. Pings arrive every ~15s; if we haven't seen one

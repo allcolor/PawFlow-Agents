@@ -37,6 +37,14 @@ def test_sse_reconnect_paths_never_poll_render_history():
 def test_user_send_reconnects_stale_sse_without_spoofing_activity():
     assert "_ensureSSEBeforeUserAction" in ATTACHMENTS_JS
     assert "_ensureSSEBeforeUserAction" in CMD_AGENT_JS
+    assert "await _ensureSSEBeforeUserAction()" in ATTACHMENTS_JS
+    assert "function _waitForSSEOpen" in SSE_JS
+    ensure_block = SSE_JS[
+        SSE_JS.index("function _ensureSSEBeforeUserAction"):
+        SSE_JS.index("// SSE liveness watchdog")]
+    assert "EventSource.CONNECTING" in ensure_block
+    assert "_forceSSEReconnect(conversationId, {});" in ensure_block
+    assert "{ noReplay: true }" not in ensure_block
     assert "lastSSEActivity = Date.now();" not in ATTACHMENTS_JS
     assert "lastSSEActivity = Date.now();" not in CMD_AGENT_JS
 

@@ -91,6 +91,22 @@ def test_server_relay_host_path_maps_container_data_dir(monkeypatch, tmp_path):
         host_data / "runtime" / "relay" / "alice" / "conv1")
 
 
+def test_server_relay_runtime_chown_uses_host_runner_uid_gid(monkeypatch, tmp_path):
+    calls = []
+    root = tmp_path / "runtime"
+    (root / "child").mkdir(parents=True)
+    (root / "child" / "file.txt").write_text("x", encoding="utf-8")
+    monkeypatch.setenv("PAWFLOW_RUN_UID", "1234")
+    monkeypatch.setenv("PAWFLOW_RUN_GID", "5678")
+    monkeypatch.setattr(srm.os, "chown", lambda path, uid, gid: calls.append((str(path), uid, gid)))
+
+    srm._chown_for_host_runner(root)
+
+    assert (str(root), 1234, 5678) in calls
+    assert (str(root / "child"), 1234, 5678) in calls
+    assert (str(root / "child" / "file.txt"), 1234, 5678) in calls
+
+
 def test_prepare_relay_code_dir_stages_runtime_from_server_image(monkeypatch, tmp_path):
     root = tmp_path / "app"
     tools = root / "tools"

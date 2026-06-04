@@ -130,6 +130,8 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert 'RUN_UID="$(id -u)"' in run_src
     assert 'RUN_GID="$(id -g)"' in run_src
     assert 'PAWFLOW_HOST_APP_DIR="$SOURCE_DIR"' in run_src
+    assert 'PAWFLOW_RUN_UID="$RUN_UID"' in run_src
+    assert 'PAWFLOW_RUN_GID="$RUN_GID"' in run_src
     assert 'PAWFLOW_APP_DIR="/app"' in run_src
     assert "BOOTSTRAP_GATEWAY_KEY" in run_src
     assert "BOOTSTRAP_RESET" in run_src
@@ -151,6 +153,11 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert "data/runtime" in dockerignore
     assert "data/system" in dockerignore
     assert "pawflow-relay-desktop/node_modules" in dockerignore
+
+    relay_dev = Path("docker/relay-dev/Dockerfile").read_text(encoding="utf-8")
+    assert 'run_uid="1001"' in relay_dev
+    assert 'run_gid="1001"' in relay_dev
+    assert 'usermod -u "$run_uid" pawflow' in relay_dev
 
     install_src = install.read_text(encoding="utf-8")
     assert "printenv PAWFLOW_IMAGE" in install_src

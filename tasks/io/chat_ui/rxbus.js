@@ -91,9 +91,11 @@ function _ensureUIActionSSE(force) {
   _uiActionEventSource = new EventSource(url);
   _uiActionEventSource.onopen = () => {
     _uiActionLastActivity = Date.now();
+    _syncPendingActionsFromServer();
   };
   _uiActionEventSource.addEventListener('sse_ping', () => {
     _uiActionLastActivity = Date.now();
+    _syncPendingActionsFromServer();
   });
   _uiActionEventSource.addEventListener('command_result', (e) => {
     _uiActionLastActivity = Date.now();
@@ -173,6 +175,37 @@ function _updateLoadingState() {
     + '<span class="ual-text">' + _escapeActionHtml(working) + ': ' + _escapeActionHtml(label) + '<span class="ual-dots"></span></span>'
     + '<span class="ual-bar" aria-hidden="true"></span>';
   el.style.display = 'inline-flex';
+}
+
+function _syncPendingActionsFromServer() {
+  if (!_pendingActionItems.size) return;
+  const callIds = Array.from(_pendingActionItems.keys());
+  const body = {
+    action: 'list_ui_action_status',
+    reply_conversation_id: _uiActionConversationId(),
+    call_ids: callIds,
+  };
+  if (typeof conversationId !== 'undefined' && conversationId) {
+    body.conversation_id = conversationId;
+  }
+  fetch(API.replace(/\/api\/agent$/, '/api/ui'), {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify(body),
+    credentials: 'same-origin',
+  }).then(resp => resp.json()).then(data => {
+    const rows = data && Array.isArray(data.actions) ? data.actions : [];
+    rows.forEach(row => {
+      if (!row || !row._callId) return;
+      if (row.status === 'done' || row.status === 'error') {
+        _pushCommandResult(row);
+      } else if (row.status === 'unknown') {
+        _untrackPendingAction(row._callId);
+      }
+    });
+  }).catch(err => {
+    console.warn('[action$] pending action sync failed', err);
+  });
 }
 
 /**

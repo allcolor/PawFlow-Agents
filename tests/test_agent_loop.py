@@ -1467,6 +1467,100 @@ class TestContextActionsAsync(unittest.TestCase):
         finally:
             self._bus.unsubscribe(reply_conv, writer)
 
+    def test_ui_action_status_registry_is_server_source_of_truth(self):
+        import time
+
+        task = self._make_task()
+        reply_conv = "__ui__:status_registry"
+        call_id = "call-status-registry"
+        writer = self._bus.subscribe(reply_conv)
+        try:
+            ff = FlowFile(content=json.dumps({
+                "action": "pfp_list_installed",
+                "conversation_id": "status_registry",
+                "scope": "user",
+                "_reply_conversation_id": reply_conv,
+                "_call_id": call_id,
+            }).encode())
+            ack = json.loads(task._handle_action(ff)[0].get_content())
+            assert ack["status"] == "accepted"
+
+            def _status():
+                status_ff = FlowFile(content=json.dumps({
+                    "action": "list_ui_action_status",
+                    "reply_conversation_id": reply_conv,
+                    "call_ids": [call_id],
+                }).encode())
+                return json.loads(task._handle_action(status_ff)[0].get_content())
+
+            status = _status()
+            assert status["actions"][0]["status"] in {"pending", "done"}
+            assert status["actions"][0]["_callId"] == call_id
+
+            deadline = time.monotonic() + 2.0
+            while time.monotonic() < deadline:
+                try:
+                    item = writer._queue.get(timeout=0.1)
+                except Exception:
+                    continue
+                if getattr(item, "event", "") == "command_result":
+                    break
+            else:
+                raise AssertionError("No command_result event received")
+
+            status = _status()
+            row = status["actions"][0]
+            assert row["status"] == "done"
+            assert row["action"] == "pfp_list_installed"
+            assert row["_callId"] == call_id
+            assert json.loads(row["result"])["packages"] == []
+        finally:
+            self._bus.unsubscribe(reply_conv, writer)
+
+    def test_unhandled_ui_action_publishes_error_and_clears_status(self):
+        import time
+
+        task = self._make_task()
+        reply_conv = "__ui__:unhandled_status"
+        call_id = "call-unhandled-status"
+        writer = self._bus.subscribe(reply_conv)
+        try:
+            ff = FlowFile(content=json.dumps({
+                "action": "definitely_missing_action",
+                "conversation_id": "unhandled_status",
+                "_reply_conversation_id": reply_conv,
+                "_call_id": call_id,
+            }).encode())
+            ack = json.loads(task._handle_action(ff)[0].get_content())
+            assert ack["status"] == "accepted"
+
+            event_data = None
+            deadline = time.monotonic() + 2.0
+            while time.monotonic() < deadline:
+                try:
+                    item = writer._queue.get(timeout=0.1)
+                except Exception:
+                    continue
+                if getattr(item, "event", "") == "command_result":
+                    event_data = item.data
+                    if isinstance(event_data, str):
+                        event_data = json.loads(event_data)
+                    break
+            assert event_data is not None, "No command_result event received"
+            assert event_data["_callId"] == call_id
+            assert "Unhandled UI action" in event_data["error"]
+
+            status_ff = FlowFile(content=json.dumps({
+                "action": "list_ui_action_status",
+                "reply_conversation_id": reply_conv,
+                "call_ids": [call_id],
+            }).encode())
+            row = json.loads(task._handle_action(status_ff)[0].get_content())["actions"][0]
+            assert row["status"] == "error"
+            assert row["error"] == event_data["error"]
+        finally:
+            self._bus.unsubscribe(reply_conv, writer)
+
     def _exec_async(self, task, body, timeout=2.0):
         """Execute an action through the real async path.
 

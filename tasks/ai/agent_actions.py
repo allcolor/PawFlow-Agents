@@ -50,6 +50,75 @@ _BG_ACTION_QUEUE = deque()
 _BG_ACTION_QUEUE_COND = threading.Condition()
 _BG_ACTION_SCHEDULER_STARTED = False
 _BG_ACTION_LAST_ENQUEUE = 0.0
+_UI_ACTION_STATUS_LOCK = threading.Lock()
+_UI_ACTION_STATUS: Dict[str, dict] = {}
+_UI_ACTION_STATUS_TTL = float(os.getenv("PAWFLOW_UI_ACTION_STATUS_TTL", "600") or "600")
+_UI_ACTION_STATUS_MAX = int(os.getenv("PAWFLOW_UI_ACTION_STATUS_MAX", "5000") or "5000")
+
+
+def _ui_action_status_key(reply_conversation_id: str, call_id: str) -> str:
+    return f"{reply_conversation_id}\0{call_id}"
+
+
+def _prune_ui_action_status(now: Optional[float] = None) -> None:
+    now = now or time.time()
+    expired = [
+        key for key, row in _UI_ACTION_STATUS.items()
+        if now - float(row.get("updated_at", 0) or 0) > _UI_ACTION_STATUS_TTL
+    ]
+    for key in expired:
+        _UI_ACTION_STATUS.pop(key, None)
+    overflow = len(_UI_ACTION_STATUS) - _UI_ACTION_STATUS_MAX
+    if overflow > 0:
+        for key, _row in sorted(
+                _UI_ACTION_STATUS.items(), key=lambda kv: kv[1].get("updated_at", 0))[:overflow]:
+            _UI_ACTION_STATUS.pop(key, None)
+
+
+def _record_ui_action_pending(reply_conversation_id: str, call_id: str,
+                              action: str, conversation_id: str) -> None:
+    if not reply_conversation_id or not call_id:
+        return
+    now = time.time()
+    with _UI_ACTION_STATUS_LOCK:
+        _prune_ui_action_status(now)
+        _UI_ACTION_STATUS[_ui_action_status_key(reply_conversation_id, call_id)] = {
+            "status": "pending", "action": action,
+            "conversation_id": conversation_id, "_callId": call_id,
+            "reply_conversation_id": reply_conversation_id,
+            "created_at": now, "updated_at": now,
+        }
+
+
+def _record_ui_action_done(reply_conversation_id: str, call_id: str,
+                           payload: dict) -> None:
+    if not reply_conversation_id or not call_id:
+        return
+    now = time.time()
+    with _UI_ACTION_STATUS_LOCK:
+        _prune_ui_action_status(now)
+        row = dict(payload)
+        row.update({
+            "status": "done" if not payload.get("error") else "error",
+            "reply_conversation_id": reply_conversation_id,
+            "created_at": _UI_ACTION_STATUS.get(
+                _ui_action_status_key(reply_conversation_id, call_id), {}).get("created_at", now),
+            "updated_at": now,
+        })
+        _UI_ACTION_STATUS[_ui_action_status_key(reply_conversation_id, call_id)] = row
+
+
+def _list_ui_action_status(reply_conversation_id: str, call_ids: list) -> list:
+    with _UI_ACTION_STATUS_LOCK:
+        _prune_ui_action_status()
+        out = []
+        for call_id in call_ids:
+            row = _UI_ACTION_STATUS.get(_ui_action_status_key(reply_conversation_id, str(call_id)))
+            if row:
+                out.append(dict(row))
+            else:
+                out.append({"_callId": str(call_id), "status": "unknown"})
+        return out
 
 
 def _ensure_bg_action_scheduler() -> None:
@@ -147,6 +216,16 @@ class AgentActionsMixin:
         reply_conversation_id = body.get("_reply_conversation_id", "") or body.get("conversation_id", "")
         call_id = body.get("_call_id", "")
 
+        if action == "list_ui_action_status":
+            target_reply = body.get("reply_conversation_id", "") or body.get("_reply_conversation_id", "")
+            call_ids = body.get("call_ids", [])
+            if not isinstance(call_ids, list):
+                call_ids = []
+            flowfile.set_content(json.dumps({
+                "actions": _list_ui_action_status(target_reply, call_ids),
+            }, ensure_ascii=False).encode())
+            return [flowfile]
+
         result_action = action
 
         # Unified command dispatch: parse /command text → action body → redispatch
@@ -231,6 +310,7 @@ class AgentActionsMixin:
         }
         if call_id:
             payload["_callId"] = call_id
+        _record_ui_action_done(reply_conversation_id, call_id, payload)
         ConversationEventBus.instance().publish_event(
             reply_conversation_id, "command_result", payload)
         from tasks.ai.agent_streaming import SERVER_START_TIME
@@ -247,6 +327,8 @@ class AgentActionsMixin:
                        result_action: str = ""):
         """Run an action in background. Return ack immediately, result via SSE."""
         result_action = result_action or action
+        _record_ui_action_pending(
+            reply_conversation_id, call_id, result_action, conversation_id)
         import copy
         _body = copy.deepcopy(body)
         _body["_result_action"] = result_action
@@ -263,6 +345,7 @@ class AgentActionsMixin:
                 }
                 if call_id:
                     payload["_callId"] = call_id
+                _record_ui_action_done(reply_conversation_id, call_id, payload)
                 ConversationEventBus.instance().publish_event(
                     reply_conversation_id, "command_result", payload)
             except Exception:
@@ -289,9 +372,11 @@ class AgentActionsMixin:
                         }
                         if call_id:
                             payload["_callId"] = call_id
+                        _record_ui_action_done(reply_conversation_id, call_id, payload)
                         ConversationEventBus.instance().publish_event(
                             reply_conversation_id, "command_result", payload)
                         return
+                _publish_error(f"Unhandled UI action: {action}")
             except Exception as e:
                 logger.error("[bg-cmd] %s failed: %s", action, e, exc_info=True)
                 _publish_error(str(e))
@@ -644,6 +729,7 @@ class AgentActionsMixin:
                 }
                 if call_id:
                     data["_callId"] = call_id
+                _record_ui_action_done(reply_conversation_id, call_id, data)
                 bus.publish_event(reply_conversation_id, "command_result", data)
             except Exception:
                 logger.debug("context op command_result publish failed", exc_info=True)

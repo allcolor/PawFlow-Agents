@@ -1580,6 +1580,9 @@ def test_ui_actions_have_no_sync_allowlist_and_use_reply_bus():
     assert "new EventSource(url)" in rxbus_src
     assert "new rxjs.ReplaySubject" in rxbus_src
     assert "r._callId !== _callId" in rxbus_src
+    assert "list_ui_action_status" in actions_src
+    assert "list_ui_action_status" in rxbus_src
+    assert "setTimeout(() =>" not in rxbus_src[rxbus_src.index("function action$"):]
 
 
 def test_agent_background_llm_calls_pass_provider_agnostic_scope():

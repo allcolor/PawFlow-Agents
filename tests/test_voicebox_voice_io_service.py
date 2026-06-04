@@ -75,8 +75,12 @@ def test_voicebox_installs_backend_runner_when_missing(tmp_path, monkeypatch):
     svc = VoiceboxService({"install_dir": str(tmp_path)})
     svc._ensure_backend_runner(python)
 
-    assert [str(python), "-m", "uvicorn", "--version"] in calls
+    assert [str(python), "-c", "import uvicorn, torch"] in calls
     assert [str(python), "-m", "pip", "install", "uvicorn[standard]>=0.30"] in calls
+    assert [
+        str(python), "-m", "pip", "install", "torch>=2.3",
+        "--index-url", "https://download.pytorch.org/whl/cpu",
+    ] in calls
 
 
 def test_voicebox_startup_error_reads_backend_log(tmp_path):

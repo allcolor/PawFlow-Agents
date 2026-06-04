@@ -195,7 +195,11 @@ def test_files_panel_supports_batch_delete_clear_and_upload_ttl():
     assert "tr.file-selected" in TEMPLATE_HTML
     assert "file-panel-actions" in TEMPLATE_HTML
     assert "clearFileStoreConfirm" in Path("tasks/io/chat_ui/i18n/en.json").read_text(encoding="utf-8")
-    assert 'PAWFLOW_WEBCHAT_UPLOAD_TTL_SECONDS", "3600"' in HTTP_LISTENER
+    assert "resolve_ttl_seconds" in HTTP_LISTENER
+    assert "webchat_upload_ttl_seconds" in HTTP_LISTENER
+    assert "attachment_ttl_seconds" in HTTP_LISTENER
+    assert 'PAWFLOW_WEBCHAT_UPLOAD_TTL_SECONDS' in HTTP_LISTENER
+    assert "default=3600" in HTTP_LISTENER
 
 
 def test_autoscroll_only_stops_on_user_scroll_intent():

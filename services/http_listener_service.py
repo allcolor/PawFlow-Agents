@@ -856,6 +856,7 @@ class _RequestHandler(BaseHTTPRequestHandler):
         """
         from email.parser import BytesParser
         from core.file_store import FileStore
+        from core.file_ttl import resolve_ttl_seconds
 
         user_id = ""
         if session and session is not True:
@@ -887,11 +888,14 @@ class _RequestHandler(BaseHTTPRequestHandler):
                     except ValueError:
                         ttl = 0
         if ttl <= 0:
-            try:
-                ttl = int(os.environ.get("PAWFLOW_WEBCHAT_UPLOAD_TTL_SECONDS", "3600"))
-            except ValueError:
-                ttl = 3600
-        ttl = max(60, ttl)
+            ttl = resolve_ttl_seconds(
+                conversation_id=conv_id,
+                conv_keys=("webchat_upload_ttl_seconds", "attachment_ttl_seconds"),
+                env_key="PAWFLOW_WEBCHAT_UPLOAD_TTL_SECONDS",
+                default=3600,
+            )
+        else:
+            ttl = max(60, ttl)
 
         store = FileStore.instance()
         results = []

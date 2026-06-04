@@ -69,6 +69,8 @@ If the key is not found in the specified scope, the expression remains unresolve
 | FlowFile attributes | set by tasks at runtime | `updateAttribute` task |
 | Environment variables | OS environment | system configuration |
 
+Conversation parameters can also override transient FileStore TTLs used by chat artifacts. Set `webchat_upload_ttl_seconds` or `attachment_ttl_seconds` to control user-uploaded attachment retention, and `screenshot_ttl_seconds` or `webchat_screenshot_ttl_seconds` to control screenshot retention. Values are seconds and are clamped to at least 60 seconds.
+
 ## Operators Reference
 
 Operations are chained with `:` and applied left-to-right. Arguments are passed in parentheses with quoted strings.

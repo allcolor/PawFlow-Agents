@@ -6,6 +6,8 @@ from typing import Any, Dict
 from core.handlers._fs_base import BaseFsHandler
 
 logger = logging.getLogger(__name__)
+SCREENSHOT_TTL_SECONDS = 5 * 60
+_SCREENSHOT_TTL_KEYS = ("screenshot_ttl_seconds", "webchat_screenshot_ttl_seconds")
 
 
 class ScreenHandler(BaseFsHandler):
@@ -178,12 +180,19 @@ class ScreenHandler(BaseFsHandler):
                     import base64
                     img_bytes = base64.b64decode(b64_data)
                     from core.file_store import FileStore
+                    from core.file_ttl import resolve_ttl_seconds
                     import time
+                    conversation_id = getattr(self, '_conversation_id', '') or ''
                     fname = f"screenshot_{int(time.time())}.png"
                     fid = FileStore.instance().store(
                         fname, img_bytes, "image/png",
                         user_id=self._user_id,
-                        conversation_id=getattr(self, '_conversation_id', '') or '',
+                        conversation_id=conversation_id,
+                        ttl=resolve_ttl_seconds(
+                            conversation_id=conversation_id,
+                            conv_keys=_SCREENSHOT_TTL_KEYS,
+                            env_key="PAWFLOW_SCREENSHOT_TTL_SECONDS",
+                            default=SCREENSHOT_TTL_SECONDS),
                         category="screenshot")
                     url = f"fs://filestore/{fid}/{fname}"
                     size_info = f"\nScreen resolution: {width}x{height}" if width and height else ""

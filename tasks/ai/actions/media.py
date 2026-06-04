@@ -165,6 +165,46 @@ def _handle_media(self, action, body, store, user_id, flowfile):
                     logger.debug("[STT] transient FileStore cleanup failed: %s", exc)
         return [flowfile]
 
+    if action == "stt_warmup":
+        conv_id = body.get("conversation_id", "")
+        agent_name = body.get("agent_name", "") or "agent"
+        service_name = body.get("service") or body.get("stt_service") or ""
+        if service_name:
+            try:
+                from core.service_registry import ServiceRegistry
+                svc = ServiceRegistry.get_instance().resolve(
+                    service_name, user_id=user_id, conv_id=conv_id)
+                err = "" if svc else f"STT service '{service_name}' not found or not connected"
+            except Exception as exc:
+                svc = None
+                err = f"STT service '{service_name}' failed to resolve: {exc}"
+        else:
+            resolver = self._make_stt_resolver(
+                user_id, conv_id, agent_name, ("transcribe",))
+            svc, err = resolver()
+        if not svc:
+            flowfile.set_content(json.dumps({"ok": False, "error": err or "no STT service available"}).encode())
+            return [flowfile]
+        try:
+            if hasattr(svc, "set_runtime_context"):
+                svc.set_runtime_context(
+                    user_id=user_id, conversation_id=conv_id,
+                    agent_name=agent_name)
+            warmup = getattr(svc, "warmup_stt", None)
+            if callable(warmup):
+                warmup(
+                    language=body.get("language", "") or "",
+                    model=body.get("model", "") or "",
+                )
+            else:
+                ensure = getattr(svc, "ensure_connected", None)
+                if callable(ensure):
+                    ensure()
+            flowfile.set_content(json.dumps({"ok": True}).encode())
+        except Exception as exc:
+            flowfile.set_content(json.dumps({"ok": False, "error": str(exc)}).encode())
+        return [flowfile]
+
     if action == "tts_synthesize":
         from core.handlers.capabilities import SpeakHandler
         import re

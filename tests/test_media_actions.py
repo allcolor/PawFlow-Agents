@@ -65,6 +65,17 @@ class _WarmupTtsService:
         self.calls.append(("warmup", kwargs))
 
 
+class _WarmupSttService:
+    def __init__(self):
+        self.calls = []
+
+    def set_runtime_context(self, **kwargs):
+        self.calls.append(("context", kwargs))
+
+    def warmup_stt(self, **kwargs):
+        self.calls.append(("warmup_stt", kwargs))
+
+
 def test_stt_transcribe_deletes_transient_filestore_audio(tmp_path, monkeypatch):
     conv_store = ConversationStore(store_dir=str(tmp_path / "conversations"))
     file_store = FileStore(base_dir=str(tmp_path / "files"))
@@ -184,4 +195,42 @@ def test_tts_warmup_invokes_service_warmup(tmp_path, monkeypatch):
     assert svc.calls == [
         ("context", {"user_id": "alice", "conversation_id": "conv1", "agent_name": "agent"}),
         ("warmup", {"voice": "F1", "language": "fr"}),
+    ]
+
+
+def test_stt_warmup_invokes_service_warmup(tmp_path, monkeypatch):
+    conv_store = ConversationStore(store_dir=str(tmp_path / "conversations"))
+    svc = _WarmupSttService()
+
+    class _Registry:
+        @staticmethod
+        def get_instance():
+            return _Registry()
+
+        def resolve(self, name, user_id="", conv_id=""):
+            assert name == "stt1"
+            return svc
+
+    monkeypatch.setattr("core.service_registry.ServiceRegistry", _Registry)
+    holder = SimpleNamespace(config={})
+    ff = FlowFile(content=b"")
+
+    _handle_media(
+        holder,
+        "stt_warmup",
+        {
+            "conversation_id": "conv1",
+            "service": "stt1",
+            "language": "fr",
+            "model": "turbo",
+        },
+        conv_store,
+        "alice",
+        ff,
+    )
+
+    assert _payload(ff)["ok"] is True
+    assert svc.calls == [
+        ("context", {"user_id": "alice", "conversation_id": "conv1", "agent_name": "agent"}),
+        ("warmup_stt", {"language": "fr", "model": "turbo"}),
     ]

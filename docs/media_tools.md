@@ -96,6 +96,9 @@ silent UI action `stt_transcribe`, writes the returned transcript into the chat
 input, and auto-sends only when the input was empty when recording started. The
 selected STT service is remembered as `pawflow_stt_service`; optional advanced
 overrides are `pawflow_stt_language` and `pawflow_stt_auto_send`.
+After service discovery or selection, webchat sends a silent `stt_warmup` action
+so providers with a warmup hook can start their local daemon and load speech
+models before the first recording is submitted.
 
 Webchat STT audio is not persisted to FileStore. The browser sends the captured
 blob directly as base64, and any server-side conversion files are temporary and
@@ -286,7 +289,9 @@ uses Voicebox's `/transcribe` endpoint for browser dictation and Voicebox's TTS
 endpoints for speech generation. Configure `client_id`, `stt_model`, and
 `default_profile` to match Voicebox's local profile and MCP/client bindings.
 Voicebox accepts browser-native microphone payloads, so PawFlow forwards
-`MediaRecorder` audio directly instead of transcoding it to WAV first.
+`MediaRecorder` audio directly instead of transcoding it to WAV first. The
+`stt_warmup` action asks Voicebox to transcribe a discarded silent WAV once per
+service instance, which loads the configured Whisper model in the live backend.
 
 Like Supertonic, the service starts lazily on first use. With `auto_start=true`
 it first probes the local API, then opens the installed macOS Voicebox app when

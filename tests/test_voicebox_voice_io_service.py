@@ -214,6 +214,27 @@ def test_voicebox_transcribe_surfaces_active_download_error(monkeypatch):
         svc.transcribe(audio_bytes=b"audio", mime_type="audio/wav", filename="speech.wav")
 
 
+def test_voicebox_warmup_stt_transcribes_silent_wav_once(monkeypatch):
+    svc = VoiceboxService({"stt_model": "turbo"})
+    calls = []
+
+    def fake_transcribe(**kwargs):
+        calls.append(kwargs)
+        return {"text": "", "language": "", "duration": 0}
+
+    monkeypatch.setattr(svc, "transcribe", fake_transcribe)
+
+    svc.warmup_stt(language="fr")
+    svc.warmup_stt(language="fr")
+
+    assert len(calls) == 1
+    assert calls[0]["mime_type"] == "audio/wav"
+    assert calls[0]["filename"] == "warmup.wav"
+    assert calls[0]["language"] == "fr"
+    assert calls[0]["model"] == "turbo"
+    assert calls[0]["audio_bytes"].startswith(b"RIFF")
+
+
 def test_voicebox_speak_posts_json_and_returns_audio(monkeypatch):
     captured = {}
 

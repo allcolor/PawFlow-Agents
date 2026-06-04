@@ -16,6 +16,7 @@ var _convSttWavSampleRate = 0;
 var _convSttChunks = [];
 var _convSttRecording = false;
 var _convSttInputWasEmpty = true;
+var _convSttWarmupKey = '';
 
 function _convSttConfig() {
   const cfg = { service: _convSttSelectedService || '', language: '', autoSend: true };
@@ -51,6 +52,25 @@ function _convSttSetServices(services) {
       : _convSttServices[0].id;
   }
   _convSttUpdateButton();
+  _convSttWarmup();
+}
+
+function _convSttWarmup() {
+  if (typeof action$ !== 'function') return;
+  if (!_convSttSelectedService) return;
+  const cfg = _convSttConfig();
+  const key = cfg.service + '|' + cfg.language;
+  if (key === _convSttWarmupKey) return;
+  _convSttWarmupKey = key;
+  action$('stt_warmup', {
+    conversation_id: conversationId,
+    service: cfg.service,
+    language: cfg.language,
+  }, { silent: true }).subscribe(result => {
+    if (result && result.error) console.warn('[conversation-stt] warmup failed', result.error);
+  }, err => {
+    console.warn('[conversation-stt] warmup request failed', err);
+  });
 }
 
 function refreshConversationSTTServices(startAfterRefresh) {
@@ -79,6 +99,7 @@ function _convSttSelectService(serviceId) {
   try { localStorage.setItem('pawflow_stt_service', serviceId); } catch (_err) {}
   const overlay = document.getElementById('convSttServiceDialog');
   if (overlay) overlay.remove();
+  _convSttWarmup();
   _convSttStartRecording();
 }
 

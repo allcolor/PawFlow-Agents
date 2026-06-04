@@ -1,4 +1,5 @@
 from core.handlers.devops import RunTestsHandler
+from core.handlers.meta_tools import _normalize_tool_args
 
 
 class RunTestsRelay:
@@ -91,3 +92,36 @@ def test_run_tests_resolves_filesystem_in_conversation_scope(monkeypatch):
 
     assert "Tests PASSED" in result
     assert seen["args"] == ("user-1", "", "conv-1")
+
+
+def test_run_tests_accepts_relay_filesystem_source_aliases(monkeypatch):
+    relay = RunTestsRelay()
+    seen = []
+
+    def fake_find(user_id, service_name="", conversation_id=""):
+        seen.append((user_id, service_name, conversation_id))
+        return relay
+
+    monkeypatch.delenv("PAWFLOW_USE_RTK", raising=False)
+    monkeypatch.setattr("core.handlers._fs_base.find_fs_service", fake_find)
+
+    for key in ("relay", "filesystem", "source", "service"):
+        result = _handler().execute({"test_files": ["tests/test_example.py"], key: "MyWorkspace"})
+        assert "Tests PASSED" in result
+
+    assert seen == [
+        ("user-1", "MyWorkspace", "conv-1"),
+        ("user-1", "MyWorkspace", "conv-1"),
+        ("user-1", "MyWorkspace", "conv-1"),
+        ("user-1", "MyWorkspace", "conv-1"),
+    ]
+
+    schema = _handler().parameters_schema["properties"]
+    assert {"relay", "filesystem", "source", "service"}.issubset(schema)
+
+
+def test_use_tool_normalizes_run_tests_relay_alias():
+    assert _normalize_tool_args("run_tests", {"relay": "MyWorkspace"}) == {
+        "relay": "MyWorkspace",
+        "service": "MyWorkspace",
+    }

@@ -75,6 +75,18 @@ class RunTestsHandler(ToolHandler):
                     "type": "string",
                     "description": "Filesystem service name (optional)",
                 },
+                "relay": {
+                    "type": "string",
+                    "description": "Alias for service; filesystem relay/service id to use.",
+                },
+                "filesystem": {
+                    "type": "string",
+                    "description": "Alias for service; filesystem relay/service id to use.",
+                },
+                "source": {
+                    "type": "string",
+                    "description": "Alias for service; filesystem relay/service id to use.",
+                },
             },
             "required": ["test_files"],
         }
@@ -143,7 +155,9 @@ class RunTestsHandler(ToolHandler):
                 timeout = max(1, int(timeout))
             except (TypeError, ValueError):
                 timeout = None
-        service_name = arguments.get("service", "")
+        service_name = (arguments.get("relay", "") or arguments.get("source", "")
+                        or arguments.get("filesystem", "")
+                        or arguments.get("service", ""))
         try:
             max_output = int(arguments.get("max_output", 3000) or 3000)
         except (TypeError, ValueError):

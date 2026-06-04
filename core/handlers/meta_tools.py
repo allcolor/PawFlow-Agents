@@ -90,6 +90,8 @@ def _normalize_tool_args(tool_name: str, tool_args: Dict[str, Any], schema: Dict
                 tool_args["source_service"] = relay
             if "dest_service" not in tool_args:
                 tool_args["dest_service"] = relay
+        elif tool_name == "run_tests" and "service" not in tool_args:
+            tool_args["service"] = relay
     props = _schema_props(schema)
     if props:
         for target, aliases in _COMMON_ARG_ALIASES.items():

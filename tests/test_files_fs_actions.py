@@ -105,3 +105,27 @@ def test_filestore_list_hides_transient_stt_and_tts(tmp_path):
     rows = file_store.list_files(user_id="alice", conversation_id="conv1")
 
     assert [row["file_id"] for row in rows] == [visible_id]
+
+
+def test_fs_read_file_resolves_filesystem_service(monkeypatch):
+    class DummyFs:
+        def read_file(self, path):
+            assert path == "image.png"
+            return b"png-bytes"
+
+    import core.handlers._fs_base as fs_base
+
+    monkeypatch.setattr(
+        fs_base, "find_fs_service",
+        lambda user_id, service: DummyFs() if (user_id, service) == ("alice", "relay") else None,
+    )
+
+    ff = FlowFile(content=b"")
+
+    result = _handle_files_fs(
+        None, "fs_read_file",
+        {"service": "relay", "path": "image.png"},
+        None, "alice", ff)
+
+    assert result == [ff]
+    assert _payload(ff) == {"content": "png-bytes", "encoding": "utf-8", "size": 9}

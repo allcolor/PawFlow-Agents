@@ -451,6 +451,8 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
         except Exception:
             return flow_default
 
+    from core.handlers._fs_base import find_fs_service as _find_svc, _FS_TYPES
+
     if action == "fs_list_services":
         from core.handlers._fs_base import find_fs_service as _find_svc, _FS_TYPES
         services = []

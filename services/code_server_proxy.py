@@ -277,8 +277,10 @@ def code_http_proxy(pending_req):
         resp_body = base64.b64decode(result.get("body", "")) if result.get("body") else b""
 
         for k in list(resp_headers):
-            if k.lower() in ("transfer-encoding", "connection", "keep-alive"):
+            if k.lower() in ("transfer-encoding", "connection", "keep-alive",
+                             "content-length"):
                 del resp_headers[k]
+        resp_headers["Content-Length"] = str(len(resp_body))
 
         pending_req.complete(status, resp_headers, resp_body)
     except Exception as e:

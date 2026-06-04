@@ -7,7 +7,7 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 # System deps. openssl is required for bootstrap TLS. Playwright/Scrapling
 # need browser dependencies and Chromium inside the server image.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    bash ca-certificates curl git openssl ffmpeg procps gosu \
+    bash build-essential ca-certificates curl git openssl ffmpeg procps gosu \
     && rm -rf /var/lib/apt/lists/*
 
 # Docker CLI used by first-run server login to start the noVNC login desktop

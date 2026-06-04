@@ -17,6 +17,7 @@ def test_server_dockerfile_supports_bootstrap_docker_builds():
     assert "ca-certificates" in src
     assert "curl" in src
     assert "ffmpeg" in src
+    assert "build-essential" in src
     assert "PLAYWRIGHT_BROWSERS_PATH" in src
     assert "python -m playwright install --with-deps chromium" in src
     assert "useradd -u 1000 -g 1000" in src

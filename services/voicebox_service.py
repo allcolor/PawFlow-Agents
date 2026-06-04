@@ -89,6 +89,7 @@ class VoiceboxService(BaseVoiceCloneService, BaseSTTService):
     CATEGORY = "audio"
     SUPPORTS_NATIVE_TTS_VOICES = True
     ACCEPTS_FILESTORE_URLS = False
+    ACCEPTS_BROWSER_STT_AUDIO = True
 
     def get_parameter_schema(self) -> dict:
         return {

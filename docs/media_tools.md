@@ -101,7 +101,9 @@ Webchat STT audio is not persisted to FileStore. The browser sends the captured
 blob directly as base64, and any server-side conversion files are temporary and
 unlinked after conversion/transcription. When PawFlow stages the decoded audio for
 a provider, it uses a hidden transient FileStore entry and deletes it in the same
-`stt_transcribe` request after the provider returns or fails.
+`stt_transcribe` request after the provider returns or fails. STT services can
+declare that they accept browser-native `MediaRecorder` formats; those services
+receive the original `webm`/`ogg`/Opus payload instead of a pre-converted WAV.
 
 `openaiCompatibleSTT` is the generic HTTP transcription provider for OpenAI-style
 `POST /audio/transcriptions` endpoints. It supports OpenAI, Groq, local
@@ -262,7 +264,9 @@ fast, private, on-device text-to-speech. PawFlow installs Supertonic through its
 Python requirements and starts the package's `supertonic serve` entrypoint
 automatically when the service connects. If the managed runtime is missing and
 `auto_start` plus `auto_install` are enabled, first use prepares the local
-virtualenv before starting the daemon.
+virtualenv before starting the daemon. The webchat TTS warmup action starts the
+daemon and asks Supertonic for a discarded short WAV before the first audible
+response when possible, so the local model is already loaded.
 
 Configure the service with `base_url` (default `http://127.0.0.1:7788`),
 `auto_start` (default `true`), `startup_timeout`, `voice` (`M1`-`M5`, `F1`-`F5`,
@@ -281,6 +285,8 @@ require a Voice Builder JSON imported into the managed Supertonic daemon.
 uses Voicebox's `/transcribe` endpoint for browser dictation and Voicebox's TTS
 endpoints for speech generation. Configure `client_id`, `stt_model`, and
 `default_profile` to match Voicebox's local profile and MCP/client bindings.
+Voicebox accepts browser-native microphone payloads, so PawFlow forwards
+`MediaRecorder` audio directly instead of transcoding it to WAV first.
 
 Like Supertonic, the service starts lazily on first use. With `auto_start=true`
 it first probes the local API, then opens the installed macOS Voicebox app when

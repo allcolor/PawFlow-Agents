@@ -52,6 +52,10 @@ def _convert_stt_audio_to_wav(audio_bytes: bytes, mime_type: str, filename: str)
                     pass
 
 
+def _stt_service_accepts_browser_audio(service) -> bool:
+    return bool(getattr(service, "ACCEPTS_BROWSER_STT_AUDIO", False))
+
+
 def _handle_media(self, action, body, store, user_id, flowfile):
     """Handle media actions. Returns [flowfile] or None."""
 
@@ -75,15 +79,32 @@ def _handle_media(self, action, body, store, user_id, flowfile):
             return [flowfile]
         mime_type = body.get("mime_type", "") or "audio/webm"
         filename = body.get("filename", "recording.webm") or "recording.webm"
-        try:
-            audio_bytes, mime_type, filename = _convert_stt_audio_to_wav(audio_bytes, mime_type, filename)
-        except Exception as exc:
-            logger.exception("[STT] audio conversion failed")
-            flowfile.set_content(json.dumps({"error": f"audio conversion failed: {exc}"}).encode())
+        if service_name:
+            try:
+                from core.service_registry import ServiceRegistry
+                svc = ServiceRegistry.get_instance().resolve(
+                    service_name, user_id=user_id, conv_id=conv_id)
+                err = "" if svc else f"STT service '{service_name}' not found or not connected"
+            except Exception as exc:
+                svc = None
+                err = f"STT service '{service_name}' failed to resolve: {exc}"
+        else:
+            resolver = self._make_stt_resolver(
+                user_id, conv_id, agent_name, ("transcribe",))
+            svc, err = resolver()
+        if not svc:
+            flowfile.set_content(json.dumps({"error": err or "no STT service available"}).encode())
             return [flowfile]
+        if not _stt_service_accepts_browser_audio(svc):
+            try:
+                audio_bytes, mime_type, filename = _convert_stt_audio_to_wav(audio_bytes, mime_type, filename)
+            except Exception as exc:
+                logger.exception("[STT] audio conversion failed")
+                flowfile.set_content(json.dumps({"error": f"audio conversion failed: {exc}"}).encode())
+                return [flowfile]
         logger.info(
             "[STT] transcribe requested: service=%s bytes=%d mime=%s filename=%s conv=%s",
-            service_name or "<auto>", len(audio_bytes), mime_type, filename,
+            service_name or getattr(svc, "NAME", "<auto>"), len(audio_bytes), mime_type, filename,
             conv_id[:8] if conv_id else "",
         )
 
@@ -106,23 +127,6 @@ def _handle_media(self, action, body, store, user_id, flowfile):
                 stt_audio_path = str(disk_path) if disk_path else ""
             except Exception as exc:
                 logger.debug("[STT] transient FileStore staging skipped: %s", exc)
-
-        if service_name:
-            try:
-                from core.service_registry import ServiceRegistry
-                svc = ServiceRegistry.get_instance().resolve(
-                    service_name, user_id=user_id, conv_id=conv_id)
-                err = "" if svc else f"STT service '{service_name}' not found or not connected"
-            except Exception as exc:
-                svc = None
-                err = f"STT service '{service_name}' failed to resolve: {exc}"
-        else:
-            resolver = self._make_stt_resolver(
-                user_id, conv_id, agent_name, ("transcribe",))
-            svc, err = resolver()
-        if not svc:
-            flowfile.set_content(json.dumps({"error": err or "no STT service available"}).encode())
-            return [flowfile]
         try:
             if hasattr(svc, "set_runtime_context"):
                 svc.set_runtime_context(
@@ -291,9 +295,16 @@ def _handle_media(self, action, body, store, user_id, flowfile):
                 svc.set_runtime_context(
                     user_id=user_id, conversation_id=conv_id,
                     agent_name=agent_name)
-            ensure = getattr(svc, "ensure_connected", None)
-            if callable(ensure):
-                ensure()
+            warmup = getattr(svc, "warmup", None)
+            if callable(warmup):
+                warmup(
+                    voice=body.get("voice", "") or "",
+                    language=body.get("language", "") or "",
+                )
+            else:
+                ensure = getattr(svc, "ensure_connected", None)
+                if callable(ensure):
+                    ensure()
             flowfile.set_content(json.dumps({"ok": True}).encode())
         except Exception as exc:
             flowfile.set_content(json.dumps({

@@ -8,6 +8,8 @@ from core.base_service import BaseService
 class BaseSTTService(BaseService):
     """Abstract base for providers that transcribe speech to text."""
 
+    ACCEPTS_BROWSER_STT_AUDIO = False
+
     @abstractmethod
     def transcribe(self, audio_bytes: bytes = b"", audio_path: str = "",
                    mime_type: str = "", language: str = "",

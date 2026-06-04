@@ -160,6 +160,7 @@ class SupertonicTTSService(BaseAudioGenerationService, BaseTTSService):
         self._managed_proc = None
         self._managed_log_path = self.install_dir / "supertonic-pawflow.log"
         self._connect_lock = threading.Lock()
+        self._warmup_done = False
 
     def set_runtime_context(self, user_id: str = "", conversation_id: str = "",
                             agent_name: str = "", **_: object):
@@ -484,6 +485,23 @@ class SupertonicTTSService(BaseAudioGenerationService, BaseTTSService):
             "content_type": content_type or _CONTENT_TYPES[fmt],
             "source_url": "",
         }
+
+    def warmup(self, voice: str = "", language: str = "", **_kwargs) -> None:
+        if self._warmup_done:
+            return
+        self.ensure_connected()
+        body: Dict[str, Any] = {
+            "text": "OK",
+            "voice": voice or self.voice,
+            "lang": language or self.lang,
+            "steps": self.steps,
+            "speed": self.speed,
+            "response_format": "wav",
+        }
+        audio_bytes, _content_type = self._post_tts(body)
+        if not audio_bytes:
+            raise ServiceError("Supertonic returned empty warmup audio")
+        self._warmup_done = True
 
     def speak(self, text: str, voice: str = "", language: str = "",
               **kwargs) -> dict:

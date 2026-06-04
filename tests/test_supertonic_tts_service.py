@@ -89,6 +89,28 @@ def test_supertonic_generate_allows_per_call_tts_overrides(monkeypatch):
     assert captured["max_chunk_length"] == 120
 
 
+def test_supertonic_warmup_synthesizes_once(monkeypatch):
+    svc = SupertonicTTSService({"voice": "M2", "lang": "en", "steps": 4})
+    calls = []
+    monkeypatch.setattr(svc, "ensure_connected", lambda: calls.append("ensure"))
+    monkeypatch.setattr(svc, "_post_tts", lambda body: calls.append(body) or (b"WAV", "audio/wav"))
+
+    svc.warmup(voice="F1", language="fr")
+    svc.warmup(voice="F1", language="fr")
+
+    assert calls == [
+        "ensure",
+        {
+            "text": "OK",
+            "voice": "F1",
+            "lang": "fr",
+            "steps": 4,
+            "speed": 1.05,
+            "response_format": "wav",
+        },
+    ]
+
+
 def test_supertonic_external_relay_url_uses_proxy_route(monkeypatch):
     captured = {}
     monkeypatch.setattr(_hl_mod, "_instances", {9090: _Listener()})

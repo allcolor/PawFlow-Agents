@@ -1630,12 +1630,26 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
         return {"type": "localImage", "path": f"{container_dir}/{rel_name}"}
 
     @staticmethod
-    def _codex_app_mcp_content_text(content) -> str:
+    def _codex_app_image_ref_from_args(args) -> str:
+        if not isinstance(args, dict):
+            return ""
+        direct = str(args.get("path") or "")
+        if direct.startswith("fs://"):
+            return direct
+        nested = args.get("arguments")
+        if isinstance(nested, dict):
+            path = str(nested.get("path") or "")
+            if path.startswith("fs://"):
+                return path
+        return ""
+
+    @staticmethod
+    def _codex_app_mcp_content_text(content, image_ref: str = "") -> str:
         """Return transcript-safe text for MCP content blocks.
 
         Image blocks are already delivered to Codex as multimodal MCP content.
-        PawFlow's transcript only keeps the human-readable text so base64 image
-        bytes never become counted context payload.
+        PawFlow's transcript keeps only text plus a short FileStore reference;
+        base64 image bytes never become counted context payload.
         """
         if not isinstance(content, list):
             return ""
@@ -1661,10 +1675,13 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
             if text:
                 parts.append(str(text))
         text = "\n".join(p for p in parts if p)
+        if image_count and image_ref and image_ref not in text:
+            ref_line = f"Image reference: {image_ref}"
+            text = f"{text}\n{ref_line}" if text else ref_line
         if text:
             return text
         if image_count:
-            return f"[image sent to vision: {image_count}]"
+            return f"Image reference: {image_ref}" if image_ref else f"[image sent to vision: {image_count}]"
         return ""
 
     @staticmethod
@@ -1674,10 +1691,23 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
         if item.get("error"):
             return str(item.get("error"))
         result = item.get("result")
+        if isinstance(result, str):
+            raw = result.strip()
+            if raw.startswith(("{", "[")):
+                try:
+                    result = json.loads(raw)
+                except Exception:
+                    return result
+            else:
+                return result
+        image_ref = LLMCodexAppServerMixin._codex_app_image_ref_from_args(
+            item.get("arguments") or {})
         if isinstance(result, dict) and isinstance(result.get("content"), list):
-            return LLMCodexAppServerMixin._codex_app_mcp_content_text(result["content"])
+            return LLMCodexAppServerMixin._codex_app_mcp_content_text(
+                result["content"], image_ref=image_ref)
         if isinstance(result, list):
-            text = LLMCodexAppServerMixin._codex_app_mcp_content_text(result)
+            text = LLMCodexAppServerMixin._codex_app_mcp_content_text(
+                result, image_ref=image_ref)
             if text:
                 return text
         if isinstance(result, (dict, list)):
@@ -1729,9 +1759,20 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                 "changes": item.get("changes") or [],
             }, ensure_ascii=False, default=str)
         if item_type == "dynamicToolCall":
+            content_items = item.get("contentItems")
+            image_ref = LLMCodexAppServerMixin._codex_app_image_ref_from_args(
+                item.get("arguments") or {})
+            if isinstance(content_items, list):
+                text = LLMCodexAppServerMixin._codex_app_mcp_content_text(
+                    content_items, image_ref=image_ref)
+                if text:
+                    return text
+                if any(isinstance(p, dict) and p.get("type") in ("image", "image_url")
+                       for p in content_items):
+                    return "[image sent to vision: 1]"
             return json.dumps({
                 "status": item.get("status"),
                 "success": item.get("success"),
-                "contentItems": item.get("contentItems"),
+                "contentItems": content_items,
             }, ensure_ascii=False, default=str)
         return json.dumps(item, ensure_ascii=False, default=str)

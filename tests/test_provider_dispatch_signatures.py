@@ -652,6 +652,45 @@ def test_codex_app_mcp_image_only_result_uses_small_placeholder():
     assert len(text) < 64
 
 
+def test_codex_app_mcp_json_string_image_result_never_serializes_base64():
+    import json
+    from core.llm_providers.codex_app_server import LLMCodexAppServerMixin
+
+    item = {
+        "arguments": {"tool_name": "see", "arguments": {"path": "fs://filestore/fid/screen.png"}},
+        "result": json.dumps({"content": [
+            {"type": "text", "text": "Image: screenshot.png"},
+            {"type": "image", "mimeType": "image/png", "data": "A" * 100_000},
+        ]}),
+    }
+
+    text = LLMCodexAppServerMixin._codex_app_result_text(item)
+
+    assert text == "Image: screenshot.png\nImage reference: fs://filestore/fid/screen.png"
+    assert "AAAA" not in text
+    assert "data" not in text
+
+
+def test_codex_app_dynamic_tool_image_result_never_serializes_base64():
+    from core.llm_providers.codex_app_server import LLMCodexAppServerMixin
+
+    item = {
+        "type": "dynamicToolCall",
+        "status": "completed",
+        "success": True,
+        "arguments": {"path": "fs://filestore/fid/screen.png"},
+        "contentItems": [
+            {"type": "text", "text": "Image: screenshot.png"},
+            {"type": "image", "mimeType": "image/png", "data": "A" * 100_000},
+        ],
+    }
+
+    text = LLMCodexAppServerMixin._codex_app_native_tool_result(item)
+
+    assert text == "Image: screenshot.png\nImage reference: fs://filestore/fid/screen.png"
+    assert "AAAA" not in text
+    assert "contentItems" not in text
+
 
 def test_provider_mixins_have_no_method_collisions():
     """Each provider's per-CLI helper methods must NOT collide.

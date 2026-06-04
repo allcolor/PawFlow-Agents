@@ -510,6 +510,7 @@ def test_code_server_http_proxy_sets_webview_csp(tmp_path):
     assert "script-src-elem" in policy
     assert "style-src-elem" in policy
     assert "font-src" in policy
+    assert "https://open-vsx.org" in policy
 
 
 def test_code_server_http_proxy_accepts_tokenless_static_asset(tmp_path):

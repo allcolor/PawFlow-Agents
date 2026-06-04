@@ -26,6 +26,21 @@ var _convTtsAfterServiceSelect = null;
 var _convTtsOneShotRunId = 0;
 var _convTtsOneShotAudio = null;
 var _convTtsOneShotFileId = '';
+var _convTtsOneShotInFlight = 0;
+var _convTtsOneShotQueue = [];
+var _convTtsOneShotPendingAudio = {};
+var _convTtsOneShotNextSeq = 1;
+var _convTtsOneShotPlaySeq = 1;
+var _convTtsOneShotPlaying = false;
+
+function _convTtsPrepareAudio(item) {
+  if (!item || !item.url || item.audio) return item;
+  const audio = new Audio(item.url);
+  audio.preload = 'auto';
+  item.audio = audio;
+  try { audio.load(); } catch (_err) {}
+  return item;
+}
 
 function _convTtsConfig() {
   const cfg = { service: _convTtsSelectedService || '', voice: '', language: '' };
@@ -381,7 +396,10 @@ function _convTtsSynthesizeNext() {
       _convTtsPump();
       return;
     }
-    _convTtsPendingAudio[seq] = { url: result.url, file_id: result.file_id || '' };
+    _convTtsPendingAudio[seq] = _convTtsPrepareAudio({
+      url: result.url,
+      file_id: result.file_id || '',
+    });
     _convTtsPlayNext();
     _convTtsPump();
   }, err => {
@@ -409,7 +427,8 @@ function _convTtsPlayNext() {
 }
 
 function _convTtsPlayUrl(item) {
-  const audio = new Audio(item.url);
+  _convTtsPrepareAudio(item);
+  const audio = item.audio;
   let cleaned = false;
   function cleanup() {
     if (cleaned) return;
@@ -446,6 +465,15 @@ function _convTtsStopOneShot() {
     try { _convTtsOneShotAudio.pause(); } catch (_err) {}
     _convTtsOneShotAudio = null;
   }
+  Object.keys(_convTtsOneShotPendingAudio).forEach(key => {
+    _convTtsDeleteFile(_convTtsOneShotPendingAudio[key] && _convTtsOneShotPendingAudio[key].file_id);
+  });
+  _convTtsOneShotQueue = [];
+  _convTtsOneShotPendingAudio = {};
+  _convTtsOneShotInFlight = 0;
+  _convTtsOneShotNextSeq = 1;
+  _convTtsOneShotPlaySeq = 1;
+  _convTtsOneShotPlaying = false;
   _convTtsDeleteFile(_convTtsOneShotFileId);
   _convTtsOneShotFileId = '';
 }
@@ -462,8 +490,27 @@ function conversationTTSSpeakText(text) {
 
 function _convTtsSpeakSegmentsOnce(segments, runId) {
   if (runId !== _convTtsOneShotRunId || !segments.length) return;
-  const text = segments.shift();
+  _convTtsOneShotQueue = segments.slice();
+  _convTtsOneShotPendingAudio = {};
+  _convTtsOneShotInFlight = 0;
+  _convTtsOneShotNextSeq = 1;
+  _convTtsOneShotPlaySeq = 1;
+  _convTtsOneShotPlaying = false;
+  _convTtsPumpOneShot(runId);
+}
+
+function _convTtsPumpOneShot(runId) {
+  if (runId !== _convTtsOneShotRunId) return;
+  while (_convTtsOneShotInFlight < 3 && _convTtsOneShotQueue.length) {
+    _convTtsSynthesizeOneShotNext(runId);
+  }
+}
+
+function _convTtsSynthesizeOneShotNext(runId) {
+  const text = _convTtsOneShotQueue.shift();
+  const seq = _convTtsOneShotNextSeq++;
   const cfg = _convTtsConfig();
+  _convTtsOneShotInFlight += 1;
   action$('tts_synthesize', {
     conversation_id: conversationId,
     text: text,
@@ -473,20 +520,43 @@ function _convTtsSpeakSegmentsOnce(segments, runId) {
     transient: true,
     transient_ttl: 300,
   }, { silent: true }).subscribe(result => {
+    _convTtsOneShotInFlight = Math.max(0, _convTtsOneShotInFlight - 1);
     if (runId !== _convTtsOneShotRunId) {
       _convTtsDeleteFile(result && result.file_id);
       return;
     }
     if (!result || result.error || !result.url) {
       _convTtsReportError(result && result.error ? result.error : 'Speech synthesis returned no audio');
+      _convTtsOneShotPendingAudio[seq] = '';
+      _convTtsPlayOneShotNext(runId);
+      _convTtsPumpOneShot(runId);
       return;
     }
-    _convTtsPlayOneShot({ url: result.url, file_id: result.file_id || '' }, runId, () => {
-      _convTtsSpeakSegmentsOnce(segments, runId);
+    _convTtsOneShotPendingAudio[seq] = _convTtsPrepareAudio({
+      url: result.url,
+      file_id: result.file_id || '',
     });
+    _convTtsPlayOneShotNext(runId);
+    _convTtsPumpOneShot(runId);
   }, err => {
+    _convTtsOneShotInFlight = Math.max(0, _convTtsOneShotInFlight - 1);
     _convTtsReportError('Speech synthesis request failed: ' + (err && err.message ? err.message : err));
+    _convTtsOneShotPendingAudio[seq] = '';
+    _convTtsPlayOneShotNext(runId);
+    _convTtsPumpOneShot(runId);
   });
+}
+
+function _convTtsPlayOneShotNext(runId) {
+  if (runId !== _convTtsOneShotRunId || _convTtsOneShotPlaying) return;
+  while (Object.prototype.hasOwnProperty.call(_convTtsOneShotPendingAudio, _convTtsOneShotPlaySeq)) {
+    const item = _convTtsOneShotPendingAudio[_convTtsOneShotPlaySeq];
+    delete _convTtsOneShotPendingAudio[_convTtsOneShotPlaySeq++];
+    if (item && item.url) {
+      _convTtsPlayOneShot(item, runId, () => _convTtsPlayOneShotNext(runId));
+      return;
+    }
+  }
 }
 
 function _convTtsPlayOneShot(item, runId, done) {
@@ -494,7 +564,8 @@ function _convTtsPlayOneShot(item, runId, done) {
     _convTtsDeleteFile(item.file_id);
     return;
   }
-  const audio = new Audio(item.url);
+  _convTtsPrepareAudio(item);
+  const audio = item.audio;
   let cleaned = false;
   function cleanup() {
     if (cleaned) return;
@@ -503,8 +574,10 @@ function _convTtsPlayOneShot(item, runId, done) {
   }
   _convTtsOneShotAudio = audio;
   _convTtsOneShotFileId = item.file_id || '';
+  _convTtsOneShotPlaying = true;
   audio.onended = audio.onerror = function() {
     cleanup();
+    _convTtsOneShotPlaying = false;
     if (_convTtsOneShotAudio === audio) {
       _convTtsOneShotAudio = null;
       _convTtsOneShotFileId = '';

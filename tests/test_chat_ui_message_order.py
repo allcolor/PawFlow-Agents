@@ -167,6 +167,13 @@ def test_live_conversation_tts_button_and_sse_hooks_are_wired():
     assert "function _convTtsDeleteFile(fileId)" in CONVERSATION_TTS_JS
     assert "action$('tts_delete'" in CONVERSATION_TTS_JS
     assert "_convTtsDeleteFile(item.file_id)" in CONVERSATION_TTS_JS
+    assert "function _convTtsPrepareAudio(item)" in CONVERSATION_TTS_JS
+    assert "audio.preload = 'auto';" in CONVERSATION_TTS_JS
+    assert "try { audio.load(); }" in CONVERSATION_TTS_JS
+    assert "while (_convTtsOneShotInFlight < 3 && _convTtsOneShotQueue.length)" in CONVERSATION_TTS_JS
+    assert "_convTtsOneShotPendingAudio[seq] = _convTtsPrepareAudio" in CONVERSATION_TTS_JS
+    assert "while (Object.prototype.hasOwnProperty.call(_convTtsOneShotPendingAudio, _convTtsOneShotPlaySeq))" in CONVERSATION_TTS_JS
+    assert "_convTtsPendingAudio[seq] = _convTtsPrepareAudio" in CONVERSATION_TTS_JS
     assert "conversationTTSSpeakText(messageTextForAction(msg))" in Path("tasks/io/chat_ui/attachments.js").read_text(encoding="utf-8")
     assert "speakMsg(this)" in MESSAGES_JS
     assert "readMessage" in MESSAGES_JS

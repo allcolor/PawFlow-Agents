@@ -30,6 +30,7 @@ import socket
 import struct
 import subprocess  # nosec B404
 import sys
+import tempfile
 import threading
 import time
 from datetime import datetime, timezone
@@ -597,8 +598,9 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as _s:
                     _s.bind(("", 0))
                     _cs_port = _s.getsockname()[1]
-            _cs_user_data = Path("/tmp/pawflow-code-server-data")
-            _cs_extensions = Path("/tmp/pawflow-code-server-extensions")
+            _cs_tmp_dir = Path(tempfile.gettempdir())
+            _cs_user_data = _cs_tmp_dir / "pawflow-code-server-data"
+            _cs_extensions = _cs_tmp_dir / "pawflow-code-server-extensions"
             _cs_settings = _cs_user_data / "User" / "settings.json"
             _cs_settings.parent.mkdir(parents=True, exist_ok=True)
             _cs_extensions.mkdir(parents=True, exist_ok=True)

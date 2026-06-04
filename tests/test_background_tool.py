@@ -114,6 +114,55 @@ def test_tool_relay_default_filesystem_prefers_default_relay(monkeypatch):
     assert resolver("") is relay_default
 
 
+def test_tool_relay_default_filesystem_does_not_fallback_to_other_linked_relay(monkeypatch):
+    from services.tool_relay_service import ToolRelayService
+    import core.relay_bindings as relay_bindings
+    from core.service_registry import SCOPE_USER
+
+    relay_other = object()
+
+    class _Definition:
+        service_type = "relay"
+        scope = SCOPE_USER
+        scope_id = "alice"
+
+        def __init__(self, service_id):
+            self.service_id = service_id
+
+    class _Registry:
+        def resolve_definition(self, service_id, user_id="", conv_id=""):
+            return _Definition(service_id)
+
+        def is_connected(self, scope, scope_id, service_id):
+            return service_id == "relay-other"
+
+        def get_live_instance_cached(self, scope, scope_id, service_id):
+            return relay_other if service_id == "relay-other" else None
+
+        def resolve(self, service_id, user_id="", conv_id=""):
+            return relay_other if service_id == "relay-other" else None
+
+    monkeypatch.setattr(relay_bindings, "get_linked", lambda cid, agent="": ["relay-other", "relay-default"])
+    monkeypatch.setattr(relay_bindings, "get_default", lambda cid, agent="": "relay-default")
+    monkeypatch.setattr(
+        "core.service_registry.ServiceRegistry.get_instance",
+        staticmethod(lambda: _Registry()),
+    )
+
+    available = ToolRelayService._list_available_filesystem_services(
+        "alice", "conv1", "assistant")
+
+    assert [item["id"] for item in available] == ["relay-default", "relay-other"]
+    assert available[0]["default"] is True
+    assert available[0]["connected"] is False
+    assert ToolRelayService._find_filesystem_service("alice", "conv1", "assistant") is None
+
+    resolver = ToolRelayService._make_filesystem_resolver("alice", "conv1", "assistant")
+    assert resolver("") is None
+    assert resolver("relay-other") is relay_other
+    assert resolver("relay-unlinked") is None
+
+
 def test_pop_cc_tc_fifo_on_hash_collision():
     _reset_state()
     h = bg._args_hash({"command": "ls"})

@@ -89,6 +89,24 @@ def find_fs_service(user_id: str, service_name: str = "", conversation_id: str =
     try:
         from core.service_registry import ServiceRegistry
         reg = ServiceRegistry.get_instance()
+        if conversation_id:
+            try:
+                from core.relay_bindings import get_default, get_linked
+                linked = get_linked(conversation_id)
+                default_id = get_default(conversation_id) or ""
+            except Exception:
+                linked = []
+                default_id = ""
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+            if service_name:
+                if service_name not in linked:
+                    return None
+            elif default_id and default_id in linked:
+                service_name = default_id
+            elif len(linked) == 1:
+                service_name = linked[0]
+            else:
+                return None
         if service_name:
             svc = reg.resolve(service_name, user_id=user_id, conv_id=conversation_id)
             if svc:
@@ -161,6 +179,7 @@ class BaseFsHandler(ToolHandler):
     def __init__(self):
         self._fs_service = None
         self._available_services = []
+        self._default_service_id = ""
         self._filesystem_scope_enforced = False
         self._user_id = ""
         self._conversation_id = ""
@@ -188,8 +207,10 @@ class BaseFsHandler(ToolHandler):
     def set_checkpoint_id(self, checkpoint_id: str):
         self._checkpoint_id = checkpoint_id
 
-    def set_available_services(self, services: List[Dict[str, Any]]):
+    def set_available_services(self, services: List[Dict[str, Any]],
+                               default_service_id: str = ""):
         self._available_services = services
+        self._default_service_id = default_service_id or ""
         self._filesystem_scope_enforced = True
 
     def set_fs_service(self, svc):
@@ -268,7 +289,9 @@ class BaseFsHandler(ToolHandler):
             if service_name:
                 if service_name not in allowed_ids:
                     return None
-            elif allowed_ids:
+            elif self._default_service_id:
+                service_name = self._default_service_id
+            elif len(allowed_ids) == 1:
                 service_name = allowed_ids[0]
             else:
                 return None

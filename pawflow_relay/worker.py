@@ -584,6 +584,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             import http.client
             _public_base_path = msg.get("base_path", "")
             _upstream_base_path = "/"
+            _abs_proxy_base_path = _public_base_path.rstrip("/")
             if hasattr(_execute_command, '_code_server_proc') and _execute_command._code_server_proc:
                 p = _execute_command._code_server_proc
                 if p.poll() is None:
@@ -596,18 +597,41 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as _s:
                     _s.bind(("", 0))
                     _cs_port = _s.getsockname()[1]
+            _cs_user_data = Path("/tmp/pawflow-code-server-data")
+            _cs_extensions = Path("/tmp/pawflow-code-server-extensions")
+            _cs_settings = _cs_user_data / "User" / "settings.json"
+            _cs_settings.parent.mkdir(parents=True, exist_ok=True)
+            _cs_extensions.mkdir(parents=True, exist_ok=True)
+            _cs_settings.write_text(json.dumps({
+                "extensions.autoCheckUpdates": False,
+                "extensions.autoUpdate": False,
+                "extensions.ignoreRecommendations": True,
+                "telemetry.telemetryLevel": "off",
+                "workbench.enableExperiments": False,
+                "github.gitAuthentication": False,
+            }), encoding="utf-8")
+            _cs_env = dict(os.environ)
+            _cs_env["EXTENSIONS_GALLERY"] = "{}"
+            _cs_env["VSCODE_DISABLE_TELEMETRY"] = "1"
             _cs_args = [
                 "code-server",
                 "--bind-addr", f"0.0.0.0:{_cs_port}",
                 "--auth", "none",
                 "--disable-telemetry",
                 "--disable-workspace-trust",
+                "--abs-proxy-base-path", _abs_proxy_base_path,
+                "--disable-extensions",
+                "--user-data-dir", str(_cs_user_data),
+                "--extensions-dir", str(_cs_extensions),
+                "--disable-extension", "GitHub.vscode-github-authentication",
+                "--disable-extension", "GitHub.copilot",
+                "--disable-extension", "GitHub.copilot-chat",
                 str(Path(root_dir).resolve()),
             ]
             try:
                 _cs_log = open("/tmp/code-server.log", "w")  # nosec B108 - relay-local service log.
                 _cs_proc = subprocess.Popen(  # nosec B603
-                    _cs_args, stdout=_cs_log, stderr=_cs_log)
+                    _cs_args, stdout=_cs_log, stderr=_cs_log, env=_cs_env)
                 _ready_path = _upstream_base_path
                 _deadline = time.time() + 10
                 _ready = False
@@ -2152,6 +2176,29 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 elif msg.get("type") == "command":
                     request_id = msg.get("request_id", "")
                     sys.stderr.write(f"[FSRelay] Command: {msg.get('action', '?')}\n")
+                    if msg.get("action") in ("cs_ws_send", "cs_ws_close"):
+                        try:
+                            _result = _execute_command(msg)
+                        except Exception as _e:
+                            _result = {"ok": False, "error": str(_e)}
+                        _resp = json.dumps({
+                            "type": "result",
+                            "request_id": request_id,
+                            "data": _result.get("data", _result),
+                        }).encode("utf-8")
+                        try:
+                            with _send_lock:
+                                _socket_diag["last_send"] = (
+                                    f"result:{msg.get('action', '?')}:{request_id[:8]}")
+                                _ws_frame_send(sock, _resp)
+                                _socket_diag["last_send_error"] = ""
+                        except Exception as _send_err:
+                            _socket_diag["last_send_error"] = (
+                                f"result:{msg.get('action', '?')}:{request_id[:8]}:{_send_err}")
+                            sys.stderr.write(
+                                f"[FSRelay] result send failed: action={msg.get('action', '?')} "
+                                f"rid={request_id[:8]} err={_send_err}\n")
+                        continue
                     with _inflight_lock:
                         _inflight_cmds[request_id] = {
                             "action": msg.get('action', '?'),

@@ -58,7 +58,7 @@ _CODE_SERVER_CSP = (
     "font-src 'self' data: https://*.vscode-cdn.net https://vscode-cdn.net; "
     "media-src 'self' data: blob:; "
     "connect-src 'self' ws: wss: "
-    "https://*.vscode-cdn.net https://vscode-cdn.net https://open-vsx.org; "
+    "https://*.vscode-cdn.net https://vscode-cdn.net; "
     "worker-src 'self' blob:; "
     "frame-src 'self' blob: https://*.vscode-cdn.net https://vscode-cdn.net; "
     "object-src 'none'; base-uri 'self'"
@@ -88,7 +88,17 @@ def _code_server_builtin_asset(sub_path: str):
         return "application/javascript", _VSDA_JS
     if asset_name == "vsda_bg.wasm":
         return "application/wasm", _EMPTY_WASM_MODULE
+    if asset_name == "seti.woff":
+        return "font/woff", b""
     return None
+
+
+def _selected_ws_protocol(headers: dict) -> str:
+    """Return the WebSocket subprotocol already selected for the browser."""
+    offered = (headers.get("Sec-WebSocket-Protocol")
+               or headers.get("sec-websocket-protocol")
+               or "")
+    return offered.split(",", 1)[0].strip()
 
 
 def register_code_server(relay_id: str, port: int, relay_service,
@@ -245,8 +255,10 @@ def code_http_proxy(pending_req):
     relay_id = sess["relay_id"]
 
     builtin_asset = _code_server_builtin_asset(sub_path)
-    if pending_req.method == "GET" and builtin_asset is not None:
+    if pending_req.method in ("GET", "HEAD") and builtin_asset is not None:
         content_type, body = builtin_asset
+        if pending_req.method == "HEAD":
+            body = b""
         pending_req.complete(
             200,
             {"Content-Type": content_type,
@@ -326,6 +338,17 @@ def code_http_proxy(pending_req):
         resp_headers = result.get("headers", {})
         resp_body = base64.b64decode(result.get("body", "")) if result.get("body") else b""
 
+        try:
+            status_int = int(status)
+        except (TypeError, ValueError):
+            status_int = 0
+        if status_int == 404:
+            fallback_asset = _code_server_builtin_asset(sub_path)
+            if fallback_asset is not None:
+                content_type, resp_body = fallback_asset
+                status = 200
+                resp_headers = {"Content-Type": content_type}
+
         for k in list(resp_headers):
             if k.lower() in ("transfer-encoding", "connection", "keep-alive",
                              "content-length"):
@@ -392,6 +415,9 @@ def code_ws_proxy(client_sock, path_params: dict, meta: dict):
                   "upgrade", "connection"):
             continue
         fwd_headers[k] = v
+    selected_protocol = _selected_ws_protocol(meta.get("headers", {}))
+    if selected_protocol:
+        fwd_headers["Sec-WebSocket-Protocol"] = selected_protocol
     fwd_headers["Host"] = f"127.0.0.1:{port}"
     fwd_headers["Origin"] = f"http://127.0.0.1:{port}"
 
@@ -438,8 +464,13 @@ def code_ws_proxy(client_sock, path_params: dict, meta: dict):
         return
 
     logger.debug("Code WS proxy: relay=%s session=%s connected", relay_id, ws_session_id)
+    logger.info("Code WS proxy connected: relay=%s session=%s path=%s",
+                relay_id, ws_session_id, proxied_path)
 
     try:
+        browser_frame_count = 0
+        browser_byte_count = 0
+        last_diag = time.time()
         while True:
             received = _ws_recv(client_sock)
             if len(received) == 3:
@@ -459,6 +490,14 @@ def code_ws_proxy(client_sock, path_params: dict, meta: dict):
                 # Browser-to-code-server frames are already masked exactly as
                 # the upstream expects. Preserve them instead of rebuilding.
                 pass
+            browser_frame_count += 1
+            browser_byte_count += len(payload)
+            now = time.time()
+            if now - last_diag >= 5.0:
+                logger.info(
+                    "Code WS browser->relay: session=%s frames=%d bytes=%d last_op=%s",
+                    ws_session_id, browser_frame_count, browser_byte_count, opcode)
+                last_diag = now
 
             _send_command_to_relay(relay_service, {
                 "action": "cs_ws_send",
@@ -501,12 +540,27 @@ def dispatch_cs_ws_data(relay_id: str, ws_session_id: str, data_b64: str, opcode
         logger.debug("cs_ws_data: no browser sock for ws_session %s", ws_session_id)
         return
     try:
+        stats = ws_sess.setdefault("stats", {
+            "relay_frames": 0,
+            "relay_bytes": 0,
+            "last_diag": time.time(),
+        })
         frame_b64 = data_b64 if opcode == -1 else ""
         if frame_b64:
-            ws_sess["browser_sock"].sendall(base64.b64decode(frame_b64))
+            raw = base64.b64decode(frame_b64)
+            ws_sess["browser_sock"].sendall(raw)
+            stats["relay_bytes"] += len(raw)
         else:
             payload = base64.b64decode(data_b64)
             _ws_send(ws_sess["browser_sock"], payload, opcode=opcode)
+            stats["relay_bytes"] += len(payload)
+        stats["relay_frames"] += 1
+        now = time.time()
+        if now - stats["last_diag"] >= 5.0:
+            logger.info(
+                "Code WS relay->browser: session=%s frames=%d bytes=%d last_op=%s",
+                ws_session_id, stats["relay_frames"], stats["relay_bytes"], opcode)
+            stats["last_diag"] = now
     except Exception as e:
         logger.warning("cs_ws_data: send error: %s", e)
 

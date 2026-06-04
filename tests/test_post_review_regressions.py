@@ -265,6 +265,53 @@ def test_code_server_ws_registers_browser_socket_under_session_id(tmp_path, monk
     assert sock.closed is True
 
 
+def test_code_server_ws_forwards_selected_subprotocol(tmp_path, monkeypatch):
+    from core.capability_auth import init_db
+    from services import code_server_proxy as csp
+
+    init_db(tmp_path / "capabilities.json")
+
+    class FakeSock:
+        def sendall(self, data):
+            pass
+
+        def close(self):
+            pass
+
+    class FakeRelay:
+        def __init__(self):
+            self.headers = None
+
+        def _request(self, action, **kwargs):
+            assert action == "cs_ws_open"
+            self.headers = kwargs["headers"]
+            return {"ok": True}
+
+    with csp._lock:
+        csp._sessions.clear()
+        csp._relay_to_session.clear()
+
+    relay = FakeRelay()
+    session_id, token = csp.register_code_server(
+        "relay-1", 8765, relay, owner_user_id="alice")
+
+    monkeypatch.setattr(csp, "_ws_recv", lambda sock: (0x08, b""))
+    monkeypatch.setattr(csp, "_send_command_to_relay", lambda *a, **k: None)
+
+    csp.code_ws_proxy(
+        FakeSock(),
+        {"session_id": session_id, "token": token, "path": "websocket"},
+        {
+            "auth_user_id": "alice",
+            "remote_addr": "127.0.0.1",
+            "headers": {"Sec-WebSocket-Protocol": "vscode, extra"},
+            "query": "",
+        },
+    )
+
+    assert relay.headers["Sec-WebSocket-Protocol"] == "vscode"
+
+
 def test_code_server_http_proxy_strips_public_prefix_by_default(tmp_path):
     from core.capability_auth import init_db
     from services import code_server_proxy as csp
@@ -510,7 +557,7 @@ def test_code_server_http_proxy_sets_webview_csp(tmp_path):
     assert "script-src-elem" in policy
     assert "style-src-elem" in policy
     assert "font-src" in policy
-    assert "https://open-vsx.org" in policy
+    assert "https://open-vsx.org" not in policy
 
 
 def test_code_server_http_proxy_accepts_tokenless_static_asset(tmp_path):
@@ -524,13 +571,7 @@ def test_code_server_http_proxy_accepts_tokenless_static_asset(tmp_path):
             self.kwargs = None
 
         def _request(self, action, **kwargs):
-            assert action == "http_proxy"
-            self.kwargs = kwargs
-            return {
-                "status": 200,
-                "headers": {"Content-Type": "font/woff"},
-                "body": "Zm9udA==",
-            }
+            raise AssertionError("seti.woff compatibility asset must not hit upstream")
 
     class FakeReq:
         method = "GET"
@@ -563,9 +604,59 @@ def test_code_server_http_proxy_accepts_tokenless_static_asset(tmp_path):
     csp.code_http_proxy(req)
 
     assert req.status == 200
-    assert relay.kwargs["req_path"] == "/_i/icons/seti.woff"
-    assert req.body == b"font"
+    assert relay.kwargs is None
+    assert req.headers["Content-Type"] == "font/woff"
+    assert req.body == b""
     assert token != "_i"
+
+
+def test_code_server_http_proxy_falls_back_for_missing_seti_font(tmp_path):
+    from core.capability_auth import init_db
+    from services import code_server_proxy as csp
+
+    init_db(tmp_path / "capabilities.json")
+
+    class FakeRelay:
+        def _request(self, action, **kwargs):
+            assert action == "http_proxy"
+            return {
+                "status": "404",
+                "headers": {"Content-Type": "text/plain"},
+                "body": "Tm90IGZvdW5k",
+            }
+
+    class FakeReq:
+        method = "GET"
+        query_string = ""
+        headers = {}
+        body = b""
+        auth_user_id = "alice"
+        auth_session_id = ""
+        remote_addr = "127.0.0.1"
+
+        def complete(self, status, headers, body):
+            self.status = status
+            self.headers = headers
+            self.body = body
+
+    with csp._lock:
+        csp._sessions.clear()
+        csp._relay_to_session.clear()
+
+    session_id, token = csp.register_code_server(
+        "relay-1", 8765, FakeRelay(), owner_user_id="alice")
+
+    req = FakeReq()
+    req.path_params = {
+        "session_id": session_id,
+        "token": token,
+        "path": "stable-build/static/extensions/theme-seti/icons/seti.woff",
+    }
+    csp.code_http_proxy(req)
+
+    assert req.status == 200
+    assert req.headers["Content-Type"] == "font/woff"
+    assert req.body == b""
 
 
 def test_code_server_http_proxy_restarts_dead_upstream_once(tmp_path):
@@ -938,9 +1029,54 @@ def test_code_server_worker_does_not_pass_base_path_to_process():
     assert '_public_base_path = msg.get("base_path", "")' in start_block
     assert '"--base-path"' not in start_block
     assert '"--folder-uri"' not in start_block
+    assert '_abs_proxy_base_path = _public_base_path.rstrip("/")' in start_block
+    assert '"--abs-proxy-base-path", _abs_proxy_base_path' in start_block
     assert 'str(Path(root_dir).resolve())' in start_block
     assert '"--disable-workspace-trust"' in start_block
     assert '"upstream_base_path": _upstream_base_path' in start_block
+
+
+def test_local_code_server_uses_abs_proxy_base_path_not_base_path():
+    src = open("pawflow_relay/thread.py", encoding="utf-8").read()
+    start = src.index('def _host_start_local_code_server')
+    start_block = src[start:]
+
+    assert 'base_path = req.get("base_path", "")' in start_block
+    assert 'abs_proxy_base_path = base_path.rstrip("/")' in start_block
+    assert '"--base-path"' not in start_block
+    assert '"--abs-proxy-base-path", abs_proxy_base_path' in start_block
+
+
+def test_code_server_worker_starts_with_isolated_profile_and_no_updates():
+    src = open("pawflow_relay/worker.py", encoding="utf-8").read()
+    start = src.index('if action == "start_code_server":')
+    stop = src.index('# -- Code-server WS tunnel --', start)
+    start_block = src[start:stop]
+
+    assert '"--user-data-dir"' in start_block
+    assert '"--extensions-dir"' in start_block
+    assert '"--disable-extensions"' in start_block
+    assert '"extensions.autoCheckUpdates": False' in start_block
+    assert '"extensions.autoUpdate": False' in start_block
+    assert '"github.gitAuthentication": False' in start_block
+    assert '"--disable-extension", "GitHub.vscode-github-authentication"' in start_block
+    assert '"--disable-extension", "GitHub.copilot"' in start_block
+    assert '"--disable-extension", "GitHub.copilot-chat"' in start_block
+    assert '"extensions.ignoreRecommendations": True' in start_block
+    assert '_cs_env["EXTENSIONS_GALLERY"] = "{}"' in start_block
+    assert 'env=_cs_env' in start_block
+
+
+def test_code_server_worker_keeps_ws_frames_ordered_outside_pool():
+    src = open("pawflow_relay/worker.py", encoding="utf-8").read()
+    start = src.index('elif msg.get("type") == "command":')
+    stop = src.index('with _inflight_lock:', start)
+    command_prefix = src[start:stop]
+
+    assert 'msg.get("action") in ("cs_ws_send", "cs_ws_close")' in command_prefix
+    assert "_execute_command(msg)" in command_prefix
+    assert "continue" in command_prefix
+    assert "_pool.submit" not in command_prefix
 
 
 def test_code_server_worker_forwards_leftover_backend_ws_frames():

@@ -89,6 +89,12 @@ the PawFlow application port private, and proxy to the local PawFlow HTTPS
 endpoint. See [Public HTTPS with Caddy](docker.md#public-https-with-caddy) for a
 Caddyfile example and UFW rules.
 
+When PawFlow opens code-server through a relay, code-server remains mounted at
+`/` upstream and PawFlow strips the public `/code/<session>/<token>/` prefix in
+the reverse proxy. code-server does not expose a `--base-path` flag; only
+`--abs-proxy-base-path` is passed so `/absproxy/<port>` preview links are
+generated under the same public `/code/...` route.
+
 ### Requirements
 - Docker installed and running
 - User in `docker` group (Linux): `sudo usermod -aG docker $USER`

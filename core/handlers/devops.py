@@ -8,6 +8,7 @@ import shlex
 import threading
 from typing import Dict, Any, List, Optional
 
+from core.handlers._fs_base import BaseFsHandler
 from core.tool_handler import ToolHandler
 
 logger = logging.getLogger(__name__)
@@ -32,7 +33,7 @@ def _detect_related_tests(modified_file: str) -> list:
 
 
 
-class RunTestsHandler(ToolHandler):
+class RunTestsHandler(BaseFsHandler):
     """Run pytest on specified test files via filesystem service exec."""
 
     _user_id: str = ""
@@ -167,8 +168,7 @@ class RunTestsHandler(ToolHandler):
         if not test_files:
             return "Error: no test files specified"
 
-        from core.handlers._fs_base import find_fs_service
-        svc = find_fs_service(self._user_id, service_name, self._conversation_id)
+        svc = self._find_service(service_name)
         if not svc:
             return "Error: no filesystem service available to run tests"
 

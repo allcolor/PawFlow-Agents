@@ -1275,8 +1275,10 @@ class ToolRelayService(BaseService):
                 if available is None:
                     available = self._list_available_filesystem_services(
                         user_id, conversation_id, agent_name, fs_types=_FS_TYPES)
+                default_fs_id = self._default_filesystem_id(
+                    available, conversation_id, agent_name) if conversation_id else ""
                 for h in _fs_handlers:
-                    h.set_available_services(available)
+                    h.set_available_services(available, default_fs_id)
                 logger.debug("Filesystem services for user '%s': %s",
                              user_id, [s["id"] for s in available])
             except Exception as e:
@@ -1582,12 +1584,14 @@ class ToolRelayService(BaseService):
         """List filesystem services explicitly linked to this conversation."""
         available = []
         seen = set()
+        default_id = ""
         try:
             from core.service_registry import ServiceRegistry
             reg = ServiceRegistry.get_instance()
             if conversation_id:
                 try:
-                    from core.relay_bindings import get_linked
+                    from core.relay_bindings import get_default, get_linked
+                    default_id = get_default(conversation_id, agent_name) or ""
                     for sid in get_linked(conversation_id, agent_name):
                         if sid in seen:
                             continue
@@ -1595,12 +1599,23 @@ class ToolRelayService(BaseService):
                         if not sdef or sdef.service_type not in ("relay", "filesystem"):
                             continue
                         seen.add(sid)
-                        svc = reg.resolve(sid, user_id=user_id, conv_id=conversation_id)
+                        connected = True
+                        try:
+                            connected = reg.is_connected(sdef.scope, sdef.scope_id, sid)
+                        except Exception:
+                            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+                        svc = None
+                        try:
+                            svc = reg.get_live_instance_cached(sdef.scope, sdef.scope_id, sid)
+                        except Exception:
+                            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                         available.append({
                             "id": sid,
                             "type": sdef.service_type,
                             "scope": sdef.scope,
                             "root": getattr(svc, "root_path", "?") if svc else "?",
+                            "connected": connected,
+                            "default": sid == default_id,
                         })
                 except Exception:
                     logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
@@ -1614,7 +1629,7 @@ class ToolRelayService(BaseService):
                         available.append(item)
                 except Exception:
                     logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-                return available
+                return ToolRelayService._default_first_available(available, default_id)
 
             for fs_type in fs_types:
                 for sdef in reg.resolve_by_type(fs_type, user_id=user_id):
@@ -1633,6 +1648,30 @@ class ToolRelayService(BaseService):
         return available
 
     @staticmethod
+    def _default_first_available(available, default_id: str = ""):
+        if not default_id:
+            return available or []
+        return sorted(
+            available or [],
+            key=lambda item: 0 if item.get("id") == default_id else 1)
+
+    @staticmethod
+    def _default_filesystem_id(available, conversation_id: str = "",
+                               agent_name: str = "") -> str:
+        try:
+            from core.relay_bindings import get_default
+            default_id = get_default(conversation_id, agent_name) or ""
+        except Exception:
+            default_id = ""
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+        ids = [item.get("id", "") for item in available or [] if item.get("id")]
+        if default_id and default_id in ids:
+            return default_id
+        if not default_id and len(ids) == 1:
+            return ids[0]
+        return ""
+
+    @staticmethod
     def _filesystem_service_from_available(available, user_id: str = "",
                                            conversation_id: str = "",
                                            agent_name: str = ""):
@@ -1640,17 +1679,12 @@ class ToolRelayService(BaseService):
             from core.service_registry import ServiceRegistry
             reg = ServiceRegistry.get_instance()
             if conversation_id and available:
-                try:
-                    from core.relay_bindings import get_default
-                    default_id = get_default(conversation_id, agent_name) or ""
-                except Exception:
-                    default_id = ""
-                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-                if default_id and any(item.get("id") == default_id for item in available):
+                default_id = ToolRelayService._default_filesystem_id(
+                    available, conversation_id, agent_name)
+                if default_id:
                     svc = reg.resolve(default_id, user_id=user_id,
                                       conv_id=conversation_id)
-                    if svc:
-                        return svc
+                    return svc
             for item in available or []:
                 svc = reg.resolve(
                     item.get("id", ""), user_id=user_id,
@@ -1671,18 +1705,12 @@ class ToolRelayService(BaseService):
                 available = ToolRelayService._list_available_filesystem_services(
                     user_id, conversation_id, agent_name)
                 allowed = [item.get("id", "") for item in available if item.get("id")]
-                default_id = ""
-                if conversation_id:
-                    try:
-                        from core.relay_bindings import get_default
-                        default_id = get_default(conversation_id, agent_name) or ""
-                    except Exception:
-                        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 if service_id in ("", "workspace", "ws", "local") and default_service:
                     return default_service
                 if conversation_id:
                     if service_id in ("", "workspace", "ws", "local"):
-                        service_id = default_id or (allowed[0] if allowed else "")
+                        service_id = ToolRelayService._default_filesystem_id(
+                            available, conversation_id, agent_name)
                     if not service_id or service_id not in allowed:
                         return None
                 return reg.resolve(service_id, user_id=user_id, conv_id=conversation_id)
@@ -1703,17 +1731,12 @@ class ToolRelayService(BaseService):
             available = ToolRelayService._list_available_filesystem_services(
                 user_id, conversation_id, agent_name)
             if conversation_id and available:
-                try:
-                    from core.relay_bindings import get_default
-                    default_id = get_default(conversation_id, agent_name) or ""
-                except Exception:
-                    default_id = ""
-                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-                if default_id and any(item.get("id") == default_id for item in available):
+                default_id = ToolRelayService._default_filesystem_id(
+                    available, conversation_id, agent_name)
+                if default_id:
                     svc = reg.resolve(default_id, user_id=user_id,
                                       conv_id=conversation_id)
-                    if svc:
-                        return svc
+                    return svc
             if available:
                 for item in available:
                     svc = reg.resolve(

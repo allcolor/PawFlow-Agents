@@ -1238,6 +1238,7 @@ class RelayThread:
 
         port = find_free_port()
         base_path = req.get("base_path", "")
+        abs_proxy_base_path = base_path.rstrip("/")
         if hasattr(self, '_local_code_server'):
             for old_port, old_proc in list(self._local_code_server.items()):
                 if old_proc.poll() is None:
@@ -1251,6 +1252,7 @@ class RelayThread:
             "--auth", "none",
             "--disable-telemetry",
             "--disable-workspace-trust",
+            "--abs-proxy-base-path", abs_proxy_base_path,
             "--bind-addr", f"127.0.0.1:{port}",
             str(Path(self.directory).resolve()),
         ]

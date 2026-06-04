@@ -71,12 +71,18 @@ def test_voicebox_installs_backend_runner_when_missing(tmp_path, monkeypatch):
     python = tmp_path / "backend" / "venv" / "bin" / "python"
     python.parent.mkdir(parents=True)
     python.write_text("", encoding="utf-8")
+    requirements = tmp_path / "backend" / "requirements.txt"
+    requirements.write_text("sqlalchemy\n", encoding="utf-8")
 
     svc = VoiceboxService({"install_dir": str(tmp_path)})
     svc._ensure_backend_runner(python)
 
-    assert [str(python), "-c", "import uvicorn, torch"] in calls
-    assert [str(python), "-m", "pip", "install", "uvicorn[standard]>=0.30"] in calls
+    assert [str(python), "-c", "import uvicorn, fastapi, numpy, torch; import backend.main"] in calls
+    assert [str(python), "-m", "pip", "install", "-r", str(requirements)] in calls
+    assert [
+        str(python), "-m", "pip", "install",
+        "fastapi>=0.110", "numpy>=1.26", "uvicorn[standard]>=0.30",
+    ] in calls
     assert [
         str(python), "-m", "pip", "install", "torch>=2.3",
         "--index-url", "https://download.pytorch.org/whl/cpu",

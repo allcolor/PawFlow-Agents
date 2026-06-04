@@ -525,7 +525,7 @@ class VoiceboxService(BaseVoiceCloneService, BaseSTTService):
         """Ensure the managed backend can be launched through uvicorn."""
         try:
             if subprocess.run(  # nosec B603 - Python executable path is from the managed venv.
-                    [str(python), "-c", "import uvicorn, torch"],
+                    [str(python), "-c", "import uvicorn, fastapi, numpy, torch; import backend.main"],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     check=False).returncode == 0:
@@ -534,8 +534,15 @@ class VoiceboxService(BaseVoiceCloneService, BaseSTTService):
             pass
         if reporter:
             reporter.step("installing_python_requirements", "Installing Voicebox backend runtime")
+        backend = python.parent.parent.parent
+        requirements = backend / "requirements.txt"
+        if requirements.exists():
+            subprocess.check_call([  # nosec B603 - requirements path is inside the managed backend checkout.
+                str(python), "-m", "pip", "install", "-r", str(requirements),
+            ])
         subprocess.check_call([  # nosec B603 - fixed pip argv for the managed venv.
-            str(python), "-m", "pip", "install", "uvicorn[standard]>=0.30",
+            str(python), "-m", "pip", "install",
+            "fastapi>=0.110", "numpy>=1.26", "uvicorn[standard]>=0.30",
         ])
         subprocess.check_call([  # nosec B603 - fixed pip argv for the managed venv.
             str(python), "-m", "pip", "install", "torch>=2.3",
@@ -634,8 +641,9 @@ class VoiceboxService(BaseVoiceCloneService, BaseSTTService):
                 f"{shlex.quote(linux_python)} -m pip --version >/dev/null"):
             subprocess.check_call(self._wsl_argv(  # nosec B603 - fixed WSL argv; Python path is shell-quoted.
                 distro,
-                f"{shlex.quote(linux_python)} -c 'import uvicorn, torch' >/dev/null 2>&1 || "
-                f"({shlex.quote(linux_python)} -m pip install 'uvicorn[standard]>=0.30' && "
+                f"{shlex.quote(linux_python)} -c 'import uvicorn, fastapi, numpy, torch; import backend.main' >/dev/null 2>&1 || "
+                f"({shlex.quote(linux_python)} -m pip install -r {shlex.quote(linux_repo.rstrip('/') + '/backend/requirements.txt')} && "
+                f"{shlex.quote(linux_python)} -m pip install 'fastapi>=0.110' 'numpy>=1.26' 'uvicorn[standard]>=0.30' && "
                 f"{shlex.quote(linux_python)} -m pip install 'torch>=2.3' --index-url https://download.pytorch.org/whl/cpu)",
             ))
             self._patch_managed_checkout_wsl(target)
@@ -656,7 +664,7 @@ class VoiceboxService(BaseVoiceCloneService, BaseSTTService):
                 "  backend/venv/bin/python -m pip install --upgrade pip -q",
                 "  backend/venv/bin/python -m pip install -r backend/requirements.txt",
                 "fi",
-                "backend/venv/bin/python -c 'import uvicorn, torch' >/dev/null 2>&1 || (backend/venv/bin/python -m pip install 'uvicorn[standard]>=0.30' && backend/venv/bin/python -m pip install 'torch>=2.3' --index-url https://download.pytorch.org/whl/cpu)",
+                "backend/venv/bin/python -c 'import uvicorn, fastapi, numpy, torch; import backend.main' >/dev/null 2>&1 || (backend/venv/bin/python -m pip install 'fastapi>=0.110' 'numpy>=1.26' 'uvicorn[standard]>=0.30' && backend/venv/bin/python -m pip install 'torch>=2.3' --index-url https://download.pytorch.org/whl/cpu)",
             ]),
         ))
         self._patch_managed_checkout_wsl(target)

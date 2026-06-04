@@ -766,40 +766,6 @@ def test_code_server_dispatch_can_forward_raw_backend_frame():
         csp._relay_to_session.pop(relay_id, None)
 
 
-def test_code_server_dispatch_routes_by_ws_session_when_relay_id_differs():
-    import base64
-    from services import code_server_proxy as csp
-
-    class FakeBrowserSocket:
-        def __init__(self):
-            self.sent = b""
-
-        def sendall(self, data):
-            self.sent += data
-
-    sock = FakeBrowserSocket()
-    session_id = "session-docker"
-    ws_session_id = "ws-docker"
-    csp._relay_to_session["registered-relay"] = session_id
-    csp._ws_to_session[ws_session_id] = session_id
-    csp._sessions[session_id] = {
-        "cs_ws_sessions": {ws_session_id: {"browser_sock": sock}},
-    }
-    try:
-        frame = b"\x81\x02ok"
-        csp.dispatch_cs_ws_data(
-            "service-id-from-docker-pool",
-            ws_session_id,
-            base64.b64encode(frame).decode("ascii"),
-            opcode=-1,
-        )
-        assert sock.sent == frame
-    finally:
-        csp._sessions.pop(session_id, None)
-        csp._relay_to_session.pop("registered-relay", None)
-        csp._ws_to_session.pop(ws_session_id, None)
-
-
 def test_code_server_worker_does_not_pass_base_path_to_process():
     src = open("pawflow_relay/worker.py", encoding="utf-8").read()
     start = src.index('if action == "start_code_server":')

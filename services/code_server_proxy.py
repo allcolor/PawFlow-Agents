@@ -22,7 +22,6 @@ logger = logging.getLogger(__name__)
 #               capability_token, cs_ws_sessions: {sid → {browser_sock, ...}}}
 _sessions: dict = {}
 _relay_to_session: dict = {}  # relay_id → session_id (for legacy lookups)
-_ws_to_session: dict = {}  # ws_session_id → session_id (authoritative for WS dispatch)
 _lock = threading.Lock()
 
 _VSDA_JS = b"""
@@ -167,10 +166,6 @@ def unregister_code_server(relay_id: str):
                     sock.close()
                 except Exception:
                     logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-    with _lock:
-        for ws_id, mapped_session_id in list(_ws_to_session.items()):
-            if mapped_session_id == session_id:
-                _ws_to_session.pop(ws_id, None)
 
 
 # —— HTTP proxy callback ——
@@ -355,7 +350,6 @@ def code_ws_proxy(client_sock, path_params: dict, meta: dict):
             _sessions[session_id]["cs_ws_sessions"][ws_session_id] = {
                 "browser_sock": client_sock,
             }
-            _ws_to_session[ws_session_id] = session_id
 
     logger.debug("Code WS proxy: opening relay WS session=%s path=%s", ws_session_id, proxied_path)
 
@@ -380,7 +374,6 @@ def code_ws_proxy(client_sock, path_params: dict, meta: dict):
             with _lock:
                 if session_id in _sessions:
                     _sessions[session_id]["cs_ws_sessions"].pop(ws_session_id, None)
-                _ws_to_session.pop(ws_session_id, None)
             _ws_close(client_sock, 4002, f"Failed: {err}")
             return
     except Exception as e:
@@ -388,7 +381,6 @@ def code_ws_proxy(client_sock, path_params: dict, meta: dict):
         with _lock:
             if session_id in _sessions:
                 _sessions[session_id]["cs_ws_sessions"].pop(ws_session_id, None)
-            _ws_to_session.pop(ws_session_id, None)
         _ws_close(client_sock, 4002, f"Failed: {e}")
         return
 
@@ -436,7 +428,6 @@ def code_ws_proxy(client_sock, path_params: dict, meta: dict):
         with _lock:
             if session_id in _sessions:
                 _sessions[session_id]["cs_ws_sessions"].pop(ws_session_id, None)
-            _ws_to_session.pop(ws_session_id, None)
         try:
             client_sock.close()
         except Exception:
@@ -447,7 +438,7 @@ def code_ws_proxy(client_sock, path_params: dict, meta: dict):
 def dispatch_cs_ws_data(relay_id: str, ws_session_id: str, data_b64: str, opcode: int = 1):
     """Called when relay sends cs_ws_data — forward to browser."""
     with _lock:
-        session_id = _ws_to_session.get(ws_session_id) or _relay_to_session.get(relay_id, "")
+        session_id = _relay_to_session.get(relay_id, "")
         sess = _sessions.get(session_id) if session_id else None
     if not sess:
         logger.debug("cs_ws_data: no session for relay %s", relay_id)
@@ -470,7 +461,7 @@ def dispatch_cs_ws_data(relay_id: str, ws_session_id: str, data_b64: str, opcode
 def dispatch_cs_ws_close(relay_id: str, ws_session_id: str):
     """Called when relay's code-server WS closes."""
     with _lock:
-        session_id = _ws_to_session.pop(ws_session_id, "") or _relay_to_session.get(relay_id, "")
+        session_id = _relay_to_session.get(relay_id, "")
         sess = _sessions.get(session_id) if session_id else None
     if not sess:
         return

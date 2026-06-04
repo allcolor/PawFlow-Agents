@@ -44,6 +44,41 @@ _VSDA_JS = b"""
 
 _EMPTY_WASM_MODULE = b"\x00asm\x01\x00\x00\x00"
 
+_CODE_SERVER_CSP = (
+    "default-src 'self' https://*.vscode-cdn.net https://vscode-cdn.net; "
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: "
+    "https://*.vscode-cdn.net https://vscode-cdn.net; "
+    "script-src-elem 'self' 'unsafe-inline' 'unsafe-eval' blob: "
+    "https://*.vscode-cdn.net https://vscode-cdn.net; "
+    "style-src 'self' 'unsafe-inline' "
+    "https://*.vscode-cdn.net https://vscode-cdn.net; "
+    "style-src-elem 'self' 'unsafe-inline' "
+    "https://*.vscode-cdn.net https://vscode-cdn.net; "
+    "img-src 'self' data: blob: https://*.vscode-cdn.net https://vscode-cdn.net; "
+    "font-src 'self' data: https://*.vscode-cdn.net https://vscode-cdn.net; "
+    "media-src 'self' data: blob:; "
+    "connect-src 'self' ws: wss: https://*.vscode-cdn.net https://vscode-cdn.net; "
+    "worker-src 'self' blob:; "
+    "frame-src 'self' blob: https://*.vscode-cdn.net https://vscode-cdn.net; "
+    "object-src 'none'; base-uri 'self'"
+)
+
+
+def _tokenless_code_server_asset_path(token: str, sub_path: str) -> str:
+    """Return a VS Code static asset path when the browser omitted the token."""
+    candidate = token.strip("/")
+    rest = sub_path.strip("/")
+    if rest:
+        candidate = f"{candidate}/{rest}"
+    if not candidate or candidate.startswith("/") or ".." in candidate.split("/"):
+        return ""
+    first = candidate.split("/", 1)[0]
+    if first == "_i" or first.startswith("stable-"):
+        return candidate
+    if first in {"static", "out", "extensions"}:
+        return candidate
+    return ""
+
 
 def _code_server_builtin_asset(sub_path: str):
     """Return small compatibility assets missing from OSS code-server builds."""
@@ -183,28 +218,39 @@ def code_http_proxy(pending_req):
     """
     session_id = pending_req.path_params.get("session_id", "")
     token = pending_req.path_params.get("token", "")
-    from core.capability_routes import verify_route_request
-    claims, err = verify_route_request(
-        pending_req, "code_server", session_id, token,
-        allow_bearer_only=True)
-    if err is not None:
-        pending_req.complete(
-            err["status"], err["headers"], err["body"].encode("utf-8"))
-        return
-
     with _lock:
         sess = _sessions.get(session_id)
     if not sess:
         pending_req.complete(404, {"Content-Type": "application/json"},
                              b'{"error": "Code server session not found"}')
         return
-    relay_id = sess["relay_id"]
 
     sub_path = pending_req.path_params.get("path", "")
+    from core.capability_routes import verify_route_request
+    claims, err = verify_route_request(
+        pending_req, "code_server", session_id, token,
+        allow_bearer_only=True)
+    if err is not None:
+        tokenless_asset = ""
+        if pending_req.method in ("GET", "HEAD"):
+            tokenless_asset = _tokenless_code_server_asset_path(token, sub_path)
+        if tokenless_asset:
+            sub_path = tokenless_asset
+        else:
+            pending_req.complete(
+                err["status"], err["headers"], err["body"].encode("utf-8"))
+            return
+
+    relay_id = sess["relay_id"]
+
     builtin_asset = _code_server_builtin_asset(sub_path)
     if pending_req.method == "GET" and builtin_asset is not None:
         content_type, body = builtin_asset
-        pending_req.complete(200, {"Content-Type": content_type}, body)
+        pending_req.complete(
+            200,
+            {"Content-Type": content_type,
+             "Content-Security-Policy": _CODE_SERVER_CSP},
+            body)
         return
 
     base_path = sess.get("base_path") or f"/code/{session_id}/{token}/"
@@ -283,6 +329,7 @@ def code_http_proxy(pending_req):
             if k.lower() in ("transfer-encoding", "connection", "keep-alive",
                              "content-length"):
                 del resp_headers[k]
+        resp_headers["Content-Security-Policy"] = _CODE_SERVER_CSP
         resp_headers["Content-Length"] = str(len(resp_body))
 
         pending_req.complete(status, resp_headers, resp_body)

@@ -464,6 +464,109 @@ def test_code_server_http_proxy_recomputes_binary_content_length(tmp_path):
     assert req.body == png
 
 
+def test_code_server_http_proxy_sets_webview_csp(tmp_path):
+    from core.capability_auth import init_db
+    from services import code_server_proxy as csp
+
+    init_db(tmp_path / "capabilities.json")
+
+    class FakeRelay:
+        def _request(self, action, **kwargs):
+            assert action == "http_proxy"
+            return {
+                "status": 200,
+                "headers": {"Content-Type": "text/html"},
+                "body": "PGh0bWw+PC9odG1sPg==",
+            }
+
+    class FakeReq:
+        method = "GET"
+        query_string = ""
+        headers = {}
+        body = b""
+        auth_user_id = "alice"
+        auth_session_id = ""
+        remote_addr = "127.0.0.1"
+
+        def complete(self, status, headers, body):
+            self.status = status
+            self.headers = headers
+            self.body = body
+
+    with csp._lock:
+        csp._sessions.clear()
+        csp._relay_to_session.clear()
+
+    session_id, token = csp.register_code_server(
+        "relay-1", 8765, FakeRelay(), owner_user_id="alice")
+
+    req = FakeReq()
+    req.path_params = {"session_id": session_id, "token": token, "path": ""}
+    csp.code_http_proxy(req)
+
+    assert req.status == 200
+    policy = req.headers["Content-Security-Policy"]
+    assert "https://*.vscode-cdn.net" in policy
+    assert "script-src-elem" in policy
+    assert "style-src-elem" in policy
+    assert "font-src" in policy
+
+
+def test_code_server_http_proxy_accepts_tokenless_static_asset(tmp_path):
+    from core.capability_auth import init_db
+    from services import code_server_proxy as csp
+
+    init_db(tmp_path / "capabilities.json")
+
+    class FakeRelay:
+        def __init__(self):
+            self.kwargs = None
+
+        def _request(self, action, **kwargs):
+            assert action == "http_proxy"
+            self.kwargs = kwargs
+            return {
+                "status": 200,
+                "headers": {"Content-Type": "font/woff"},
+                "body": "Zm9udA==",
+            }
+
+    class FakeReq:
+        method = "GET"
+        query_string = ""
+        headers = {}
+        body = b""
+        auth_user_id = ""
+        auth_session_id = ""
+        remote_addr = "127.0.0.1"
+
+        def complete(self, status, headers, body):
+            self.status = status
+            self.headers = headers
+            self.body = body
+
+    with csp._lock:
+        csp._sessions.clear()
+        csp._relay_to_session.clear()
+
+    relay = FakeRelay()
+    session_id, token = csp.register_code_server(
+        "relay-1", 8765, relay, owner_user_id="alice")
+
+    req = FakeReq()
+    req.path_params = {
+        "session_id": session_id,
+        "token": "_i",
+        "path": "icons/seti.woff",
+    }
+    csp.code_http_proxy(req)
+
+    assert req.status == 200
+    assert relay.kwargs["req_path"] == "/_i/icons/seti.woff"
+    assert req.body == b"font"
+    assert token != "_i"
+
+
 def test_code_server_http_proxy_restarts_dead_upstream_once(tmp_path):
     from core.capability_auth import init_db
     from services import code_server_proxy as csp

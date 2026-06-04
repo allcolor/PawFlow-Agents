@@ -230,6 +230,12 @@ function loadRelayImageCatalog() {
   return JSON.parse(fs.readFileSync(relayImageCatalogPath(), 'utf8'));
 }
 
+function defaultRelayImageName() {
+  const repo = process.env.PAWFLOW_RELAY_DEV_IMAGE_REPO || 'ghcr.io/allcolor/pawflow-relay-dev';
+  const tag = process.env.PAWFLOW_RELAY_IMAGE_TAG || process.env.PAWFLOW_VERSION || 'latest';
+  return `${repo}:${tag}`;
+}
+
 async function listDockerImages() {
   try {
     const out = await runDocker([
@@ -264,8 +270,12 @@ function validateDockerImageName(imageName) {
   }
 }
 
+function normalizeRelayImageName(imageName) {
+  return String(imageName || '').trim() || defaultRelayImageName();
+}
+
 async function buildRelayImage(input) {
-  const imageName = String(input.imageName || '').trim();
+  const imageName = normalizeRelayImageName(input.imageName);
   validateDockerImageName(imageName);
   const profile = String(input.profile || '');
   const features = Array.isArray(input.features) ? input.features.map(String).filter(Boolean) : [];
@@ -297,6 +307,74 @@ async function buildRelayImage(input) {
   } finally {
     fs.rmSync(outDir, { recursive: true, force: true });
   }
+  return { ok: true, image: imageName };
+}
+
+async function relayImageIds() {
+  const out = await runDocker(['images', '--format', '{{.Repository}}\t{{.Tag}}\t{{.ID}}']);
+  return out.split('\n')
+    .map(line => line.trim().split('\t'))
+    .filter(parts => parts.length === 3)
+    .filter(([repo, tag]) => repo && tag && repo !== '<none>' && tag !== '<none>')
+    .filter(([repo]) => repo === 'ghcr.io/allcolor/pawflow-relay-dev'
+      || repo === 'ghcr.io/allcolor/pawflow-relay-minimal')
+    .map(([, , id]) => id);
+}
+
+async function cleanupOldRelayImages(currentImage, oldIds) {
+  const keep = new Set([currentImage, 'pawflow-relay-dev:latest']);
+  appendLog('image-download', 'Cleaning older PawFlow relay image tags\n');
+  const out = await runDocker(['images', '--format', '{{.Repository}}\t{{.Tag}}\t{{.ID}}']);
+  for (const line of out.split('\n')) {
+    const [repo, tag] = line.trim().split('\t');
+    if (!repo || !tag || repo === '<none>' || tag === '<none>') continue;
+    if (repo !== 'ghcr.io/allcolor/pawflow-relay-dev'
+        && repo !== 'ghcr.io/allcolor/pawflow-relay-minimal') continue;
+    const ref = `${repo}:${tag}`;
+    if (keep.has(ref)) continue;
+    appendLog('image-download', `Removing old image tag ${ref}\n`);
+    try {
+      await runDocker(['rmi', ref], { logName: 'image-download' });
+    } catch (err) {
+      appendLog('image-download', `[cleanup] ${err.message}\n`);
+    }
+  }
+  const currentIds = new Set((await runDocker(['images', '--format', '{{.ID}}'])).split('\n').map(line => line.trim()).filter(Boolean));
+  for (const id of Array.from(new Set(oldIds || []))) {
+    if (!id || !currentIds.has(id)) continue;
+    let hasTag = true;
+    try {
+      const tag = (await runDocker(['image', 'inspect', '-f', '{{index .RepoTags 0}}', id])).trim();
+      hasTag = Boolean(tag && tag !== '<no value>' && !tag.startsWith('<none>'));
+    } catch (_err) {
+      hasTag = false;
+    }
+    if (hasTag) continue;
+    appendLog('image-download', `Removing old untagged PawFlow relay image id ${id}\n`);
+    try {
+      await runDocker(['rmi', '-f', id], { logName: 'image-download' });
+    } catch (err) {
+      appendLog('image-download', `[cleanup] ${err.message}\n`);
+    }
+  }
+  try {
+    await runDocker(['image', 'prune', '-f', '--filter', 'dangling=true'], { logName: 'image-download' });
+  } catch (err) {
+    appendLog('image-download', `[prune] ${err.message}\n`);
+  }
+}
+
+async function downloadRelayImage(input = {}) {
+  const imageName = normalizeRelayImageName(input.imageName);
+  validateDockerImageName(imageName);
+  const oldIds = await relayImageIds();
+  appendLog('image-download', `Pulling Docker image ${imageName}\n`);
+  await runDocker(['pull', imageName], { logName: 'image-download' });
+  if (imageName.startsWith('ghcr.io/allcolor/pawflow-relay-dev:')) {
+    appendLog('image-download', `Tagging ${imageName} as pawflow-relay-dev:latest\n`);
+    await runDocker(['tag', imageName, 'pawflow-relay-dev:latest'], { logName: 'image-download' });
+  }
+  await cleanupOldRelayImages(imageName, oldIds);
   return { ok: true, image: imageName };
 }
 
@@ -580,7 +658,7 @@ ipcMain.handle('relay:add-workspace', async (_event, input) => {
     '--server', input.server || '',
     '--path', input.path || '',
     '--mode', input.mode || 'rw',
-    '--docker-image', input.dockerImage || '',
+    '--docker-image', input.dockerImage || 'pawflow-relay-dev:latest',
   ];
   if (Boolean(input.allowLocal)) args.push('--allow-local');
   if (!Boolean(input.allowExec)) args.push('--no-exec');
@@ -619,6 +697,8 @@ ipcMain.handle('relay:docker-images', async () => listDockerImages());
 ipcMain.handle('relay:image-catalog', async () => loadRelayImageCatalog());
 
 ipcMain.handle('relay:build-image', async (_event, input) => buildRelayImage(input || {}));
+
+ipcMain.handle('relay:download-image', async (_event, input) => downloadRelayImage(input || {}));
 
 app.whenReady().then(() => {
   createWindow();

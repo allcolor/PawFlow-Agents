@@ -276,6 +276,7 @@ function renderWorkspacePanel(share) {
         <label>Docker image
           <div class="image-picker">
             <select name="dockerImage">${dockerOptions}</select>
+            <button class="button secondary" type="button" id="downloadImageBtn">Download</button>
             <button class="button secondary" type="button" id="buildImageBtn">Build</button>
           </div>
           ${dockerStatus}
@@ -296,6 +297,7 @@ function renderWorkspacePanel(share) {
   `;
   $('#workspaceForm').addEventListener('submit', saveWorkspace);
   $('#browsePathBtn')?.addEventListener('click', browseWorkspacePath);
+  $('#downloadImageBtn')?.addEventListener('click', () => downloadRelayImageFromWorkspace());
   $('#buildImageBtn')?.addEventListener('click', () => setSelected('image-builder'));
   $('#cancelWorkspaceBtn')?.addEventListener('click', () => setSelected('home'));
   if (share) {
@@ -465,6 +467,26 @@ async function buildRelayImage(event) {
   } finally {
     submit.disabled = false;
     submit.textContent = 'Build Image';
+  }
+}
+
+async function downloadRelayImageFromWorkspace() {
+  const form = $('#workspaceForm');
+  const select = form?.elements?.dockerImage;
+  const button = $('#downloadImageBtn');
+  const imageName = select?.value || '';
+  button.disabled = true;
+  button.textContent = 'Downloading...';
+  try {
+    const result = await window.pawflowRelay.downloadRelayImage({ imageName });
+    toast(`Downloaded image ${result.image}`);
+    await refresh();
+    setSelected('workspace', form?.elements?.name?.value || state.selected?.name || '');
+  } catch (err) {
+    toast(err.message, true);
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Download';
   }
 }
 

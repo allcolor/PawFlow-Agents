@@ -305,9 +305,11 @@ def test_relay_manager_start_cleans_runtime_lock_after_exit(monkeypatch, tmp_pat
         "prod", gateway_cookie="gw", session_token="session", username="quentin")
     share = manager.add_workspace("repo", "prod", str(workspace))
     events = []
+    relay_kwargs = {}
 
     class FakeRelay:
         def __init__(self, *args, **kwargs):
+            relay_kwargs.update(kwargs)
             self.relay_id = kwargs["relay_id"]
 
         def start(self):
@@ -324,6 +326,7 @@ def test_relay_manager_start_cleans_runtime_lock_after_exit(monkeypatch, tmp_pat
     manager.start_workspace("repo")
 
     assert events == ["start", "wait", "stop"]
+    assert relay_kwargs["docker_image"] == "pawflow-relay-dev:latest"
     assert not manager._workspace_runtime_lock_path(share["relay_id"]).exists()
 
 

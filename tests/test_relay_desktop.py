@@ -70,6 +70,7 @@ def test_relay_desktop_uses_python_manager_and_safe_preload():
     assert "function runDockerBuild(" in main
     assert "function relayBinaryPath()" in main
     assert "function relayClientCommand(" in main
+    assert "input.dockerImage || 'pawflow-relay-dev:latest'" in main
     assert "function runRelayClientJson(" in main
     assert "PAWFLOW_RELAY_BIN" in main
     assert "process.resourcesPath, 'runtime'" in main
@@ -82,6 +83,12 @@ def test_relay_desktop_uses_python_manager_and_safe_preload():
     assert "return { images: [], error: message }" in main
     assert "relay:image-catalog" in main
     assert "relay:build-image" in main
+    assert "relay:download-image" in main
+    assert "function downloadRelayImage(" in main
+    assert "Cleaning older PawFlow relay image tags" in main
+    assert "runDocker(['pull', imageName]" in main
+    assert "runDocker(['rmi', ref]" in main
+    assert "runDocker(['image', 'prune', '-f', '--filter', 'dangling=true']" in main
     assert "docker builder prune" not in main
     assert "builder', 'prune', '-f'" in main
     assert "nodeIntegration: false" in main
@@ -103,6 +110,7 @@ def test_relay_desktop_uses_python_manager_and_safe_preload():
     assert "ipcRenderer.invoke('relay:docker-images'" in preload
     assert "ipcRenderer.invoke('relay:image-catalog'" in preload
     assert "ipcRenderer.invoke('relay:build-image'" in preload
+    assert "ipcRenderer.invoke('relay:download-image'" in preload
     assert "relay:delete-server" in main
     assert "relay:delete-workspace" in main
     assert "window.pawflowRelay.addWorkspace" in renderer
@@ -113,8 +121,10 @@ def test_relay_desktop_uses_python_manager_and_safe_preload():
     assert "cancelWorkspaceBtn" in renderer
     assert "browsePathBtn" in renderer
     assert "buildImageBtn" in renderer
+    assert "downloadImageBtn" in renderer
     assert "Build Relay Image" in renderer
     assert "window.pawflowRelay.buildRelayImage" in renderer
+    assert "window.pawflowRelay.downloadRelayImage" in renderer
     assert "dockerError" in renderer
     assert "Docker unavailable" in renderer
     assert "selectDirectory" in renderer

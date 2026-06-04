@@ -403,7 +403,7 @@ def start_workspace(name: str):
     relay = RelayThread(
         server["url"], token, username, share["path"],
         relay_id=share.get("relay_id", ""),
-        docker_image=share.get("docker_image", ""),
+        docker_image=share.get("docker_image", "") or "pawflow-relay-dev:latest",
         gateway_cookie=server.get("gateway_cookie", ""),
         gateway_key=server.get("gateway_key", ""),
         allow_exec=bool(share.get("allow_exec", True)),

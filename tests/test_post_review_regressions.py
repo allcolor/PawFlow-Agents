@@ -790,3 +790,16 @@ def test_code_server_worker_forwards_leftover_backend_ws_frames():
     assert "if _leftover:" in ws_open_block
     assert "_forward_cs_ws_frame(_ws_sid, _leftover" in ws_open_block
     assert ws_open_block.index("if _leftover:") < ws_open_block.index("_t.start()")
+
+
+def test_code_server_worker_strips_browser_headers_from_backend_ws_handshake():
+    src = open("pawflow_relay/worker.py", encoding="utf-8").read()
+    start = src.index('if action == "cs_ws_open":')
+    stop = src.index('if action == "cs_ws_send":', start)
+    ws_open_block = src[start:stop]
+
+    assert "Do not forward browser/proxy headers" in ws_open_block
+    assert 'X-Forwarded-*' in ws_open_block
+    assert '_hdr_lines.append(f"{_hk}: {_hv}")' not in ws_open_block
+    assert '_ws_protocol = (_ws_headers.get("Sec-WebSocket-Protocol")' in ws_open_block
+    assert '_hdr_lines.append(f"Sec-WebSocket-Protocol: {_ws_protocol}")' in ws_open_block

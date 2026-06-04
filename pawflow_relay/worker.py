@@ -674,11 +674,14 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                     f"Sec-WebSocket-Key: {_ws_key}",
                     "Sec-WebSocket-Version: 13",
                 ]
-                for _hk, _hv in _ws_headers.items():
-                    _hkl = _hk.lower()
-                    if _hkl not in ("host", "upgrade", "connection",
-                                    "sec-websocket-key", "sec-websocket-version"):
-                        _hdr_lines.append(f"{_hk}: {_hv}")
+                # The browser connects to PawFlow, not directly to code-server.
+                # Do not forward browser/proxy headers such as Cookie,
+                # X-Forwarded-*, or Origin: code-server validates Origin and
+                # rejects proxied HTTPS origins with HTTP 403.
+                _ws_protocol = (_ws_headers.get("Sec-WebSocket-Protocol")
+                                or _ws_headers.get("sec-websocket-protocol"))
+                if _ws_protocol:
+                    _hdr_lines.append(f"Sec-WebSocket-Protocol: {_ws_protocol}")
                 _handshake = "\r\n".join(_hdr_lines) + "\r\n\r\n"
                 sys.stderr.write(f"[FSRelay] cs_ws_open connecting to 127.0.0.1:{_ws_port} path={_ws_path[:80]}\n")
                 _cs_sock = socket.create_connection(("127.0.0.1", _ws_port), timeout=10)

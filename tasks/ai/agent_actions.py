@@ -54,6 +54,23 @@ _UI_ACTION_STATUS_LOCK = threading.Lock()
 _UI_ACTION_STATUS: Dict[str, dict] = {}
 _UI_ACTION_STATUS_TTL = float(os.getenv("PAWFLOW_UI_ACTION_STATUS_TTL", "600") or "600")
 _UI_ACTION_STATUS_MAX = int(os.getenv("PAWFLOW_UI_ACTION_STATUS_MAX", "5000") or "5000")
+_UI_LIST_CACHE_TTL = float(os.getenv("PAWFLOW_UI_LIST_CACHE_TTL", "2.0") or "2.0")
+_UI_LIST_CACHE_MAX = int(os.getenv("PAWFLOW_UI_LIST_CACHE_MAX", "512") or "512")
+_UI_LIST_CACHE_LOCK = threading.Lock()
+_UI_LIST_CACHE: Dict[str, dict] = {}
+
+_UI_LIST_CACHE_ACTIONS = {
+    "list_services",
+    "list_resources",
+    "pfp_list_installed",
+    "list_params_secrets",
+    "list_linked_accounts",
+}
+_UI_LIST_CACHE_IGNORED_BODY_KEYS = {
+    "_call_id",
+    "_reply_conversation_id",
+    "_result_action",
+}
 
 
 def _ui_action_status_key(reply_conversation_id: str, call_id: str) -> str:
@@ -119,6 +136,60 @@ def _list_ui_action_status(reply_conversation_id: str, call_ids: list) -> list:
             else:
                 out.append({"_callId": str(call_id), "status": "unknown"})
         return out
+
+
+def _ui_list_cache_key(action: str, body: dict, user_id: str,
+                       conversation_id: str, result_action: str) -> str:
+    stable_body = {
+        k: v for k, v in body.items()
+        if k not in _UI_LIST_CACHE_IGNORED_BODY_KEYS
+    }
+    payload = {
+        "action": action,
+        "result_action": result_action,
+        "user_id": user_id,
+        "conversation_id": conversation_id,
+        "body": stable_body,
+    }
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def _get_ui_list_cache(action: str, body: dict, user_id: str,
+                       conversation_id: str, result_action: str) -> Optional[str]:
+    if action not in _UI_LIST_CACHE_ACTIONS:
+        return None
+    now = time.monotonic()
+    key = _ui_list_cache_key(action, body, user_id, conversation_id, result_action)
+    with _UI_LIST_CACHE_LOCK:
+        row = _UI_LIST_CACHE.get(key)
+        if not row:
+            return None
+        if now - float(row.get("created_at", 0) or 0) > _UI_LIST_CACHE_TTL:
+            _UI_LIST_CACHE.pop(key, None)
+            return None
+        return str(row.get("content", ""))
+
+
+def _put_ui_list_cache(action: str, body: dict, user_id: str,
+                       conversation_id: str, result_action: str,
+                       content: str) -> None:
+    if action not in _UI_LIST_CACHE_ACTIONS:
+        return
+    now = time.monotonic()
+    key = _ui_list_cache_key(action, body, user_id, conversation_id, result_action)
+    with _UI_LIST_CACHE_LOCK:
+        expired = [
+            k for k, row in _UI_LIST_CACHE.items()
+            if now - float(row.get("created_at", 0) or 0) > _UI_LIST_CACHE_TTL
+        ]
+        for k in expired:
+            _UI_LIST_CACHE.pop(k, None)
+        _UI_LIST_CACHE[key] = {"created_at": now, "content": content}
+        overflow = len(_UI_LIST_CACHE) - _UI_LIST_CACHE_MAX
+        if overflow > 0:
+            for k, _row in sorted(
+                    _UI_LIST_CACHE.items(), key=lambda kv: kv[1].get("created_at", 0))[:overflow]:
+                _UI_LIST_CACHE.pop(k, None)
 
 
 def _ensure_bg_action_scheduler() -> None:
@@ -329,6 +400,27 @@ class AgentActionsMixin:
         result_action = result_action or action
         _record_ui_action_pending(
             reply_conversation_id, call_id, result_action, conversation_id)
+        cached_content = _get_ui_list_cache(
+            action, body, user_id, conversation_id, result_action)
+        if cached_content is not None:
+            from core.conversation_event_bus import ConversationEventBus
+            payload = {
+                "action": result_action, "result": cached_content,
+                "conversation_id": conversation_id,
+            }
+            if call_id:
+                payload["_callId"] = call_id
+            _record_ui_action_done(reply_conversation_id, call_id, payload)
+            ConversationEventBus.instance().publish_event(
+                reply_conversation_id, "command_result", payload)
+            from tasks.ai.agent_streaming import SERVER_START_TIME
+            flowfile.set_content(json.dumps({
+                "status": "accepted", "action": action,
+                "_callId": call_id,
+                "server_start_time": SERVER_START_TIME,
+            }).encode())
+            return [flowfile]
+
         import copy
         _body = copy.deepcopy(body)
         _body["_result_action"] = result_action
@@ -361,6 +453,9 @@ class AgentActionsMixin:
                             if result[0].get_attribute("suppress_command_result") == "1":
                                 return
                             _content = result[0].get_content().decode("utf-8", errors="replace")
+                        _put_ui_list_cache(
+                            action, _body, user_id, conversation_id,
+                            result_action, _content)
                         from core.conversation_event_bus import ConversationEventBus
                         # The "conversation_id" field is the *call's* scope so
                         # the rxbus filter can route the result back to the

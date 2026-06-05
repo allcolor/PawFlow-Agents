@@ -27,6 +27,7 @@ _TERMINAL_JS = Path("tasks/io/chat_ui/terminal.js").read_text(encoding="utf-8")
 _TABS_JS = Path("tasks/io/chat_ui/tabs.js").read_text(encoding="utf-8")
 _FLOW_GRAPH_HTML = Path("tasks/io/chat_ui/flow_graph.html").read_text(encoding="utf-8")
 _MESSAGES_JS = Path("tasks/io/chat_ui/messages.js").read_text(encoding="utf-8")
+_RXBUS_JS = Path("tasks/io/chat_ui/rxbus.js").read_text(encoding="utf-8")
 _AGENT_CONTEXT_PY = Path("tasks/ai/agent_context.py").read_text(encoding="utf-8")
 _AGENT_CORE_PY = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
 _AGENT_COMPACTION_PY = Path("tasks/ai/agent_compaction.py").read_text(encoding="utf-8")
@@ -36,6 +37,7 @@ _CONTEXT_EDITOR_JS = Path(
 _AGENT_ACTIONS_PY = Path("tasks/ai/agent_actions.py").read_text(encoding="utf-8")
 _AGENT_POLLER_PY = Path("tasks/ai/agent_poller.py").read_text(encoding="utf-8")
 _FILESYSTEM_SERVICE_PY = Path("services/filesystem_service.py").read_text(encoding="utf-8")
+_HTTP_LISTENER_SERVICE_PY = Path("services/http_listener_service.py").read_text(encoding="utf-8")
 
 
 def test_set_context_usage_blocks_demote_to_zero():
@@ -317,6 +319,41 @@ def test_active_panel_uses_context_cache_as_source_of_truth():
     assert "(cached.used || 0) > ctxUsed" not in body
     assert "if (cached && cached.max)" in body
     assert "ctxUsed = cached.used || 0" in body
+
+
+def test_action_bus_starts_work_only_on_subscription():
+    """Creating an action Observable must not increment the header pending
+    count. Some callers compose or return action$; only subscription should
+    start fetch/tracking, otherwise stale "actions in progress" badges remain
+    until the SSE status sync clears them."""
+    body = _extract_function_body(_RXBUS_JS, "action$")
+    assert "return defer(() => {" in body
+    assert body.index("return defer(() => {") < body.index("_trackPendingAction(")
+    assert body.index("return defer(() => {") < body.index("fetch(_uiUrl")
+
+
+def test_ui_list_actions_have_short_backend_cache():
+    """Expensive resource/status list actions are called in bursts by the UI.
+    They need a short backend cache keyed by real params, not per-call SSE ids."""
+    src = Path("tasks/ai/agent_actions.py").read_text(encoding="utf-8")
+    for action in (
+        "list_services",
+        "list_resources",
+        "pfp_list_installed",
+        "list_params_secrets",
+        "list_linked_accounts",
+    ):
+        assert f'"{action}"' in src
+    assert "PAWFLOW_UI_LIST_CACHE_TTL" in src
+    assert "_get_ui_list_cache(" in src
+    assert "_put_ui_list_cache(" in src
+    assert '"_call_id"' in src
+    assert '"_reply_conversation_id"' in src
+    assert "cached_content is not None" in src
+
+
+def test_http_slow_response_warning_threshold_is_not_ui_noise():
+    assert 'PAWFLOW_HTTP_TIMING_DIAG_MS", "100"' in _HTTP_LISTENER_SERVICE_PY
 
 
 def test_list_active_does_not_surface_idle_live_only_rows():

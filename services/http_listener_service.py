@@ -28,7 +28,7 @@ from urllib.parse import parse_qs
 from core.base_service import BaseService
 
 logger = logging.getLogger(__name__)
-_HTTP_TIMING_DIAG_MS = float(os.getenv("PAWFLOW_HTTP_TIMING_DIAG_MS", "20") or "20")
+_HTTP_TIMING_DIAG_MS = float(os.getenv("PAWFLOW_HTTP_TIMING_DIAG_MS", "100") or "100")
 
 
 _SECURITY_HEADERS = {

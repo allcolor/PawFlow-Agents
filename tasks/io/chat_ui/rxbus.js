@@ -8,7 +8,7 @@
 //
 //   fireAction('compact', {conversation_id: cid});  // fire-and-forget, no result needed
 
-const { filter, take, map, catchError, of, EMPTY, first, finalize } = rxjs;
+const { filter, take, map, catchError, of, EMPTY, first, finalize, defer } = rxjs;
 
 // Central command-result bus. Replay a short window so an SSE replay or
 // ultra-fast inline response cannot be lost before action$ subscribers attach.
@@ -221,94 +221,95 @@ function _syncPendingActionsFromServer() {
  * @returns {rxjs.Observable} Observable that emits the parsed result
  */
 function action$(actionName, params = {}, opts = {}) {
-
-  // Fire the fetch (no await). Results are always delivered through the
-  // per-tab UI SSE bus, not through the HTTP response body.
-  _ensureUIActionSSE();
-  const body = { action: actionName, ...params };
-  if (!opts.skipConversationId && !body.conversation_id && typeof conversationId !== 'undefined' && conversationId) {
-    body.conversation_id = conversationId;
-  }
-  // Capture the conversation_id this call is scoped to. The filter
-  // below rejects results from a DIFFERENT conv that happen to share
-  // the same action name, so a subscription left over from a previous
-  // conv can't swallow the current conv's result.
-  const _callConvId = body.conversation_id || '';
-  // Unique call id so multiple concurrent calls to the same action
-  // on the same conv don't route their sync results to each other.
-  const _callId = Math.random().toString(36).slice(2) + Date.now().toString(36);
-  body._call_id = _callId;
-  body._reply_conversation_id = _uiActionConversationId();
-  const _trackPending = !opts.silent;
-  if (_trackPending) {
-    _trackPendingAction(_callId, actionName, opts);
-  }
-
-  // UI commands go to /api/ui (dedicated task slot, isolated from
-  // agent execution). Derive from API (/api/agent) by swapping the
-  // last path segment so custom deployments keep working.
-  const _uiUrl = API.replace(/\/api\/agent$/, '/api/ui');
-  fetch(_uiUrl, {
-    method: 'POST',
-    headers: getAuthHeaders(),
-    body: JSON.stringify(body),
-    credentials: 'same-origin',
-  }).then(resp => {
-    if (resp.status === 401 || resp.status === 403) {
-      if (typeof LOGIN_URL !== 'undefined' && LOGIN_URL) {
-        window.location.href = LOGIN_URL;
-      }
-      return;
+  return defer(() => {
+    // Fire the fetch (no await). Results are always delivered through the
+    // per-tab UI SSE bus, not through the HTTP response body.
+    _ensureUIActionSSE();
+    const body = { action: actionName, ...params };
+    if (!opts.skipConversationId && !body.conversation_id && typeof conversationId !== 'undefined' && conversationId) {
+      body.conversation_id = conversationId;
     }
-    // Read response body — if it's NOT {"status":"accepted"}, it's a sync result
-    return resp.json().then(data => {
-      // Server-restart probe: every response carries server_start_time
-      // so we can detect a backend bounce before the UI notices SSE is
-      // stale. Defined in sse.js; may not be loaded in embedded views.
-      try { if (typeof _checkServerRestart === 'function') _checkServerRestart(data); } catch (_) {}
-      if (data && data.status !== 'accepted') {
-        // Sync response — tag with call's conv + id so the filter
-        // below routes it to the right subscriber.
-        _commandResult$.next({
-          action: actionName, result: JSON.stringify(data),
-          conversation_id: _callConvId, _callId,
-        });
-      }
-      // else: accepted → result will arrive via SSE command_result
-    });
-  }).catch(err => {
-    console.warn('[action$] fetch failed for', actionName, err);
-    _commandResult$.next({
-      action: actionName, error: err.message || 'Network error',
-      conversation_id: _callConvId, _callId,
-    });
-  });
+    // Capture the conversation_id this call is scoped to. The filter
+    // below rejects results from a DIFFERENT conv that happen to share
+    // the same action name, so a subscription left over from a previous
+    // conv can't swallow the current conv's result.
+    const _callConvId = body.conversation_id || '';
+    // Unique call id so multiple concurrent calls to the same action
+    // on the same conv don't route their sync results to each other.
+    const _callId = Math.random().toString(36).slice(2) + Date.now().toString(36);
+    body._call_id = _callId;
+    body._reply_conversation_id = _uiActionConversationId();
+    const _trackPending = !opts.silent;
+    if (_trackPending) {
+      _trackPendingAction(_callId, actionName, opts);
+    }
 
-  // Return filtered observable: wait for the exact per-call result.
-  // The bus is replayed, so accepting untagged historical results would
-  // route stale responses into new calls. Browser action$ always sends
-  // _call_id, and the backend echoes it as _callId for every result path.
-  return _commandResult$.pipe(
-    filter(r => {
-      if (r.action !== actionName) return false;
-      if (r._callId !== _callId) return false;
-      if (_callConvId && r.conversation_id && r.conversation_id !== _callConvId) return false;
-      return true;
-    }),
-    first(),
-    map(r => {
-      if (r.error) throw new Error(r.error);
-      // Parse result string into object
-      if (typeof r.result === 'string') {
-        try { return JSON.parse(r.result); } catch { return r.result; }
+    // UI commands go to /api/ui (dedicated task slot, isolated from
+    // agent execution). Derive from API (/api/agent) by swapping the
+    // last path segment so custom deployments keep working.
+    const _uiUrl = API.replace(/\/api\/agent$/, '/api/ui');
+    fetch(_uiUrl, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(body),
+      credentials: 'same-origin',
+    }).then(resp => {
+      if (resp.status === 401 || resp.status === 403) {
+        if (typeof LOGIN_URL !== 'undefined' && LOGIN_URL) {
+          window.location.href = LOGIN_URL;
+        }
+        return;
       }
-      return r.result || r;
-    }),
-    catchError(err => of({ error: err.message || String(err) })),
-    finalize(() => {
-      if (_trackPending) _untrackPendingAction(_callId);
-    }),
-  );
+      // Read response body — if it's NOT {"status":"accepted"}, it's a sync result
+      return resp.json().then(data => {
+        // Server-restart probe: every response carries server_start_time
+        // so we can detect a backend bounce before the UI notices SSE is
+        // stale. Defined in sse.js; may not be loaded in embedded views.
+        try { if (typeof _checkServerRestart === 'function') _checkServerRestart(data); } catch (_) {}
+        if (data && data.status !== 'accepted') {
+          // Sync response — tag with call's conv + id so the filter
+          // below routes it to the right subscriber.
+          _commandResult$.next({
+            action: actionName, result: JSON.stringify(data),
+            conversation_id: _callConvId, _callId,
+          });
+        }
+        // else: accepted → result will arrive via SSE command_result
+      });
+    }).catch(err => {
+      console.warn('[action$] fetch failed for', actionName, err);
+      _commandResult$.next({
+        action: actionName, error: err.message || 'Network error',
+        conversation_id: _callConvId, _callId,
+      });
+    });
+
+    // Return filtered observable: wait for the exact per-call result.
+    // The bus is replayed, so accepting untagged historical results would
+    // route stale responses into new calls. Browser action$ always sends
+    // _call_id, and the backend echoes it as _callId for every result path.
+    return _commandResult$.pipe(
+      filter(r => {
+        if (r.action !== actionName) return false;
+        if (r._callId !== _callId) return false;
+        if (_callConvId && r.conversation_id && r.conversation_id !== _callConvId) return false;
+        return true;
+      }),
+      first(),
+      map(r => {
+        if (r.error) throw new Error(r.error);
+        // Parse result string into object
+        if (typeof r.result === 'string') {
+          try { return JSON.parse(r.result); } catch { return r.result; }
+        }
+        return r.result || r;
+      }),
+      catchError(err => of({ error: err.message || String(err) })),
+      finalize(() => {
+        if (_trackPending) _untrackPendingAction(_callId);
+      }),
+    );
+  });
 }
 
 /**

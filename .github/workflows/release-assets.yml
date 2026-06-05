@@ -184,6 +184,7 @@ jobs:
             dist/relay-desktop-installers/*.deb
             dist/relay-desktop-installers/*.tar.gz
             dist/relay-desktop-installers/*.exe
+            dist/relay-desktop-installers/*.zip
           if-no-files-found: error
 
   vscode-extension:

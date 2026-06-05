@@ -26,6 +26,7 @@ const releaseAssets = (version) => {
     relayDesktopDeb: `pawflow-relay-desktop_${desktopVersion}_amd64.deb`,
     relayDesktopAppImage: `PawFlow Relay Desktop-${desktopVersion}.AppImage`,
     relayDesktopWindows: `PawFlow Relay Desktop Setup ${desktopVersion}.exe`,
+    relayDesktopWindowsZip: `PawFlow Relay Desktop-${desktopVersion}-win.zip`,
     vscodeVsix: `pawflow-vscode-${desktopVersion}.vsix`,
   };
 };

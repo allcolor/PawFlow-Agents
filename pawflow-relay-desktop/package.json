@@ -37,7 +37,11 @@
       }
     ],
     "win": {
-      "target": ["nsis"]
+      "target": ["nsis", "zip"],
+      "artifactName": "${productName}-${version}-win.${ext}"
+    },
+    "nsis": {
+      "artifactName": "${productName} Setup ${version}.${ext}"
     },
     "linux": {
       "target": ["AppImage", "deb", "tar.gz"],

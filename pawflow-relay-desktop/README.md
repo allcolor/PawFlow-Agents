@@ -97,7 +97,7 @@ cd pawflow-relay-desktop
 python -m pip install pyinstaller
 npm install
 npm run dist:linux   # AppImage + deb
-npm run dist:win     # NSIS exe, from Windows
+npm run dist:win     # NSIS exe + zip, from Windows
 npm run dist:mac     # dmg + zip, from macOS
 ```
 

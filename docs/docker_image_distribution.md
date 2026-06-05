@@ -60,7 +60,7 @@ The resulting `dist/pawflow-installers/pawflow-install-VERSION.zip` contains onl
 - the minimal PawFlow install zip on Linux;
 - PawCode archives and native packages on Linux and Windows;
 - standalone Relay CLI archives on Linux and Windows;
-- Relay Desktop installers on Linux (`.AppImage`, `.deb`) and Windows (`.exe`).
+- Relay Desktop installers on Linux (`.AppImage`, `.deb`) and Windows (`.exe`, `.zip`).
 
 To publish a release, push a version tag after the Docker image workflow can publish matching GHCR tags:
 

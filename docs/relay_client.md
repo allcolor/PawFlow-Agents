@@ -94,7 +94,7 @@ npm start
 
 Release builds use `pawflow-relay-desktop/npm run dist:<platform>`. The build
 prepares the runtime payload, creates a PyInstaller relay executable under
-`runtime/bin/`, and packages it with Electron Builder (`nsis` on Windows,
+`runtime/bin/`, and packages it with Electron Builder (`nsis`/`zip` on Windows,
 `AppImage`/`deb` on Linux, `dmg`/`zip` on macOS). In packaged mode the desktop
 app launches the embedded relay binary and uses the Python fallback only for
 source checkouts.

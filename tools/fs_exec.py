@@ -116,6 +116,7 @@ def action_exec(root_dir: str, path: str, req: Dict[str, Any], *,
                              f"Use docker-python, docker-node, or docker-bash.")
         docker_run_args = [
             "--rm",
+            "--init",
             "-v", f"{_translate_path(_to_host_path(root_abs))}:/workspace",
             "-w", "/workspace",
             "-e", "PYTHONIOENCODING=utf-8",

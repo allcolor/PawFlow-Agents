@@ -225,6 +225,7 @@ def docker_available() -> bool:
 def docker_run(args: list, **kwargs) -> subprocess.CompletedProcess:
     """Run 'docker run' with correct prefix. Translates -v paths on Windows."""
     cmd = docker_cmd() + ["run"]
+    args = _with_docker_init(args)
 
     # Translate volume mount paths on Windows
     if is_windows():
@@ -247,6 +248,7 @@ def docker_run(args: list, **kwargs) -> subprocess.CompletedProcess:
 def docker_popen(args: list, **kwargs) -> subprocess.Popen:
     """Popen 'docker run' with correct prefix. Translates -v paths on Windows."""
     cmd = docker_cmd() + ["run"]
+    args = _with_docker_init(args)
 
     # On Windows: create new process group so Ctrl-C goes to Python, not wsl
     if is_windows() and "creationflags" not in kwargs:
@@ -268,6 +270,13 @@ def docker_popen(args: list, **kwargs) -> subprocess.Popen:
 
     cmd.extend(args)
     return subprocess.Popen(cmd, **kwargs)  # nosec B603
+
+
+def _with_docker_init(args: list) -> list:
+    """Ensure Docker reaps orphaned grandchildren inside launched containers."""
+    if "--init" in args:
+        return list(args)
+    return ["--init", *args]
 
 
 def docker_exec(container: str, cmd_args: list, **kwargs) -> subprocess.CompletedProcess:

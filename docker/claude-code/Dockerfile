@@ -72,4 +72,5 @@ RUN mkdir -p /opt/pawflow /workspace /relay /cc_sessions \
 ENV PYTHONPATH="/opt/pawflow"
 
 USER pawflow
-ENTRYPOINT ["/usr/bin/tini", "--", "claude"]
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["claude"]

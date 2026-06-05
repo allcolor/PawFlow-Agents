@@ -553,6 +553,7 @@ class RelayThread:
             docker_run_cmd = docker_cmd() + [
                 "run", "--rm",
                 "--name", self._docker_container,
+                "--init",
                 "--env-file", _env_file_container,
                 "-v", f"{translate_path(to_host_path(self.directory))}:/workspace",
                 "-v", f"pawflow_home_{self.relay_id}:/home/pawflow",

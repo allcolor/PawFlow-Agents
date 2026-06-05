@@ -2089,6 +2089,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                                     _dr = subprocess.run(_docker_cmd() + [  # nosec B603
                                         "run", "-d",
                                         "--name", _child_container,
+                                        "--init",
                                         "-v", f"{_translate_path(_to_host_path(_root))}:/workspace",
                                         "-w", "/workspace",
                                         "--cpus", _cpus, "--memory", _mem,

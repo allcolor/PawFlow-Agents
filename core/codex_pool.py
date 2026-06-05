@@ -624,6 +624,7 @@ class CodexPool:
             "-d",  # detached
             "--rm",  # auto-remove on exit — prevents dead-container pileup
             "--name", name,
+            "--init",
             "--cpus", self.cpu_limit,
             "--memory", self.memory_limit,
             *workspace_mount_args,
@@ -653,7 +654,7 @@ class CodexPool:
             "--cap-add", "SYS_ADMIN",  # needed for mount --bind in exec_codex
             "--security-opt", "apparmor:unconfined",
             "--security-opt", "seccomp=unconfined",
-            # Override entrypoint: keep alive (full path — PATH may be dirty)
+            # Docker's init remains PID 1 and reaps docker exec children.
             "--entrypoint", "/usr/bin/sleep",
             self.image,
             "infinity",

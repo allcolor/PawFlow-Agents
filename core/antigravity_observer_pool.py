@@ -1327,7 +1327,7 @@ class AntigravityObserverPool:
         name = f"pf-{owner[:12]}-agyobs-{uuid.uuid4().hex[:8]}"
         image = os.environ.get("PAWFLOW_ANTIGRAVITY_IMAGE", os.environ.get("PAWFLOW_GEMINI_IMAGE", "pawflow-claude-code:latest"))
         run_args = [
-            "-d", "--rm", "--name", name,
+            "-d", "--rm", "--name", name, "--init",
             *mounts,
             "--add-host", f"{ANTIGRAVITY_BACKEND_HOST}:127.0.0.1",
             "--add-host", "host.docker.internal:host-gateway",

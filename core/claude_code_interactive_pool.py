@@ -559,7 +559,7 @@ class InteractiveClaudeCodePool:
         name = f"pf-{owner[:12]}-cci-{uuid.uuid4().hex[:8]}"
         image = os.environ.get("PAWFLOW_CLAUDE_CODE_IMAGE", "pawflow-claude-code:latest")
         run_args = [
-            "-d", "--rm", "--name", name,
+            "-d", "--rm", "--name", name, "--init",
             *mounts,
             "--add-host", "api.anthropic.com:127.0.0.1",
             "--add-host", "host.docker.internal:host-gateway",

@@ -329,7 +329,8 @@ def test_agent_login_image_installs_rclone_and_copies_login_script():
 
     assert "downloads.rclone.org/rclone-${DOWNLOAD_RCLONE_VERSION}-linux-amd64.zip" in src
     assert "install -m 0755 /tmp/rclone-dist/*/rclone /usr/local/bin/rclone" in src
-    assert 'ENTRYPOINT ["/usr/bin/tini", "--", "claude"]' in src
+    assert 'ENTRYPOINT ["/usr/bin/tini", "--"]' in src
+    assert 'CMD ["claude"]' in src
     assert "ARG RCLONE_" not in src
     assert "PAWFLOW_RCLONE_TYPE" in script
     assert " chrony rclone " not in src
@@ -352,3 +353,42 @@ def test_agent_cli_image_installs_bubblewrap_for_codex_sandbox():
 
     assert " bubblewrap " in src
     assert " tini " in src
+
+
+def test_agent_pool_containers_keep_tini_as_pid_one():
+    for path in (
+        "core/claude_code_pool.py",
+        "core/codex_pool.py",
+        "core/gemini_pool.py",
+        "core/claude_code_interactive_pool.py",
+        "core/antigravity_observer_pool.py",
+    ):
+        src = Path(path).read_text(encoding="utf-8")
+        assert '"--init"' in src
+        assert '"--entrypoint", "/usr/bin/sleep"' in src
+        assert '"/usr/bin/sleep"' in src
+        assert '"infinity"' in src
+
+
+def test_container_launchers_request_docker_init():
+    for path in (
+        "core/server_relay_manager.py",
+        "pawflow_relay/cli.py",
+        "pawflow_relay/thread.py",
+        "pawflow_relay/worker.py",
+        "tools/fs_exec.py",
+        ".pawflow-runtime/fs_exec.py",
+        ".pawflow-runtime/pawflow_relay/cli.py",
+        ".pawflow-runtime/pawflow_relay/thread.py",
+        ".pawflow-runtime/pawflow_relay/worker.py",
+        "pawflow-relay-desktop/runtime/tools/fs_exec.py",
+        "pawflow-relay-desktop/runtime/pawflow_relay/cli.py",
+        "pawflow-relay-desktop/runtime/pawflow_relay/thread.py",
+        "pawflow-relay-desktop/runtime/pawflow_relay/worker.py",
+    ):
+        src = Path(path).read_text(encoding="utf-8")
+        assert '"--init"' in src
+
+    docker_utils = Path("core/docker_utils.py").read_text(encoding="utf-8")
+    assert "def _with_docker_init" in docker_utils
+    assert 'return ["--init", *args]' in docker_utils

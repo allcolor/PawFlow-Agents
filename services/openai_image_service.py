@@ -6,6 +6,7 @@ Supports DALL-E 3 and compatible endpoints (base_url configurable).
 
 import json
 import logging
+import base64
 import urllib.request
 
 from core import ServiceFactory, ServiceError
@@ -102,27 +103,40 @@ class OpenAIImageService(BaseImageGenerationService):
         pass
 
     def generate(self, prompt="", negative_prompt="", width=1024, height=1024,
-                 **_) -> dict:
+                 output_format="png", quality="", **_) -> dict:
         if not prompt:
             raise ServiceError("No prompt provided")
         self.ensure_connected()
 
-        # DALL-E 3 supports: 1024x1024, 1792x1024, 1024x1792
+        is_gpt_image = str(self.model or "").startswith("gpt-image-")
         size = "1024x1024"
         if width and height:
             ratio = width / height
-            if ratio > 1.4:
-                size = "1792x1024"
-            elif ratio < 0.7:
-                size = "1024x1792"
+            if is_gpt_image:
+                if ratio > 1.15:
+                    size = "1536x1024"
+                elif ratio < 0.87:
+                    size = "1024x1536"
+            else:
+                if ratio > 1.4:
+                    size = "1792x1024"
+                elif ratio < 0.7:
+                    size = "1024x1792"
 
         body = {
             "model": self.model,
             "prompt": prompt,
             "n": 1,
             "size": size,
-            "response_format": "url",
         }
+        if is_gpt_image:
+            fmt = str(output_format or "").strip().lower()
+            if fmt in {"png", "jpeg", "webp"}:
+                body["output_format"] = fmt
+            if quality:
+                body["quality"] = quality
+        else:
+            body["response_format"] = "url"
 
         logger.info("[OPENAI-IMAGE] Generating: prompt=%s..., model=%s, size=%s",
                     prompt[:80], self.model, size)
@@ -143,9 +157,19 @@ class OpenAIImageService(BaseImageGenerationService):
         if not images:
             raise ServiceError(f"No images in response: {json.dumps(result)[:300]}")
 
-        image_url = images[0].get("url", "")
+        image = images[0]
+        image_b64 = image.get("b64_json", "")
+        if image_b64:
+            content_type = {
+                "jpeg": "image/jpeg",
+                "webp": "image/webp",
+                "png": "image/png",
+            }.get(str(output_format or "png").lower(), "image/png")
+            return {"image_bytes": base64.b64decode(image_b64), "content_type": content_type}
+
+        image_url = image.get("url", "")
         if not image_url:
-            raise ServiceError("No image URL in response")
+            raise ServiceError("No image URL or base64 payload in response")
 
         # Download image
         img_req = urllib.request.Request(

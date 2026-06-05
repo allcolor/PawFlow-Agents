@@ -58,26 +58,25 @@ def test_image_service_uses_openai_images_for_bare_openai(monkeypatch):
     calls = []
 
     monkeypatch.setattr(svc, "_resolve_llm_service", lambda: llm)
+    raw = base64.b64encode(b"PNG").decode("ascii")
     monkeypatch.setattr(
         svc,
         "_request_json",
         lambda resolved, method, path, body=None: calls.append((method, path, body)) or {
-            "data": [{"url": "https://cdn.example.com/out.png"}],
+            "data": [{"b64_json": raw}],
         },
     )
-    monkeypatch.setattr(
-        svc,
-        "_download_url",
-        lambda url, default_content_type, timeout: (b"PNG", "image/png"),
-    )
 
-    result = svc.generate(prompt="draw a cat", width=1024, height=1024)
+    result = svc.generate(prompt="draw a cat", width=1536, height=1024, output_format="png")
 
     assert result == {"image_bytes": b"PNG", "content_type": "image/png"}
     assert calls[0][0] == "POST"
     assert calls[0][1] == "/images/generations"
     assert calls[0][2]["model"] == "gpt-image-1"
     assert calls[0][2]["prompt"] == "draw a cat"
+    assert calls[0][2]["size"] == "1536x1024"
+    assert calls[0][2]["output_format"] == "png"
+    assert "response_format" not in calls[0][2]
 
 
 def test_image_service_uses_chat_completions_for_openrouter_and_max_tokens(monkeypatch):

@@ -275,6 +275,26 @@ class OpenAICompatibleImageGenerationService(_OpenAICompatibleMediaMixin, BaseIm
             return "1024x1792"
         return "1024x1024"
 
+    @staticmethod
+    def _is_gpt_image_model(model: str) -> bool:
+        return str(model or "").startswith("gpt-image-")
+
+    @staticmethod
+    def _gpt_image_size(width=None, height=None) -> str:
+        try:
+            w = int(width or 0)
+            h = int(height or 0)
+        except (TypeError, ValueError):
+            return "1024x1024"
+        if w <= 0 or h <= 0:
+            return "1024x1024"
+        ratio = w / h
+        if ratio > 1.15:
+            return "1536x1024"
+        if ratio < 0.87:
+            return "1024x1536"
+        return "1024x1024"
+
     def generate(self, prompt="", negative_prompt="", width=1024, height=1024,
                  model: str = "", **kwargs) -> dict:
         if not prompt:
@@ -295,9 +315,17 @@ class OpenAICompatibleImageGenerationService(_OpenAICompatibleMediaMixin, BaseIm
             "model": model,
             "prompt": prompt if not negative_prompt else f"{prompt}\nAvoid: {negative_prompt}",
             "n": 1,
-            "size": kwargs.get("size") or self._size(width, height),
-            "response_format": kwargs.get("response_format") or self.response_format,
+            "size": kwargs.get("size") or (
+                self._gpt_image_size(width, height)
+                if self._is_gpt_image_model(model) else self._size(width, height)
+            ),
         }
+        if self._is_gpt_image_model(model):
+            output_format = str(kwargs.get("output_format") or "").strip().lower()
+            if output_format in {"png", "jpeg", "webp"}:
+                body["output_format"] = output_format
+        else:
+            body["response_format"] = kwargs.get("response_format") or self.response_format
         if self.quality:
             body["quality"] = self.quality
         if self.style:

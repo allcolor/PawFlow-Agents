@@ -63,9 +63,10 @@ function _convTtsUpdateButton() {
   btn.classList.toggle('active', _convTtsEnabled);
   btn.style.display = _convTtsServices.length ? 'inline-flex' : 'none';
   btn.setAttribute('aria-pressed', _convTtsEnabled ? 'true' : 'false');
-  btn.title = _convTtsEnabled
+  const baseTitle = _convTtsEnabled
     ? (typeof t === 'function' ? t('liveSpeechStopTitle') : 'Stop live speech')
     : (typeof t === 'function' ? t('liveSpeechStartTitle') : 'Speak agent messages live');
+  btn.title = baseTitle + (_convTtsServices.length > 1 ? ' (right-click to choose service)' : '');
   btn.innerHTML = _convTtsEnabled ? '&#x1F50A;' : '&#x1F507;';
 }
 
@@ -76,11 +77,14 @@ function _convTtsSetServices(services) {
     _convTtsSelectedService = '';
     if (_convTtsEnabled) toggleConversationTTS();
   } else if (!_convTtsSelectedService || !_convTtsServices.some(s => s.id === _convTtsSelectedService)) {
-    let stored = '';
-    try { stored = localStorage.getItem('pawflow_tts_service') || ''; } catch (_err) {}
-    _convTtsSelectedService = _convTtsServices.some(s => s.id === stored)
-      ? stored
-      : _convTtsServices[0].id;
+    const agentName = (typeof selectedAgent !== 'undefined' && selectedAgent) ? selectedAgent : '';
+    const preferred = _convTtsServices.find(s => {
+      const selectedFor = Array.isArray(s.selected_for) ? s.selected_for : [];
+      return selectedFor.indexOf('*') >= 0 || selectedFor.indexOf(agentName) >= 0;
+    });
+    _convTtsSelectedService = preferred
+      ? preferred.id
+      : (_convTtsServices.length === 1 ? _convTtsServices[0].id : '');
   }
   _convTtsUpdateButton();
 }
@@ -113,13 +117,44 @@ function _convTtsStartFromAvailableServices() {
 function _convTtsSelectService(serviceId) {
   if (!serviceId) return;
   _convTtsSelectedService = serviceId;
-  try { localStorage.setItem('pawflow_tts_service', serviceId); } catch (_err) {}
   const overlay = document.getElementById('convTtsServiceDialog');
   if (overlay) overlay.remove();
   const afterSelect = _convTtsAfterServiceSelect;
   _convTtsAfterServiceSelect = null;
   if (afterSelect) afterSelect();
   else _convTtsStart();
+}
+
+function _convTtsSetDefaultService(serviceId) {
+  if (!serviceId || typeof action$ !== 'function') return;
+  action$('set_tts_service', {
+    conversation_id: conversationId,
+    service_name: serviceId,
+    agent_name: '*',
+  }, { silent: true }).subscribe(() => {
+    try { localStorage.removeItem('pawflow_tts_service'); } catch (_err) {}
+    _convTtsSelectedService = serviceId;
+    refreshConversationTTSServices();
+  });
+}
+
+function _convTtsResetDefaultService() {
+  if (typeof action$ !== 'function') return;
+  action$('clear_tts_service', {
+    conversation_id: conversationId,
+  }, { silent: true }).subscribe(() => {
+    try { localStorage.removeItem('pawflow_tts_service'); } catch (_err) {}
+    _convTtsSelectedService = '';
+    refreshConversationTTSServices();
+  });
+}
+
+function showConversationTTSServiceDialog() {
+  if (!_convTtsServicesLoaded) {
+    refreshConversationTTSServices(() => _convTtsShowServiceDialog());
+    return;
+  }
+  if (_convTtsServices.length > 1) _convTtsShowServiceDialog();
 }
 
 function _convTtsChooseService(afterSelect) {
@@ -132,7 +167,8 @@ function _convTtsChooseService(afterSelect) {
     return;
   }
   _convTtsAfterServiceSelect = afterSelect;
-  if (_convTtsServices.length > 1) _convTtsShowServiceDialog();
+  if (_convTtsSelectedService) _convTtsSelectService(_convTtsSelectedService);
+  else if (_convTtsServices.length > 1) _convTtsShowServiceDialog();
   else _convTtsSelectService(_convTtsServices[0].id);
 }
 
@@ -146,11 +182,18 @@ function _convTtsShowServiceDialog() {
     + '<h3>' + escapeHtml(typeof t === 'function' ? t('liveSpeechChooseService') : 'Choose speech service') + '</h3>';
   _convTtsServices.forEach(s => {
     const label = s.id + (s.type ? ' (' + s.type + ')' : '');
-    html += '<button class="btn" style="display:block;width:100%;margin:6px 0;text-align:left;" '
+    const selectedFor = Array.isArray(s.selected_for) ? s.selected_for : [];
+    const isDefault = selectedFor.indexOf('*') >= 0;
+    html += '<div style="display:grid;grid-template-columns:1fr auto;gap:6px;margin:6px 0;align-items:center;">'
+      + '<button class="btn" style="display:block;width:100%;text-align:left;" '
       + 'onclick="_convTtsSelectService(this.dataset.service)" data-service="' + escapeHtml(s.id) + '">'
-      + escapeHtml(label) + '</button>';
+      + escapeHtml(label + (isDefault ? ' *' : '')) + '</button>'
+      + '<button class="btn" onclick="_convTtsSetDefaultService(this.dataset.service)" data-service="' + escapeHtml(s.id) + '">Default</button>'
+      + '</div>';
   });
-  html += '<div class="dialog-actions" style="margin-top:12px;"><button class="btn" onclick="document.getElementById(\'convTtsServiceDialog\').remove()">'
+  html += '<div class="dialog-actions" style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end;">'
+    + '<button class="btn" onclick="_convTtsResetDefaultService()">Reset default</button>'
+    + '<button class="btn" onclick="document.getElementById(\'convTtsServiceDialog\').remove()">'
     + escapeHtml(typeof t === 'function' ? t('cancel') : 'Cancel') + '</button></div></div>';
   overlay.innerHTML = html;
 

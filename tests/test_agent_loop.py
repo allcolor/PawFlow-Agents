@@ -2590,6 +2590,23 @@ class TestImageServiceResolution(unittest.TestCase):
         assert err is None
         resolve.assert_called_once_with("pixazo", "user1", "conv1")
 
+    def test_make_tts_resolver_multiple_no_pref_requires_default(self):
+        """With multiple TTS services and no preference, resolver does not pick one."""
+        from tasks.ai.agent_loop import AgentLoopTask
+        task = AgentLoopTask.__new__(AgentLoopTask)
+
+        with patch.object(task, '_discover_media_services', return_value=[
+            ("supertonic", "supertonicTTS", "user"),
+            ("voxcpm", "voxcpmTTS", "user"),
+        ]):
+            with patch("core.conversation_store.ConversationStore") as mock_cs:
+                mock_cs.instance.return_value.get_extra.return_value = {}
+                resolver = task._make_tts_resolver("user1", "conv1", "assistant")
+                svc, err = resolver()
+
+        assert svc is None
+        assert "Multiple text-to-speech services available" in err
+
     def test_make_image_resolver_with_agent_pref(self):
         """Per-agent preference selects the right service."""
         from tasks.ai.agent_loop import AgentLoopTask

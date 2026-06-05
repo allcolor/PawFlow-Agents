@@ -60,22 +60,22 @@ Example chain:
 | `delete_voice` | Remove local voice clone state, cached TTS renders, and provider voice id where applicable. |
 | `stt_transcribe` | UI action that transcribes browser microphone audio through the active STT provider. |
 
-`speak` is the single text-to-speech entry point. Supertonic, Pixazo, WaveSpeed,
-VoxCPM, ElevenLabs, Fish Audio, and other compatible providers all expose speech
-through the same tool. Use `clone_voice` only when the provider needs or supports a
-stored voice resource; only clone voices when the user has explicit rights to use
-the speaker's voice.
+`speak` is the single text-to-speech entry point. OpenAI-compatible TTS,
+Supertonic, Pixazo, WaveSpeed, VoxCPM, ElevenLabs, Fish Audio, and other
+compatible providers all expose speech through the same tool. Use `clone_voice`
+only when the provider needs or supports a stored voice resource; only clone
+voices when the user has explicit rights to use the speaker's voice.
 
 The webchat header includes a speaker toggle that reads new agent messages as
 they stream in. It calls the silent UI action `tts_synthesize`, which delegates
 to `speak` and returns an audio URL without adding `tool_call` or `tool_result`
 messages to the conversation. The button is hidden until at least one compatible
-TTS service is configured. With one service it toggles immediately; with several
-services it opens a service picker before playback. The selected service is
-remembered in local storage as `pawflow_tts_service`; optional advanced overrides
-for provider-native voice/language remain available as `pawflow_tts_voice` and
-`pawflow_tts_language`, otherwise the selected service's configured defaults are
-used.
+TTS service is configured. With one service it toggles immediately. With several
+services, the conversation default is used when set; otherwise the button opens a
+service picker before playback. The picker can also set or reset the conversation
+default. Optional advanced overrides for provider-native voice/language remain
+available as `pawflow_tts_voice` and `pawflow_tts_language`, otherwise the
+selected service's configured defaults are used.
 
 Webchat playback audio is transient. `tts_synthesize` passes an internal storage
 TTL to `speak`, and the browser calls `tts_delete` as soon as playback ends,
@@ -93,9 +93,11 @@ synthesizes only that message and deletes the transient audio after playback.
 The webchat input also includes a microphone button when an STT provider is
 configured. The browser records audio with `MediaRecorder`, sends it to the
 silent UI action `stt_transcribe`, writes the returned transcript into the chat
-input, and auto-sends only when the input was empty when recording started. The
-selected STT service is remembered as `pawflow_stt_service`; optional advanced
-overrides are `pawflow_stt_language` and `pawflow_stt_auto_send`.
+input, and auto-sends only when the input was empty when recording started. With
+one STT service it records immediately. With several services, the conversation
+default is used when set; otherwise the button opens a service picker. The picker
+can also set or reset the conversation default. Optional advanced overrides are
+`pawflow_stt_language` and `pawflow_stt_auto_send`.
 After service discovery or selection, webchat sends a silent `stt_warmup` action
 so providers with a warmup hook can start their local daemon and load speech
 models before the first recording is submitted.
@@ -231,6 +233,7 @@ Supported service families include:
 - `klingVideoGeneration`
 - `sunoAudioGeneration`
 - `supertonicTTS`
+- `openaiCompatibleTTS`
 - `openaiCompatibleSTT`
 - `voicebox`
 - `luxTTS`
@@ -255,6 +258,16 @@ Supported service families include:
 - `wavespeedVoiceClone`
 
 For Pixazo model-specific schemas and pricing notes, see [Pixazo](pixazo.md). For WaveSpeedAI model-specific schemas and pricing notes, see [WaveSpeedAI](wavespeed.md). For registered voice internals, see [Voice Clone](voice_clone.md).
+
+### OpenAI-Compatible Text-to-Speech Service
+
+`openaiCompatibleTTS` calls the OpenAI-compatible `POST /audio/speech` API and
+returns the generated audio bytes to PawFlow's `speak` pipeline. The default
+configuration targets `https://api.openai.com/v1` with model `gpt-4o-mini-tts`,
+voice `coral`, and `mp3` output. Configure `api_key` for OpenAI or compatible
+hosted providers, or leave it empty for trusted local relay-routed endpoints.
+The service supports provider-native `voice`, `instructions`, `response_format`,
+`speed`, and per-call overrides passed through `speak`.
 
 ### Suno Audio Service
 

@@ -624,7 +624,7 @@ if (typeof hljs !== 'undefined') {
     <select id="languageSelect" onchange="setLanguage(this.value)" title="Language" aria-label="Language" data-i18n-title="languageTitle" data-i18n-aria-label="languageTitle"
             style="background:var(--pf-user);color:var(--pf-text);border:1px solid var(--pf-accent-2);border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;display:none;max-width:120px">
     </select>
-    <button class="speak-toggle-btn" id="speakToggleBtn" onclick="toggleConversationTTS()" title="Speak agent messages live" data-i18n-title="liveSpeechStartTitle" style="display:none">&#x1F50A;</button>
+    <button class="speak-toggle-btn" id="speakToggleBtn" onclick="toggleConversationTTS()" oncontextmenu="showConversationTTSServiceDialog(); return false;" title="Speak agent messages live" data-i18n-title="liveSpeechStartTitle" style="display:none">&#x1F50A;</button>
     <div class="view-menu-wrap" id="viewMenuWrap">
       <button id="viewMenuToggle" class="tech-group-toggle" type="button" aria-haspopup="true" aria-expanded="false"
               aria-label="View options" title="View options"
@@ -777,7 +777,7 @@ if (typeof hljs !== 'undefined') {
   <div class="input-row">
     <button class="btn-attach" id="promptsBtn" onclick="showPrompts()" title="Prompt library" data-i18n-title="promptLibraryTitle" style="font-size:16px !important">&#x1F4DD;</button>
     <button class="btn-attach" id="fileAttachBtn" onclick="document.getElementById('fileInput').click()" title="Attach files" data-i18n-title="attachTitle">&#x1F4CE;</button>
-    <button class="btn-attach" id="speechInputBtn" onclick="toggleConversationSTT()" title="Dictate and send" data-i18n-title="speechInputStartTitle" style="display:none">&#x1F3A4;</button>
+    <button class="btn-attach" id="speechInputBtn" onclick="toggleConversationSTT()" oncontextmenu="showConversationSTTServiceDialog(); return false;" title="Dictate and send" data-i18n-title="speechInputStartTitle" style="display:none">&#x1F3A4;</button>
     <button class="btn-attach" id="refreshConvBtn" onclick="refreshCurrentConversation()" title="Refresh conversation" data-i18n-title="refreshConversationTitle">&#x21BB;</button>
     <input type="file" id="fileInput" multiple accept=".pdf,.txt,.html,.md,.csv,.json,.png,.jpg,.jpeg,.gif,.webp,.py" style="display:none" onchange="handleFiles(this.files)">
     <textarea id="input" placeholder="Type a message... (Enter to send, Shift+Enter for newline)" data-i18n-placeholder="placeholder"

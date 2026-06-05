@@ -6,6 +6,7 @@ var _convSttSelectedService = '';
 var _convSttServicesLoaded = false;
 var _convSttRefreshInFlight = false;
 var _convSttStartAfterRefresh = false;
+var _convSttAfterRefresh = null;
 var _convSttMediaRecorder = null;
 var _convSttStream = null;
 var _convSttAudioContext = null;
@@ -33,9 +34,10 @@ function _convSttUpdateButton() {
   btn.style.display = _convSttServices.length ? 'inline-flex' : 'none';
   btn.classList.toggle('active', _convSttRecording);
   btn.setAttribute('aria-pressed', _convSttRecording ? 'true' : 'false');
-  btn.title = _convSttRecording
+  const baseTitle = _convSttRecording
     ? (typeof t === 'function' ? t('speechInputStopTitle') : 'Stop recording')
     : (typeof t === 'function' ? t('speechInputStartTitle') : 'Dictate and send');
+  btn.title = baseTitle + (_convSttServices.length > 1 ? ' (right-click to choose service)' : '');
   btn.innerHTML = _convSttRecording ? '&#x23F9;' : '&#x1F3A4;';
 }
 
@@ -45,11 +47,14 @@ function _convSttSetServices(services) {
   if (!_convSttServices.length) {
     _convSttSelectedService = '';
   } else if (!_convSttSelectedService || !_convSttServices.some(s => s.id === _convSttSelectedService)) {
-    let stored = '';
-    try { stored = localStorage.getItem('pawflow_stt_service') || ''; } catch (_err) {}
-    _convSttSelectedService = _convSttServices.some(s => s.id === stored)
-      ? stored
-      : _convSttServices[0].id;
+    const agentName = (typeof selectedAgent !== 'undefined' && selectedAgent) ? selectedAgent : '';
+    const preferred = _convSttServices.find(s => {
+      const selectedFor = Array.isArray(s.selected_for) ? s.selected_for : [];
+      return selectedFor.indexOf('*') >= 0 || selectedFor.indexOf(agentName) >= 0;
+    });
+    _convSttSelectedService = preferred
+      ? preferred.id
+      : (_convSttServices.length === 1 ? _convSttServices[0].id : '');
   }
   _convSttUpdateButton();
   _convSttWarmup();
@@ -74,7 +79,8 @@ function _convSttWarmup() {
 }
 
 function refreshConversationSTTServices(startAfterRefresh) {
-  if (startAfterRefresh) _convSttStartAfterRefresh = true;
+  if (typeof startAfterRefresh === 'function') _convSttAfterRefresh = startAfterRefresh;
+  else if (startAfterRefresh) _convSttStartAfterRefresh = true;
   if (_convSttRefreshInFlight) return;
   if (typeof action$ !== 'function') { _convSttUpdateButton(); return; }
   _convSttRefreshInFlight = true;
@@ -82,7 +88,11 @@ function refreshConversationSTTServices(startAfterRefresh) {
     _convSttRefreshInFlight = false;
     const services = Array.isArray(data) ? data : ((data && data.services) || []);
     _convSttSetServices(services);
-    if (_convSttStartAfterRefresh) {
+    const afterRefresh = _convSttAfterRefresh;
+    _convSttAfterRefresh = null;
+    if (afterRefresh) {
+      afterRefresh();
+    } else if (_convSttStartAfterRefresh) {
       _convSttStartAfterRefresh = false;
       if (_convSttServices.length > 1 && !_convSttSelectedService) _convSttShowServiceDialog();
       else if (_convSttServices.length) _convSttStartRecording();
@@ -96,11 +106,42 @@ function refreshConversationSTTServices(startAfterRefresh) {
 function _convSttSelectService(serviceId) {
   if (!serviceId) return;
   _convSttSelectedService = serviceId;
-  try { localStorage.setItem('pawflow_stt_service', serviceId); } catch (_err) {}
   const overlay = document.getElementById('convSttServiceDialog');
   if (overlay) overlay.remove();
   _convSttWarmup();
   _convSttStartRecording();
+}
+
+function _convSttSetDefaultService(serviceId) {
+  if (!serviceId || typeof action$ !== 'function') return;
+  action$('set_stt_service', {
+    conversation_id: conversationId,
+    service_name: serviceId,
+    agent_name: '*',
+  }, { silent: true }).subscribe(() => {
+    try { localStorage.removeItem('pawflow_stt_service'); } catch (_err) {}
+    _convSttSelectedService = serviceId;
+    refreshConversationSTTServices();
+  });
+}
+
+function _convSttResetDefaultService() {
+  if (typeof action$ !== 'function') return;
+  action$('clear_stt_service', {
+    conversation_id: conversationId,
+  }, { silent: true }).subscribe(() => {
+    try { localStorage.removeItem('pawflow_stt_service'); } catch (_err) {}
+    _convSttSelectedService = '';
+    refreshConversationSTTServices();
+  });
+}
+
+function showConversationSTTServiceDialog() {
+  if (!_convSttServicesLoaded) {
+    refreshConversationSTTServices(() => _convSttShowServiceDialog());
+    return;
+  }
+  if (_convSttServices.length > 1) _convSttShowServiceDialog();
 }
 
 function _convSttShowServiceDialog() {
@@ -113,11 +154,18 @@ function _convSttShowServiceDialog() {
     + '<h3>' + escapeHtml(typeof t === 'function' ? t('speechInputChooseService') : 'Choose speech input service') + '</h3>';
   _convSttServices.forEach(s => {
     const label = s.id + (s.type ? ' (' + s.type + ')' : '');
-    html += '<button class="btn" style="display:block;width:100%;margin:6px 0;text-align:left;" '
+    const selectedFor = Array.isArray(s.selected_for) ? s.selected_for : [];
+    const isDefault = selectedFor.indexOf('*') >= 0;
+    html += '<div style="display:grid;grid-template-columns:1fr auto;gap:6px;margin:6px 0;align-items:center;">'
+      + '<button class="btn" style="display:block;width:100%;text-align:left;" '
       + 'onclick="_convSttSelectService(this.dataset.service)" data-service="' + escapeHtml(s.id) + '">'
-      + escapeHtml(label) + '</button>';
+      + escapeHtml(label + (isDefault ? ' *' : '')) + '</button>'
+      + '<button class="btn" onclick="_convSttSetDefaultService(this.dataset.service)" data-service="' + escapeHtml(s.id) + '">Default</button>'
+      + '</div>';
   });
-  html += '<div class="dialog-actions" style="margin-top:12px;"><button class="btn" onclick="document.getElementById(\'convSttServiceDialog\').remove()">'
+  html += '<div class="dialog-actions" style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end;">'
+    + '<button class="btn" onclick="_convSttResetDefaultService()">Reset default</button>'
+    + '<button class="btn" onclick="document.getElementById(\'convSttServiceDialog\').remove()">'
     + escapeHtml(typeof t === 'function' ? t('cancel') : 'Cancel') + '</button></div></div>';
   overlay.innerHTML = html;
 

@@ -133,22 +133,35 @@ def test_live_conversation_tts_button_and_sse_hooks_are_wired():
     assert 'id="speechInputBtn"' in TEMPLATE_HTML
     assert 'id="speakToggleBtn"' in TEMPLATE_HTML and 'style="display:none"' in TEMPLATE_HTML
     assert 'onclick="toggleConversationTTS()"' in TEMPLATE_HTML
+    assert 'oncontextmenu="showConversationTTSServiceDialog(); return false;"' in TEMPLATE_HTML
+    assert 'oncontextmenu="showConversationSTTServiceDialog(); return false;"' in TEMPLATE_HTML
     assert "function toggleConversationTTS()" in CONVERSATION_TTS_JS
     assert "function conversationTTSSpeakText(text)" in CONVERSATION_TTS_JS
     assert "function _convTtsChooseService(afterSelect)" in CONVERSATION_TTS_JS
+    assert "function showConversationTTSServiceDialog()" in CONVERSATION_TTS_JS
     assert "action$('list_tts_services'" in CONVERSATION_TTS_JS
+    assert "action$('set_tts_service'" in CONVERSATION_TTS_JS
+    assert "action$('clear_tts_service'" in CONVERSATION_TTS_JS
     assert 'action == "list_tts_services"' in MEDIA_ACTIONS
+    assert 'action == "set_tts_service"' in MEDIA_ACTIONS
+    assert 'action == "clear_tts_service"' in MEDIA_ACTIONS
     assert "from services.base_tts import BaseTTSService" in MEDIA_ACTIONS
     assert "action$('tts_synthesize'" in CONVERSATION_TTS_JS
     conversation_stt_js = Path("tasks/io/chat_ui/conversation_stt.js").read_text(encoding="utf-8")
     assert "function toggleConversationSTT()" in conversation_stt_js
+    assert "function showConversationSTTServiceDialog()" in conversation_stt_js
     assert "action$('list_stt_services'" in conversation_stt_js
+    assert "action$('set_stt_service'" in conversation_stt_js
+    assert "action$('clear_stt_service'" in conversation_stt_js
     assert "action$('stt_transcribe'" in conversation_stt_js
+    assert "_convSttServices.length === 1 ? _convSttServices[0].id : ''" in conversation_stt_js
     assert 'action == "list_stt_services"' in MEDIA_ACTIONS
+    assert 'action == "set_stt_service"' in MEDIA_ACTIONS
+    assert 'action == "clear_stt_service"' in MEDIA_ACTIONS
     assert 'action == "stt_transcribe"' in MEDIA_ACTIONS
     assert "from services.base_stt import BaseSTTService" in MEDIA_ACTIONS
     assert "btn.style.display = _convTtsServices.length ? 'inline-flex' : 'none';" in CONVERSATION_TTS_JS
-    assert "if (_convTtsServices.length > 1) _convTtsShowServiceDialog();" in CONVERSATION_TTS_JS
+    assert "if (_convTtsSelectedService) _convTtsSelectService(_convTtsSelectedService);" in CONVERSATION_TTS_JS
     assert "function _convTtsShowServiceDialog()" in CONVERSATION_TTS_JS
     assert "setTimeout(function()" not in CONVERSATION_TTS_JS
     assert "setInterval" not in CONVERSATION_TTS_JS

@@ -400,6 +400,74 @@ def _handle_media(self, action, body, store, user_id, flowfile):
         flowfile.set_content(json.dumps(result, ensure_ascii=False).encode())
         return [flowfile]
 
+    if action == "set_tts_service":
+        conv_id = body.get("conversation_id", "")
+        service_name = body.get("service_name", "") or body.get("service", "")
+        agent = body.get("agent_name", "*") or "*"
+        if not conv_id or not service_name:
+            flowfile.set_content(json.dumps({
+                "error": "conversation_id and service_name required",
+            }).encode())
+            return [flowfile]
+        prefs = store.get_extra(conv_id, "audio_services") or {}
+        prefs[agent] = service_name
+        store.set_extra(conv_id, "audio_services", prefs)
+        flowfile.set_content(json.dumps({
+            "ok": True, "service": service_name, "agent": agent,
+        }).encode())
+        return [flowfile]
+
+    if action == "clear_tts_service":
+        conv_id = body.get("conversation_id", "")
+        agent = body.get("agent_name", "") or ""
+        if not conv_id:
+            flowfile.set_content(json.dumps({
+                "error": "conversation_id required",
+            }).encode())
+            return [flowfile]
+        if agent:
+            prefs = store.get_extra(conv_id, "audio_services") or {}
+            prefs.pop(agent, None)
+            store.set_extra(conv_id, "audio_services", prefs)
+        else:
+            store.set_extra(conv_id, "audio_services", {})
+        flowfile.set_content(json.dumps({"ok": True}).encode())
+        return [flowfile]
+
+    if action == "set_stt_service":
+        conv_id = body.get("conversation_id", "")
+        service_name = body.get("service_name", "") or body.get("service", "")
+        agent = body.get("agent_name", "*") or "*"
+        if not conv_id or not service_name:
+            flowfile.set_content(json.dumps({
+                "error": "conversation_id and service_name required",
+            }).encode())
+            return [flowfile]
+        prefs = store.get_extra(conv_id, "stt_services") or {}
+        prefs[agent] = service_name
+        store.set_extra(conv_id, "stt_services", prefs)
+        flowfile.set_content(json.dumps({
+            "ok": True, "service": service_name, "agent": agent,
+        }).encode())
+        return [flowfile]
+
+    if action == "clear_stt_service":
+        conv_id = body.get("conversation_id", "")
+        agent = body.get("agent_name", "") or ""
+        if not conv_id:
+            flowfile.set_content(json.dumps({
+                "error": "conversation_id required",
+            }).encode())
+            return [flowfile]
+        if agent:
+            prefs = store.get_extra(conv_id, "stt_services") or {}
+            prefs.pop(agent, None)
+            store.set_extra(conv_id, "stt_services", prefs)
+        else:
+            store.set_extra(conv_id, "stt_services", {})
+        flowfile.set_content(json.dumps({"ok": True}).encode())
+        return [flowfile]
+
     if action == "set_image_service":
         conv_id = body.get("conversation_id", "")
         service_name = body.get("service_name", "")

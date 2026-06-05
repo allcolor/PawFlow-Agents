@@ -450,7 +450,7 @@ class AgentUtilsMixin:
     def _make_media_resolver(self, user_id: str, conversation_id: str,
                              agent_name: str, base_class,
                              extra_key: str, label: str, command: str,
-                             required_methods=()):
+                             required_methods=(), require_preference=False):
         """Build a generic resolver closure for any media service type."""
         _self = self
         required_methods = tuple(required_methods or ())
@@ -514,6 +514,8 @@ class AgentUtilsMixin:
                         preferred, user_id, conversation_id)
                     if _service_supports_required_methods(svc, active_required):
                         return svc, None
+            if require_preference:
+                return None, f"Multiple {label} services available; choose a conversation default"
             for service_ref in available:
                 service_def = getattr(service_ref, "service_def", None)
                 if service_def is not None:
@@ -565,6 +567,7 @@ class AgentUtilsMixin:
             user_id, conversation_id, agent_name,
             BaseTTSService, "audio_services",
             "text-to-speech", "/audioservice", required_methods,
+            require_preference=True,
         )
 
     def _make_stt_resolver(self, user_id, conversation_id, agent_name,
@@ -574,6 +577,7 @@ class AgentUtilsMixin:
             user_id, conversation_id, agent_name,
             BaseSTTService, "stt_services",
             "speech-to-text", "/sttservice", required_methods,
+            require_preference=True,
         )
 
     def _make_3d_resolver(self, user_id, conversation_id, agent_name,

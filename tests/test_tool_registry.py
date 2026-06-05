@@ -982,6 +982,41 @@ class TestMetaToolAliases(unittest.TestCase):
             finally:
                 FileStore._instance = old_instance
 
+    def test_filestore_list_uses_list_files_metadata(self):
+        from core.file_store import FileStore
+        from core.handlers.list_dir import ListDirHandler
+
+        old_instance = FileStore._instance
+        with tempfile.TemporaryDirectory() as tmp:
+            try:
+                store = FileStore(base_dir=str(Path(tmp) / "filestore"))
+                FileStore._instance = store
+                visible_id = store.store(
+                    "image.png", b"png", "image/png",
+                    user_id="user-1", conversation_id="conv-1",
+                )
+                store.store(
+                    "other.png", b"png", "image/png",
+                    user_id="user-1", conversation_id="conv-2",
+                )
+                store.store(
+                    "speech.wav", b"wav", "audio/wav",
+                    user_id="user-1", conversation_id="conv-1",
+                    category="webchat_stt", ttl=300,
+                )
+
+                handler = ListDirHandler()
+                handler.set_user_id("user-1")
+                handler.set_conversation_id("conv-1")
+                reg = ToolRegistry()
+                reg.register(handler)
+
+                result = reg.execute("list_dir", {"source": "filestore", "path": ""})
+
+                assert result == f"📄 fs://filestore/{visible_id}/image.png (3 bytes)"
+            finally:
+                FileStore._instance = old_instance
+
 
     def test_relay_list_dir_action_supports_recursive_limit(self):
         from tools.fs_actions import action_list_dir

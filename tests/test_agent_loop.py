@@ -236,9 +236,10 @@ class TestLLMClientMessageBuilding(unittest.TestCase):
 
         assert result == [{"role": "user", "content": [
             {"type": "text", "text": "look"},
+            {"type": "text", "text": f"Attached image: fs://filestore/{file_id}/shot.png"},
             {"type": "image_url", "image_url": {"url": "data:image/png;base64,UE5HREFUQQ=="}},
         ]}]
-        assert "fs://filestore" not in json.dumps(result)
+        assert "fs://filestore" in json.dumps(result)
 
     @patch.object(LLMClient, '_http_post')
     def test_openai_vision_rejection_retries_with_filestore_links(self, mock_post):

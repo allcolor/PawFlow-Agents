@@ -675,8 +675,10 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                         })
                         logger.info("Loaded image from FileStore for vision: %s (%d bytes)",
                                     _fid, len(_data))
-                        # Image is in vision — no text placeholder that would
-                        # make the agent see()/read() it redundantly.
+                        new_content.append({
+                            "type": "text",
+                            "text": f"Attached image: fs://filestore/{_fid}/{_fname}",
+                        })
                     else:
                         _fid = block.get("file_id", "")
                         _fname = block.get("filename", "image") or "image"

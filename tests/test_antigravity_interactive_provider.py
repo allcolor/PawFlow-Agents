@@ -677,7 +677,7 @@ def test_antigravity_prompt_materializes_image_ref_as_at_path(tmp_path, monkeypa
 
     prompt = client._agi_prompt([msg], None, str(tmp_path), "/cc_sessions/u/conv/a", "u", "conv")
 
-    assert "Attachments:\n@/cc_sessions/u/conv/a/.pawflow_vision/img1.png" in prompt
+    assert "Attachments:\nfs://filestore/img1/sample.png -> @/cc_sessions/u/conv/a/.pawflow_vision/img1.png" in prompt
     assert "describe" in prompt
     assert (tmp_path / ".pawflow_vision" / "img1.png").read_bytes() == b"PNG"
 
@@ -741,7 +741,7 @@ def test_antigravity_live_preempt_materializes_image_attachment(tmp_path, monkey
         agent_name="a",
     ) is True
 
-    assert "Attachments:\n@/cc_sessions/u/conv/a/.pawflow_vision/img1.png" in pool.sent[0]
+    assert "Attachments:\nfs://filestore/img1/sample.png -> @/cc_sessions/u/conv/a/.pawflow_vision/img1.png" in pool.sent[0]
     assert "look at this" in pool.sent[0]
     assert (tmp_path / ".pawflow_vision" / "img1.png").read_bytes() == b"PNG"
 

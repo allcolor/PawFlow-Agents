@@ -1578,6 +1578,10 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                     from core.file_store import FileStore
                     filename, data, content_type = FileStore.instance().get_required(
                         file_id, user_id=user_id, conversation_id=conversation_id)
+                    items.append({
+                        "type": "text",
+                        "text": f"Attached image: fs://filestore/{file_id}/{filename}",
+                    })
                     mime = (
                         attachment.get("mime_type")
                         or attachment.get("content_type")

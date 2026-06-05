@@ -125,6 +125,10 @@ reached directly from the PawFlow server.
 existing `llmConnection` whose provider is `openai`. Configure that LLM service
 with a bare OpenAI base URL such as `https://api.openai.com/v1`, or an
 OpenRouter/OpenAI-compatible base URL such as `https://openrouter.ai/api/v1`.
+The direct `openaiImageGeneration` provider supports both `generate_image` and
+`edit_image` against OpenAI's images API. `edit_image` sends multipart image
+inputs to `POST /images/edits`, accepts `fs://filestore/...` sources directly,
+and returns the edited image to the requested PawFlow storage destination.
 The image service supports `protocol=auto`, `openai_images`, and
 `chat_completions`/`openrouter`: bare OpenAI image models normally use
 `POST /images/generations`, while OpenRouter image models use chat completions

@@ -402,6 +402,9 @@ class LLMOpenaiMixin:
                                     p, user_id=user_id,
                                     conversation_id=conversation_id)
                                 if vision_part:
+                                    link_part = self._image_text_link(p)
+                                    if link_part:
+                                        img_parts.append(link_part)
                                     img_parts.append(vision_part)
                                     continue
                             link_part = self._image_text_link(p)
@@ -447,6 +450,9 @@ class LLMOpenaiMixin:
                                 part, user_id=user_id,
                                 conversation_id=conversation_id)
                             if vision_part:
+                                link_part = self._image_text_link(part)
+                                if link_part:
+                                    parts.append(link_part)
                                 parts.append(vision_part)
                                 continue
                         link_part = self._image_text_link(part)

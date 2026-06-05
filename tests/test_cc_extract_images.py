@@ -1,9 +1,8 @@
 """Tests for claude_code._extract_images placeholder policy.
 
-When an image is forwarded to CC via the native vision channel, it must
-NOT also be left as a text placeholder in the user message — the agent
-would then see "[image: foo.png]" and call see()/read() on it, getting
-the same image back through a tool_result and paying tokens twice.
+When an image is forwarded to CC via the native vision channel, it keeps the
+FileStore URL as a reusable handle, but does not leave a generic placeholder
+like "[image: foo.png]" behind.
 
 Historical images (older user messages, not re-injected into vision on
 resume) DO get a text placeholder so the model still knows an image was
@@ -22,7 +21,7 @@ def _msg(role, content):
 
 
 def test_last_user_image_url_no_placeholder():
-    # data: URL in the LAST user message goes to vision, no placeholder
+    # data: URL in the LAST user message goes to vision, no placeholder.
     msgs = [
         _msg("user", [
             {"type": "text", "text": "hello"},
@@ -60,10 +59,11 @@ def test_last_user_image_ref_no_placeholder(tmp_path, monkeypatch):
             msgs, user_id="u", conversation_id="c")
         assert len(blocks) == 1
         assert blocks[0]["type"] == "image"
-        # No "[image: foo.png]" placeholder left behind
+        # No "[image: foo.png]" placeholder left behind; FileStore link remains.
         _texts = [b.get("text", "") for b in msgs[0].content
                   if isinstance(b, dict) and b.get("type") == "text"]
         assert "see this" in _texts
+        assert any(f"fs://filestore/{_fid}/foo.png" in t for t in _texts)
         assert not any("[image:" in t for t in _texts)
     finally:
         try: fs.delete(_fid)
@@ -118,3 +118,27 @@ def test_text_only_user_message_unchanged():
         msgs, user_id="u", conversation_id="c")
     assert blocks == []
     assert msgs[0].content == [{"type": "text", "text": "hi"}]
+
+
+def test_gemini_current_image_ref_keeps_filestore_link(monkeypatch):
+    from core.llm_providers.gemini import LLMGeminiMixin
+
+    class _Store:
+        def get_required(self, file_id, user_id="", conversation_id=""):
+            assert (file_id, user_id, conversation_id) == ("img1", "u", "c")
+            return "shot.png", b"PNG", "image/png"
+
+    monkeypatch.setattr("core.file_store.FileStore.instance", staticmethod(lambda: _Store()))
+    msgs = [_msg("user", [
+        {"type": "text", "text": "see this"},
+        {"type": "image_ref", "file_id": "img1", "filename": "shot.png"},
+    ])]
+
+    blocks = LLMGeminiMixin._gemini_acp_extract_images(
+        msgs, user_id="u", conversation_id="c")
+
+    assert len(blocks) == 1
+    texts = [b.get("text", "") for b in msgs[0].content
+             if isinstance(b, dict) and b.get("type") == "text"]
+    assert "see this" in texts
+    assert "Attached image: fs://filestore/img1/shot.png" in texts

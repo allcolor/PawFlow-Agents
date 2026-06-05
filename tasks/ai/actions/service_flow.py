@@ -298,14 +298,6 @@ def _service_type_sort_key(service: Dict[str, Any]):
 def _service_requires_connected_state(service_type: str) -> bool:
     if service_type == "filesystem":
         return True
-    try:
-        from core import ServiceFactory
-        from services.base_tts import BaseTTSService
-        cls = ServiceFactory.get(service_type)
-        if issubclass(cls, BaseTTSService):
-            return True
-    except Exception as exc:
-        logger.debug("Service connected-state detection failed: %s", exc)
     return False
 
 

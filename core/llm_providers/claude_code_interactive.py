@@ -711,7 +711,9 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
                 suffix = Path(filename).suffix or mimetypes.guess_extension(mime or "") or ".png"
                 name = f"{file_id}{suffix}"
                 (out_dir / name).write_bytes(data)
-                lines.append(f"@{container_workdir}/.pawflow_vision/{name}")
+                lines.append(
+                    f"fs://filestore/{file_id}/{filename} -> "
+                    f"@{container_workdir}/.pawflow_vision/{name}")
             elif btype in {"image_url", "image"}:
                 url = ""
                 if btype == "image_url":

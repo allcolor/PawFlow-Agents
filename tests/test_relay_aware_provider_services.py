@@ -78,6 +78,50 @@ def test_openai_image_service_handles_gpt_image_base64(monkeypatch):
     assert "response_format" not in bodies[0]
 
 
+def test_openai_image_service_edits_filestore_image(monkeypatch, tmp_path):
+    from core.file_store import FileStore
+
+    store = FileStore(base_dir=str(tmp_path / "files"))
+    monkeypatch.setattr(FileStore, "_instance", store)
+    file_id = store.store(
+        "source.png", b"SOURCE", "image/png",
+        user_id="alice", conversation_id="conv1")
+    calls = []
+
+    def fake_urlopen(req, timeout=0):
+        calls.append(req)
+        payload = base64.b64encode(b"EDITED").decode("ascii")
+        return _Resp(json.dumps({"data": [{"b64_json": payload}]}).encode())
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    svc = OpenAIImageService({"api_key": "sk-test", "model": "gpt-image-1"})
+    svc.set_runtime_context(user_id="alice", conversation_id="conv1")
+
+    out = svc.edit_image(
+        prompt="add a blue badge",
+        image_urls=[f"fs://filestore/{file_id}/source.png"],
+        width=1024,
+        height=1536,
+        output_format="webp",
+    )
+
+    assert out == {"image_bytes": b"EDITED", "content_type": "image/webp"}
+    req = calls[0]
+    assert req.full_url.endswith("/images/edits")
+    assert req.headers["Content-type"].startswith("multipart/form-data; boundary=")
+    body = req.data
+    assert b'name="model"' in body
+    assert b"gpt-image-1" in body
+    assert b'name="prompt"' in body
+    assert b"add a blue badge" in body
+    assert b'name="size"' in body
+    assert b"1024x1536" in body
+    assert b'name="output_format"' in body
+    assert b"webp" in body
+    assert b'name="image"; filename="source.png"' in body
+    assert b"SOURCE" in body
+
+
 def test_http_client_service_resolves_relay_shaped_urls(monkeypatch):
     _relay(monkeypatch)
     svc = HTTPClientService({"base_url": "http://${conv.relay}/localhost:3000/api"})

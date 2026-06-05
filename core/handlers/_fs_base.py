@@ -485,10 +485,14 @@ class BaseFsHandler(ToolHandler):
         """List all files in server FileStore."""
         from core.file_store import FileStore
         store = FileStore.instance()
-        entries = store.list_all() if hasattr(store, 'list_all') else []
+        entries = store.list_files(
+            user_id=self._user_id,
+            conversation_id=self._conversation_id or "",
+            include_internal=False,
+        )
         if not entries:
             return "(FileStore is empty)"
-        lines = [f"📄 fs://filestore/{e['id']}/{e['name']} ({e.get('size', '?')} bytes)"
+        lines = [f"📄 fs://filestore/{e['file_id']}/{e['filename']} ({e.get('size', '?')} bytes)"
                  for e in entries[:50]]
         if len(entries) > 50:
             lines.append(f"... +{len(entries) - 50} more")

@@ -376,7 +376,7 @@ class LLMAnthropicMixin:
                         mime = part.get("mime_type", _ct) or "image/png"
                         blocks.append({
                             "type": "text",
-                            "text": f"Attached image {_fname} is provided below for visual analysis.",
+                            "text": f"Attached image: fs://filestore/{_fid}/{_fname}",
                         })
                         blocks.append({
                             "type": "image",
@@ -487,7 +487,7 @@ class LLMAnthropicMixin:
                         mime = part.get("mime_type", _ct) or "image/png"
                         content_blocks.append({
                             "type": "text",
-                            "text": f"Attached image {_fname} is provided below for visual analysis.",
+                            "text": f"Attached image: fs://filestore/{_fid}/{_fname}",
                         })
                         content_blocks.append({
                             "type": "image",

@@ -502,6 +502,10 @@ class LLMGeminiMixin(GeminiSessionMixin):
                             raise ValueError("image_ref block missing file_id - producer bug")
                         _fname, data, content_type = FileStore.instance().get_required(
                             fid, user_id=user_id, conversation_id=conversation_id)
+                        new_content.append({
+                            "type": "text",
+                            "text": f"Attached image: fs://filestore/{fid}/{_fname}",
+                        })
                         image_blocks.append({
                             "type": "image",
                             "source": {

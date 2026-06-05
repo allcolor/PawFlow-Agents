@@ -754,7 +754,7 @@ def test_prompt_materializes_image_ref_as_at_path(tmp_path, monkeypatch):
 
     prompt = client._cci_prompt([msg], None, str(tmp_path), "/cc_sessions/u/conv/a", "u", "conv")
 
-    assert "@/cc_sessions/u/conv/a/.pawflow_vision/img1.png" in prompt
+    assert "fs://filestore/img1/sample.png -> @/cc_sessions/u/conv/a/.pawflow_vision/img1.png" in prompt
     assert (tmp_path / ".pawflow_vision" / "img1.png").read_bytes() == b"PNG"
 
 
@@ -1090,7 +1090,7 @@ def test_cc_interactive_live_preempt_materializes_image_attachment(tmp_path, mon
         agent_name="a",
     ) is True
 
-    assert "Attachments:\n@/cc_sessions/u/conv/a/.pawflow_vision/img1.png" in pool.sent[0]
+    assert "Attachments:\nfs://filestore/img1/sample.png -> @/cc_sessions/u/conv/a/.pawflow_vision/img1.png" in pool.sent[0]
     assert "look at this" in pool.sent[0]
     assert (tmp_path / ".pawflow_vision" / "img1.png").read_bytes() == b"PNG"
 

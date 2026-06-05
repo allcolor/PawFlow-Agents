@@ -63,7 +63,7 @@ def test_anthropic_image_ref_payload_includes_context_and_image(monkeypatch, cap
     content = api_messages[0]["content"]
     assert content[0] == {
         "type": "text",
-        "text": "Attached image screen.png is provided below for visual analysis.",
+        "text": "Attached image: fs://filestore/img_1/screen.png",
     }
     assert content[1]["type"] == "image"
     assert content[1]["source"]["media_type"] == "image/png"
@@ -89,7 +89,7 @@ def test_anthropic_image_ref_payload_includes_context_and_image(monkeypatch, cap
     _system, tool_api_messages = client._build_anthropic_messages(
         tool_messages, user_id="u", conversation_id="conv-a")
     tool_content = tool_api_messages[2]["content"][0]["content"]
-    assert tool_content[0]["text"] == "Attached image screen.png is provided below for visual analysis."
+    assert tool_content[0]["text"] == "Attached image: fs://filestore/img_1/screen.png"
     assert tool_content[1]["type"] == "image"
     assert client._count_anthropic_image_blocks(tool_api_messages) == 1
 

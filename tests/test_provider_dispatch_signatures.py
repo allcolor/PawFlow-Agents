@@ -618,9 +618,13 @@ def test_codex_app_preempt_attachment_items_resolve_filestore_image(tmp_path, mo
         container_dir="/workspace",
     )
 
-    assert items and items[0]["type"] == "localImage"
-    assert items[0]["path"].startswith("/workspace/.pawflow_vision/")
-    saved = workdir / ".pawflow_vision" / items[0]["path"].rsplit("/", 1)[-1]
+    assert items and items[0] == {
+        "type": "text",
+        "text": f"Attached image: fs://filestore/{file_id}/image.png",
+    }
+    assert items[1]["type"] == "localImage"
+    assert items[1]["path"].startswith("/workspace/.pawflow_vision/")
+    saved = workdir / ".pawflow_vision" / items[1]["path"].rsplit("/", 1)[-1]
     assert saved.read_bytes() == b"image-bytes"
 
 

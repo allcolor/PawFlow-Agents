@@ -1120,6 +1120,21 @@ class TestAgentServiceActions:
         assert by_id["db1"]["description"] == "Main DB"
         assert by_id["db2"]["enabled"] is False
 
+    def test_service_list_marks_stateless_tts_started_when_enabled(self):
+        self.reg.install(
+            self.SCOPE, "testuser", "openai_TTS", "openaiCompatibleTTS",
+            config={"base_url": "https://api.openai.com/v1", "model": "gpt-4o-mini-tts"},
+        )
+
+        from tasks.ai.actions.service_flow import _handle_service_flow
+        ff = self._make_flowfile({"action": "list_services"})
+        result = _handle_service_flow(None, "list_services", json.loads(ff.get_content()), None, "testuser", ff)
+        data = json.loads(result[0].get_content())
+
+        by_id = {s["service_id"]: s for s in data["services"]}
+        assert by_id["openai_TTS"]["enabled"] is True
+        assert by_id["openai_TTS"]["started"] is True
+
     def test_service_list_includes_conversation_scope_when_requested(self):
         self.reg.install("conv", "conv1", "convdb", SVC_TYPE, config={"host": "conv"})
 

@@ -7,6 +7,8 @@ Supports DALL-E 3 and compatible endpoints (base_url configurable).
 import json
 import logging
 import base64
+import mimetypes
+import uuid
 import urllib.request
 
 from core import ServiceFactory, ServiceError
@@ -32,6 +34,7 @@ class OpenAIImageService(BaseImageGenerationService):
     VERSION = "1.0.0"
     NAME = "OpenAI Image Generation"
     DESCRIPTION = "Generate images via OpenAI API (ChatGPT Image, DALL-E)"
+    ACCEPTS_FILESTORE_URLS = True
 
     def get_parameter_schema(self) -> dict:
         return {
@@ -102,12 +105,7 @@ class OpenAIImageService(BaseImageGenerationService):
     def _close_connection(self):
         pass
 
-    def generate(self, prompt="", negative_prompt="", width=1024, height=1024,
-                 output_format="png", quality="", **_) -> dict:
-        if not prompt:
-            raise ServiceError("No prompt provided")
-        self.ensure_connected()
-
+    def _image_size(self, width=1024, height=1024) -> str:
         is_gpt_image = str(self.model or "").startswith("gpt-image-")
         size = "1024x1024"
         if width and height:
@@ -122,6 +120,75 @@ class OpenAIImageService(BaseImageGenerationService):
                     size = "1792x1024"
                 elif ratio < 0.7:
                     size = "1024x1792"
+        return size
+
+    def _load_image_input(self, url: str, index: int) -> tuple[str, bytes, str]:
+        ref = str(url or "")
+        if ref.startswith("fs://filestore/"):
+            from core.file_store import FileStore
+            remainder = ref[len("fs://filestore/"):]
+            file_id = remainder.split("/", 1)[0]
+            filename, data, content_type = FileStore.instance().get_required(
+                file_id,
+                user_id=self._runtime_user_id,
+                conversation_id=self._runtime_conversation_id,
+            )
+            return filename, data, content_type or "image/png"
+        if ref.startswith("/files/"):
+            from core.file_store import FileStore
+            file_id = ref[len("/files/"):].split("/", 1)[0]
+            filename, data, content_type = FileStore.instance().get_required(
+                file_id,
+                user_id=self._runtime_user_id,
+                conversation_id=self._runtime_conversation_id,
+            )
+            return filename, data, content_type or "image/png"
+        req = urllib.request.Request(ref, headers={"User-Agent": "PawFlow-Agent/1.0"})
+        with urllib.request.urlopen(req, timeout=60) as resp:  # nosec B310 - user/provider supplied image URL for edit input.
+            data = resp.read()
+            content_type = resp.headers.get("Content-Type", "") or ""
+        filename = ref.rstrip("/").rsplit("/", 1)[-1] or f"image-{index}.png"
+        if "?" in filename:
+            filename = filename.split("?", 1)[0]
+        if not mimetypes.guess_type(filename)[0]:
+            ext = mimetypes.guess_extension(content_type) or ".png"
+            filename = f"image-{index}{ext}"
+        return filename, data, content_type or mimetypes.guess_type(filename)[0] or "image/png"
+
+    @staticmethod
+    def _multipart_form(fields: dict, files: list[tuple[str, str, bytes, str]]) -> tuple[bytes, str]:
+        boundary = "----PawFlowOpenAIImage" + uuid.uuid4().hex
+        chunks = []
+        for name, value in fields.items():
+            if value is None or value == "":
+                continue
+            chunks.extend([
+                f"--{boundary}\r\n".encode("utf-8"),
+                f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode("utf-8"),
+                str(value).encode("utf-8"),
+                b"\r\n",
+            ])
+        for field_name, filename, data, content_type in files:
+            safe_name = filename.replace('"', "") or "image.png"
+            chunks.extend([
+                f"--{boundary}\r\n".encode("utf-8"),
+                (f'Content-Disposition: form-data; name="{field_name}"; '
+                 f'filename="{safe_name}"\r\n').encode("utf-8"),
+                f"Content-Type: {content_type or 'application/octet-stream'}\r\n\r\n".encode("utf-8"),
+                data,
+                b"\r\n",
+            ])
+        chunks.append(f"--{boundary}--\r\n".encode("utf-8"))
+        return b"".join(chunks), f"multipart/form-data; boundary={boundary}"
+
+    def generate(self, prompt="", negative_prompt="", width=1024, height=1024,
+                 output_format="png", quality="", **_) -> dict:
+        if not prompt:
+            raise ServiceError("No prompt provided")
+        self.ensure_connected()
+
+        is_gpt_image = str(self.model or "").startswith("gpt-image-")
+        size = self._image_size(width, height)
 
         body = {
             "model": self.model,
@@ -180,6 +247,66 @@ class OpenAIImageService(BaseImageGenerationService):
             content_type = img_resp.headers.get("Content-Type", "image/png")
 
         return {"image_bytes": image_bytes, "content_type": content_type}
+
+    def edit_image(self, prompt: str = "", image_urls=None, negative_prompt: str = "",
+                   width=1024, height=1024, output_format="png", quality="", **_) -> dict:
+        if not prompt:
+            raise ServiceError("No prompt provided")
+        if isinstance(image_urls, str):
+            image_urls = [image_urls]
+        image_urls = image_urls or []
+        if not image_urls:
+            raise ServiceError("image_urls is required for OpenAI image edit")
+        self.ensure_connected()
+
+        is_gpt_image = str(self.model or "").startswith("gpt-image-")
+        fmt = str(output_format or "png").strip().lower()
+        if fmt not in {"png", "jpeg", "webp"}:
+            fmt = "png"
+        fields = {
+            "model": self.model,
+            "prompt": prompt,
+            "n": 1,
+            "size": self._image_size(width, height),
+        }
+        if is_gpt_image:
+            fields["output_format"] = fmt
+            if quality:
+                fields["quality"] = quality
+        else:
+            fields["response_format"] = "b64_json"
+
+        files = []
+        for idx, image_url in enumerate(image_urls):
+            filename, data, content_type = self._load_image_input(image_url, idx)
+            files.append(("image", filename, data, content_type))
+
+        body, content_type = self._multipart_form(fields, files)
+        req = urllib.request.Request(
+            f"{self._effective_base_url()}/images/edits",
+            data=body,
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": content_type,
+            },
+        )
+        with urllib.request.urlopen(req, timeout=self.timeout) as resp:  # nosec B310 - configured OpenAI image API endpoint.
+            result = json.loads(resp.read().decode("utf-8"))
+
+        images = result.get("data", [])
+        if not images:
+            raise ServiceError(f"No images in response: {json.dumps(result)[:300]}")
+        image_b64 = images[0].get("b64_json", "")
+        if not image_b64:
+            raise ServiceError("No base64 image payload in edit response")
+        return {
+            "image_bytes": base64.b64decode(image_b64),
+            "content_type": {
+                "jpeg": "image/jpeg",
+                "webp": "image/webp",
+                "png": "image/png",
+            }.get(fmt, "image/png"),
+        }
 
 
 ServiceFactory.register(OpenAIImageService)

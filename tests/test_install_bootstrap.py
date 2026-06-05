@@ -195,13 +195,16 @@ def test_existing_deployments_skip_bootstrap_without_state(tmp_path, monkeypatch
 
 def test_completed_install_syncs_main_flow_listener_port(tmp_path, monkeypatch):
     DeploymentRegistry.reset()
+    ServiceRegistry.reset()
     dep_dir = tmp_path / "deployments"
+    runtime_dir = tmp_path / "runtime"
     state_file = tmp_path / "install_state.json"
     main_template = tmp_path / "main.json"
     _write_main_template(main_template)
     state_file.write_text(json.dumps({"install_complete": True}), encoding="utf-8")
 
     monkeypatch.setattr(_paths, "DEPLOYMENTS_DIR", dep_dir)
+    monkeypatch.setattr(_paths, "RUNTIME_DIR", runtime_dir)
     monkeypatch.setattr(ib, "INSTALL_STATE_FILE", state_file)
     monkeypatch.setattr(ib, "INSTALLER_TEMPLATE", tmp_path / "missing.json")
     _stub_cert_generation(tmp_path, monkeypatch)
@@ -217,13 +220,26 @@ def test_completed_install_syncs_main_flow_listener_port(tmp_path, monkeypatch):
             source="bootstrap",
             service_configs={"http_listener": {"port": 9090}},
         )
+        reg.deploy(str(main_template), instance_id=ib.INSTALLER_INSTANCE_ID, source="bootstrap")
+        ServiceRegistry.get_instance().install(
+            SCOPE_GLOBAL,
+            "",
+            ib.BOOTSTRAP_PRIVATE_GATEWAY_SERVICE_ID,
+            "privateGateway",
+            {"enabled": True, "secret_refs": ib.BOOTSTRAP_GATEWAY_SECRET_REF},
+            enabled=True,
+        )
 
         assert ib.ensure_install_bootstrap(port=19990) is False
         inst = reg.get(ib.MAIN_INSTANCE_ID)
         assert inst is not None
         assert inst.service_configs["http_listener"]["port"] == 19990
+        assert reg.get(ib.INSTALLER_INSTANCE_ID) is None
+        assert ServiceRegistry.get_instance().get_definition(
+            SCOPE_GLOBAL, "", ib.BOOTSTRAP_PRIVATE_GATEWAY_SERVICE_ID) is None
     finally:
         DeploymentRegistry.reset()
+        ServiceRegistry.reset()
 
 
 def test_bootstrap_reset_removes_state_and_redeploys_installer(tmp_path, monkeypatch):
@@ -765,11 +781,10 @@ def test_finalize_install_persists_complete_state_without_cleartext_key(tmp_path
         assert verify_secret(new_key, ib.FINAL_GATEWAY_SECRET_REF) is True
         assert verify_secret("RoyBetty", ib.FINAL_GATEWAY_SECRET_REF) is False
         assert reg.get(ib.MAIN_INSTANCE_ID).status == "running"
-        assert reg.get(ib.INSTALLER_INSTANCE_ID).status == "stopped"
+        assert reg.get(ib.INSTALLER_INSTANCE_ID) is None
         sdef = ServiceRegistry.get_instance().get_definition(
             SCOPE_GLOBAL, "", ib.BOOTSTRAP_PRIVATE_GATEWAY_SERVICE_ID)
-        assert sdef is not None
-        assert sdef.enabled is False
+        assert sdef is None
         final_gateway = ServiceRegistry.get_instance().get_definition(
             SCOPE_GLOBAL, "", ib.FINAL_PRIVATE_GATEWAY_SERVICE_ID)
         assert final_gateway is not None

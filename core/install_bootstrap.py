@@ -373,6 +373,25 @@ def _restore_file_state(snapshot: Dict[Path, bytes | None]) -> None:
             logger.warning("Install finalization rollback could not restore %s", path, exc_info=True)
 
 
+def _cleanup_bootstrap_artifacts() -> None:
+    """Remove first-run-only deployment and service artifacts after install."""
+    try:
+        from core.deployment_registry import DeploymentRegistry
+        registry = DeploymentRegistry.get_instance()
+        if registry.get(INSTALLER_INSTANCE_ID) is not None:
+            registry.update_status(INSTALLER_INSTANCE_ID, "stopped")
+            registry.undeploy(INSTALLER_INSTANCE_ID)
+    except Exception:
+        logger.warning("Install bootstrap cleanup could not undeploy installer", exc_info=True)
+
+    try:
+        from core.service_registry import ServiceRegistry, SCOPE_GLOBAL
+        ServiceRegistry.get_instance().uninstall(
+            SCOPE_GLOBAL, "", BOOTSTRAP_PRIVATE_GATEWAY_SERVICE_ID)
+    except Exception:
+        logger.warning("Install bootstrap cleanup could not uninstall bootstrap gateway", exc_info=True)
+
+
 def _install_bootstrap_private_gateway(secret_ref: str) -> str:
     """Install the global privateGateway used only by the first-run installer."""
     from tasks import _register_all_services
@@ -1897,19 +1916,7 @@ def finalize_install(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     _write_state(state)
 
-    try:
-        from core.deployment_registry import DeploymentRegistry
-        DeploymentRegistry.get_instance().update_status(INSTALLER_INSTANCE_ID, "stopped")
-    except Exception:
-        logger.warning("Install bootstrap finalized but installer status update failed", exc_info=True)
-
-    try:
-        from core.service_registry import ServiceRegistry, SCOPE_GLOBAL
-        ServiceRegistry.get_instance().disable(
-            SCOPE_GLOBAL, "", BOOTSTRAP_PRIVATE_GATEWAY_SERVICE_ID)
-    except Exception:
-        logger.warning("Install bootstrap finalized but bootstrap gateway disable failed", exc_info=True)
-
+    _cleanup_bootstrap_artifacts()
     _stop_installer_executor_soon()
     logger.info("Install bootstrap finalized")
     return get_install_status()
@@ -1942,6 +1949,7 @@ def ensure_install_bootstrap(port: int) -> bool:
 
     state = _load_state()
     if state.get("install_complete"):
+        _cleanup_bootstrap_artifacts()
         _sync_main_flow_listener_port(port)
         return False
 

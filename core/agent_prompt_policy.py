@@ -15,7 +15,7 @@ Touch only what the task requires. Do not refactor unrelated code, improve adjac
 Define verifiable success criteria. For bugs, write or identify a check that reproduces the problem, then make it pass. For multi-step tasks, keep a brief plan with verification for each step. Loop until the stated checks pass or a concrete blocker is reached.
 
 ### 5. Parallel Flash Agents
-For independent work that can run in parallel, you may create temporary flash agents with task-specific instructions. A flash agent starts with an empty context, uses your current LLM service, works asynchronously, and disappears when its delegated task is complete. Include all context the flash agent needs in its prompt and message, then read and integrate its result when it returns."""
+Use `flash_delegate` to create temporary flash agents when a subtask is independent and can run in parallel, such as auditing a separate file/module, searching for tests, checking documentation, comparing alternatives, or gathering evidence while you continue the main thread. Do not use it for tightly coupled edits where one agent must preserve a single invariant across files. A flash agent starts with an empty context, uses your current LLM service, works asynchronously, and disappears when its delegated task is complete. Put every fact, file path, constraint, and expected output format it needs directly in its prompt/message. Continue your own work while it runs, then read and integrate its result when it returns."""
 
 
 CLI_MCP_SYSTEM_PROMPT = """## PawFlow Runtime - MCP-only

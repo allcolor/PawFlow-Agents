@@ -1380,10 +1380,17 @@ class FlashAgentHandler(SpawnAgentsHandler):
     def description(self) -> str:
         return (
             "Create temporary flash agents for independent parallel work. "
-            "Each flash agent starts with an empty context, uses the "
-            "calling agent's current llm_service, runs asynchronously, "
-            "and disappears when its delegated task completes. Include all "
-            "context the flash agent needs in its prompt and message."
+            "Use this for separable research/audit/checking tasks while you "
+            "continue the main work: inspect a different file, search tests, "
+            "verify documentation, compare approaches, or gather evidence. "
+            "Do NOT use it for tightly coupled edits where one agent must "
+            "preserve a single invariant across files. Each flash agent starts "
+            "with an empty context, uses the calling agent's current "
+            "llm_service, runs asynchronously, and disappears when its "
+            "delegated task completes. Include every fact, file path, "
+            "constraint, and expected output format it needs in its prompt "
+            "and message. Read and integrate returned results; do not ignore "
+            "them."
         )
 
     @property
@@ -1402,11 +1409,11 @@ class FlashAgentHandler(SpawnAgentsHandler):
                             },
                             "prompt": {
                                 "type": "string",
-                                "description": "System instructions for this temporary agent",
+                                "description": "System instructions for this temporary agent. Include the role, scope, constraints, and expected output format because the agent has no prior context.",
                             },
                             "message": {
                                 "type": "string",
-                                "description": "The task/message to send to the flash agent",
+                                "description": "The concrete task to run. Include relevant paths, snippets, user requirements, and success criteria because the flash agent starts empty.",
                             },
                             "id": {
                                 "type": "string",
@@ -1415,7 +1422,7 @@ class FlashAgentHandler(SpawnAgentsHandler):
                             "tools": {
                                 "type": "array",
                                 "items": {"type": "string"},
-                                "description": "Optional tool whitelist for the flash agent",
+                                "description": "Optional tool whitelist for the flash agent. Keep it narrow for audit/search tasks; omit only when the subtask genuinely needs broad tool access.",
                             },
                             "skills": {
                                 "type": "array",

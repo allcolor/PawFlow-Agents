@@ -781,6 +781,25 @@ class AgentCoreMixin:
                     and _tm.get("source_agent")
                     and msg.role in ("assistant", "tool")):
                 _self_name = ctx.get("active_agent_name", "") or ""
+                _delegate_visibility = "self_only"
+                _delegate_visibility_explicit = False
+                if isinstance(msg.source, dict):
+                    _explicit_visibility = msg.source.get("delegate_visibility")
+                    if _explicit_visibility:
+                        _delegate_visibility = _explicit_visibility
+                        _delegate_visibility_explicit = True
+                elif (msg.role == "assistant"
+                      and not msg.tool_calls
+                      and isinstance(msg.content, str)
+                      and msg.content.strip()):
+                    _delegate_visibility = "final_reply"
+                if (msg.role == "assistant"
+                        and not msg.tool_calls
+                        and isinstance(msg.content, str)
+                        and msg.content.strip()
+                        and _delegate_visibility == "self_only"
+                        and not _delegate_visibility_explicit):
+                    _delegate_visibility = "final_reply"
                 # Preserve the LLM meta fields from the original source
                 # (provider/model/tokens/context/base_url/containerized)
                 # so the recipient's UI can render the badge + meta line
@@ -805,6 +824,7 @@ class AgentCoreMixin:
                     # X's reply to your delegate:") instead of treating
                     # it like a fresh inbound request.
                     "kind": "reply",
+                    "delegate_visibility": _delegate_visibility,
                 }
             if msg.role == "assistant" and conversation_id:
                 try:
@@ -1781,10 +1801,16 @@ class AgentCoreMixin:
                         # _append.
                         _text_thinking = turn_thinking if (not tool_calls) else ""
                         if text:
+                            _text_src = _src
+                            if tool_calls:
+                                _text_src = {
+                                    **_src,
+                                    "delegate_visibility": "self_only",
+                                }
                             msg = LLMMessage(
                                 role="assistant", content=text,
                                 thinking=_text_thinking,
-                                source=_src,
+                                source=_text_src,
                                 conversation_id=conversation_id)
                             _append(msg)  # persists immediately + publishes new_message (+ thinking_content)
                             turn_msgs.append(msg)

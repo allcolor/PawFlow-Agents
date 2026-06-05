@@ -1301,7 +1301,8 @@ class TestAppendMessage:
         m = _msg(role="assistant", content="answer",
                  source={"type": "agent_delegate",
                          "from": "bob", "to": "alice",
-                         "kind": "reply"})
+                         "kind": "reply",
+                         "delegate_visibility": "final_reply"})
         store.append_message(cid, m, agent_name="bob", user_id=uid)
         alice_ctx = store.load_agent_context(cid, "alice")
         bob_ctx = store.load_agent_context(cid, "bob")
@@ -1317,6 +1318,39 @@ class TestAppendMessage:
         if shared:
             assert not any(
                 "answer" in str(msg.get("content", ""))
+                for msg in shared)
+
+    def test_delegate_reply_self_only_skips_caller_context(self, conv):
+        store, cid, uid = conv
+        store.set_extra(cid, "conv_agents", {
+            "alice": {"definition": "alice", "llm_service": "llm"},
+            "bob": {"definition": "bob", "llm_service": "llm"},
+        }, user_id=uid)
+        store.save_agent_context(cid, "alice", [])
+        store.save_agent_context(cid, "bob", [])
+        store._reload_cache(cid)
+        m = _msg(role="tool", content="tool output",
+                 source={"type": "agent_delegate",
+                         "from": "bob", "to": "alice",
+                         "kind": "reply",
+                         "delegate_visibility": "self_only"})
+        store.append_message(cid, m, agent_name="bob", user_id=uid)
+        alice_ctx = store.load_agent_context(cid, "alice")
+        bob_ctx = store.load_agent_context(cid, "bob")
+        transcript = store.load(cid, user_id=uid)
+        shared = store.load_agent_context(cid, "")
+        assert not alice_ctx or not any(
+            "tool output" in str(msg.get("content", ""))
+            for msg in alice_ctx)
+        assert bob_ctx and any(
+            "tool output" in str(msg.get("content", ""))
+            for msg in bob_ctx)
+        assert transcript and any(
+            "tool output" in str(msg.get("content", ""))
+            for msg in transcript)
+        if shared:
+            assert not any(
+                "tool output" in str(msg.get("content", ""))
                 for msg in shared)
 
     def test_broadcast_to_other_agents(self, conv):

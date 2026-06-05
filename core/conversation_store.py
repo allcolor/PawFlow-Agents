@@ -2531,7 +2531,7 @@ class ConversationStore:
         if not _to:
             return set()
         _kind = src.get("kind")
-        touched_agents = {self._canon_agent(_from), self._canon_agent(_to)}
+        touched_agents = {self._canon_agent(_from)}
 
         # FROM's own ctx — [delegate <from> → <to>]:
         _for_from = dict(msg)
@@ -2540,18 +2540,26 @@ class ConversationStore:
             f"[delegate {_from} → {_to}]:")
         self._append_ctx_file(cid, _from, [_for_from])
 
+        _visibility = src.get("delegate_visibility") or "final_reply"
+        _reply_self_only = (_kind == "reply" and _visibility == "self_only")
+
         # TO's ctx — role coerced to user with explicit attribution.
-        _for_to = dict(msg)
-        if _for_to.get("role") == "assistant":
-            _for_to["role"] = "user"
-        if _kind == "reply":
-            _attr = (f"Here is agent '{_from}''s reply to your "
-                     f"delegate:")
-        else:
-            _attr = f"Here is a message from agent '{_from}':"
-        _for_to["content"] = self._prefix_content(
-            _for_to.get("content", ""), _attr)
-        self._append_ctx_file(cid, _to, [_for_to])
+        # Delegate reply internals (tool calls/results and intermediate
+        # assistant blocks) stay in the responder's context only. The caller
+        # receives just the final synthesized reply.
+        if not _reply_self_only:
+            _for_to = dict(msg)
+            if _for_to.get("role") == "assistant":
+                _for_to["role"] = "user"
+            if _kind == "reply":
+                _attr = (f"Here is agent '{_from}''s reply to your "
+                         f"delegate:")
+            else:
+                _attr = f"Here is a message from agent '{_from}':"
+            _for_to["content"] = self._prefix_content(
+                _for_to.get("content", ""), _attr)
+            self._append_ctx_file(cid, _to, [_for_to])
+            touched_agents.add(self._canon_agent(_to))
 
         # Replies stay private between from/to — don't leak to shared.
         if _kind == "reply":

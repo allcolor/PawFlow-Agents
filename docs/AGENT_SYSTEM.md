@@ -248,6 +248,16 @@ In multi-agent conversations, messages are prefixed so each agent can distinguis
 - **User to self**: No prefix -- the agent MUST respond to these.
 - **User to others**: `[User to agent X]: ...` -- context only, the agent must NOT act on these.
 
+### Delegate Reply Context
+
+Shared `delegate` calls keep a full audit trail in the transcript while keeping
+the caller's LLM context compact. The delegate target keeps its complete private
+context, including intermediate assistant messages, tool calls, and tool
+results. The caller receives the original delegate request and only the final
+synthesized reply from the target; the target's intermediate assistant blocks,
+tool calls, and tool results are not appended to the caller's private context.
+Delegate replies are never projected into shared context.
+
 ### Agent Selection
 
 The user can:

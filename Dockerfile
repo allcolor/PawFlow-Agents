@@ -7,7 +7,7 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 # System deps. openssl is required for bootstrap TLS. Playwright/Scrapling
 # need browser dependencies and Chromium inside the server image.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    bash build-essential ca-certificates curl git openssl ffmpeg procps gosu \
+    bash build-essential ca-certificates curl git openssl ffmpeg procps gosu tini \
     && rm -rf /var/lib/apt/lists/*
 
 # Docker CLI used by first-run server login to start the noVNC login desktop
@@ -49,5 +49,5 @@ RUN groupadd -g 1000 pawflow && useradd -u 1000 -g 1000 -d /app -s /bin/bash paw
     && chown -R pawflow:pawflow /app /ms-playwright
 
 # Default: run the PawFlow listener/chat runtime.
-ENTRYPOINT ["/app/docker/server-entrypoint.sh"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/app/docker/server-entrypoint.sh"]
 CMD ["sh", "-lc", "test -n \"$PAWFLOW_PORT\" || { echo 'PAWFLOW_PORT is required' >&2; exit 2; }; exec python cli.py start --host 0.0.0.0 --port \"$PAWFLOW_PORT\""]

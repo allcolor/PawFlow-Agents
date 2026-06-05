@@ -318,6 +318,7 @@ def test_relay_image_installs_rclone():
 
     assert "downloads.rclone.org/rclone-${DOWNLOAD_RCLONE_VERSION}-linux-amd64.zip" in src
     assert "install -m 0755 /tmp/rclone-dist/*/rclone /usr/local/bin/rclone" in src
+    assert 'ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/init.sh"]' in src
     assert "ARG RCLONE_" not in src
     assert " zip rclone " not in src
 
@@ -328,6 +329,7 @@ def test_agent_login_image_installs_rclone_and_copies_login_script():
 
     assert "downloads.rclone.org/rclone-${DOWNLOAD_RCLONE_VERSION}-linux-amd64.zip" in src
     assert "install -m 0755 /tmp/rclone-dist/*/rclone /usr/local/bin/rclone" in src
+    assert 'ENTRYPOINT ["/usr/bin/tini", "--", "claude"]' in src
     assert "ARG RCLONE_" not in src
     assert "PAWFLOW_RCLONE_TYPE" in script
     assert " chrony rclone " not in src
@@ -349,3 +351,4 @@ def test_agent_cli_image_installs_bubblewrap_for_codex_sandbox():
     src = Path("docker/claude-code/Dockerfile").read_text(encoding="utf-8")
 
     assert " bubblewrap " in src
+    assert " tini " in src

@@ -13,6 +13,7 @@ def test_server_dockerfile_supports_bootstrap_docker_builds():
     assert "download.docker.com/linux/static/stable" in src
     assert "/usr/local/bin/docker" in src
     assert "gosu" in src
+    assert "tini" in src
     assert "openssl" in src
     assert "ca-certificates" in src
     assert "curl" in src
@@ -25,6 +26,7 @@ def test_server_dockerfile_supports_bootstrap_docker_builds():
     assert "/app/default-data" in src
     assert "/app/default-config" in src
     assert "server-entrypoint.sh" in src
+    assert 'ENTRYPOINT ["/usr/bin/tini", "--", "/app/docker/server-entrypoint.sh"]' in src
     assert "PAWFLOW_PORT is required" in src
     assert '"--port", "19990"' not in src
     assert "EXPOSE 9090" not in src
@@ -42,6 +44,8 @@ def test_server_dockerfile_supports_bootstrap_docker_builds():
     assert "exec gosu pawflow" in entrypoint
 
     relay_dev = Path("docker/relay-dev/Dockerfile").read_text(encoding="utf-8")
+    assert "tini" in relay_dev
+    assert 'ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/init.sh"]' in relay_dev
     assert "COPY tools/ /opt/pawflow/" not in relay_dev
     assert "COPY pawflow_relay/ /opt/pawflow/pawflow_relay/" not in relay_dev
     assert "stays a clean dependency image" in relay_dev

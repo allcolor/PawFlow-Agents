@@ -33,7 +33,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential make cmake pkg-config autoconf automake libtool \
     jq sqlite3 libsqlite3-dev openssh-client unzip zip \
     ripgrep fd-find bat tree htop strace ltrace \
-    file less man-db chrony \
+    file less man-db chrony tini \
     libffi-dev libssl-dev zlib1g-dev libbz2-dev libreadline-dev \
     libncurses-dev libgdbm-dev liblzma-dev tk-dev uuid-dev \
     libfontconfig1-dev libxkbcommon-dev libgtk-3-dev libayatana-appindicator3-dev \
@@ -286,5 +286,5 @@ USER root
 ENV HOME="/home/pawflow"
 ENV USER="pawflow"
 WORKDIR /workspace
-ENTRYPOINT ["/usr/local/bin/init.sh"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/init.sh"]
 CMD ["bash"]

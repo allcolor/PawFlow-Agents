@@ -2,7 +2,7 @@ FROM node:22-slim
 
 # System deps for Claude Code/Codex/Gemini + Python for MCP bridge + display for auth login
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 python3-pip git ca-certificates curl unzip chrony tmux bubblewrap \
+    python3 python3-pip git ca-certificates curl unzip chrony tmux bubblewrap tini \
     xvfb x11vnc novnc websockify chromium dbus-x11 xterm \
     && rm -rf /var/lib/apt/lists/*
 
@@ -72,4 +72,4 @@ RUN mkdir -p /opt/pawflow /workspace /relay /cc_sessions \
 ENV PYTHONPATH="/opt/pawflow"
 
 USER pawflow
-ENTRYPOINT ["claude"]
+ENTRYPOINT ["/usr/bin/tini", "--", "claude"]

@@ -1055,13 +1055,11 @@ def test_code_server_worker_starts_with_isolated_profile_and_no_updates():
 
     assert '"--user-data-dir"' in start_block
     assert '"--extensions-dir"' in start_block
-    assert '"--disable-extensions"' in start_block
+    assert '"--disable-extensions"' not in start_block
+    assert '"--disable-extension"' not in start_block
     assert '"extensions.autoCheckUpdates": False' in start_block
     assert '"extensions.autoUpdate": False' in start_block
     assert '"github.gitAuthentication": False' in start_block
-    assert '"--disable-extension", "GitHub.vscode-github-authentication"' in start_block
-    assert '"--disable-extension", "GitHub.copilot"' in start_block
-    assert '"--disable-extension", "GitHub.copilot-chat"' in start_block
     assert '"extensions.ignoreRecommendations": True' in start_block
     assert '_cs_env["EXTENSIONS_GALLERY"] = "{}"' in start_block
     assert 'env=_cs_env' in start_block

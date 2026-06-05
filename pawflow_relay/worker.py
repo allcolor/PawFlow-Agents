@@ -622,12 +622,8 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 "--disable-telemetry",
                 "--disable-workspace-trust",
                 "--abs-proxy-base-path", _abs_proxy_base_path,
-                "--disable-extensions",
                 "--user-data-dir", str(_cs_user_data),
                 "--extensions-dir", str(_cs_extensions),
-                "--disable-extension", "GitHub.vscode-github-authentication",
-                "--disable-extension", "GitHub.copilot",
-                "--disable-extension", "GitHub.copilot-chat",
                 str(Path(root_dir).resolve()),
             ]
             try:

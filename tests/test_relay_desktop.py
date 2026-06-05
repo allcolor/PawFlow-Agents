@@ -19,7 +19,9 @@ def test_relay_desktop_package_exposes_electron_app():
     assert package["homepage"] == "https://github.com/allcolor/PawFlow-Agents"
     assert package["author"]["email"]
     assert "electron-builder" in package["scripts"]["dist"]
-    assert package["build"]["win"]["target"] == ["nsis"]
+    assert package["build"]["win"]["target"] == ["nsis", "zip"]
+    assert package["build"]["win"]["artifactName"] == "${productName}-${version}-win.${ext}"
+    assert package["build"]["nsis"]["artifactName"] == "${productName} Setup ${version}.${ext}"
     assert "AppImage" in package["build"]["linux"]["target"]
     assert "tar.gz" in package["build"]["linux"]["target"]
     assert package["build"]["linux"]["maintainer"]

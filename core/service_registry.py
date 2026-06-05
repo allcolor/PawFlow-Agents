@@ -292,6 +292,43 @@ class ServiceRegistry:
                             f"(scope={sdef.scope})"
                         )
 
+    def _check_relay_conflict(
+        self, service_id: str, scope: str, scope_id: str,
+        config: Dict[str, Any],
+        exclude_scope_id: str = "", exclude_service_id: str = "",
+    ) -> None:
+        """Relays own global listener routes and managed workspace scopes."""
+        managed = bool((config or {}).get("server_managed"))
+        target_scope = str((config or {}).get("server_scope") or scope or "user")
+        target_scope_id = str((config or {}).get("server_scope_id") or scope_id or "")
+        target_kind = str((config or {}).get("server_kind") or "workspace")
+        with self._data_lock:
+            for sid, scope_defs in self._definitions.items():
+                for svc_id, sdef in scope_defs.items():
+                    if sid == exclude_scope_id and svc_id == exclude_service_id:
+                        continue
+                    if sdef.service_type != "relay":
+                        continue
+                    if svc_id == service_id:
+                        raise ResourceConflictError(
+                            f"Relay service id '{service_id}' already exists "
+                            f"in scope={sdef.scope}. Relay websocket routes are "
+                            "global; use a unique relay name per server.")
+                    other_cfg = sdef.config or {}
+                    if not (managed and other_cfg.get("server_managed")):
+                        continue
+                    other_scope = str(other_cfg.get("server_scope") or sdef.scope or "user")
+                    other_scope_id = str(other_cfg.get("server_scope_id") or sdef.scope_id or "")
+                    other_kind = str(other_cfg.get("server_kind") or "workspace")
+                    if (other_scope, other_scope_id, other_kind) == (
+                            target_scope, target_scope_id, target_kind):
+                        label = "conversation" if target_scope == "conv" else target_scope
+                        raise ResourceConflictError(
+                            f"Managed server relay for {label} scope "
+                            f"'{target_scope_id or 'global'}' already exists "
+                            f"as service '{svc_id}'. Only one managed server "
+                            "relay is allowed per scope.")
+
     # ---- CRUD ----
 
     def install(
@@ -372,6 +409,11 @@ class ServiceRegistry:
             service_type, _new_config,
             exclude_scope_id=sid, exclude_service_id=service_id,
         )
+        if service_type == "relay":
+            self._check_relay_conflict(
+                service_id, scope, sid, _new_config,
+                exclude_scope_id=sid, exclude_service_id=service_id,
+            )
 
         with self._data_lock:
             needs_disconnect = service_id in self._live_instances.get(sid, {})

@@ -1574,6 +1574,16 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             description = getattr(sdef, "description", "") or ""
             enabled = bool(getattr(sdef, "enabled", True))
             service_type = getattr(sdef, "service_type", "")
+            if service_type == "relay" and config.get("server_managed"):
+                flowfile.set_content(json.dumps({
+                    "error": (
+                        "Managed server relays cannot be moved between scopes. "
+                        "Create a new server relay in the target scope and "
+                        "uninstall the old one when you no longer need its workspace."
+                    )
+                }).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
             registry.uninstall(from_scope, from_scope_id, sid)
             try:
                 registry.install(
@@ -1608,8 +1618,13 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             return [flowfile]
         try:
             from core.service_registry import ServiceRegistry
-            ServiceRegistry.get_instance().uninstall(
-                scope, _service_scope_id(scope, user_id, conv_id), sid)
+            registry = ServiceRegistry.get_instance()
+            scope_id = _service_scope_id(scope, user_id, conv_id)
+            svc_def = registry.get_definition(scope, scope_id, sid)
+            if svc_def and svc_def.service_type == "relay" and (svc_def.config or {}).get("server_managed"):
+                from core.server_relay_manager import ServerRelayManager
+                ServerRelayManager.get_instance().cleanup_service_relay(svc_def.config or {})
+            registry.uninstall(scope, scope_id, sid)
             flowfile.set_content(json.dumps({"ok": True}).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())

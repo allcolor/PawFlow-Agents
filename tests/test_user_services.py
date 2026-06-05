@@ -1024,6 +1024,60 @@ class TestAgentServiceActions:
         assert sdef.config["token"] == "manual-token"
         assert "server_managed" not in sdef.config
 
+    def test_managed_relay_install_rejects_second_same_user_scope(self):
+        self.reg.install("user", "testuser", "RelayOne", "relay", config={
+            "token": "token-1",
+            "server_managed": True,
+            "server_scope": "user",
+            "server_scope_id": "testuser",
+            "server_kind": "workspace",
+        })
+
+        with pytest.raises(ValueError, match="Only one managed server relay"):
+            self.reg.install("user", "testuser", "RelayTwo", "relay", config={
+                "token": "token-2",
+                "server_managed": True,
+                "server_scope": "user",
+                "server_scope_id": "testuser",
+                "server_kind": "workspace",
+            })
+
+    def test_relay_install_rejects_same_id_across_scopes(self):
+        self.reg.install("global", "", "MyWorkspace", "relay", config={
+            "token": "global-token",
+        })
+
+        with pytest.raises(ValueError, match="websocket routes are global"):
+            self.reg.install("user", "testuser", "MyWorkspace", "relay", config={
+                "token": "user-token",
+            })
+
+    def test_move_service_scope_rejects_managed_relay(self):
+        from tasks.ai.actions.service_flow import _handle_service_flow
+
+        self.reg.install("user", "testuser", "MyWorkspace", "relay", config={
+            "token": "generated-token",
+            "server_managed": True,
+            "server_scope": "user",
+            "server_scope_id": "testuser",
+            "server_workspace_dir": "data/runtime/relay/testuser",
+        })
+        ff = self._make_flowfile({
+            "action": "move_service_scope",
+            "service_id": "MyWorkspace",
+            "from_scope": "user",
+            "to_scope": "conversation",
+            "conversation_id": "conv1",
+        })
+
+        result = _handle_service_flow(None, "move_service_scope", json.loads(ff.get_content()), None, "testuser", ff)
+        data = json.loads(result[0].get_content())
+
+        assert "Managed server relays cannot be moved" in data["error"]
+        assert result[0].get_attribute("http.response.status") == "400"
+        assert self.reg.get_definition("user", "testuser", "MyWorkspace") is not None
+        assert self.reg.get_definition("conv", "conv1", "MyWorkspace") is None
+
     def test_server_filesystem_service_type_is_not_registered(self):
         from core import ServiceFactory
 
@@ -1089,6 +1143,40 @@ class TestAgentServiceActions:
         data = json.loads(result[0].get_content())
 
         assert data["uninstalled"] is True
+        assert self.reg.get_definition(self.SCOPE, "testuser", "MyWorkspace") is None
+        assert calls == [config]
+
+    def test_delete_service_managed_relay_cleans_container_and_storage(self, monkeypatch):
+        calls = []
+
+        class FakeServerRelayManager:
+            @classmethod
+            def get_instance(cls):
+                return cls()
+
+            def cleanup_service_relay(self, config):
+                calls.append(dict(config))
+                return True
+
+        monkeypatch.setattr("core.server_relay_manager.ServerRelayManager", FakeServerRelayManager)
+        config = {
+            "token": "generated-token",
+            "server_managed": True,
+            "server_container_name": "pawflow-relay-srv-MyWorkspace",
+            "server_workspace_dir": "data/runtime/relay/testuser",
+        }
+        self.reg.install(self.SCOPE, "testuser", "MyWorkspace", "relay", config=config)
+
+        from tasks.ai.agent_loop import AgentLoopTask
+        task = AgentLoopTask({"conversation_store": True, "api_key": "test-key"})
+        ff = self._make_flowfile({
+            "action": "delete_service",
+            "service_id": "MyWorkspace",
+        })
+        result = task._handle_action(ff)
+        data = json.loads(result[0].get_content())
+
+        assert data["ok"] is True
         assert self.reg.get_definition(self.SCOPE, "testuser", "MyWorkspace") is None
         assert calls == [config]
 

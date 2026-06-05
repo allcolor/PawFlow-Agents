@@ -9,8 +9,18 @@ PawFlow relay lifecycle is separate from PawFlow clients.
 This separation keeps PawCode and the VS Code extension equivalent to the webchat: they do not create, start, stop, or own relays.
 
 Server relays do not ask the user for a filesystem path. PawFlow allocates their
-workspace under `data/runtime/relay/<user-or-global>/<conversation-id>` and
-mounts that directory into the relay container at `/workspace`.
+workspace from the relay scope and mounts that directory into the relay
+container at `/workspace`:
+
+- global scope: `data/runtime/relay/global`
+- user scope: `data/runtime/relay/<user_id>`
+- conversation scope: `data/runtime/relay/<user_id>/<conversation_id>`
+
+Only one managed server relay is allowed for each global/user/conversation
+workspace scope. Relay service ids are also unique across scopes because the
+reverse WebSocket route is global (`/ws/relay/<service_id>`). Managed server
+relays cannot be moved between scopes; create a new relay in the target scope
+and uninstall the old relay explicitly when its workspace is no longer needed.
 
 Server-side relay sessions track in-flight reverse filesystem requests per WebSocket connection. When a relay disconnects or is removed from the pool, those pending request tasks are cancelled so stale connections cannot retain writers, loops, or queued FUSE work.
 

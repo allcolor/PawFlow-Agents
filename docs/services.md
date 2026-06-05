@@ -89,8 +89,10 @@ run, so read/search-style calls do not restat or decrypt secrets repeatedly.
 |---|---|
 | `openaiImageGeneration` | OpenAI-backed image generation. |
 | `codexImageGeneration` | Codex CLI `$imagegen` generation/editing through a codex-app-server LLM service. |
-| `grokImageGeneration` | Grok/xAI-backed image generation. |
-| `grokVideoGeneration` | Grok/xAI-backed video generation. |
+| `grokImageGeneration` | Grok/xAI-backed image generation and editing. |
+| `grokVideoGeneration` | Grok/xAI-backed video generation and editing. |
+| `xaiTTS` | xAI-backed text-to-speech. |
+| `xaiSTT` | xAI-backed speech-to-text. |
 | `klingVideoGeneration` | Kling video generation. |
 | `sunoAudioGeneration` | Suno audio/music generation. |
 | `pixazoImageGeneration` | Pixazo image catalog dispatch. |

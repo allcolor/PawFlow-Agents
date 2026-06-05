@@ -240,6 +240,8 @@ _SERVICE_CATEGORY_BY_TYPE = {
     "supertonicTTS": "audio",
     "voxcpmTTS": "audio",
     "openaiCompatibleSTT": "audio",
+    "xaiTTS": "audio",
+    "xaiSTT": "audio",
     "wavespeedAudioGeneration": "audio",
     "elevenLabsVoiceClone": "voice",
     "fishAudioVoiceClone": "voice",

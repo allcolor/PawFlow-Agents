@@ -123,8 +123,14 @@ STATIC_MODELS = {
         ("google/veo-3", "OpenRouter video model."),
         ("minimax/hailuo-02", "OpenRouter video model."),
     ],
-    "grokImageGeneration": [("grok-imagine-image", "xAI image generation model.")],
-    "grokVideoGeneration": [("grok-imagine-video", "xAI video generation model.")],
+    "grokImageGeneration": [
+        ("grok-imagine-image-quality", "xAI image generation and editing model."),
+        ("grok-imagine-image-quality-latest", "Latest xAI image generation model alias."),
+        ("grok-imagine-image", "Legacy xAI image generation model."),
+    ],
+    "grokVideoGeneration": [("grok-imagine-video", "xAI video generation and editing model.")],
+    "xaiTTS": [("grok-voice-latest", "xAI voice model."), ("grok-voice-fast-1.0", "xAI fast voice model.")],
+    "xaiSTT": [("grok-transcribe", "xAI speech-to-text model.")],
     "klingVideoGeneration": [
         ("kling-v2.6-pro", "Kling Pro video model."),
         ("kling-v2.6-std", "Kling standard video model."),

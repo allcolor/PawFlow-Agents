@@ -141,6 +141,15 @@ models such as `google/veo-3.1` use `POST /videos` and poll the returned
 `max_tokens` and `max_output_tokens` for chat-completions media responses, plus
 provider escape hatches through `extra_body` and `extra_headers`.
 
+`grokImageGeneration` and `grokVideoGeneration` call xAI directly at
+`https://api.x.ai/v1`. The image service defaults to
+`grok-imagine-image-quality`, supports text generation and `edit_image`, and
+accepts up to three reference images for edit requests. The video service uses
+`grok-imagine-video` for text-to-video, image-to-video, reference-to-video,
+video edit, and video extension; `generate_video(..., video_mode="extend",
+video_url="...")` selects the extension endpoint. `xaiTTS` and `xaiSTT` expose
+xAI's direct `/v1/tts` and `/v1/stt` audio APIs.
+
 ## Provider Webhooks
 
 Some media providers can POST the final async result to PawFlow instead of being
@@ -234,6 +243,8 @@ Supported service families include:
 - `codexImageGeneration`
 - `grokImageGeneration`
 - `grokVideoGeneration`
+- `xaiTTS`
+- `xaiSTT`
 - `klingVideoGeneration`
 - `sunoAudioGeneration`
 - `supertonicTTS`

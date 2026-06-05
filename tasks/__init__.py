@@ -93,6 +93,8 @@ def _register_all_services():
     import services.voxcpm_tts_service         # noqa: F401  — external VoxCPM TTS
     import services.openai_compatible_tts_service  # noqa: F401  — OpenAI-compatible TTS
     import services.openai_compatible_stt_service  # noqa: F401  — OpenAI-compatible STT
+    import services.xai_tts_service               # noqa: F401  — xAI TTS
+    import services.xai_stt_service               # noqa: F401  — xAI STT
     import services.luxtts_service             # noqa: F401  — local LuxTTS voice clone
 
     # Voice-cloning TTS services

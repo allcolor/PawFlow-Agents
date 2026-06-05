@@ -165,8 +165,12 @@ class ImageGenerationHandler(ToolHandler):
     def _required_video_methods(arguments: Dict[str, Any]):
         if arguments.get("image_url") and arguments.get("end_image_url"):
             return ("frame_to_video",)
+        if arguments.get("video_url") and arguments.get("video_mode") == "extend":
+            return ("video_extend",)
         if arguments.get("video_url"):
             return ("video_edit",)
+        if arguments.get("reference_image_urls"):
+            return ("reference_to_video",)
         if arguments.get("image_url"):
             return ("image_to_video", "reference_to_video")
         return ("generate",)
@@ -480,6 +484,17 @@ class VideoGenerationHandler(ToolHandler):
                         "transfer, re-editing, or video-to-video transformation."
                     ),
                 },
+                "reference_image_urls": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Reference image URLs for reference-to-video mode "
+                        "(HTTP or fs://filestore/<id>/<name>)."),
+                },
+                "video_mode": {
+                    "type": "string",
+                    "description": "Optional video operation hint. Use 'extend' with video_url to continue an existing video.",
+                },
                 "end_image_url": {
                     "type": "string",
                     "description": (
@@ -547,8 +562,12 @@ class VideoGenerationHandler(ToolHandler):
     def _required_video_methods(arguments: Dict[str, Any]):
         if arguments.get("image_url") and arguments.get("end_image_url"):
             return ("frame_to_video",)
+        if arguments.get("video_url") and arguments.get("video_mode") == "extend":
+            return ("video_extend",)
         if arguments.get("video_url"):
             return ("video_edit",)
+        if arguments.get("reference_image_urls"):
+            return ("reference_to_video",)
         if arguments.get("image_url"):
             return ("image_to_video", "reference_to_video")
         return ("generate",)
@@ -608,6 +627,10 @@ class VideoGenerationHandler(ToolHandler):
         image_url = self._rewrite(arguments.get("image_url", "") or "", service=service)
         video_url = self._rewrite(arguments.get("video_url", "") or "", service=service)
         end_image_url = self._rewrite(arguments.get("end_image_url", "") or "", service=service)
+        reference_image_urls = arguments.get("reference_image_urls") or []
+        if isinstance(reference_image_urls, str):
+            reference_image_urls = [reference_image_urls]
+        reference_image_urls = [self._rewrite(u, service=service) for u in reference_image_urls]
         destination = arguments.get("destination", "filestore")
 
         try:
@@ -621,7 +644,8 @@ class VideoGenerationHandler(ToolHandler):
                 service.set_callback_base_url(self._base_url)
             gen_args = {k: v for k, v in arguments.items()
                         if k not in ("destination", "path", "image_url",
-                                     "video_url", "end_image_url", "service", "video_service")}
+                                     "video_url", "end_image_url", "reference_image_urls",
+                                     "service", "video_service")}
 
             if image_url and end_image_url:
                 # Frame-to-video mode (start + end frame)
@@ -633,13 +657,25 @@ class VideoGenerationHandler(ToolHandler):
                 gen_args["end_image_url"] = end_image_url
                 result = service.frame_to_video(**gen_args)
             elif video_url:
-                # Video-edit mode
-                if not hasattr(service, 'video_edit'):
+                if arguments.get("video_mode") == "extend":
+                    if not hasattr(service, 'video_extend'):
+                        return ("Error: the active video service does not support "
+                                "video extension.")
+                    gen_args["video_url"] = video_url
+                    result = service.video_extend(**gen_args)
+                elif not hasattr(service, 'video_edit'):
                     return ("Error: the active video service does not support "
                             "video_edit. Use a model with a video_edit operation "
                             "(e.g. 'seedance-2-0-fast', 'kling-o1-edit-video-video-to-video-634').")
-                gen_args["video_url"] = video_url
-                result = service.video_edit(**gen_args)
+                else:
+                    gen_args["video_url"] = video_url
+                    result = service.video_edit(**gen_args)
+            elif reference_image_urls:
+                if not hasattr(service, 'reference_to_video'):
+                    return ("Error: the active video service does not support "
+                            "reference_to_video.")
+                gen_args["reference_image_urls"] = reference_image_urls
+                result = service.reference_to_video(**gen_args)
             elif image_url:
                 # Image-to-video mode — try image_to_video first,
                 # fall back to reference_to_video (Seedance)

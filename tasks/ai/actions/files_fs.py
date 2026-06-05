@@ -77,6 +77,43 @@ def _static_flow_graph(raw: Dict[str, Any]):
     return nodes, edges
 
 
+def _load_flow_template_definition(template_id: str, user_id: str,
+                                   conversation_id: str = "") -> Dict[str, Any]:
+    """Load a flow template from the versioned repository or legacy path."""
+    from pathlib import Path as _P
+    from tasks.ai.actions.service_flow import _resolve_flow_template_path
+
+    tpath = _resolve_flow_template_path(template_id, user_id, conversation_id)
+    if tpath:
+        return json.loads(_P(tpath).read_text(encoding="utf-8"))
+
+    # Repository-backed flows can be addressed by FQN, by package/name without
+    # a version, or by the raw id/name embedded in the flow definition.
+    from core.repository import ScopedRepository
+    repo = ScopedRepository.instance()
+    scope_candidates = []
+    if user_id and conversation_id:
+        scope_candidates.append(("conv", user_id, conversation_id))
+    if user_id:
+        scope_candidates.append(("user", user_id, ""))
+    scope_candidates.append(("global", "", ""))
+    id_candidates = [template_id]
+    if ":" not in template_id and "." not in template_id:
+        id_candidates.append(f"default.{template_id}")
+
+    for scope, uid, cid in scope_candidates:
+        for flow_id in id_candidates:
+            try:
+                raw = repo.get_flow(flow_id, scope, user_id=uid, conv_id=cid)
+            except Exception:
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+                raw = None
+            if raw is not None:
+                return raw
+
+    raise FileNotFoundError(f"Flow template not found: {template_id}")
+
+
 def _handle_files_fs(self, action, body, store, user_id, flowfile):
     """Handle files fs actions. Returns [flowfile] or None."""
 
@@ -202,13 +239,8 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
             flow_name = instance_id or template_id
 
             if template_id:
-                from pathlib import Path as _P
-                from tasks.ai.actions.service_flow import _resolve_flow_template_path
-                template_path = _resolve_flow_template_path(
+                raw = _load_flow_template_definition(
                     template_id, user_id, body.get("conversation_id", ""))
-                if not template_path:
-                    raise FileNotFoundError(f"Flow template not found: {template_id}")
-                raw = json.loads(_P(template_path).read_text(encoding="utf-8"))
                 flow_name = raw.get("name") or raw.get("id") or template_id
                 nodes, edges = _static_flow_graph(raw)
             else:

@@ -173,3 +173,39 @@ def test_fs_list_services_without_conversation_returns_empty():
 
     assert result == [ff]
     assert _payload(ff) == {"services": []}
+
+
+def test_flow_runtime_graph_loads_repository_template(tmp_path, monkeypatch):
+    import core.paths as paths
+    from core.repository import ScopedRepository
+
+    monkeypatch.setattr(paths, "REPOSITORY_DIR", tmp_path / "repository")
+    ScopedRepository.reset()
+    ScopedRepository.instance().create_flow(
+        "default.demo_flow:1.0.0", "global", {
+            "id": "demo-flow",
+            "name": "demo_flow",
+            "tasks": {
+                "start": {"type": "generateFlowFile", "parameters": {}},
+                "done": {"type": "logMessage", "parameters": {}},
+            },
+            "relations": [{"from": "start", "to": "done", "type": "success"}],
+        })
+    ff = FlowFile(content=b"")
+
+    result = _handle_files_fs(
+        None, "flow_runtime_graph", {"template_id": "default.demo_flow:1.0.0"},
+        None, "alice", ff)
+
+    payload = _payload(ff)
+    assert result == [ff]
+    assert payload["flow_name"] == "demo_flow"
+    assert set(payload["nodes"]) == {"start", "done"}
+    assert payload["edges"] == [{
+        "source": "start",
+        "target": "done",
+        "relationship": "success",
+        "queue_size": 0,
+        "max_queue": 10000,
+        "backpressured": False,
+    }]

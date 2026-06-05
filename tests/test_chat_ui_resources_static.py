@@ -164,6 +164,14 @@ def test_flow_template_graph_passes_conversation_id():
     assert "template_id: TEMPLATE_ID, conversation_id: CONVERSATION_ID" in flow_graph
 
 
+def test_flow_graph_handles_missing_nodes_edges_response():
+    flow_graph = Path("tasks/io/chat_ui/flow_graph.html").read_text(encoding="utf-8")
+
+    assert "Object.entries(apiNodes || {})" in flow_graph
+    assert "Array.isArray(apiEdges) ? apiEdges : []" in flow_graph
+    assert "Flow graph response is missing nodes or edges" in flow_graph
+
+
 def test_chat_ui_html_helpers_escape_attribute_and_js_contexts():
     js = Path("tasks/io/chat_ui/messages.js").read_text(encoding="utf-8")
     conv_js = Path("tasks/io/chat_ui/conversations.js").read_text(encoding="utf-8")

@@ -762,7 +762,7 @@ const nodeTypes = { flowNode: FlowNode };
 
 // ── Convert API data to React Flow format ──
 function toRFNodes(apiNodes) {
-  return Object.entries(apiNodes).map(([id, n]) => ({
+  return Object.entries(apiNodes || {}).map(([id, n]) => ({
     id,
     type: 'flowNode',
     position: { x: 0, y: 0 },
@@ -776,7 +776,7 @@ function toRFNodes(apiNodes) {
 }
 
 function toRFEdges(apiEdges) {
-  return apiEdges.map((e, i) => {
+  return (Array.isArray(apiEdges) ? apiEdges : []).map((e, i) => {
     const animated = e.queue_size > 0;
     const color = queueColor(e.queue_size, e.max_queue);
     let label = e.relationship;
@@ -820,6 +820,12 @@ function App() {
       setIsRunning(data.is_running);
       setError('');
 
+      if (!data.nodes || !data.edges) {
+        setError('Flow graph response is missing nodes or edges');
+        setNodes([]);
+        setEdges([]);
+        return;
+      }
       const rfNodes = toRFNodes(data.nodes);
       const rfEdges = toRFEdges(data.edges);
 

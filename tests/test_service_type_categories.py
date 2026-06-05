@@ -34,6 +34,10 @@ def test_service_category_prefers_declared_category():
 def test_service_category_maps_legacy_service_type():
     assert _service_category("rcloneFilesystem", _LegacyService) == "filesystem"
     assert _service_category("supertonicTTS", SupertonicTTSService) == "audio"
+    assert _service_category("openaiCompatibleImageGeneration", _LegacyService) == "image"
+    assert _service_category("openaiCompatibleVideoGeneration", _LegacyService) == "video"
+    assert _service_category("ccInteractiveEvents", _LegacyService) == "ai"
+    assert _service_category("packageRuntime", _LegacyService) == "system"
 
 
 def test_service_category_normalizes_catalog_aliases():
@@ -42,6 +46,20 @@ def test_service_category_normalizes_catalog_aliases():
 
 def test_service_category_falls_back_to_other():
     assert _service_category("customService", _UnknownCategoryService) == "other"
+
+
+def test_registered_builtin_services_do_not_fall_back_to_other():
+    from core import ServiceFactory
+    from tasks import _register_all_services
+
+    _register_all_services()
+    uncategorized = []
+    for stype in sorted(ServiceFactory.list_types()):
+        cls = ServiceFactory.get(stype)
+        if _service_category(stype, cls) == "other":
+            uncategorized.append(stype)
+
+    assert uncategorized == []
 
 
 def test_service_type_sort_key_orders_by_category_then_name():

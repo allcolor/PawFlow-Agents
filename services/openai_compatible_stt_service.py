@@ -3,6 +3,7 @@
 import json
 import logging
 import mimetypes
+import base64
 import uuid
 import urllib.error
 import urllib.request
@@ -68,6 +69,11 @@ class OpenAICompatibleSTTService(BaseSTTService):
                 "type": "string", "required": False, "sensitive": True,
                 "description": "Bearer token. Leave empty for trusted local/relay endpoints.",
             },
+            "protocol": {
+                "type": "select", "required": False, "default": "auto",
+                "options": ["auto", "openai_multipart", "openrouter_json"],
+                "description": "Request protocol. auto uses OpenRouter JSON when base_url points to openrouter.ai; otherwise OpenAI multipart.",
+            },
             "allow_private_base_url": {
                 "type": "boolean", "required": False, "default": False,
                 "description": "Allow direct private/loopback base_url targets. Prefer http://${conv.relay}/host:port for local relay endpoints.",
@@ -85,6 +91,10 @@ class OpenAICompatibleSTTService(BaseSTTService):
                 "type": "string", "required": False, "default": "json",
                 "description": "Provider response format. json is recommended.",
             },
+            "provider_options": {
+                "type": "textarea", "required": False, "default": "",
+                "description": "Optional JSON object passed as provider.options for OpenRouter STT routing.",
+            },
             "timeout": {
                 "type": "integer", "required": False, "default": 120,
                 "description": "HTTP timeout in seconds.",
@@ -101,9 +111,11 @@ class OpenAICompatibleSTTService(BaseSTTService):
         self._runtime_conversation_id = ""
         self._runtime_agent_name = ""
         self.api_key = str(self.config.get("api_key") or "")
+        self.protocol = str(self.config.get("protocol") or "auto").strip().lower()
         self.model = str(self.config.get("model") or "gpt-4o-mini-transcribe")
         self.language = str(self.config.get("language") or "")
         self.response_format = str(self.config.get("response_format") or "json")
+        self.provider_options = str(self.config.get("provider_options") or "").strip()
         self.timeout = int(self.config.get("timeout") or 120)
 
     def set_runtime_context(self, user_id: str = "", conversation_id: str = "",
@@ -135,6 +147,90 @@ class OpenAICompatibleSTTService(BaseSTTService):
     def _close_connection(self):
         pass
 
+    def _select_protocol(self) -> str:
+        if self.protocol in {"openai_multipart", "openrouter_json"}:
+            return self.protocol
+        if "openrouter.ai" in (self._raw_base_url or "").lower():
+            return "openrouter_json"
+        return "openai_multipart"
+
+    @staticmethod
+    def _audio_format(filename: str, mime_type: str) -> str:
+        marker = f"{filename} {mime_type}".lower()
+        for fmt in ("wav", "mp3", "flac", "m4a", "ogg", "webm", "aac"):
+            if fmt in marker:
+                return fmt
+        return "wav"
+
+    def _provider_body(self, override=None) -> dict:
+        provider = override
+        provider_options = ""
+        if provider is None:
+            provider_options = self.provider_options
+        if provider:
+            if not isinstance(provider, dict):
+                raise ServiceError("provider must be a JSON object")
+            return provider
+        if not provider_options:
+            return {}
+        try:
+            parsed = json.loads(provider_options)
+        except json.JSONDecodeError as exc:
+            raise ServiceError("provider_options must be valid JSON") from exc
+        if not isinstance(parsed, dict):
+            raise ServiceError("provider_options must be a JSON object")
+        return {"options": parsed}
+
+    def _transcribe_openrouter_json(self, audio_bytes: bytes, filename: str,
+                                    mime_type: str, language: str,
+                                    prompt: str, model: str,
+                                    **kwargs) -> dict:
+        body = {
+            "model": model or self.model,
+            "input_audio": {
+                "data": base64.b64encode(audio_bytes).decode("ascii"),
+                "format": kwargs.pop("format", None) or self._audio_format(filename, mime_type),
+            },
+        }
+        if language or self.language:
+            body["language"] = language or self.language
+        temperature = kwargs.pop("temperature", None)
+        if temperature not in (None, ""):
+            body["temperature"] = float(temperature)
+        provider = self._provider_body(kwargs.pop("provider", None))
+        if provider:
+            body["provider"] = provider
+        if prompt:
+            body.setdefault("provider", {"options": {}})
+            body["provider"].setdefault("options", {}).setdefault("openai", {})["prompt"] = prompt
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": "PawFlow-Agent/1.0",
+        }
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        base_url = self._effective_base_url()
+        req = urllib.request.Request(
+            f"{base_url}/audio/transcriptions",
+            data=json.dumps(body).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:  # nosec B310 - configured STT provider endpoint.
+                raw = resp.read()
+        except urllib.error.HTTPError as exc:
+            detail = exc.read()[:1000].decode("utf-8", errors="replace")
+            raise ServiceError(
+                f"OpenAI-compatible STT error POST /audio/transcriptions ({exc.code}): {detail}") from exc
+        except urllib.error.URLError as exc:
+            raise ServiceError(f"OpenAI-compatible STT unavailable at {base_url}: {exc}") from exc
+        try:
+            return json.loads(raw.decode("utf-8", errors="replace"))
+        except json.JSONDecodeError as exc:
+            raise ServiceError("OpenAI-compatible STT returned non-JSON") from exc
+
     def transcribe(self, audio_bytes: bytes = b"", audio_path: str = "",
                    mime_type: str = "", language: str = "",
                    prompt: str = "", model: str = "", **kwargs) -> dict:
@@ -144,8 +240,20 @@ class OpenAICompatibleSTTService(BaseSTTService):
                 audio_bytes = fh.read()
         if not audio_bytes:
             raise ServiceError("audio_bytes or audio_path is required")
-        filename = kwargs.get("filename") or "speech.webm"
+        filename = kwargs.pop("filename", None) or "speech.webm"
         content_type = mime_type or mimetypes.guess_type(filename)[0] or "application/octet-stream"
+        if self._select_protocol() == "openrouter_json":
+            result = self._transcribe_openrouter_json(
+                audio_bytes, filename, content_type, language, prompt, model, **kwargs)
+            transcript = result.get("text") or result.get("transcript") or ""
+            usage = result.get("usage") or {}
+            return {
+                "text": str(transcript).strip(),
+                "language": result.get("language", language or self.language),
+                "duration": result.get("duration", usage.get("seconds", 0)),
+                "segments": result.get("segments", []),
+                "provider_result": result,
+            }
         fields = {
             "model": model or self.model,
             "language": language or self.language,

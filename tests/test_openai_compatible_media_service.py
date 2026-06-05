@@ -108,11 +108,11 @@ def test_image_service_uses_chat_completions_for_openrouter_and_max_tokens(monke
     assert calls[0][2]["modalities"] == ["image"]
 
 
-def test_video_service_uses_openrouter_chat_and_downloads_direct_video(monkeypatch):
+def test_video_service_uses_openrouter_videos_endpoint_and_downloads_direct_video(monkeypatch):
     svc = OpenAICompatibleVideoGenerationService({
         "llm_service": "openrouter_llm",
         "model": "kwaivgi/kling-v3.0-pro",
-        "max_tokens": 512,
+        "extra_body": {"provider": {"sort": "throughput"}},
     })
     llm = FakeLLMService("https://openrouter.ai/api/v1", "kwaivgi/kling-v3.0-pro")
     calls = []
@@ -122,7 +122,7 @@ def test_video_service_uses_openrouter_chat_and_downloads_direct_video(monkeypat
         svc,
         "_request_json",
         lambda resolved, method, path, body=None: calls.append((method, path, body)) or {
-            "choices": [{"message": {"content": "https://cdn.example.com/video.mp4"}}],
+            "unsigned_urls": ["https://cdn.example.com/video.mp4"],
         },
     )
     monkeypatch.setattr(
@@ -135,12 +135,13 @@ def test_video_service_uses_openrouter_chat_and_downloads_direct_video(monkeypat
                           image_url="https://cdn.example.com/first.png")
 
     assert result == {"video_bytes": b"MP4", "content_type": "video/mp4"}
-    assert calls[0][1] == "/chat/completions"
+    assert calls[0][1] == "/videos"
     body = calls[0][2]
     assert body["model"] == "kwaivgi/kling-v3.0-pro"
     assert body["duration"] == 12
-    assert body["max_tokens"] == 512
-    assert body["messages"][0]["content"][1]["image_url"]["url"] == "https://cdn.example.com/first.png"
+    assert body["provider"] == {"sort": "throughput"}
+    assert body["frame_images"][0]["image_url"]["url"] == "https://cdn.example.com/first.png"
+    assert body["frame_images"][0]["frame_type"] == "first_frame"
 
 
 def test_video_service_default_timeout_matches_schema():
@@ -177,7 +178,41 @@ def test_video_service_polls_generation_id(monkeypatch):
 
     assert result["video_bytes"] == b"MP4"
     assert calls[1][0] == "GET"
-    assert calls[1][1] == "/generation?id=gen_123"
+    assert calls[1][1] == "/videos/gen_123"
+
+
+def test_video_service_uses_openrouter_polling_url(monkeypatch):
+    svc = OpenAICompatibleVideoGenerationService({
+        "llm_service": "openrouter_llm",
+        "model": "google/veo-3.1",
+        "poll_interval": 0,
+    })
+    llm = FakeLLMService("https://openrouter.ai/api/v1", "google/veo-3.1")
+    calls = []
+
+    def fake_request(resolved, method, path, body=None):
+        calls.append((method, path, body))
+        if method == "POST":
+            return {
+                "id": "job_123",
+                "status": "queued",
+                "polling_url": "https://openrouter.ai/api/v1/videos/job_123",
+            }
+        return {"status": "completed", "unsigned_urls": ["https://cdn.example.com/final.mp4"]}
+
+    monkeypatch.setattr(svc, "_resolve_llm_service", lambda: llm)
+    monkeypatch.setattr(svc, "_request_json", fake_request)
+    monkeypatch.setattr(
+        svc,
+        "_download_url",
+        lambda url, default_content_type, timeout: (b"MP4", "video/mp4"),
+    )
+
+    result = svc.generate(prompt="waves")
+
+    assert result["video_bytes"] == b"MP4"
+    assert calls[1][0] == "GET"
+    assert calls[1][1] == "https://openrouter.ai/api/v1/videos/job_123"
 
 
 def test_video_service_openrouter_video_webhook_uses_callback_url(monkeypatch):
@@ -189,8 +224,7 @@ def test_video_service_openrouter_video_webhook_uses_callback_url(monkeypatch):
     svc = OpenAICompatibleVideoGenerationService({
         "llm_service": "openrouter_llm",
         "model": "google/veo-3.1",
-        "protocol": "openai_video",
-        "submit_path": "/videos",
+        "protocol": "openrouter",
         "poll_interval": 0,
         "timeout": 5,
         "use_webhook": True,
@@ -224,6 +258,38 @@ def test_video_service_openrouter_video_webhook_uses_callback_url(monkeypatch):
     assert result == {"video_bytes": b"MP4", "content_type": "video/mp4"}
     assert calls[0][1] == "/videos"
     assert listener.unregistered
+
+
+def test_video_service_chat_completions_does_not_use_webhook(monkeypatch):
+    svc = OpenAICompatibleVideoGenerationService({
+        "llm_service": "openrouter_llm",
+        "model": "legacy-video-model",
+        "protocol": "chat_completions",
+        "poll_interval": 0,
+        "timeout": 5,
+        "use_webhook": True,
+    })
+    llm = FakeLLMService("https://api.example.com/v1", "legacy-video-model")
+    calls = []
+
+    monkeypatch.setattr(svc, "_resolve_llm_service", lambda: llm)
+    monkeypatch.setattr(
+        svc,
+        "_request_json",
+        lambda resolved, method, path, body=None: calls.append((method, path, body)) or {
+            "choices": [{"message": {"content": "https://cdn.example.com/video.mp4"}}],
+        },
+    )
+    monkeypatch.setattr(
+        svc,
+        "_download_url",
+        lambda url, default_content_type, timeout: (b"MP4", "video/mp4"),
+    )
+
+    result = svc.generate(prompt="waves")
+
+    assert result == {"video_bytes": b"MP4", "content_type": "video/mp4"}
+    assert "callback_url" not in calls[0][2]
 
 
 def test_openai_compatible_media_services_are_registered():

@@ -64,6 +64,41 @@ def test_openai_compatible_tts_posts_openai_speech_json(monkeypatch):
     assert captured["timeout"] == 17
 
 
+def test_openai_compatible_tts_supports_openrouter_model_and_provider_options(monkeypatch):
+    captured = {}
+
+    def fake_urlopen(req, timeout=0):
+        captured["url"] = req.full_url
+        captured["body"] = json.loads(req.data.decode("utf-8"))
+        return _Resp(b"audio", "audio/mpeg")
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    svc = OpenAICompatibleTTSService({
+        "base_url": "https://openrouter.ai/api/v1",
+        "api_key": "or-key",
+        "model": "openai/gpt-4o-mini-tts-2025-12-15",
+        "voice": "nova",
+        "response_format": "mp3",
+        "provider_options": '{"openai":{"instructions":"Speak warmly."}}',
+    })
+
+    result = svc.speak("Hello")
+
+    assert result["audio_bytes"] == b"audio"
+    assert captured["url"] == "https://openrouter.ai/api/v1/audio/speech"
+    assert captured["body"] == {
+        "model": "openai/gpt-4o-mini-tts-2025-12-15",
+        "input": "Hello",
+        "voice": "nova",
+        "response_format": "mp3",
+        "provider": {
+            "options": {
+                "openai": {"instructions": "Speak warmly."},
+            },
+        },
+    }
+
+
 def test_openai_compatible_tts_decodes_json_audio_response(monkeypatch):
     monkeypatch.setattr(
         "urllib.request.urlopen",

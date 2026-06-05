@@ -142,6 +142,8 @@ class _OpenAICompatibleMediaMixin:
 
     @staticmethod
     def _join_url(base_url: str, path: str) -> str:
+        if path.startswith(("http://", "https://")):
+            return path
         base = (base_url or "").rstrip("/")
         if not path.startswith("/"):
             path = "/" + path
@@ -394,8 +396,8 @@ class OpenAICompatibleVideoGenerationService(_OpenAICompatibleMediaMixin, BaseVi
             },
             "protocol": {
                 "type": "select", "required": False, "default": "auto",
-                "options": ["auto", "openai_video", "chat_completions", "openrouter"],
-                "description": "openai_video uses configurable video endpoints; chat_completions/openrouter uses /chat/completions.",
+                "options": ["auto", "openai_video", "openrouter", "chat_completions"],
+                "description": "openai_video uses configurable video endpoints; openrouter uses /videos; chat_completions is a legacy fallback.",
             },
             "model": {"type": "string", "required": False, "default": "", "description": "Video model override."},
             "timeout": {"type": "integer", "required": False, "default": 900, "description": "Total HTTP/poll timeout in seconds."},
@@ -405,7 +407,7 @@ class OpenAICompatibleVideoGenerationService(_OpenAICompatibleMediaMixin, BaseVi
             "max_output_tokens": {"type": "integer", "required": False, "default": 0, "description": "Alias/preferred max token limit for newer OpenAI models."},
             "submit_path": {"type": "string", "required": False, "default": "/videos/generations", "description": "OpenAI-video submit endpoint override."},
             "status_path_template": {"type": "string", "required": False, "default": "/videos/{id}", "description": "Async status endpoint template; {id} is replaced with the generation id."},
-            "openrouter_generation_path_template": {"type": "string", "required": False, "default": "/generation?id={id}", "description": "OpenRouter-style async generation status endpoint."},
+            "openrouter_generation_path_template": {"type": "string", "required": False, "default": "/videos/{id}", "description": "OpenRouter-style async generation status endpoint."},
             "use_webhook": {
                 "type": "boolean", "required": False, "default": False,
                 "description": (
@@ -434,7 +436,7 @@ class OpenAICompatibleVideoGenerationService(_OpenAICompatibleMediaMixin, BaseVi
         self.max_duration = int(self.config.get("max_duration", 15) or 15)
         self.submit_path = (self.config.get("submit_path", "/videos/generations") or "/videos/generations").strip()
         self.status_path_template = (self.config.get("status_path_template", "/videos/{id}") or "/videos/{id}").strip()
-        self.openrouter_generation_path_template = (self.config.get("openrouter_generation_path_template", "/generation?id={id}") or "/generation?id={id}").strip()
+        self.openrouter_generation_path_template = (self.config.get("openrouter_generation_path_template", "/videos/{id}") or "/videos/{id}").strip()
         self.use_webhook = _truthy(self.config.get("use_webhook", False))
         self.public_callback_base_url = (
             self.config.get("public_callback_base_url", "") or "").strip().rstrip("/")
@@ -444,13 +446,15 @@ class OpenAICompatibleVideoGenerationService(_OpenAICompatibleMediaMixin, BaseVi
         self._callback_base_url = (base_url or "").strip().rstrip("/")
 
     def _select_protocol(self, svc, model: str) -> str:
-        if self.protocol in ("chat_completions", "openrouter"):
+        if self.protocol == "openrouter":
+            return "openrouter_video"
+        if self.protocol == "chat_completions":
             return "chat_completions"
         if self.protocol == "openai_video":
             return "openai_video"
         base = (getattr(svc, "base_url", "") or "").lower()
         if "openrouter.ai" in base or "/" in model:
-            return "chat_completions"
+            return "openrouter_video"
         return "openai_video"
 
     @staticmethod
@@ -482,20 +486,26 @@ class OpenAICompatibleVideoGenerationService(_OpenAICompatibleMediaMixin, BaseVi
         protocol = self._select_protocol(svc, selected_model)
         bounded_duration = max(1, min(int(duration or 5), self.max_duration))
         webhook_ticket = None
-        if protocol != "openai_video":
-            data = self._submit_chat_video(svc, selected_model, prompt, bounded_duration, width, height, image_url, end_image_url, kwargs)
-            status_template = self.openrouter_generation_path_template
-            return self._resolve_video_result(svc, data, status_template)
-
-        status_template = self.status_path_template
         try:
-            if self.use_webhook:
+            if self.use_webhook and protocol in {"openrouter_video", "openai_video"}:
                 base_url = self.public_callback_base_url or self._callback_base_url
                 from services.media_webhook_registry import MediaWebhookRegistry
                 webhook_ticket = MediaWebhookRegistry.instance().register(
                     "openrouter", base_url)
                 kwargs = dict(kwargs)
                 kwargs["callback_url"] = webhook_ticket.url
+            if protocol == "openrouter_video":
+                data = self._submit_openrouter_video(
+                    svc, selected_model, prompt, bounded_duration, width, height,
+                    image_url, end_image_url, kwargs)
+                status_template = self._extract_polling_url(data) or self.openrouter_generation_path_template
+                return self._resolve_video_result(svc, data, status_template, webhook_ticket=webhook_ticket)
+            if protocol == "chat_completions":
+                data = self._submit_chat_video(svc, selected_model, prompt, bounded_duration, width, height, image_url, end_image_url, kwargs)
+                status_template = self.openrouter_generation_path_template
+                return self._resolve_video_result(svc, data, status_template)
+
+            status_template = self.status_path_template
             data = self._submit_openai_video(svc, selected_model, prompt, bounded_duration, width, height, image_url, end_image_url, kwargs)
             return self._resolve_video_result(svc, data, status_template, webhook_ticket=webhook_ticket)
         finally:
@@ -522,6 +532,46 @@ class OpenAICompatibleVideoGenerationService(_OpenAICompatibleMediaMixin, BaseVi
         if kwargs.get("callback_url"):
             body["callback_url"] = kwargs["callback_url"]
         return self._request_json(svc, "POST", self.submit_path, body)
+
+    def _submit_openrouter_video(self, svc, model: str, prompt: str, duration: int,
+                                 width, height, image_url: str, end_image_url: str,
+                                 kwargs: dict) -> dict:
+        body = {
+            "model": model,
+            "prompt": prompt,
+            "duration": duration,
+            "aspect_ratio": kwargs.get("aspect_ratio") or self._aspect_ratio(width, height),
+        }
+        if kwargs.get("resolution"):
+            body["resolution"] = kwargs["resolution"]
+        if kwargs.get("size"):
+            body["size"] = kwargs["size"]
+        if kwargs.get("seed") not in (None, ""):
+            body["seed"] = kwargs["seed"]
+        if kwargs.get("generate_audio") not in (None, ""):
+            body["generate_audio"] = _truthy(kwargs["generate_audio"])
+        elif kwargs.get("with_audio") not in (None, ""):
+            body["generate_audio"] = _truthy(kwargs["with_audio"])
+        frame_images = []
+        if image_url:
+            frame_images.append({
+                "type": "image_url",
+                "image_url": {"url": image_url},
+                "frame_type": "first_frame",
+            })
+        if end_image_url:
+            frame_images.append({
+                "type": "image_url",
+                "image_url": {"url": end_image_url},
+                "frame_type": "last_frame",
+            })
+        if frame_images:
+            body["frame_images"] = frame_images
+        for key in ("input_references", "provider", "callback_url"):
+            if key in kwargs and kwargs[key] not in (None, ""):
+                body[key] = kwargs[key]
+        body.update(self.extra_body)
+        return self._request_json(svc, "POST", "/videos", body)
 
     def _submit_chat_video(self, svc, model: str, prompt: str, duration: int,
                            width, height, image_url: str, end_image_url: str,
@@ -631,6 +681,15 @@ class OpenAICompatibleVideoGenerationService(_OpenAICompatibleMediaMixin, BaseVi
                     value = item.get(key)
                     if isinstance(value, str) and value.strip():
                         return value.strip()
+        return ""
+
+    @staticmethod
+    def _extract_polling_url(data: dict) -> str:
+        for item in _walk_json(data):
+            if isinstance(item, dict):
+                value = item.get("polling_url") or item.get("status_url")
+                if isinstance(value, str) and value.startswith(("http://", "https://", "/")):
+                    return value
         return ""
 
     @staticmethod

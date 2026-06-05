@@ -63,6 +63,42 @@ def test_openai_compatible_stt_posts_openai_transcription_multipart(monkeypatch)
     assert b"whisper-large-v3-turbo" in captured["body"]
 
 
+def test_openai_compatible_stt_supports_openrouter_json_protocol(monkeypatch):
+    captured = {}
+
+    def fake_urlopen(req, timeout=0):
+        captured["url"] = req.full_url
+        captured["headers"] = dict(req.header_items())
+        captured["body"] = json.loads(req.data.decode("utf-8"))
+        return _Resp(json.dumps({
+            "text": "hello",
+            "usage": {"seconds": 2.5},
+        }).encode())
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    svc = OpenAICompatibleSTTService({
+        "base_url": "https://openrouter.ai/api/v1",
+        "api_key": "or-key",
+        "model": "openai/whisper-1",
+        "provider_options": '{"groq":{"prompt":"Expected vocabulary"}}',
+    })
+
+    result = svc.transcribe(
+        audio_bytes=b"audio", mime_type="audio/wav", filename="speech.wav",
+        language="en")
+
+    assert result["text"] == "hello"
+    assert result["duration"] == 2.5
+    assert captured["url"] == "https://openrouter.ai/api/v1/audio/transcriptions"
+    assert captured["headers"]["Authorization"] == "Bearer or-key"
+    assert captured["body"] == {
+        "model": "openai/whisper-1",
+        "input_audio": {"data": "YXVkaW8=", "format": "wav"},
+        "language": "en",
+        "provider": {"options": {"groq": {"prompt": "Expected vocabulary"}}},
+    }
+
+
 def test_openai_compatible_stt_requires_valid_base_url():
     svc = OpenAICompatibleSTTService({"base_url": "localhost:1234"})
 

@@ -63,10 +63,9 @@ class OpenAICompatibleTTSService(BaseTTSService):
                 "description": "Allow direct private/loopback base_url targets. Prefer relay URLs for local endpoints.",
             },
             "model": {
-                "type": "select", "required": False,
+                "type": "string", "required": False,
                 "default": "gpt-4o-mini-tts",
-                "options": list(_MODELS),
-                "description": "Speech model sent to /audio/speech.",
+                "description": "Speech model sent to /audio/speech, e.g. gpt-4o-mini-tts or openai/gpt-4o-mini-tts-2025-12-15 on OpenRouter.",
             },
             "voice": {
                 "type": "select", "required": False,
@@ -77,6 +76,10 @@ class OpenAICompatibleTTSService(BaseTTSService):
             "instructions": {
                 "type": "textarea", "required": False, "default": "",
                 "description": "Optional speaking style instructions supported by newer OpenAI speech models.",
+            },
+            "provider_options": {
+                "type": "textarea", "required": False, "default": "",
+                "description": "Optional JSON object passed as provider.options for OpenRouter-compatible routing, e.g. {\"openai\":{\"instructions\":\"Warm tone\"}}.",
             },
             "response_format": {
                 "type": "select", "required": False, "default": "mp3",
@@ -103,6 +106,7 @@ class OpenAICompatibleTTSService(BaseTTSService):
         self.model = str(self.config.get("model") or "gpt-4o-mini-tts")
         self.voice = str(self.config.get("voice") or "coral")
         self.instructions = str(self.config.get("instructions") or "")
+        self.provider_options = str(self.config.get("provider_options") or "").strip()
         self.response_format = self._response_format(self.config.get("response_format") or "mp3")
         self.speed = safe_float(self.config.get("speed", 1.0), 1.0)
         self.timeout = int(self.config.get("timeout") or 120)
@@ -162,6 +166,18 @@ class OpenAICompatibleTTSService(BaseTTSService):
         instructions = kwargs.pop("instructions", None) or self.instructions
         if instructions:
             body["instructions"] = instructions
+        provider = kwargs.pop("provider", None)
+        provider_options = kwargs.pop("provider_options", None) or self.provider_options
+        if provider:
+            body["provider"] = provider
+        elif provider_options:
+            try:
+                parsed_provider_options = json.loads(str(provider_options))
+            except json.JSONDecodeError as exc:
+                raise ServiceError("provider_options must be valid JSON") from exc
+            if not isinstance(parsed_provider_options, dict):
+                raise ServiceError("provider_options must be a JSON object")
+            body["provider"] = {"options": parsed_provider_options}
         speed = kwargs.pop("speed", None)
         if speed in (None, ""):
             speed = self.speed

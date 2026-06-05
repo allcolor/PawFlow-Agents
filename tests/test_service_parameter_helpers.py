@@ -73,6 +73,37 @@ def test_openrouter_model_helper_allows_public_models_without_api_key(monkeypatc
     assert data["values"][0]["value"] == "openai/gpt-5.5"
 
 
+def test_openrouter_media_model_helpers_filter_by_output_modality(monkeypatch):
+    import core.service_parameter_helpers as helpers
+
+    seen = []
+
+    def fake_fetch_json(url, headers, timeout=8):
+        seen.append((url, headers))
+        return {"data": [{"id": "model/ok", "name": "Model OK"}]}
+
+    monkeypatch.setattr(helpers, "_fetch_json", fake_fetch_json)
+
+    cases = {
+        "openaiCompatibleTTS": "speech",
+        "openaiCompatibleSTT": "transcription",
+        "openaiCompatibleImageGeneration": "image",
+        "openaiCompatibleVideoGeneration": "video",
+    }
+    for service_type, modality in cases.items():
+        data = helpers.get_service_parameter_helper(
+            service_type,
+            "model",
+            {"base_url": "https://openrouter.ai/api/v1", "api_key": ""},
+        )
+        assert data["source"] == "live"
+        assert data["values"][0]["value"] == "model/ok"
+        assert seen[-1] == (
+            "https://openrouter.ai/api/v1/models?output_modalities=" + modality,
+            {},
+        )
+
+
 def test_priority_service_helpers_cover_media_oauth_rclone_and_catalogs():
     from core.service_parameter_helpers import apply_service_parameter_helpers
 
@@ -85,6 +116,16 @@ def test_priority_service_helpers_cover_media_oauth_rclone_and_catalogs():
     assert schema["base_url"]["fill_helper"]["id"] == "base_urls"
     assert schema["model"]["fill_helper"]["id"] == "models"
     assert schema["api_key"]["fill_helper"]["id"] == "secrets.refs"
+
+    tts_schema = apply_service_parameter_helpers("openaiCompatibleTTS", {
+        "base_url": {"type": "string"},
+        "api_key": {"type": "string"},
+        "model": {"type": "string"},
+        "response_format": {"type": "string"},
+    })
+    assert tts_schema["base_url"]["fill_helper"]["id"] == "base_urls"
+    assert tts_schema["model"]["fill_helper"]["id"] == "models"
+    assert tts_schema["api_key"]["fill_helper"]["id"] == "secrets.refs"
 
     oauth = apply_service_parameter_helpers("oauthProvider", {
         "scope": {"type": "string"},

@@ -93,10 +93,18 @@ EMBEDDING_MODELS = {
 
 STATIC_MODELS = {
     "openaiCompatibleSTT": [
+        ("openai/whisper-1", "OpenRouter Whisper STT model."),
+        ("openai/whisper-large-v3", "OpenRouter Whisper STT model."),
         ("gpt-4o-transcribe", "OpenAI transcription model."),
         ("gpt-4o-mini-transcribe", "Lower-cost OpenAI transcription model."),
         ("whisper-1", "OpenAI Whisper endpoint model."),
         ("whisper-large-v3-turbo", "Common OpenAI-compatible Whisper model."),
+    ],
+    "openaiCompatibleTTS": [
+        ("gpt-4o-mini-tts", "OpenAI TTS model."),
+        ("tts-1", "OpenAI TTS model."),
+        ("tts-1-hd", "OpenAI high-definition TTS model."),
+        ("openai/gpt-4o-mini-tts-2025-12-15", "OpenRouter OpenAI TTS model."),
     ],
     "openaiImageGeneration": [
         ("gpt-image-1", "OpenAI image generation model."),
@@ -234,6 +242,15 @@ def _provider_family(config: Dict[str, Any]) -> str:
     if "dashscope" in base_url or "aliyuncs" in base_url:
         return "dashscope"
     return provider or "openai"
+
+
+def _openrouter_output_modality(service_type: str) -> str:
+    return {
+        "openaiCompatibleTTS": "speech",
+        "openaiCompatibleSTT": "transcription",
+        "openaiCompatibleImageGeneration": "image",
+        "openaiCompatibleVideoGeneration": "video",
+    }.get(service_type, "")
 
 
 def _helper_spec(service_type: str, parameter: str, pdef: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
@@ -388,6 +405,7 @@ def _live_model_values(
     config: Dict[str, Any],
     *,
     embedding: bool = False,
+    service_type: str = "",
     user_id: str = "",
     conversation_id: str = "",
 ) -> Tuple[List[Dict[str, Any]], str, str]:
@@ -413,6 +431,9 @@ def _live_model_values(
             "xai": "https://api.x.ai/v1",
             "dashscope": "https://dashscope.aliyuncs.com/compatible-mode/v1",
         }.get(family, "https://api.openai.com/v1")).rstrip("/") + "/models"
+        modality = _openrouter_output_modality(service_type) if family == "openrouter" else ""
+        if modality:
+            endpoint += "?" + urllib.parse.urlencode({"output_modalities": modality})
         if api_key:
             headers = {"Authorization": "Bearer " + api_key}
         elif family in {"openai", "deepseek", "xai", "dashscope"}:
@@ -517,10 +538,11 @@ def get_service_parameter_helper(
             values = _values([("22", "SFTP default."), ("21", "FTP default."), ("9000", "Common MinIO port.")])
     elif helper_id in {"llm.models", "models"}:
         embedding = service_type == "llmConnection" and parameter == "embedding_model"
-        if service_type == "llmConnection" or service_type in {"openaiCompatibleSTT", "openaiImageGeneration", "openaiCompatibleImageGeneration", "openaiCompatibleVideoGeneration"}:
+        if service_type == "llmConnection" or service_type in {"openaiCompatibleTTS", "openaiCompatibleSTT", "openaiImageGeneration", "openaiCompatibleImageGeneration", "openaiCompatibleVideoGeneration"}:
             values, source, warning = _live_model_values(
                 config,
                 embedding=embedding,
+                service_type=service_type,
                 user_id=user_id,
                 conversation_id=conversation_id,
             )
@@ -532,6 +554,8 @@ def get_service_parameter_helper(
     elif helper_id == "formats":
         if service_type == "openaiCompatibleSTT":
             values = _values(AUDIO_RESPONSE_FORMATS)
+        elif service_type == "openaiCompatibleTTS":
+            values = _values([("mp3", "MP3 audio."), ("pcm", "Raw PCM audio."), ("wav", "WAV audio."), ("flac", "FLAC audio."), ("opus", "Opus audio."), ("aac", "AAC audio.")])
         elif parameter == "output_format" and service_type == "elevenLabsVoiceClone":
             values = _values([("mp3_44100_128", "MP3 44.1 kHz 128 kbps."), ("mp3_44100_192", "MP3 44.1 kHz 192 kbps."), ("pcm_16000", "PCM 16 kHz."), ("pcm_44100", "PCM 44.1 kHz.")])
         else:

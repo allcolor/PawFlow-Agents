@@ -127,16 +127,15 @@ with a bare OpenAI base URL such as `https://api.openai.com/v1`, or an
 OpenRouter/OpenAI-compatible base URL such as `https://openrouter.ai/api/v1`.
 The image service supports `protocol=auto`, `openai_images`, and
 `chat_completions`/`openrouter`: bare OpenAI image models normally use
-`POST /images/generations`, while OpenRouter image models such as
-`openai/gpt-5.4-image-2` use chat completions and provider-specific response
-parsing. The video service supports `protocol=auto`, `openai_video`, and
-`chat_completions`/`openrouter`: bare OpenAI-compatible video providers use the
-configurable `submit_path` and `status_path_template`, while OpenRouter-style
-video models such as `kwaivgi/kling-v3.0-pro` use chat completions and, when a
-generation id is returned, poll `openrouter_generation_path_template`. Both
-services expose `max_tokens` and `max_output_tokens` for chat-completions media
-responses, plus provider escape hatches through `extra_body` and
-`extra_headers`.
+`POST /images/generations`, while OpenRouter image models use chat completions
+with `modalities=["image"]` and provider-specific response parsing. The video
+service supports `protocol=auto`, `openai_video`, `openrouter`, and the legacy
+`chat_completions` fallback: bare OpenAI-compatible video providers use the
+configurable `submit_path` and `status_path_template`, while OpenRouter video
+models such as `google/veo-3.1` use `POST /videos` and poll the returned
+`polling_url` or `openrouter_generation_path_template`. Both services expose
+`max_tokens` and `max_output_tokens` for chat-completions media responses, plus
+provider escape hatches through `extra_body` and `extra_headers`.
 
 ## Provider Webhooks
 
@@ -148,10 +147,11 @@ the temporary callback route instead of polling the status URL. WaveSpeed media
 services also support `use_webhook=true`; PawFlow passes the one-shot route as
 WaveSpeedAI's `webhook` query parameter and reads the final URL from the callback
 payload's `outputs[]` fields. `openaiCompatibleVideoGeneration` supports
-`use_webhook=true` for `protocol=openai_video` endpoints that accept
-`callback_url`, including OpenRouter's video generation endpoint. Chat
-completions media paths keep polling or parsing the immediate response because
-they do not expose a per-request callback contract.
+`use_webhook=true` for async video endpoints that accept `callback_url`,
+including OpenRouter `POST /videos` and `protocol=openai_video` providers. The
+OpenAI-compatible TTS, STT, image, and chat-completions media paths remain
+synchronous or streaming request/response APIs; they keep polling or parsing the
+immediate response because they do not expose a per-request callback contract.
 
 Webhook mode requires the PawFlow HTTP listener to be reachable from the public
 internet through HTTPS. Configure `public_callback_base_url` on the media service
@@ -268,6 +268,12 @@ voice `coral`, and `mp3` output. Configure `api_key` for OpenAI or compatible
 hosted providers, or leave it empty for trusted local relay-routed endpoints.
 The service supports provider-native `voice`, `instructions`, `response_format`,
 `speed`, and per-call overrides passed through `speak`.
+
+For OpenRouter TTS, set `base_url` to `https://openrouter.ai/api/v1`, use an
+OpenRouter model slug such as `openai/gpt-4o-mini-tts-2025-12-15`, and set the
+OpenRouter API key in `api_key`. OpenRouter provider-specific options can be
+passed through `provider_options` as JSON, for example
+`{"openai":{"instructions":"Speak in a warm, friendly tone."}}`.
 
 ### Suno Audio Service
 

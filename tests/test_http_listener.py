@@ -592,6 +592,32 @@ class TestHTTPListenerService:
         finally:
             svc.disconnect()
 
+    def test_chat_js_nested_assets_are_served_without_flow_dispatch(self):
+        svc = HTTPListenerService({"host": "127.0.0.1", "port": 19917})
+        svc.connect()
+        try:
+            dispatched = []
+            svc.register_route(
+                "GET", "/chat/js/{path}", "test",
+                lambda req: dispatched.append(req),
+            )
+            req = urllib.request.Request(
+                "http://127.0.0.1:19917/chat/js/assets/favicon.ico",
+                method="GET",
+                headers={"Cookie": f"pawflow_token={_create_test_session()}"},
+            )
+            resp = urllib.request.urlopen(req, timeout=5)
+
+            assert resp.status == 200
+            assert resp.read().startswith(b"\x00\x00\x01\x00")
+            assert resp.headers.get("Content-Type") in {
+                "image/vnd.microsoft.icon", "image/x-icon",
+                "application/octet-stream",
+            }
+            assert dispatched == []
+        finally:
+            svc.disconnect()
+
     def test_filestore_download_streams_without_flow_dispatch(self, tmp_path, monkeypatch):
         from core.file_store import FileStore
 

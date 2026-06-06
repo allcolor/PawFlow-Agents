@@ -90,7 +90,8 @@ class ContinuousFlowExecutor:
                  checkpoint_interval: float = 30.0,
                  enable_checkpoints: bool = True,
                  parameters: Optional[Dict[str, Any]] = None,
-                 runtime_context: Optional[Dict[str, Any]] = None):
+                 runtime_context: Optional[Dict[str, Any]] = None,
+                 enabled_one_shot_root_task_ids: Optional[List[str]] = None):
         self._flow = flow
         self._max_workers = max_workers
         self._max_retries = max_retries
@@ -136,6 +137,10 @@ class ContinuousFlowExecutor:
         self._data_preview = None
 
         self._has_persistent_sources = False
+        self._enabled_one_shot_root_task_ids = (
+            set(enabled_one_shot_root_task_ids)
+            if enabled_one_shot_root_task_ids is not None else None
+        )
         self._idle_cycles = 0
         self._auto_stop_threshold = 3  # idle cycles before auto-stop
         self._exit_results: List[FlowFile] = []  # outputs from exit tasks
@@ -511,7 +516,10 @@ class ContinuousFlowExecutor:
                 # - Others need inject() to provide data
                 if not incoming:
                     task = self._tasks.get(task_id)
-                    if task and hasattr(task, 'has_pending_input') and task.has_pending_input():
+                    if (task and hasattr(task, 'has_pending_input') and
+                            task.has_pending_input() and
+                            (self._enabled_one_shot_root_task_ids is None or
+                             task_id in self._enabled_one_shot_root_task_ids)):
                         pass  # fall through to schedule
                     else:
                         continue
@@ -633,7 +641,9 @@ class ContinuousFlowExecutor:
 
             # Self-triggering tasks (e.g. httpReceiver) don't need incoming
             if dequeued_ff is None and not incoming:
-                if hasattr(task, 'has_pending_input') and task.has_pending_input():
+                if (hasattr(task, 'has_pending_input') and task.has_pending_input() and
+                        (self._enabled_one_shot_root_task_ids is None or
+                         task_id in self._enabled_one_shot_root_task_ids)):
                     is_self_triggering = True
                     # Will call execute(None) — task generates its own FlowFile
                 else:
@@ -1366,6 +1376,8 @@ class ContinuousFlowExecutor:
         timeout: Optional[float] = None,
         provenance: Optional[ProvenanceRepository] = None,
         runtime_context: Optional[Dict[str, Any]] = None,
+        entry_task_id: Optional[str] = None,
+        suppress_one_shot_roots: bool = False,
     ) -> ExecutionResult:
         """Run a flow synchronously (batch mode).
 
@@ -1382,6 +1394,9 @@ class ContinuousFlowExecutor:
             timeout: Optional max seconds to wait for completion. If omitted,
                 wait until the flow completes.
             provenance: Optional provenance repository
+            entry_task_id: Optional task id where input FlowFiles are injected
+            suppress_one_shot_roots: If true, root tasks that self-trigger via
+                has_pending_input() are not scheduled implicitly.
 
         Returns:
             ExecutionResult with outputs, stats, and errors.
@@ -1397,6 +1412,7 @@ class ContinuousFlowExecutor:
             enable_checkpoints=False,
             parameters=parameters,
             runtime_context=runtime_context,
+            enabled_one_shot_root_task_ids=[] if suppress_one_shot_roots else None,
         )
 
         try:
@@ -1405,11 +1421,11 @@ class ContinuousFlowExecutor:
             # Inject input FlowFiles at entry points
             if input_flowfiles:
                 for ff in input_flowfiles:
-                    executor.inject(ff)
-            elif not executor._has_persistent_sources:
+                    executor.inject(ff, entry_task_id=entry_task_id)
+            elif not executor._has_persistent_sources and not suppress_one_shot_roots:
                 # No input and no sources — inject an empty FlowFile to kick off
                 if flow.entries:
-                    executor.inject(FlowFile())
+                    executor.inject(FlowFile(), entry_task_id=entry_task_id)
 
             # Wait for completion. No implicit deadline: callers that need a
             # bounded batch run must pass timeout explicitly.

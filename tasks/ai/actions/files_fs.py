@@ -350,6 +350,35 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
                 from tasks import register_all_tasks
                 register_all_tasks()
                 raw = _load_deployed_flow_definition(inst)
+                selected_trigger_ids = body.get("entry_task_ids")
+                if selected_trigger_ids is None:
+                    selected_trigger_ids = body.get("one_shot_trigger_ids")
+                if selected_trigger_ids is not None:
+                    if not isinstance(selected_trigger_ids, list):
+                        flowfile.set_content(json.dumps(
+                            {"error": "entry_task_ids must be a list"}).encode())
+                        return [flowfile]
+                    selected_trigger_ids = [str(tid) for tid in selected_trigger_ids if str(tid)]
+                    from tasks.ai.actions.service_flow import _flow_one_shot_trigger_payload
+                    one_shot_meta = _flow_one_shot_trigger_payload(raw or {})
+                    valid_trigger_ids = {
+                        item.get("task_id")
+                        for item in one_shot_meta.get("one_shot_triggers", [])
+                    }
+                    if not one_shot_meta.get("is_one_shot_flow"):
+                        flowfile.set_content(json.dumps(
+                            {"error": "Flow has no selectable one-shot triggers"}).encode())
+                        return [flowfile]
+                    if not selected_trigger_ids and valid_trigger_ids:
+                        flowfile.set_content(json.dumps(
+                            {"error": "Select at least one one-shot trigger"}).encode())
+                        return [flowfile]
+                    invalid = [tid for tid in selected_trigger_ids
+                               if tid not in valid_trigger_ids]
+                    if invalid:
+                        flowfile.set_content(json.dumps(
+                            {"error": f"Unknown one-shot trigger(s): {invalid}"}).encode())
+                        return [flowfile]
                 clean = {k: v for k, v in raw.items()
                          if not k.startswith("_")}
                 if inst.parameters:
@@ -375,7 +404,8 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
                         "conversation_id": inst.conversation_id or "",
                         "scope": "conversation" if inst.conversation_id else "user" if inst.owner else "",
                         "agent_name": getattr(inst, "agent_name", "") or "",
-                    })
+                    },
+                    enabled_one_shot_root_task_ids=selected_trigger_ids)
                 executor.start()
                 reg.register(flow_id, executor)
                 flowfile.set_content(json.dumps(

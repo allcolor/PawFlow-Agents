@@ -93,6 +93,8 @@ class ExecuteFlowTask(BaseTask):
                 input_flowfiles=[flowfile],
                 parameters=child_params if child_params else None,
                 runtime_context=self._runtime_context or None,
+                entry_task_id=input_port_id or None,
+                suppress_one_shot_roots=True,
             )
 
             if not result.success:

@@ -16,7 +16,7 @@ import logging
 import threading
 import time
 from pathlib import Path
-from typing import Dict, Optional, Any
+from typing import Dict, Optional, Any, List
 
 from engine.continuous_executor import ContinuousFlowExecutor
 
@@ -272,7 +272,8 @@ class ExecutorRegistry:
                           service_configs: Optional[Dict[str, Dict[str, Any]]] = None,
                           owner: str = "",
                           conversation_id: str = "",
-                          agent_name: str = "") -> bool:
+                          agent_name: str = "",
+                          enabled_one_shot_root_task_ids: Optional[List[str]] = None) -> bool:
         """Restore a single executor from the repository or flow_path."""
         try:
             _restore_t0 = time.monotonic()
@@ -364,6 +365,7 @@ class ExecutorRegistry:
                     "scope": "conversation" if conversation_id else "user" if owner else "",
                     "agent_name": agent_name,
                 },
+                enabled_one_shot_root_task_ids=enabled_one_shot_root_task_ids,
             )
             if flow_fqn:
                 executor._flow_fqn = flow_fqn

@@ -638,6 +638,66 @@ def _flow_deploy_schema_payload(raw: Dict[str, Any], *, parameters=None,
     }
 
 
+def _flow_one_shot_trigger_payload(raw: Dict[str, Any]) -> Dict[str, Any]:
+    """Return root one-shot triggers that may be selected at manual start."""
+    tasks = raw.get("tasks") or {}
+    relations = raw.get("relations") or []
+    targets = {rel.get("to") for rel in relations if isinstance(rel, dict)}
+    root_ids = [tid for tid in tasks if tid not in targets]
+    triggers = []
+    has_persistent_sources = False
+    try:
+        from tasks import register_all_tasks
+        register_all_tasks()
+        from core import TaskFactory
+        for task_id, task_def in tasks.items():
+            if not isinstance(task_def, dict):
+                continue
+            task_type = task_def.get("type", "") or ""
+            try:
+                task_cls = TaskFactory.get(task_type)
+                task = task_cls(task_def.get("parameters") or {})
+            except Exception:
+                continue
+            if getattr(task, "is_persistent_source", False):
+                has_persistent_sources = True
+
+        for task_id in root_ids:
+            task_def = tasks.get(task_id) or {}
+            if not isinstance(task_def, dict):
+                continue
+            task_type = task_def.get("type", "") or ""
+            if task_type in {"inputPort", "outputPort"}:
+                continue
+            try:
+                task_cls = TaskFactory.get(task_type)
+                task = task_cls(task_def.get("parameters") or {})
+            except Exception:
+                continue
+            if getattr(task, "is_persistent_source", False):
+                continue
+            if not hasattr(task, "has_pending_input"):
+                continue
+            try:
+                if not task.has_pending_input():
+                    continue
+            except Exception:
+                continue
+            label = getattr(task, "NAME", "") or task_def.get("name") or task_id
+            triggers.append({
+                "task_id": task_id,
+                "task_type": task_type,
+                "label": label,
+            })
+    except Exception:
+        logger.debug("Failed to inspect one-shot triggers", exc_info=True)
+    return {
+        "one_shot_triggers": triggers,
+        "has_persistent_sources": has_persistent_sources,
+        "is_one_shot_flow": bool(triggers) and not has_persistent_sources,
+    }
+
+
 def _load_flow_instance_template_raw(inst, user_id: str) -> Dict[str, Any]:
     """Load the template JSON for a deployed instance.
 
@@ -2596,6 +2656,39 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 if not inst:
                     flowfile.set_content(json.dumps({"error": "Instance not found"}).encode())
                     return [flowfile]
+                selected_trigger_ids = body.get("entry_task_ids")
+                if selected_trigger_ids is None:
+                    selected_trigger_ids = body.get("one_shot_trigger_ids")
+                if selected_trigger_ids is not None:
+                    if not isinstance(selected_trigger_ids, list):
+                        flowfile.set_content(json.dumps(
+                            {"error": "entry_task_ids must be a list"}).encode())
+                        flowfile.set_attribute("http.response.status", "400")
+                        return [flowfile]
+                    selected_trigger_ids = [str(tid) for tid in selected_trigger_ids if str(tid)]
+                    raw = _load_flow_instance_template_raw(inst, user_id)
+                    one_shot_meta = _flow_one_shot_trigger_payload(raw or {})
+                    valid_trigger_ids = {
+                        item.get("task_id")
+                        for item in one_shot_meta.get("one_shot_triggers", [])
+                    }
+                    if not one_shot_meta.get("is_one_shot_flow"):
+                        flowfile.set_content(json.dumps(
+                            {"error": "Flow has no selectable one-shot triggers"}).encode())
+                        flowfile.set_attribute("http.response.status", "400")
+                        return [flowfile]
+                    if not selected_trigger_ids and valid_trigger_ids:
+                        flowfile.set_content(json.dumps(
+                            {"error": "Select at least one one-shot trigger"}).encode())
+                        flowfile.set_attribute("http.response.status", "400")
+                        return [flowfile]
+                    invalid = [tid for tid in selected_trigger_ids
+                               if tid not in valid_trigger_ids]
+                    if invalid:
+                        flowfile.set_content(json.dumps(
+                            {"error": f"Unknown one-shot trigger(s): {invalid}"}).encode())
+                        flowfile.set_attribute("http.response.status", "400")
+                        return [flowfile]
                 reg._restore_instance(iid, inst.flow_path,
                                        inst.max_workers, inst.max_retries,
                                        flow_fqn=getattr(inst, "flow_fqn", "") or "",
@@ -2605,7 +2698,8 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                                        service_configs=inst.service_configs,
                                        owner=inst.owner or "",
                                        conversation_id=inst.conversation_id or "",
-                                       agent_name=getattr(inst, "agent_name", "") or "")
+                                       agent_name=getattr(inst, "agent_name", "") or "",
+                                       enabled_one_shot_root_task_ids=selected_trigger_ids)
                 flowfile.set_content(json.dumps({"ok": True, "status": "running"}).encode())
             elif action == "undeploy_flow":
                 ex = reg.get(iid)
@@ -2852,6 +2946,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             # Load template deployment schema for reference
             template_params = {}
             deploy_schema = {}
+            one_shot_meta = {}
             try:
                 raw = _load_flow_instance_template_raw(inst, user_id)
                 if raw:
@@ -2860,6 +2955,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                         raw, parameters=inst.parameters,
                         service_overrides=inst.service_overrides,
                         service_configs=inst.service_configs)
+                    one_shot_meta = _flow_one_shot_trigger_payload(raw)
             except Exception:
                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             payload = {
@@ -2874,6 +2970,9 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 "services": deploy_schema.get("services", {}),
                 "service_overrides": inst.service_overrides,
                 "service_configs": inst.service_configs,
+                "one_shot_triggers": one_shot_meta.get("one_shot_triggers", []),
+                "has_persistent_sources": one_shot_meta.get("has_persistent_sources", False),
+                "is_one_shot_flow": one_shot_meta.get("is_one_shot_flow", False),
                 "owner": inst.owner,
                 "scope": "conversation" if inst.conversation_id else "user" if inst.owner else "global",
             }

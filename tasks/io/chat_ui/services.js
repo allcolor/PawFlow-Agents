@@ -107,8 +107,22 @@ function _showFlowStartDialog(instanceId, editOnly) {
         panel.querySelector('div:last-child').innerHTML = '<div style="color:#e94560;">' + escapeHtml(t('error')) + ': ' + escapeHtml(e.message || e) + '</div>';
         return;
       }
+      const oneShotTriggers = (!editOnly && data.is_one_shot_flow && Array.isArray(data.one_shot_triggers)) ? data.one_shot_triggers : [];
+      let triggersHtml = '';
+      if (oneShotTriggers.length) {
+        triggersHtml = '<div id="flow-one-shot-triggers" style="border-top:1px solid #333;padding-top:8px;margin-top:8px;">'
+          + '<div style="color:#888;font-size:11px;margin-bottom:6px;font-weight:600;">' + escapeHtml(t('flowOneShotTriggers')) + '</div>'
+          + oneShotTriggers.map(tr => {
+            const tid = tr.task_id || '';
+            const label = (tr.label || tid) + (tr.task_type ? ' [' + tr.task_type + ']' : '');
+            return '<label style="display:flex;align-items:center;gap:8px;color:#e0e0e0;font-size:12px;margin:6px 0;">'
+              + '<input type="checkbox" class="flow-one-shot-trigger" value="' + escapeHtml(tid) + '" checked>'
+              + '<span>' + escapeHtml(label) + '</span></label>';
+          }).join('') + '</div>';
+      }
       const btnLabel = editOnly ? t('contextSave') : t('flowStart');
       panel.querySelector('div:last-child').innerHTML = '<div id="flow-instance-config">' + fieldsHtml + '</div>'
+        + triggersHtml
         + `<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
           <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:#333;color:#ccc;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">${escapeHtml(t('contextCancel'))}</button>
           <button id="flowStartBtn" style="background:#6c5ce7;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">${escapeHtml(btnLabel)}</button>
@@ -135,7 +149,17 @@ function _showFlowStartDialog(instanceId, editOnly) {
               document.getElementById('resourceEditorOverlay').remove();
               loadResources();
             } else {
-              _flowAction(instanceId, 'start_flow');
+              const triggerBox = document.getElementById('flow-one-shot-triggers');
+              let startPayload = {};
+              if (triggerBox) {
+                const selected = Array.from(triggerBox.querySelectorAll('.flow-one-shot-trigger:checked')).map(el => el.value).filter(Boolean);
+                if (!selected.length) {
+                  alert(t('flowSelectOneShotTrigger'));
+                  return;
+                }
+                startPayload.entry_task_ids = selected;
+              }
+              _flowAction(instanceId, 'start_flow', startPayload);
               document.getElementById('resourceEditorOverlay').remove();
             }
           },
@@ -149,8 +173,8 @@ function _showFlowStartDialog(instanceId, editOnly) {
   });
 }
 
-function _flowAction(instanceId, action) {
-  action$(action, { instance_id: instanceId }).subscribe({
+function _flowAction(instanceId, action, extraPayload) {
+  action$(action, Object.assign({ instance_id: instanceId }, extraPayload || {})).subscribe({
     next: (d) => {
       if (d.error) addMsg('error', d.error);
       else { addMsg('system', `${action.replace('_', ' ')}: ${instanceId}`); loadResources(); }

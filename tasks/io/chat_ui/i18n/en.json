@@ -471,6 +471,8 @@
   "flowIndependentNoDependencies": "Independent flow - no runtime dependencies.",
   "flowLoadingParameters": "Loading parameters...",
   "flowNoParameters": "No flow parameters.",
+  "flowOneShotTriggers": "One-shot triggers to run",
+  "flowSelectOneShotTrigger": "Select at least one one-shot trigger.",
   "flowPromoteToUser": "Promote to user",
   "flowPromotedToUser": "Flow '{id}' promoted to user scope",
   "flowPromotedToUserScope": "Flow '{id}' promoted to user scope",

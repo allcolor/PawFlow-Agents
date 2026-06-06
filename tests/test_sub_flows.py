@@ -109,6 +109,72 @@ def test_execute_flow_missing_path_errors(tmp_path):
         task.execute(FlowFile(content=b""))
 
 
+def test_execute_flow_suppresses_unmapped_one_shot_roots(tmp_path):
+    from tasks.control.execute_flow import ExecuteFlowTask
+
+    child_flow = _write_flow(tmp_path, "child", {
+        "id": "child",
+        "name": "Child",
+        "version": "1.0.0",
+        "tasks": {
+            "in": {"type": "inputPort", "parameters": {"port_name": "main"}},
+            "manual": {"type": "generateFlowFile", "parameters": {"content": "manual"}},
+            "out": {"type": "outputPort", "parameters": {"port_name": "done"}},
+        },
+        "relations": [
+            {"from": "in", "to": "out", "type": "success"},
+            {"from": "manual", "to": "out", "type": "success"},
+        ],
+    })
+
+    task = ExecuteFlowTask({
+        "flow_path": child_flow,
+        "port_mapping": {"input": {"port_task_id": "in"}},
+    })
+    results = task.execute(FlowFile(content=b"parent"))
+
+    assert [ff.get_content() for ff in results] == [b"parent"]
+
+
+def test_crypto_email_v2_daily_uses_manual_subflow():
+    manual_path = Path(
+        "data/repository/flows/global/default/"
+        "manual_crypto_email_oauth2/versions/2.0.0.json")
+    daily_path = Path(
+        "data/repository/flows/global/default/"
+        "daily_crypto_email_oauth2/versions/2.0.0.json")
+
+    manual = json.loads(manual_path.read_text(encoding="utf-8"))
+    daily = json.loads(daily_path.read_text(encoding="utf-8"))
+    manual_latest = json.loads(
+        manual_path.parent.parent.joinpath("latest.json").read_text(encoding="utf-8"))
+    daily_latest = json.loads(
+        daily_path.parent.parent.joinpath("latest.json").read_text(encoding="utf-8"))
+
+    assert manual_latest == {"version": "2.0.0"}
+    assert manual["version"] == "2.0.0"
+    assert manual["entries"] == ["in_port"]
+    assert manual["tasks"]["in_port"]["type"] == "inputPort"
+    assert {
+        "from": "in_port",
+        "to": "fetch_crypto",
+        "type": "success",
+    } in manual["relations"]
+
+    assert daily_latest == {"version": "2.0.0"}
+    assert daily["version"] == "2.0.0"
+    assert set(daily["tasks"]) == {"trigger"}
+    assert daily["groups"]["manual_crypto_email"]["flow_ref"] == {
+        "path": str(manual_path),
+        "version": "2.0.0",
+    }
+    assert daily["groups"]["manual_crypto_email"]["port_mapping"] == {
+        "input": {"port_task_id": "in_port"},
+    }
+    flow = FlowParser.parse(daily)
+    assert flow.tasks["manual_crypto_email"].__class__.__name__ == "ExecuteFlowTask"
+
+
 def test_flow_ref_version_mismatch_raises(tmp_path):
     """flow_ref.version must match the loaded child's version field."""
     child_flow = _write_flow(tmp_path, "child", {

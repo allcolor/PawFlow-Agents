@@ -672,7 +672,7 @@ class _RequestHandler(BaseHTTPRequestHandler):
                 self.wfile.write(b'{"error": "Internal Server Error"}')
                 return
 
-        if method == "GET" and _matched and path.startswith("/chat/js/"):
+        if method == "GET" and path.startswith("/chat/js/"):
             if self._handle_chat_js_asset(path):
                 return
 

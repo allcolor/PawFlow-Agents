@@ -36,6 +36,34 @@ def make_flow(tasks_dict, relations):
 
 class TestContinuousFlowExecutor:
 
+    def test_enabled_one_shot_root_task_ids_limits_manual_start(self):
+        flow = make_flow(
+            {
+                "gen_a": {"type": "generateFlowFile", "parameters": {"content": "a"}},
+                "gen_b": {"type": "generateFlowFile", "parameters": {"content": "b"}},
+                "out_a": {"type": "outputPort", "parameters": {"port_name": "a"}},
+                "out_b": {"type": "outputPort", "parameters": {"port_name": "b"}},
+            },
+            [
+                {"from": "gen_a", "to": "out_a", "type": "success"},
+                {"from": "gen_b", "to": "out_b", "type": "success"},
+            ],
+        )
+        executor = ContinuousFlowExecutor(
+            flow,
+            enable_checkpoints=False,
+            enabled_one_shot_root_task_ids=["gen_b"],
+        )
+
+        executor.start()
+        deadline = time.time() + 3
+        while executor.is_running and time.time() < deadline:
+            time.sleep(0.05)
+        if executor.is_running:
+            executor.stop()
+
+        assert [ff.get_content() for ff in executor._exit_results] == [b"b"]
+
     def test_interactive_http_flowfiles_use_reserved_lane(self):
         flow = make_flow(
             {"log1": {"type": "log", "parameters": {"message": "test", "level": "INFO"}}},

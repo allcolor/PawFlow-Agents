@@ -1,0 +1,39 @@
+{
+  "id": "daily-crypto-email-oauth2",
+  "name": "daily_crypto_email_oauth2",
+  "version": "2.0.0",
+  "parameters": {},
+  "tasks": {
+    "trigger": {
+      "type": "cronTrigger",
+      "parameters": {
+        "schedule": "0 7 * * *"
+      }
+    }
+  },
+  "groups": {
+    "manual_crypto_email": {
+      "id": "manual_crypto_email",
+      "name": "Manual crypto email subflow",
+      "flow_ref": {
+        "path": "data/repository/flows/global/default/manual_crypto_email_oauth2/versions/2.0.0.json",
+        "version": "2.0.0"
+      },
+      "port_mapping": {
+        "input": {
+          "port_task_id": "in_port"
+        }
+      }
+    }
+  },
+  "relations": [
+    {
+      "from": "trigger",
+      "to": "manual_crypto_email",
+      "type": "success"
+    }
+  ],
+  "fqn": "default.daily_crypto_email_oauth2:2.0.0",
+  "package": "default",
+  "created_at": 1780763709.7675998
+}

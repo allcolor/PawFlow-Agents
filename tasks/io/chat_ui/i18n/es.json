@@ -471,6 +471,8 @@
   "flowIndependentNoDependencies": "Flow independiente - sin dependencias de ejecución.",
   "flowLoadingParameters": "Cargando parámetros...",
   "flowNoParameters": "No hay parámetros de flow.",
+  "flowOneShotTriggers": "Triggers one-shot a ejecutar",
+  "flowSelectOneShotTrigger": "Selecciona al menos un trigger one-shot.",
   "flowPromoteToUser": "Promover a usuario",
   "flowPromotedToUser": "Flow '{id}' promovido al ámbito de usuario",
   "flowPromotedToUserScope": "Flow '{id}' promovido al scope de usuario",

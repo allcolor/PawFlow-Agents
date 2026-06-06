@@ -44,6 +44,16 @@ def test_service_category_normalizes_catalog_aliases():
     assert _service_category("pixazoTryOn", _TryOnService) == "try-on"
 
 
+def test_service_category_uses_capability_base_class():
+    from services.base_capabilities import BaseTryOnService
+
+    class _NativeTryOnService(BaseTryOnService):
+        def try_on(self, person_image: str, garment_image: str, **kwargs) -> dict:
+            return {}
+
+    assert _service_category("nativeTryOnForPfpTest", _NativeTryOnService) == "try-on"
+
+
 def test_service_category_falls_back_to_other():
     assert _service_category("customService", _UnknownCategoryService) == "other"
 

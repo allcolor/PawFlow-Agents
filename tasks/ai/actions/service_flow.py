@@ -293,6 +293,22 @@ def _service_category(service_type: str, service_cls: type) -> str:
     }.get(category, category)
     if category in _SERVICE_CATEGORY_ORDER:
         return category
+    try:
+        from services.base_capabilities import (
+            BaseImage3DService, BaseImageUpscaleService, BaseTryOnService,
+            BaseLipsyncService, BaseImageTrainerService,
+        )
+        for base_cls, base_category in (
+            (BaseImage3DService, "3d"),
+            (BaseImageUpscaleService, "upscale"),
+            (BaseTryOnService, "try-on"),
+            (BaseLipsyncService, "video"),
+            (BaseImageTrainerService, "image"),
+        ):
+            if issubclass(service_cls, base_cls):
+                return base_category
+    except Exception:
+        logger.debug("Service capability category detection skipped", exc_info=True)
     return _SERVICE_CATEGORY_BY_TYPE.get(service_type, "other")
 
 

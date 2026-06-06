@@ -204,13 +204,12 @@ def register_all_tasks():
     # Scrapling fetch
     from tasks.io.scrapling_fetch import ScraplingFetchTask
 
-    # File serving + Chat UI + Assets + Admin UI
+    # File serving + Chat UI + Assets
     from tasks.io.serve_file import ServeFileTask
     from tasks.io.serve_relay_file import ServeRelayFileTask
     from tasks.io.serve_chat_ui import ServeChatUITask
     from tasks.io.serve_assets import ServeAssetsTask
     from tasks.io.serve_pfp_ext_assets import ServePfpExtensionAssetsTask
-    from tasks.io.serve_admin_ui import ServeAdminUITask
     from tasks.io.admin_actions import AdminActionTask
     from tasks.io.relay_proxy import ServeRelayProxyTask
 

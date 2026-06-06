@@ -40,6 +40,7 @@
   .flow-node.error { border-color: #dc3545; }
   .flow-node.disabled { border-color: #343a40; opacity: 0.5; }
   .flow-node.subflow { border-color: #00d4aa; cursor: pointer; }
+  .flow-node.runtime-port { border-color: #b088ff; border-style: dashed; background: #201a35; }
   .flow-node.in-flight { border-style: dashed; border-color: #28a745; box-shadow: 0 0 10px rgba(40,167,69,0.5); animation: pulse 1.5s infinite; }
   .flow-node .node-type { font-size: 10px; color: #888; margin-bottom: 2px; }
   .flow-node .node-id { font-weight: 600; font-size: 12px; margin-bottom: 4px; }
@@ -47,6 +48,8 @@
   .flow-node .node-stats span { display: flex; align-items: center; gap: 2px; }
   .flow-node .node-error { font-size: 9px; color: #e94560; margin-top: 3px; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .flow-node .node-hint { font-size: 9px; color: #00d4aa; margin-top: 3px; }
+  .flow-node.runtime-port .node-type,
+  .flow-node.runtime-port .node-hint { color: #bda6ff; }
   .flow-node .state-dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; margin-right: 4px; vertical-align: middle; }
   .flow-node .state-dot.running { background: #28a745; }
   .flow-node .state-dot.stopped { background: #6c757d; }
@@ -762,7 +765,7 @@ function queueColor(size, max) {
 // ── Custom Node ──
 const FlowNode = memo(({ data }) => {
   const st = data.state || 'stopped';
-  const cls = ['flow-node', 'nodrag', 'nopan', st, data.isSubflow ? 'subflow' : '', data.in_flight ? 'in-flight' : ''].filter(Boolean).join(' ');
+  const cls = ['flow-node', 'nodrag', 'nopan', st, data.isSubflow ? 'subflow' : '', data.isRuntimeLink ? 'runtime-port' : '', data.in_flight ? 'in-flight' : ''].filter(Boolean).join(' ');
   const open = (ev) => {
     if (!data.isSubflow || !data.onOpenSubflow) return;
     ev.preventDefault();
@@ -774,7 +777,7 @@ const FlowNode = memo(({ data }) => {
     onDoubleClick: open,
     'data-subflow-ref': data.isSubflow ? JSON.stringify(data.subflowRef || {}) : '',
     children: jsxs(Fragment, { children: [
-    jsx(Handle, { type: 'target', position: Position.Left, style: { background: '#555' } }),
+    jsx(Handle, { type: 'target', position: Position.Left, style: { background: data.isRuntimeLink ? '#b088ff' : '#555' } }),
     jsx('div', { className: 'node-type', children: data.taskType }),
     jsxs('div', { className: 'node-id', children: [
       jsx('span', { className: 'state-dot ' + st }), data.label
@@ -786,8 +789,9 @@ const FlowNode = memo(({ data }) => {
       data.error_count > 0 && jsxs('span', { style: { color: '#e94560' }, children: ['\u26A0 ', data.error_count] }),
     ] }),
     data.isSubflow && jsx('div', { className: 'node-hint', children: 'double-click or right-click' }),
+    data.isRuntimeLink && jsx('div', { className: 'node-hint', children: 'runtime input port' }),
     data.error && jsx('div', { className: 'node-error', title: data.error, children: data.error }),
-    jsx(Handle, { type: 'source', position: Position.Right, style: { background: '#555' } }),
+    !data.isRuntimeLink && jsx(Handle, { type: 'source', position: Position.Right, style: { background: '#555' } }),
   ] }) });
 });
 FlowNode.displayName = 'FlowNode';
@@ -811,6 +815,7 @@ function toRFNodes(apiNodes, onOpenSubflow) {
       in_flight: !!n?.in_flight, pending: n?.pending || 0,
       subflowRef: n?.subflow_ref || null,
       isSubflow: !!(n?.subflow_ref && n.subflow_ref.path),
+      isRuntimeLink: !!n?.runtime_link,
       onOpenSubflow,
     },
   }));
@@ -834,7 +839,9 @@ function toRFEdges(apiEdges, validNodeIds) {
       animated,
       label,
       type: 'smoothstep',
-      style: { stroke: color, strokeWidth: animated ? 2.5 : 1.5 },
+      style: e?.runtime_link
+        ? { stroke: '#b088ff', strokeWidth: 2, strokeDasharray: '6 4' }
+        : { stroke: color, strokeWidth: animated ? 2.5 : 1.5 },
       labelStyle: { fill: '#888', fontSize: 9 },
       labelBgStyle: { fill: '#0a0a0a', fillOpacity: 0.85 },
     };

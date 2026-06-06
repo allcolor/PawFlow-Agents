@@ -162,4 +162,3 @@ exclude = ["tests*"]
 
 [tool.setuptools.package-data]
 "tasks.io.chat_ui" = ["**/*.html", "**/*.js", "**/*.css", "**/*.json"]
-"tasks.io.admin_ui" = ["**/*.html", "**/*.js", "**/*.css", "**/*.json"]

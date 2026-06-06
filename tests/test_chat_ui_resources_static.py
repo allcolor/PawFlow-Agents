@@ -3,7 +3,6 @@ from pathlib import Path
 
 def test_modal_overlays_do_not_close_from_background_clicks():
     ui_files = list(Path("tasks/io/chat_ui").glob("*.js"))
-    ui_files += list(Path("tasks/io/admin_ui").glob("*.js"))
     forbidden = [
         "if (e.target === overlay) overlay.remove()",
         "if(e.target===overlay)overlay.remove()",
@@ -194,6 +193,15 @@ def test_flow_graph_supports_subflow_navigation():
     assert "flow_ref: graph.flow_ref" in flow_graph
     assert "setGraphStack(prev => [...prev, next])" in flow_graph
     assert "id: 'backButton'" in flow_graph
+
+
+def test_flow_graph_renders_runtime_port_links():
+    flow_graph = Path("tasks/io/chat_ui/flow_graph.html").read_text(encoding="utf-8")
+
+    assert "runtime-port" in flow_graph
+    assert "runtime input port" in flow_graph
+    assert "isRuntimeLink: !!n?.runtime_link" in flow_graph
+    assert "strokeDasharray: '6 4'" in flow_graph
 
 
 def test_chat_ui_html_helpers_escape_attribute_and_js_contexts():

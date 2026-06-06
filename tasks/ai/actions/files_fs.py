@@ -51,6 +51,7 @@ def _load_deployed_flow_definition(inst) -> Dict[str, Any]:
 def _static_flow_graph(raw: Dict[str, Any]):
     nodes = {}
     edges = []
+    parameters = raw.get("parameters") or {}
     for tid, tdef in (raw.get("tasks") or {}).items():
         nodes[tid] = {
             "type": tdef.get("type", "?"),
@@ -89,7 +90,55 @@ def _static_flow_graph(raw: Dict[str, Any]):
             "max_queue": 10000,
             "backpressured": False,
         })
+    _add_runtime_links_to_graph(raw, nodes, edges)
     return nodes, edges
+
+
+def _add_runtime_links_to_graph(raw: Dict[str, Any], nodes: Dict[str, Any],
+                                edges: List[Dict[str, Any]]) -> None:
+    parameters = raw.get("parameters") or {}
+    for link in raw.get("runtime_links", []) or []:
+        if not isinstance(link, dict):
+            continue
+        source = link.get("from") or link.get("source")
+        target = _resolve_template_parameter(link.get("to") or link.get("target"), parameters)
+        if not source or not target or source not in nodes:
+            continue
+        node_id = f"runtime:{target}"
+        nodes[node_id] = {
+            "type": link.get("type") or "runtimePort",
+            "state": "stopped",
+            "in": 0,
+            "out": 0,
+            "error_count": 0,
+            "error": "",
+            "in_flight": False,
+            "runtime_link": True,
+            "runtime_target": target,
+            "group_name": target,
+            "description": link.get("description", ""),
+        }
+        edges.append({
+            "source": source,
+            "target": node_id,
+            "relationship": link.get("type") or "runtime",
+            "queue_size": 0,
+            "max_queue": 10000,
+            "backpressured": False,
+            "runtime_link": True,
+        })
+
+
+def _resolve_template_parameter(value: Any, parameters: Dict[str, Any]) -> str:
+    text = str(value or "")
+    if text.startswith("${") and text.endswith("}") and text.count("${") == 1:
+        key = text[2:-1]
+        resolved = parameters.get(key)
+        if isinstance(resolved, dict):
+            resolved = resolved.get("default", "")
+        if resolved not in (None, ""):
+            return str(resolved)
+    return text
 
 
 def _load_flow_ref_definition(flow_ref: Dict[str, Any]) -> Dict[str, Any]:
@@ -322,6 +371,12 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
                             "max_queue": qs.get("max_queue_size", 10000),
                             "backpressured": qs.get("backpressured", False),
                         })
+                    if inst:
+                        try:
+                            raw = _load_deployed_flow_definition(inst)
+                            _add_runtime_links_to_graph(raw, nodes, edges)
+                        except Exception:
+                            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 elif inst:
                     try:
                         raw = _load_deployed_flow_definition(inst)

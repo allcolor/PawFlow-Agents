@@ -211,6 +211,45 @@ def test_flow_runtime_graph_loads_repository_template(tmp_path, monkeypatch):
     }]
 
 
+def test_flow_runtime_graph_includes_runtime_links():
+    from tasks.ai.actions.files_fs import _static_flow_graph
+
+    nodes, edges = _static_flow_graph({
+        "parameters": {"agent_runtime_port": "pawflow_agent.agent_runtime_in"},
+        "tasks": {"agent_client": {"type": "telegramAgentClient", "parameters": {}}},
+        "relations": [],
+        "runtime_links": [{
+            "from": "agent_client",
+            "to": "${agent_runtime_port}",
+            "type": "agentRuntime",
+            "description": "Submit messages to PawFlow Agent",
+        }],
+    })
+
+    assert nodes["runtime:pawflow_agent.agent_runtime_in"] == {
+        "type": "agentRuntime",
+        "state": "stopped",
+        "in": 0,
+        "out": 0,
+        "error_count": 0,
+        "error": "",
+        "in_flight": False,
+        "runtime_link": True,
+        "runtime_target": "pawflow_agent.agent_runtime_in",
+        "group_name": "pawflow_agent.agent_runtime_in",
+        "description": "Submit messages to PawFlow Agent",
+    }
+    assert edges == [{
+        "source": "agent_client",
+        "target": "runtime:pawflow_agent.agent_runtime_in",
+        "relationship": "agentRuntime",
+        "queue_size": 0,
+        "max_queue": 10000,
+        "backpressured": False,
+        "runtime_link": True,
+    }]
+
+
 def test_flow_runtime_graph_includes_subflow_groups(tmp_path):
     from tasks.ai.actions.files_fs import _static_flow_graph
 

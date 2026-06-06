@@ -77,7 +77,6 @@ code duplication.
 | `readConversation` | Read messages from a linked conversation |
 | `scraplingFetch` | Fetch web pages with anti-bot handling, JS rendering, and CSS selectors |
 | `sendEmail` | Send an email via SMTP (password or OAuth2 for Gmail/Microsoft) |
-| `serveAdminUI` | Serve the native PawFlow administration interface |
 | `serveAssets` | Serve static assets (JS, CSS, images) from the flow directory |
 | `serveChatUI` | Serve an HTML chat interface for the agent |
 | `serveFile` | Serve a file from the temporary file store |

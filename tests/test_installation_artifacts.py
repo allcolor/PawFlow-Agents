@@ -926,6 +926,10 @@ def test_server_relay_desktop_uses_container_ip_without_published_host():
     assert 'f"pawflow-relay-srv-{relay_id}"' in src
     assert "_server_relay_proxy_target(relay_id, 6080" in open_desktop
     assert "_server_relay_proxy_target(relay_id, 6180" in open_desktop
+    assert "def _novnc_backend_http_ready" in src
+    assert "GET /vnc.html HTTP/1.1" in src
+    assert "already-running noVNC is not reachable" in open_desktop
+    assert 'svc._request("stop_desktop")' in open_desktop
     assert "return container_ip, container_port" in src
     assert "def _get_relay_published_port" in src
     assert '_dkr_cmd() + ["port", cname, str(container_port)]' in src

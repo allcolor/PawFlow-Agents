@@ -257,6 +257,51 @@ def test_vnc_register_then_verify_owner(cap_db):
     assert claims and claims.user_id == "alice"
 
 
+def test_vnc_http_proxy_serves_novnc_static_locally(cap_db, tmp_path, monkeypatch):
+    from services import vnc_proxy
+
+    base = tmp_path / "novnc"
+    (base / "app" / "styles").mkdir(parents=True)
+    (base / "app" / "sounds").mkdir(parents=True)
+    (base / "app" / "styles" / "base.css").write_text("body{}", encoding="utf-8")
+    (base / "app" / "sounds" / "bell.oga").write_bytes(b"ogg")
+    monkeypatch.setattr(vnc_proxy, "_NOVNC_LOCAL_DIRS", [str(base)])
+
+    def _unexpected_urlopen(*args, **kwargs):
+        raise AssertionError("static noVNC assets should not hit the backend")
+
+    monkeypatch.setattr("urllib.request.urlopen", _unexpected_urlopen)
+    tok = vnc_proxy.register_session(
+        "vnc-static", 6080, owner_user_id="alice", login_session_id="login-1")
+    req = _FakePendingReq(
+        auth_user_id="alice",
+        remote_addr="10.0.0.20",
+        path_params={
+            "session_id": "vnc-static",
+            "token": tok,
+            "path": "app/styles/base.css",
+        },
+    )
+
+    vnc_proxy.vnc_http_proxy(req)
+
+    assert req.completed == (200, {
+        "Content-Type": "text/css",
+        "Cross-Origin-Resource-Policy": "same-origin",
+        "Cross-Origin-Opener-Policy": "same-origin",
+        "Cross-Origin-Embedder-Policy": "require-corp",
+    }, b"body{}")
+
+    req.path_params["path"] = "app/sounds/bell.oga"
+    req.completed = None
+    vnc_proxy.vnc_http_proxy(req)
+
+    assert req.completed is not None
+    assert req.completed[0] == 200
+    assert req.completed[1]["Content-Type"] == "audio/ogg"
+    assert req.completed[2] == b"ogg"
+
+
 def test_terminal_register_then_unregister_revokes(cap_db):
     from services.terminal_proxy import register_terminal, unregister_terminal
     tok = register_terminal(

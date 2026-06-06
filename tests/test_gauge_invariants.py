@@ -1674,6 +1674,8 @@ def test_flash_delegate_is_registered_and_prompted():
 def test_relay_desktop_has_periodic_healthcheck():
     src = Path("pawflow_relay/worker.py").read_text(encoding="utf-8")
     assert "def _desktop_is_healthy" in src
+    assert "def _novnc_http_ready" in src
+    assert "and _novnc_http_ready()" in src
     assert "def _start_desktop_watchdog" in src
     assert "desktop-healthcheck" in src
     assert "healthcheck failed" in src
@@ -1684,8 +1686,12 @@ def test_relay_desktop_waits_for_reachable_novnc():
     start_desktop = src[src.index('if action == "start_desktop"'):src.index('if action == "stop_desktop"')]
 
     assert 'f"0.0.0.0:{_novnc_port}"' in start_desktop
-    assert 'GET /vnc.html HTTP/1.1' in start_desktop
+    assert 'GET /vnc.html HTTP/1.1' in src
+    assert "_novnc_http_ready(_novnc_port" in start_desktop
     assert "noVNC failed to become ready" in start_desktop
+    procs_registered = start_desktop.index("_execute_command._desktop_procs = _procs")
+    readiness_error = start_desktop.index("noVNC failed to become ready")
+    assert procs_registered < readiness_error
 
 
 def test_vnc_proxy_retries_backend_startup_window():

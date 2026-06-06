@@ -369,12 +369,25 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
 
     from pawflow_relay.ws_frame import ws_send as _ws_frame_send, ws_recv as _ws_frame_recv
 
+    def _novnc_http_ready(port=None, timeout=1.0):
+        port = int(port or getattr(_execute_command, '_desktop_novnc_port', 0) or 0)
+        if not port:
+            return False
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=timeout) as sock:
+                sock.sendall(b"GET /vnc.html HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+                resp = sock.recv(128)
+            status = resp.split(b"\r\n", 1)[0]
+            return b" 200 " in status or b" 301 " in status or b" 302 " in status
+        except Exception:
+            return False
+
     def _desktop_is_healthy():
         procs = getattr(_execute_command, '_desktop_procs', None)
         if not procs:
             return False
         essential = getattr(_execute_command, '_desktop_essential_procs', None) or procs
-        return all(p.poll() is None for p in essential)
+        return all(p.poll() is None for p in essential) and _novnc_http_ready()
 
     def _desktop_cleanup(reason=""):
         stop = getattr(_execute_command, '_desktop_watchdog_stop', None)
@@ -1022,30 +1035,25 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                      f"0.0.0.0:{_novnc_port}", f"localhost:{_vnc_port}"],
                     stdout=_log_d, stderr=_log_d)
                 _procs.append(_p_novnc)
+                _execute_command._desktop_procs = _procs
+                _execute_command._desktop_essential_procs = [_p_xvfb, _p_vnc, _p_novnc]
+                _execute_command._desktop_vnc_port = _vnc_port
+                _execute_command._desktop_novnc_port = _novnc_port
+                _execute_command._desktop_display = _display
 
                 _deadline = _time_mod.time() + 8
                 _novnc_ready = False
                 while _time_mod.time() < _deadline:
                     if _p_novnc.poll() is not None:
                         break
-                    try:
-                        with socket.create_connection(("127.0.0.1", _novnc_port), timeout=0.5) as _sock:
-                            _sock.sendall(b"GET /vnc.html HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
-                            _resp = _sock.recv(64)
-                            if b" 200 " in _resp or b" 301 " in _resp or b" 302 " in _resp:
-                                _novnc_ready = True
-                                break
-                    except Exception:
-                        _time_mod.sleep(0.2)
+                    if _novnc_http_ready(_novnc_port, timeout=0.5):
+                        _novnc_ready = True
+                        break
+                    _time_mod.sleep(0.2)
                 if not _novnc_ready:
                     _desktop_cleanup("noVNC failed to become ready")
                     return {"ok": False, "error": "noVNC failed to become ready"}
 
-                _execute_command._desktop_procs = _procs
-                _execute_command._desktop_essential_procs = [_p_xvfb, _p_vnc, _p_novnc]
-                _execute_command._desktop_vnc_port = _vnc_port
-                _execute_command._desktop_novnc_port = _novnc_port
-                _execute_command._desktop_display = _display
                 _start_desktop_watchdog(_procs)
                 sys.stderr.write(f"[FSRelay] Desktop started: display={_display} vnc={_vnc_port} novnc={_novnc_port} audio={_audio_port} res={_resolution}\n")
                 return {"ok": True, "data": {

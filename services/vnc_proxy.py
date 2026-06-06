@@ -273,11 +273,24 @@ _MIME_TYPES = {
     ".png": "image/png",
     ".svg": "image/svg+xml",
     ".ico": "image/x-icon",
+    ".oga": "audio/ogg",
+    ".ogg": "audio/ogg",
+    ".mp3": "audio/mpeg",
     ".woff": "font/woff",
     ".woff2": "font/woff2",
     ".ttf": "font/ttf",
     ".json": "application/json",
 }
+
+
+def _is_novnc_static_path(sub_path: str) -> bool:
+    """Return True for noVNC UI files that can be served locally."""
+    safe_path = _os.path.normpath(str(sub_path or "")).lstrip(_os.sep).lstrip("/")
+    if not safe_path or ".." in safe_path:
+        return False
+    if safe_path in {"vnc.html", "vnc_lite.html"}:
+        return True
+    return safe_path.startswith(("app/", "core/", "vendor/", "include/"))
 
 
 def _serve_novnc_local(pending_req, sub_path: str) -> bool:
@@ -367,6 +380,9 @@ def vnc_http_proxy(pending_req):
                              b'{"error": "Unknown VNC session"}')
         return
 
+    if _is_novnc_static_path(sub_path) and _serve_novnc_local(pending_req, sub_path):
+        return
+
     # Proxy to backend (Docker container or local relay)
     target = f"http://{host}:{port}/{sub_path}"
     try:
@@ -394,7 +410,7 @@ def vnc_http_proxy(pending_req):
                     raise last_error
                 time.sleep(0.2)
     except urllib.error.HTTPError as e:
-        if e.code == 405 and _serve_novnc_local(pending_req, sub_path):
+        if _is_novnc_static_path(sub_path) and _serve_novnc_local(pending_req, sub_path):
             return
         pending_req.complete(e.code, {"Content-Type": "text/plain"},
                              e.read()[:500])

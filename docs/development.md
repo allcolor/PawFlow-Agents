@@ -112,6 +112,10 @@ def test_empty_content():
 - **Use `get_content()`/`set_content()`** instead of `.content` for streaming support
 - **Injected services**: access shared services via `self.get_service("service_id")`
 
+### HTTP response lifecycle
+
+HTTP routes must produce their initial response promptly. Long-running work should return an accepted job state, a streaming response, or another explicit UI-cancellable handle instead of keeping the HTTP request open. The HTTP listener has a bounded initial-response timeout to protect `/api/ui` and other short requests from stuck route callbacks; this is not an implicit timeout for cancellable background work.
+
 ---
 
 ## How to Create a New Service

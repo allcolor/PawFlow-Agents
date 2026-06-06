@@ -204,6 +204,89 @@ def test_http_dispatch_slot_released_after_request(monkeypatch):
         server.server_close()
 
 
+def test_long_lived_dispatch_transfer_releases_short_slot(monkeypatch):
+    monkeypatch.setenv("PAWFLOW_HTTP_MAX_DISPATCH_THREADS", "1")
+    monkeypatch.setenv("PAWFLOW_HTTP_MAX_LONG_DISPATCH_THREADS", "1")
+    server = _HTTPServerWithRegistry(
+        ("127.0.0.1", 0), object, RouteRegistry(), request_timeout=30)
+    try:
+        assert server._dispatch_slots.acquire(blocking=False)
+        with server._dispatch_lock:
+            server._dispatch_active += 1
+        server._dispatch_context.short_slot_released = False
+        server._dispatch_context.long_slot_acquired = False
+
+        assert server.transfer_current_dispatch_to_long_lived("test") is True
+
+        assert server._dispatch_active == 0
+        assert server._long_dispatch_active == 1
+        assert server._dispatch_slots.acquire(blocking=False)
+    finally:
+        try:
+            server._dispatch_slots.release()
+        except ValueError:
+            pass
+        if getattr(server._dispatch_context, "long_slot_acquired", False):
+            server._release_long_dispatch_slot()
+        server.server_close()
+
+
+def test_websocket_only_route_callbacks_complete_plain_http(monkeypatch):
+    from services import http_listener_service
+    from tasks.ai.actions import service_flow
+
+    class FakeFlowFile:
+        def get_attribute(self, key):
+            return "19990" if key == "http.listener.port" else ""
+
+    class FakeListener:
+        def __init__(self):
+            self.routes = []
+
+        def get_routes(self):
+            return []
+
+        def register_route(self, method, pattern, owner_id, callback,
+                           ws_handler=None, public=False, private_only=False):
+            self.routes.append({
+                "method": method,
+                "pattern": pattern,
+                "owner": owner_id,
+                "callback": callback,
+                "ws_handler": ws_handler,
+                "public": public,
+                "private_only": private_only,
+            })
+
+    listener = FakeListener()
+    monkeypatch.setitem(http_listener_service._instances, 19990, listener)
+
+    service_flow._ensure_vnc_routes(FakeFlowFile())
+    service_flow._ensure_terminal_routes(FakeFlowFile())
+
+    ws_only_patterns = {
+        "/vnc/{session_id}/{token}/websockify",
+        "/audio/{session_id}/{token}/stream",
+        "/terminal/{session_id}/{token}",
+    }
+    callbacks = [r["callback"] for r in listener.routes
+                 if r["pattern"] in ws_only_patterns]
+
+    assert len(callbacks) == 3
+    for callback in callbacks:
+        req = PendingRequest(
+            request_id="rid",
+            method="GET",
+            path="/ws-only",
+            headers={},
+            body=b"",
+        )
+        callback(req)
+        assert req.wait(timeout=0)
+        assert req.response_status == 426
+        assert b"WebSocket upgrade required" in req.response_body
+
+
 # ---------------------------------------------------------------------------
 # RouteRegistry tests
 # ---------------------------------------------------------------------------
@@ -299,6 +382,15 @@ class TestPendingRequest:
         assert req.response_status == 200
         assert req.response_body == b"OK"
         t.join()
+
+    def test_wait_returns_false_on_timeout(self):
+        req = PendingRequest(
+            request_id="abc", method="GET", path="/",
+            headers={}, body=b"",
+        )
+
+        assert req.wait(timeout=0.001) is False
+        assert req.completed is False
 
 
 # ---------------------------------------------------------------------------

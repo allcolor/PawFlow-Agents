@@ -34,9 +34,13 @@ The browser opens a noVNC session connected through PawFlow's VNC proxy.
 
 Docker desktop sessions are supervised by the relay worker. After `start_desktop`,
 a lightweight healthcheck thread watches the essential processes: Xvfb, x11vnc,
-and websockify. If one dies, the relay clears the desktop state and terminates
-remaining child processes so `desktop_status` cannot keep reporting a stale
-`running=true` session.
+and websockify. It also performs an HTTP probe against `vnc.html`, so a live
+websockify process that no longer serves noVNC is treated as unhealthy. If one
+process or the noVNC HTTP probe fails, the relay clears the desktop state and
+terminates remaining child processes so `desktop_status` cannot keep reporting
+a stale `running=true` session. `open_desktop` repeats the server-side noVNC
+probe before reusing an existing session and restarts the desktop when the
+backend is not reachable from PawFlow.
 
 ## `screen` Tool
 

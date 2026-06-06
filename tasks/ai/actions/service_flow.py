@@ -14,6 +14,18 @@ from core.tool_registry import ToolRegistry
 logger = logging.getLogger(__name__)
 
 
+def _ws_upgrade_required(req) -> None:
+    """Reject plain HTTP requests sent to WebSocket-only routes."""
+    req.complete(
+        426,
+        {
+            "Content-Type": "application/json",
+            "Connection": "close",
+        },
+        b'{"error": "WebSocket upgrade required"}',
+    )
+
+
 def _docker_published_host() -> str:
     """Host address this container can use to reach Docker-published ports."""
     import os as _os
@@ -55,7 +67,7 @@ def _ensure_vnc_routes(flowfile: FlowFile) -> None:
             return
         _vnc_owner = "_vnc_proxy"
         _http_svc.register_route("GET", "/vnc/{session_id}/{token}/websockify",
-                                 _vnc_owner, callback=lambda req: None,
+                                 _vnc_owner, callback=_ws_upgrade_required,
                                  ws_handler=vnc_ws_proxy, public=True)
         _http_svc.register_route("GET", "/vnc/{session_id}/{token}/{path+}",
                                  _vnc_owner, callback=vnc_http_proxy, public=True)
@@ -64,10 +76,32 @@ def _ensure_vnc_routes(flowfile: FlowFile) -> None:
                          if r.get("pattern", "").startswith("/audio/")]
         if not _audio_exists:
             _http_svc.register_route("GET", "/audio/{session_id}/{token}/stream",
-                                     _vnc_owner, callback=lambda req: None,
+                                     _vnc_owner, callback=_ws_upgrade_required,
                                      ws_handler=audio_ws_proxy, public=True)
     except Exception as e:
         logger.warning("[vnc] Route registration failed: %s", e)
+
+
+def _novnc_backend_http_ready(host: str, port: int, timeout: float = 2.0) -> bool:
+    """Return True when the server can fetch noVNC HTML from a backend."""
+    import socket
+    try:
+        port = int(port or 0)
+    except Exception:
+        return False
+    if not host or not port:
+        return False
+    try:
+        with socket.create_connection((host, port), timeout=timeout) as sock:
+            sock.sendall(
+                b"GET /vnc.html HTTP/1.1\r\n"
+                b"Host: novnc\r\n"
+                b"Connection: close\r\n\r\n")
+            resp = sock.recv(128)
+        status = resp.split(b"\r\n", 1)[0]
+        return b" 200 " in status or b" 301 " in status or b" 302 " in status
+    except Exception:
+        return False
 
 
 def _ensure_terminal_routes(flowfile: FlowFile) -> None:
@@ -90,7 +124,7 @@ def _ensure_terminal_routes(flowfile: FlowFile) -> None:
             _http_svc.register_route(
                 "GET", "/terminal/{session_id}/{token}",
                 _owner,
-                callback=lambda req: None,
+                callback=_ws_upgrade_required,
                 ws_handler=terminal_ws_handler,
                 public=True,
             )
@@ -3646,6 +3680,17 @@ finally:
                 if local_screen:
                     _novnc_port = status.get("local_screen_novnc_port")
                     if _novnc_port:
+                        _relay_addr = getattr(svc, '_relay_addr', None) or '127.0.0.1'
+                        if not _novnc_backend_http_ready(_relay_addr, _novnc_port):
+                            logger.warning(
+                                "[open_desktop] already-running local noVNC is not reachable at %s:%s; restarting %s",
+                                _relay_addr, _novnc_port, relay_id)
+                            try:
+                                svc._request("stop_local_desktop")
+                            except Exception:
+                                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+                            _novnc_port = 0
+                    if _novnc_port:
                         _sid = f"{_session_prefix}_{relay_id}"
                         from services.vnc_proxy import register_session
                         _vtok = register_session(
@@ -3659,7 +3704,6 @@ finally:
                             from services.audio_proxy import register_audio_source
                             _audio_port = status.get("local_screen_audio_port")
                             if _audio_port:
-                                _relay_addr = getattr(svc, '_relay_addr', None) or '127.0.0.1'
                                 _audio_token = register_audio_source(_sid, _relay_addr, _audio_port,
                                                                      owner_user_id=user_id,
                                                                      login_session_id=_login_sid)
@@ -3680,6 +3724,15 @@ finally:
                     if not _backend_port and status.get("novnc_port"):
                         _backend_host = getattr(svc, '_relay_addr', None) or '127.0.0.1'
                         _backend_port = status.get("novnc_port")
+                    if _backend_port and not _novnc_backend_http_ready(_backend_host, _backend_port):
+                        logger.warning(
+                            "[open_desktop] already-running noVNC is not reachable at %s:%s; restarting %s",
+                            _backend_host, _backend_port, relay_id)
+                        try:
+                            svc._request("stop_desktop")
+                        except Exception:
+                            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+                        _backend_port = 0
                     if _backend_port:
                         _sid = f"{_session_prefix}_{relay_id}"
                         from services.vnc_proxy import register_session

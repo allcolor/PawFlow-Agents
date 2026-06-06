@@ -83,6 +83,7 @@ class _GlobalRateLimiter:
 
 _GLOBAL_RATE_LIMITER = _GlobalRateLimiter()
 _DEFAULT_MAX_DISPATCH_THREADS = 128
+_DEFAULT_MAX_LONG_DISPATCH_THREADS = 1024
 _DEFAULT_HEADER_READ_TIMEOUT = 3.0
 
 
@@ -148,14 +149,14 @@ class PendingRequest:
         """
         self.timing[name] = time.monotonic()
 
-    def wait(self) -> None:
-        """Block until response is ready. NO TIMEOUT — project rule.
+    def wait(self, timeout: Optional[float] = None) -> bool:
+        """Block until response is ready.
 
-        If the flow never responds, this blocks forever. That's a real
-        bug we want to surface (not mask with a 504), and the HTTP
-        worker thread is a daemon — Ctrl+C kills it cleanly.
+        Returns False when the route callback never produced an initial
+        response. That is still a backend bug, but keeping the HTTP worker
+        blocked forever turns one stuck request into a listener-wide outage.
         """
-        self._event.wait()
+        return self._event.wait(timeout=timeout)
 
     def complete(self, status: int, headers: Dict[str, str], body: bytes):
         """Set the response and unblock the waiting HTTP handler."""
@@ -781,13 +782,31 @@ class _RequestHandler(BaseHTTPRequestHandler):
             return
         req.mark("dispatch")
 
-        # Block until flow responds. NO TIMEOUT — project rule: only the
-        # LLM watchdog has a timeout, nowhere else. If a request stalls
-        # forever, that's a backend bug we want to surface (not paper over
-        # with a 504). The slow-response log below catches slow responses,
-        # but skips paths that are legitimately long-lived (LLM streaming
-        # through /relay-proxy/ can take 60+ s per turn).
-        req.wait()
+        # Block until the flow produces the initial HTTP response. This is a
+        # listener guard, not an action timeout: long/cancellable work must
+        # respond with a stream, accepted job state, or explicit UI-cancellable
+        # handle instead of pinning the HTTP worker indefinitely.
+        if not req.wait(timeout=self.server._request_timeout):
+            self.server._pending_requests.pop(req.request_id, None)
+            waited_ms = round((time.monotonic() - req.timing.get(
+                "recv", req.timing.get("dispatch", time.monotonic()))) * 1000)
+            _action = _request_action_label(req)
+            logger.error(
+                "[http] request timed out waiting for flow response — %s %s%s "
+                "waited=%dms request_id=%s pending=%d",
+                method, path, f" action={_action}" if _action else "",
+                waited_ms, req.request_id[:8],
+                len(self.server._pending_requests))
+            self.send_response(503)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                "error": "HTTP route did not produce a response",
+                "request_id": req.request_id,
+                "path": path,
+            }).encode("utf-8"))
+            req.mark("send")
+            return
         # `respond` is marked from inside complete()/complete_stream(),
         # capturing when the flow actually handed us the response — not
         # when this thread woke up from the event.
@@ -824,6 +843,9 @@ class _RequestHandler(BaseHTTPRequestHandler):
 
         if req.response_stream is not None:
             # Streaming response — write chunks as they come
+            if _is_long_lived_stream_path(path):
+                self.server.transfer_current_dispatch_to_long_lived(
+                    f"stream {path}", self.connection)
             try:
                 for chunk in req.response_stream:
                     if chunk:
@@ -1063,6 +1085,16 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
         self._dispatch_active = 0
         self._dispatch_rejected = 0
         self._dispatch_lock = threading.Lock()
+        self._dispatch_context = threading.local()
+        self._max_long_dispatch_threads = self._resolve_int_config(
+            None,
+            "PAWFLOW_HTTP_MAX_LONG_DISPATCH_THREADS",
+            _DEFAULT_MAX_LONG_DISPATCH_THREADS,
+            minimum=1)
+        self._long_dispatch_slots = threading.BoundedSemaphore(
+            self._max_long_dispatch_threads)
+        self._long_dispatch_active = 0
+        self._long_dispatch_rejected = 0
         super().__init__(server_address, handler_class)
 
     @staticmethod
@@ -1217,18 +1249,72 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
             self._dispatch_active += 1
 
         def _run_dispatch():
+            self._dispatch_context.short_slot_released = False
+            self._dispatch_context.long_slot_acquired = False
             try:
                 self._dispatch_request(request, client_address)
             finally:
-                with self._dispatch_lock:
-                    self._dispatch_active = max(0, self._dispatch_active - 1)
-                self._dispatch_slots.release()
+                if getattr(self._dispatch_context, "long_slot_acquired", False):
+                    self._release_long_dispatch_slot()
+                if not getattr(self._dispatch_context, "short_slot_released", False):
+                    self._release_short_dispatch_slot()
+                self._dispatch_context.short_slot_released = False
+                self._dispatch_context.long_slot_acquired = False
 
         t = threading.Thread(
             target=_run_dispatch,
             daemon=True,
             name="http-dispatch")
         t.start()
+
+    def _release_short_dispatch_slot(self):
+        if getattr(self._dispatch_context, "short_slot_released", False):
+            return
+        with self._dispatch_lock:
+            self._dispatch_active = max(0, self._dispatch_active - 1)
+        self._dispatch_slots.release()
+        self._dispatch_context.short_slot_released = True
+
+    def _release_long_dispatch_slot(self):
+        if not getattr(self._dispatch_context, "long_slot_acquired", False):
+            return
+        with self._dispatch_lock:
+            self._long_dispatch_active = max(0, self._long_dispatch_active - 1)
+        self._long_dispatch_slots.release()
+        self._dispatch_context.long_slot_acquired = False
+
+    def transfer_current_dispatch_to_long_lived(self, reason: str,
+                                                request=None) -> bool:
+        """Move this connection off the short HTTP dispatch pool.
+
+        Long-lived WebSocket and streaming responses must not occupy the same
+        bounded pool as short API requests. Otherwise a few stuck browser tabs,
+        VNC sessions, or relay streams can make /api/ui look like a 502 outage
+        to the reverse proxy even though the process is still alive.
+        """
+        if getattr(self._dispatch_context, "long_slot_acquired", False):
+            return True
+        if not self._long_dispatch_slots.acquire(blocking=False):
+            with self._dispatch_lock:
+                self._long_dispatch_rejected += 1
+                rejected = self._long_dispatch_rejected
+            if rejected == 1 or rejected % 100 == 0:
+                logger.warning(
+                    "HTTP long dispatch saturated: active=%d max=%d "
+                    "rejected=%d reason=%s",
+                    self._long_dispatch_active, self._max_long_dispatch_threads,
+                    rejected, reason)
+            if request is not None:
+                try:
+                    request.close()
+                except Exception:
+                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+            return False
+        with self._dispatch_lock:
+            self._long_dispatch_active += 1
+        self._dispatch_context.long_slot_acquired = True
+        self._release_short_dispatch_slot()
+        return True
 
     def _dispatch_request(self, request, client_address):
         """Route connections: read headers, detect WS vs HTTP, handle.
@@ -1277,6 +1363,8 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
 
         if b"Upgrade: websocket" in data or b"upgrade: websocket" in data:
             # WS — handle directly on raw socket.
+            if not self.transfer_current_dispatch_to_long_lived("websocket", request):
+                return
             sock_id = id(request)
             self._ws_sockets.add(sock_id)
             try:

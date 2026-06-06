@@ -284,7 +284,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             "slack":    ("slack.channel_id", "slack.user_id"),
         }
 
-        channel = "web"
+        channel = flowfile.get_attribute("agent.client_channel") or "web"
         channel_chat_id = ""
         channel_user_id = ""
         for ch, (chat_attr, user_attr) in CHANNEL_ATTRS.items():
@@ -1653,6 +1653,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 or self.config.get("chars_per_token", 0)
             ),
             "channel": channel,
+            "request_msg_id": flowfile.get_attribute("agent.request_msg_id") or "",
             "active_agent_name": _active_agent_name,  # MUST be non-empty — see _ensure_active_agent
             "active_llm_service": _active_llm_service,
             "title_llm_service": self._resolve_service_param("title_llm_service", user_id),

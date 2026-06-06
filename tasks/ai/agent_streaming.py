@@ -80,6 +80,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
         _user_text = _body.get("message", "")
         _target = _body.get("target_agent", "") or _body.get("agent_name", "")
         _attachments_body = _body.get("attachments", []) if isinstance(_body, dict) else []
+        _channel = flowfile.get_attribute("agent.client_channel") or "web"
         if (_user_text.strip() or _attachments_body) and not _target:
             flowfile.set_content(json.dumps({
                 "error": "target_agent is required for user messages",
@@ -143,7 +144,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                 "source": {"type": "user", "name": _uid,
                            "target_agent": _target or None},
                 "msg_id": _user_msg_id or None,
-                "channel": "web",
+                "channel": _channel,
             }, conversation_id)
             _stream_mark("stamped")
             if _attachments_body:
@@ -160,7 +161,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                     "content": _stamped_user.get("content", ""),
                     "attachments": _attachments_body,
                     "target_agent": _target or "",
-                    "channel": "web",
+                    "channel": _channel,
                 }, fail_policy="closed")
                 _stream_step(
                     "pre_user_hook",
@@ -198,7 +199,15 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                     _enqueue_started = _t_stream.monotonic()
                     _cw.enqueue_message(
                         dict(_stamped_user), agent_name=_target or "",
-                        user_id=_uid)
+                        user_id=_uid,
+                        sse_events=[{"type": "new_message", "data": {
+                            "role": "user",
+                            "content": _stamped_user.get("content", ""),
+                            "msg_id": _stamped_user.get("msg_id", ""),
+                            "ts": _stamped_user.get("ts"),
+                            "source": _stamped_user.get("source") or {},
+                            "channel": _channel,
+                        }}])
                     _stream_step("pre_persist_enqueue", _enqueue_started)
                 except Exception as _pe:
                     logger.warning(
@@ -214,7 +223,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                     "source": {"type": "user", "name": _uid,
                                "target_agent": _target or None},
                     "msg_id": _user_msg_id or None,
-                    "channel": "web",
+                    "channel": _channel,
                 }, conversation_id)
                 if _attachments_body:
                     _stamped_user["attachments"] = _attachments_body

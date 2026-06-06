@@ -13,7 +13,7 @@ Thread-safe singleton.
 import logging
 import threading
 import time
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Callable, Dict, List, Optional, Set, Tuple
 
 from core.sse_writer import SSEEvent, SSEWriter
 
@@ -56,7 +56,21 @@ class ConversationEventBus:
         self._clients: Dict[Tuple[str, str], SSEWriter] = {}
         # Replay buffer: {conversation_id: [(timestamp, SSEEvent), ...]}
         self._buffer: Dict[str, List[Tuple[float, SSEEvent]]] = {}
+        self._listeners: Set[Callable[[str, str, object], None]] = set()
         self._lock = threading.Lock()
+
+    def add_listener(self, listener: Callable[[str, str, object], None]) -> None:
+        """Register an in-process event listener.
+
+        Listeners observe the same broadcast stream as SSE clients. They do not
+        affect delivery or filtering; failures are logged and ignored.
+        """
+        with self._lock:
+            self._listeners.add(listener)
+
+    def remove_listener(self, listener: Callable[[str, str, object], None]) -> None:
+        with self._lock:
+            self._listeners.discard(listener)
 
     def subscribe(self, conversation_id: str, replay: bool = True,
                   client_id: str = "") -> SSEWriter:
@@ -235,7 +249,15 @@ class ConversationEventBus:
         if isinstance(data, dict) and "ts" not in data:
             data["ts"] = time.time()
         self._log_context_gauge_update(conversation_id, event_type, data)
-        self.publish(conversation_id, SSEEvent(event=event_type, data=data or ""))
+        payload = data or ""
+        self.publish(conversation_id, SSEEvent(event=event_type, data=payload))
+        with self._lock:
+            listeners = list(self._listeners)
+        for listener in listeners:
+            try:
+                listener(conversation_id, event_type, payload)
+            except Exception:
+                logger.debug("ConversationEventBus listener failed", exc_info=True)
 
     def subscriber_count(self, conversation_id: str) -> int:
         """Number of active subscribers for a conversation."""
@@ -287,4 +309,5 @@ class ConversationEventBus:
                     writer.close()
             self._subscribers.clear()
             self._clients.clear()
+            self._listeners.clear()
             self._buffer.clear()

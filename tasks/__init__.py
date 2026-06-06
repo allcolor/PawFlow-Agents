@@ -235,6 +235,8 @@ def register_all_tasks():
     # Telegram
     from tasks.io.telegram_receiver import TelegramReceiverTask
     from tasks.io.telegram_send import TelegramSendTask
+    from tasks.io.telegram_agent_client import (
+        TelegramAgentClientTask, TelegramConversationBridgeTask)
 
     # Discord
     from tasks.io.discord_receiver import DiscordReceiverTask

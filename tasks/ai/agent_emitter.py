@@ -311,6 +311,9 @@ class StreamEmitter(AgentEmitter):
         data = {
             "response": result.response_content,
             "msg_id": _last_id,
+            "turn_id": self.ctx.get("request_msg_id") or "",
+            "request_msg_id": self.ctx.get("request_msg_id") or "",
+            "channel": self._channel or "web",
             "all_msg_ids": _all_ids,
             "model": result.model,
             "provider": result.provider,
@@ -318,6 +321,7 @@ class StreamEmitter(AgentEmitter):
             "tokens_in": result.tokens_in,
             "tokens_out": result.tokens_out,
             "duration_ms": result.duration_ms,
+            "finish_reason": result.finish_reason,
             "cost_usd": result.cost_usd,
             "source": result.source,
             "agent_name": self._agent_name or "",
@@ -357,6 +361,9 @@ class StreamEmitter(AgentEmitter):
             "message": str(error),
             "agent_name": self._agent_name or "",
             "conversation_id": self.conversation_id,
+            "turn_id": self.ctx.get("request_msg_id") or "",
+            "request_msg_id": self.ctx.get("request_msg_id") or "",
+            "channel": self._channel or "web",
         })
 
     def on_interrupted(self, result: AgentResult) -> None:

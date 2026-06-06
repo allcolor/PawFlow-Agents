@@ -2,12 +2,12 @@
   "id": "telegram-agent",
   "name": "telegram_agent",
   "version": "1.0.0",
-  "description": "LLM agent accessible via Telegram. Messages from Telegram are processed by the agent and responses are sent back.",
+  "description": "Telegram client for the shared PawFlow agent runtime. Messages are submitted through the same API contract used by webchat, PawCode, and VSCode.",
   "parameters": {
-    "llm_service": "",
     "bot_token": "",
     "allowed_users": "",
-    "conversation_ttl": 0
+    "target_agent": "",
+    "agent_timeout": 600
   },
   "services": {
     "telegram_bot": {
@@ -26,14 +26,18 @@
         "service_id": "telegram_bot"
       }
     },
-    "agent": {
-      "type": "agentLoop",
+    "agent_client": {
+      "type": "telegramAgentClient",
       "parameters": {
-        "llm_service": "${llm_service}",
-        "system_prompt": "You are a helpful AI assistant on Telegram. Be concise and helpful. Use Markdown formatting.",
-        "conversation_attribute": "telegram.chat_id",
-        "conversation_ttl": "${conversation_ttl}",
-        "max_iterations": 50
+        "target_agent": "${target_agent}",
+        "timeout": "${agent_timeout}",
+        "create_conversation": true
+      }
+    },
+    "conversation_bridge": {
+      "type": "telegramConversationBridge",
+      "parameters": {
+        "service_id": "telegram_bot"
       }
     },
     "send_reply": {
@@ -50,13 +54,13 @@
   "relations": [
     {
       "source": "receive",
-      "target": "agent",
+      "target": "agent_client",
       "relationships": [
         "success"
       ]
     },
     {
-      "source": "agent",
+      "source": "agent_client",
       "target": "send_reply",
       "relationships": [
         "success"

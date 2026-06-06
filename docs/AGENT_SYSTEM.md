@@ -19,6 +19,14 @@ The core implementation is `AgentLoopTask`, a composite task assembled from mixi
 
 The flow pattern is: `httpReceiver -> agentLoop -> handleHTTPResponse`. The agent returns an immediate ACK to the HTTP caller, then runs the LLM loop in a background thread, publishing results via SSE (Server-Sent Events).
 
+Non-HTTP clients use the same runtime contract through `core.agent_runtime_api`.
+For example, the Telegram client flow normalizes Telegram updates into an
+`AgentRequest`, submits it to the live `AgentLoopTask`, and waits for the
+correlated `done` event using the request `turn_id`. The conversation event bus
+still broadcasts every event by `conversation_id` to all connected clients; the
+`turn_id` is only reply correlation for transports that need to answer a
+specific inbound message.
+
 ---
 
 ## 2. Agent Configuration

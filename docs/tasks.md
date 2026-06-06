@@ -38,7 +38,7 @@ code duplication.
 
 ---
 
-## IO Tasks (51)
+## IO Tasks (53)
 
 | Type | Description |
 |------|-------------|
@@ -85,6 +85,8 @@ code duplication.
 | `slackReceiver` | Receive messages from a Slack bot |
 | `slackSend` | Send a message to Slack via Incoming Webhook |
 | `spawnAgent` | Spawn an agent in a linked conversation (sync or async) |
+| `telegramAgentClient` | Submit Telegram messages through the shared agent runtime and wait for the final response |
+| `telegramConversationBridge` | Forward shared conversation events to active Telegram chats in compact mode |
 | `telegramReceiver` | Receive messages from a Telegram bot |
 | `telegramSend` | Send a message to a Telegram chat |
 | `validateHTTPAuth` | Validate Bearer/Basic authentication on HTTP requests |

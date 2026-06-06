@@ -53,21 +53,22 @@ powershell -ExecutionPolicy Bypass -File scripts/install-pawflow.ps1 -Port PORT 
 When run from a checkout, the installer uses that checkout. When run as a
 downloaded standalone script, it clones
 `https://github.com/allcolor/PawFlow-Agents.git` into `~/pawflow-src`. Without a
-version, it first tries the prebuilt `ghcr.io/allcolor/pawflow:latest`,
-`ghcr.io/allcolor/pawflow-relay-minimal:latest`, and
-`ghcr.io/allcolor/pawflow-relay-dev:latest` images. With `--version VERSION`, it
-checks out the matching git tag before fallback builds, then first tries the
-matching `:VERSION` image tags. If a prebuilt image is unavailable, the installer
-builds that image from the same source tag. It always builds the local CLI LLM
+version, it first tries the prebuilt `ghcr.io/allcolor/pawflow:latest`, then
+uses the extracted `config/relay_image_catalog.json` to select the relay image
+tags. With `--version VERSION`, it first tries
+`ghcr.io/allcolor/pawflow:VERSION`; relay images still use the catalog's
+independent `relay_image_version` tag (`YYYY.mm.dd`). Use `--from-source` or
+`--build-images` when you want local source builds instead of requiring the
+published images. It always builds the local CLI LLM
 image required before the first web installer opens:
 
 - `ghcr.io/allcolor/pawflow:latest`, `ghcr.io/allcolor/pawflow:VERSION`, or
   `PAWFLOW_IMAGE` for the server
 - `pawflow-claude-code:latest` for Claude Code, Codex, Gemini, and Antigravity
   CLI sessions and OAuth login containers
-- `ghcr.io/allcolor/pawflow-relay-minimal:latest` or `:VERSION` for protected
+- `ghcr.io/allcolor/pawflow-relay-minimal:<relay_image_version>` for protected
   server-side minimal execution
-- `ghcr.io/allcolor/pawflow-relay-dev:latest` or `:VERSION` for full server
+- `ghcr.io/allcolor/pawflow-relay-dev:<relay_image_version>` for full server
   relay workspaces
 
 After the builds, it creates persistent volumes under `~/pawflow`, starts
@@ -100,8 +101,9 @@ PAWFLOW_HOME=/srv/pawflow PAWFLOW_PORT=9443 bash scripts/run-pawflow-docker.sh
 For release updates, use the installer itself. `--check-updates` queries GitHub
 releases, `--self-update` refreshes the installer scripts from the latest release
 zip, and a versioned `--pull-images` run recreates the existing server container
-on the requested GHCR tag while preserving persistent data. Older PawFlow
-server/relay image tags are removed after a successful update unless
+on the requested GHCR tag while preserving persistent data. Relay image tags are
+resolved from the requested server image's catalog. Older PawFlow server/relay
+image tags are removed after a successful update unless
 `--keep-old-images` is set.
 
 ```bash

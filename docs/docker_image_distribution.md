@@ -10,7 +10,11 @@ GitHub Actions publishes these public GHCR images from `.github/workflows/docker
 - `ghcr.io/allcolor/pawflow-relay-minimal` — protected minimal server relay
 - `ghcr.io/allcolor/pawflow-relay-dev` — full server relay workspace image
 
-The workflow publishes `latest` from `main`, version tags from Git tags, and `main-<sha>` traceability tags. It enables BuildKit SBOM and provenance metadata for each image.
+The workflow publishes PawFlow server image tags from Git tags. Relay images use
+the independent `relay_image_version` from `config/relay_image_catalog.json`
+(format `YYYY.mm.dd`) and are skipped when that GHCR tag already exists. Bump
+that catalog value only when the relay image OS/packages/tooling change. The
+workflow enables BuildKit SBOM and provenance metadata for each image it builds.
 
 The published images currently target `linux/amd64`. Several upstream language/tool downloads remain architecture-specific, so multi-arch publishing must wait until those installers are made architecture-aware.
 
@@ -29,13 +33,20 @@ provides the Windows PowerShell image-install/update path for Docker Desktop
 Linux containers.
 
 - Pull the prebuilt server image first.
-- When the server image is available, extract installer/runtime artifacts from `/app` in that image and pull the matching relay images.
+- When the server image is available, extract installer/runtime artifacts from `/app` in that image and pull the relay images tagged by the extracted catalog's `relay_image_version`.
 - When the server image is unavailable, use a source checkout and build the server and relay images from source.
 - Always build the CLI LLM image locally.
 
-Use `--pull-images` to require all three public images to be available. Use `--build-images` to force source builds for the server and relay images.
+Use `--pull-images` to require the server image and the catalog-selected relay
+images to be available. Use `--build-images` to force source builds for the
+server and relay images.
 
-Image installs do not require the installer zip to carry PawFlow runtime files. The installer copies the run script, doctor script, PowerShell installer, CLI image Docker context, MCP bridge, PawFlow SDK, and relay Python package out of the pulled `ghcr.io/allcolor/pawflow:<tag>` image into `PAWFLOW_RUNTIME_DIR` or `~/.pawflow/runtime/<tag>`. Source installs keep using the checkout selected by `--dir` / `PAWFLOW_INSTALL_DIR`.
+Image installs do not require the installer zip to carry PawFlow runtime files.
+The installer copies the run script, doctor script, PowerShell installer, relay
+image catalog, CLI image Docker context, MCP bridge, PawFlow SDK, and relay
+Python package out of the pulled `ghcr.io/allcolor/pawflow:<tag>` image into
+`PAWFLOW_RUNTIME_DIR` or `~/.pawflow/runtime/<tag>`. Source installs keep using
+the checkout selected by `--dir` / `PAWFLOW_INSTALL_DIR`.
 
 Use `--check-updates` to query the latest GitHub release and print the
 recommended server update command. Use `--self-update` to refresh the installer
@@ -62,7 +73,7 @@ The resulting `dist/pawflow-installers/pawflow-install-VERSION.zip` contains onl
 - standalone Relay CLI archives on Linux and Windows;
 - Relay Desktop installers on Linux (`.AppImage`, `.deb`) and Windows (`.exe`, `.zip`).
 
-To publish a release, push a version tag after the Docker image workflow can publish matching GHCR tags:
+To publish a release, push a version tag. The Docker image workflow publishes the matching PawFlow server tag and uses the catalog relay image tag for relay images:
 
 ```bash
 VERSION=1.0.0.prealpha.N

@@ -12,6 +12,10 @@ on:
         description: Rebuild and push even if the GHCR tag already exists
         type: boolean
         default: false
+      force_rebuild_relay:
+        description: Rebuild relay images even if the configured relay image tag already exists
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -50,9 +54,35 @@ jobs:
         id: release
         run: |
           raw="${{ inputs.version || github.ref_name }}"
-          tag="${raw#v}"
-          echo "image_tag=$tag" >> "$GITHUB_OUTPUT"
+          pawflow_tag="${raw#v}"
+          relay_tag="$(python3 - <<'PY'
+          import json
+          with open('config/relay_image_catalog.json', encoding='utf-8') as f:
+              print(json.load(f)['relay_image_version'])
+          PY
+          )"
+          echo "image_tag=$pawflow_tag" >> "$GITHUB_OUTPUT"
+          echo "relay_image_tag=$relay_tag" >> "$GITHUB_OUTPUT"
           echo "force_rebuild=${{ inputs.force_rebuild || false }}" >> "$GITHUB_OUTPUT"
+          echo "force_rebuild_relay=${{ inputs.force_rebuild_relay || false }}" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve effective image tag
+        id: effective
+        run: |
+          case "${{ matrix.image }}" in
+            pawflow)
+              echo "tag=${{ steps.release.outputs.image_tag }}" >> "$GITHUB_OUTPUT"
+              echo "force=${{ steps.release.outputs.force_rebuild }}" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "tag=${{ steps.release.outputs.relay_image_tag }}" >> "$GITHUB_OUTPUT"
+              if [[ "${{ steps.release.outputs.force_rebuild_relay }}" == "true" ]]; then
+                echo "force=true" >> "$GITHUB_OUTPUT"
+              else
+                echo "force=${{ steps.release.outputs.force_rebuild }}" >> "$GITHUB_OUTPUT"
+              fi
+              ;;
+          esac
 
       - name: Free runner disk space
         run: |
@@ -78,8 +108,8 @@ jobs:
       - name: Check existing image tag
         id: existing
         run: |
-          image="${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.image }}:${{ steps.release.outputs.image_tag }}"
-          if [[ "${{ steps.release.outputs.force_rebuild }}" == "true" ]]; then
+          image="${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.image }}:${{ steps.effective.outputs.tag }}"
+          if [[ "${{ steps.effective.outputs.force }}" == "true" ]]; then
             echo "exists=false" >> "$GITHUB_OUTPUT"
             echo "Force rebuild requested: $image"
             exit 0
@@ -97,7 +127,7 @@ jobs:
           python3 scripts/generate-relay-image.py \
             --profile server-minimal \
             --out docker/relay-generated/server-minimal \
-            --image ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.image }}:${{ steps.release.outputs.image_tag }}
+            --image ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.image }}:${{ steps.effective.outputs.tag }}
 
       - name: Docker metadata
         if: steps.existing.outputs.exists != 'true'
@@ -106,7 +136,7 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.image }}
           tags: |
-            type=raw,value=${{ steps.release.outputs.image_tag }}
+            type=raw,value=${{ steps.effective.outputs.tag }}
           labels: |
             org.opencontainers.image.title=PawFlow ${{ matrix.image }}
             org.opencontainers.image.description=PawFlow redistributable Docker image
@@ -123,6 +153,8 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
+          build-args: |
+            PAWFLOW_DOCKER_IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.image }}:${{ steps.effective.outputs.tag }}
           labels: ${{ steps.meta.outputs.labels }}
           sbom: true
           provenance: true

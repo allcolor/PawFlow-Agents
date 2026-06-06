@@ -187,7 +187,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN curl -fsSL https://code-server.dev/install.sh | sh
 RUN rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
-ENV PAWFLOW_DOCKER_IMAGE="pawflow-relay-dev:latest"
+ARG PAWFLOW_DOCKER_IMAGE="pawflow-relay-dev:latest"
+ENV PAWFLOW_DOCKER_IMAGE="${PAWFLOW_DOCKER_IMAGE}"
 
 # ── Desktop environment (VNC + audio) ───────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \

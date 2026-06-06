@@ -38,6 +38,7 @@ PYTHON_BIN="$(printenv PAWFLOW_PYTHON || true)"
 VENV_DIR="$(printenv PAWFLOW_VENV_DIR || true)"
 RELAY_MINIMAL_IMAGE="$(printenv PAWFLOW_RELAY_MINIMAL_IMAGE || printenv PAWFLOW_SERVER_MINIMAL_RELAY_IMAGE || true)"
 RELAY_DEV_IMAGE="$(printenv PAWFLOW_RELAY_DEV_IMAGE || true)"
+RELAY_IMAGE_VERSION="$(printenv PAWFLOW_RELAY_IMAGE_VERSION || true)"
 CLI_LLM_IMAGE="$(printenv PAWFLOW_CLI_LLM_IMAGE || true)"
 GHCR_USER="$(printenv PAWFLOW_GHCR_USER || printenv GHCR_USER || true)"
 GHCR_TOKEN="$(printenv PAWFLOW_GHCR_TOKEN || printenv GHCR_TOKEN || true)"
@@ -97,7 +98,7 @@ while [[ $# -gt 0 ]]; do
       cat <<'HELP'
 
 Options:
-  --version VERSION  Install this PawFlow version. Image installs pull this tag; source installs checkout this git tag.
+  --version VERSION  Install this PawFlow server version. Relay image tags come from the selected release catalog.
   --from-source      Build the server from source. With --version, checkout that exact git tag; without it, checkout main.
   --pull-server      Require pulling the server image. Fails if the image is not available.
   --pull-images      Require pulling server + redistributable relay images.
@@ -107,9 +108,9 @@ Options:
   --image TAG        Full server image tag to build, pull, or run.
   --image-repo REPO  Server image repository when --image is not set (default: ghcr.io/allcolor/pawflow).
   --relay-minimal-image TAG
-                     Minimal relay image tag (default: ghcr.io/allcolor/pawflow-relay-minimal:<version|latest>).
+                     Minimal relay image tag (default: ghcr.io/allcolor/pawflow-relay-minimal:<relay_image_version|latest>).
   --relay-dev-image TAG
-                     Full relay image tag (default: ghcr.io/allcolor/pawflow-relay-dev:<version|latest>).
+                     Full relay image tag (default: ghcr.io/allcolor/pawflow-relay-dev:<relay_image_version|latest>).
   --cli-llm-image TAG
                      Local CLI LLM image tag (default: pawflow-claude-code:latest).
   --repo URL         Git repository to clone when the script is not run from a checkout.
@@ -234,6 +235,34 @@ image_tag() {
     return 0
   fi
   normalize_version "${image##*:}"
+}
+
+relay_image_version() {
+  local repo_dir="$1" catalog="$1/config/relay_image_catalog.json" py
+  if [[ -n "$RELAY_IMAGE_VERSION" ]]; then
+    printf '%s' "$RELAY_IMAGE_VERSION"
+    return 0
+  fi
+  if [[ -f "$catalog" ]]; then
+    py="$(optional_python_cmd)"
+    if [[ -n "$py" ]]; then
+      "$py" - "$catalog" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as f:
+    print(json.load(f).get("relay_image_version", ""))
+PY
+      return 0
+    fi
+    sed -n 's/.*"relay_image_version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$catalog" | head -n 1
+    return 0
+  fi
+  if [[ -n "$VERSION" ]]; then
+    printf '%s' "$VERSION"
+  else
+    printf '%s' latest
+  fi
 }
 
 check_updates() {
@@ -495,6 +524,7 @@ extract_image_artifacts() (
     scripts/doctor-pawflow.sh \
     scripts/doctor-pawflow.ps1 \
     scripts/install-pawflow.ps1 \
+    config/relay_image_catalog.json \
     docker/claude-code \
     docker/pawflow_sdk \
     tools/mcp_bridge.py \
@@ -684,29 +714,14 @@ if [[ -z "$IMAGE" ]]; then
     IMAGE="$IMAGE_REPO:latest"
   fi
 fi
-if [[ -z "$RELAY_MINIMAL_IMAGE" ]]; then
-  if [[ -n "$VERSION" ]]; then
-    RELAY_MINIMAL_IMAGE="$RELAY_MINIMAL_IMAGE_REPO:$VERSION"
-  else
-    RELAY_MINIMAL_IMAGE="$RELAY_MINIMAL_IMAGE_REPO:latest"
-  fi
-fi
-if [[ -z "$RELAY_DEV_IMAGE" ]]; then
-  if [[ -n "$VERSION" ]]; then
-    RELAY_DEV_IMAGE="$RELAY_DEV_IMAGE_REPO:$VERSION"
-  else
-    RELAY_DEV_IMAGE="$RELAY_DEV_IMAGE_REPO:latest"
-  fi
-fi
-
 if [[ -z "$DOCKER_PLATFORM" && "$HOST_OS" == "macos" ]]; then
   DOCKER_PLATFORM="linux/amd64"
 fi
 
-capture_existing_pawflow_image_ids
 if [[ -n "$DOCKER_PLATFORM" ]]; then
   export PAWFLOW_DOCKER_PLATFORM="$DOCKER_PLATFORM"
 fi
+capture_existing_pawflow_image_ids
 
 if [[ "$SERVER_MODE" == "source" ]]; then
   REPO_DIR="$(ensure_checkout)"
@@ -718,8 +733,6 @@ echo "Host: $HOST_OS"
 echo "Version: ${VERSION}"
 echo "Server image: $IMAGE ($SERVER_MODE)"
 echo "Runtime image mode: $RUNTIME_IMAGE_MODE"
-echo "Minimal relay image: $RELAY_MINIMAL_IMAGE"
-echo "Full relay image: $RELAY_DEV_IMAGE"
 echo "CLI LLM image: $CLI_LLM_IMAGE (local build)"
 echo "Start target: $START_TARGET"
 if [[ -n "$DOCKER_PLATFORM" ]]; then
@@ -763,6 +776,18 @@ if [[ "$INSTALL_SOURCE" == "image" && "$START_TARGET" == "native" ]]; then
   exit 2
 fi
 
+_relay_tag="$(relay_image_version "$REPO_DIR")"
+if [[ -z "$_relay_tag" ]]; then
+  echo "ERROR: relay_image_version is missing from $REPO_DIR/config/relay_image_catalog.json." >&2
+  exit 2
+fi
+if [[ -z "$RELAY_MINIMAL_IMAGE" ]]; then
+  RELAY_MINIMAL_IMAGE="$RELAY_MINIMAL_IMAGE_REPO:$_relay_tag"
+fi
+if [[ -z "$RELAY_DEV_IMAGE" ]]; then
+  RELAY_DEV_IMAGE="$RELAY_DEV_IMAGE_REPO:$_relay_tag"
+fi
+
 if [[ "$RUN_DOCTOR" == "1" ]]; then
   if [[ "$INSTALL_SOURCE" == "source" ]]; then
     bash "$REPO_DIR/scripts/doctor-pawflow.sh" --port "$PORT" --source
@@ -773,6 +798,9 @@ fi
 
 echo "PawFlow install artifacts: $REPO_DIR ($INSTALL_SOURCE)"
 echo "Effective runtime image mode: $RUNTIME_IMAGE_MODE"
+echo "Relay image version: $_relay_tag"
+echo "Minimal relay image: $RELAY_MINIMAL_IMAGE"
+echo "Full relay image: $RELAY_DEV_IMAGE"
 
 echo "Building PawFlow CLI LLM image locally: $CLI_LLM_IMAGE"
 PAWFLOW_CLI_LLM_IMAGE="$CLI_LLM_IMAGE" bash "$REPO_DIR/docker/claude-code/build.sh"

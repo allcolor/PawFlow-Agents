@@ -225,6 +225,7 @@ def _manifest(catalog: dict[str, Any], profile: str, feature_ids: list[str], ima
         runtime_args.extend(features[feature_id].get("runtime", {}).get("docker_args", []))
     return {
         "version": catalog.get("version", 1),
+        "relay_image_version": catalog.get("relay_image_version", ""),
         "profile": profile,
         "image": image_name,
         "features": feature_ids,

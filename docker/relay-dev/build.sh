@@ -28,7 +28,7 @@ if [[ -z "$IMAGE" ]]; then IMAGE="pawflow-relay-dev:latest"; fi
 BUILD_ARGS=()
 if [[ -n "$PLATFORM" ]]; then BUILD_ARGS+=(--platform "$PLATFORM"); fi
 
-docker build "${BUILD_ARGS[@]}" -f "$SCRIPT_DIR/Dockerfile" -t "$IMAGE" "$REPO_DIR"
+docker build "${BUILD_ARGS[@]}" --build-arg "PAWFLOW_DOCKER_IMAGE=$IMAGE" -f "$SCRIPT_DIR/Dockerfile" -t "$IMAGE" "$REPO_DIR"
 
 echo ""
 echo "Built $IMAGE"

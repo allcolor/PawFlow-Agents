@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import re
 from pathlib import Path
 
 from core.install_bootstrap import get_install_status
@@ -26,6 +27,7 @@ def test_relay_catalog_has_required_base_runtime():
     catalog = _catalog()
     base = catalog["features"]["relay.base"]
 
+    assert re.fullmatch(r"\d{4}\.\d{2}\.\d{2}", catalog["relay_image_version"])
     assert "relay.base" in catalog["required_features"]
     assert base["required"] is True
     assert "python3" in base["apt"]
@@ -114,6 +116,7 @@ def test_generator_resolves_implied_features_and_writes_installer_artifacts(tmp_
     assert (out_dir / "runtime" / "pawflow.py").exists()
     assert (out_dir / "runtime" / "pawflow_relay" / "__init__.py").exists()
     assert "relay.base" in manifest["features"]
+    assert manifest["relay_image_version"] == _catalog()["relay_image_version"]
     assert "gui.gimp" in manifest["features"]
     assert "desktop.runtime" in manifest["features"]
     assert "lang.node" in manifest["features"]

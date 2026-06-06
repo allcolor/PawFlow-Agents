@@ -20,6 +20,7 @@ param(
     [string]$RelayMinimalImageRepo = $(if ($env:PAWFLOW_RELAY_MINIMAL_IMAGE_REPO) { $env:PAWFLOW_RELAY_MINIMAL_IMAGE_REPO } else { "ghcr.io/allcolor/pawflow-relay-minimal" }),
     [string]$RelayDevImage = $(if ($env:PAWFLOW_RELAY_DEV_IMAGE) { $env:PAWFLOW_RELAY_DEV_IMAGE } else { "" }),
     [string]$RelayDevImageRepo = $(if ($env:PAWFLOW_RELAY_DEV_IMAGE_REPO) { $env:PAWFLOW_RELAY_DEV_IMAGE_REPO } else { "ghcr.io/allcolor/pawflow-relay-dev" }),
+    [string]$RelayImageVersion = $env:PAWFLOW_RELAY_IMAGE_VERSION,
     [string]$RuntimeDir = $env:PAWFLOW_RUNTIME_DIR,
     [string]$DockerPlatform = $env:PAWFLOW_DOCKER_PLATFORM,
     [string]$CliLlmImage = $(if ($env:PAWFLOW_CLI_LLM_IMAGE) { $env:PAWFLOW_CLI_LLM_IMAGE } else { "pawflow-claude-code:latest" }),
@@ -46,6 +47,16 @@ function Normalize-Version($value) {
 function Image-Tag($image) {
     if (-not $image -or -not $image.Contains(':')) { return "" }
     return Normalize-Version($image.Substring($image.LastIndexOf(':') + 1))
+}
+function Resolve-RelayImageVersion($repoDir) {
+    if ($RelayImageVersion) { return $RelayImageVersion }
+    $catalog = Join-Path $repoDir "config\relay_image_catalog.json"
+    if (Test-Path $catalog) {
+        $data = Get-Content -Raw -Path $catalog | ConvertFrom-Json
+        if ($data.relay_image_version) { return [string]$data.relay_image_version }
+    }
+    if ($Version) { return $Version }
+    return "latest"
 }
 function Resolve-LatestVersion {
     $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/allcolor/PawFlow-Agents/releases?per_page=20" -Headers @{ "User-Agent" = "pawflow-installer" }
@@ -137,6 +148,7 @@ function Extract-ImageArtifacts($image, $outDir) {
             "scripts/doctor-pawflow.sh",
             "scripts/doctor-pawflow.ps1",
             "scripts/install-pawflow.ps1",
+            "config/relay_image_catalog.json",
             "docker/claude-code",
             "docker/pawflow_sdk",
             "tools/mcp_bridge.py",
@@ -274,25 +286,27 @@ Maybe-LoginGhcr
 
 $tag = if ($Version) { $Version } else { "latest" }
 if (-not $Image) { $Image = "${ImageRepo}:${tag}" }
-if (-not $RelayMinimalImage) { $RelayMinimalImage = "${RelayMinimalImageRepo}:${tag}" }
-if (-not $RelayDevImage) { $RelayDevImage = "${RelayDevImageRepo}:${tag}" }
-
-Capture-ExistingPawFlowImageIds
 
 Info "Host: Windows / PowerShell"
 Info "Version: $Version"
 Info "Server image: $Image"
-Info "Minimal relay image: $RelayMinimalImage"
-Info "Full relay image: $RelayDevImage"
 Info "CLI LLM image: $CliLlmImage (local build)"
 if ($DockerPlatform) { Info "Docker platform: $DockerPlatform" }
 
 Pull-Image $Image
-Pull-Image $RelayMinimalImage
-Pull-Image $RelayDevImage
 
 $repoDir = Runtime-DirForImage $Image
 Extract-ImageArtifacts $Image $repoDir
+$relayTag = Resolve-RelayImageVersion $repoDir
+if (-not $relayTag) { Fail "relay_image_version is missing from $repoDir\config\relay_image_catalog.json." }
+if (-not $RelayMinimalImage) { $RelayMinimalImage = "${RelayMinimalImageRepo}:${relayTag}" }
+if (-not $RelayDevImage) { $RelayDevImage = "${RelayDevImageRepo}:${relayTag}" }
+Capture-ExistingPawFlowImageIds
+Info "Relay image version: $relayTag"
+Info "Minimal relay image: $RelayMinimalImage"
+Info "Full relay image: $RelayDevImage"
+Pull-Image $RelayMinimalImage
+Pull-Image $RelayDevImage
 if (-not $SkipDoctor) {
     $doctor = Join-Path $repoDir "scripts\doctor-pawflow.ps1"
     if (Test-Path $doctor) { & $doctor -Port $Port }

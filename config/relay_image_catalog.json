@@ -1,5 +1,6 @@
 {
   "version": 1,
+  "relay_image_version": "2026.06.06",
   "required_features": ["relay.base"],
   "server_profile": "server-full",
   "server_minimal_profile": "server-minimal",

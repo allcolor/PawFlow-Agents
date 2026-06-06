@@ -171,13 +171,14 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert "--source" in install_src
     assert "--from-source" in install_src
     assert "--version" in install_src
-    assert "Image installs pull this tag; source installs checkout this git tag" in install_src
+    assert "Relay image tags come from the selected release catalog" in install_src
     assert "--pull-server" in install_src
     assert "--pull-images" in install_src
     assert "--runtime-image-mode" in install_src
     assert "PAWFLOW_RUNTIME_IMAGE_MODE" in install_src
     assert "PAWFLOW_RELAY_MINIMAL_IMAGE" in install_src
     assert "PAWFLOW_RELAY_DEV_IMAGE" in install_src
+    assert "PAWFLOW_RELAY_IMAGE_VERSION" in install_src
     assert "PAWFLOW_CLI_LLM_IMAGE" in install_src
     assert "--platform" in install_src
     assert "--native" in install_src
@@ -229,12 +230,14 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert "git clone" in install_src
     assert "image_runtime_dir" in install_src
     assert "extract_image_artifacts" in install_src
+    assert "relay_image_version" in install_src
     assert 'docker create "$image" true' in install_src
     assert 'docker cp "$cid:/app/$rel" "$out_dir/$rel"' in install_src
     assert "scripts/run-pawflow-docker.sh" in install_src
     assert "scripts/doctor-pawflow.sh" in install_src
     assert "scripts/doctor-pawflow.ps1" in install_src
     assert "scripts/install-pawflow.ps1" in install_src
+    assert "config/relay_image_catalog.json" in install_src
     assert "tools/mcp_bridge.py" in install_src
     assert "docker/pawflow_sdk" in install_src
     assert "pawflow_relay" in install_src
@@ -247,6 +250,8 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert "pawflow-claude-code:latest" in install_src
     assert "ghcr.io/allcolor/pawflow-relay-minimal" in install_src
     assert "ghcr.io/allcolor/pawflow-relay-dev" in install_src
+    assert 'RELAY_MINIMAL_IMAGE="$RELAY_MINIMAL_IMAGE_REPO:$VERSION"' not in install_src
+    assert 'RELAY_DEV_IMAGE="$RELAY_DEV_IMAGE_REPO:$VERSION"' not in install_src
     assert "windows-shell" in install_src
     assert "Native Windows shells are not supported" not in install_src
     assert 'printenv PAWFLOW_BOOTSTRAP_GATEWAY_KEY' in install_src
@@ -265,6 +270,8 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert "CheckUpdates" in install_ps1_src
     assert "SelfUpdate" in install_ps1_src
     assert "PullImages" in install_ps1_src
+    assert "RelayImageVersion" in install_ps1_src
+    assert "Resolve-RelayImageVersion" in install_ps1_src
     assert "Resolve-LatestVersion" in install_ps1_src
     assert "releases?per_page=20" in install_ps1_src
     assert "Remove-ManagedRelayContainers" in install_ps1_src
@@ -275,6 +282,7 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert "pawflow-install-$latest.zip" in install_ps1_src
     assert "scripts/doctor-pawflow.ps1" in install_ps1_src
     assert 'Join-Path $repoDir "scripts\\doctor-pawflow.ps1"' in install_ps1_src
+    assert "config/relay_image_catalog.json" in install_ps1_src
     assert "docker rm -f $Container" in install_ps1_src
     assert "Cleanup-OldImages" in install_ps1_src
     assert "Capture-ExistingPawFlowImageIds" in install_ps1_src
@@ -282,6 +290,8 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert "docker rmi -f $oldId" in install_ps1_src
     assert 'docker image prune -f --filter "dangling=true"' in install_ps1_src
     assert "ghcr.io/allcolor/pawflow" in install_ps1_src
+    assert 'RelayMinimalImage = "${RelayMinimalImageRepo}:${tag}"' not in install_ps1_src
+    assert 'RelayDevImage = "${RelayDevImageRepo}:${tag}"' not in install_ps1_src
     assert "PAWFLOW_RECREATE_CONTAINER" in run_src
     assert "recreating it with image" in run_src
     assert 'docker rm -f "$CONTAINER"' in run_src
@@ -367,6 +377,7 @@ def test_docker_publish_skips_existing_ghcr_tags():
 
     assert "Check existing image tag" in workflow
     assert "force_rebuild" in workflow
+    assert "force_rebuild_relay" in workflow
     assert "Force rebuild requested" in workflow
     assert "docker buildx imagetools inspect" in workflow
     assert "Image already exists, skipping rebuild" in workflow
@@ -565,10 +576,11 @@ def test_install_docs_and_agent_prompt_capture_bootstrap_contract():
     assert "--from-source" in doc
     assert "--native" in doc
     assert "prebuilt" in doc
-    assert "checks out the matching git tag before" in doc
+    assert "checks out the exact git" in doc
     assert "pawflow-claude-code:latest" in doc
-    assert "ghcr.io/allcolor/pawflow-relay-minimal:latest" in doc
-    assert "ghcr.io/allcolor/pawflow-relay-dev:latest" in doc
+    assert "relay_image_version" in doc
+    assert "ghcr.io/allcolor/pawflow-relay-minimal:<relay_image_version>" in doc
+    assert "ghcr.io/allcolor/pawflow-relay-dev:<relay_image_version>" in doc
 
     assert "docker info" in prompt
     assert "doctor-pawflow.sh" in prompt
@@ -579,8 +591,9 @@ def test_install_docs_and_agent_prompt_capture_bootstrap_contract():
     assert "--native" in prompt
     assert "prebuilt" in prompt
     assert "pawflow-claude-code:latest" in prompt
-    assert "ghcr.io/allcolor/pawflow-relay-minimal:latest" in prompt
-    assert "ghcr.io/allcolor/pawflow-relay-dev:latest" in prompt
+    assert "relay_image_version" in prompt
+    assert "ghcr.io/allcolor/pawflow-relay-minimal:<relay_image_version>" in prompt
+    assert "ghcr.io/allcolor/pawflow-relay-dev:<relay_image_version>" in prompt
     assert "--port PORT" in prompt
     assert "self-signed bootstrap certificate" in prompt
     assert "Do not configure relays" in prompt
@@ -633,7 +646,11 @@ def test_docker_publish_workflow_only_publishes_redistributable_images():
     assert "sbom: true" in src
     assert "provenance: true" in src
     assert "THIRD_PARTY_NOTICES.md" in src
-    assert "type=raw,value=${{ steps.release.outputs.image_tag }}" in src
+    assert "relay_image_catalog.json" in src
+    assert "relay_image_tag" in src
+    assert "Resolve effective image tag" in src
+    assert "type=raw,value=${{ steps.effective.outputs.tag }}" in src
+    assert "PAWFLOW_DOCKER_IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.image }}:${{ steps.effective.outputs.tag }}" in src
     assert "Resolve image tag" in src
     assert "Free runner disk space" in src
     assert "/opt/hostedtoolcache" in src

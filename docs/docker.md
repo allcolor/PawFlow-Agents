@@ -25,10 +25,13 @@ bash scripts/install-pawflow.sh --port PORT
 This is the recommended Linux, macOS, Windows-native Docker Desktop, and WSL2
 install path. It first tries the prebuilt server and redistributable relay
 images (`ghcr.io/allcolor/pawflow`, `ghcr.io/allcolor/pawflow-relay-minimal`,
-and `ghcr.io/allcolor/pawflow-relay-dev`, tagged `latest` or `VERSION`). If the
-server image is available, it extracts the run scripts, CLI image Docker context,
-MCP bridge, PawFlow SDK, and relay Python package from `/app` in that image into
-`PAWFLOW_RUNTIME_DIR` or `~/.pawflow/runtime/<tag>`, then pulls the relay images.
+and `ghcr.io/allcolor/pawflow-relay-dev`). The server image is tagged `latest`
+or `VERSION`; relay images are tagged independently by the extracted
+`config/relay_image_catalog.json` `relay_image_version` (`YYYY.mm.dd`). If the
+server image is available, it extracts the run scripts, relay image catalog, CLI
+image Docker context, MCP bridge, PawFlow SDK, and relay Python package from
+`/app` in that image into `PAWFLOW_RUNTIME_DIR` or `~/.pawflow/runtime/<tag>`,
+then pulls the catalog-selected relay images.
 If the server image is unavailable, it falls back to a source checkout and builds
 from source. It always builds the shared CLI LLM image locally
 (`pawflow-claude-code:latest` for Claude Code, Codex, Gemini, and Antigravity),
@@ -156,13 +159,15 @@ bash scripts/install-pawflow.sh --check-updates
 bash scripts/install-pawflow.sh --self-update
 ```
 
-`--version VERSION` first tries the prebuilt `ghcr.io/allcolor/pawflow:VERSION`,
-`ghcr.io/allcolor/pawflow-relay-minimal:VERSION`, and
-`ghcr.io/allcolor/pawflow-relay-dev:VERSION` images. `--from-source --version
-VERSION` checks out the exact git tag and fails if it is missing. `--from-source`
-without a version checks out `main`. All modes still build the local CLI LLM
-image locally; image installs get that Docker context from the pulled server
-image, while source installs use the repository checkout.
+`--version VERSION` first tries the prebuilt `ghcr.io/allcolor/pawflow:VERSION`
+server image. After the server image is extracted, the installer reads
+`config/relay_image_catalog.json` and pulls
+`ghcr.io/allcolor/pawflow-relay-minimal:<relay_image_version>` and
+`ghcr.io/allcolor/pawflow-relay-dev:<relay_image_version>`. `--from-source
+--version VERSION` checks out the exact git tag and fails if it is missing.
+`--from-source` without a version checks out `main`. All modes still build the
+local CLI LLM image locally; image installs get that Docker context from the
+pulled server image, while source installs use the repository checkout.
 
 The doctor script validates host prerequisites before install. It detects
 Linux, macOS, Windows shells, and WSL, checks Docker CLI/daemon access, WSL
@@ -240,18 +245,20 @@ These are the supported Docker install scenarios and their expected outcomes.
 
 2. Versioned install
    - Run `bash scripts/install-pawflow.sh --version VERSION`.
-   - The script first pulls `ghcr.io/allcolor/pawflow:VERSION`,
-     `ghcr.io/allcolor/pawflow-relay-minimal:VERSION`, and
-     `ghcr.io/allcolor/pawflow-relay-dev:VERSION`; if any image is unavailable,
-     it checks out git tag `VERSION` and builds the missing image from source.
-     It always builds the CLI LLM image locally.
-   - Expected result: server and relay images match the requested PawFlow version
-     when published tags exist.
+   - The script first pulls `ghcr.io/allcolor/pawflow:VERSION`, extracts its
+     runtime artifacts and relay image catalog, then pulls the relay images at
+     the catalog's `relay_image_version`. Use `--from-source --version VERSION`
+     or `--build-images --version VERSION` when you want source builds for that
+     tag instead of requiring published images. It always builds the CLI LLM
+     image locally.
+   - Expected result: the server image matches the requested PawFlow version;
+     relay images match the catalog relay image version for that PawFlow build.
 
 3. Versioned image update
    - Run `bash scripts/install-pawflow.sh --version NEW_VERSION --port PORT --pull-images` or the equivalent PowerShell command.
-   - The installer pulls the requested server and relay image tags, extracts the
-     matching runtime artifacts, rebuilds the local CLI LLM image, recreates the
+   - The installer pulls the requested server image and the catalog-selected
+     relay image tags, extracts the matching runtime artifacts, rebuilds the
+     local CLI LLM image, recreates the
      existing `pawflow-server` container, and keeps mounted data/config/certs/logs
      intact.
    - Expected result: `docker inspect pawflow-server` reports the requested

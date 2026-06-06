@@ -149,14 +149,14 @@ class PendingRequest:
         """
         self.timing[name] = time.monotonic()
 
-    def wait(self, timeout: Optional[float] = None) -> bool:
-        """Block until response is ready.
+    def wait(self) -> None:
+        """Block until response is ready. NO TIMEOUT — project rule.
 
-        Returns False when the route callback never produced an initial
-        response. That is still a backend bug, but keeping the HTTP worker
-        blocked forever turns one stuck request into a listener-wide outage.
+        If the flow never responds, this blocks forever. That's a real
+        bug we want to surface (not mask with a 503), and the HTTP
+        worker thread is a daemon — Ctrl+C kills it cleanly.
         """
-        return self._event.wait(timeout=timeout)
+        self._event.wait()
 
     def complete(self, status: int, headers: Dict[str, str], body: bytes):
         """Set the response and unblock the waiting HTTP handler."""
@@ -782,31 +782,13 @@ class _RequestHandler(BaseHTTPRequestHandler):
             return
         req.mark("dispatch")
 
-        # Block until the flow produces the initial HTTP response. This is a
-        # listener guard, not an action timeout: long/cancellable work must
-        # respond with a stream, accepted job state, or explicit UI-cancellable
-        # handle instead of pinning the HTTP worker indefinitely.
-        if not req.wait(timeout=self.server._request_timeout):
-            self.server._pending_requests.pop(req.request_id, None)
-            waited_ms = round((time.monotonic() - req.timing.get(
-                "recv", req.timing.get("dispatch", time.monotonic()))) * 1000)
-            _action = _request_action_label(req)
-            logger.error(
-                "[http] request timed out waiting for flow response — %s %s%s "
-                "waited=%dms request_id=%s pending=%d",
-                method, path, f" action={_action}" if _action else "",
-                waited_ms, req.request_id[:8],
-                len(self.server._pending_requests))
-            self.send_response(503)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps({
-                "error": "HTTP route did not produce a response",
-                "request_id": req.request_id,
-                "path": path,
-            }).encode("utf-8"))
-            req.mark("send")
-            return
+        # Block until flow responds. NO TIMEOUT — project rule: only the
+        # LLM watchdog has a timeout, nowhere else. If a request stalls
+        # forever, that's a backend bug we want to surface (not paper over
+        # with a 503). The slow-response log below catches slow responses,
+        # but skips paths that are legitimately long-lived (LLM streaming
+        # through /relay-proxy/ can take 60+ s per turn).
+        req.wait()
         # `respond` is marked from inside complete()/complete_stream(),
         # capturing when the flow actually handed us the response — not
         # when this thread woke up from the event.

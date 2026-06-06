@@ -282,7 +282,7 @@ def test_websocket_only_route_callbacks_complete_plain_http(monkeypatch):
             body=b"",
         )
         callback(req)
-        assert req.wait(timeout=0)
+        assert req.completed is True
         assert req.response_status == 426
         assert b"WebSocket upgrade required" in req.response_body
 
@@ -382,16 +382,6 @@ class TestPendingRequest:
         assert req.response_status == 200
         assert req.response_body == b"OK"
         t.join()
-
-    def test_wait_returns_false_on_timeout(self):
-        req = PendingRequest(
-            request_id="abc", method="GET", path="/",
-            headers={}, body=b"",
-        )
-
-        assert req.wait(timeout=0.001) is False
-        assert req.completed is False
-
 
 # ---------------------------------------------------------------------------
 # HTTPListenerService tests
@@ -499,6 +489,28 @@ class TestHTTPListenerService:
             )
             resp = urllib.request.urlopen(req, timeout=5)
             assert resp.status == 200
+        finally:
+            svc.disconnect()
+
+    def test_request_timeout_zero_does_not_short_circuit_flow_response(self):
+        svc = HTTPListenerService({"host": "127.0.0.1", "port": 19915, "request_timeout": 0})
+        svc.connect()
+        try:
+            def delayed(req):
+                def respond():
+                    time.sleep(0.15)
+                    req.complete(200, {"Content-Type": "text/plain"}, b"late-ok")
+                threading.Thread(target=respond, daemon=True).start()
+
+            svc.register_route("GET", "/delayed", "test", delayed)
+            req = urllib.request.Request(
+                "http://127.0.0.1:19915/delayed",
+                method="GET",
+                headers={"Cookie": f"pawflow_token={_create_test_session()}"},
+            )
+            resp = urllib.request.urlopen(req, timeout=5)
+            assert resp.status == 200
+            assert resp.read() == b"late-ok"
         finally:
             svc.disconnect()
 

@@ -161,7 +161,15 @@ def test_flow_template_graph_passes_conversation_id():
     assert "window.__PAWFLOW_FLOW_CONVERSATION_ID" in services_js
     assert "conversation_id=' + encodeURIComponent(convId)" in services_js
     assert "const CONVERSATION_ID = params.get('conversation_id')" in flow_graph
-    assert "template_id: TEMPLATE_ID, conversation_id: CONVERSATION_ID" in flow_graph
+    assert "template_id: TEMPLATE_ID, conversation_id: CONVERSATION_ID, _inline_response: true" in flow_graph
+    assert "API_BASE + '/api/ui'" in flow_graph
+
+
+def test_flow_graph_fetch_busts_immutable_chat_js_cache():
+    services_js = Path("tasks/io/chat_ui/services.js").read_text(encoding="utf-8")
+
+    assert "'&v=' + encodeURIComponent(Date.now())" in services_js
+    assert "cache: 'no-store'" in services_js
 
 
 def test_flow_graph_handles_missing_nodes_edges_response():

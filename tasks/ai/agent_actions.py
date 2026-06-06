@@ -321,7 +321,11 @@ class AgentActionsMixin:
                         action, result, reply_conversation_id, call_id, flowfile)
 
         conversation_id = body.get("conversation_id", "")
-        reply_conversation_id = body.get("_reply_conversation_id", "") or reply_conversation_id or conversation_id
+        inline_response = bool(body.get("_inline_response"))
+        reply_conversation_id = body.get("_reply_conversation_id", "") or (
+            "" if inline_response else reply_conversation_id)
+        if not inline_response:
+            reply_conversation_id = reply_conversation_id or conversation_id
         call_id = body.get("_call_id", "") or call_id
 
         # No reply bus available → run synchronously and return the payload

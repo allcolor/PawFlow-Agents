@@ -829,15 +829,18 @@ function App() {
   const layoutDone = useRef(false);
   const timerRef = useRef(null);
   const fetchData = useCallback(async () => {
+    let stage = 'prepare request';
     try {
       const body = TEMPLATE_ID
-        ? { action: 'flow_runtime_graph', template_id: TEMPLATE_ID, conversation_id: CONVERSATION_ID }
-        : { action: 'flow_runtime_graph', instance_id: INSTANCE_ID };
-      const resp = await fetch(API_BASE + '/api/agent', {
+        ? { action: 'flow_runtime_graph', template_id: TEMPLATE_ID, conversation_id: CONVERSATION_ID, _inline_response: true }
+        : { action: 'flow_runtime_graph', instance_id: INSTANCE_ID, _inline_response: true };
+      stage = 'fetch graph data';
+      const resp = await fetch(API_BASE + '/api/ui', {
         method: 'POST',
         headers: getAuthHeaders(),
         body: JSON.stringify(body),
       });
+      stage = 'parse graph response';
       const data = await resp.json();
       if (data.error) { setError(data.error); return; }
       setFlowName(data.flow_name || TEMPLATE_ID || INSTANCE_ID);
@@ -845,15 +848,18 @@ function App() {
       setError('');
 
       if (!data.nodes || !data.edges) {
-        setError('Flow graph response is missing nodes or edges');
+        const keys = data && typeof data === 'object' ? Object.keys(data).join(',') : typeof data;
+        setError('Flow graph response is missing nodes or edges (keys: ' + keys + ')');
         setNodes([]);
         setEdges([]);
         return;
       }
+      stage = 'normalize graph data';
       const rfNodes = toRFNodes(data.nodes);
       const validNodeIds = new Set(rfNodes.map(n => n.id));
       const rfEdges = toRFEdges(data.edges, validNodeIds);
 
+      stage = 'layout graph';
       if (!layoutDone.current && rfNodes.length > 0) {
         const laid = safeLayoutGraph(rfNodes, rfEdges);
         setNodes(laid);
@@ -862,7 +868,7 @@ function App() {
         // Update in-place, keep positions
         setNodes(prev => {
           const posMap = {};
-          prev.forEach(n => { posMap[n.id] = n.position; });
+          (Array.isArray(prev) ? prev : []).forEach(n => { posMap[n.id] = n.position; });
           const newIds = rfNodes.filter(n => !posMap[n.id]);
           if (newIds.length > 0) {
             const laid = safeLayoutGraph(rfNodes, rfEdges);
@@ -873,7 +879,7 @@ function App() {
       }
       setEdges(rfEdges);
     } catch (e) {
-      setError('Fetch failed: ' + e.message);
+      setError(stage + ': ' + (e.message || e));
     }
   }, [setNodes, setEdges]);
 

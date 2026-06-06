@@ -52,8 +52,9 @@ function showFlowInstanceMenu(e, instanceId, status, scope) {
 
 async function _openFlowGraphTab(instanceId) {
   try {
-    const graphUrl = '/chat/js/flow_graph.html?instance_id=' + encodeURIComponent(instanceId);
-    const resp = await fetch(graphUrl, { credentials: 'same-origin' });
+    const graphUrl = '/chat/js/flow_graph.html?instance_id=' + encodeURIComponent(instanceId)
+      + '&v=' + encodeURIComponent(Date.now());
+    const resp = await fetch(graphUrl, { credentials: 'same-origin', cache: 'no-store' });
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     let html = await resp.text();
     const bootstrap = '<script>window.__PAWFLOW_FLOW_INSTANCE_ID=' + JSON.stringify(instanceId) + ';<\/script>\n';
@@ -68,8 +69,9 @@ async function _openFlowTemplateGraphTab(templateId) {
   try {
     const convId = typeof conversationId !== 'undefined' ? (conversationId || '') : '';
     const graphUrl = '/chat/js/flow_graph.html?template_id=' + encodeURIComponent(templateId)
-      + (convId ? '&conversation_id=' + encodeURIComponent(convId) : '');
-    const resp = await fetch(graphUrl, { credentials: 'same-origin' });
+      + (convId ? '&conversation_id=' + encodeURIComponent(convId) : '')
+      + '&v=' + encodeURIComponent(Date.now());
+    const resp = await fetch(graphUrl, { credentials: 'same-origin', cache: 'no-store' });
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     let html = await resp.text();
     const bootstrap = '<script>window.__PAWFLOW_FLOW_TEMPLATE_ID=' + JSON.stringify(templateId)

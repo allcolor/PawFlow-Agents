@@ -114,6 +114,8 @@ def test_flow_graph_opens_reactflow_via_blob_to_avoid_frame_refusal():
     assert '<link rel="stylesheet" href="https://esm.sh/@xyflow/react@12.6.0/dist/style.css">' not in _FLOW_GRAPH_HTML
     assert "panOnDrag: true" in _FLOW_GRAPH_HTML
     assert "zoomOnScroll: true" in _FLOW_GRAPH_HTML
+    assert "_inline_response: true" in _FLOW_GRAPH_HTML
+    assert "API_BASE + '/api/ui'" in _FLOW_GRAPH_HTML
 
 
 def test_existing_vscode_tab_refreshes_new_capability_url():

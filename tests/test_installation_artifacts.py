@@ -193,6 +193,8 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert "cleanup_old_pawflow_images" in install_src
     assert "capture_existing_pawflow_image_ids" in install_src
     assert "cleanup_retagged_pawflow_images" in install_src
+    assert 'local cli_repo="$CLI_LLM_IMAGE"' in install_src
+    assert 'sed \'s/:[^/]*$//\'' in install_src
     assert "Removing old untagged PawFlow image id" in install_src
     assert 'docker rmi -f "$old_id"' in install_src
     assert 'docker image prune -f --filter "dangling=true"' in install_src

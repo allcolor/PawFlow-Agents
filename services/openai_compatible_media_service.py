@@ -8,6 +8,7 @@ timeout; the media service supplies the media-specific protocol and parsing.
 from __future__ import annotations
 
 import base64
+import copy
 import json
 import logging
 import re
@@ -130,6 +131,16 @@ class _OpenAICompatibleMediaMixin:
         if provider != "openai":
             raise ServiceError(
                 f"OpenAI-compatible {self.MEDIA_KIND} generation requires an openai llmConnection, got {provider or 'unknown'}")
+        client = getattr(svc, "_client", None)
+        if hasattr(svc, "get_client"):
+            client = svc.get_client()
+        elif client is not None and hasattr(client, "clone_for_call"):
+            client = client.clone_for_call()
+        if client is not None:
+            svc = copy.copy(svc)
+            svc._client = client
+            svc._client._user_id = self._runtime_user_id
+            svc._client._conversation_id = self._runtime_conversation_id
         if not getattr(svc, "api_key", ""):
             raise ServiceError(f"LLM service '{self.llm_service}' has no api_key")
         return svc

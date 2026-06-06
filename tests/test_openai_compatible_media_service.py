@@ -9,11 +9,18 @@ from services.openai_compatible_media_service import (
 
 
 class FakeClient:
+    def __init__(self):
+        self._user_id = ""
+        self._conversation_id = ""
+
     @staticmethod
     def _openai_tokens_key(model, base_url):
         if "api.openai.com" in base_url and model.startswith("gpt-5"):
             return "max_completion_tokens"
         return "max_tokens"
+
+    def clone_for_call(self):
+        return FakeClient()
 
 
 class FakeLLMService:
@@ -77,6 +84,36 @@ def test_image_service_uses_openai_images_for_bare_openai(monkeypatch):
     assert calls[0][2]["size"] == "1536x1024"
     assert calls[0][2]["output_format"] == "png"
     assert "response_format" not in calls[0][2]
+
+
+def test_resolved_llm_service_gets_runtime_context_on_cloned_client(monkeypatch):
+    svc = OpenAICompatibleImageGenerationService({
+        "llm_service": "openai_llm",
+        "model": "gpt-image-1",
+    })
+    svc.set_runtime_context(user_id="alice", conversation_id="conv1")
+    llm = FakeLLMService("https://api.openai.com/v1", "gpt-image-1")
+
+    class FakeRegistry:
+        def resolve_definition(self, *_args, **_kwargs):
+            return type("Def", (), {"service_type": "llmConnection"})()
+
+        def resolve(self, *_args, **_kwargs):
+            return llm
+
+    monkeypatch.setattr(
+        "core.service_registry.ServiceRegistry.get_instance",
+        staticmethod(lambda: FakeRegistry()),
+    )
+
+    resolved = svc._resolve_llm_service()
+
+    assert resolved is not llm
+    assert resolved._client is not llm._client
+    assert resolved._client._user_id == "alice"
+    assert resolved._client._conversation_id == "conv1"
+    assert llm._client._user_id == ""
+    assert llm._client._conversation_id == ""
 
 
 def test_image_service_uses_chat_completions_for_openrouter_and_max_tokens(monkeypatch):

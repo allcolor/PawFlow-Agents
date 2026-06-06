@@ -352,7 +352,8 @@ cleanup_old_pawflow_images() {
 }
 
 capture_existing_pawflow_image_ids() {
-  local cli_repo="${CLI_LLM_IMAGE%%}"
+  local cli_repo="$CLI_LLM_IMAGE"
+  if [[ "${CLI_LLM_IMAGE##*/}" == *:* ]]; then cli_repo="$(printf '%s' "$CLI_LLM_IMAGE" | sed 's/:[^/]*$//')"; fi
   OLD_PAWFLOW_IMAGE_IDS="$(docker images --format '{{.Repository}} {{.Tag}} {{.ID}}' | while read -r repo tag id; do
     case "$repo" in
       "$IMAGE_REPO"|"$RELAY_MINIMAL_IMAGE_REPO"|"$RELAY_DEV_IMAGE_REPO") printf '%s\n' "$id" ;;

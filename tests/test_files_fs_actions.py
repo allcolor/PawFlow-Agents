@@ -209,3 +209,37 @@ def test_flow_runtime_graph_loads_repository_template(tmp_path, monkeypatch):
         "max_queue": 10000,
         "backpressured": False,
     }]
+
+
+def test_flow_runtime_graph_includes_subflow_groups(tmp_path):
+    from tasks.ai.actions.files_fs import _static_flow_graph
+
+    child = tmp_path / "child.json"
+    child.write_text(json.dumps({
+        "id": "child",
+        "version": "1.0.0",
+        "tasks": {},
+        "relations": [],
+    }), encoding="utf-8")
+    nodes, edges = _static_flow_graph({
+        "tasks": {"trigger": {"type": "cronTrigger", "parameters": {}}},
+        "groups": {
+            "child_group": {
+                "name": "Child group",
+                "flow_ref": {"path": str(child), "version": "1.0.0"},
+                "port_mapping": {"input": {"port_task_id": "in_port"}},
+            },
+        },
+        "relations": [{"from": "trigger", "to": "child_group", "type": "success"}],
+    })
+
+    assert nodes["child_group"]["type"] == "subflow"
+    assert nodes["child_group"]["subflow_ref"] == {"path": str(child), "version": "1.0.0"}
+    assert edges == [{
+        "source": "trigger",
+        "target": "child_group",
+        "relationship": "success",
+        "queue_size": 0,
+        "max_queue": 10000,
+        "backpressured": False,
+    }]

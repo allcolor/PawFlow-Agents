@@ -161,7 +161,8 @@ def test_flow_template_graph_passes_conversation_id():
     assert "window.__PAWFLOW_FLOW_CONVERSATION_ID" in services_js
     assert "conversation_id=' + encodeURIComponent(convId)" in services_js
     assert "const CONVERSATION_ID = params.get('conversation_id')" in flow_graph
-    assert "template_id: TEMPLATE_ID, conversation_id: CONVERSATION_ID, _inline_response: true" in flow_graph
+    assert "template_id: graph.template_id" in flow_graph
+    assert "conversation_id: graph.conversation_id || ''" in flow_graph
     assert "API_BASE + '/api/ui'" in flow_graph
 
 
@@ -179,6 +180,20 @@ def test_flow_graph_handles_missing_nodes_edges_response():
     assert "function safeLayoutGraph(nodes, edges)" in flow_graph
     assert "!validNodeIds.has(source) || !validNodeIds.has(target)" in flow_graph
     assert "Flow graph response is missing nodes or edges" in flow_graph
+
+
+def test_flow_graph_supports_subflow_navigation():
+    flow_graph = Path("tasks/io/chat_ui/flow_graph.html").read_text(encoding="utf-8")
+
+    assert "'flow-node', 'nodrag', 'nopan'" in flow_graph
+    assert "onNodeContextMenu" in flow_graph
+    assert "onNodeDoubleClick" in flow_graph
+    assert "elementsSelectable: true" in flow_graph
+    assert "Open subflow" in flow_graph
+    assert "graph-context-menu" in flow_graph
+    assert "flow_ref: graph.flow_ref" in flow_graph
+    assert "setGraphStack(prev => [...prev, next])" in flow_graph
+    assert "id: 'backButton'" in flow_graph
 
 
 def test_chat_ui_html_helpers_escape_attribute_and_js_contexts():

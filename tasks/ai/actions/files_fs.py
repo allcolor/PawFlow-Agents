@@ -61,6 +61,21 @@ def _static_flow_graph(raw: Dict[str, Any]):
             "error": "",
             "in_flight": False,
         }
+    for gid, gdef in (raw.get("groups") or {}).items():
+        if not isinstance(gdef, dict):
+            continue
+        flow_ref = gdef.get("flow_ref") or {}
+        nodes[gid] = {
+            "type": "subflow" if flow_ref else "processGroup",
+            "state": "stopped",
+            "in": 0,
+            "out": 0,
+            "error_count": 0,
+            "error": "",
+            "in_flight": False,
+            "subflow_ref": flow_ref,
+            "group_name": gdef.get("name", gid),
+        }
     for rel in raw.get("relations", []) or []:
         source = rel.get("from") or rel.get("source")
         target = rel.get("to") or rel.get("target")
@@ -75,6 +90,31 @@ def _static_flow_graph(raw: Dict[str, Any]):
             "backpressured": False,
         })
     return nodes, edges
+
+
+def _load_flow_ref_definition(flow_ref: Dict[str, Any]) -> Dict[str, Any]:
+    """Load a graph sub-flow from a ProcessGroup flow_ref."""
+    from pathlib import Path as _P
+
+    ref_path = str((flow_ref or {}).get("path") or "")
+    if not ref_path:
+        raise FileNotFoundError("Missing subflow flow_ref.path")
+    path = _P(ref_path)
+    if not path.is_absolute():
+        path = _P.cwd() / path
+    root = _P.cwd().resolve()
+    resolved = path.resolve()
+    if root not in resolved.parents and resolved != root:
+        raise PermissionError(f"Subflow path is outside the workspace: {ref_path}")
+    if resolved.suffix != ".json":
+        raise ValueError(f"Subflow path must point to a JSON flow: {ref_path}")
+    raw = json.loads(resolved.read_text(encoding="utf-8"))
+    expected_version = str((flow_ref or {}).get("version") or "")
+    if expected_version and str(raw.get("version") or "") != expected_version:
+        raise ValueError(
+            f"Subflow version mismatch for {ref_path}: expected "
+            f"{expected_version}, got {raw.get('version') or '(none)'}")
+    return raw
 
 
 def _load_flow_template_definition(template_id: str, user_id: str,
@@ -226,8 +266,9 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
     if action == "flow_runtime_graph":
         instance_id = body.get("instance_id", "")
         template_id = body.get("template_id", "")
-        if not instance_id and not template_id:
-            flowfile.set_content(json.dumps({"error": "instance_id or template_id required"}).encode())
+        flow_ref = body.get("flow_ref") if isinstance(body.get("flow_ref"), dict) else None
+        if not instance_id and not template_id and not flow_ref:
+            flowfile.set_content(json.dumps({"error": "instance_id, template_id, or flow_ref required"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         try:
@@ -238,7 +279,11 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
             edges = []
             flow_name = instance_id or template_id
 
-            if template_id:
+            if flow_ref:
+                raw = _load_flow_ref_definition(flow_ref)
+                flow_name = raw.get("name") or raw.get("id") or flow_ref.get("path", "subflow")
+                nodes, edges = _static_flow_graph(raw)
+            elif template_id:
                 raw = _load_flow_template_definition(
                     template_id, user_id, body.get("conversation_id", ""))
                 flow_name = raw.get("name") or raw.get("id") or template_id
@@ -261,6 +306,13 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
                             "error": (st.get("error_message") or st.get("error", ""))[:80],
                             "in_flight": st.get("in_flight", False),
                         }
+                    for gid, group in getattr(executor._flow, "groups", {}).items():
+                        if gid not in nodes:
+                            continue
+                        flow_ref = getattr(group, "flow_ref", None) or {}
+                        nodes[gid]["type"] = "subflow" if flow_ref else nodes[gid].get("type", "processGroup")
+                        nodes[gid]["subflow_ref"] = flow_ref
+                        nodes[gid]["group_name"] = getattr(group, "name", gid)
                     for qs in executor.get_queue_stats():
                         edges.append({
                             "source": qs["source"],

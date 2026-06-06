@@ -24,6 +24,11 @@
   #statusBar .dot.stopped { background: #6c757d; }
   #statusBar .dot.error { background: #dc3545; }
   #statusBar .name { color: #e0e0e0; font-weight: 600; }
+  #backButton { background: #1a1a2e; border: 1px solid #333; color: #e0e0e0; border-radius: 4px; padding: 2px 8px; cursor: pointer; font-size: 11px; }
+  #backButton:hover { background: #2a2a4a; }
+  .graph-context-menu { position: fixed; z-index: 1000; background: #141414; border: 1px solid #333; border-radius: 6px; padding: 4px 0; min-width: 150px; box-shadow: 0 4px 12px rgba(0,0,0,0.5); }
+  .graph-context-menu button { width: 100%; background: transparent; border: 0; color: #e0e0e0; padding: 7px 12px; text-align: left; cursor: pointer; font-size: 12px; }
+  .graph-context-menu button:hover { background: #2a2a4a; }
 
   @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
   @keyframes edgeFlow { to { stroke-dashoffset: -20; } }
@@ -34,12 +39,14 @@
   .flow-node.running { border-color: #28a745; }
   .flow-node.error { border-color: #dc3545; }
   .flow-node.disabled { border-color: #343a40; opacity: 0.5; }
+  .flow-node.subflow { border-color: #00d4aa; cursor: pointer; }
   .flow-node.in-flight { border-style: dashed; border-color: #28a745; box-shadow: 0 0 10px rgba(40,167,69,0.5); animation: pulse 1.5s infinite; }
   .flow-node .node-type { font-size: 10px; color: #888; margin-bottom: 2px; }
   .flow-node .node-id { font-weight: 600; font-size: 12px; margin-bottom: 4px; }
   .flow-node .node-stats { font-size: 10px; color: #666; display: flex; justify-content: center; gap: 8px; }
   .flow-node .node-stats span { display: flex; align-items: center; gap: 2px; }
   .flow-node .node-error { font-size: 9px; color: #e94560; margin-top: 3px; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .flow-node .node-hint { font-size: 9px; color: #00d4aa; margin-top: 3px; }
   .flow-node .state-dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; margin-right: 4px; vertical-align: middle; }
   .flow-node .state-dot.running { background: #28a745; }
   .flow-node .state-dot.stopped { background: #6c757d; }
@@ -755,8 +762,18 @@ function queueColor(size, max) {
 // ── Custom Node ──
 const FlowNode = memo(({ data }) => {
   const st = data.state || 'stopped';
-  const cls = ['flow-node', st, data.in_flight ? 'in-flight' : ''].filter(Boolean).join(' ');
-  return jsx('div', { className: cls, children: jsxs(Fragment, { children: [
+  const cls = ['flow-node', 'nodrag', 'nopan', st, data.isSubflow ? 'subflow' : '', data.in_flight ? 'in-flight' : ''].filter(Boolean).join(' ');
+  const open = (ev) => {
+    if (!data.isSubflow || !data.onOpenSubflow) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    data.onOpenSubflow(data.subflowRef);
+  };
+  return jsx('div', {
+    className: cls,
+    onDoubleClick: open,
+    'data-subflow-ref': data.isSubflow ? JSON.stringify(data.subflowRef || {}) : '',
+    children: jsxs(Fragment, { children: [
     jsx(Handle, { type: 'target', position: Position.Left, style: { background: '#555' } }),
     jsx('div', { className: 'node-type', children: data.taskType }),
     jsxs('div', { className: 'node-id', children: [
@@ -768,6 +785,7 @@ const FlowNode = memo(({ data }) => {
       data.pending > 0 && jsxs('span', { style: { color: '#ffc107' }, children: ['\u23F3 ', data.pending] }),
       data.error_count > 0 && jsxs('span', { style: { color: '#e94560' }, children: ['\u26A0 ', data.error_count] }),
     ] }),
+    data.isSubflow && jsx('div', { className: 'node-hint', children: 'double-click or right-click' }),
     data.error && jsx('div', { className: 'node-error', title: data.error, children: data.error }),
     jsx(Handle, { type: 'source', position: Position.Right, style: { background: '#555' } }),
   ] }) });
@@ -777,19 +795,23 @@ FlowNode.displayName = 'FlowNode';
 const nodeTypes = { flowNode: FlowNode };
 
 // ── Convert API data to React Flow format ──
-function toRFNodes(apiNodes) {
+function toRFNodes(apiNodes, onOpenSubflow) {
   const entries = Array.isArray(apiNodes)
     ? apiNodes.map((n, i) => [String(n?.id || n?.name || `node-${i}`), n || {}])
     : Object.entries(apiNodes && typeof apiNodes === 'object' ? apiNodes : {});
   return entries.map(([id, n]) => ({
     id: String(id),
     type: 'flowNode',
+    className: n?.subflow_ref && n.subflow_ref.path ? 'nopan' : '',
     position: { x: 0, y: 0 },
     data: {
-      label: String(id), taskType: n?.type || '?', state: n?.state || 'stopped',
+      label: n?.group_name || String(id), taskType: n?.type || '?', state: n?.state || 'stopped',
       stats_in: n?.in || 0, stats_out: n?.out || 0,
       error_count: n?.error_count || 0, error: n?.error || '',
       in_flight: !!n?.in_flight, pending: n?.pending || 0,
+      subflowRef: n?.subflow_ref || null,
+      isSubflow: !!(n?.subflow_ref && n.subflow_ref.path),
+      onOpenSubflow,
     },
   }));
 }
@@ -823,17 +845,39 @@ function toRFEdges(apiEdges, validNodeIds) {
 function App() {
   const [nodes, setNodes] = useNodesState([]);
   const [edges, setEdges] = useEdgesState([]);
+  const [graphStack, setGraphStack] = useState([{ instance_id: INSTANCE_ID, template_id: TEMPLATE_ID, conversation_id: CONVERSATION_ID, flow_ref: null }]);
   const [flowName, setFlowName] = useState('');
   const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState('');
+  const [contextMenu, setContextMenu] = useState(null);
   const layoutDone = useRef(false);
   const timerRef = useRef(null);
-  const fetchData = useCallback(async () => {
+  const openSubflow = useCallback((ref) => {
+    if (!ref || !ref.path) return;
+    const next = { flow_ref: ref, instance_id: '', template_id: '', conversation_id: '' };
+    layoutDone.current = false;
+    setNodes([]);
+    setEdges([]);
+    setContextMenu(null);
+    setGraphStack(prev => [...prev, next]);
+  }, [setNodes, setEdges]);
+
+  const onNodeContextMenu = useCallback((event, node) => {
+    const ref = node?.data?.subflowRef;
+    if (!ref || !ref.path) return;
+    event.preventDefault();
+    setContextMenu({ x: event.clientX, y: event.clientY, ref });
+  }, []);
+
+  const fetchData = useCallback(async (graphOverride) => {
     let stage = 'prepare request';
     try {
-      const body = TEMPLATE_ID
-        ? { action: 'flow_runtime_graph', template_id: TEMPLATE_ID, conversation_id: CONVERSATION_ID, _inline_response: true }
-        : { action: 'flow_runtime_graph', instance_id: INSTANCE_ID, _inline_response: true };
+      const graph = graphOverride || graphStack[graphStack.length - 1] || {};
+      const body = graph.flow_ref
+        ? { action: 'flow_runtime_graph', flow_ref: graph.flow_ref, _inline_response: true }
+        : graph.template_id
+          ? { action: 'flow_runtime_graph', template_id: graph.template_id, conversation_id: graph.conversation_id || '', _inline_response: true }
+          : { action: 'flow_runtime_graph', instance_id: graph.instance_id || '', _inline_response: true };
       stage = 'fetch graph data';
       const resp = await fetch(API_BASE + '/api/ui', {
         method: 'POST',
@@ -855,7 +899,7 @@ function App() {
         return;
       }
       stage = 'normalize graph data';
-      const rfNodes = toRFNodes(data.nodes);
+      const rfNodes = toRFNodes(data.nodes, openSubflow);
       const validNodeIds = new Set(rfNodes.map(n => n.id));
       const rfEdges = toRFEdges(data.edges, validNodeIds);
 
@@ -881,14 +925,33 @@ function App() {
     } catch (e) {
       setError(stage + ': ' + (e.message || e));
     }
+  }, [setNodes, setEdges, graphStack, openSubflow]);
+
+  const goBack = useCallback(() => {
+    setGraphStack(prev => {
+      if (prev.length <= 1) return prev;
+      const nextStack = prev.slice(0, -1);
+      const nextGraph = nextStack[nextStack.length - 1];
+      layoutDone.current = false;
+      setNodes([]);
+      setEdges([]);
+      return nextStack;
+    });
   }, [setNodes, setEdges]);
+
+  useEffect(() => {
+    if (!contextMenu) return undefined;
+    const close = () => setContextMenu(null);
+    document.addEventListener('click', close);
+    return () => document.removeEventListener('click', close);
+  }, [contextMenu]);
 
   useEffect(() => {
     if (!INSTANCE_ID && !TEMPLATE_ID) { setError('No instance_id or template_id parameter'); return; }
     fetchData();
-    if (!TEMPLATE_ID) timerRef.current = setInterval(fetchData, POLL_INTERVAL);
+    if (!TEMPLATE_ID && graphStack.length === 1) timerRef.current = setInterval(fetchData, POLL_INTERVAL);
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [fetchData]);
+  }, [fetchData, graphStack.length]);
 
   // Hide loading
   useEffect(() => {
@@ -900,6 +963,7 @@ function App() {
 
   return jsxs(Fragment, { children: [
     jsxs('div', { id: 'statusBar', children: [
+      graphStack.length > 1 && jsx('button', { id: 'backButton', onClick: goBack, children: '<=' }),
       jsx('span', { className: 'dot ' + statusClass }),
       jsx('span', { className: 'name', children: flowName }),
       jsx('span', { children: isRunning ? 'Running' : 'Stopped' }),
@@ -910,7 +974,12 @@ function App() {
       nodeTypes,
       nodesDraggable: false,
       nodesConnectable: false,
-      elementsSelectable: false,
+      elementsSelectable: true,
+      onNodeContextMenu,
+      onNodeDoubleClick: (event, node) => {
+        const ref = node?.data?.subflowRef;
+        if (ref && ref.path) openSubflow(ref);
+      },
       panOnDrag: true,
       zoomOnScroll: true,
       zoomOnPinch: true,
@@ -927,6 +996,15 @@ function App() {
         }),
         jsx(Controls, { showInteractive: false }),
       ] }),
+    }),
+    contextMenu && jsx('div', {
+      className: 'graph-context-menu',
+      style: { left: contextMenu.x, top: contextMenu.y },
+      onClick: ev => ev.stopPropagation(),
+      children: jsx('button', {
+        onClick: () => openSubflow(contextMenu.ref),
+        children: 'Open subflow',
+      }),
     }),
   ] });
 }

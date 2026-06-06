@@ -27,6 +27,7 @@ class AgentRequest:
     attachments: list = field(default_factory=list)
     msg_id: str = ""
     channel: str = "web"
+    runtime_port: str = ""
     source_attributes: Dict[str, str] = field(default_factory=dict)
 
 
@@ -163,9 +164,17 @@ class AgentRuntimeAPI:
         for key, value in (request.source_attributes or {}).items():
             ff.set_attribute(str(key), str(value))
 
-        from tasks.ai.agent_loop import AgentLoopTask
-        inst = AgentLoopTask._live_instance
+        inst = None
+        if request.runtime_port:
+            from core.agent_runtime_ports import resolve_agent_runtime_task
+            inst = resolve_agent_runtime_task(request.runtime_port)
+        else:
+            from tasks.ai.agent_loop import AgentLoopTask
+            inst = AgentLoopTask._live_instance
         if inst is None:
+            if request.runtime_port:
+                raise RuntimeError(
+                    f"No live AgentLoopTask is available for runtime port: {request.runtime_port}")
             raise RuntimeError("No live AgentLoopTask instance is available")
 
         waiter = AgentResultWaiter.instance()

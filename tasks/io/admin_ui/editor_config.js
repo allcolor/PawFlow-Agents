@@ -38,19 +38,19 @@ function renderEditorConfig() {
 
     // Connections summary
     var rels = editorFlowData.relations || [];
-    var incoming = rels.filter(function(r) { return r.to === tid; });
-    var outgoing = rels.filter(function(r) { return r.from === tid; });
+    var incoming = rels.filter(function(r) { return (r.to || r.target) === tid; });
+    var outgoing = rels.filter(function(r) { return (r.from || r.source) === tid; });
     if (incoming.length > 0 || outgoing.length > 0) {
         html += '<div class="card-title" style="margin-top:12px">Connections</div>';
         incoming.forEach(function(r, i) {
             html += '<div style="font-size:12px;padding:2px 0;color:var(--text-dim)">'
-                + '\u2B05 ' + esc(r.from) + ' <span style="color:var(--green)">[' + esc(r.type || "?") + ']</span>'
+                + '\u2B05 ' + esc(r.from || r.source) + ' <span style="color:var(--green)">[' + esc(r.type || "?") + ']</span>'
                 + '</div>';
         });
         outgoing.forEach(function(r, i) {
             var relIdx = rels.indexOf(r);
             html += '<div style="font-size:12px;padding:2px 0;display:flex;align-items:center;justify-content:space-between">';
-            html += '<span style="color:var(--text-dim)">\u27A1 ' + esc(r.to) + ' <span style="color:var(--green)">[' + esc(r.type || "?") + ']</span></span>';
+            html += '<span style="color:var(--text-dim)">\u27A1 ' + esc(r.to || r.target) + ' <span style="color:var(--green)">[' + esc(r.type || "?") + ']</span></span>';
             html += '<button class="btn btn-ghost btn-sm" style="font-size:10px;padding:1px 4px" onclick="editorDeleteConnection(' + relIdx + ')">x</button>';
             html += '</div>';
         });

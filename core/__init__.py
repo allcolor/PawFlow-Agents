@@ -249,6 +249,8 @@ class Flow:
         self.parameters = config.get('parameters', {})
         self.entries = config.get('entries', [])
         self.exits = config.get('exits', [])
+        self.ports = config.get('ports', {})
+        self.runtime_links = config.get('runtime_links', [])
         self.tasks: Dict[str, Task] = {}
         self.services: Dict[str, Service] = {}
         # Groups: Dict[str, ProcessGroup] — parsed from config in FlowParser

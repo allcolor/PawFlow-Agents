@@ -2425,80 +2425,14 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         return [flowfile]
 
     if action == "create_conversation":
-        agents = body.get("agents", [])
-        if not agents or not isinstance(agents, list):
-            flowfile.set_content(json.dumps({"error": "'agents' list is required"}).encode())
+        try:
+            from core.conversation_creation import create_conversation
+            result = create_conversation(user_id, body)
+        except ValueError as exc:
+            flowfile.set_content(json.dumps({"error": str(exc)}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
-        from core.resource_store import ResourceStore
-        uid = user_id
-        rs = ResourceStore.instance()
-        from core.conv_agent_config import add_agent_to_conv
-        _agent_entries = []
-        for item in agents:
-            if not isinstance(item, dict):
-                continue
-            iname = item.get("instance_name") or item.get("name", "")
-            _agent_entries.append({
-                "instance_name": iname,
-                "definition": item.get("definition", iname),
-                "params": item.get("params") or {},
-                "llm_service": item.get("llm_service", ""),
-                "model": item.get("model", ""),
-                "tools": item.get("tools"),
-                "max_depth": int(item.get("max_depth", 1000)),
-                "skills": item.get("skills"),
-            })
-        # Validate definitions exist in repo
-        valid_entries = []
-        for entry in _agent_entries:
-            if rs.get_any("agent", entry["definition"], uid):
-                valid_entries.append(entry)
-        if not valid_entries:
-            flowfile.set_content(json.dumps({"error": "None of the specified agent definitions exist in the repository"}).encode())
-            flowfile.set_attribute("http.response.status", "400")
-            return [flowfile]
-        new_id = store.generate_id()
-        store.save(new_id, [], user_id=uid)
-        _instance_names = [e["instance_name"] for e in valid_entries]
-        active_res = {"agents": _instance_names, "agent": _instance_names[0]}
-        store.set_extra(new_id, "active_resources", active_res)
-        for entry in valid_entries:
-            if entry.get("skills") is not None:
-                _agent_def = rs.get_any("agent", entry["definition"], uid)
-                if _agent_def is not None:
-                    _scope = _agent_def.get("_scope", "user")
-                    _uid = uid if _scope == "user" else "__global__"
-                    rs.update("agent", entry["definition"], _uid, {
-                        "assigned_skills": list(entry.get("skills") or [])
-                    })
-            add_agent_to_conv(
-                new_id, entry["instance_name"],
-                llm_service=entry["llm_service"],
-                definition=entry["definition"],
-                params=entry["params"],
-                model=entry["model"],
-                tools=entry["tools"],
-                max_depth=entry["max_depth"],
-                skills=entry["skills"],
-            )
-        # Title
-        title = body.get("title", "")
-        if title:
-            store.set_extra(new_id, "title", title)
-        # Relay bindings
-        relay_ids = body.get("relays", [])
-        default_relay = body.get("default_relay", "")
-        if relay_ids:
-            from core.relay_bindings import link_relay, set_default_relay
-            for rid in relay_ids:
-                link_relay(new_id, rid)
-            if default_relay and default_relay in relay_ids:
-                set_default_relay(new_id, default_relay)
-        flowfile.set_content(json.dumps({
-            "conversation_id": new_id,
-            "agents": _instance_names,
-        }).encode())
+        flowfile.set_content(json.dumps(result).encode())
         return [flowfile]
 
     return None

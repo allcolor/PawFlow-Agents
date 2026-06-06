@@ -218,6 +218,28 @@ class TestTelegramReceiverTask(unittest.TestCase):
         task._on_update({"update_id": 5, "edited_message": {}})
         assert task.has_pending_input() is False
 
+    def test_callback_query_to_flowfile(self):
+        from tasks.io.telegram_receiver import TelegramReceiverTask
+        task = TelegramReceiverTask({"service_id": "tg"})
+        task._registered = True
+
+        task._on_update({
+            "update_id": 6,
+            "callback_query": {
+                "id": "cb1",
+                "from": {"id": 123, "username": "testuser", "first_name": "Test"},
+                "data": "conv:new:start",
+                "message": {"message_id": 45, "chat": {"id": 456}},
+            },
+        })
+
+        ff = task.execute()[0]
+        assert ff.get_content() == b"conv:new:start"
+        assert ff.get_attribute("telegram.message_type") == "callback_query"
+        assert ff.get_attribute("telegram.callback_query_id") == "cb1"
+        assert ff.get_attribute("telegram.callback_data") == "conv:new:start"
+        assert ff.get_attribute("telegram.user_id") == "123"
+
     def test_empty_queue_returns_empty(self):
         from tasks.io.telegram_receiver import TelegramReceiverTask
         task = TelegramReceiverTask({"service_id": "tg"})
@@ -245,11 +267,33 @@ class TestTelegramSendTask(unittest.TestCase):
 
     def test_parameter_schema(self):
         from tasks.io.telegram_send import TelegramSendTask
-        task = TelegramSendTask({"service_id": "tg"})
+        task = TelegramSendTask({"service_id": "tg", "chat_id": "456"})
         schema = task.get_parameter_schema()
         assert "service_id" in schema
         assert "chat_id" in schema
         assert "parse_mode" in schema
+
+    def test_reply_markup_attribute_is_sent(self):
+        from core import FlowFile
+        from tasks.io.telegram_send import TelegramSendTask
+
+        svc = MagicMock()
+        svc.send_message.return_value = {"message_id": 7}
+        task = TelegramSendTask({"service_id": "tg", "chat_id": "456"})
+        task.get_service = lambda service_id: svc
+
+        ff = FlowFile(content=b"Choose")
+        ff.set_attribute("telegram.chat_id", "456")
+        ff.set_attribute("telegram.reply_markup", json.dumps({
+            "inline_keyboard": [[{"text": "A", "callback_data": "a"}]],
+        }))
+
+        task.execute(ff)
+
+        svc.send_message.assert_called_once()
+        assert svc.send_message.call_args.kwargs["reply_markup"] == {
+            "inline_keyboard": [[{"text": "A", "callback_data": "a"}]],
+        }
 
 
 # ── TelegramSendHandler ────────────────────────────────────────────
@@ -328,6 +372,39 @@ class TestTelegramFlow(unittest.TestCase):
         assert "agent_client" in sources
         assert "agent_client" in targets
         assert "send_reply" in targets
+
+    def test_flow_parser_normalizes_relations_for_execution(self):
+        from engine.parser import FlowParser
+
+        path = _paths.REPOSITORY_DIR / "flows" / "global" / "default" / "telegram_agent" / "versions" / "1.0.0.json"
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        flow = FlowParser.parse(raw)
+
+        assert {rel["from"] for rel in flow.relations} == {"receive", "agent_client"}
+        assert {rel["to"] for rel in flow.relations} == {"agent_client", "send_reply"}
+        assert all(rel["type"] == "success" for rel in flow.relations)
+
+    def test_flow_declares_agent_runtime_link(self):
+        path = _paths.REPOSITORY_DIR / "flows" / "global" / "default" / "telegram_agent" / "versions" / "1.0.0.json"
+        flow = json.loads(path.read_text(encoding="utf-8"))
+        assert flow["parameters"]["agent_runtime_port"] == "pawflow_agent.agent_runtime_in"
+        assert flow["tasks"]["agent_client"]["parameters"]["agent_runtime_port"] == "${agent_runtime_port}"
+        assert flow["runtime_links"] == [{
+            "from": "agent_client",
+            "to": "${agent_runtime_port}",
+            "type": "agentRuntime",
+            "description": "Submit Telegram messages to the shared PawFlow agent runtime",
+        }]
+
+    def test_pawflow_agent_declares_agent_runtime_input_port(self):
+        path = _paths.REPOSITORY_DIR / "flows" / "global" / "default" / "pawflow_agent" / "versions" / "1.0.0.json"
+        flow = json.loads(path.read_text(encoding="utf-8"))
+        assert flow["ports"]["agent_runtime_in"] == {
+            "type": "agentRuntime",
+            "task": "agent",
+            "direction": "input",
+            "description": "Submit messages to the shared AgentLoop runtime",
+        }
 
 
 # ── i18n ────────────────────────────────────────────────────────────

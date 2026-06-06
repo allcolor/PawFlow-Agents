@@ -94,6 +94,19 @@ code duplication.
 | `whatsappReceiver` | Receive messages from WhatsApp |
 | `whatsappSend` | Send a message via WhatsApp |
 
+`telegramAgentClient` uses the shared conversation runtime. Telegram messages
+must target an explicitly resumed conversation with a selected agent; the task
+does not auto-create conversations. Telegram `/conv new` requires
+`/conv new <agent> --title <title> --relay <relay_id> [--llm <service>]` and
+validates the agent, LLM service, and relay in the linked user's scope.
+When called without arguments, `/conv new` opens an inline Telegram wizard for
+title, one or more agents, per-agent LLM service, agent instance names, relays,
+default relay, and confirmation. `/conv list` and `/conv select` without an ID
+show inline buttons to resume an existing conversation. The `agent_runtime_port`
+parameter resolves at execution time to a running flow port such as
+`pawflow_agent.agent_runtime_in`; the target flow must be running and declare an
+`agentRuntime` input port.
+
 ---
 
 ## Data Tasks (27)

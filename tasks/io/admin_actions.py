@@ -146,14 +146,23 @@ def _admin_get_flow(body, exec_reg, deploy_reg, gsvc_reg, tmpl_svc):
     tasks_def = {}
     services_def = {}
     relations = []
+    runtime_links = []
+    ports = {}
+    template_parameters = {}
     if inst.flow_path and Path(inst.flow_path).exists():
         try:
             raw = json.loads(Path(inst.flow_path).read_text(encoding="utf-8"))
             tasks_def = raw.get("tasks", {})
             services_def = raw.get("services", {})
             relations = raw.get("relations", [])
+            runtime_links = raw.get("runtime_links", [])
+            ports = raw.get("ports", {})
+            template_parameters = raw.get("parameters", {})
         except Exception:
             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+
+    resolved_parameters = dict(template_parameters)
+    resolved_parameters.update(inst.parameters or {})
 
     return {
         "instance_id": iid,
@@ -168,6 +177,7 @@ def _admin_get_flow(body, exec_reg, deploy_reg, gsvc_reg, tmpl_svc):
         "last_stopped": inst.last_stopped,
         "error_message": inst.error_message,
         "parameters": inst.parameters,
+        "resolved_parameters": resolved_parameters,
         "service_overrides": inst.service_overrides,
         "service_configs": inst.service_configs,
         "max_workers": inst.max_workers,
@@ -175,6 +185,8 @@ def _admin_get_flow(body, exec_reg, deploy_reg, gsvc_reg, tmpl_svc):
         "tasks": tasks_def,
         "services": services_def,
         "relations": relations,
+        "runtime_links": runtime_links,
+        "ports": ports,
         "task_states": task_states,
         "queue_stats": queue_stats,
         "executor_status": status_info,

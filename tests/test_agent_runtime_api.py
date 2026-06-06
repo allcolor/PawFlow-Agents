@@ -48,6 +48,7 @@ def test_telegram_agent_client_conv_commands(monkeypatch):
     import core.paths as paths
     from core.conversation_store import ConversationStore
     from core.identity_service import IdentityService
+    from tasks.io import telegram_agent_client as mod
     from tasks.io.telegram_agent_client import TelegramAgentClientTask
 
     tmp = Path(tempfile.mkdtemp())
@@ -61,9 +62,270 @@ def test_telegram_agent_client_conv_commands(monkeypatch):
     task = TelegramAgentClientTask({})
 
     created = task._handle_command("/conv new", "alice", "chat1")
-    assert created and "Created and selected conversation" in created
+    assert created and "Send the conversation title" in created["text"]
+    assert created["reply_markup"]["inline_keyboard"]
+    mod._clear_wizard("alice:chat1")
+
+    captured = {}
+
+    def create_from_command(args, user_id):
+        captured["args"] = args
+        captured["user_id"] = user_id
+        return "conv-new", "assistant"
+
+    monkeypatch.setattr(
+        TelegramAgentClientTask,
+        "_create_conversation_from_command",
+        staticmethod(create_from_command),
+    )
+    created = task._handle_command(
+        "/conv new assistant --title T --relay relay1", "alice", "chat1")
+    assert created and "Created and selected conversation: conv-new" in created
+    assert ids.get_active_conv("alice", "telegram") == "conv-new"
+    assert captured == {
+        "args": "assistant --title T --relay relay1",
+        "user_id": "alice",
+    }
+
+    store = ConversationStore.instance()
+    cid = store.generate_id()
+    store.save(cid, [], user_id="alice")
+    store.set_extra(cid, "conv_agents", {
+        "assistant": {"definition": "assistant", "llm_service": "llm"},
+    })
+    ids.set_active_conv("alice", "telegram", cid)
+
     current = task._handle_command("/conv current", "alice", "chat1")
-    assert current and "Active conversation:" in current
+    assert current and cid in current
     listing = task._handle_command("/conv list", "alice", "chat1")
-    assert listing and "Conversations:" in listing
+    assert listing and "Conversations:" in listing["text"]
+    assert listing["reply_markup"]["inline_keyboard"][0][0]["callback_data"].startswith("conv:resume:")
+
+
+def test_telegram_conv_new_parser_keeps_options_after_title():
+    from tasks.io.telegram_agent_client import _parse_new_conversation_args
+
+    opts = _parse_new_conversation_args(
+        "assistant --title My Telegram chat --relay relay1 --llm llm1")
+
+    assert opts == {
+        "agent": "assistant",
+        "title": "My Telegram chat",
+        "relays": ["relay1"],
+        "llm": "llm1",
+    }
+
+
+def test_telegram_agent_client_uses_selected_conversation_agent(monkeypatch):
+    import core.paths as paths
+    from core import FlowFile
+    from core.agent_runtime_api import AgentFinalResult, AgentSubmission
+    from core.conversation_store import ConversationStore
+    from core.identity_service import IdentityService
+    from tasks.io import telegram_agent_client as mod
+    from tasks.io.telegram_agent_client import TelegramAgentClientTask
+
+    tmp = Path(tempfile.mkdtemp())
+    monkeypatch.setattr(paths, "CONVERSATIONS_DIR", tmp / "conversations")
+    monkeypatch.setattr(paths, "USER_CONFIG_DIR", tmp / "users")
+    ConversationStore.reset()
+    IdentityService.reset()
+
+    store = ConversationStore.instance()
+    ids = IdentityService.instance()
+    assert ids.link("alice", "telegram", "tg1")
+    cid = store.generate_id()
+    store.save(cid, [], user_id="alice")
+    store.set_extra(cid, "conv_agents", {
+        "assistant": {"definition": "assistant", "llm_service": "llm"},
+    })
+    store.set_extra(cid, "active_resources", {"agent": "assistant"})
+    ids.set_active_conv("alice", "telegram", cid)
+
+    captured = {}
+
+    def submit(request):
+        captured["target_agent"] = request.target_agent
+        captured["runtime_port"] = request.runtime_port
+        return AgentSubmission("accepted", request.conversation_id, request.msg_id)
+
+    def wait(conversation_id, turn_id, timeout=600):
+        return AgentFinalResult(conversation_id, turn_id, response="pong")
+
+    monkeypatch.setattr(mod.AgentRuntimeAPI, "submit_message", staticmethod(submit))
+    monkeypatch.setattr(mod.AgentRuntimeAPI, "wait_for_done", staticmethod(wait))
+
+    ff = FlowFile(content=b"ping")
+    ff.set_attribute("telegram.user_id", "tg1")
+    ff.set_attribute("telegram.chat_id", "chat1")
+    ff.set_attribute("telegram.message_id", "42")
+
+    out = TelegramAgentClientTask({
+        "agent_runtime_port": "pawflow_agent.agent_runtime_in",
+    }).execute(ff)[0]
+
+    assert captured["target_agent"] == "assistant"
+    assert captured["runtime_port"] == "pawflow_agent.agent_runtime_in"
+    assert out.get_content() == b"pong"
+
+
+def test_agent_runtime_api_uses_declared_runtime_port(monkeypatch):
+    from core.agent_runtime_api import AgentRequest, AgentRuntimeAPI
+    from tasks.ai.agent_loop import AgentLoopTask
+
+    class RuntimeTask:
+        def __init__(self):
+            self.called = False
+
+        def execute(self, flowfile):
+            import json
+            self.called = True
+            body = json.loads(flowfile.get_content().decode("utf-8"))
+            flowfile.set_content(json.dumps({
+                "status": "accepted",
+                "conversation_id": body["conversation_id"],
+            }).encode("utf-8"))
+            return [flowfile]
+
+    runtime = RuntimeTask()
+    monkeypatch.setattr(
+        "core.agent_runtime_ports.resolve_agent_runtime_task",
+        lambda runtime_port: runtime,
+    )
+    monkeypatch.setattr(AgentLoopTask, "_live_instance", None)
+
+    submission = AgentRuntimeAPI.submit_message(AgentRequest(
+        user_id="alice",
+        conversation_id="conv1",
+        target_agent="assistant",
+        message="hello",
+        msg_id="telegram:1:2",
+        runtime_port="pawflow_agent.agent_runtime_in",
+    ))
+
+    assert runtime.called is True
+    assert submission.conversation_id == "conv1"
+    assert submission.turn_id == "telegram:1:2"
+
+
+def test_agent_runtime_port_resolver_finds_running_declared_port(monkeypatch):
+    from types import SimpleNamespace
+    from core.agent_runtime_ports import resolve_agent_runtime_task
+
+    task = object()
+
+    class DeployReg:
+        def get_all(self):
+            return {
+                "inst1": SimpleNamespace(
+                    instance_id="inst1",
+                    flow_id="pawflow-agent",
+                    flow_name="pawflow_agent",
+                    flow_fqn="default.pawflow_agent:1.0.0",
+                    flow_path="",
+                    status="running",
+                )
+            }
+
+    class Executor:
+        flow = SimpleNamespace(ports={
+            "agent_runtime_in": {"type": "agentRuntime", "task": "agent"},
+        })
+
+        def get_task(self, task_id):
+            return task if task_id == "agent" else None
+
+    class ExecReg:
+        def get(self, instance_id):
+            return Executor() if instance_id == "inst1" else None
+
+    monkeypatch.setattr(
+        "core.deployment_registry.DeploymentRegistry.get_instance",
+        lambda: DeployReg(),
+    )
+    monkeypatch.setattr(
+        "core.executor_registry.ExecutorRegistry.get_instance",
+        lambda: ExecReg(),
+    )
+
+    assert resolve_agent_runtime_task("pawflow_agent.agent_runtime_in") is task
+
+
+def test_telegram_relay_validation_uses_user_scope(monkeypatch):
+    from tasks.io import telegram_agent_client as mod
+
+    captured = {}
+
+    def list_available_relays(user_id="", conv_id=""):
+        captured["user_id"] = user_id
+        captured["conv_id"] = conv_id
+        return [{"relay_id": "relay1", "connected": True}]
+
+    monkeypatch.setattr(
+        "core.relay_bindings.list_available_relays", list_available_relays)
+
+    assert mod._validate_relays(["relay1"], user_id="alice") == ["relay1"]
+    assert captured == {"user_id": "alice", "conv_id": ""}
+
+
+def test_telegram_new_conversation_wizard_builds_payload(monkeypatch):
+    from tasks.io import telegram_agent_client as mod
+    from tasks.io.telegram_agent_client import TelegramAgentClientTask
+
+    class ServiceDef:
+        service_id = "llm1"
+
+    created = {}
+
+    monkeypatch.setattr(mod, "_available_agents", lambda user_id: [
+        {"name": "assistant", "model": "", "tools": [], "max_depth": 1000, "skills": []},
+    ])
+    monkeypatch.setattr(mod, "_agent_definition", lambda user_id, name: {
+        "name": name, "model": "", "tools": [], "max_depth": 1000, "skills": [],
+    })
+    monkeypatch.setattr(mod, "_available_llm_services", lambda user_id: [ServiceDef()])
+    monkeypatch.setattr(mod, "_available_relays", lambda user_id: [
+        {"relay_id": "relay1", "connected": True},
+    ])
+
+    def create_conversation(user_id, payload):
+        created["user_id"] = user_id
+        created["payload"] = payload
+        return {"conversation_id": "conv1", "agents": ["coder"]}
+
+    class Ids:
+        selected = None
+        def set_active_conv(self, user_id, channel, conv_id):
+            self.selected = (user_id, channel, conv_id)
+
+    ids = Ids()
+    monkeypatch.setattr("core.conversation_creation.create_conversation", create_conversation)
+    monkeypatch.setattr("core.identity_service.IdentityService.instance", lambda: ids)
+
+    task = TelegramAgentClientTask({})
+
+    response = task._handle_command("/conv new", "alice", "chat1")
+    assert "Send the conversation title" in response["text"]
+    response = task._handle_wizard_input("Work", "", "alice", "chat1")
+    assert "Choose an agent" in response["text"]
+    response = task._handle_wizard_input("conv:new:agent:0", "conv:new:agent:0", "alice", "chat1")
+    assert "instance name" in response["text"]
+    response = task._handle_wizard_input("coder", "", "alice", "chat1")
+    assert "Choose the LLM" in response["text"]
+    response = task._handle_wizard_input("conv:new:llm:0", "conv:new:llm:0", "alice", "chat1")
+    assert "Agents:" in response["text"]
+    response = task._handle_wizard_input("conv:new:relays", "conv:new:relays", "alice", "chat1")
+    assert "Select one or more relays" in response["text"]
+    task._handle_wizard_input("conv:new:relay:0", "conv:new:relay:0", "alice", "chat1")
+    response = task._handle_wizard_input("conv:new:create", "conv:new:create", "alice", "chat1")
+
+    assert response["text"] == "Created and selected conversation: conv1"
+    assert created["user_id"] == "alice"
+    assert created["payload"]["title"] == "Work"
+    assert created["payload"]["relays"] == ["relay1"]
+    assert created["payload"]["default_relay"] == "relay1"
+    assert created["payload"]["agents"][0]["instance_name"] == "coder"
+    assert created["payload"]["agents"][0]["definition"] == "assistant"
+    assert created["payload"]["agents"][0]["llm_service"] == "llm1"
+    assert ids.selected == ("alice", "telegram", "conv1")
 

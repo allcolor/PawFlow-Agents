@@ -330,7 +330,8 @@ tasks: httpReceiver → processData → handleHTTPResponse
 services: httpListener (shared port)
 
 ### Telegram bot
-tasks: telegramReceiver → agentLoop → telegramSend
+tasks: telegramReceiver → telegramAgentClient → telegramSend
+runtime link: telegramAgentClient → pawflow_agent.agent_runtime_in
 services: telegramBot
 
 ### Deploying existing templates

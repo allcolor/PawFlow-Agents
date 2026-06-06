@@ -104,8 +104,10 @@ function renderCanvas() {
     // Connections
     var rels = data.relations || [];
     rels.forEach(function(r, idx) {
-        var src = (data.tasks || {})[r.from];
-        var tgt = (data.tasks || {})[r.to];
+        var fromId = r.from || r.source;
+        var toId = r.to || r.target;
+        var src = (data.tasks || {})[fromId];
+        var tgt = (data.tasks || {})[toId];
         if (!src || !tgt) return;
         var x1 = (src.x || 0) + NODE_W;
         var y1 = (src.y || 0) + NODE_H / 2;
@@ -122,6 +124,25 @@ function renderCanvas() {
             svg += '<text x="' + lx + '" y="' + ly + '" fill="#667" font-size="10" text-anchor="middle">'
                 + esc(r.type) + '</text>';
         }
+    });
+
+    // Runtime links to external flow ports. These are not queue edges in this
+    // DAG; they document runtime calls such as Telegram -> pawflow_agent port.
+    var runtimeLinks = data.runtime_links || [];
+    runtimeLinks.forEach(function(link, idx) {
+        var fromId = link.from || link.source;
+        var src = (data.tasks || {})[fromId];
+        if (!src) return;
+        var x1 = (src.x || 0) + NODE_W;
+        var y1 = (src.y || 0) + NODE_H / 2;
+        var x2 = Number(link.x);
+        var y2 = Number(link.y);
+        if (!isFinite(x2)) x2 = (src.x || 0) + NODE_W + 90;
+        if (!isFinite(y2)) y2 = (src.y || 0) - 8;
+        var mx = (x1 + x2) / 2;
+        svg += '<path d="M' + x1 + ',' + y1 + ' C' + mx + ',' + y1 + ' ' + mx + ',' + (y2 + NODE_H / 2) + ' ' + x2 + ',' + (y2 + NODE_H / 2) + '"'
+            + ' fill="none" stroke="#b088ff" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#arrow)" />';
+        svg += renderRuntimePortNode(link, idx, x2, y2, data.parameters || {});
     });
 
     // Nodes
@@ -169,6 +190,38 @@ function renderCanvas() {
         svgEl.onmouseup = canvasMouseUp;
         svgEl.onwheel = canvasWheel;
     }
+}
+
+function renderRuntimePortNode(link, idx, x, y, params) {
+    var target = resolveRuntimeTarget(link.to || "runtime.port", params || {});
+    var parts = String(target).split(".");
+    var flow = parts[0] || "flow";
+    var port = parts.slice(1).join(".") || "port";
+    var label = flow;
+    if (label.length > 20) label = label.substring(0, 18) + "..";
+    var sub = port;
+    if (sub.length > 24) sub = sub.substring(0, 22) + "..";
+    var title = esc((link.description || "Runtime call") + "\n" + target);
+    var html = '<g class="runtime-node" data-runtime-link="' + idx + '" transform="translate(' + x + ',' + y + ')">';
+    html += '<title>' + title + '</title>';
+    html += '<rect x="2" y="2" rx="6" ry="6" width="' + NODE_W + '" height="' + NODE_H + '" fill="rgba(0,0,0,0.3)" />';
+    html += '<rect rx="6" ry="6" width="' + NODE_W + '" height="' + NODE_H + '" fill="#201a35" stroke="#b088ff" stroke-width="1.5" stroke-dasharray="4 3" />';
+    html += '<rect rx="6" ry="0" width="' + NODE_W + '" height="4" fill="#b088ff" />';
+    html += '<rect x="0" y="2" width="' + NODE_W + '" height="2" fill="#b088ff" />';
+    html += '<text x="' + (NODE_W / 2) + '" y="20" fill="#efe7ff" font-size="12" font-weight="500" text-anchor="middle">' + esc(label) + '</text>';
+    html += '<text x="' + (NODE_W / 2) + '" y="36" fill="#bda6ff" font-size="10" text-anchor="middle">' + esc(sub) + '</text>';
+    html += '<text x="' + (NODE_W / 2) + '" y="51" fill="#8f7ac2" font-size="9" text-anchor="middle">runtime input port</text>';
+    html += '<circle cx="0" cy="' + (NODE_H / 2) + '" r="' + PORT_R + '" fill="#201a35" stroke="#b088ff" stroke-width="1.5" />';
+    html += '</g>';
+    return html;
+}
+
+function resolveRuntimeTarget(value, params) {
+    return String(value || "").replace(/\$\{([^}]+)\}/g, function(_, key) {
+        var v = params[key];
+        if (v && typeof v === "object" && v.default != null) return v.default;
+        return v != null ? v : "${" + key + "}";
+    });
 }
 
 // ── Mouse interactions ──
@@ -302,7 +355,7 @@ function editorDeleteSelected() {
     editorSelection.forEach(function(tid) {
         delete editorFlowData.tasks[tid];
         editorFlowData.relations = (editorFlowData.relations || []).filter(function(r) {
-            return r.from !== tid && r.to !== tid;
+            return (r.from || r.source) !== tid && (r.to || r.target) !== tid;
         });
         // Remove from entries/exits
         editorFlowData.entries = (editorFlowData.entries || []).filter(function(e) { return e !== tid; });
@@ -360,7 +413,9 @@ function editorAutoLayout() {
     var incoming = {};
     ids.forEach(function(id) { incoming[id] = []; });
     rels.forEach(function(r) {
-        if (incoming[r.to]) incoming[r.to].push(r.from);
+        var fromId = r.from || r.source;
+        var toId = r.to || r.target;
+        if (incoming[toId]) incoming[toId].push(fromId);
     });
 
     // Assign layers via topological sort

@@ -269,6 +269,13 @@ class ContinuousFlowExecutor:
     def flow_version(self) -> int:
         return self._flow_version
 
+    @property
+    def flow(self) -> Flow:
+        return self._flow
+
+    def get_task(self, task_id: str) -> Optional[Task]:
+        return self._tasks.get(task_id)
+
     # -- Lifecycle --
 
     def start(self):

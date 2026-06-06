@@ -215,14 +215,21 @@ class TestTelegramConvCommands(unittest.TestCase):
         self.assertIn("No active conversation", content)
 
     def test_conv_new(self):
+        from tasks.io.telegram_agent_client import TelegramAgentClientTask
         from tasks.ai.agent_loop import AgentLoopTask
+        original = TelegramAgentClientTask._create_conversation_from_command
+        TelegramAgentClientTask._create_conversation_from_command = staticmethod(
+            lambda args, user_id: ("conv-created", "assistant"))
         task = AgentLoopTask({"api_key": "test", "conversation_store": True})
-        result = task.execute(self._make_ff("/conv new"))
-        content = result[0].get_content().decode("utf-8")
-        self.assertIn("New conversation started", content)
-        # Verify active conv was set
-        active = self.ids.get_active_conv("alice@test.com", "telegram")
-        self.assertIsNotNone(active)
+        try:
+            result = task.execute(
+                self._make_ff("/conv new assistant --title T --relay relay1"))
+            content = result[0].get_content().decode("utf-8")
+            self.assertIn("Created and selected conversation: conv-created", content)
+            active = self.ids.get_active_conv("alice@test.com", "telegram")
+            self.assertEqual(active, "conv-created")
+        finally:
+            TelegramAgentClientTask._create_conversation_from_command = original
 
     def test_conv_list_empty(self):
         from tasks.ai.agent_loop import AgentLoopTask

@@ -501,7 +501,6 @@ class AgentActionsMixin:
         Commands:
           /conv list       - list the user's conversations
           /conv select ID  - switch active conversation
-          /conv new        - start a new conversation
           /conv info       - show current active conversation
         """
         from core.identity_service import IdentityService
@@ -566,10 +565,19 @@ class AgentActionsMixin:
             return [flowfile]
 
         if subcmd == "new":
-            new_id = store.generate_id()
+            try:
+                from tasks.io.telegram_agent_client import TelegramAgentClientTask
+                new_id, agent_name = (
+                    TelegramAgentClientTask._create_conversation_from_command(
+                        parts[2] if len(parts) > 2 else "", resolved_user)
+                )
+            except ValueError as exc:
+                flowfile.set_content(str(exc).encode("utf-8"))
+                return [flowfile]
             ids.set_active_conv(resolved_user, "telegram", new_id)
             flowfile.set_content(
-                f"New conversation started: {new_id[:12]}".encode("utf-8")
+                f"Created and selected conversation: {new_id}\n"
+                f"Agent: {agent_name}".encode("utf-8")
             )
             return [flowfile]
 
@@ -584,7 +592,8 @@ class AgentActionsMixin:
             )
         else:
             flowfile.set_content(
-                f"No active conversation. Use /conv new or /conv select ID.\n"
+                f"No active conversation. Use /conv list after creating "
+                f"a conversation from webchat or PawCode.\n"
                 f"User: {resolved_user}".encode("utf-8")
             )
         return [flowfile]

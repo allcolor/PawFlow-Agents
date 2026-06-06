@@ -114,6 +114,35 @@ function renderOverviewTab(data) {
     }
     html += '</table></div>';
 
+    var runtimeLinks = data.runtime_links || [];
+    var ports = data.ports || {};
+    if (runtimeLinks.length || Object.keys(ports).length) {
+        html += '<div class="card">';
+        html += '<div class="card-title">Runtime Links</div>';
+        if (Object.keys(ports).length) {
+            html += '<table><tr><th>Port</th><th>Type</th><th>Task</th><th>Description</th></tr>';
+            Object.keys(ports).forEach(function(pid) {
+                var p = ports[pid] || {};
+                html += '<tr><td>' + esc(pid) + '</td><td>' + esc(p.type || "")
+                    + '</td><td>' + esc(p.task || "") + '</td><td>'
+                    + esc(p.description || "") + '</td></tr>';
+            });
+            html += '</table>';
+        }
+        if (runtimeLinks.length) {
+            html += '<table><tr><th>From</th><th>Target Port</th><th>Type</th><th>Description</th></tr>';
+            runtimeLinks.forEach(function(link) {
+                var target = resolveRuntimeDetailTarget(
+                    link.to || "", data.resolved_parameters || data.parameters || {});
+                html += '<tr><td>' + esc(link.from || "") + '</td><td>'
+                    + esc(target) + '</td><td>' + esc(link.type || "")
+                    + '</td><td>' + esc(link.description || "") + '</td></tr>';
+            });
+            html += '</table>';
+        }
+        html += '</div>';
+    }
+
     // Task states (if running)
     if (data.task_states && Object.keys(data.task_states).length > 0) {
         html += '<div class="card">';
@@ -136,6 +165,14 @@ function renderOverviewTab(data) {
     }
 
     return html;
+}
+
+function resolveRuntimeDetailTarget(value, params) {
+    return String(value || "").replace(/\$\{([^}]+)\}/g, function(_, key) {
+        var v = params[key];
+        if (v && typeof v === "object" && v.default != null) return v.default;
+        return v != null ? v : "${" + key + "}";
+    });
 }
 
 function kpiCard(value, label) {

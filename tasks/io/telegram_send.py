@@ -72,6 +72,8 @@ class TelegramSendTask(BaseTask):
 
         parse_mode = self.config.get("parse_mode", "Markdown")
         text = flowfile.get_content().decode("utf-8", errors="replace")
+        reply_markup = _parse_reply_markup(
+            flowfile.get_attribute("telegram.reply_markup") or "")
 
         if not text.strip():
             logger.warning("telegramSend: empty message, skipping")
@@ -87,10 +89,12 @@ class TelegramSendTask(BaseTask):
                 from services.telegram_bot_service import TelegramBotPool
                 result = TelegramBotPool.instance().send_message(
                     user_bot_token, chat_id, text, parse_mode=parse_mode,
+                    reply_markup=reply_markup,
                 )
             else:
                 result = svc.send_message(
                     chat_id, text, parse_mode=parse_mode, reply_to=reply_to,
+                    reply_markup=reply_markup,
                 )
             flowfile.set_attribute("telegram.sent_message_id",
                                    str(result.get("message_id", "")))
@@ -116,6 +120,17 @@ class TelegramSendTask(BaseTask):
         except Exception:
             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         return None
+
+
+def _parse_reply_markup(raw: str) -> Optional[Dict[str, Any]]:
+    if not raw:
+        return None
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError:
+        logger.warning("telegramSend: invalid telegram.reply_markup JSON")
+        return None
+    return value if isinstance(value, dict) else None
 
 
 class TelegramSendHandler(ToolHandler):

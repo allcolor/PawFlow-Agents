@@ -166,13 +166,36 @@ class FlowParser:
                 _ef_task._max_instances = 1
                 flow.add_task(group_id, _ef_task)
         
-        # Parse relationships
-        flow.relations = config.get('relations', [])
+        # Parse relationships. Repository templates may use either the editor
+        # shape (from/to/type) or the package shape
+        # (source/target/relationships). Normalize before the executor builds
+        # queues so both forms execute identically.
+        flow.relations = cls._normalize_relations(config.get('relations', []))
 
         # Parse variables
         flow.variables = config.get('variables', {})
 
         return flow
+
+    @staticmethod
+    def _normalize_relations(relations: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        normalized = []
+        for rel in relations or []:
+            if not isinstance(rel, dict):
+                continue
+            source = rel.get('from') or rel.get('source') or ''
+            target = rel.get('to') or rel.get('target') or ''
+            rel_type = rel.get('type')
+            if rel_type is None:
+                rels = rel.get('relationships')
+                if isinstance(rels, list) and rels:
+                    rel_type = rels[0]
+            item = dict(rel)
+            item['from'] = source
+            item['to'] = target
+            item['type'] = rel_type or 'success'
+            normalized.append(item)
+        return normalized
     
     @classmethod
     def parse_from_file(cls, filepath: str) -> Flow:

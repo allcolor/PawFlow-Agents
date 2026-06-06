@@ -101,18 +101,22 @@ class TelegramReceiverTask(BaseTask):
 
     def _on_update(self, update: dict):
         """Called by TelegramBotService when a message arrives."""
-        msg = update.get("message")
+        callback = update.get("callback_query") or {}
+        msg = update.get("message") or callback.get("message")
         if not msg:
-            return  # Skip non-message updates for now
+            return
 
         chat_id = str(msg.get("chat", {}).get("id", ""))
-        user = msg.get("from", {})
+        user = callback.get("from") or msg.get("from", {})
         user_id = str(user.get("id", ""))
         username = user.get("username", "")
         first_name = user.get("first_name", "")
 
         # Determine content and type; download media files
-        if "text" in msg:
+        if callback:
+            content = str(callback.get("data") or "").encode("utf-8")
+            msg_type = "callback_query"
+        elif "text" in msg:
             content = msg["text"].encode("utf-8")
             msg_type = "text"
         elif "document" in msg:
@@ -159,6 +163,9 @@ class TelegramReceiverTask(BaseTask):
         ff.set_attribute("telegram.first_name", first_name)
         ff.set_attribute("telegram.message_id", str(msg.get("message_id", "")))
         ff.set_attribute("telegram.message_type", msg_type)
+        if callback:
+            ff.set_attribute("telegram.callback_query_id", str(callback.get("id", "")))
+            ff.set_attribute("telegram.callback_data", str(callback.get("data", "")))
 
         # For photos, store base64 data for LLM vision
         if msg_type == "photo" and file_data:

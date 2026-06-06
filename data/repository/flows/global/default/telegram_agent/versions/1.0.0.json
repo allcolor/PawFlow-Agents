@@ -7,8 +7,17 @@
     "bot_token": "",
     "allowed_users": "",
     "target_agent": "",
+    "agent_runtime_port": "pawflow_agent.agent_runtime_in",
     "agent_timeout": 600
   },
+  "runtime_links": [
+    {
+      "from": "agent_client",
+      "to": "${agent_runtime_port}",
+      "type": "agentRuntime",
+      "description": "Submit Telegram messages to the shared PawFlow agent runtime"
+    }
+  ],
   "services": {
     "telegram_bot": {
       "type": "telegramBot",
@@ -30,8 +39,9 @@
       "type": "telegramAgentClient",
       "parameters": {
         "target_agent": "${target_agent}",
+        "agent_runtime_port": "${agent_runtime_port}",
         "timeout": "${agent_timeout}",
-        "create_conversation": true
+        "create_conversation": false
       }
     },
     "send_reply": {

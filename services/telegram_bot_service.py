@@ -123,9 +123,11 @@ class TelegramBotService(BaseService):
     def _dispatch(self, update: dict):
         """Dispatch update to all registered callbacks."""
         # Check allowed_users filter
-        msg = update.get("message") or update.get("callback_query", {}).get("message")
+        callback = update.get("callback_query") or {}
+        msg = update.get("message") or callback.get("message")
         if msg and self._allowed_users:
-            user_id = str(msg.get("from", {}).get("id", ""))
+            user = callback.get("from") or msg.get("from", {})
+            user_id = str(user.get("id", ""))
             if user_id not in self._allowed_users:
                 logger.debug(f"Telegram: ignoring message from {user_id} (not in allowed list)")
                 return
@@ -142,7 +144,8 @@ class TelegramBotService(BaseService):
 
     def send_message(self, chat_id: str, text: str,
                      parse_mode: str = "Markdown",
-                     reply_to: int = 0) -> dict:
+                     reply_to: int = 0,
+                     reply_markup: Optional[Dict[str, Any]] = None) -> dict:
         """Send a text message."""
         params: Dict[str, Any] = {
             "chat_id": chat_id,
@@ -152,6 +155,8 @@ class TelegramBotService(BaseService):
             params["parse_mode"] = parse_mode
         if reply_to:
             params["reply_to_message_id"] = reply_to
+        if reply_markup:
+            params["reply_markup"] = json.dumps(reply_markup)
         # Split long messages (Telegram 4096 char limit)
         if len(text) > 4096:
             chunks = [text[i:i+4096] for i in range(0, len(text), 4096)]
@@ -361,11 +366,14 @@ class TelegramBotPool:
             self._callbacks = [c for c in self._callbacks if c is not callback]
 
     def send_message(self, token: str, chat_id: str, text: str,
-                     parse_mode: str = "Markdown") -> dict:
+                     parse_mode: str = "Markdown",
+                     reply_markup: Optional[Dict[str, Any]] = None) -> dict:
         """Send a message via a specific bot token."""
         params: Dict[str, Any] = {"chat_id": chat_id, "text": text}
         if parse_mode:
             params["parse_mode"] = parse_mode
+        if reply_markup:
+            params["reply_markup"] = json.dumps(reply_markup)
         if len(text) > 4096:
             chunks = [text[i:i+4096] for i in range(0, len(text), 4096)]
             result = None

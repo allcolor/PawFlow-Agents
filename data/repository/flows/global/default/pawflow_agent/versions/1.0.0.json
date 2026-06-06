@@ -17,6 +17,14 @@
     "max_workers": 32,
     "agent_max_instances": 20
   },
+  "ports": {
+    "agent_runtime_in": {
+      "type": "agentRuntime",
+      "task": "agent",
+      "direction": "input",
+      "description": "Submit messages to the shared AgentLoop runtime"
+    }
+  },
   "services": {
     "http_listener": {
       "type": "httpListener",

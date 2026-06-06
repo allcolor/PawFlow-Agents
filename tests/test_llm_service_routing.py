@@ -641,4 +641,10 @@ class TestFlowMigration(unittest.TestCase):
             params = flow.get("parameters", {})
             self.assertNotIn("provider", params, f"{name} still has provider")
             self.assertNotIn("api_key", params, f"{name} still has api_key")
-            self.assertIn("llm_service", params, f"{name} missing llm_service")
+            has_agent_loop = any(
+                task.get("type") == "agentLoop"
+                for task in (flow.get("tasks") or {}).values()
+                if isinstance(task, dict)
+            )
+            if has_agent_loop:
+                self.assertIn("llm_service", params, f"{name} missing llm_service")

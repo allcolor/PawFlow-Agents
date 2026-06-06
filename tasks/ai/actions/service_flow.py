@@ -658,8 +658,9 @@ def _flow_one_shot_trigger_payload(raw: Dict[str, Any]) -> Dict[str, Any]:
                 task_cls = TaskFactory.get(task_type)
                 task = task_cls(task_def.get("parameters") or {})
             except Exception:
-                continue
-            if getattr(task, "is_persistent_source", False):
+                logger.debug("Failed to inspect task %s", task_id, exc_info=True)
+                task = None
+            if task is not None and getattr(task, "is_persistent_source", False):
                 has_persistent_sources = True
 
         for task_id in root_ids:
@@ -673,15 +674,21 @@ def _flow_one_shot_trigger_payload(raw: Dict[str, Any]) -> Dict[str, Any]:
                 task_cls = TaskFactory.get(task_type)
                 task = task_cls(task_def.get("parameters") or {})
             except Exception:
+                logger.debug("Failed to inspect root task %s", task_id, exc_info=True)
+                task = None
+            if task is None:
                 continue
             if getattr(task, "is_persistent_source", False):
                 continue
             if not hasattr(task, "has_pending_input"):
                 continue
             try:
-                if not task.has_pending_input():
-                    continue
+                has_pending = bool(task.has_pending_input())
             except Exception:
+                logger.debug("Failed to inspect pending input for %s", task_id,
+                             exc_info=True)
+                has_pending = False
+            if not has_pending:
                 continue
             label = getattr(task, "NAME", "") or task_def.get("name") or task_id
             triggers.append({

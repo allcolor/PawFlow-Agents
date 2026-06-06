@@ -313,8 +313,8 @@ class TestTelegramFlow(unittest.TestCase):
         tasks = flow["tasks"]
         assert "receive" in tasks
         assert tasks["receive"]["type"] == "telegramReceiver"
-        assert "agent" in tasks
-        assert tasks["agent"]["type"] == "agentLoop"
+        assert "agent_client" in tasks
+        assert tasks["agent_client"]["type"] == "telegramAgentClient"
         assert "send_reply" in tasks
         assert tasks["send_reply"]["type"] == "telegramSend"
 
@@ -325,8 +325,8 @@ class TestTelegramFlow(unittest.TestCase):
         sources = [c["source"] for c in rels]
         targets = [c["target"] for c in rels]
         assert "receive" in sources
-        assert "agent" in sources
-        assert "agent" in targets
+        assert "agent_client" in sources
+        assert "agent_client" in targets
         assert "send_reply" in targets
 
 

@@ -34,12 +34,6 @@
         "create_conversation": true
       }
     },
-    "conversation_bridge": {
-      "type": "telegramConversationBridge",
-      "parameters": {
-        "service_id": "telegram_bot"
-      }
-    },
     "send_reply": {
       "type": "telegramSend",
       "parameters": {

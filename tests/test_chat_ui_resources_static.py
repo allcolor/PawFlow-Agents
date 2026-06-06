@@ -167,8 +167,9 @@ def test_flow_template_graph_passes_conversation_id():
 def test_flow_graph_handles_missing_nodes_edges_response():
     flow_graph = Path("tasks/io/chat_ui/flow_graph.html").read_text(encoding="utf-8")
 
-    assert "Object.entries(apiNodes || {})" in flow_graph
-    assert "Array.isArray(apiEdges) ? apiEdges : []" in flow_graph
+    assert "apiNodes && typeof apiNodes === 'object' ? apiNodes : {}" in flow_graph
+    assert "function safeLayoutGraph(nodes, edges)" in flow_graph
+    assert "!validNodeIds.has(source) || !validNodeIds.has(target)" in flow_graph
     assert "Flow graph response is missing nodes or edges" in flow_graph
 
 

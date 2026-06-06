@@ -724,6 +724,22 @@ function layoutGraph(nodes, edges) {
   });
 }
 
+function fallbackLayout(nodes) {
+  return nodes.map((n, i) => ({
+    ...n,
+    position: { x: 60 + (i % 4) * 260, y: 80 + Math.floor(i / 4) * 150 },
+  }));
+}
+
+function safeLayoutGraph(nodes, edges) {
+  try {
+    return layoutGraph(nodes, edges);
+  } catch (e) {
+    console.warn('Flow graph layout failed, using fallback layout', e);
+    return fallbackLayout(nodes);
+  }
+}
+
 // ── State colors ──
 const STATE_COLORS = { running: '#28a745', stopped: '#6c757d', error: '#dc3545', disabled: '#343a40' };
 
@@ -762,29 +778,37 @@ const nodeTypes = { flowNode: FlowNode };
 
 // ── Convert API data to React Flow format ──
 function toRFNodes(apiNodes) {
-  return Object.entries(apiNodes || {}).map(([id, n]) => ({
-    id,
+  const entries = Array.isArray(apiNodes)
+    ? apiNodes.map((n, i) => [String(n?.id || n?.name || `node-${i}`), n || {}])
+    : Object.entries(apiNodes && typeof apiNodes === 'object' ? apiNodes : {});
+  return entries.map(([id, n]) => ({
+    id: String(id),
     type: 'flowNode',
     position: { x: 0, y: 0 },
     data: {
-      label: id, taskType: n.type, state: n.state,
-      stats_in: n.in, stats_out: n.out,
-      error_count: n.error_count, error: n.error,
-      in_flight: n.in_flight, pending: n.pending || 0,
+      label: String(id), taskType: n?.type || '?', state: n?.state || 'stopped',
+      stats_in: n?.in || 0, stats_out: n?.out || 0,
+      error_count: n?.error_count || 0, error: n?.error || '',
+      in_flight: !!n?.in_flight, pending: n?.pending || 0,
     },
   }));
 }
 
-function toRFEdges(apiEdges) {
+function toRFEdges(apiEdges, validNodeIds) {
   return (Array.isArray(apiEdges) ? apiEdges : []).map((e, i) => {
-    const animated = e.queue_size > 0;
-    const color = queueColor(e.queue_size, e.max_queue);
-    let label = e.relationship;
-    if (e.queue_size > 0) label += ` (${e.queue_size}/${e.max_queue})`;
-    if (e.backpressured) label = '\uD83D\uDD34 ' + label;
+    const source = String(e?.source || '');
+    const target = String(e?.target || '');
+    if (!source || !target || !validNodeIds.has(source) || !validNodeIds.has(target)) return null;
+    const queueSize = e?.queue_size || 0;
+    const maxQueue = e?.max_queue || 10000;
+    const animated = queueSize > 0;
+    const color = queueColor(queueSize, maxQueue);
+    let label = e?.relationship || 'success';
+    if (queueSize > 0) label += ` (${queueSize}/${maxQueue})`;
+    if (e?.backpressured) label = '\uD83D\uDD34 ' + label;
     return {
-      id: `e-${i}-${e.source}-${e.target}`,
-      source: e.source, target: e.target,
+      id: `e-${i}-${source}-${target}`,
+      source, target,
       animated,
       label,
       type: 'smoothstep',
@@ -792,7 +816,7 @@ function toRFEdges(apiEdges) {
       labelStyle: { fill: '#888', fontSize: 9 },
       labelBgStyle: { fill: '#0a0a0a', fillOpacity: 0.85 },
     };
-  });
+  }).filter(Boolean);
 }
 
 // ── Main App ──
@@ -827,10 +851,11 @@ function App() {
         return;
       }
       const rfNodes = toRFNodes(data.nodes);
-      const rfEdges = toRFEdges(data.edges);
+      const validNodeIds = new Set(rfNodes.map(n => n.id));
+      const rfEdges = toRFEdges(data.edges, validNodeIds);
 
       if (!layoutDone.current && rfNodes.length > 0) {
-        const laid = layoutGraph(rfNodes, rfEdges);
+        const laid = safeLayoutGraph(rfNodes, rfEdges);
         setNodes(laid);
         layoutDone.current = true;
       } else {
@@ -840,7 +865,7 @@ function App() {
           prev.forEach(n => { posMap[n.id] = n.position; });
           const newIds = rfNodes.filter(n => !posMap[n.id]);
           if (newIds.length > 0) {
-            const laid = layoutGraph(rfNodes, rfEdges);
+            const laid = safeLayoutGraph(rfNodes, rfEdges);
             return laid.map(n => posMap[n.id] ? { ...n, position: posMap[n.id] } : n);
           }
           return rfNodes.map(n => ({ ...n, position: posMap[n.id] || { x: 0, y: 0 } }));

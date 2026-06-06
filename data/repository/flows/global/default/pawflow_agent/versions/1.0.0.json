@@ -15,8 +15,7 @@
     "poll_interval": 30,
     "poll_recheck_delay": 7200,
     "max_workers": 32,
-    "agent_max_instances": 20,
-    "http_request_timeout": 600.0
+    "agent_max_instances": 20
   },
   "services": {
     "http_listener": {
@@ -24,7 +23,6 @@
       "parameters": {
         "host": "0.0.0.0",
         "port": "${port}",
-        "request_timeout": "${http_request_timeout}",
         "private_gateway_service_id": "${private_gateway_service_id}"
       }
     },

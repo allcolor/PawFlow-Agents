@@ -11,8 +11,7 @@
       "type": "httpListener",
       "parameters": {
         "host": "0.0.0.0",
-        "port": 9090,
-        "request_timeout": 60.0
+        "port": 9090
       }
     },
     "auth": {

@@ -652,7 +652,7 @@ class ContinuousFlowExecutor:
                 if self._debugger._action == DebugAction.STOP:
                     self._debugger = None
 
-            # Discard stale HTTP FlowFiles (request already timed out / responded)
+            # Discard stale HTTP FlowFiles (request already responded or listener stopped)
             if dequeued_ff and dequeued_ff.get_attribute("http.request.id"):
                 _req_id = dequeued_ff.get_attribute("http.request.id")
                 _svc_id = dequeued_ff.get_attribute("http.listener.service_id") or ""
@@ -666,7 +666,7 @@ class ContinuousFlowExecutor:
                 except Exception:
                     _still_valid = True  # can't check → assume valid
                 if not _still_valid:
-                    # Request expired — silently discard (already dequeued above)
+                    # Request is no longer pending — silently discard (already dequeued above)
                     self._task_states.record_run(task_id)
                     return
 
@@ -1238,7 +1238,8 @@ class ContinuousFlowExecutor:
         """Recover queued FlowFiles from the latest checkpoint.
 
         Never blocks startup — corrupted checkpoints are skipped and deleted.
-        HTTP-originated FlowFiles are discarded (requests already timed out).
+        HTTP-originated FlowFiles are discarded when their listener request is
+        no longer pending.
         """
         if not self._checkpoint_mgr:
             return

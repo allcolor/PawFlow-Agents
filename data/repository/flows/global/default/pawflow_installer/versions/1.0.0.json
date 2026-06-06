@@ -17,7 +17,6 @@
       "parameters": {
         "host": "0.0.0.0",
         "port": "${port}",
-        "request_timeout": 60.0,
         "ssl_certfile": "${ssl_certfile}",
         "ssl_keyfile": "${ssl_keyfile}",
         "private_gateway_service_id": "${private_gateway_service_id}"

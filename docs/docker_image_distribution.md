@@ -14,7 +14,9 @@ The workflow publishes PawFlow server image tags from Git tags. Relay images use
 the independent `relay_image_version` from `config/relay_image_catalog.json`
 (format `YYYY.mm.dd`) and are skipped when that GHCR tag already exists. Bump
 that catalog value only when the relay image OS/packages/tooling change. The
-workflow enables BuildKit SBOM and provenance metadata for each image it builds.
+workflow disables BuildKit SBOM/provenance publication because GHCR exposes
+those attestation manifests as extra untagged package versions, which makes
+release pages look like duplicate image builds.
 
 The published images currently target `linux/amd64`. Several upstream language/tool downloads remain architecture-specific, so multi-arch publishing must wait until those installers are made architecture-aware.
 
@@ -89,4 +91,6 @@ The server container receives `PAWFLOW_SERVER_RELAY_IMAGE` and `PAWFLOW_SERVER_R
 
 Published images must not include proprietary Google Chrome or Microsoft Visual Studio Code desktop builds. The full relay image uses Playwright-managed Chromium and `code-server` instead.
 
-Before making releases public, review SBOM/provenance output and keep third-party notices available for bundled MIT, Apache-2.0, BSD, LGPL, Ubuntu/Debian, Python, npm, Go, Rust, and system packages.
+Before making releases public, keep third-party notices available for bundled
+MIT, Apache-2.0, BSD, LGPL, Ubuntu/Debian, Python, npm, Go, Rust, and system
+packages.

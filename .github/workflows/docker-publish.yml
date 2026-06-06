@@ -20,8 +20,6 @@ on:
 permissions:
   contents: read
   packages: write
-  attestations: write
-  id-token: write
 
 env:
   REGISTRY: ghcr.io
@@ -156,5 +154,5 @@ jobs:
           build-args: |
             PAWFLOW_DOCKER_IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.image }}:${{ steps.effective.outputs.tag }}
           labels: ${{ steps.meta.outputs.labels }}
-          sbom: true
-          provenance: true
+          sbom: false
+          provenance: false

@@ -163,7 +163,7 @@ class _CloseTrackingSocket:
 def test_http_dispatch_saturation_closes_without_spawning(monkeypatch):
     monkeypatch.setenv("PAWFLOW_HTTP_MAX_DISPATCH_THREADS", "1")
     server = _HTTPServerWithRegistry(
-        ("127.0.0.1", 0), object, RouteRegistry(), request_timeout=30)
+        ("127.0.0.1", 0), object, RouteRegistry())
     try:
         assert server._dispatch_slots.acquire(blocking=False)
         sock = _CloseTrackingSocket()
@@ -181,7 +181,7 @@ def test_http_dispatch_saturation_closes_without_spawning(monkeypatch):
 def test_http_dispatch_slot_released_after_request(monkeypatch):
     monkeypatch.setenv("PAWFLOW_HTTP_MAX_DISPATCH_THREADS", "1")
     server = _HTTPServerWithRegistry(
-        ("127.0.0.1", 0), object, RouteRegistry(), request_timeout=30)
+        ("127.0.0.1", 0), object, RouteRegistry())
     done = threading.Event()
     try:
         def _fake_dispatch(_request, _client_address):
@@ -208,7 +208,7 @@ def test_long_lived_dispatch_transfer_releases_short_slot(monkeypatch):
     monkeypatch.setenv("PAWFLOW_HTTP_MAX_DISPATCH_THREADS", "1")
     monkeypatch.setenv("PAWFLOW_HTTP_MAX_LONG_DISPATCH_THREADS", "1")
     server = _HTTPServerWithRegistry(
-        ("127.0.0.1", 0), object, RouteRegistry(), request_timeout=30)
+        ("127.0.0.1", 0), object, RouteRegistry())
     try:
         assert server._dispatch_slots.acquire(blocking=False)
         with server._dispatch_lock:
@@ -492,8 +492,8 @@ class TestHTTPListenerService:
         finally:
             svc.disconnect()
 
-    def test_request_timeout_zero_does_not_short_circuit_flow_response(self):
-        svc = HTTPListenerService({"host": "127.0.0.1", "port": 19915, "request_timeout": 0})
+    def test_flow_response_wait_has_no_configured_timeout(self):
+        svc = HTTPListenerService({"host": "127.0.0.1", "port": 19915})
         svc.connect()
         try:
             def delayed(req):
@@ -511,6 +511,61 @@ class TestHTTPListenerService:
             resp = urllib.request.urlopen(req, timeout=5)
             assert resp.status == 200
             assert resp.read() == b"late-ok"
+        finally:
+            svc.disconnect()
+
+    def test_stalled_flow_response_does_not_occupy_short_dispatch_slot(self, monkeypatch):
+        monkeypatch.setenv("PAWFLOW_HTTP_MAX_DISPATCH_THREADS", "1")
+        svc = HTTPListenerService({"host": "127.0.0.1", "port": 19917})
+        svc.connect()
+        first_dispatched = threading.Event()
+        first_result = []
+        try:
+            def blocked(req):
+                first_dispatched.set()
+
+            def fast(req):
+                req.complete(200, {"Content-Type": "text/plain"}, b"fast-ok")
+
+            svc.register_route("GET", "/blocked", "test", blocked)
+            svc.register_route("GET", "/fast-after-blocked", "test", fast)
+            token = _create_test_session()
+
+            def make_blocked_request():
+                try:
+                    req = urllib.request.Request(
+                        "http://127.0.0.1:19917/blocked",
+                        method="GET",
+                        headers={"Cookie": f"pawflow_token={token}"},
+                    )
+                    urllib.request.urlopen(req, timeout=5).read()
+                except Exception as exc:
+                    first_result.append(exc)
+
+            t = threading.Thread(target=make_blocked_request, daemon=True)
+            t.start()
+            assert first_dispatched.wait(timeout=2)
+            deadline = time.time() + 2
+            while time.time() < deadline and svc._server._dispatch_active != 0:
+                time.sleep(0.01)
+            assert svc._server._dispatch_active == 0
+            assert svc._server._long_dispatch_active == 1
+
+            req = urllib.request.Request(
+                "http://127.0.0.1:19917/fast-after-blocked",
+                method="GET",
+                headers={"Cookie": f"pawflow_token={token}"},
+            )
+            resp = urllib.request.urlopen(req, timeout=5)
+            assert resp.status == 200
+            assert resp.read() == b"fast-ok"
+        finally:
+            svc.disconnect()
+
+    def test_http_listener_schema_does_not_expose_request_timeout(self):
+        svc = HTTPListenerService({"host": "127.0.0.1", "port": 19916})
+        try:
+            assert "request_timeout" not in svc.get_parameter_schema()
         finally:
             svc.disconnect()
 

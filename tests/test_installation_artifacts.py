@@ -643,8 +643,8 @@ def test_docker_publish_workflow_only_publishes_redistributable_images():
     assert "FORCE_JAVASCRIPT_ACTIONS_TO_NODE24" in src
     assert "pawflow-relay-minimal" in src
     assert "pawflow-relay-dev" in src
-    assert "sbom: true" in src
-    assert "provenance: true" in src
+    assert "sbom: false" in src
+    assert "provenance: false" in src
     assert "THIRD_PARTY_NOTICES.md" in src
     assert "relay_image_catalog.json" in src
     assert "relay_image_tag" in src

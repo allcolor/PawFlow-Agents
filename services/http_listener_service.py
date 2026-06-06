@@ -783,11 +783,23 @@ class _RequestHandler(BaseHTTPRequestHandler):
         req.mark("dispatch")
 
         # Block until flow responds. NO TIMEOUT — project rule: only the
-        # LLM watchdog has a timeout, nowhere else. If a request stalls
-        # forever, that's a backend bug we want to surface (not paper over
-        # with a 503). The slow-response log below catches slow responses,
-        # but skips paths that are legitimately long-lived (LLM streaming
-        # through /relay-proxy/ can take 60+ s per turn).
+        # LLM watchdog has a timeout, nowhere else. While waiting for the
+        # flow, move this request off the short dispatch pool so one stuck
+        # flow response cannot starve unrelated UI/API requests.
+        if not req.completed:
+            if not self.server.transfer_current_dispatch_to_long_lived(
+                    f"flow response wait {method} {path}"):
+                self.server._pending_requests.pop(req.request_id, None)
+                self.send_response(503)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    "error": "HTTP response wait capacity exceeded",
+                    "request_id": req.request_id,
+                    "path": path,
+                }).encode("utf-8"))
+                req.mark("send")
+                return
         req.wait()
         # `respond` is marked from inside complete()/complete_stream(),
         # capturing when the flow actually handed us the response — not
@@ -1043,13 +1055,12 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
     allow_reuse_address = True
     allow_reuse_port = True
 
-    def __init__(self, server_address, handler_class, route_registry, request_timeout,
+    def __init__(self, server_address, handler_class, route_registry,
                  max_dispatch_threads=None, header_read_timeout=None,
                  private_gateway=None):
         self._route_registry = route_registry
         self._private_gateway = private_gateway
         self._pending_requests: Dict[str, PendingRequest] = {}
-        self._request_timeout = request_timeout
         self._ssl_ctx: Optional[ssl.SSLContext] = None
         self._sni_certs: Dict[str, ssl.SSLContext] = {}
         self._ws_sockets: set = set()  # sockets handed to WS handlers
@@ -1608,7 +1619,6 @@ class HTTPListenerService(BaseService):
     Config:
         host: str = "0.0.0.0"
         port: int
-        request_timeout: float = 30.0  (seconds before 504)
         ssl_certfile: str = ""  (path to default PEM certificate)
         ssl_keyfile: str = ""   (path to default PEM private key)
         ssl_keyfile_password: str = "" (optional key password)
@@ -1651,7 +1661,6 @@ class HTTPListenerService(BaseService):
         if "port" not in self.config or self.config.get("port") in {None, ""}:
             raise ValueError("HTTPListenerService requires port")
         self._port = int(self.config.get("port"))
-        self._request_timeout = float(self.config.get("request_timeout", 120.0))
         self._max_dispatch_threads = self.config.get("max_dispatch_threads")
         self._header_read_timeout = self.config.get("header_read_timeout")
         self._private_gateway_service_id = self.config.get("private_gateway_service_id", "")
@@ -1684,7 +1693,6 @@ class HTTPListenerService(BaseService):
             self._ssl_keyfile_password,
         )
         self.config.update(config)
-        self._request_timeout = float(self.config.get("request_timeout", self._request_timeout))
         self._max_dispatch_threads = self.config.get("max_dispatch_threads", self._max_dispatch_threads)
         self._header_read_timeout = self.config.get("header_read_timeout", self._header_read_timeout)
         self._private_gateway_service_id = self.config.get("private_gateway_service_id", self._private_gateway_service_id)
@@ -1707,7 +1715,6 @@ class HTTPListenerService(BaseService):
         return {
             "host": {"type": "string", "required": False, "default": "0.0.0.0", "description": "Bind address"},  # nosec B104 - documented listener default.
             "port": {"type": "integer", "required": True, "description": "Listen port"},
-            "request_timeout": {"type": "float", "required": False, "default": 30.0, "description": "Request timeout (seconds)"},
             "max_dispatch_threads": {"type": "integer", "required": False, "default": 128, "description": "Maximum concurrent HTTP/WebSocket dispatch threads"},
             "header_read_timeout": {"type": "float", "required": False, "default": 3.0, "description": "Seconds to wait for request headers before closing slow or half-open clients"},
             "ssl_certfile": {"type": "string", "required": False, "default": "", "description": "Path to SSL certificate (PEM)"},
@@ -1764,7 +1771,6 @@ class HTTPListenerService(BaseService):
             (self._host, self._port),
             _RequestHandler,
             self._registry,
-            self._request_timeout,
             max_dispatch_threads=self._max_dispatch_threads,
             header_read_timeout=self._header_read_timeout,
             private_gateway=private_gateway,
@@ -1957,7 +1963,7 @@ class HTTPListenerService(BaseService):
 
         req = self._server._pending_requests.get(request_id)
         if not req:
-            logger.warning(f"Request {request_id} not found (timed out or already responded)")
+            logger.warning(f"Request {request_id} not found (already responded or listener stopped)")
             return False
 
         req.complete(status, headers or {}, body)

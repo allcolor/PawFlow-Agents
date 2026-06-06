@@ -55,7 +55,6 @@
       "parameters": {
         "host": "0.0.0.0",
         "port": 9090,
-        "request_timeout": 30.0,
         "ssl_certfile": "",
         "ssl_keyfile": "",
         "ssl_keyfile_password": "",
@@ -64,7 +63,6 @@
       "config": {
         "host": "0.0.0.0",
         "port": 9090,
-        "request_timeout": 30.0,
         "ssl_certfile": "",
         "ssl_keyfile": "",
         "ssl_keyfile_password": "",

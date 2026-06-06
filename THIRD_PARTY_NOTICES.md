@@ -2,7 +2,9 @@
 
 PawFlow Docker images bundle third-party operating system packages, language runtimes, package-manager dependencies, and developer tools. This file summarizes the redistribution posture for the public images built by `.github/workflows/docker-publish.yml`.
 
-This notice is not a substitute for the generated SBOM. Release review must inspect the SBOM/provenance metadata produced for each image.
+This notice is not a substitute for dependency review. The release workflow does
+not publish BuildKit SBOM/provenance attestations because GHCR exposes those
+attestation manifests as extra untagged package versions.
 
 ## Public Images
 
@@ -38,6 +40,6 @@ Before making a Docker release public:
 
 1. Confirm the workflow builds only the three public images listed above.
 2. Confirm no public image installs Google Chrome, Microsoft Visual Studio Code desktop, Claude Code, or Antigravity.
-3. Review SBOM/provenance output for unexpected proprietary packages.
+3. Review image dependency changes for unexpected proprietary packages.
 4. Keep this notice and the repository license reachable from the package source URL.
 5. If a new binary installer or package repository is added, verify its redistribution terms before publishing the image.

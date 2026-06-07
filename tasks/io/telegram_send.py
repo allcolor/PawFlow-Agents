@@ -75,7 +75,8 @@ class TelegramSendTask(BaseTask):
         reply_markup = _parse_reply_markup(
             flowfile.get_attribute("telegram.reply_markup") or "")
 
-        if not text.strip():
+        has_tts_audio = bool(flowfile.get_attribute("telegram.tts_audio_base64") or "")
+        if not text.strip() and not has_tts_audio:
             logger.warning("telegramSend: empty message, skipping")
             return [flowfile]
 
@@ -88,16 +89,20 @@ class TelegramSendTask(BaseTask):
             if user_bot_token:
                 from services.telegram_bot_service import TelegramBotPool
                 bot_pool = TelegramBotPool.instance()
-                result = bot_pool.send_message(
-                    user_bot_token, chat_id, text, parse_mode=parse_mode,
-                    reply_markup=reply_markup,
-                )
+                result = {}
+                if text.strip():
+                    result = bot_pool.send_message(
+                        user_bot_token, chat_id, text, parse_mode=parse_mode,
+                        reply_markup=reply_markup,
+                    )
                 self._send_tts_audio(bot_pool, user_bot_token, chat_id, flowfile)
             else:
-                result = svc.send_message(
-                    chat_id, text, parse_mode=parse_mode, reply_to=reply_to,
-                    reply_markup=reply_markup,
-                )
+                result = {}
+                if text.strip():
+                    result = svc.send_message(
+                        chat_id, text, parse_mode=parse_mode, reply_to=reply_to,
+                        reply_markup=reply_markup,
+                    )
                 self._send_tts_audio(svc, "", chat_id, flowfile)
             flowfile.set_attribute("telegram.sent_message_id",
                                    str(result.get("message_id", "")))

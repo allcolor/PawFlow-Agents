@@ -422,6 +422,26 @@ class TestTelegramSendTask(unittest.TestCase):
         svc.send_audio.assert_called_once_with(
             "456", b"audio", filename="reply.mp3", content_type="audio/mpeg")
 
+    def test_tts_audio_attribute_is_sent_without_duplicate_text(self):
+        from core import FlowFile
+        from tasks.io.telegram_send import TelegramSendTask
+
+        svc = MagicMock()
+        task = TelegramSendTask({"service_id": "tg", "chat_id": "456"})
+        task.get_service = lambda service_id: svc
+
+        ff = FlowFile(content=b"")
+        ff.set_attribute("telegram.chat_id", "456")
+        ff.set_attribute("telegram.tts_audio_base64", base64.b64encode(b"audio").decode("ascii"))
+        ff.set_attribute("telegram.tts_filename", "reply.mp3")
+        ff.set_attribute("telegram.tts_content_type", "audio/mpeg")
+
+        task.execute(ff)
+
+        svc.send_message.assert_not_called()
+        svc.send_audio.assert_called_once_with(
+            "456", b"audio", filename="reply.mp3", content_type="audio/mpeg")
+
 
 class TestTelegramAgentClientTask(unittest.TestCase):
 
@@ -871,6 +891,10 @@ class TestTelegramAgentClientTask(unittest.TestCase):
         assert ff.get_attribute("telegram.tts_content_type") == "audio/mpeg"
         registry.resolve.assert_called_once_with("tts1", user_id="alice", conv_id="conv1")
 
+    def test_agent_client_uses_full_result_for_tts_when_live_text_was_forwarded(self):
+        src = Path("tasks/io/telegram_agent_client.py").read_text(encoding="utf-8")
+        assert "response_text or str(result.response or \"\")" in src
+
     def test_conversation_bridge_drops_generic_thinking_heartbeat(self):
         from tasks.io.telegram_agent_client import TelegramConversationBridgeTask
         task = TelegramConversationBridgeTask({"service_id": "telegram_bot"})
@@ -924,10 +948,32 @@ class TestTelegramAgentClientTask(unittest.TestCase):
 
         assert [call.args[2] for call in task._send.call_args_list] == [
             "🟩 <b>assistant</b>\ncalling <code>read</code>",
-            "🟩 <b>assistant</b>\n<code>read</code> done",
             "🟩 <b>assistant</b>\ncalling <code>grep</code>",
-            "🟩 <b>assistant</b>\n<code>grep</code> done",
         ]
+        assert task._send_tool_media.call_count == 2
+
+    def test_conversation_bridge_unwraps_use_tool_progress_name(self):
+        from tasks.io.telegram_agent_client import TelegramConversationBridgeTask
+        task = TelegramConversationBridgeTask({"service_id": "telegram_bot"})
+        task._send = MagicMock()
+        task._send_tool_media = MagicMock()
+
+        with patch.object(TelegramConversationBridgeTask, "_telegram_subscribers", return_value=[("alice", "chat-1")]):
+            task._on_event("conv1", "tool_call", {
+                "agent_name": "assistant",
+                "tool": "use_tool",
+                "arguments": {"tool_name": "read", "arguments": {"path": "x"}},
+            })
+            task._on_event("conv1", "tool_result", {
+                "agent_name": "assistant",
+                "tool": "use_tool",
+                "arguments": {"tool_name": "bash", "arguments": {"cmd": "git status"}},
+            })
+
+        assert [call.args[2] for call in task._send.call_args_list] == [
+            "🟩 <b>assistant</b>\ncalling <code>read</code>",
+        ]
+        task._send_tool_media.assert_called_once()
 
     def test_conversation_bridge_does_not_restart_stopped_service(self):
         from tasks.io.telegram_agent_client import TelegramConversationBridgeTask

@@ -185,7 +185,8 @@ class TelegramAgentClientTask(BaseTask):
         flowfile.set_attribute("agent.conversation_id", submission.conversation_id)
         flowfile.set_attribute("agent.turn_id", submission.turn_id)
         _attach_telegram_tts_audio(
-            flowfile, response_text, user_id, conversation_id, target_agent)
+            flowfile, response_text or str(result.response or ""),
+            user_id, conversation_id, target_agent)
         return [flowfile]
 
     def _telegram_live_callback(self, user_id: str, chat_id: str):
@@ -198,9 +199,10 @@ class TelegramAgentClientTask(BaseTask):
             if not isinstance(data, dict):
                 return
             text = bridge._format_event(event_type, data)
-            if not text:
+            if not text and event_type != "tool_result":
                 return
-            bridge._send(user_id, chat_id, text)
+            if text:
+                bridge._send(user_id, chat_id, text)
             if event_type == "tool_result":
                 bridge._send_tool_media(user_id, chat_id, data)
             if event_type == "new_message" and data.get("role") == "assistant":
@@ -847,7 +849,7 @@ class TelegramConversationBridgeTask(BaseTask):
                 and data.get("role") == "user"):
             return
         text = self._format_event(event_type, data)
-        if not text:
+        if not text and event_type != "tool_result":
             return
         if event_type in {"thinking", "iteration_status", "thinking_delta", "thinking_content"}:
             agent_key = data.get("agent_name") or ""
@@ -871,7 +873,8 @@ class TelegramConversationBridgeTask(BaseTask):
             )
             return
         for user_id, chat_id in subscribers:
-            self._send(user_id, chat_id, text)
+            if text:
+                self._send(user_id, chat_id, text)
             if event_type == "tool_result":
                 self._send_tool_media(user_id, chat_id, data)
         if event_type == "new_message" and data.get("role") == "assistant":
@@ -908,12 +911,10 @@ class TelegramConversationBridgeTask(BaseTask):
             return f"{_telegram_agent_badge(data)}\n{html.escape(text)}" if text else ""
         if event_type == "tool_call":
             agent = _telegram_agent_badge(data)
-            tool = data.get("tool") or data.get("tool_name") or data.get("name") or "tool"
+            tool = _telegram_tool_display_name(data)
             return f"{agent}\ncalling <code>{html.escape(str(tool))}</code>"
         if event_type == "tool_result":
-            agent = _telegram_agent_badge(data)
-            tool = data.get("tool") or data.get("tool_name") or data.get("name") or "tool"
-            return f"{agent}\n<code>{html.escape(str(tool))}</code> done"
+            return ""
         return ""
 
     @staticmethod
@@ -1045,11 +1046,35 @@ def _telegram_agent_badge(data: Dict[str, Any], fallback: str = "assistant") -> 
     source = data.get("source") if isinstance(data.get("source"), dict) else {}
     name = str(source.get("name") or data.get("agent_name") or data.get("channel") or fallback or "assistant")
     service = str(source.get("llm_service") or data.get("llm_service") or "")
-    color = "🟩" if fallback == "assistant" or data.get("agent_name") or source.get("llm_service") else "⬜"
+    color = _telegram_badge_color(name) if fallback == "assistant" or data.get("agent_name") or source.get("llm_service") else "⬜"
     name_html = html.escape(name)
     if service and name != service:
         return f"{color} <b>{name_html}</b> via <code>{html.escape(service)}</code>"
     return f"{color} <b>{name_html}</b>"
+
+
+def _telegram_badge_color(name: str) -> str:
+    if (name or "").strip().lower() == "assistant":
+        return "🟩"
+    colors = ["🟦", "🟪", "🟧", "🟥", "🟨", "🟫"]
+    idx = sum(ord(ch) for ch in (name or "agent")) % len(colors)
+    return colors[idx]
+
+
+def _telegram_tool_display_name(data: Dict[str, Any]) -> str:
+    tool = str(data.get("tool") or data.get("tool_name") or data.get("name") or "tool")
+    raw_tool = str(data.get("raw_tool") or data.get("raw_name") or "")
+    if tool not in {"use_tool", "mcp_pawflow_use_tool", "mcp__pawflow__use_tool"}:
+        return tool
+    args = data.get("arguments") if isinstance(data.get("arguments"), dict) else {}
+    inner = str(args.get("tool_name") or args.get("name") or args.get("tool") or "")
+    if inner:
+        return inner
+    result = str(data.get("result") or data.get("content") or "")
+    match = re.search(r"tool_name['\"]?\s*[:=]\s*['\"]([^'\"}\s,]+)", result)
+    if match:
+        return match.group(1)
+    return raw_tool or tool
 
 
 def _extract_filestore_refs(text: str) -> List[str]:

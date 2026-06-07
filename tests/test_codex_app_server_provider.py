@@ -84,6 +84,22 @@ def test_codex_app_server_file_id_attachment_wins_over_relative_url(monkeypatch,
     assert not any(item.get("url", "").startswith("/files/") for item in items)
 
 
+def test_codex_app_server_unwraps_mcp_tool_names_for_events():
+    src = inspect.getsource(LLMCodexAppServerMixin._stream_codex_app_server)
+    assert '"raw_name": raw_name' in src
+    assert '"raw_tool": raw_name' in src
+    assert '"tool": display_name' in src
+
+
+def test_codex_app_server_rollout_receipt_marks_preempt_handled():
+    src = inspect.getsource(LLMCodexAppServerMixin._stream_codex_app_server)
+    preempt_block = src[src.index('if getattr(self, "_codex_app_preempt_pending", 0) > 0:'):]
+    preempt_block = preempt_block[:preempt_block.index('self._codex_app_turn_completed_for_callback')]
+
+    assert 'if pstatus == "done":' in preempt_block
+    assert "self._had_preempts_this_turn = True" in preempt_block
+
+
 def test_codex_app_server_stdio_is_utf8_and_ascii_safe_json():
     src = inspect.getsource(LLMCodexAppServerMixin)
     assert 'encoding="utf-8"' in src

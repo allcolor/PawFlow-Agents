@@ -1,6 +1,7 @@
 """OpenAI-compatible TTS service tests."""
 
 import json
+import sys
 
 import pytest
 
@@ -25,6 +26,54 @@ class _Resp:
 
 def test_openai_compatible_tts_is_registered():
     assert ServiceFactory.get("openaiCompatibleTTS") is OpenAICompatibleTTSService
+
+
+def test_register_all_services_reimports_missing_builtin_service_type():
+    import tasks
+
+    tasks._register_all_services()
+    ServiceFactory._services.pop("openaiCompatibleTTS", None)
+    sys.modules.pop("services.openai_compatible_tts_service", None)
+
+    tasks._register_all_services()
+
+    assert "openaiCompatibleTTS" in ServiceFactory.list_types()
+
+
+def test_media_discovery_returns_installed_openai_compatible_tts_after_late_import(monkeypatch, tmp_path):
+    import core.service_registry as service_registry_mod
+    from core.service_registry import SCOPE_USER, ServiceRegistry
+    from services.base_tts import BaseTTSService
+    from tasks.ai.agent_loop import AgentLoopTask
+
+    ServiceRegistry.reset()
+    monkeypatch.setattr(
+        service_registry_mod,
+        "_global_services_dir",
+        lambda: tmp_path / "global_services",
+    )
+    monkeypatch.setattr(
+        service_registry_mod,
+        "_user_services_dir",
+        lambda: tmp_path / "user_services",
+    )
+    reg = ServiceRegistry.get_instance()
+    reg.install(
+        SCOPE_USER,
+        "alice",
+        "openai_tts",
+        "openaiCompatibleTTS",
+        config={"api_key": "", "response_format": "wav"},
+        enabled=True,
+    )
+    ServiceFactory._services.pop("openaiCompatibleTTS", None)
+    sys.modules.pop("services.openai_compatible_tts_service", None)
+
+    services = AgentLoopTask({})._discover_media_services(
+        "alice", BaseTTSService, "")
+
+    assert any(sid == "openai_tts" for sid, _stype, _scope in services)
+    ServiceRegistry.reset()
 
 
 def test_openai_compatible_tts_posts_openai_speech_json(monkeypatch):

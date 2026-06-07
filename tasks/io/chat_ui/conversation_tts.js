@@ -134,6 +134,8 @@ function _convTtsSetDefaultService(serviceId) {
   }, { silent: true }).subscribe(() => {
     try { localStorage.removeItem('pawflow_tts_service'); } catch (_err) {}
     _convTtsSelectedService = serviceId;
+    const overlay = document.getElementById('convTtsServiceDialog');
+    if (overlay) overlay.remove();
     refreshConversationTTSServices();
   });
 }

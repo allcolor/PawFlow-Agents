@@ -121,6 +121,8 @@ function _convSttSetDefaultService(serviceId) {
   }, { silent: true }).subscribe(() => {
     try { localStorage.removeItem('pawflow_stt_service'); } catch (_err) {}
     _convSttSelectedService = serviceId;
+    const overlay = document.getElementById('convSttServiceDialog');
+    if (overlay) overlay.remove();
     refreshConversationSTTServices();
   });
 }

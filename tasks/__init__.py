@@ -17,23 +17,6 @@ logger = logging.getLogger(__name__)
 
 def _register_all_services():
     """Import all service modules to trigger ServiceFactory registration."""
-    from core import ServiceFactory
-    # Check a late-registered type to know if ALL modules are loaded
-    # (llmConnection alone is not enough — image/video may be missing)
-    _registered_types = set(ServiceFactory.list_types())
-    if ("pixazoImageGeneration" in _registered_types
-            and "codexImageGeneration" in _registered_types
-            and "supertonicTTS" in _registered_types
-            and "voicebox" in _registered_types
-            and "voxcpmTTS" in _registered_types
-            and "openaiCompatibleSTT" in _registered_types
-            and "openaiCompatibleImageGeneration" in _registered_types
-            and "openaiCompatibleVideoGeneration" in _registered_types
-            and "luxTTS" in _registered_types
-            and "summarizer" in _registered_types
-            and "ccInteractiveEvents" in _registered_types):
-        return  # All modules already registered
-
     # Force project root into sys.path — always, no conditional check
     # (Windows path comparison is unreliable: C:\x vs C:/x vs c:\x)
     import sys, os

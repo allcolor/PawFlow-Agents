@@ -257,7 +257,7 @@ def test_agent_runtime_submission_can_disable_done_wait(monkeypatch):
             import json
             body = json.loads(flowfile.get_content().decode("utf-8"))
             flowfile.set_content(json.dumps({
-                "status": "preempted",
+                "status": "accepted",
                 "conversation_id": body["conversation_id"],
                 "wait_for_done": False,
             }).encode("utf-8"))
@@ -278,7 +278,7 @@ def test_agent_runtime_submission_can_disable_done_wait(monkeypatch):
         runtime_port="pawflow_agent.agent_runtime_in",
     ))
 
-    assert submission.status == "preempted"
+    assert submission.status == "accepted"
     assert submission.wait_for_done is False
 
 

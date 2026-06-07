@@ -28,11 +28,13 @@ def test_add_msg_inserts_by_message_timestamp():
     assert "_insertMessageChronologically(container, el, _ts)" in MESSAGES_JS
 
 
-def test_send_ignores_preempt_ack_body():
+def test_send_ignores_technical_ack_body():
     ack_block = ATTACHMENTS_JS[
-        ATTACHMENTS_JS.index("Technical ACKs are transport state"):
+        ATTACHMENTS_JS.index("// If streaming mode"):
         ATTACHMENTS_JS.index("// Non-streaming mode")]
-    assert "['accepted', 'queued', 'preempted'].includes(data.status)" in ack_block
+    assert "data.status === 'accepted'" in ack_block
+    assert "data.status === 'queued'" in ack_block
+    assert "preempted" not in ack_block
     assert "return;" in ack_block
     assert "addMsg('assistant'" not in ack_block
 

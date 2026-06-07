@@ -325,7 +325,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                         "[agent:%s] preempted active provider session%s",
                         conversation_id[:8],
                         "; queued rescue" if _rescued else "")
-                    ack = json.dumps({"status": "preempted", "conversation_id": conversation_id,
+                    ack = json.dumps({"status": "accepted", "conversation_id": conversation_id,
                                       "message_count": _ack_message_count(),
                                       "server_start_time": SERVER_START_TIME,
                                       "wait_for_done": False})
@@ -626,18 +626,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                 "finish_reason=%r",
                 conversation_id[:8], bool(_retrig_flag), _had_error,
                 getattr(result, "finish_reason", ""))
-            if _retrig_flag:
-                if _had_error:
-                    if ctx.get("_error_retrigger_attempted"):
-                        logger.warning(
-                            "[agent:%s] suppressing repeated error retrigger for queued messages",
-                            conversation_id[:8])
-                        ctx.pop("_retrigger_after_done", None)
-                        _retrig_flag = False
-                    else:
-                        ctx["_error_retrigger_attempted"] = True
-                if not _retrig_flag:
-                    return
+            if _retrig_flag and not _had_error:
                 ctx.pop("_retrigger_after_done", None)
                 logger.info("[agent:%s] re-triggering loop for queued messages",
                             conversation_id[:8])

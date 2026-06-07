@@ -767,7 +767,7 @@ class TestTelegramAgentClientTask(unittest.TestCase):
 
             with patch.object(TelegramAgentClientTask, "_selected_agent_for_conversation", return_value="assistant"), \
                     patch("core.agent_runtime_api.AgentRuntimeAPI.submit_message", return_value=AgentSubmission(
-                        "preempted", "conv1", "telegram:111111:m2", wait_for_done=False)), \
+                        "accepted", "conv1", "telegram:111111:m2", wait_for_done=False)), \
                     patch("core.agent_runtime_api.AgentRuntimeAPI.wait_for_done") as wait:
                 out = task.execute(ff)
 

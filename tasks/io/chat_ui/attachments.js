@@ -385,17 +385,24 @@ async function send() {
       loadConversations();  // Show new conversation in sidebar immediately
     }
 
-    // Technical ACKs are transport state, never chat content.
-    if (['accepted', 'queued', 'preempted'].includes(data.status)) {
+    // If streaming mode: events come via SSE, don't show response here
+    if (data.status === 'accepted') {
       if (typeof _noteLiveHistoryAppend === 'function') {
         _noteLiveHistoryAppend(data.message_count, 1);
       } else if (data.message_count) serverMsgCount = data.message_count;
-      if (data.status === 'accepted' || data.status === 'preempted') {
-        document.getElementById('status').textContent = t('thinking');
-        document.getElementById('stopBtn').style.display = '';
-      } else {
-        sending = false;
-      }
+      document.getElementById('status').textContent = t('thinking');
+      document.getElementById('stopBtn').style.display = '';
+      // SSE will handle the rest
+      return;
+    }
+
+    // Message queued — agent is busy, message will be picked up at next checkpoint
+    if (data.status === 'queued') {
+      if (typeof _noteLiveHistoryAppend === 'function') {
+        _noteLiveHistoryAppend(data.message_count, 1);
+      } else if (data.message_count) serverMsgCount = data.message_count;
+      sending = false;
+      // Agent is already working — the message is persisted and will be injected
       return;
     }
 

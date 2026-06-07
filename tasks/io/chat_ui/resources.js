@@ -740,23 +740,80 @@ function showFlowTemplateMenu(e, templateId) {
   e.preventDefault();
   const old = document.querySelector('.ctx-menu');
   if (old) old.remove();
+  const tpl = _findFlowTemplate(templateId) || {};
   const menu = document.createElement('div');
   menu.className = 'ctx-menu';
   menu.style.cssText = 'position:fixed;z-index:10000;background:var(--pf-panel);border:1px solid var(--pf-border);border-radius:6px;padding:4px 0;min-width:150px;box-shadow:0 4px 12px var(--pf-shadow);';
   _positionMenu(menu, e);
-  const item = (label, fn) => {
+  const item = (label, fn, danger) => {
     const d = document.createElement('div');
     d.textContent = label;
-    d.style.cssText = 'padding:6px 16px;cursor:pointer;font-size:12px;color:var(--pf-text);';
+    d.style.cssText = 'padding:6px 16px;cursor:pointer;font-size:12px;color:' + (danger ? 'var(--pf-danger)' : 'var(--pf-text)') + ';';
     d.onmouseenter = () => d.style.background = 'color-mix(in srgb, var(--pf-accent) 12%, var(--pf-panel))';
     d.onmouseleave = () => d.style.background = '';
     d.onclick = () => { menu.remove(); fn(); };
     menu.appendChild(d);
   };
+  const sep = () => { const s = document.createElement('div'); s.style.cssText = 'height:1px;background:var(--pf-border);margin:4px 0;'; menu.appendChild(s); };
+  item('\u25B6 ' + t('deploy'), () => showDeployFlowDialog(templateId));
   item('\uD83D\uDCC8 ' + t('flowViewGraph'), () => _openFlowTemplateGraphTab(templateId));
+  sep();
+  item('\uD83D\uDCE6 ' + t('flowMoveToPackage'), () => _moveFlowTemplateToPackage(templateId, tpl));
+  item('\u2191 ' + t('promote'), () => _moveFlowTemplateScope(templateId, 'global'));
+  item('\u2195 ' + t('flowMoveToUserScope'), () => _moveFlowTemplateScope(templateId, 'user'));
+  if (typeof conversationId !== 'undefined' && conversationId) {
+    item('\u2193 ' + t('flowMoveToConversationScope'), () => _moveFlowTemplateScope(templateId, 'conversation'));
+  }
+  sep();
+  item('\u{1F5D1} ' + t('delete'), () => _deleteFlowTemplate(templateId), true);
   document.body.appendChild(menu);
   _positionMenu(menu, e);
   setTimeout(() => document.addEventListener('click', function _c() { menu.remove(); document.removeEventListener('click', _c); }), 0);
+}
+
+function _findFlowTemplate(templateId) {
+  const templates = (_lastResourcesData && _lastResourcesData.flow_templates) || [];
+  return templates.find(tpl => tpl.id === templateId || tpl.fqn === templateId || tpl.name === templateId) || null;
+}
+
+function _flowTemplatePayload(templateId, extra) {
+  const payload = Object.assign({ template_id: templateId }, extra || {});
+  if (typeof conversationId !== 'undefined' && conversationId) payload.conversation_id = conversationId;
+  return payload;
+}
+
+function _flowTemplateMutationOptions(targetScope) {
+  return { skipConversationId: !(targetScope === 'conversation') };
+}
+
+function _moveFlowTemplateToPackage(templateId, tpl) {
+  const current = (tpl && tpl.package) || 'default';
+  const nextPackage = prompt(t('flowMoveToPackagePrompt', { current: current }), current);
+  if (!nextPackage || nextPackage === current) return;
+  if (!confirm(t('flowMoveToPackageConfirm', { id: templateId, package: nextPackage }))) return;
+  action$('move_flow_template_package', _flowTemplatePayload(templateId, { package: nextPackage })).subscribe(d => {
+    if (d.error) addMsg('error', d.error);
+    else addMsg('system', t('flowTemplateMovedToPackage', { id: templateId, package: nextPackage }));
+    loadResources();
+  });
+}
+
+function _moveFlowTemplateScope(templateId, targetScope) {
+  if (!confirm(t('flowTemplateMoveScopeConfirm', { id: templateId, scope: targetScope }))) return;
+  action$('promote_flow_template', _flowTemplatePayload(templateId, { target_scope: targetScope }), _flowTemplateMutationOptions(targetScope)).subscribe(d => {
+    if (d.error) addMsg('error', d.error);
+    else addMsg('system', t('flowTemplateMovedToScope', { id: templateId, scope: targetScope }));
+    loadResources();
+  });
+}
+
+function _deleteFlowTemplate(templateId) {
+  if (!confirm(t('flowTemplateDeleteConfirm', { id: templateId }))) return;
+  action$('delete_flow_template', _flowTemplatePayload(templateId)).subscribe(d => {
+    if (d.error) addMsg('error', d.error);
+    else addMsg('system', t('flowTemplateDeleted', { id: templateId }));
+    loadResources();
+  });
 }
 
 function _renderFlowPackageGroup(packageName, flows) {
@@ -2469,7 +2526,7 @@ async function _renderFlowDeploymentConfig(schemaData) {
   return html;
 }
 
-async function showDeployFlowDialog() {
+async function showDeployFlowDialog(initialTemplateId) {
   let overlay = document.getElementById('resourceEditorOverlay');
   if (overlay) overlay.remove();
   overlay = document.createElement('div');
@@ -2493,7 +2550,8 @@ async function showDeployFlowDialog() {
     let optionsHtml = templates.map(t => {
       const versionLabel = t.version ? ' v' + t.version : '';
       const scopeLabel = t.scope || 'independent';
-      return '<option value="' + escapeHtml(t.id) + '" data-scope="' + escapeHtml(scopeLabel) + '">'
+      const selected = initialTemplateId && t.id === initialTemplateId ? ' selected' : '';
+      return '<option value="' + escapeHtml(t.id) + '" data-scope="' + escapeHtml(scopeLabel) + '"' + selected + '>'
         + escapeHtml(t.name) + ' (' + escapeHtml(String(t.tasks_count)) + ' tasks)' + escapeHtml(versionLabel)
         + ' [' + escapeHtml(scopeLabel) + ']</option>';
     }).join('');
@@ -2519,6 +2577,7 @@ async function showDeployFlowDialog() {
 function _submitDeployFlow() {
   const templateId = document.getElementById('deploy-template').value;
   const scope = document.getElementById('deploy-scope').value;
+  if (!confirm(t('flowDeployConfirm', { id: templateId, scope: scope }))) return;
   let cfg;
   try {
     cfg = _collectFlowDeploymentConfig(document.getElementById('deploy-config'));

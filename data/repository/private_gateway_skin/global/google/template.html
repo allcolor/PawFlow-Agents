@@ -52,7 +52,7 @@
 <div class="cd" id="cd"></div>
 <script>
 (function(){
-  var cd = {{ cooldown }}, b = document.getElementById('b'),
+  var cd = Number('{{ cooldown }}') || 0, b = document.getElementById('b'),
       cdEl = document.getElementById('cd');
   function tick() {
     if (cd <= 0) { b.disabled = false; cdEl.textContent = ''; return; }

@@ -560,6 +560,69 @@ def _resolve_flow_template_path(template_id: str, user_id: str,
     return None
 
 
+def _flow_template_storage_info(tpath, user_id: str, conversation_id: str = ""):
+    from core.paths import REPOSITORY_DIR
+
+    tpath = tpath.resolve()
+    roots = []
+    if user_id and conversation_id:
+        roots.append(("conversation", REPOSITORY_DIR / "flows" / "users" / user_id / conversation_id))
+    if user_id:
+        roots.append(("user", REPOSITORY_DIR / "flows" / "users" / user_id))
+    roots.append(("global", REPOSITORY_DIR / "flows" / "global"))
+    flow_dir = tpath.parent.parent
+    for scope, root in roots:
+        try:
+            rel_parts = flow_dir.resolve().relative_to(root.resolve()).parts
+        except ValueError:
+            continue
+        if not rel_parts:
+            break
+        package = ".".join(rel_parts[:-1]) if len(rel_parts) > 1 else "default"
+        raw = json.loads(tpath.read_text(encoding="utf-8"))
+        return {
+            "scope": scope,
+            "repo_scope": "conv" if scope == "conversation" else scope,
+            "root": root,
+            "flow_dir": flow_dir,
+            "package": raw.get("package") or package,
+            "storage_package": package,
+            "flow_name": flow_dir.name,
+            "version": raw.get("version") or tpath.stem,
+            "raw": raw,
+        }
+    raise ValueError("Template path is outside the flow repository")
+
+
+def _validate_flow_package_name(package: str) -> str:
+    import re
+
+    package = str(package or "").strip().strip(".")
+    if not package:
+        raise ValueError("Missing package")
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", package):
+        raise ValueError("Package may only contain letters, numbers, dots, underscores, and dashes")
+    if ".." in package:
+        raise ValueError("Package cannot contain empty segments")
+    return package
+
+
+def _ensure_template_scope_edit_allowed(flowfile: FlowFile, scope: str) -> Optional[Dict[str, str]]:
+    if scope == "global" and not _is_admin(flowfile):
+        flowfile.set_attribute("http.response.status", "403")
+        return {"error": "Requires admin role for global scope"}
+    return None
+
+
+def _rewrite_flow_template_package(flow_dir, package: str) -> None:
+    for version_file in sorted((flow_dir / "versions").glob("*.json")):
+        raw = json.loads(version_file.read_text(encoding="utf-8"))
+        version = raw.get("version") or version_file.stem
+        raw["package"] = package
+        raw["fqn"] = f"{package}.{flow_dir.name}:{version}"
+        version_file.write_text(json.dumps(raw, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
 def _service_parameter_schema(service_type: str) -> Dict[str, Any]:
     if not service_type:
         return {}
@@ -2875,6 +2938,140 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps(
                 {"ok": True, "instance_id": iid, "scope": deploy_scope,
                  "flow_scope": flow_scope}).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+        return [flowfile]
+
+    if action == "move_flow_template_package":
+        template_id = body.get("template_id", "")
+        target_package = body.get("package", "")
+        conv_id = body.get("conversation_id", "") or flowfile.get_attribute("http.conversation_id") or ""
+        if not template_id:
+            flowfile.set_content(json.dumps({"error": "Missing template_id"}).encode())
+            return [flowfile]
+        try:
+            import shutil
+            from core.paths import flow_package_dir
+
+            target_package = _validate_flow_package_name(target_package)
+            tpath = _resolve_flow_template_path(template_id, user_id, conv_id)
+            if not tpath:
+                flowfile.set_content(json.dumps({"error": f"Template '{template_id}' not found"}).encode())
+                return [flowfile]
+            info = _flow_template_storage_info(tpath, user_id, conv_id)
+            denied = _ensure_template_scope_edit_allowed(flowfile, info["scope"])
+            if denied:
+                flowfile.set_content(json.dumps(denied).encode())
+                return [flowfile]
+            if target_package == info["storage_package"]:
+                flowfile.set_content(json.dumps({"ok": True, "unchanged": True}).encode())
+                return [flowfile]
+            dest_pkg = flow_package_dir(
+                target_package, info["repo_scope"], user_id, conv_id)
+            dest_dir = dest_pkg / info["flow_name"]
+            if dest_dir.exists():
+                flowfile.set_content(json.dumps(
+                    {"error": f"Flow already exists in package '{target_package}'"}).encode())
+                return [flowfile]
+            dest_pkg.mkdir(parents=True, exist_ok=True)
+            pkg_file = dest_pkg / "package.json"
+            if not pkg_file.exists():
+                pkg_file.write_text(json.dumps({
+                    "name": target_package,
+                    "description": "",
+                    "author": "",
+                }, indent=2) + "\n", encoding="utf-8")
+            shutil.move(str(info["flow_dir"]), str(dest_dir))
+            _rewrite_flow_template_package(dest_dir, target_package)
+            flowfile.set_content(json.dumps({
+                "ok": True,
+                "template_id": template_id,
+                "package": target_package,
+                "scope": info["scope"],
+            }).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+        return [flowfile]
+
+    if action == "promote_flow_template":
+        template_id = body.get("template_id", "")
+        target_scope = body.get("target_scope", "")
+        conv_id = body.get("conversation_id", "") or flowfile.get_attribute("http.conversation_id") or ""
+        if not template_id:
+            flowfile.set_content(json.dumps({"error": "Missing template_id"}).encode())
+            return [flowfile]
+        if target_scope not in {"conversation", "user", "global"}:
+            flowfile.set_content(json.dumps({"error": "Invalid target_scope"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        if target_scope == "conversation" and not conv_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id for conversation scope"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        if target_scope == "global" and not _is_admin(flowfile):
+            flowfile.set_content(json.dumps({"error": "Requires admin role for global scope"}).encode())
+            flowfile.set_attribute("http.response.status", "403")
+            return [flowfile]
+        try:
+            from core.repository import ScopedRepository
+
+            tpath = _resolve_flow_template_path(template_id, user_id, conv_id)
+            if not tpath:
+                flowfile.set_content(json.dumps({"error": f"Template '{template_id}' not found"}).encode())
+                return [flowfile]
+            info = _flow_template_storage_info(tpath, user_id, conv_id)
+            denied = _ensure_template_scope_edit_allowed(flowfile, info["scope"])
+            if denied:
+                flowfile.set_content(json.dumps(denied).encode())
+                return [flowfile]
+            if target_scope == info["scope"]:
+                flowfile.set_content(json.dumps({"ok": True, "unchanged": True}).encode())
+                return [flowfile]
+            fqn = f"{info['storage_package']}.{info['flow_name']}:{info['version']}"
+            from_repo_scope = info["repo_scope"]
+            to_repo_scope = "conv" if target_scope == "conversation" else target_scope
+            if {"conversation": 0, "user": 1, "global": 2}[target_scope] > {"conversation": 0, "user": 1, "global": 2}[info["scope"]]:
+                ScopedRepository().promote(
+                    "flows", fqn, from_repo_scope, to_repo_scope,
+                    user_id=user_id, conv_id=conv_id, move=True)
+            else:
+                ScopedRepository().demote(
+                    "flows", fqn, from_repo_scope, to_repo_scope,
+                    user_id=user_id, conv_id=conv_id, move=True)
+            flowfile.set_content(json.dumps({
+                "ok": True,
+                "template_id": template_id,
+                "from_scope": info["scope"],
+                "scope": target_scope,
+            }).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+        return [flowfile]
+
+    if action == "delete_flow_template":
+        template_id = body.get("template_id", "")
+        conv_id = body.get("conversation_id", "") or flowfile.get_attribute("http.conversation_id") or ""
+        if not template_id:
+            flowfile.set_content(json.dumps({"error": "Missing template_id"}).encode())
+            return [flowfile]
+        try:
+            import shutil
+
+            tpath = _resolve_flow_template_path(template_id, user_id, conv_id)
+            if not tpath:
+                flowfile.set_content(json.dumps({"error": f"Template '{template_id}' not found"}).encode())
+                return [flowfile]
+            info = _flow_template_storage_info(tpath, user_id, conv_id)
+            denied = _ensure_template_scope_edit_allowed(flowfile, info["scope"])
+            if denied:
+                flowfile.set_content(json.dumps(denied).encode())
+                return [flowfile]
+            shutil.rmtree(info["flow_dir"])
+            flowfile.set_content(json.dumps({
+                "ok": True,
+                "template_id": template_id,
+                "scope": info["scope"],
+            }).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
         return [flowfile]

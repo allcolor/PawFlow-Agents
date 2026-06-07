@@ -37,6 +37,20 @@ def test_server_dockerfile_supports_bootstrap_docker_builds():
     assert "default_repository_manifest.json" in entrypoint
     assert "flows/global/default" in entrypoint
     assert "flows/global/default/pawflow_admin" in entrypoint
+    managed_builtin_roots = [
+        "agents/global",
+        "configs",
+        "flows/global/default",
+        "private_gateway_skin/global",
+        "prompts/global",
+        "skills/global",
+        "tasks/global",
+        "theme/global",
+    ]
+    install_script = Path("scripts/install-pawflow.sh").read_text(encoding="utf-8")
+    for rel in managed_builtin_roots:
+        assert rel in entrypoint
+        assert rel in install_script
     assert "seed_missing_tree /app/default-config /app/config" in entrypoint
     assert "configure_runtime_user" in entrypoint
     assert "printenv PAWFLOW_RUN_UID" in entrypoint

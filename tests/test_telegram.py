@@ -562,7 +562,7 @@ class TestTelegramAgentClientTask(unittest.TestCase):
         assert svc.kwargs["mime_type"] == "audio/mpeg"
         assert svc.kwargs["filename"] == "clip.mp3"
 
-    def test_telegram_voice_auto_selects_single_available_stt_service(self):
+    def test_telegram_voice_prefers_voicebox_stt_when_no_conversation_preference(self):
         from unittest.mock import patch
         from tasks.io.telegram_agent_client import _transcribe_telegram_voice
 
@@ -571,11 +571,16 @@ class TestTelegramAgentClientTask(unittest.TestCase):
                 return {"text": "auto transcribed"}
 
         class FakeDef:
-            service_id = "voicebox_service"
+            def __init__(self, service_id):
+                self.service_id = service_id
 
         svc = FakeSTT()
         registry = MagicMock()
-        registry.resolve_by_type.side_effect = lambda service_type, **kwargs: [FakeDef()] if service_type == "voicebox" else []
+        registry.resolve_by_type.side_effect = lambda service_type, **kwargs: {
+            "voicebox": [FakeDef("voicebox_service")],
+            "openaiCompatibleSTT": [FakeDef("openai_STT")],
+            "xaiSTT": [],
+        }.get(service_type, [])
         registry.resolve.return_value = svc
         store = MagicMock()
         store.get_extra.return_value = {}
@@ -837,6 +842,21 @@ class TestTelegramAgentClientTask(unittest.TestCase):
 
         task._send.assert_not_called()
 
+    def test_conversation_bridge_does_not_echo_telegram_user_message_by_msg_id(self):
+        from tasks.io.telegram_agent_client import TelegramConversationBridgeTask
+        task = TelegramConversationBridgeTask({"service_id": "telegram_bot"})
+        task._send = MagicMock()
+
+        with patch.object(TelegramConversationBridgeTask, "_telegram_subscribers", return_value=[("alice", "chat-1")]):
+            task._on_event("conv1", "new_message", {
+                "role": "user",
+                "content": "Voilà, j'ai restart en .16",
+                "msg_id": "telegram:111111:42",
+                "source": {"name": "allcolor"},
+            })
+
+        task._send.assert_not_called()
+
     def test_agent_client_removes_live_assistant_messages_from_final_reply(self):
         from core.agent_runtime_api import AgentFinalResult
         from tasks.io.telegram_agent_client import (
@@ -856,6 +876,22 @@ class TestTelegramAgentClientTask(unittest.TestCase):
         )
 
         assert _remove_forwarded_telegram_live_text("conv1", result) == "Corrigé."
+        assert "conv1" not in _TELEGRAM_LIVE_TEXT_BY_TURN
+
+    def test_agent_client_removes_live_text_without_matching_all_msg_ids(self):
+        from core.agent_runtime_api import AgentFinalResult
+        from tasks.io.telegram_agent_client import (
+            _TELEGRAM_LIVE_TEXT_BY_TURN,
+            _remove_forwarded_telegram_live_text,
+        )
+
+        _TELEGRAM_LIVE_TEXT_BY_TURN.clear()
+        _TELEGRAM_LIVE_TEXT_BY_TURN["conv1"] = {"live-msg": "already sent live"}
+        result = AgentFinalResult(
+            "conv1", "telegram:111111:42", response="already sent live",
+            data={"all_msg_ids": ["different-msg"]})
+
+        assert _remove_forwarded_telegram_live_text("conv1", result) == ""
         assert "conv1" not in _TELEGRAM_LIVE_TEXT_BY_TURN
 
     def test_tts_command_toggles_conversation_audio(self):
@@ -920,9 +956,27 @@ class TestTelegramAgentClientTask(unittest.TestCase):
         assert ff.get_attribute("telegram.tts_content_type") == "audio/mpeg"
         registry.resolve.assert_called_once_with("tts1", user_id="alice", conv_id="conv1")
 
-    def test_agent_client_uses_full_result_for_tts_when_live_text_was_forwarded(self):
+    def test_agent_client_tts_uses_remaining_final_text_after_live_forwarding(self):
         src = Path("tasks/io/telegram_agent_client.py").read_text(encoding="utf-8")
-        assert "response_text or str(result.response or \"\")" in src
+        assert "response_text or str(result.response or \"\")" not in src
+        assert "flowfile, response_text," in src
+
+    def test_conversation_bridge_sends_tts_for_live_assistant_message(self):
+        from tasks.io.telegram_agent_client import TelegramConversationBridgeTask
+        task = TelegramConversationBridgeTask({"service_id": "telegram_bot"})
+        task._send = MagicMock()
+        task._send_tts_audio = MagicMock()
+
+        with patch.object(TelegramConversationBridgeTask, "_telegram_subscribers", return_value=[("alice", "chat-1")]):
+            task._on_event("conv1", "new_message", {
+                "role": "assistant",
+                "content": "message intermédiaire",
+                "agent_name": "assistant",
+                "msg_id": "mid1",
+            })
+
+        task._send.assert_called_once()
+        task._send_tts_audio.assert_called_once()
 
     def test_conversation_bridge_drops_generic_thinking_heartbeat(self):
         from tasks.io.telegram_agent_client import TelegramConversationBridgeTask

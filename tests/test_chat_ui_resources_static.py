@@ -199,8 +199,14 @@ def test_flow_graph_renders_runtime_port_links():
     flow_graph = Path("tasks/io/chat_ui/flow_graph.html").read_text(encoding="utf-8")
 
     assert "runtime-port" in flow_graph
-    assert "runtime input port" in flow_graph
+    assert "input port" in flow_graph
+    assert "runtime call target" in flow_graph
+    assert "runtime call" in flow_graph
     assert "isRuntimeLink: !!n?.runtime_link" in flow_graph
+    assert "isRuntimePort: !!(n?.runtime_link || n?.runtime_port)" in flow_graph
+    assert "portDirection: n?.port_direction || 'input'" in flow_graph
+    assert "edges.filter(e => !e?.data?.runtimeLink)" in flow_graph
+    assert "data: { runtimeLink: !!e?.runtime_link, runtimePort: !!e?.runtime_port }" in flow_graph
     assert "strokeDasharray: '6 4'" in flow_graph
 
 

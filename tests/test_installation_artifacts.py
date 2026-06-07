@@ -33,6 +33,10 @@ def test_server_dockerfile_supports_bootstrap_docker_builds():
 
     entrypoint = Path("docker/server-entrypoint.sh").read_text(encoding="utf-8")
     assert "seed_missing_tree /app/default-data/repository /app/data/repository" in entrypoint
+    assert "sync_managed_repository_defaults" in entrypoint
+    assert "default_repository_manifest.json" in entrypoint
+    assert "flows/global/default" in entrypoint
+    assert "flows/global/default/pawflow_admin" in entrypoint
     assert "seed_missing_tree /app/default-config /app/config" in entrypoint
     assert "configure_runtime_user" in entrypoint
     assert "printenv PAWFLOW_RUN_UID" in entrypoint
@@ -236,6 +240,8 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert "image_runtime_dir" in install_src
     assert "extract_image_artifacts" in install_src
     assert "relay_image_version" in install_src
+    assert "default_repository_manifest.json" in install_src
+    assert "flows/global/default/pawflow_admin" in install_src
     assert 'docker create "$image" true' in install_src
     assert 'docker cp "$cid:/app/$rel" "$out_dir/$rel"' in install_src
     assert "scripts/run-pawflow-docker.sh" in install_src

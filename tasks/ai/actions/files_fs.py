@@ -90,8 +90,45 @@ def _static_flow_graph(raw: Dict[str, Any]):
             "max_queue": 10000,
             "backpressured": False,
         })
+    _add_declared_ports_to_graph(raw, nodes, edges)
     _add_runtime_links_to_graph(raw, nodes, edges)
     return nodes, edges
+
+
+def _add_declared_ports_to_graph(raw: Dict[str, Any], nodes: Dict[str, Any],
+                                 edges: List[Dict[str, Any]]) -> None:
+    for port_id, port in (raw.get("ports") or {}).items():
+        if not isinstance(port, dict):
+            continue
+        direction = str(port.get("direction") or "input")
+        task_id = str(port.get("task") or "")
+        node_id = f"port:{port_id}"
+        nodes[node_id] = {
+            "type": port.get("type") or "port",
+            "state": "stopped",
+            "in": 0,
+            "out": 0,
+            "error_count": 0,
+            "error": "",
+            "in_flight": False,
+            "runtime_port": True,
+            "port_direction": direction,
+            "runtime_target": port_id,
+            "group_name": port_id,
+            "description": port.get("description", ""),
+        }
+        if task_id not in nodes:
+            continue
+        source, target = (node_id, task_id) if direction == "input" else (task_id, node_id)
+        edges.append({
+            "source": source,
+            "target": target,
+            "relationship": port.get("type") or direction,
+            "queue_size": 0,
+            "max_queue": 10000,
+            "backpressured": False,
+            "runtime_port": True,
+        })
 
 
 def _add_runtime_links_to_graph(raw: Dict[str, Any], nodes: Dict[str, Any],
@@ -374,6 +411,7 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
                     if inst:
                         try:
                             raw = _load_deployed_flow_definition(inst)
+                            _add_declared_ports_to_graph(raw, nodes, edges)
                             _add_runtime_links_to_graph(raw, nodes, edges)
                         except Exception:
                             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)

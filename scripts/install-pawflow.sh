@@ -661,11 +661,71 @@ ensure_runtime_image() {
 }
 
 seed_native_data() {
+  local py
   mkdir -p "$PAWFLOW_HOME/data" "$PAWFLOW_HOME/logs"
   if [[ ! -d "$PAWFLOW_HOME/data/repository" ]]; then
     echo "Seeding native PawFlow repository data: $PAWFLOW_HOME/data/repository"
     mkdir -p "$PAWFLOW_HOME/data"
     cp -R "$REPO_DIR/data/repository" "$PAWFLOW_HOME/data/repository"
+  fi
+  py="$(find_optional_python)"
+  if [[ -n "$py" && -d "$REPO_DIR/data/repository" ]]; then
+    "$py" - "$REPO_DIR/data/repository" "$PAWFLOW_HOME/data/repository" "$PAWFLOW_HOME/data/system/default_repository_manifest.json" <<'PY'
+import json
+import shutil
+import sys
+from pathlib import Path
+
+src = Path(sys.argv[1])
+dest = Path(sys.argv[2])
+manifest = Path(sys.argv[3])
+managed_roots = [
+    "agents/global", "configs", "flows/global/default",
+    "private_gateway_skin/global", "prompts/global", "skills/global",
+    "tasks/global", "theme/global",
+]
+legacy_removed_dirs = ["flows/global/default/pawflow_admin"]
+
+def files_under(root):
+    if not root.exists():
+        return set()
+    return {p.relative_to(src).as_posix() for p in root.rglob("*") if p.is_file()}
+
+current_files = set()
+for rel in managed_roots:
+    current_files.update(files_under(src / rel))
+old_files = set()
+if manifest.exists():
+    try:
+        old_files = set(json.loads(manifest.read_text(encoding="utf-8")).get("files", []))
+    except (OSError, json.JSONDecodeError):
+        old_files = set()
+for rel in sorted(old_files - current_files, reverse=True):
+    target = dest / rel
+    if target.exists() and target.is_file():
+        target.unlink()
+for rel in legacy_removed_dirs:
+    target = dest / rel
+    source = src / rel
+    if target.exists() and not source.exists():
+        shutil.rmtree(target)
+for rel in managed_roots:
+    source = src / rel
+    target = dest / rel
+    if source.exists():
+        shutil.copytree(source, target, dirs_exist_ok=True)
+for rel in managed_roots:
+    root = dest / rel
+    if not root.exists():
+        continue
+    for path in sorted((p for p in root.rglob("*") if p.is_dir()), reverse=True):
+        try:
+            path.rmdir()
+        except OSError:
+            pass
+manifest.parent.mkdir(parents=True, exist_ok=True)
+manifest.write_text(json.dumps({"files": sorted(current_files)}, indent=2) + "\n", encoding="utf-8")
+PY
   fi
 }
 

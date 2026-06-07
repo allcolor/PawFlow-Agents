@@ -4,6 +4,7 @@ import json
 import logging
 import threading
 import time
+from datetime import datetime
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
@@ -563,6 +564,33 @@ class StreamEmitter(AgentEmitter):
         return self.agent._check_interrupt(self.gen_key)
 
     def drain_pending(self, messages, append_fn, iteration):
+        def _flowfile_created_ts(flowfile) -> float:
+            created = getattr(flowfile, "created_at", None)
+            if isinstance(created, datetime):
+                return created.timestamp()
+            try:
+                return float(created or 0.0)
+            except (TypeError, ValueError):
+                return 0.0
+
+        def _force_stop_cutoff() -> float:
+            try:
+                from core.conversation_store import ConversationStore
+                store = ConversationStore.instance()
+                agent = (self._agent_name or "").lower()
+                agent_cutoff = 0.0
+                if agent:
+                    agent_cutoff = float(store.get_extra(
+                        self.conversation_id,
+                        f"last_force_stop_at:{agent}") or 0.0)
+                global_cutoff = float(store.get_extra(
+                    self.conversation_id, "last_force_stop_at") or 0.0)
+                return max(agent_cutoff, global_cutoff)
+            except Exception:
+                return 0.0
+
+        _force_stop_after = _force_stop_cutoff()
+
         # Source 1: executor queue drain
         if hasattr(self.agent, '_drain_pending') and self.agent._drain_pending:
             try:
@@ -581,6 +609,12 @@ class StreamEmitter(AgentEmitter):
                                 _pconv = _pjson.get("conversation_id")
                                 if _pconv and _pconv != self.conversation_id:
                                     _requeue.append(_pff)
+                                    continue
+                                if (_force_stop_after and _pconv == self.conversation_id
+                                        and _flowfile_created_ts(_pff) <= _force_stop_after):
+                                    logger.info(
+                                        "[drain] dropping pre-force-stop FlowFile for %s/%s",
+                                        self.conversation_id[:8], self._agent_name or "")
                                     continue
                                 _ptext = _pjson.get("message", "")
                     except (json.JSONDecodeError, ValueError):

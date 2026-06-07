@@ -588,13 +588,7 @@ class TestOAuthRedirectTask(unittest.TestCase):
 
     def test_login_page_renders_telegram_widget_provider(self):
         from tasks.io.serve_login import ServeLoginTask
-
-        class TelegramProvider:
-            def get_widget_html(self, callback_url):
-                return (
-                    '<script data-telegram-login="PawFlowBot" '
-                    f'data-auth-url="{callback_url}"></script>'
-                )
+        from services.auth_providers.telegram import TelegramAuthProvider
 
         class Auth:
             def get_enabled_providers(self):
@@ -605,7 +599,10 @@ class TestOAuthRedirectTask(unittest.TestCase):
 
             def get_provider(self, name):
                 assert name == "telegram"
-                return TelegramProvider()
+                return TelegramAuthProvider({
+                    "bot_token": "123:test",
+                    "bot_username": "ExamplePawFlowBot",
+                })
 
         task = ServeLoginTask({"auth_service_id": "auth"})
         task._services = {"auth": Auth()}
@@ -616,7 +613,8 @@ class TestOAuthRedirectTask(unittest.TestCase):
         results = task.execute(ff)
 
         body = results[0].get_content().decode("utf-8")
-        assert 'data-telegram-login="PawFlowBot"' in body
+        assert 'src="https://telegram.org/js/telegram-widget.js?22"' in body
+        assert 'data-telegram-login="ExamplePawFlowBot"' in body
         assert 'data-auth-url="https://webchat.example/auth/callback"' in body
         assert '<div class="divider"><span>or</span></div>' in body
 

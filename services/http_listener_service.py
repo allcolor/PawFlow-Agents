@@ -39,7 +39,7 @@ _SECURITY_HEADERS = {
     "Content-Security-Policy": (
         "default-src 'self'; "
         "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: "
-        "https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://esm.sh; "
+        "https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://esm.sh https://telegram.org; "
         "style-src 'self' 'unsafe-inline' "
         "https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; "
         "img-src 'self' data: blob:; "

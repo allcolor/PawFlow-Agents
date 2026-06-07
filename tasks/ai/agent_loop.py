@@ -256,8 +256,12 @@ class AgentLoopTask(
         if inst:
             inst.cancel_agent(conversation_id, agent_name=agent_name, silent=True)
             try:
-                from tasks.ai.actions.cancel_interrupt import _clear_force_stop_relaunch_state
+                from tasks.ai.actions.cancel_interrupt import (
+                    _clear_force_stop_relaunch_state,
+                    _clear_force_stop_runtime_state,
+                )
                 _clear_force_stop_relaunch_state(conversation_id, agent_name)
+                _clear_force_stop_runtime_state(inst, conversation_id, agent_name)
             except Exception:
                 logger.debug("force-stop relaunch cleanup failed", exc_info=True)
             _key = f"{conversation_id}:{agent_name}" if agent_name else conversation_id

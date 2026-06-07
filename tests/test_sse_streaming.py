@@ -18,6 +18,7 @@ import tempfile
 import threading
 import time
 import unittest
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -789,6 +790,66 @@ class TestAgentLoopStreaming(unittest.TestCase):
                 assert appended[0]._pawflow_current_user_message is True
 
         PendingQueue.drop_cache()
+
+    def test_executor_queue_drops_messages_created_before_force_stop(self):
+        from tasks.ai.agent_emitter import StreamEmitter
+
+        conversation_id = "test-conv-force-stop-drain"
+        agent_name = "assistant"
+        force_stop_at = time.time()
+
+        class _FakeStore:
+            def get_extra(self, cid, key, default=None):
+                assert cid == conversation_id
+                if key in ("last_force_stop_at",
+                           f"last_force_stop_at:{agent_name}"):
+                    return force_stop_at
+                return default
+
+        class _FakeAgent:
+            def __init__(self):
+                self._requeued = []
+
+            def _drain_pending(self):
+                return [
+                    FlowFile(
+                        content=json.dumps({
+                            "message": "old interrupt",
+                            "conversation_id": conversation_id,
+                        }).encode(),
+                        created_at=datetime.fromtimestamp(force_stop_at - 30),
+                    ),
+                    FlowFile(
+                        content=json.dumps({
+                            "message": "message after force stop",
+                            "conversation_id": conversation_id,
+                        }).encode(),
+                        attributes={"_user_msg_id": "m-after-force-stop"},
+                        created_at=datetime.fromtimestamp(force_stop_at + 30),
+                    ),
+                ]
+
+            def _requeue_flowfiles(self, flowfiles):
+                self._requeued.extend(flowfiles)
+
+        with patch("core.conversation_store.ConversationStore.instance",
+                   return_value=_FakeStore()):
+            agent = _FakeAgent()
+            emitter = StreamEmitter(
+                conversation_id,
+                ConversationEventBus.instance(),
+                {"active_agent_name": agent_name, "user_id": "u"},
+                agent,
+                f"{conversation_id}:{agent_name}",
+                0,
+            )
+            appended = []
+
+            emitter.drain_pending([], appended.append, 0)
+
+            assert [m.content for m in appended] == ["message after force stop"]
+            assert appended[0].msg_id == "m-after-force-stop"
+            assert agent._requeued == []
 
     def test_user_message_during_preparing_turn_queues_before_thread_visible(self):
         from tasks.ai.agent_loop import AgentLoopTask

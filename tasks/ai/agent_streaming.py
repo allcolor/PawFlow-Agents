@@ -104,15 +104,43 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
         # If agent thread already running FOR THIS AGENT, preempt or queue
         _agent_key = f"{conversation_id}:{_target}" if _target else conversation_id
         _thread_name = f"agent-stream-{_agent_key}"
-        _already_active = any(
+        _thread_active = any(
             t.is_alive() and t.name == _thread_name
             for t in threading.enumerate())
-        if not _already_active:
-            with self._active_contexts_lock:
-                _already_active = (
-                    _agent_key in self._active_turns
-                    or _agent_key in self._active_contexts
-                )
+        with self._active_contexts_lock:
+            _active_turn_marker = self._active_turns.get(_agent_key)
+            _active_context_marker = self._active_contexts.get(_agent_key)
+            _active_client_marker = self._active_claude_client.get(_agent_key)
+        _already_active = bool(
+            _active_turn_marker
+            or _active_context_marker
+            or _active_client_marker
+            or _thread_active)
+        if _already_active:
+            _marker_generation = None
+            if isinstance(_active_turn_marker, dict):
+                _marker_generation = _active_turn_marker.get("generation")
+            with self._conv_gen_lock:
+                _current_generation = self._conv_generation.get(_agent_key, 0)
+            _stale_generation = (
+                _marker_generation is not None
+                and _marker_generation != _current_generation)
+            _thread_only = (
+                _thread_active
+                and not _active_turn_marker
+                and not _active_context_marker
+                and not _active_client_marker)
+            if _stale_generation or _thread_only:
+                logger.info(
+                    "[agent:%s] ignoring stale stopped turn before new user message "
+                    "(thread=%s marker_gen=%s current_gen=%s)",
+                    conversation_id[:8], _thread_active,
+                    _marker_generation, _current_generation)
+                with self._active_contexts_lock:
+                    self._active_turns.pop(_agent_key, None)
+                    self._active_contexts.pop(_agent_key, None)
+                    self._active_claude_client.pop(_agent_key, None)
+                _already_active = False
         _stream_mark("active_check")
         # A live agent can temporarily have no _active_contexts entry: context
         # preparation, provider compact/restart, and final cleanup all run

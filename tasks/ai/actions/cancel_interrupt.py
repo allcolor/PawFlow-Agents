@@ -56,6 +56,7 @@ def _clear_force_stop_relaunch_state(conv_id: str, agent_name: str,
     except Exception:
         store = None
     agents = set()
+    stopped_at = time.time()
     if agent_name:
         agents.add(agent_name.lower())
     elif store is not None:
@@ -92,10 +93,56 @@ def _clear_force_stop_relaunch_state(conv_id: str, agent_name: str,
         logger.debug("force-stop schedule cleanup failed", exc_info=True)
     try:
         if store is not None:
+            store.set_extra(conv_id, "last_force_stop_at", stopped_at)
             for agent in sorted(agents):
+                store.set_extra(conv_id, f"last_force_stop_at:{agent}", stopped_at)
                 store.set_extra(conv_id, f"cancel_checkpoint:{agent}", None)
     except Exception:
         logger.debug("force-stop cancel checkpoint cleanup failed", exc_info=True)
+
+
+def _clear_force_stop_runtime_state(executor, conv_id: str,
+                                    agent_name: str = "") -> None:
+    """Remove stale in-memory active markers after a force stop.
+
+    The Python worker thread may remain alive briefly while its provider is
+    being killed and its finally block runs. Once the user has force-stopped the
+    turn, those stale markers must not make the next user message look like a
+    live preempt/queued message.
+    """
+    if not executor or not conv_id:
+        return
+    agent_l = (agent_name or "").lower()
+
+    def _matches(key: str) -> bool:
+        if "::task::" in key or "::task_verify::" in key:
+            return False
+        if key != conv_id and not key.startswith(conv_id + ":"):
+            return False
+        if not agent_l:
+            return True
+        key_agent = key.split(":", 1)[1].lower() if ":" in key else ""
+        return key_agent == agent_l
+
+    try:
+        with executor._active_lock:
+            executor._active_conversations.pop(conv_id, None)
+            executor._user_active_conversations.discard(conv_id)
+    except Exception:
+        logger.debug("force-stop active counter cleanup failed", exc_info=True)
+
+    try:
+        with executor._active_contexts_lock:
+            for mapping_name in (
+                "_active_contexts", "_active_turns", "_active_claude_client"):
+                mapping = getattr(executor, mapping_name, None)
+                if not isinstance(mapping, dict):
+                    continue
+                for key in list(mapping):
+                    if _matches(str(key)):
+                        mapping.pop(key, None)
+    except Exception:
+        logger.debug("force-stop runtime marker cleanup failed", exc_info=True)
 
 
 def _handle_cancel_interrupt(self, action, body, store, user_id, flowfile):
@@ -244,14 +291,9 @@ def _handle_cancel_interrupt(self, action, body, store, user_id, flowfile):
                 "agent_name": agent_name or "",
                 "force_stopped": True,
             })
-        # Clear active tracking
-        with _exec._active_lock:
-            _exec._active_conversations.pop(conv_id, None)
-            _exec._user_active_conversations.discard(conv_id)
-        with _exec._active_contexts_lock:
-            for k in list(_exec._active_contexts):
-                if (k == conv_id or k.startswith(conv_id + ":")) and "::task::" not in k and "::task_verify::" not in k:
-                    del _exec._active_contexts[k]
+        # Clear active tracking so the next user message starts a fresh turn,
+        # even if the killed worker thread is still unwinding.
+        _clear_force_stop_runtime_state(_exec, conv_id, agent_name)
         logger.info(f"[agent:{conv_id[:8]}] FORCE STOPPED ({_killed} thread(s))")
         flowfile.set_content(json.dumps({
             "cancelled": True, "conversation_id": conv_id,

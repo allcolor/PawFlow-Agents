@@ -169,7 +169,7 @@ class TelegramBotService(BaseService):
         result = None
         for idx, chunk in enumerate(chunks):
             params: Dict[str, Any] = {"chat_id": chat_id, "text": chunk}
-            if parse_mode and len(chunks) == 1:
+            if parse_mode:
                 params["parse_mode"] = parse_mode
             if reply_to and idx == 0:
                 params["reply_to_message_id"] = reply_to
@@ -368,7 +368,7 @@ class TelegramBotPool:
         result = None
         for idx, chunk in enumerate(chunks):
             params: Dict[str, Any] = {"chat_id": chat_id, "text": chunk}
-            if parse_mode and len(chunks) == 1:
+            if parse_mode:
                 params["parse_mode"] = parse_mode
             if reply_markup and idx == len(chunks) - 1:
                 params["reply_markup"] = json.dumps(reply_markup)

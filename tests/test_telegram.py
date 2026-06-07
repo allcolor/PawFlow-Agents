@@ -117,7 +117,7 @@ class TestTelegramBotService(unittest.TestCase):
         assert call_count == 3
         assert result == {"message_id": 3}
         assert all(len(call["text"]) <= 4096 for call in calls)
-        assert all("parse_mode" not in call for call in calls)
+        assert all(call["parse_mode"] == "Markdown" for call in calls)
         assert calls[0]["reply_to_message_id"] == 42
         assert "reply_to_message_id" not in calls[1]
         assert "reply_markup" not in calls[0]
@@ -153,7 +153,7 @@ class TestTelegramBotService(unittest.TestCase):
         for call in api_call.call_args_list:
             params = call.args[2]
             assert len(params["text"]) <= 4096
-            assert "parse_mode" not in params
+            assert params["parse_mode"] == "Markdown"
 
 
 # ── TelegramReceiverTask ────────────────────────────────────────────

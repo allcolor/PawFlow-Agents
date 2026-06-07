@@ -1223,7 +1223,22 @@ def _remove_one_forwarded_text(response: str, live_text: str) -> str:
             before = response[:idx].rstrip()
             after = response[idx + len(candidate):].lstrip()
             return (before + ("\n" if before and after else "") + after).strip()
-    return response
+    removed = _remove_forwarded_text_loose(response, live_text)
+    return removed if removed is not None else response
+
+
+def _remove_forwarded_text_loose(response: str, live_text: str) -> Optional[str]:
+    """Remove already-sent text even when final aggregation changed spacing."""
+    live_words = re.findall(r"\S+", live_text or "")
+    if not live_words:
+        return None
+    pattern = r"\s*".join(re.escape(word) for word in live_words)
+    match = re.search(pattern, response, flags=re.DOTALL)
+    if not match:
+        return None
+    before = response[:match.start()].rstrip()
+    after = response[match.end():].lstrip()
+    return (before + ("\n" if before and after else "") + after).strip()
 
 
 def _compact_live_text(text: str, limit: int) -> str:

@@ -1021,6 +1021,27 @@ class TestTelegramAgentClientTask(unittest.TestCase):
         assert _remove_forwarded_telegram_live_text("conv1", result) == "Corrigé."
         assert "conv1" not in _TELEGRAM_LIVE_TEXT_BY_TURN
 
+    def test_agent_client_removes_live_text_with_collapsed_spacing(self):
+        from core.agent_runtime_api import AgentFinalResult
+        from tasks.io.telegram_agent_client import (
+            _TELEGRAM_LIVE_TEXT_BY_TURN,
+            _remove_forwarded_telegram_live_text,
+        )
+
+        _TELEGRAM_LIVE_TEXT_BY_TURN.clear()
+        _TELEGRAM_LIVE_TEXT_BY_TURN["conv1"] = {
+            "a1": "Je vais vérifier le tag avant de le créer.",
+            "a2": "Le tag n'existe pas.",
+        }
+        result = AgentFinalResult(
+            "conv1", "turn1",
+            response="Je vais vérifier le tag avant de le créer.Le tag n'existe pas.Commit fait.",
+            data={"all_msg_ids": ["a1", "a2", "a3"]},
+        )
+
+        assert _remove_forwarded_telegram_live_text("conv1", result) == "Commit fait."
+        assert "conv1" not in _TELEGRAM_LIVE_TEXT_BY_TURN
+
     def test_agent_client_removes_live_text_without_matching_all_msg_ids(self):
         from core.agent_runtime_api import AgentFinalResult
         from tasks.io.telegram_agent_client import (

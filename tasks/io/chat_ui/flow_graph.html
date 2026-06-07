@@ -698,7 +698,7 @@ svg.react-flow__connectionline {
 import React, { useState, useEffect, useCallback, useRef, memo } from 'react';
 import { createRoot } from 'react-dom/client';
 import { jsx, jsxs, Fragment } from 'react/jsx-runtime';
-import { ReactFlow, MiniMap, Controls, Background, Handle, Position, useNodesState, useEdgesState } from '@xyflow/react';
+import { ReactFlow, MiniMap, Controls, Background, Handle, Position, MarkerType, useNodesState, useEdgesState } from '@xyflow/react';
 import dagre from '@dagrejs/dagre';
 
 const params = new URLSearchParams(window.location.search);
@@ -802,7 +802,7 @@ const FlowNode = memo(({ data }) => {
     data.isSubflow && jsx('div', { className: 'node-hint', children: 'double-click or right-click' }),
     data.isRuntimePort && jsx('div', {
       className: 'node-hint',
-      children: data.isRuntimeLink ? 'runtime call target' : (data.portDirection === 'output' ? 'output port' : 'input port')
+      children: data.isRuntimeLink ? 'runtime request/response target' : 'runtime request/response port'
     }),
     data.error && jsx('div', { className: 'node-error', title: data.error, children: data.error }),
     !data.isRuntimeLink && jsx(Handle, { type: 'source', position: Position.Right, style: { background: data.isRuntimePort ? '#b088ff' : '#555' } }),
@@ -846,7 +846,8 @@ function toRFEdges(apiEdges, validNodeIds) {
     const maxQueue = e?.max_queue || 10000;
     const animated = queueSize > 0;
     const color = queueColor(queueSize, maxQueue);
-    let label = e?.runtime_link ? 'runtime call' : (e?.relationship || 'success');
+    const isRuntimeEdge = !!(e?.runtime_link || e?.runtime_port);
+    let label = isRuntimeEdge ? 'request/response' : (e?.relationship || 'success');
     if (queueSize > 0) label += ` (${queueSize}/${maxQueue})`;
     if (e?.backpressured) label = '\uD83D\uDD34 ' + label;
     return {
@@ -855,9 +856,11 @@ function toRFEdges(apiEdges, validNodeIds) {
       animated,
       label,
       type: 'smoothstep',
-      style: e?.runtime_link || e?.runtime_port
+      style: isRuntimeEdge
         ? { stroke: '#b088ff', strokeWidth: 2, strokeDasharray: '6 4' }
         : { stroke: color, strokeWidth: animated ? 2.5 : 1.5 },
+      markerStart: isRuntimeEdge ? { type: MarkerType.ArrowClosed, color: '#b088ff' } : undefined,
+      markerEnd: isRuntimeEdge ? { type: MarkerType.ArrowClosed, color: '#b088ff' } : undefined,
       data: { runtimeLink: !!e?.runtime_link, runtimePort: !!e?.runtime_port },
       labelStyle: { fill: '#888', fontSize: 9 },
       labelBgStyle: { fill: '#0a0a0a', fillOpacity: 0.85 },

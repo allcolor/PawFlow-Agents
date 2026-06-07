@@ -190,7 +190,7 @@ class TelegramReceiverTask(BaseTask):
         except queue.Full:
             logger.warning("telegramReceiver queue full, dropping message")
 
-    def _try_download(self, file_id: str, bot_token: str = "") -> str:
+    def _try_download(self, file_id: str, bot_token: Optional[str] = None) -> str:
         """Try to download a file from Telegram and return base64 data."""
         if not file_id:
             return ""

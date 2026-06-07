@@ -975,27 +975,29 @@ class ServiceRegistry:
                         enabled_only: bool = True) -> List[ServiceDef]:
         """Get all services matching a type, ordered conv > user > global.
 
-        If the same service_id exists in multiple scopes, the most specific wins.
+        Uses the same canonical scope merge as resolve_all so service pickers
+        and typed lookups cannot diverge.
         """
-        result = []
-        seen: set = set()
-        for scope, sid in self._scope_chain(user_id=user_id, conv_id=conv_id):
-            self._ensure_loaded(scope, sid)
-            rsid = self._resolve_scope_id(scope, sid)
-            with self._data_lock:
-                for sdef in self._definitions.get(rsid, {}).values():
-                    seen_key = (
-                        sdef.service_id if service_type != "packageRuntime"
-                        else _package_runtime_dedupe_key(sdef)
-                    )
-                    if seen_key in seen:
-                        continue
-                    if sdef.service_type == service_type:
-                        if enabled_only and not sdef.enabled:
-                            continue
-                        result.append(sdef)
-                        seen.add(seen_key)
-        return result
+        if service_type == "packageRuntime":
+            result = []
+            seen = set()
+            for sdef in self.resolve_all(
+                    user_id=user_id, conv_id=conv_id,
+                    enabled_only=enabled_only).values():
+                if sdef.service_type != service_type:
+                    continue
+                seen_key = _package_runtime_dedupe_key(sdef)
+                if seen_key in seen:
+                    continue
+                result.append(sdef)
+                seen.add(seen_key)
+            return result
+        return [
+            sdef for sdef in self.resolve_all(
+                user_id=user_id, conv_id=conv_id,
+                enabled_only=enabled_only).values()
+            if sdef.service_type == service_type
+        ]
 
     def resolve_all(self, *, user_id: str = "", conv_id: str = "",
                     enabled_only: bool = False) -> Dict[str, ServiceDef]:

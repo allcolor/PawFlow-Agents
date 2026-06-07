@@ -919,13 +919,13 @@ class TelegramConversationBridgeTask(BaseTask):
             return ""
         if event_type == "thinking":
             detail = str(data.get("detail") or "").strip()
-            return f"{_telegram_agent_badge(data)}\n{html.escape(detail)}" if detail else ""
+            return _telegram_thinking_message(data, detail)
         if event_type == "thinking_delta":
             text = str(data.get("text") or data.get("content") or "").strip()
-            return f"{_telegram_agent_badge(data)}\n{html.escape(text)}" if text else ""
+            return _telegram_thinking_message(data, text)
         if event_type == "thinking_content":
             text = str(data.get("text") or data.get("content") or "").strip()
-            return f"{_telegram_agent_badge(data)}\n{html.escape(text)}" if text else ""
+            return _telegram_thinking_message(data, text)
         if event_type == "tool_call":
             agent = _telegram_agent_badge(data)
             tool = _telegram_tool_display_name(data)
@@ -1091,6 +1091,15 @@ def _telegram_agent_badge(data: Dict[str, Any], fallback: str = "assistant") -> 
     if service and name != service:
         return f"{color} <b>{name_html}</b> via <code>{html.escape(service)}</code>"
     return f"{color} <b>{name_html}</b>"
+
+
+def _telegram_thinking_message(data: Dict[str, Any], text: str) -> str:
+    text = str(text or "").strip()
+    if not text:
+        return ""
+    source = data.get("source") if isinstance(data.get("source"), dict) else {}
+    name = str(source.get("name") or data.get("agent_name") or "assistant")
+    return f"💭 <i>{html.escape(name)} thinking</i>\n<tg-spoiler>{html.escape(text)}</tg-spoiler>"
 
 
 def _telegram_badge_color(name: str) -> str:

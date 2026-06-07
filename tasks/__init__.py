@@ -98,6 +98,18 @@ def _register_all_services():
     import services.rclone_filesystem_service  # noqa: F401
     import services.rclone_oauth_credentials  # noqa: F401
 
+    from core import ServiceFactory
+    for module_name, module in list(sys.modules.items()):
+        if not module_name.startswith("services.") or module is None:
+            continue
+        for value in vars(module).values():
+            if not isinstance(value, type):
+                continue
+            if value.__module__ != module_name:
+                continue
+            if getattr(value, "TYPE", ""):
+                ServiceFactory.register(value)
+
 
 def register_all_tasks():
     """Register all available tasks and services."""

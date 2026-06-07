@@ -1125,8 +1125,8 @@ class TestTelegramAgentClientTask(unittest.TestCase):
             task._on_event("conv1", "thinking_content", {"agent_name": "assistant", "text": "Found the bug"})
 
         assert [call.args[2] for call in task._send.call_args_list] == [
-            "🟩 <b>assistant</b>\nChecking logs",
-            "🟩 <b>assistant</b>\nFound the bug",
+            "💭 <i>assistant thinking</i>\n<tg-spoiler>Checking logs</tg-spoiler>",
+            "💭 <i>assistant thinking</i>\n<tg-spoiler>Found the bug</tg-spoiler>",
         ]
 
     def test_conversation_bridge_forwards_periodic_waiting_progress(self):

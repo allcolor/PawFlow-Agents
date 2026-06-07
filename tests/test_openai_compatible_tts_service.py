@@ -1,7 +1,6 @@
 """OpenAI-compatible TTS service tests."""
 
 import json
-import sys
 
 import pytest
 
@@ -28,12 +27,12 @@ def test_openai_compatible_tts_is_registered():
     assert ServiceFactory.get("openaiCompatibleTTS") is OpenAICompatibleTTSService
 
 
-def test_register_all_services_reimports_missing_builtin_service_type():
+def test_register_all_services_reregisters_missing_cached_builtin_service_type():
+    import services.openai_compatible_tts_service  # noqa: F401
     import tasks
 
     tasks._register_all_services()
     ServiceFactory._services.pop("openaiCompatibleTTS", None)
-    sys.modules.pop("services.openai_compatible_tts_service", None)
 
     tasks._register_all_services()
 
@@ -67,7 +66,6 @@ def test_media_discovery_returns_installed_openai_compatible_tts_after_late_impo
         enabled=True,
     )
     ServiceFactory._services.pop("openaiCompatibleTTS", None)
-    sys.modules.pop("services.openai_compatible_tts_service", None)
 
     services = AgentLoopTask({})._discover_media_services(
         "alice", BaseTTSService, "")

@@ -8,7 +8,6 @@ engines and voice profiles.
 
 import json
 import base64
-import io
 import logging
 import mimetypes
 import os
@@ -21,7 +20,6 @@ import uuid
 import urllib.error
 import urllib.parse
 import urllib.request
-import wave
 from pathlib import Path
 from typing import Any, Dict
 
@@ -69,17 +67,6 @@ def _multipart(fields: Dict[str, str], files: Dict[str, tuple[str, bytes, str]])
         chunks.append(b"\r\n")
     chunks.append(f"--{boundary}--\r\n".encode())
     return b"".join(chunks), f"multipart/form-data; boundary={boundary}"
-
-
-def _silent_wav(duration: float = 0.2, sample_rate: int = 16000) -> bytes:
-    frames = int(duration * sample_rate)
-    out = io.BytesIO()
-    with wave.open(out, "wb") as wav:
-        wav.setnchannels(1)
-        wav.setsampwidth(2)
-        wav.setframerate(sample_rate)
-        wav.writeframes(b"\0\0" * frames)
-    return out.getvalue()
 
 
 def _wsl_unc_to_linux_path(path: Path) -> tuple[str, str] | None:
@@ -868,13 +855,7 @@ class VoiceboxService(BaseVoiceCloneService, BaseSTTService):
     def warmup_stt(self, language: str = "", model: str = "", **_kwargs) -> None:
         if self._stt_warmup_done:
             return
-        self.transcribe(
-            audio_bytes=_silent_wav(),
-            mime_type="audio/wav",
-            filename="warmup.wav",
-            language=language,
-            model=model or self.stt_model,
-        )
+        self.ensure_connected()
         self._stt_warmup_done = True
 
     def list_profiles(self) -> list[dict]:

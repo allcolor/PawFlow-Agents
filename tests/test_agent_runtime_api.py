@@ -206,7 +206,7 @@ def test_telegram_agent_client_uses_selected_conversation_agent(monkeypatch):
 
     assert captured["target_agent"] == "assistant"
     assert captured["runtime_port"] == "pawflow_agent.agent_runtime_in"
-    assert out.get_content() == b"pong"
+    assert out.get_content() == b""
 
 
 def test_agent_runtime_api_uses_declared_runtime_port(monkeypatch):

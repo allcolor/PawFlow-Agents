@@ -28,9 +28,8 @@ _AGENT_RESPONSE_TIMEOUT_SECONDS = 600
 _WIZARDS: Dict[str, Dict[str, Any]] = {}
 _WIZARD_LOCK = threading.Lock()
 _LIVE_EVENT_MIN_INTERVAL_SECONDS = 6.0
-_TELEGRAM_LIVE_TEXT_BY_TURN: Dict[str, Dict[str, str]] = {}
-_TELEGRAM_LIVE_SENT_TEXT_BY_TURN: Dict[str, List[str]] = {}
 _TELEGRAM_LIVE_ASSISTANT_SENT_TURNS: set[str] = set()
+_TELEGRAM_LIVE_SENT_ASSISTANT_MSG_IDS: set[str] = set()
 
 
 class TelegramAgentClientTask(BaseTask):
@@ -102,11 +101,15 @@ class TelegramAgentClientTask(BaseTask):
             return [flowfile]
 
         if flowfile.get_attribute("telegram.message_type") in {"voice", "audio"}:
-            transcribed = _transcribe_telegram_voice(
+            transcribed, stt_error = _transcribe_telegram_voice_result(
                 text, user_id, conversation_id, target_agent)
+            if stt_error:
+                flowfile.set_content(
+                    f"Speech transcription failed: {stt_error}".encode("utf-8"))
+                return [flowfile]
             if not transcribed:
                 logger.info(
-                    "Ignoring Telegram voice message for %s: no configured STT or empty transcription",
+                    "Ignoring Telegram voice message for %s: no STT service available or empty transcription",
                     conversation_id,
                 )
                 return []
@@ -146,7 +149,6 @@ class TelegramAgentClientTask(BaseTask):
             msg_id=msg_id,
             channel="telegram",
             runtime_port=str(self.config.get("agent_runtime_port") or "").strip(),
-            live_callback=self._telegram_live_callback(user_id, chat_id),
             source_attributes={
                 "telegram.chat_id": chat_id,
                 "telegram.user_id": tg_user_id,
@@ -181,59 +183,11 @@ class TelegramAgentClientTask(BaseTask):
         if result.error:
             flowfile.set_content(f"Agent error: {result.error}".encode("utf-8"))
             return [flowfile]
-        if _telegram_live_assistant_was_forwarded(submission.conversation_id):
-            response_text = ""
-        else:
-            response_text = _remove_forwarded_telegram_live_text(
-                submission.conversation_id, result)
-        sent_text_before_tts = False
-        if response_text and _telegram_tts_enabled(conversation_id):
-            bridge = TelegramConversationBridgeTask({
-                "service_id": str(self.config.get("service_id") or "telegram_bot"),
-            })
-            bridge.get_service = self.get_service
-            sent_text_before_tts = bridge._send(
-                user_id, chat_id, html.escape(response_text))
-        flowfile.set_content(
-            b"" if sent_text_before_tts else response_text.encode("utf-8"))
+        _telegram_live_assistant_was_forwarded(submission.conversation_id)
+        flowfile.set_content(b"")
         flowfile.set_attribute("agent.conversation_id", submission.conversation_id)
         flowfile.set_attribute("agent.turn_id", submission.turn_id)
-        _attach_telegram_tts_audio(
-            flowfile, response_text,
-            user_id, conversation_id, target_agent)
         return [flowfile]
-
-    def _telegram_live_callback(self, user_id: str, chat_id: str):
-        bridge = TelegramConversationBridgeTask({
-            "service_id": str(self.config.get("service_id") or "telegram_bot"),
-        })
-        bridge.get_service = self.get_service
-
-        def _callback(conversation_id: str, event_type: str, data: Any) -> None:
-            if not isinstance(data, dict):
-                return
-            if (event_type == "new_message" and data.get("role") == "user"
-                    and _is_telegram_origin_event(data)):
-                return
-            text = bridge._format_event(event_type, data)
-            if not text and event_type != "tool_result":
-                return
-            sent_text = False
-            if text:
-                sent_text = bridge._send(user_id, chat_id, text)
-                if sent_text:
-                    _remember_forwarded_telegram_live_text(conversation_id, text)
-                if sent_text and event_type == "new_message" and data.get("role") == "assistant":
-                    _remember_forwarded_telegram_live_assistant(conversation_id)
-                    bridge._send_tts_audio(user_id, chat_id, conversation_id, data)
-            if event_type == "tool_result":
-                bridge._send_tool_media(user_id, chat_id, data)
-            if sent_text and event_type == "new_message" and data.get("role") == "assistant":
-                msg_id = str(data.get("msg_id") or "")
-                if msg_id:
-                    _TELEGRAM_LIVE_TEXT_BY_TURN.setdefault(conversation_id, {})[msg_id] = str(data.get("content") or "").strip()
-
-        return _callback
 
     def _handle_command(self, text: str, user_id: str, chat_id: str) -> Optional[str]:
         if text.startswith("/tts"):
@@ -868,6 +822,9 @@ class TelegramConversationBridgeTask(BaseTask):
                 and event_type in {"new_message", "thinking", "thinking_delta", "thinking_content", "tool_call", "tool_result"}
                 and data.get("role") != "user"):
             return
+        if (event_type == "new_message" and data.get("role") == "assistant"
+                and _telegram_assistant_msg_id_was_sent(conversation_id, data)):
+            return
         if (event_type == "new_message" and data.get("role") == "user"
                 and _is_telegram_origin_event(data)):
             return
@@ -898,20 +855,14 @@ class TelegramConversationBridgeTask(BaseTask):
         for user_id, chat_id in subscribers:
             if text:
                 sent_text = self._send(user_id, chat_id, text)
-                if sent_text:
-                    _remember_forwarded_telegram_live_text(conversation_id, text)
                 if sent_text and event_type == "new_message" and data.get("role") == "assistant":
                     _remember_forwarded_telegram_live_assistant(conversation_id)
+                    _remember_sent_telegram_assistant_msg_id(conversation_id, data)
                     self._send_tts_audio(user_id, chat_id, conversation_id, data)
             if event_type == "new_message":
                 self._send_message_attachments(user_id, chat_id, data)
             if event_type == "tool_result":
                 self._send_tool_media(user_id, chat_id, data)
-        if event_type == "new_message" and data.get("role") == "assistant":
-            msg_id = str(data.get("msg_id") or "")
-            if msg_id:
-                _TELEGRAM_LIVE_TEXT_BY_TURN.setdefault(conversation_id, {})[msg_id] = str(data.get("content") or "").strip()
-
     def _format_event(self, event_type: str, data: Dict[str, Any],
                       conversation_id: str = "") -> str:
         if event_type == "new_message":
@@ -1198,57 +1149,27 @@ def _load_filestore_media(file_id: str, user_id: str):
     return result
 
 
-def _remove_forwarded_telegram_live_text(conversation_id: str, result) -> str:
-    response = str(getattr(result, "response", "") or "")
-    data = getattr(result, "data", {}) if result is not None else {}
-    return _remove_forwarded_telegram_live_response(conversation_id, response, data)
-
-
-def _remove_forwarded_telegram_live_response(conversation_id: str, response: str,
-                                             data: Dict[str, Any]) -> str:
-    all_msg_ids = data.get("all_msg_ids") if isinstance(data, dict) else []
-    if not response:
-        return response
-    if not isinstance(all_msg_ids, list):
-        all_msg_ids = []
-    live_sent = _TELEGRAM_LIVE_SENT_TEXT_BY_TURN.get(conversation_id) or []
-    for live_text in list(live_sent):
-        response = _remove_one_forwarded_text(response, live_text)
-    if live_sent:
-        _TELEGRAM_LIVE_SENT_TEXT_BY_TURN.pop(conversation_id, None)
-    live_by_id = _TELEGRAM_LIVE_TEXT_BY_TURN.get(conversation_id) or {}
-    for msg_id in all_msg_ids:
-        live_text = str(live_by_id.get(str(msg_id)) or "").strip()
-        if not live_text:
-            continue
-        response = _remove_one_forwarded_text(response, live_text)
-    for msg_id in all_msg_ids:
-        live_by_id.pop(str(msg_id), None)
-    for msg_id, live_text in list(live_by_id.items()):
-        live_text = str(live_text or "").strip()
-        if not live_text:
-            continue
-        updated = _remove_one_forwarded_text(response, live_text)
-        if updated != response:
-            response = updated
-            live_by_id.pop(str(msg_id), None)
-    if not live_by_id:
-        _TELEGRAM_LIVE_TEXT_BY_TURN.pop(conversation_id, None)
-    return response.strip()
-
-
-def _remember_forwarded_telegram_live_text(conversation_id: str, text: str) -> None:
-    normalized = _telegram_forwarded_text_for_dedup(text)
-    if not conversation_id or not normalized:
-        return
-    items = _TELEGRAM_LIVE_SENT_TEXT_BY_TURN.setdefault(conversation_id, [])
-    if normalized not in items:
-        items.append(normalized)
-
-
 def _remember_forwarded_telegram_live_assistant(conversation_id: str) -> None:
     if conversation_id:
         _TELEGRAM_LIVE_ASSISTANT_SENT_TURNS.add(conversation_id)
+
+
+def _telegram_assistant_msg_key(conversation_id: str, data: Dict[str, Any]) -> str:
+    msg_id = str(data.get("msg_id") or data.get("message_id") or "").strip()
+    return f"{conversation_id}\x1f{msg_id}" if conversation_id and msg_id else ""
+
+
+def _remember_sent_telegram_assistant_msg_id(conversation_id: str,
+                                             data: Dict[str, Any]) -> None:
+    key = _telegram_assistant_msg_key(conversation_id, data)
+    if key:
+        _TELEGRAM_LIVE_SENT_ASSISTANT_MSG_IDS.add(key)
+
+
+def _telegram_assistant_msg_id_was_sent(conversation_id: str,
+                                        data: Dict[str, Any]) -> bool:
+    key = _telegram_assistant_msg_key(conversation_id, data)
+    return bool(key and key in _TELEGRAM_LIVE_SENT_ASSISTANT_MSG_IDS)
 
 
 def _telegram_live_assistant_was_forwarded(conversation_id: str) -> bool:
@@ -1257,24 +1178,11 @@ def _telegram_live_assistant_was_forwarded(conversation_id: str) -> bool:
     seen = conversation_id in _TELEGRAM_LIVE_ASSISTANT_SENT_TURNS
     _TELEGRAM_LIVE_ASSISTANT_SENT_TURNS.discard(conversation_id)
     if seen:
-        _TELEGRAM_LIVE_TEXT_BY_TURN.pop(conversation_id, None)
-        _TELEGRAM_LIVE_SENT_TEXT_BY_TURN.pop(conversation_id, None)
+        prefix = conversation_id + "\x1f"
+        for key in list(_TELEGRAM_LIVE_SENT_ASSISTANT_MSG_IDS):
+            if key.startswith(prefix):
+                _TELEGRAM_LIVE_SENT_ASSISTANT_MSG_IDS.discard(key)
     return seen
-
-
-def _telegram_forwarded_text_for_dedup(text: str) -> str:
-    text = str(text or "").strip()
-    if not text:
-        return ""
-    text = re.sub(r"<tg-spoiler>(.*?)</tg-spoiler>", r"\1", text, flags=re.DOTALL)
-    text = re.sub(r"<[^>]+>", "", text)
-    text = html.unescape(text)
-    text = re.sub(r"^[\U0001F7E9\U0001F7E6\U0001F7EA\U0001F7E7\U0001F7E8\U0001F7EB\u2B1C]\s*", "", text)
-    text = re.sub(r"^[^\n]+\s+via\s+[^\n]+\n", "", text)
-    text = re.sub(r"^[^\n]*\bthinking\b\s*\n", "", text, flags=re.IGNORECASE)
-    text = re.sub(r"^calling\s+\S+\s*$", "", text, flags=re.IGNORECASE)
-    text = re.sub(r"\s+", " ", text).strip()
-    return text
 
 
 def _is_telegram_origin_event(data: Dict[str, Any]) -> bool:
@@ -1286,33 +1194,6 @@ def _is_telegram_origin_event(data: Dict[str, Any]) -> bool:
         or msg_id.startswith("telegram:")
         or bool(data.get("telegram.chat_id") or data.get("telegram.user_id"))
     )
-
-
-def _remove_one_forwarded_text(response: str, live_text: str) -> str:
-    for candidate in (live_text, live_text.strip()):
-        if not candidate:
-            continue
-        idx = response.find(candidate)
-        if idx >= 0:
-            before = response[:idx].rstrip()
-            after = response[idx + len(candidate):].lstrip()
-            return (before + ("\n" if before and after else "") + after).strip()
-    removed = _remove_forwarded_text_loose(response, live_text)
-    return removed if removed is not None else response
-
-
-def _remove_forwarded_text_loose(response: str, live_text: str) -> Optional[str]:
-    """Remove already-sent text even when final aggregation changed spacing."""
-    live_words = re.findall(r"\S+", live_text or "")
-    if not live_words:
-        return None
-    pattern = r"\s*".join(re.escape(word) for word in live_words)
-    match = re.search(pattern, response, flags=re.DOTALL)
-    if not match:
-        return None
-    before = response[:match.start()].rstrip()
-    after = response[match.end():].lstrip()
-    return (before + ("\n" if before and after else "") + after).strip()
 
 
 def _compact_live_text(text: str, limit: int) -> str:
@@ -1387,31 +1268,39 @@ def _attach_telegram_tts_audio(
 def _transcribe_telegram_voice(
     content: str, user_id: str, conversation_id: str, agent_name: str,
 ) -> str:
+    transcript, _error = _transcribe_telegram_voice_result(
+        content, user_id, conversation_id, agent_name)
+    return transcript
+
+
+def _transcribe_telegram_voice_result(
+    content: str, user_id: str, conversation_id: str, agent_name: str,
+) -> tuple[str, str]:
     stt_file_id = ""
     try:
         payload = json.loads(content or "{}")
     except json.JSONDecodeError:
-        return ""
+        return "", ""
     if not isinstance(payload, dict) or payload.get("type") not in {"voice", "audio"}:
-        return ""
+        return "", ""
     audio_b64 = str(payload.get("data_base64") or "")
     if not audio_b64:
         logger.info(
             "Telegram voice STT skipped for %s: empty audio payload",
             conversation_id,
         )
-        return ""
+        return "", ""
     try:
         audio_bytes = base64.b64decode(audio_b64)
     except Exception:
         logger.warning("Telegram voice STT skipped: invalid audio payload", exc_info=True)
-        return ""
+        return "", "invalid audio payload"
     if not audio_bytes:
         logger.info(
             "Telegram voice STT skipped for %s: decoded audio payload is empty",
             conversation_id,
         )
-        return ""
+        return "", ""
     try:
         from tasks.ai.actions.media import resolve_stt_service
 
@@ -1423,7 +1312,7 @@ def _transcribe_telegram_voice(
                 conversation_id,
                 err or "no STT service available",
             )
-            return ""
+            return "", ""
         service_id = str(getattr(svc, "service_id", "") or getattr(svc, "NAME", "") or "<resolved>")
         if hasattr(svc, "set_runtime_context"):
             svc.set_runtime_context(
@@ -1488,10 +1377,10 @@ def _transcribe_telegram_voice(
             conversation_id[:8],
             agent_name,
         )
-        return transcript
+        return transcript, ""
     except Exception as exc:
         logger.warning("Telegram voice STT failed: %s", exc, exc_info=True)
-        return ""
+        return "", str(exc)
     finally:
         if stt_file_id:
             try:

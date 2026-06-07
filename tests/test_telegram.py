@@ -283,6 +283,8 @@ class TestTelegramReceiverTask(unittest.TestCase):
         ff = task.execute()[0]
         content = json.loads(ff.get_content().decode())
         assert ff.get_attribute("telegram.message_type") == "voice"
+        assert content["file_name"] == "telegram_voice.ogg"
+        assert content["mime_type"] == "audio/ogg"
         assert base64.b64decode(content["data_base64"]) == b"voice-bytes"
         pool.get_file_bytes.assert_called_once_with("personal-token", "voice_123")
 
@@ -537,6 +539,68 @@ class TestTelegramAgentClientTask(unittest.TestCase):
             assert svc.calls[0]["audio_bytes"] == b"audio"
         assert svc.calls[0]["mime_type"] == "audio/ogg"
 
+    def test_agent_client_voice_resolves_prefixed_telegram_link_to_principal_for_stt(self):
+        import shutil
+        import tempfile
+        from unittest.mock import patch
+
+        from core.identity_service import IdentityService
+        from tasks.io.telegram_agent_client import TelegramAgentClientTask
+
+        class FakeSTT:
+            def transcribe(self, **kwargs):
+                return {"text": "transcribed from prefixed link"}
+
+        tmp = tempfile.mkdtemp()
+        IdentityService.reset()
+        import core.paths as _p
+        orig_ucd = _p.USER_CONFIG_DIR
+        _p.USER_CONFIG_DIR = Path(tmp) / "users"
+        try:
+            ids = IdentityService()
+            IdentityService._instance = ids
+            ids.link("alice", "telegram", "telegram:111111")
+            ids.set_active_conv("alice", "telegram", "conv1")
+
+            store = MagicMock()
+            store.get_extra.side_effect = lambda cid, key: (
+                {"assistant": "stt1"} if cid == "conv1" and key == "stt_services" else {}
+            )
+            registry = MagicMock()
+            registry.resolve.return_value = FakeSTT()
+
+            task = TelegramAgentClientTask({"agent_runtime_port": "pawflow_agent.agent_runtime_in"})
+            ff = FlowFile(content=json.dumps({
+                "type": "voice",
+                "data_base64": base64.b64encode(b"audio").decode("ascii"),
+            }).encode("utf-8"))
+            ff.set_attribute("telegram.user_id", "111111")
+            ff.set_attribute("telegram.chat_id", "111111")
+            ff.set_attribute("telegram.message_id", "m1")
+            ff.set_attribute("telegram.message_type", "voice")
+
+            with patch.object(TelegramAgentClientTask, "_selected_agent_for_conversation", return_value="assistant"), \
+                    patch("core.conversation_store.ConversationStore.instance", return_value=store), \
+                    patch("core.service_registry.ServiceRegistry.get_instance", return_value=registry), \
+                    patch("core.agent_runtime_api.AgentRuntimeAPI.submit_message", return_value=type("Submission", (), {
+                        "conversation_id": "conv1",
+                        "turn_id": "telegram:111111:m1",
+                        "wait_for_done": False,
+                        "status": "accepted",
+                    })()) as submit:
+                out = task.execute(ff)
+
+            assert out == []
+            registry.resolve.assert_called_once_with("stt1", user_id="alice", conv_id="conv1")
+            submit.assert_called_once()
+            request = submit.call_args.args[0]
+            assert request.user_id == "alice"
+            assert request.message == "transcribed from prefixed link"
+        finally:
+            IdentityService.reset()
+            _p.USER_CONFIG_DIR = orig_ucd
+            shutil.rmtree(tmp, ignore_errors=True)
+
     def test_telegram_audio_uses_configured_stt_service(self):
         from unittest.mock import patch
         from tasks.io.telegram_agent_client import _transcribe_telegram_voice
@@ -599,6 +663,37 @@ class TestTelegramAgentClientTask(unittest.TestCase):
 
         assert text == "auto transcribed"
         registry.resolve.assert_called_once_with("voicebox_service", user_id="alice", conv_id="conv1")
+
+    def test_telegram_voice_uses_parent_conversation_stt_preference(self):
+        from unittest.mock import patch
+        from tasks.io.telegram_agent_client import _transcribe_telegram_voice
+
+        class FakeSTT:
+            def transcribe(self, **kwargs):
+                return {"text": "parent transcribed"}
+
+        svc = FakeSTT()
+        registry = MagicMock()
+        registry.resolve.return_value = svc
+        store = MagicMock()
+        store.get_extra.side_effect = lambda cid, key: (
+            {"assistant": "stt_parent"} if cid == "conv1" and key == "stt_services" else {}
+        )
+        content = json.dumps({
+            "type": "voice",
+            "file_name": "telegram_voice.ogg",
+            "mime_type": "audio/ogg",
+            "data_base64": base64.b64encode(b"audio").decode("ascii"),
+        })
+
+        with patch("core.conversation_store.ConversationStore.instance", return_value=store), \
+                patch("core.service_registry.ServiceRegistry.get_instance", return_value=registry):
+            text = _transcribe_telegram_voice(
+                content, "alice", "conv1::task::t123", "assistant")
+
+        assert text == "parent transcribed"
+        registry.resolve.assert_called_once_with(
+            "stt_parent", user_id="alice", conv_id="conv1::task::t123")
 
     def test_telegram_voice_auto_selects_any_registered_stt_service(self):
         from unittest.mock import patch
@@ -955,6 +1050,59 @@ class TestTelegramAgentClientTask(unittest.TestCase):
         load.assert_called_once_with("fid1", "alice")
         task._send_media.assert_called_once_with("alice", "chat-1", b"png", "image.png", "image/png")
 
+    def test_conversation_bridge_loads_webchat_attachment_with_event_user(self):
+        from tasks.io.telegram_agent_client import TelegramConversationBridgeTask
+        task = TelegramConversationBridgeTask({"service_id": "telegram_bot"})
+        task._send = MagicMock(return_value=True)
+        task._send_media = MagicMock()
+
+        with patch.object(TelegramConversationBridgeTask, "_telegram_subscribers", return_value=[("telegram-user", "telegram:1725865697")]), \
+                patch("tasks.io.telegram_agent_client._load_filestore_media", return_value=("image.png", b"png", "image/png")) as load:
+            task._on_event("conv1", "new_message", {
+                "role": "user",
+                "content": "look",
+                "source": {"type": "user", "name": "allcolor"},
+                "attachments": [{"filename": "image.png", "mime_type": "image/png", "file_id": "fid1"}],
+            })
+
+        load.assert_called_once_with("fid1", "allcolor")
+        task._send_media.assert_called_once_with(
+            "telegram-user", "telegram:1725865697", b"png", "image.png", "image/png")
+
+    def test_conversation_bridge_sends_attachment_media_to_api_chat_id(self):
+        from tasks.io.telegram_agent_client import TelegramConversationBridgeTask
+        task = TelegramConversationBridgeTask({"service_id": "telegram_bot"})
+        svc = MagicMock()
+        svc._initialized = True
+        task.get_service = MagicMock(return_value=svc)
+
+        task._send_media(
+            "alice", "telegram:1725865697", b"png", "image.png", "image/png")
+
+        svc.send_photo.assert_called_once_with(
+            "1725865697", b"png", filename="image.png", content_type="image/png")
+
+    def test_conversation_bridge_forwards_content_image_ref_media(self):
+        from tasks.io.telegram_agent_client import TelegramConversationBridgeTask
+        task = TelegramConversationBridgeTask({"service_id": "telegram_bot"})
+        task._send = MagicMock(return_value=True)
+        task._send_media = MagicMock()
+
+        with patch.object(TelegramConversationBridgeTask, "_telegram_subscribers", return_value=[("alice", "telegram:1725865697")]), \
+                patch("tasks.io.telegram_agent_client._load_filestore_media", return_value=("image.png", b"png", "image/png")) as load:
+            task._on_event("conv1", "new_message", {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "look"},
+                    {"type": "image_ref", "file_id": "fid1", "filename": "image.png"},
+                ],
+                "source": {"name": "alice"},
+            })
+
+        load.assert_called_once_with("fid1", "alice")
+        task._send_media.assert_called_once_with(
+            "alice", "telegram:1725865697", b"png", "image.png", "image/png")
+
     def test_conversation_bridge_formats_agent_service_badge(self):
         from tasks.io.telegram_agent_client import TelegramConversationBridgeTask
         task = TelegramConversationBridgeTask({"service_id": "telegram_bot"})
@@ -1061,6 +1209,139 @@ class TestTelegramAgentClientTask(unittest.TestCase):
 
         assert _remove_forwarded_telegram_live_text("conv1", result) == ""
         assert "conv1" not in _TELEGRAM_LIVE_TEXT_BY_TURN
+
+    def test_agent_client_removes_formatted_live_events_from_final_reply(self):
+        from core.agent_runtime_api import AgentFinalResult
+        from tasks.io.telegram_agent_client import (
+            _TELEGRAM_LIVE_SENT_TEXT_BY_TURN,
+            _remember_forwarded_telegram_live_text,
+            _remove_forwarded_telegram_live_text,
+        )
+
+        _TELEGRAM_LIVE_SENT_TEXT_BY_TURN.clear()
+        _remember_forwarded_telegram_live_text(
+            "conv1",
+            "💭 <i>assistant thinking</i>\n<tg-spoiler>Je vérifie le cache TTS.</tg-spoiler>",
+        )
+        _remember_forwarded_telegram_live_text(
+            "conv1",
+            "🟩 <b>assistant</b> via <code>codex_appserver_llm_service</code>\n"
+            "Le cache était lié au mauvais conversationId.",
+        )
+        result = AgentFinalResult(
+            "conv1", "telegram:111111:m1",
+            response=(
+                "Je vérifie le cache TTS.\n"
+                "Le cache était lié au mauvais conversationId.\n"
+                "Corrigé."
+            ),
+            data={"all_msg_ids": ["final-msg"]},
+        )
+
+        assert _remove_forwarded_telegram_live_text("conv1", result) == "Corrigé."
+        assert "conv1" not in _TELEGRAM_LIVE_SENT_TEXT_BY_TURN
+
+    def test_agent_client_does_not_send_done_aggregate_after_live_assistant_message(self):
+        import shutil
+        import tempfile
+        from unittest.mock import patch
+
+        from core.agent_runtime_api import AgentFinalResult
+        from core.identity_service import IdentityService
+        from tasks.io.telegram_agent_client import (
+            TelegramAgentClientTask,
+            _TELEGRAM_LIVE_ASSISTANT_SENT_TURNS,
+        )
+
+        tmp = tempfile.mkdtemp()
+        IdentityService.reset()
+        import core.paths as _p
+        orig_ucd = _p.USER_CONFIG_DIR
+        _p.USER_CONFIG_DIR = Path(tmp) / "users"
+        try:
+            ids = IdentityService()
+            IdentityService._instance = ids
+            ids.link("alice", "telegram", "111111")
+            ids.set_active_conv("alice", "telegram", "conv1")
+            _TELEGRAM_LIVE_ASSISTANT_SENT_TURNS.add("conv1")
+
+            task = TelegramAgentClientTask({"agent_runtime_port": "pawflow_agent.agent_runtime_in"})
+            ff = FlowFile(content=b"hello")
+            ff.set_attribute("telegram.user_id", "111111")
+            ff.set_attribute("telegram.chat_id", "111111")
+            ff.set_attribute("telegram.message_id", "m1")
+
+            with patch.object(TelegramAgentClientTask, "_selected_agent_for_conversation", return_value="assistant"), \
+                    patch("core.agent_runtime_api.AgentRuntimeAPI.submit_message", return_value=type("Submission", (), {
+                        "conversation_id": "conv1",
+                        "turn_id": "telegram:111111:m1",
+                        "wait_for_done": True,
+                        "status": "accepted",
+                    })()), \
+                    patch("core.agent_runtime_api.AgentRuntimeAPI.wait_for_done", return_value=AgentFinalResult(
+                        "conv1", "telegram:111111:m1",
+                        response="intermediate text\nfinal text",
+                    )):
+                out = task.execute(ff)
+
+            assert out[0].get_content() == b""
+            assert "conv1" not in _TELEGRAM_LIVE_ASSISTANT_SENT_TURNS
+        finally:
+            IdentityService.reset()
+            _p.USER_CONFIG_DIR = orig_ucd
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_bridge_uses_linked_active_telegram_conversation(self):
+        import shutil
+        import tempfile
+
+        from core.identity_service import IdentityService
+        from tasks.io.telegram_agent_client import TelegramConversationBridgeTask
+
+        tmp = tempfile.mkdtemp()
+        IdentityService.reset()
+        import core.paths as _p
+        orig_ucd = _p.USER_CONFIG_DIR
+        _p.USER_CONFIG_DIR = Path(tmp) / "users"
+        try:
+            ids = IdentityService()
+            IdentityService._instance = ids
+            ids.link("alice", "telegram", "telegram:1725865697")
+            ids.set_active_conv("alice", "telegram", "conv1")
+
+            subscribers = list(TelegramConversationBridgeTask._telegram_subscribers("conv1", {}))
+
+            assert subscribers == [("alice", "telegram:1725865697")]
+        finally:
+            IdentityService.reset()
+            _p.USER_CONFIG_DIR = orig_ucd
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_bridge_requires_active_telegram_conversation(self):
+        import shutil
+        import tempfile
+
+        from core.identity_service import IdentityService
+        from tasks.io.telegram_agent_client import TelegramConversationBridgeTask
+
+        tmp = tempfile.mkdtemp()
+        IdentityService.reset()
+        import core.paths as _p
+        orig_ucd = _p.USER_CONFIG_DIR
+        _p.USER_CONFIG_DIR = Path(tmp) / "users"
+        try:
+            ids = IdentityService()
+            IdentityService._instance = ids
+            ids.link("alice", "telegram", "telegram:1725865697")
+            ids.set_active_conv("alice", "telegram", "other_conv")
+
+            subscribers = list(TelegramConversationBridgeTask._telegram_subscribers("conv1", {}))
+
+            assert subscribers == []
+        finally:
+            IdentityService.reset()
+            _p.USER_CONFIG_DIR = orig_ucd
+            shutil.rmtree(tmp, ignore_errors=True)
 
     def test_tts_command_toggles_conversation_audio(self):
         import shutil
@@ -1238,6 +1519,18 @@ class TestTelegramAgentClientTask(unittest.TestCase):
         svc.ensure_connected.assert_not_called()
         svc.send_message.assert_not_called()
 
+    def test_conversation_bridge_sends_api_chat_id(self):
+        from tasks.io.telegram_agent_client import TelegramConversationBridgeTask
+        task = TelegramConversationBridgeTask({"service_id": "telegram_bot"})
+        svc = MagicMock()
+        svc._initialized = True
+        task.get_service = MagicMock(return_value=svc)
+
+        assert task._send("alice", "telegram:1725865697", "hello") is True
+
+        svc.send_message.assert_called_once_with(
+            "1725865697", "hello", parse_mode="HTML")
+
     def test_telegram_receiver_cleanup_unregisters_pool_callback(self):
         from tasks.io.telegram_receiver import TelegramReceiverTask
         task = TelegramReceiverTask({"service_id": "telegram_bot"})
@@ -1251,10 +1544,9 @@ class TestTelegramAgentClientTask(unittest.TestCase):
 
         pool.unregister_callback.assert_called_once_with(task._on_update)
 
-    def test_conversation_bridge_uses_telegram_chat_metadata(self):
+    def test_conversation_bridge_uses_active_telegram_link(self):
         import shutil
         import tempfile
-        from unittest.mock import patch
 
         from core.identity_service import IdentityService
         from tasks.io.telegram_agent_client import TelegramConversationBridgeTask
@@ -1267,14 +1559,12 @@ class TestTelegramAgentClientTask(unittest.TestCase):
         try:
             ids = IdentityService()
             IdentityService._instance = ids
-            ids.link("alice", "telegram", "chat-1")
+            ids.link("alice", "telegram", "telegram:1725865697")
+            ids.set_active_conv("alice", "telegram", "conv1")
 
-            mock_store = MagicMock()
-            mock_store.get_extra.return_value = "chat-1"
-            with patch("core.conversation_store.ConversationStore.instance", return_value=mock_store):
-                subscribers = list(TelegramConversationBridgeTask._telegram_subscribers("conv1"))
+            subscribers = list(TelegramConversationBridgeTask._telegram_subscribers("conv1"))
 
-            assert subscribers == [("alice", "chat-1")]
+            assert subscribers == [("alice", "telegram:1725865697")]
         finally:
             IdentityService.reset()
             _p.USER_CONFIG_DIR = orig_ucd
@@ -1337,7 +1627,7 @@ class TestTelegramSendHandler(unittest.TestCase):
         mock_svc.send_message.return_value = {"message_id": 99}
         h.set_service(mock_svc)
 
-        result = h.execute({"chat_id": "123", "text": "hello"})
+        result = h.execute({"chat_id": "telegram:123", "text": "hello"})
         assert "99" in result
         mock_svc.send_message.assert_called_once_with("123", "hello")
 

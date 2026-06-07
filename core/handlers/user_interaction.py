@@ -81,25 +81,6 @@ class NotifyUserHandler(ToolHandler):
             except Exception as e:
                 logger.debug(f"SSE notify failed: {e}")
 
-        # Channel 2: Telegram (if conversation has telegram metadata)
-        if self._conversation_id:
-            try:
-                from core.conversation_store import ConversationStore
-                store = ConversationStore.instance()
-                tg_chat_id = store.get_extra(
-                    self._conversation_id, "telegram_chat_id",
-                )
-                if tg_chat_id:
-                    # Try to find a running TelegramBotService
-                    from services.telegram_bot_service import TelegramBotService
-                    # Use the service registry pattern — for now log intent
-                    logger.info(
-                        f"Telegram notification to {tg_chat_id}: {message[:100]}"
-                    )
-                    sent_channels.append("telegram_queued")
-            except Exception:
-                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-
         if sent_channels:
             return f"Notification sent via: {', '.join(sent_channels)}"
         return "Notification queued (no active channels detected)"

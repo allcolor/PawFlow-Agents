@@ -4,7 +4,10 @@
 var _convSttServices = [];
 var _convSttSelectedService = '';
 var _convSttServicesLoaded = false;
+var _convSttServicesConversationId = null;
 var _convSttRefreshInFlight = false;
+var _convSttRefreshConversationId = null;
+var _convSttRefreshAgain = false;
 var _convSttStartAfterRefresh = false;
 var _convSttAfterRefresh = null;
 var _convSttMediaRecorder = null;
@@ -41,9 +44,18 @@ function _convSttUpdateButton() {
   btn.innerHTML = _convSttRecording ? '&#x23F9;' : '&#x1F3A4;';
 }
 
-function _convSttSetServices(services) {
+function _convSttCurrentConversationId() {
+  return (typeof conversationId !== 'undefined' && conversationId) ? conversationId : '';
+}
+
+function _convSttServicesCurrent() {
+  return _convSttServicesLoaded && _convSttServicesConversationId === _convSttCurrentConversationId();
+}
+
+function _convSttSetServices(services, servicesConversationId) {
   _convSttServices = Array.isArray(services) ? services : [];
   _convSttServicesLoaded = true;
+  _convSttServicesConversationId = servicesConversationId || '';
   if (!_convSttServices.length) {
     _convSttSelectedService = '';
   } else if (!_convSttSelectedService || !_convSttServices.some(s => s.id === _convSttSelectedService)) {
@@ -81,15 +93,26 @@ function _convSttWarmup() {
 function refreshConversationSTTServices(startAfterRefresh) {
   if (typeof startAfterRefresh === 'function') _convSttAfterRefresh = startAfterRefresh;
   else if (startAfterRefresh) _convSttStartAfterRefresh = true;
-  if (_convSttRefreshInFlight) return;
+  const requestConversationId = _convSttCurrentConversationId();
+  if (_convSttRefreshInFlight) {
+    if (_convSttRefreshConversationId !== requestConversationId) _convSttRefreshAgain = true;
+    return;
+  }
   if (typeof action$ !== 'function') { _convSttUpdateButton(); return; }
   _convSttRefreshInFlight = true;
+  _convSttRefreshConversationId = requestConversationId;
   action$('list_stt_services', {
-    conversation_id: conversationId,
+    conversation_id: requestConversationId,
   }, { silent: true }).subscribe(data => {
     _convSttRefreshInFlight = false;
+    _convSttRefreshConversationId = null;
     const services = Array.isArray(data) ? data : ((data && data.services) || []);
-    _convSttSetServices(services);
+    _convSttSetServices(services, requestConversationId);
+    if (_convSttRefreshAgain || requestConversationId !== _convSttCurrentConversationId()) {
+      _convSttRefreshAgain = false;
+      refreshConversationSTTServices();
+      return;
+    }
     const afterRefresh = _convSttAfterRefresh;
     _convSttAfterRefresh = null;
     if (afterRefresh) {
@@ -101,7 +124,8 @@ function refreshConversationSTTServices(startAfterRefresh) {
     }
   }, _err => {
     _convSttRefreshInFlight = false;
-    _convSttSetServices([]);
+    _convSttRefreshConversationId = null;
+    _convSttSetServices([], requestConversationId);
   });
 }
 
@@ -141,7 +165,7 @@ function _convSttResetDefaultService() {
 }
 
 function showConversationSTTServiceDialog() {
-  if (!_convSttServicesLoaded) {
+  if (!_convSttServicesCurrent()) {
     refreshConversationSTTServices(() => _convSttShowServiceDialog());
     return;
   }
@@ -181,7 +205,7 @@ function toggleConversationSTT() {
     _convSttStopRecording();
     return;
   }
-  if (!_convSttServicesLoaded) {
+  if (!_convSttServicesCurrent()) {
     refreshConversationSTTServices(true);
     return;
   }

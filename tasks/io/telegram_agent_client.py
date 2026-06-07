@@ -29,6 +29,8 @@ _WIZARDS: Dict[str, Dict[str, Any]] = {}
 _WIZARD_LOCK = threading.Lock()
 _LIVE_EVENT_MIN_INTERVAL_SECONDS = 6.0
 _TELEGRAM_LIVE_TEXT_BY_TURN: Dict[str, Dict[str, str]] = {}
+_TELEGRAM_LIVE_SENT_TEXT_BY_TURN: Dict[str, List[str]] = {}
+_TELEGRAM_LIVE_ASSISTANT_SENT_TURNS: set[str] = set()
 
 
 class TelegramAgentClientTask(BaseTask):
@@ -179,8 +181,11 @@ class TelegramAgentClientTask(BaseTask):
         if result.error:
             flowfile.set_content(f"Agent error: {result.error}".encode("utf-8"))
             return [flowfile]
-        response_text = _remove_forwarded_telegram_live_text(
-            submission.conversation_id, result)
+        if _telegram_live_assistant_was_forwarded(submission.conversation_id):
+            response_text = ""
+        else:
+            response_text = _remove_forwarded_telegram_live_text(
+                submission.conversation_id, result)
         sent_text_before_tts = False
         if response_text and _telegram_tts_enabled(conversation_id):
             bridge = TelegramConversationBridgeTask({
@@ -216,7 +221,10 @@ class TelegramAgentClientTask(BaseTask):
             sent_text = False
             if text:
                 sent_text = bridge._send(user_id, chat_id, text)
+                if sent_text:
+                    _remember_forwarded_telegram_live_text(conversation_id, text)
                 if sent_text and event_type == "new_message" and data.get("role") == "assistant":
+                    _remember_forwarded_telegram_live_assistant(conversation_id)
                     bridge._send_tts_audio(user_id, chat_id, conversation_id, data)
             if event_type == "tool_result":
                 bridge._send_tool_media(user_id, chat_id, data)
@@ -889,8 +897,11 @@ class TelegramConversationBridgeTask(BaseTask):
             return
         for user_id, chat_id in subscribers:
             if text:
-                self._send(user_id, chat_id, text)
-                if event_type == "new_message" and data.get("role") == "assistant":
+                sent_text = self._send(user_id, chat_id, text)
+                if sent_text:
+                    _remember_forwarded_telegram_live_text(conversation_id, text)
+                if sent_text and event_type == "new_message" and data.get("role") == "assistant":
+                    _remember_forwarded_telegram_live_assistant(conversation_id)
                     self._send_tts_audio(user_id, chat_id, conversation_id, data)
             if event_type == "new_message":
                 self._send_message_attachments(user_id, chat_id, data)
@@ -960,26 +971,13 @@ class TelegramConversationBridgeTask(BaseTask):
                 continue
             if ids.get_active_conv(user_id, "telegram") == conversation_id:
                 yield from _yield_linked_user(user_id)
-        try:
-            from core.conversation_store import ConversationStore
-            store = ConversationStore.instance()
-            chat_id = str(store.get_extra(conversation_id, "telegram_chat_id") or "").strip()
-            if not chat_id:
-                return
-            for user_id, links in all_links.items():
-                linked_chat = links.get("telegram") if isinstance(links, dict) else ""
-                if linked_chat == chat_id and (user_id, chat_id) not in yielded:
-                    yielded.add((user_id, chat_id))
-                    yield user_id, chat_id
-                    return
-            key = ("", chat_id)
-            if key not in yielded:
-                yield key
-        except Exception:
-            logger.debug("Telegram bridge metadata subscriber lookup failed", exc_info=True)
 
     def _send(self, user_id: str, chat_id: str, text: str) -> bool:
         try:
+            from tasks.io.telegram_send import telegram_api_chat_id
+            chat_id = telegram_api_chat_id(chat_id)
+            if not chat_id:
+                return False
             svc = self._active_bridge_service()
             if not svc:
                 return False
@@ -1005,23 +1003,23 @@ class TelegramConversationBridgeTask(BaseTask):
                                   data: Dict[str, Any]) -> None:
         attachments = data.get("attachments") if isinstance(data.get("attachments"), list) else []
         refs: List[str] = []
-        for att in attachments:
-            if not isinstance(att, dict):
-                continue
-            file_id = str(att.get("file_id") or "").strip()
-            if file_id and file_id not in refs:
-                refs.append(file_id)
-                continue
-            ref_text = " ".join(str(att.get(k) or "") for k in ("url", "href", "path"))
-            for ref in _extract_filestore_refs(ref_text):
+        _collect_attachment_refs(attachments, refs)
+        content = data.get("content")
+        if isinstance(content, list):
+            _collect_attachment_refs(content, refs)
+        elif isinstance(content, str):
+            for ref in _extract_filestore_refs(content):
                 if ref not in refs:
                     refs.append(ref)
+        media_user_id = _filestore_user_id_for_event(data, user_id)
         for file_id in refs[:4]:
             try:
-                name, raw, content_type = _load_filestore_media(file_id, user_id)
+                name, raw, content_type = _load_filestore_media(file_id, media_user_id)
                 self._send_media(user_id, chat_id, raw, name, content_type)
             except Exception as exc:
-                logger.warning("Telegram bridge attachment send failed for %s/%s: %s", chat_id, file_id, exc)
+                logger.warning(
+                    "Telegram bridge attachment send failed for %s/%s owner=%s: %s",
+                    chat_id, file_id, media_user_id, exc)
 
     def _send_tool_media(self, user_id: str, chat_id: str, data: Dict[str, Any]) -> None:
         refs = _extract_filestore_refs(str(data.get("result") or data.get("content") or ""))
@@ -1055,6 +1053,10 @@ class TelegramConversationBridgeTask(BaseTask):
 
     def _send_media(self, user_id: str, chat_id: str, raw: bytes,
                     filename: str, content_type: str) -> None:
+        from tasks.io.telegram_send import telegram_api_chat_id
+        chat_id = telegram_api_chat_id(chat_id)
+        if not chat_id:
+            return
         content_type = content_type or mimetypes.guess_type(filename)[0] or "application/octet-stream"
         from core.identity_service import IdentityService
         bot_token = IdentityService.instance().get_bot_token(user_id, "telegram")
@@ -1104,6 +1106,29 @@ def _format_attachment_summary(attachments: List[Dict[str, Any]]) -> str:
     if file_count:
         parts.append(f"{file_count} file attachment{'s' if file_count != 1 else ''}")
     return "[attachments: " + ", ".join(parts) + "]" if parts else "[attachments]"
+
+
+def _collect_attachment_refs(items: List[Any], refs: List[str]) -> None:
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        file_id = str(item.get("file_id") or "").strip()
+        if file_id and file_id not in refs:
+            refs.append(file_id)
+            continue
+        ref_text = " ".join(str(item.get(k) or "") for k in ("url", "href", "path"))
+        for ref in _extract_filestore_refs(ref_text):
+            if ref not in refs:
+                refs.append(ref)
+
+
+def _filestore_user_id_for_event(data: Dict[str, Any], fallback: str) -> str:
+    source = data.get("source") if isinstance(data.get("source"), dict) else {}
+    if str(source.get("type") or "") == "user":
+        name = str(source.get("name") or "").strip()
+        if name:
+            return name
+    return fallback
 
 
 def _telegram_agent_badge(data: Dict[str, Any], fallback: str = "assistant") -> str:
@@ -1182,6 +1207,11 @@ def _remove_forwarded_telegram_live_text(conversation_id: str, result) -> str:
     all_msg_ids = data.get("all_msg_ids") if isinstance(data, dict) else []
     if not response or not isinstance(all_msg_ids, list):
         return response
+    live_sent = _TELEGRAM_LIVE_SENT_TEXT_BY_TURN.get(conversation_id) or []
+    for live_text in list(live_sent):
+        response = _remove_one_forwarded_text(response, live_text)
+    if live_sent:
+        _TELEGRAM_LIVE_SENT_TEXT_BY_TURN.pop(conversation_id, None)
     live_by_id = _TELEGRAM_LIVE_TEXT_BY_TURN.get(conversation_id) or {}
     for msg_id in all_msg_ids:
         live_text = str(live_by_id.get(str(msg_id)) or "").strip()
@@ -1201,6 +1231,46 @@ def _remove_forwarded_telegram_live_text(conversation_id: str, result) -> str:
     if not live_by_id:
         _TELEGRAM_LIVE_TEXT_BY_TURN.pop(conversation_id, None)
     return response.strip()
+
+
+def _remember_forwarded_telegram_live_text(conversation_id: str, text: str) -> None:
+    normalized = _telegram_forwarded_text_for_dedup(text)
+    if not conversation_id or not normalized:
+        return
+    items = _TELEGRAM_LIVE_SENT_TEXT_BY_TURN.setdefault(conversation_id, [])
+    if normalized not in items:
+        items.append(normalized)
+
+
+def _remember_forwarded_telegram_live_assistant(conversation_id: str) -> None:
+    if conversation_id:
+        _TELEGRAM_LIVE_ASSISTANT_SENT_TURNS.add(conversation_id)
+
+
+def _telegram_live_assistant_was_forwarded(conversation_id: str) -> bool:
+    if not conversation_id:
+        return False
+    seen = conversation_id in _TELEGRAM_LIVE_ASSISTANT_SENT_TURNS
+    _TELEGRAM_LIVE_ASSISTANT_SENT_TURNS.discard(conversation_id)
+    if seen:
+        _TELEGRAM_LIVE_TEXT_BY_TURN.pop(conversation_id, None)
+        _TELEGRAM_LIVE_SENT_TEXT_BY_TURN.pop(conversation_id, None)
+    return seen
+
+
+def _telegram_forwarded_text_for_dedup(text: str) -> str:
+    text = str(text or "").strip()
+    if not text:
+        return ""
+    text = re.sub(r"<tg-spoiler>(.*?)</tg-spoiler>", r"\1", text, flags=re.DOTALL)
+    text = re.sub(r"<[^>]+>", "", text)
+    text = html.unescape(text)
+    text = re.sub(r"^[\U0001F7E9\U0001F7E6\U0001F7EA\U0001F7E7\U0001F7E8\U0001F7EB\u2B1C]\s*", "", text)
+    text = re.sub(r"^[^\n]+\s+via\s+[^\n]+\n", "", text)
+    text = re.sub(r"^[^\n]*\bthinking\b\s*\n", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"^calling\s+\S+\s*$", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
 
 
 def _is_telegram_origin_event(data: Dict[str, Any]) -> bool:
@@ -1322,9 +1392,18 @@ def _transcribe_telegram_voice(
         return ""
     audio_b64 = str(payload.get("data_base64") or "")
     if not audio_b64:
+        logger.info(
+            "Telegram voice STT skipped for %s: empty audio payload",
+            conversation_id,
+        )
         return ""
     service_id = _configured_stt_service_id(conversation_id, agent_name, user_id=user_id)
     if not service_id:
+        logger.info(
+            "Telegram voice STT skipped for %s: no STT service configured for agent=%s",
+            conversation_id,
+            agent_name,
+        )
         return ""
     try:
         audio_bytes = base64.b64decode(audio_b64)
@@ -1332,6 +1411,10 @@ def _transcribe_telegram_voice(
         logger.warning("Telegram voice STT skipped: invalid audio payload", exc_info=True)
         return ""
     if not audio_bytes:
+        logger.info(
+            "Telegram voice STT skipped for %s: decoded audio payload is empty",
+            conversation_id,
+        )
         return ""
     try:
         from core.service_registry import ServiceRegistry
@@ -1346,6 +1429,9 @@ def _transcribe_telegram_voice(
                 agent_name=agent_name)
         mime_type = str(payload.get("mime_type") or "audio/ogg")
         filename = str(payload.get("file_name") or "telegram_voice.ogg")
+        original_size = len(audio_bytes)
+        original_mime_type = mime_type
+        original_filename = filename
         try:
             from tasks.ai.actions.media import _convert_stt_audio_to_wav
             audio_bytes, mime_type, filename = _convert_stt_audio_to_wav(
@@ -1356,6 +1442,19 @@ def _transcribe_telegram_voice(
                 exc,
                 exc_info=True,
             )
+        logger.info(
+            "Telegram voice STT transcribe requested: user=%s service=%s bytes=%d->%d mime=%s->%s filename=%s->%s conv=%s agent=%s",
+            user_id,
+            service_id,
+            original_size,
+            len(audio_bytes),
+            original_mime_type,
+            mime_type,
+            original_filename,
+            filename,
+            conversation_id[:8],
+            agent_name,
+        )
         audio_path = ""
         if user_id and conversation_id:
             try:
@@ -1378,7 +1477,16 @@ def _transcribe_telegram_voice(
             mime_type=mime_type,
             filename=filename,
         )
-        return str((result or {}).get("text") or "").strip()
+        transcript = str((result or {}).get("text") or "").strip()
+        logger.info(
+            "Telegram voice STT transcribe completed: user=%s service=%s chars=%d conv=%s agent=%s",
+            user_id,
+            service_id,
+            len(transcript),
+            conversation_id[:8],
+            agent_name,
+        )
+        return transcript
     except Exception as exc:
         logger.warning("Telegram voice STT failed: %s", exc, exc_info=True)
         return ""
@@ -1395,9 +1503,19 @@ def _configured_stt_service_id(conversation_id: str, agent_name: str,
                                user_id: str = "") -> str:
     if not conversation_id:
         return ""
+    lookup_ids = [conversation_id]
+    if "::task::" in conversation_id:
+        lookup_ids.append(conversation_id.split("::task::", 1)[0])
+    if "::task_verify::" in conversation_id:
+        lookup_ids.append(conversation_id.split("::task_verify::", 1)[0])
     try:
         from core.conversation_store import ConversationStore
-        prefs = ConversationStore.instance().get_extra(conversation_id, "stt_services") or {}
+        store = ConversationStore.instance()
+        prefs = {}
+        for cid in lookup_ids:
+            prefs = store.get_extra(cid, "stt_services") or {}
+            if prefs:
+                break
     except Exception:
         logger.debug("Telegram voice STT preference lookup failed", exc_info=True)
         return ""

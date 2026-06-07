@@ -368,19 +368,6 @@ class TestNotifyUserHandler(unittest.TestCase):
         call_args = mock_bus.publish_event.call_args
         self.assertEqual(call_args[0][2]["urgency"], "high")
 
-    @patch("core.conversation_event_bus.ConversationEventBus")
-    def test_notify_with_telegram_metadata(self, mock_bus_cls):
-        mock_bus = MagicMock()
-        mock_bus_cls.instance.return_value = mock_bus
-        # Set telegram_chat_id in conv extra
-        self.store.set_extra("conv1", "telegram_chat_id", "12345")
-        h = NotifyUserHandler()
-        h.set_conversation_id("conv1")
-        h.set_user_id("user1")
-        result = h.execute({"message": "TG test"})
-        self.assertIn("telegram_queued", result)
-
-
 # ══════════════════════════════════════════════════════════════════
 # 4. CreateToolHandler
 # ══════════════════════════════════════════════════════════════════

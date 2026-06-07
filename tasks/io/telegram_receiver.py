@@ -152,7 +152,9 @@ class TelegramReceiverTask(BaseTask):
             content = json.dumps({
                 "type": "voice",
                 "file_id": file_id,
+                "file_name": "telegram_voice.ogg",
                 "duration": msg["voice"].get("duration", 0),
+                "mime_type": msg["voice"].get("mime_type", "audio/ogg"),
                 "data_base64": file_data,
             }).encode("utf-8")
             msg_type = "voice"

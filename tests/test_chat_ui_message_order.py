@@ -152,6 +152,9 @@ def test_live_conversation_tts_button_and_sse_hooks_are_wired():
     assert "function showConversationTTSServiceDialog()" in CONVERSATION_TTS_JS
     assert "action$('list_tts_services'" in CONVERSATION_TTS_JS
     assert "conversation_id: conversationId" in CONVERSATION_TTS_JS
+    assert "var _convTtsServicesConversationId = null" in CONVERSATION_TTS_JS
+    assert "function _convTtsServicesCurrent()" in CONVERSATION_TTS_JS
+    assert "requestConversationId !== _convTtsCurrentConversationId()" in CONVERSATION_TTS_JS
     assert "action$('set_tts_service'" in CONVERSATION_TTS_JS
     assert "action$('clear_tts_service'" in CONVERSATION_TTS_JS
     assert 'action == "list_tts_services"' in MEDIA_ACTIONS
@@ -164,6 +167,9 @@ def test_live_conversation_tts_button_and_sse_hooks_are_wired():
     assert "function showConversationSTTServiceDialog()" in conversation_stt_js
     assert "action$('list_stt_services'" in conversation_stt_js
     assert "conversation_id: conversationId" in conversation_stt_js
+    assert "var _convSttServicesConversationId = null" in conversation_stt_js
+    assert "function _convSttServicesCurrent()" in conversation_stt_js
+    assert "requestConversationId !== _convSttCurrentConversationId()" in conversation_stt_js
     assert "action$('set_stt_service'" in conversation_stt_js
     assert "action$('clear_stt_service'" in conversation_stt_js
     assert "action$('stt_transcribe'" in conversation_stt_js

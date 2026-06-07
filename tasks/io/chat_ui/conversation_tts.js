@@ -19,7 +19,10 @@ var _convTtsStreamedMessages = new Set();
 var _convTtsServices = [];
 var _convTtsSelectedService = '';
 var _convTtsServicesLoaded = false;
+var _convTtsServicesConversationId = null;
 var _convTtsRefreshInFlight = false;
+var _convTtsRefreshConversationId = null;
+var _convTtsRefreshAgain = false;
 var _convTtsStartAfterRefresh = false;
 var _convTtsAfterRefresh = null;
 var _convTtsAfterServiceSelect = null;
@@ -70,9 +73,18 @@ function _convTtsUpdateButton() {
   btn.innerHTML = _convTtsEnabled ? '&#x1F50A;' : '&#x1F507;';
 }
 
-function _convTtsSetServices(services) {
+function _convTtsCurrentConversationId() {
+  return (typeof conversationId !== 'undefined' && conversationId) ? conversationId : '';
+}
+
+function _convTtsServicesCurrent() {
+  return _convTtsServicesLoaded && _convTtsServicesConversationId === _convTtsCurrentConversationId();
+}
+
+function _convTtsSetServices(services, servicesConversationId) {
   _convTtsServices = Array.isArray(services) ? services : [];
   _convTtsServicesLoaded = true;
+  _convTtsServicesConversationId = servicesConversationId || '';
   if (!_convTtsServices.length) {
     _convTtsSelectedService = '';
     if (_convTtsEnabled) toggleConversationTTS();
@@ -92,15 +104,26 @@ function _convTtsSetServices(services) {
 function refreshConversationTTSServices(startAfterRefresh) {
   if (typeof startAfterRefresh === 'function') _convTtsAfterRefresh = startAfterRefresh;
   else if (startAfterRefresh) _convTtsStartAfterRefresh = true;
-  if (_convTtsRefreshInFlight) return;
+  const requestConversationId = _convTtsCurrentConversationId();
+  if (_convTtsRefreshInFlight) {
+    if (_convTtsRefreshConversationId !== requestConversationId) _convTtsRefreshAgain = true;
+    return;
+  }
   if (typeof action$ !== 'function') { _convTtsUpdateButton(); return; }
   _convTtsRefreshInFlight = true;
+  _convTtsRefreshConversationId = requestConversationId;
   action$('list_tts_services', {
-    conversation_id: conversationId,
+    conversation_id: requestConversationId,
   }, { silent: true }).subscribe(data => {
     _convTtsRefreshInFlight = false;
+    _convTtsRefreshConversationId = null;
     const services = Array.isArray(data) ? data : ((data && data.services) || []);
-    _convTtsSetServices(services);
+    _convTtsSetServices(services, requestConversationId);
+    if (_convTtsRefreshAgain || requestConversationId !== _convTtsCurrentConversationId()) {
+      _convTtsRefreshAgain = false;
+      refreshConversationTTSServices();
+      return;
+    }
     const afterRefresh = _convTtsAfterRefresh;
     _convTtsAfterRefresh = null;
     if (afterRefresh) {
@@ -154,7 +177,7 @@ function _convTtsResetDefaultService() {
 }
 
 function showConversationTTSServiceDialog() {
-  if (!_convTtsServicesLoaded) {
+  if (!_convTtsServicesCurrent()) {
     refreshConversationTTSServices(() => _convTtsShowServiceDialog());
     return;
   }
@@ -162,7 +185,7 @@ function showConversationTTSServiceDialog() {
 }
 
 function _convTtsChooseService(afterSelect) {
-  if (!_convTtsServicesLoaded) {
+  if (!_convTtsServicesCurrent()) {
     refreshConversationTTSServices(() => _convTtsChooseService(afterSelect));
     return;
   }

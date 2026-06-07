@@ -113,9 +113,7 @@ event.
 `telegramConversationBridge` listens to shared conversation events from webchat,
 PawCode, and other non-Telegram clients and forwards user messages, final agent
 responses, and agent errors to linked Telegram chats whose Telegram active
-conversation matches the event conversation. If the conversation stores
-`telegram_chat_id`, the bridge also uses that metadata as a fallback subscriber
-source. User message attachments are summarized in the Telegram text so the
+conversation matches the event conversation. User message attachments are summarized in the Telegram text so the
 remote chat can see that files or images were sent even when Telegram cannot
 receive the original binary payload through the event bus.
 

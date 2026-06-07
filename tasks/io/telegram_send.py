@@ -66,7 +66,7 @@ class TelegramSendTask(BaseTask):
 
         # Resolve chat_id from config or FlowFile attribute
         chat_id_expr = self.config.get("chat_id", "${telegram.chat_id}")
-        chat_id = self.resolve_value(chat_id_expr, flowfile=flowfile)
+        chat_id = telegram_api_chat_id(self.resolve_value(chat_id_expr, flowfile=flowfile))
         if not chat_id:
             raise ValueError("No chat_id available (configure or set telegram.chat_id)")
 
@@ -196,7 +196,7 @@ class TelegramSendHandler(ToolHandler):
         self._service = svc
 
     def execute(self, arguments: Dict[str, Any]) -> str:
-        chat_id = arguments.get("chat_id", "")
+        chat_id = telegram_api_chat_id(arguments.get("chat_id", ""))
         text = arguments.get("text", "")
         if not chat_id or not text:
             return "Error: chat_id and text are required"
@@ -210,6 +210,11 @@ class TelegramSendHandler(ToolHandler):
             return f"Message sent (id: {result.get('message_id', '?')})"
         except Exception as e:
             return f"Error sending message: {e}"
+
+
+def telegram_api_chat_id(chat_id: Any) -> str:
+    value = str(chat_id or "").strip()
+    return value.split(":", 1)[1].strip() if value.startswith("telegram:") else value
 
 
 TaskFactory.register(TelegramSendTask)

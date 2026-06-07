@@ -562,6 +562,35 @@ class TestTelegramAgentClientTask(unittest.TestCase):
         assert svc.kwargs["mime_type"] == "audio/mpeg"
         assert svc.kwargs["filename"] == "clip.mp3"
 
+    def test_telegram_voice_auto_selects_single_available_stt_service(self):
+        from unittest.mock import patch
+        from tasks.io.telegram_agent_client import _transcribe_telegram_voice
+
+        class FakeSTT:
+            def transcribe(self, **kwargs):
+                return {"text": "auto transcribed"}
+
+        class FakeDef:
+            service_id = "voicebox_service"
+
+        svc = FakeSTT()
+        registry = MagicMock()
+        registry.resolve_by_type.side_effect = lambda service_type, **kwargs: [FakeDef()] if service_type == "voicebox" else []
+        registry.resolve.return_value = svc
+        store = MagicMock()
+        store.get_extra.return_value = {}
+        content = json.dumps({
+            "type": "voice",
+            "data_base64": base64.b64encode(b"audio").decode("ascii"),
+        })
+
+        with patch("core.conversation_store.ConversationStore.instance", return_value=store), \
+                patch("core.service_registry.ServiceRegistry.get_instance", return_value=registry):
+            text = _transcribe_telegram_voice(content, "alice", "conv1", "assistant")
+
+        assert text == "auto transcribed"
+        registry.resolve.assert_called_once_with("voicebox_service", user_id="alice", conv_id="conv1")
+
     def test_agent_client_materializes_telegram_image_attachment(self):
         import shutil
         import tempfile

@@ -1211,7 +1211,7 @@ def _transcribe_telegram_voice(
     audio_b64 = str(payload.get("data_base64") or "")
     if not audio_b64:
         return ""
-    service_id = _configured_stt_service_id(conversation_id, agent_name)
+    service_id = _configured_stt_service_id(conversation_id, agent_name, user_id=user_id)
     if not service_id:
         return ""
     try:
@@ -1243,7 +1243,8 @@ def _transcribe_telegram_voice(
         return ""
 
 
-def _configured_stt_service_id(conversation_id: str, agent_name: str) -> str:
+def _configured_stt_service_id(conversation_id: str, agent_name: str,
+                               user_id: str = "") -> str:
     if not conversation_id:
         return ""
     try:
@@ -1254,7 +1255,26 @@ def _configured_stt_service_id(conversation_id: str, agent_name: str) -> str:
         return ""
     if not isinstance(prefs, dict):
         return ""
-    return str(prefs.get(agent_name or "agent") or prefs.get("*") or "").strip()
+    service_id = str(prefs.get(agent_name or "agent") or prefs.get("*") or "").strip()
+    if service_id:
+        return service_id
+    return _single_available_stt_service_id(user_id, conversation_id)
+
+
+def _single_available_stt_service_id(user_id: str, conversation_id: str) -> str:
+    try:
+        from core.service_registry import ServiceRegistry
+        reg = ServiceRegistry.get_instance()
+        candidates = []
+        for service_type in ("voicebox", "openaiCompatibleSTT", "xaiSTT"):
+            candidates.extend(reg.resolve_by_type(
+                service_type, user_id=user_id, conv_id=conversation_id))
+        service_ids = [str(getattr(s, "service_id", "") or "") for s in candidates]
+        service_ids = [sid for sid in service_ids if sid]
+        return service_ids[0] if len(service_ids) == 1 else ""
+    except Exception:
+        logger.debug("Telegram voice STT auto-selection failed", exc_info=True)
+        return ""
 
 
 def _configured_tts_service_id(conversation_id: str, agent_name: str) -> str:

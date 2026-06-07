@@ -181,7 +181,16 @@ class TelegramAgentClientTask(BaseTask):
             return [flowfile]
         response_text = _remove_forwarded_telegram_live_text(
             submission.conversation_id, result)
-        flowfile.set_content(response_text.encode("utf-8"))
+        sent_text_before_tts = False
+        if response_text and _telegram_tts_enabled(conversation_id):
+            bridge = TelegramConversationBridgeTask({
+                "service_id": str(self.config.get("service_id") or "telegram_bot"),
+            })
+            bridge.get_service = self.get_service
+            sent_text_before_tts = bridge._send(
+                user_id, chat_id, html.escape(response_text))
+        flowfile.set_content(
+            b"" if sent_text_before_tts else response_text.encode("utf-8"))
         flowfile.set_attribute("agent.conversation_id", submission.conversation_id)
         flowfile.set_attribute("agent.turn_id", submission.turn_id)
         _attach_telegram_tts_audio(
@@ -198,16 +207,20 @@ class TelegramAgentClientTask(BaseTask):
         def _callback(conversation_id: str, event_type: str, data: Any) -> None:
             if not isinstance(data, dict):
                 return
+            if (event_type == "new_message" and data.get("role") == "user"
+                    and _is_telegram_origin_event(data)):
+                return
             text = bridge._format_event(event_type, data)
             if not text and event_type != "tool_result":
                 return
+            sent_text = False
             if text:
-                bridge._send(user_id, chat_id, text)
-                if event_type == "new_message" and data.get("role") == "assistant":
+                sent_text = bridge._send(user_id, chat_id, text)
+                if sent_text and event_type == "new_message" and data.get("role") == "assistant":
                     bridge._send_tts_audio(user_id, chat_id, conversation_id, data)
             if event_type == "tool_result":
                 bridge._send_tool_media(user_id, chat_id, data)
-            if event_type == "new_message" and data.get("role") == "assistant":
+            if sent_text and event_type == "new_message" and data.get("role") == "assistant":
                 msg_id = str(data.get("msg_id") or "")
                 if msg_id:
                     _TELEGRAM_LIVE_TEXT_BY_TURN.setdefault(conversation_id, {})[msg_id] = str(data.get("content") or "").strip()
@@ -963,20 +976,22 @@ class TelegramConversationBridgeTask(BaseTask):
         except Exception:
             logger.debug("Telegram bridge metadata subscriber lookup failed", exc_info=True)
 
-    def _send(self, user_id: str, chat_id: str, text: str) -> None:
+    def _send(self, user_id: str, chat_id: str, text: str) -> bool:
         try:
             svc = self._active_bridge_service()
             if not svc:
-                return
+                return False
             from core.identity_service import IdentityService
             bot_token = IdentityService.instance().get_bot_token(user_id, "telegram")
             if bot_token:
                 from services.telegram_bot_service import TelegramBotPool
                 TelegramBotPool.instance().send_message(bot_token, chat_id, text, parse_mode="HTML")
-                return
+                return True
             svc.send_message(chat_id, text, parse_mode="HTML")
+            return True
         except Exception as exc:
             logger.warning("Telegram bridge send failed for %s: %s", chat_id, exc)
+            return False
 
     def _active_bridge_service(self):
         svc = self.get_service(self.config.get("service_id", ""))
@@ -1185,19 +1200,23 @@ def _compact_live_text(text: str, limit: int) -> str:
     return text[: max(0, limit - 1)].rstrip() + "…"
 
 
+def _telegram_tts_enabled(conversation_id: str) -> bool:
+    if not conversation_id:
+        return False
+    try:
+        from core.conversation_store import ConversationStore
+        return bool(ConversationStore.instance().get_extra(
+            conversation_id, "telegram_tts_enabled"))
+    except Exception:
+        logger.debug("Telegram TTS enabled lookup failed", exc_info=True)
+        return False
+
+
 def _attach_telegram_tts_audio(
     flowfile: FlowFile, text: str, user_id: str, conversation_id: str,
     agent_name: str,
 ) -> None:
-    if not text.strip() or not conversation_id:
-        return
-    try:
-        from core.conversation_store import ConversationStore
-        store = ConversationStore.instance()
-        if not store.get_extra(conversation_id, "telegram_tts_enabled"):
-            return
-    except Exception:
-        logger.debug("Telegram TTS enabled lookup failed", exc_info=True)
+    if not text.strip() or not _telegram_tts_enabled(conversation_id):
         return
     service_id = _configured_tts_service_id(conversation_id, agent_name)
     if not service_id:
@@ -1307,10 +1326,24 @@ def _configured_stt_service_id(conversation_id: str, agent_name: str,
 
 def _single_available_stt_service_id(user_id: str, conversation_id: str) -> str:
     try:
+        from core import ServiceFactory
         from core.service_registry import ServiceRegistry
+        from services.base_stt import BaseSTTService
+        from tasks import _register_all_services
+
+        _register_all_services()
+        service_types = []
+        for service_type, service_class in ServiceFactory._services.items():
+            try:
+                if issubclass(service_class, BaseSTTService):
+                    service_types.append(service_type)
+            except TypeError:
+                continue
+        service_types = sorted(service_types, key=lambda item: (item != "voicebox", item))
+
         reg = ServiceRegistry.get_instance()
         candidates = []
-        for service_type in ("voicebox", "openaiCompatibleSTT", "xaiSTT"):
+        for service_type in service_types:
             candidates.extend(reg.resolve_by_type(
                 service_type, user_id=user_id, conv_id=conversation_id))
         service_ids = [str(getattr(s, "service_id", "") or "") for s in candidates]

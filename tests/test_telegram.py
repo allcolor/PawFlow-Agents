@@ -596,6 +596,33 @@ class TestTelegramAgentClientTask(unittest.TestCase):
         assert text == "auto transcribed"
         registry.resolve.assert_called_once_with("voicebox_service", user_id="alice", conv_id="conv1")
 
+    def test_telegram_voice_auto_selects_any_registered_stt_service(self):
+        from unittest.mock import patch
+        from services.base_stt import BaseSTTService
+        from tasks.io.telegram_agent_client import _single_available_stt_service_id
+
+        class CustomTelegramSTT(BaseSTTService):
+            TYPE = "customTelegramSTT"
+
+            def transcribe(self, **kwargs):
+                return {"text": "custom"}
+
+        class FakeDef:
+            service_id = "custom_stt"
+
+        ServiceFactory.register(CustomTelegramSTT)
+        registry = MagicMock()
+        registry.resolve_by_type.side_effect = lambda service_type, **kwargs: (
+            [FakeDef()] if service_type == "customTelegramSTT" else []
+        )
+        try:
+            with patch("core.service_registry.ServiceRegistry.get_instance", return_value=registry):
+                service_id = _single_available_stt_service_id("alice", "conv1")
+        finally:
+            ServiceFactory._services.pop("customTelegramSTT", None)
+
+        assert service_id == "custom_stt"
+
     def test_agent_client_materializes_telegram_image_attachment(self):
         import shutil
         import tempfile
@@ -645,6 +672,64 @@ class TestTelegramAgentClientTask(unittest.TestCase):
             assert captured["attachments"][0]["url"] == "/files/file123/telegram_photo.jpg"
             assert captured["attachments"][0]["data"]
             fs.store.assert_called_once()
+        finally:
+            IdentityService.reset()
+            _p.USER_CONFIG_DIR = orig_ucd
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_agent_client_sends_text_before_telegram_tts_audio(self):
+        import shutil
+        import tempfile
+        from unittest.mock import patch
+
+        from core.identity_service import IdentityService
+        from core.agent_runtime_api import AgentFinalResult
+        from tasks.io.telegram_agent_client import (
+            TelegramAgentClientTask,
+            TelegramConversationBridgeTask,
+        )
+
+        tmp = tempfile.mkdtemp()
+        IdentityService.reset()
+        import core.paths as _p
+        orig_ucd = _p.USER_CONFIG_DIR
+        _p.USER_CONFIG_DIR = Path(tmp) / "users"
+        try:
+            ids = IdentityService()
+            IdentityService._instance = ids
+            ids.link("alice", "telegram", "111111")
+            ids.set_active_conv("alice", "telegram", "conv1")
+
+            task = TelegramAgentClientTask({"agent_runtime_port": "pawflow_agent.agent_runtime_in"})
+            ff = FlowFile(content=b"hello")
+            ff.set_attribute("telegram.user_id", "111111")
+            ff.set_attribute("telegram.chat_id", "111111")
+            ff.set_attribute("telegram.message_id", "m1")
+
+            def attach_audio(flowfile, text, *_args):
+                assert text == "final text"
+                assert flowfile.get_content() == b""
+                flowfile.set_attribute(
+                    "telegram.tts_audio_base64",
+                    base64.b64encode(b"audio").decode("ascii"),
+                )
+
+            with patch.object(TelegramAgentClientTask, "_selected_agent_for_conversation", return_value="assistant"), \
+                    patch("tasks.io.telegram_agent_client._telegram_tts_enabled", return_value=True), \
+                    patch.object(TelegramConversationBridgeTask, "_send", return_value=True) as send, \
+                    patch("tasks.io.telegram_agent_client._attach_telegram_tts_audio", side_effect=attach_audio), \
+                    patch("core.agent_runtime_api.AgentRuntimeAPI.submit_message", return_value=type("Submission", (), {
+                        "conversation_id": "conv1",
+                        "turn_id": "telegram:111111:m1",
+                        "wait_for_done": True,
+                        "status": "accepted",
+                    })()), \
+                    patch("core.agent_runtime_api.AgentRuntimeAPI.wait_for_done", return_value=AgentFinalResult("conv1", "telegram:111111:m1", response="final text")):
+                out = task.execute(ff)
+
+            send.assert_called_once_with("alice", "111111", "final text")
+            assert out[0].get_content() == b""
+            assert out[0].get_attribute("telegram.tts_audio_base64")
         finally:
             IdentityService.reset()
             _p.USER_CONFIG_DIR = orig_ucd
@@ -778,6 +863,46 @@ class TestTelegramAgentClientTask(unittest.TestCase):
     def test_streaming_user_message_event_includes_attachments(self):
         src = Path("tasks/ai/agent_streaming.py").read_text(encoding="utf-8")
         assert '"attachments": _attachments_body' in src
+
+    def test_agent_client_live_callback_skips_telegram_user_echo(self):
+        from tasks.io.telegram_agent_client import (
+            TelegramAgentClientTask,
+            TelegramConversationBridgeTask,
+        )
+        task = TelegramAgentClientTask({"service_id": "telegram_bot"})
+
+        with patch.object(TelegramConversationBridgeTask, "_send") as send:
+            callback = task._telegram_live_callback("alice", "chat-1")
+            callback("conv1", "new_message", {
+                "role": "user",
+                "content": "Stt depuis telegram toujours ko",
+                "msg_id": "telegram:chat-1:m1",
+                "source": {"name": "allcolor", "channel": "telegram"},
+                "attachments": [{"filename": "telegram_photo.jpg", "mime_type": "image/jpeg"}],
+            })
+
+        send.assert_not_called()
+
+    def test_agent_client_live_callback_does_not_mark_failed_send_as_forwarded(self):
+        from core.agent_runtime_api import AgentFinalResult
+        from tasks.io.telegram_agent_client import (
+            TelegramAgentClientTask,
+            TelegramConversationBridgeTask,
+            _remove_forwarded_telegram_live_text,
+        )
+        task = TelegramAgentClientTask({"service_id": "telegram_bot"})
+
+        with patch.object(TelegramConversationBridgeTask, "_send", return_value=False):
+            callback = task._telegram_live_callback("alice", "chat-1")
+            callback("conv1", "new_message", {
+                "role": "assistant",
+                "content": "final text",
+                "msg_id": "a1",
+                "source": {"name": "assistant"},
+            })
+
+        result = AgentFinalResult("conv1", "telegram:chat-1:m1", response="final text", data={"all_msg_ids": ["a1"]})
+        assert _remove_forwarded_telegram_live_text("conv1", result) == "final text"
 
     def test_conversation_bridge_formats_user_attachments(self):
         from tasks.io.telegram_agent_client import TelegramConversationBridgeTask

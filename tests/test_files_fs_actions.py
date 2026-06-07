@@ -211,6 +211,98 @@ def test_flow_runtime_graph_loads_repository_template(tmp_path, monkeypatch):
     }]
 
 
+def test_flow_runtime_graph_instance_uses_repository_runtime_links(tmp_path, monkeypatch):
+    import core.paths as paths
+    from core.deployment_registry import DeploymentRegistry
+    from core.repository import ScopedRepository
+
+    monkeypatch.setattr(paths, "REPOSITORY_DIR", tmp_path / "repository")
+    monkeypatch.setattr(paths, "DEPLOYMENTS_DIR", tmp_path / "deployments")
+    ScopedRepository.reset()
+    DeploymentRegistry.reset()
+    ScopedRepository.instance().create_flow(
+        "default.telegram_agent:1.0.0", "global", {
+            "id": "telegram_agent",
+            "name": "telegram_agent",
+            "parameters": {"agent_runtime_port": "pawflow_agent.agent_runtime_in"},
+            "tasks": {"agent_client": {"type": "telegramAgentClient", "parameters": {}}},
+            "relations": [],
+            "runtime_links": [{
+                "from": "agent_client",
+                "to": "${agent_runtime_port}",
+                "type": "agentRuntime",
+            }],
+        })
+    stale_path = tmp_path / "stale.json"
+    stale_path.write_text(json.dumps({
+        "id": "telegram_agent",
+        "name": "telegram_agent",
+        "tasks": {"agent_client": {"type": "telegramAgentClient", "parameters": {}}},
+        "relations": [],
+    }), encoding="utf-8")
+    dep_reg = DeploymentRegistry.get_instance()
+    instance_id = dep_reg.deploy(str(stale_path), owner="alice")
+    inst = dep_reg.get(instance_id)
+    inst.flow_fqn = "default.telegram_agent:1.0.0"
+    inst.flow_scope = "global"
+    dep_reg._save_instance(inst)
+    ff = FlowFile(content=b"")
+
+    result = _handle_files_fs(
+        None, "flow_runtime_graph", {"instance_id": instance_id},
+        None, "alice", ff)
+
+    payload = _payload(ff)
+    assert result == [ff]
+    assert "runtime:pawflow_agent.agent_runtime_in" in payload["nodes"]
+    assert payload["edges"] == [{
+        "source": "agent_client",
+        "target": "runtime:pawflow_agent.agent_runtime_in",
+        "relationship": "agentRuntime",
+        "queue_size": 0,
+        "max_queue": 10000,
+        "backpressured": False,
+        "runtime_link": True,
+    }]
+
+
+def test_flow_runtime_graph_instance_uses_deployed_runtime_parameter(tmp_path, monkeypatch):
+    import core.paths as paths
+    from core.deployment_registry import DeploymentRegistry
+    from core.repository import ScopedRepository
+
+    monkeypatch.setattr(paths, "REPOSITORY_DIR", tmp_path / "repository")
+    monkeypatch.setattr(paths, "DEPLOYMENTS_DIR", tmp_path / "deployments")
+    ScopedRepository.reset()
+    DeploymentRegistry.reset()
+    flow = {
+        "id": "telegram_agent",
+        "name": "telegram_agent",
+        "parameters": {"agent_runtime_port": "pawflow_agent.agent_runtime_in"},
+        "tasks": {"agent_client": {"type": "telegramAgentClient", "parameters": {}}},
+        "relations": [],
+        "runtime_links": [{"from": "agent_client", "to": "${agent_runtime_port}", "type": "agentRuntime"}],
+    }
+    ScopedRepository.instance().create_flow("default.telegram_agent:1.0.0", "global", flow)
+    flow_path = tmp_path / "flow.json"
+    flow_path.write_text(json.dumps(flow), encoding="utf-8")
+    dep_reg = DeploymentRegistry.get_instance()
+    instance_id = dep_reg.deploy(
+        str(flow_path), owner="alice",
+        parameters={"agent_runtime_port": "custom_agent.agent_runtime_in"})
+    inst = dep_reg.get(instance_id)
+    inst.flow_fqn = "default.telegram_agent:1.0.0"
+    inst.flow_scope = "global"
+    dep_reg._save_instance(inst)
+    ff = FlowFile(content=b"")
+
+    _handle_files_fs(None, "flow_runtime_graph", {"instance_id": instance_id}, None, "alice", ff)
+
+    payload = _payload(ff)
+    assert "runtime:custom_agent.agent_runtime_in" in payload["nodes"]
+    assert payload["edges"][0]["target"] == "runtime:custom_agent.agent_runtime_in"
+
+
 def test_flow_runtime_graph_includes_runtime_links():
     from tasks.ai.actions.files_fs import _static_flow_graph
 

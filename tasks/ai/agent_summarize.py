@@ -49,6 +49,23 @@ def _is_ptl_error(exc: BaseException) -> bool:
     return any(marker in msg for marker in _PTL_MARKERS)
 
 
+def _compact_scope_id(conversation_id: str, compact_key: str) -> str:
+    """Unique provider scope for one summarizer run.
+
+    Background bucket jobs can run concurrently for the same user. A shared
+    sentinel like `_compact` makes CLI-backed providers share session locks and
+    workdirs across unrelated rollups. Keep the call outside the real
+    conversation, but give every compact its own ephemeral provider scope.
+    """
+    safe_cid = "".join(
+        c if c.isalnum() or c in "-_" else "_"
+        for c in (conversation_id or "compact"))[:48]
+    safe_key = "".join(
+        c if c.isalnum() or c in "-_" else "_"
+        for c in (compact_key or "run"))[:24]
+    return f"_compact_{safe_cid}_{safe_key}"
+
+
 def _strip_analysis_wrapper(text: str) -> str:
     """Remove <analysis>...</analysis> blocks and outer <summary> tags.
 
@@ -427,9 +444,10 @@ class AgentSummarizeMixin:
         from core.handlers.compact_result import set_compact_key, wait_for_compact_result
 
         compact_key = "CK_" + uuid.uuid4().hex[:8]
+        compact_scope = _compact_scope_id(conversation_id, compact_key)
         file_id = FileStore.instance().store(
             "compact_input.txt", text.encode("utf-8"), "text/plain",
-            user_id=user_id, conversation_id="_compact",
+            user_id=user_id, conversation_id=compact_scope,
             category="compact")
         logger.info("[compact] wrote %d chars as %s, key=%s", len(text), file_id, compact_key)
 
@@ -582,10 +600,12 @@ class AgentSummarizeMixin:
             if _provider == "claude-code":
                 return self._summarize_via_cc(
                     client, _prompt, _fid, _ckey, target_tokens,
-                    max_retries, _pub, conversation_id, user_id)
+                    max_retries, _pub, conversation_id, user_id,
+                    compact_scope=compact_scope)
             return self._summarize_via_api(
                 client, _prompt, _fid, _ckey, target_tokens,
-                max_retries, _pub, conversation_id, user_id)
+                max_retries, _pub, conversation_id, user_id,
+                compact_scope=compact_scope)
 
         # PTL retry loop: if the summarizer LLM itself raises a
         # prompt-too-long-family error (rare — we already chunk above
@@ -622,7 +642,7 @@ class AgentSummarizeMixin:
                     cur_fid = FileStore.instance().store(
                         "compact_input.txt", cur_text.encode("utf-8"),
                         "text/plain",
-                        user_id=user_id, conversation_id="_compact",
+                        user_id=user_id, conversation_id=compact_scope,
                         category="compact")
                     issued_fids.append(cur_fid)
                     set_compact_key(cur_key)
@@ -646,7 +666,7 @@ class AgentSummarizeMixin:
     def _summarize_via_cc(self, client, prompt: str, file_id: str,
                           compact_key: str, target_tokens: int,
                           max_retries: int, _pub, conversation_id: str,
-                          user_id: str = "") -> str:
+                          user_id: str = "", compact_scope: str = "") -> str:
         """Run summarization via Claude Code streaming (CC handles tool loop)."""
         from core.handlers.compact_result import set_compact_key, wait_for_compact_result
 
@@ -665,9 +685,11 @@ class AgentSummarizeMixin:
         _inner = getattr(client, '_client', client)
         _compact_client = _inner.clone_for_call()
 
+        compact_scope = compact_scope or _compact_scope_id(
+            conversation_id, compact_key)
         _compact_call_kwargs = {
             "call_user_id": user_id,
-            "call_conversation_id": "_compact",
+            "call_conversation_id": compact_scope,
             "call_agent_name": "compact",
             "call_event_cid": "",
             "call_ephemeral_stream": True,
@@ -690,7 +712,7 @@ class AgentSummarizeMixin:
                 try:
                     _stream_response = _compact_client.complete_stream(
                         messages=[LLMMessage(role="user", content=prompt,
-                                               conversation_id="_compact")],
+                                               conversation_id=compact_scope)],
                         max_tokens=min(target_tokens * 3, 8000),
                         **_compact_call_kwargs,
                     )
@@ -773,7 +795,8 @@ class AgentSummarizeMixin:
                 import shutil
                 from core.llm_providers.claude_code import _get_sessions_base
                 _uid = (user_id or "default").replace(":", "_").replace("/", "_").replace("\\", "_")
-                _compact_workdir = os.path.join(_get_sessions_base(), _uid, "_compact")
+                _compact_workdir = os.path.join(
+                    _get_sessions_base(), _uid, compact_scope, "compact")
                 if os.path.isdir(_compact_workdir):
                     shutil.rmtree(_compact_workdir, ignore_errors=True)
             except Exception:
@@ -782,7 +805,8 @@ class AgentSummarizeMixin:
     def _summarize_via_api(self, client, prompt: str, file_id: str,
                            compact_key: str, target_tokens: int,
                            max_retries: int, _pub,
-                           conversation_id: str, user_id: str) -> str:
+                           conversation_id: str, user_id: str,
+                           compact_scope: str = "") -> str:
         """Run summarization via API tool loop (OpenAI, Anthropic, Gemini).
 
         Mini agent loop: send prompt with read + compact_result tools,
@@ -803,13 +827,15 @@ class AgentSummarizeMixin:
         read_handler = ReadHandler()
         if hasattr(read_handler, "set_user_id"):
             read_handler.set_user_id(user_id)
+        compact_scope = compact_scope or _compact_scope_id(
+            conversation_id, compact_key)
         if hasattr(read_handler, "set_conversation_id"):
-            read_handler.set_conversation_id("_compact")
+            read_handler.set_conversation_id(compact_scope)
         tools = [_READ_TOOL, _COMPACT_RESULT_TOOL]
         max_loop = 15  # max tool-loop iterations (read pages + compact)
         call_scope = {
             "call_user_id": user_id,
-            "call_conversation_id": "_compact",
+            "call_conversation_id": compact_scope,
             "call_agent_name": "compact",
             "call_event_cid": "",
             "call_ephemeral_stream": True,
@@ -829,7 +855,7 @@ class AgentSummarizeMixin:
                 set_compact_key(compact_key)
 
             messages = [LLMMessage(role="user", content=prompt,
-                                     conversation_id="_compact")]
+                                     conversation_id=compact_scope)]
 
             for iteration in range(max_loop):
                 try:
@@ -867,7 +893,7 @@ class AgentSummarizeMixin:
                     tool_calls=response.tool_calls,
                     thinking=getattr(response, "thinking", "") or "",
                     thinking_signature=getattr(response, "thinking_signature", "") or "",
-                    conversation_id="_compact")
+                    conversation_id=compact_scope)
                 messages.append(assistant_msg)
 
                 for tc in response.tool_calls:
@@ -881,7 +907,7 @@ class AgentSummarizeMixin:
                         if hasattr(handler, "set_user_id"):
                             handler.set_user_id(user_id)
                         if hasattr(handler, "set_conversation_id"):
-                            handler.set_conversation_id("_compact")
+                            handler.set_conversation_id(compact_scope)
                         handler.execute(args)
                         # Retrieve result
                         try:
@@ -902,7 +928,7 @@ class AgentSummarizeMixin:
                         messages.append(LLMMessage(
                             role="tool", content="Summary received.",
                             tool_call_id=tc.id,
-                            conversation_id="_compact"))
+                            conversation_id=compact_scope))
 
                     elif tool_name == "read":
                         # Execute read via handler
@@ -910,14 +936,14 @@ class AgentSummarizeMixin:
                         messages.append(LLMMessage(
                             role="tool", content=result,
                             tool_call_id=tc.id,
-                            conversation_id="_compact"))
+                            conversation_id=compact_scope))
 
                     else:
                         messages.append(LLMMessage(
                             role="tool",
                             content=f"Error: only 'read' and 'compact_result' tools are available.",
                             tool_call_id=tc.id,
-                            conversation_id="_compact"))
+                            conversation_id=compact_scope))
 
             # Check if compact_result was called during this attempt
             try:

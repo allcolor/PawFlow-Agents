@@ -48,6 +48,17 @@ def _load_deployed_flow_definition(inst) -> Dict[str, Any]:
         f"Flow not found: fqn={getattr(inst, 'flow_fqn', '') or '-'} path={flow_path or '-'}")
 
 
+def _with_deployed_parameters(raw: Dict[str, Any], inst) -> Dict[str, Any]:
+    """Return flow definition with deployment parameter overrides applied."""
+    parameters = dict(raw.get("parameters") or {})
+    parameters.update(getattr(inst, "parameters", None) or {})
+    if parameters == (raw.get("parameters") or {}):
+        return raw
+    merged = dict(raw)
+    merged["parameters"] = parameters
+    return merged
+
+
 def _static_flow_graph(raw: Dict[str, Any]):
     nodes = {}
     edges = []
@@ -410,14 +421,16 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
                         })
                     if inst:
                         try:
-                            raw = _load_deployed_flow_definition(inst)
+                            raw = _with_deployed_parameters(
+                                _load_deployed_flow_definition(inst), inst)
                             _add_declared_ports_to_graph(raw, nodes, edges)
                             _add_runtime_links_to_graph(raw, nodes, edges)
                         except Exception:
                             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 elif inst:
                     try:
-                        raw = _load_deployed_flow_definition(inst)
+                        raw = _with_deployed_parameters(
+                            _load_deployed_flow_definition(inst), inst)
                         nodes, edges = _static_flow_graph(raw)
                     except Exception:
                         logging.getLogger(__name__).debug("Ignored exception", exc_info=True)

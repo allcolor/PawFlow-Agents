@@ -13,7 +13,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 from core import FlowFile
 
@@ -29,6 +29,7 @@ class AgentRequest:
     channel: str = "web"
     runtime_port: str = ""
     source_attributes: Dict[str, str] = field(default_factory=dict)
+    live_callback: Optional[Callable[[str, str, Any], None]] = None
 
 
 @dataclass
@@ -38,6 +39,7 @@ class AgentSubmission:
     turn_id: str
     target_agent: str = ""
     server_start_time: float = 0.0
+    wait_for_done: bool = True
 
 
 @dataclass
@@ -79,7 +81,8 @@ class AgentResultWaiter:
         ConversationEventBus.instance().add_listener(self._on_event)
         self._listener_registered = True
 
-    def register(self, conversation_id: str, turn_id: str) -> None:
+    def register(self, conversation_id: str, turn_id: str,
+                 live_callback: Optional[Callable[[str, str, Any], None]] = None) -> None:
         if not conversation_id or not turn_id:
             return
         self._ensure_listener()
@@ -89,6 +92,7 @@ class AgentResultWaiter:
                 "event": threading.Event(),
                 "result": None,
                 "created_at": time.time(),
+                "live_callback": live_callback,
             }
 
     def wait(self, conversation_id: str, turn_id: str,
@@ -98,7 +102,9 @@ class AgentResultWaiter:
             item = self._pending.get(key)
         if not item:
             return None
-        item["event"].wait(timeout=max(0.0, float(timeout)))
+        signaled = item["event"].wait(timeout=max(0.0, float(timeout)))
+        if not signaled:
+            return None
         with self._pending_lock:
             item = self._pending.pop(key, item)
         return item.get("result")
@@ -108,9 +114,29 @@ class AgentResultWaiter:
             self._pending.pop(self._key(conversation_id, turn_id), None)
 
     def _on_event(self, conversation_id: str, event_type: str, data: Any) -> None:
-        if event_type not in {"done", "error_event"} or not isinstance(data, dict):
+        if not isinstance(data, dict):
             return
         turn_id = str(data.get("turn_id") or data.get("request_msg_id") or "")
+        with self._pending_lock:
+            if turn_id:
+                key = self._key(conversation_id, turn_id)
+                item = self._pending.get(key)
+            else:
+                matches = [pending for pending_key, pending in self._pending.items()
+                           if pending_key.startswith(conversation_id + "\x1f")]
+                item = matches[0] if len(matches) == 1 else None
+        if not item:
+            return
+        live_callback = item.get("live_callback")
+        if live_callback and event_type not in {"done", "error_event"}:
+            try:
+                live_callback(conversation_id, event_type, data)
+            except Exception:
+                import logging
+                logging.getLogger(__name__).debug(
+                    "Agent runtime live callback failed", exc_info=True)
+        if event_type not in {"done", "error_event"}:
+            return
         if not turn_id:
             return
         key = self._key(conversation_id, turn_id)
@@ -179,7 +205,7 @@ class AgentRuntimeAPI:
 
         waiter = AgentResultWaiter.instance()
         if request.conversation_id:
-            waiter.register(request.conversation_id, turn_id)
+            waiter.register(request.conversation_id, turn_id, request.live_callback)
         outputs = inst.execute(ff)
         out = outputs[0] if outputs else ff
         try:
@@ -189,13 +215,14 @@ class AgentRuntimeAPI:
         conversation_id = str(ack.get("conversation_id") or request.conversation_id or
                               out.get_attribute("agent.conversation_id") or "")
         if conversation_id and not request.conversation_id:
-            waiter.register(conversation_id, turn_id)
+            waiter.register(conversation_id, turn_id, request.live_callback)
         return AgentSubmission(
             status=str(ack.get("status") or "accepted"),
             conversation_id=conversation_id,
             turn_id=turn_id,
             target_agent=request.target_agent,
             server_start_time=float(ack.get("server_start_time") or 0.0),
+            wait_for_done=bool(ack.get("wait_for_done", True)),
         )
 
     @staticmethod

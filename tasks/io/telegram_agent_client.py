@@ -26,11 +26,13 @@ _AGENT_RESPONSE_TIMEOUT_SECONDS = 600
 _WIZARDS: Dict[str, Dict[str, Any]] = {}
 _WIZARD_LOCK = threading.Lock()
 _LIVE_EVENT_MIN_INTERVAL_SECONDS = 6.0
+_TELEGRAM_LIVE_TEXT_BY_TURN: Dict[str, Dict[str, str]] = {}
 
 
 class TelegramAgentClientTask(BaseTask):
     """Submit a Telegram message to the shared agent runtime and wait for done."""
 
+    _max_instances = 20
     TYPE = "telegramAgentClient"
     VERSION = "1.0.0"
     NAME = "Telegram Agent Client"
@@ -44,6 +46,11 @@ class TelegramAgentClientTask(BaseTask):
                 "type": "string", "required": False,
                 "default": "pawflow_agent.agent_runtime_in",
                 "description": "Visible target runtime port for the shared AgentLoop runtime.",
+            },
+            "service_id": {
+                "type": "string", "required": False,
+                "default": "telegram_bot",
+                "description": "Fallback TelegramBotService used for live progress messages.",
             },
         }
 
@@ -135,6 +142,7 @@ class TelegramAgentClientTask(BaseTask):
             msg_id=msg_id,
             channel="telegram",
             runtime_port=str(self.config.get("agent_runtime_port") or "").strip(),
+            live_callback=self._telegram_live_callback(user_id, chat_id),
             source_attributes={
                 "telegram.chat_id": chat_id,
                 "telegram.user_id": tg_user_id,
@@ -143,6 +151,13 @@ class TelegramAgentClientTask(BaseTask):
         )
         try:
             submission = AgentRuntimeAPI.submit_message(request)
+            if not submission.wait_for_done:
+                if submission.status == "queued":
+                    flowfile.set_content(b"Message queued for the selected agent.")
+                    flowfile.set_attribute("agent.conversation_id", submission.conversation_id)
+                    flowfile.set_attribute("agent.turn_id", submission.turn_id)
+                    return [flowfile]
+                return []
             result = AgentRuntimeAPI.wait_for_done(
                 submission.conversation_id, submission.turn_id,
                 timeout=_AGENT_RESPONSE_TIMEOUT_SECONDS)
@@ -154,18 +169,42 @@ class TelegramAgentClientTask(BaseTask):
             return [flowfile]
 
         if result is None:
-            flowfile.set_content(b"Agent response timed out.")
-            return [flowfile]
+            logger.info(
+                "Telegram agent request still running after %.0fs; final reply will arrive through live callback",
+                _AGENT_RESPONSE_TIMEOUT_SECONDS,
+            )
+            return []
         if result.error:
             flowfile.set_content(f"Agent error: {result.error}".encode("utf-8"))
             return [flowfile]
-        response_text = result.response or ""
+        response_text = _remove_forwarded_telegram_live_text(
+            submission.conversation_id, result)
         flowfile.set_content(response_text.encode("utf-8"))
         flowfile.set_attribute("agent.conversation_id", submission.conversation_id)
         flowfile.set_attribute("agent.turn_id", submission.turn_id)
         _attach_telegram_tts_audio(
             flowfile, response_text, user_id, conversation_id, target_agent)
         return [flowfile]
+
+    def _telegram_live_callback(self, user_id: str, chat_id: str):
+        bridge = TelegramConversationBridgeTask({
+            "service_id": str(self.config.get("service_id") or "telegram_bot"),
+        })
+        bridge.get_service = self.get_service
+
+        def _callback(conversation_id: str, event_type: str, data: Any) -> None:
+            if not isinstance(data, dict):
+                return
+            text = bridge._format_event(event_type, data)
+            if not text:
+                return
+            bridge._send(user_id, chat_id, text)
+            if event_type == "new_message" and data.get("role") == "assistant":
+                msg_id = str(data.get("msg_id") or "")
+                if msg_id:
+                    _TELEGRAM_LIVE_TEXT_BY_TURN.setdefault(conversation_id, {})[msg_id] = str(data.get("content") or "").strip()
+
+        return _callback
 
     def _handle_command(self, text: str, user_id: str, chat_id: str) -> Optional[str]:
         if text.startswith("/tts"):
@@ -757,6 +796,7 @@ class TelegramConversationBridgeTask(BaseTask):
         super().__init__(config)
         self._registered = False
         self._last_live_event: Dict[str, float] = {}
+        self._last_live_text: Dict[str, str] = {}
 
     def get_parameter_schema(self) -> Dict[str, Any]:
         return {
@@ -791,17 +831,33 @@ class TelegramConversationBridgeTask(BaseTask):
             return
         if not isinstance(data, dict):
             return
-        if data.get("channel") == "telegram" and event_type in {"new_message", "done", "error_event"}:
+        source = data.get("source") if isinstance(data.get("source"), dict) else {}
+        if ((data.get("channel") == "telegram" or source.get("channel") == "telegram")
+                and event_type in {"done", "error_event"}):
+            return
+        if ((data.get("channel") == "telegram" or source.get("channel") == "telegram")
+                and event_type in {"new_message", "thinking", "thinking_delta", "thinking_content", "iteration_status", "tool_call", "tool_result"}
+                and data.get("role") != "user"):
+            return
+        if (data.get("channel") == "telegram" and event_type == "new_message"
+                and data.get("role") == "user"):
             return
         text = self._format_event(event_type, data)
         if not text:
             return
         if event_type in {"thinking", "iteration_status", "thinking_delta", "thinking_content"}:
-            key = f"{conversation_id}:{event_type}:{data.get('agent_name') or ''}"
+            agent_key = data.get("agent_name") or ""
+            if event_type in {"thinking", "thinking_delta", "thinking_content"}:
+                key = f"{conversation_id}:thinking:{agent_key}"
+            else:
+                key = f"{conversation_id}:progress:{agent_key}"
             now = time.time()
+            if self._last_live_text.get(key) == text:
+                return
             if now - self._last_live_event.get(key, 0.0) < _LIVE_EVENT_MIN_INTERVAL_SECONDS:
                 return
             self._last_live_event[key] = now
+            self._last_live_text[key] = text
         subscribers = list(self._telegram_subscribers(conversation_id, data))
         if not subscribers:
             logger.info(
@@ -811,13 +867,18 @@ class TelegramConversationBridgeTask(BaseTask):
             return
         for user_id, chat_id in subscribers:
             self._send(user_id, chat_id, text)
+        if event_type == "new_message" and data.get("role") == "assistant":
+            msg_id = str(data.get("msg_id") or "")
+            if msg_id:
+                _TELEGRAM_LIVE_TEXT_BY_TURN.setdefault(conversation_id, {})[msg_id] = str(data.get("content") or "").strip()
 
     def _format_event(self, event_type: str, data: Dict[str, Any]) -> str:
         if event_type == "new_message":
-            if data.get("role") != "user":
+            role = data.get("role") or ""
+            if role not in {"user", "assistant"}:
                 return ""
             source = data.get("source") if isinstance(data.get("source"), dict) else {}
-            name = source.get("name") or data.get("channel") or "user"
+            name = source.get("name") or data.get("agent_name") or data.get("channel") or role
             content = str(data.get("content") or "").strip()
             attachments = data.get("attachments") if isinstance(data.get("attachments"), list) else []
             attachment_text = _format_attachment_summary(attachments)
@@ -939,6 +1000,37 @@ def _format_attachment_summary(attachments: List[Dict[str, Any]]) -> str:
     if file_count:
         parts.append(f"{file_count} file attachment{'s' if file_count != 1 else ''}")
     return "[attachments: " + ", ".join(parts) + "]" if parts else "[attachments]"
+
+
+def _remove_forwarded_telegram_live_text(conversation_id: str, result) -> str:
+    response = str(getattr(result, "response", "") or "")
+    data = getattr(result, "data", {}) if result is not None else {}
+    all_msg_ids = data.get("all_msg_ids") if isinstance(data, dict) else []
+    if not response or not isinstance(all_msg_ids, list):
+        return response
+    live_by_id = _TELEGRAM_LIVE_TEXT_BY_TURN.get(conversation_id) or {}
+    for msg_id in all_msg_ids:
+        live_text = str(live_by_id.get(str(msg_id)) or "").strip()
+        if not live_text:
+            continue
+        response = _remove_one_forwarded_text(response, live_text)
+    for msg_id in all_msg_ids:
+        live_by_id.pop(str(msg_id), None)
+    if not live_by_id:
+        _TELEGRAM_LIVE_TEXT_BY_TURN.pop(conversation_id, None)
+    return response.strip()
+
+
+def _remove_one_forwarded_text(response: str, live_text: str) -> str:
+    for candidate in (live_text, live_text.strip()):
+        if not candidate:
+            continue
+        idx = response.find(candidate)
+        if idx >= 0:
+            before = response[:idx].rstrip()
+            after = response[idx + len(candidate):].lstrip()
+            return (before + ("\n" if before and after else "") + after).strip()
+    return response
 
 
 def _compact_live_text(text: str, limit: int) -> str:

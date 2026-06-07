@@ -154,6 +154,7 @@ class StreamEmitter(AgentEmitter):
             "llm_service": self._agent_svc or "",
             "provider": _prov if isinstance(_prov, str) else "",
             "model": _model,
+            "channel": self._channel or "web",
             "base_url": _re.sub(r'(key|token|secret)=[^&]+', r'\1=***', _burl) if _burl and isinstance(_burl, str) else "",
             "containerized": _prov == "claude-code",
         }

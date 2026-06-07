@@ -9,6 +9,7 @@ import json
 import logging
 import re
 import time
+import uuid
 from typing import Any, Dict, List, Tuple
 
 logger = logging.getLogger(__name__)
@@ -80,7 +81,9 @@ def auto_extract_memories(
     if not llm_client:
         return 0
 
-    facts = _extract_with_llm(llm_client, summary, user_id=user_id)
+    facts = _extract_with_llm(
+        llm_client, summary, user_id=user_id,
+        conversation_id=conversation_id)
     if not facts:
         return 0
 
@@ -213,15 +216,24 @@ def _ttl_days(fact: Dict[str, Any], category: str, scope: str, durability: str) 
     return 180
 
 
-def _extract_with_llm(client, summary: str, user_id: str = "") -> list:
+def _memory_scope_id(conversation_id: str) -> str:
+    safe_cid = "".join(
+        c if c.isalnum() or c in "-_" else "_"
+        for c in (conversation_id or "memory"))[:48]
+    return f"_memory_extract_{safe_cid}_{uuid.uuid4().hex[:8]}"
+
+
+def _extract_with_llm(client, summary: str, user_id: str = "",
+                      conversation_id: str = "") -> list:
     """Use LLM to extract structured facts in an isolated ephemeral call."""
     try:
         from core.llm_client import LLMMessage
         _inner = getattr(client, "_client", client)
         _memory_client = _inner.clone_for_call()
+        scope_id = _memory_scope_id(conversation_id)
         messages = [
             LLMMessage(role="user", content=_EXTRACT_PROMPT + summary,
-                        conversation_id="_memory_extract"),
+                        conversation_id=scope_id),
         ]
         resp = _memory_client.complete(
             messages=messages,
@@ -229,7 +241,7 @@ def _extract_with_llm(client, summary: str, user_id: str = "") -> list:
             max_tokens=1000,
             response_format="json",
             call_user_id=user_id,
-            call_conversation_id="_memory_extract",
+            call_conversation_id=scope_id,
             call_agent_name="memory",
             call_event_cid="",
             call_ephemeral_stream=True,

@@ -28,6 +28,8 @@ from core.base_service import BaseService
 logger = logging.getLogger(__name__)
 
 _API_HOST = "api.telegram.org"
+_TELEGRAM_TEXT_LIMIT = 4096
+_TELEGRAM_SPLIT_LIMIT = 4000
 
 
 class TelegramBotService(BaseService):
@@ -163,25 +165,18 @@ class TelegramBotService(BaseService):
                      reply_to: int = 0,
                      reply_markup: Optional[Dict[str, Any]] = None) -> dict:
         """Send a text message."""
-        params: Dict[str, Any] = {
-            "chat_id": chat_id,
-            "text": text,
-        }
-        if parse_mode:
-            params["parse_mode"] = parse_mode
-        if reply_to:
-            params["reply_to_message_id"] = reply_to
-        if reply_markup:
-            params["reply_markup"] = json.dumps(reply_markup)
-        # Split long messages (Telegram 4096 char limit)
-        if len(text) > 4096:
-            chunks = [text[i:i+4096] for i in range(0, len(text), 4096)]
-            result = None
-            for chunk in chunks:
-                params["text"] = chunk
-                result = self._api_call("sendMessage", params)
-            return result or {}
-        return self._api_call("sendMessage", params)
+        chunks = _split_telegram_text(text)
+        result = None
+        for idx, chunk in enumerate(chunks):
+            params: Dict[str, Any] = {"chat_id": chat_id, "text": chunk}
+            if parse_mode and len(chunks) == 1:
+                params["parse_mode"] = parse_mode
+            if reply_to and idx == 0:
+                params["reply_to_message_id"] = reply_to
+            if reply_markup and idx == len(chunks) - 1:
+                params["reply_markup"] = json.dumps(reply_markup)
+            result = self._api_call("sendMessage", params)
+        return result or {}
 
     def send_document(self, chat_id: str, file_bytes: bytes,
                       filename: str, caption: str = "") -> dict:
@@ -369,19 +364,16 @@ class TelegramBotPool:
                      parse_mode: str = "Markdown",
                      reply_markup: Optional[Dict[str, Any]] = None) -> dict:
         """Send a message via a specific bot token."""
-        params: Dict[str, Any] = {"chat_id": chat_id, "text": text}
-        if parse_mode:
-            params["parse_mode"] = parse_mode
-        if reply_markup:
-            params["reply_markup"] = json.dumps(reply_markup)
-        if len(text) > 4096:
-            chunks = [text[i:i+4096] for i in range(0, len(text), 4096)]
-            result = None
-            for chunk in chunks:
-                params["text"] = chunk
-                result = _api_call_static(token, "sendMessage", params)
-            return result or {}
-        return _api_call_static(token, "sendMessage", params)
+        chunks = _split_telegram_text(text)
+        result = None
+        for idx, chunk in enumerate(chunks):
+            params: Dict[str, Any] = {"chat_id": chat_id, "text": chunk}
+            if parse_mode and len(chunks) == 1:
+                params["parse_mode"] = parse_mode
+            if reply_markup and idx == len(chunks) - 1:
+                params["reply_markup"] = json.dumps(reply_markup)
+            result = _api_call_static(token, "sendMessage", params)
+        return result or {}
 
     def send_audio(self, token: str, chat_id: str, file_bytes: bytes,
                    filename: str = "speech.mp3", caption: str = "",
@@ -513,6 +505,37 @@ def _api_call_static(token: str, method: str,
         return data.get("result")
     finally:
         conn.close()
+
+
+def _split_telegram_text(text: str) -> List[str]:
+    """Split Bot API text into complete Telegram-sized messages."""
+    if not text:
+        return [""]
+    if len(text) <= _TELEGRAM_TEXT_LIMIT:
+        return [text]
+
+    chunks: List[str] = []
+    remaining = text
+    while len(remaining) > _TELEGRAM_TEXT_LIMIT:
+        split_at = _best_telegram_split(remaining, _TELEGRAM_SPLIT_LIMIT)
+        chunk = remaining[:split_at].rstrip()
+        if not chunk:
+            chunk = remaining[:_TELEGRAM_SPLIT_LIMIT]
+            split_at = len(chunk)
+        chunks.append(chunk)
+        remaining = remaining[split_at:].lstrip()
+    if remaining:
+        chunks.append(remaining)
+    return chunks
+
+
+def _best_telegram_split(text: str, limit: int) -> int:
+    window = text[:limit]
+    for marker in ("\n\n", "\n", ". ", "! ", "? ", " "):
+        idx = window.rfind(marker)
+        if idx >= max(1, limit // 2):
+            return idx + len(marker)
+    return limit
 
 
 def _api_upload(token: str, method: str, chat_id: str, field_name: str,

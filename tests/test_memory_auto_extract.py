@@ -14,11 +14,13 @@ from core.memory_store import MemoryEntry, MemoryStore
 class _FakeClient:
     def __init__(self, facts):
         self.facts = facts
+        self.calls = []
 
     def clone_for_call(self):
         return self
 
     def complete(self, **_kwargs):
+        self.calls.append(_kwargs)
         return MagicMock(content=json.dumps(self.facts))
 
 
@@ -52,8 +54,9 @@ class TestMemoryAutoExtract:
             },
         ]
 
+        client = _FakeClient(facts)
         count = auto_extract_memories(
-            "u1", "summary", llm_client=_FakeClient(facts),
+            "u1", "summary", llm_client=client,
             conversation_id="conv1")
 
         assert count == 1
@@ -63,6 +66,11 @@ class TestMemoryAutoExtract:
         assert entries[0].agent == ""
         assert entries[0].expires_at > time.time()
         assert "auto-extracted" in entries[0].tags
+        scope = client.calls[0]["call_conversation_id"]
+        assert scope.startswith("_memory_extract_conv1_")
+        assert scope != "_memory_extract"
+        assert client.calls[0]["call_ephemeral_stream"] is True
+        assert client.calls[0]["messages"][0].conversation_id == scope
 
     def test_durable_preference_can_be_global_without_ttl(self):
         facts = [{

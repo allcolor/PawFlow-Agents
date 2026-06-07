@@ -104,7 +104,11 @@ default relay, and confirmation. `/conv list` and `/conv select` without an ID
 show inline buttons to resume an existing conversation. The `agent_runtime_port`
 parameter resolves at execution time to a running flow port such as
 `pawflow_agent.agent_runtime_in`; the target flow must be running and declare an
-`agentRuntime` input port.
+`agentRuntime` input port. The Telegram client task is concurrent so a second
+Telegram message can reach the running agent and preempt or queue while an older
+Telegram request is still waiting for its final response. Runtime ACKs that are
+only preemption or queue acknowledgements do not wait for a separate `done`
+event.
 
 `telegramConversationBridge` listens to shared conversation events from webchat,
 PawCode, and other non-Telegram clients and forwards user messages, final agent
@@ -127,6 +131,9 @@ When enabled, Telegram receives the normal text reply first and then the
 synthesized audio; TTS failures fall back to text only. The Telegram bridge also
 forwards compact live agent progress events such as thinking, iteration status,
 and tool calls so Telegram users are not silent until the final response.
+Telegram text replies longer than the Bot API message limit are split into
+multiple complete messages before sending; split messages are sent as plain text
+so partial Markdown cannot abort delivery.
 
 ---
 

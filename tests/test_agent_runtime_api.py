@@ -18,6 +18,46 @@ def test_conversation_event_bus_notifies_internal_listeners():
     assert seen == [("conv1", "done", {"turn_id": "t1", "response": "ok", "ts": seen[0][2]["ts"]})]
 
 
+def test_agent_runtime_waiter_delivers_live_events_before_done():
+    from core.agent_runtime_api import AgentResultWaiter
+    from core.conversation_event_bus import ConversationEventBus
+
+    ConversationEventBus.reset()
+    AgentResultWaiter._instance = None
+    waiter = AgentResultWaiter.instance()
+    seen = []
+    waiter.register("conv1", "turn1", lambda cid, event_type, data: seen.append((cid, event_type, data)))
+
+    bus = ConversationEventBus.instance()
+    bus.publish_event("conv1", "new_message", {"role": "assistant", "content": "live"})
+    bus.publish_event("conv1", "done", {"turn_id": "turn1", "response": "final"})
+    result = waiter.wait("conv1", "turn1", timeout=0.1)
+
+    assert seen == [("conv1", "new_message", {"role": "assistant", "content": "live", "ts": seen[0][2]["ts"]})]
+    assert result.response == "final"
+
+
+def test_agent_runtime_wait_timeout_keeps_live_callback_until_done():
+    from core.agent_runtime_api import AgentResultWaiter
+    from core.conversation_event_bus import ConversationEventBus
+
+    ConversationEventBus.reset()
+    AgentResultWaiter._instance = None
+    waiter = AgentResultWaiter.instance()
+    seen = []
+    waiter.register("conv1", "turn1", lambda cid, event_type, data: seen.append((event_type, data)))
+
+    assert waiter.wait("conv1", "turn1", timeout=0.001) is None
+
+    bus = ConversationEventBus.instance()
+    bus.publish_event("conv1", "new_message", {"role": "assistant", "content": "late live"})
+    bus.publish_event("conv1", "done", {"turn_id": "turn1", "response": "late final"})
+    result = waiter.wait("conv1", "turn1", timeout=0.1)
+
+    assert seen == [("new_message", {"role": "assistant", "content": "late live", "ts": seen[0][1]["ts"]})]
+    assert result.response == "late final"
+
+
 def test_stream_done_payload_includes_transport_correlation():
     from tasks.ai.agent_emitter import AgentResult, StreamEmitter
 
@@ -206,6 +246,40 @@ def test_agent_runtime_api_uses_declared_runtime_port(monkeypatch):
     assert runtime.called is True
     assert submission.conversation_id == "conv1"
     assert submission.turn_id == "telegram:1:2"
+
+
+def test_agent_runtime_submission_can_disable_done_wait(monkeypatch):
+    from core.agent_runtime_api import AgentRequest, AgentRuntimeAPI
+    from tasks.ai.agent_loop import AgentLoopTask
+
+    class RuntimeTask:
+        def execute(self, flowfile):
+            import json
+            body = json.loads(flowfile.get_content().decode("utf-8"))
+            flowfile.set_content(json.dumps({
+                "status": "preempted",
+                "conversation_id": body["conversation_id"],
+                "wait_for_done": False,
+            }).encode("utf-8"))
+            return [flowfile]
+
+    monkeypatch.setattr(
+        "core.agent_runtime_ports.resolve_agent_runtime_task",
+        lambda runtime_port: RuntimeTask(),
+    )
+    monkeypatch.setattr(AgentLoopTask, "_live_instance", None)
+
+    submission = AgentRuntimeAPI.submit_message(AgentRequest(
+        user_id="alice",
+        conversation_id="conv1",
+        target_agent="assistant",
+        message="preempt",
+        msg_id="telegram:1:3",
+        runtime_port="pawflow_agent.agent_runtime_in",
+    ))
+
+    assert submission.status == "preempted"
+    assert submission.wait_for_done is False
 
 
 def test_agent_runtime_port_resolver_finds_running_declared_port(monkeypatch):

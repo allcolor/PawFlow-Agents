@@ -159,6 +159,7 @@ def test_call_summarize_uses_resolved_summarizer_client(monkeypatch):
 
     class _Host(AgentSummarizeMixin):
         executed_provider = ""
+        compact_scope = ""
 
         def _get_summarizer_client(self, user_id=""):
             return _ResolvedDeepseek(), 400000, "deepseek_llm_service"
@@ -168,6 +169,7 @@ def test_call_summarize_uses_resolved_summarizer_client(monkeypatch):
 
         def _summarize_via_api(self, client, *args, **kwargs):
             self.executed_provider = client.provider
+            self.compact_scope = kwargs["compact_scope"]
             return "VALID API SUMMARY " * 5
 
     from core.file_store import FileStore
@@ -180,6 +182,8 @@ def test_call_summarize_uses_resolved_summarizer_client(monkeypatch):
 
     assert "VALID API SUMMARY" in result
     assert host.executed_provider == "anthropic"
+    assert host.compact_scope.startswith("_compact_cid_deepseek_CK_")
+    assert host.compact_scope != "_compact"
 
 
 def test_summarize_via_cc_kill_on_delivery_not_treated_as_failure(monkeypatch):
@@ -208,6 +212,11 @@ def test_summarize_via_cc_kill_on_delivery_not_treated_as_failure(monkeypatch):
         def clone_for_call(self):
             return self
         def complete_stream(self, messages, max_tokens, **kwargs):
+            assert kwargs["call_conversation_id"].startswith(
+                "_compact_cid_kill_test_CK_")
+            assert kwargs["call_conversation_id"] != "_compact"
+            assert kwargs["call_ephemeral_stream"] is True
+            assert messages[0].conversation_id == kwargs["call_conversation_id"]
             # Simulate the compact_result handler firing mid-stream,
             # then the CC kill producing a non-zero exit.
             _cr._pending["CK_test"]["summary"] = "VALID SUMMARY " * 20

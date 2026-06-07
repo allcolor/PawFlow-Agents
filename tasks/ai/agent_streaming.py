@@ -325,9 +325,10 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                         "[agent:%s] preempted active provider session%s",
                         conversation_id[:8],
                         "; queued rescue" if _rescued else "")
-                    ack = json.dumps({"status": "accepted", "conversation_id": conversation_id,
+                    ack = json.dumps({"status": "preempted", "conversation_id": conversation_id,
                                       "message_count": _ack_message_count(),
-                                      "server_start_time": SERVER_START_TIME})
+                                      "server_start_time": SERVER_START_TIME,
+                                      "wait_for_done": False})
                     flowfile.set_content(ack.encode("utf-8"))
                     flowfile.set_attribute("agent.conversation_id", conversation_id)
                     return [flowfile]
@@ -381,7 +382,8 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                 _queue_pending_user(source="http")
                 ack = json.dumps({"status": "queued", "conversation_id": conversation_id,
                                   "message_count": _ack_message_count(),
-                                  "server_start_time": SERVER_START_TIME})
+                                  "server_start_time": SERVER_START_TIME,
+                                  "wait_for_done": False})
                 flowfile.set_content(ack.encode("utf-8"))
                 flowfile.set_attribute("agent.conversation_id", conversation_id)
                 return [flowfile]

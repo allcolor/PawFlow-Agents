@@ -101,17 +101,59 @@ class TestTelegramBotService(unittest.TestCase):
         from services.telegram_bot_service import TelegramBotService
         svc = TelegramBotService({"bot_token": "test"})
         call_count = 0
-        original_api_call = svc._api_call
+        calls = []
 
         def mock_api_call(method, params=None):
             nonlocal call_count
             call_count += 1
+            calls.append(dict(params or {}))
             return {"message_id": call_count}
 
         svc._api_call = mock_api_call
-        result = svc.send_message("123", "x" * 8200)
-        # Should split into 3 chunks: 4096 + 4096 + 8
+        result = svc.send_message(
+            "123", "x" * 8200, parse_mode="Markdown", reply_to=42,
+            reply_markup={"inline_keyboard": [[{"text": "OK", "callback_data": "ok"}]]})
+
         assert call_count == 3
+        assert result == {"message_id": 3}
+        assert all(len(call["text"]) <= 4096 for call in calls)
+        assert all("parse_mode" not in call for call in calls)
+        assert calls[0]["reply_to_message_id"] == 42
+        assert "reply_to_message_id" not in calls[1]
+        assert "reply_markup" not in calls[0]
+        assert "reply_markup" in calls[-1]
+
+    def test_send_message_keeps_parse_mode_for_short_text(self):
+        from services.telegram_bot_service import TelegramBotService
+        svc = TelegramBotService({"bot_token": "test"})
+        calls = []
+
+        def mock_api_call(method, params=None):
+            calls.append(dict(params or {}))
+            return {"message_id": 1}
+
+        svc._api_call = mock_api_call
+        svc.send_message("123", "**hello**", parse_mode="Markdown")
+
+        assert calls == [{
+            "chat_id": "123", "text": "**hello**", "parse_mode": "Markdown",
+        }]
+
+    @patch("services.telegram_bot_service._api_call_static")
+    def test_bot_pool_send_message_splits_long(self, api_call):
+        from services.telegram_bot_service import TelegramBotPool
+        api_call.side_effect = [{"message_id": 1}, {"message_id": 2}]
+        pool = TelegramBotPool()
+
+        result = pool.send_message("token", "123", "word " * 900,
+                                   parse_mode="Markdown")
+
+        assert result == {"message_id": 2}
+        assert api_call.call_count == 2
+        for call in api_call.call_args_list:
+            params = call.args[2]
+            assert len(params["text"]) <= 4096
+            assert "parse_mode" not in params
 
 
 # ── TelegramReceiverTask ────────────────────────────────────────────
@@ -554,6 +596,131 @@ class TestTelegramAgentClientTask(unittest.TestCase):
             _p.USER_CONFIG_DIR = orig_ucd
             shutil.rmtree(tmp, ignore_errors=True)
 
+    def test_agent_client_does_not_wait_for_preempt_ack(self):
+        import shutil
+        import tempfile
+        from unittest.mock import patch
+
+        from core.identity_service import IdentityService
+        from core.agent_runtime_api import AgentSubmission
+        from tasks.io.telegram_agent_client import TelegramAgentClientTask
+
+        tmp = tempfile.mkdtemp()
+        IdentityService.reset()
+        import core.paths as _p
+        orig_ucd = _p.USER_CONFIG_DIR
+        _p.USER_CONFIG_DIR = Path(tmp) / "users"
+        try:
+            ids = IdentityService()
+            IdentityService._instance = ids
+            ids.link("alice", "telegram", "111111")
+            ids.set_active_conv("alice", "telegram", "conv1")
+
+            task = TelegramAgentClientTask({"agent_runtime_port": "pawflow_agent.agent_runtime_in"})
+            ff = FlowFile(content=b"interrupt")
+            ff.set_attribute("telegram.user_id", "111111")
+            ff.set_attribute("telegram.chat_id", "111111")
+            ff.set_attribute("telegram.message_id", "m2")
+
+            with patch.object(TelegramAgentClientTask, "_selected_agent_for_conversation", return_value="assistant"), \
+                    patch("core.agent_runtime_api.AgentRuntimeAPI.submit_message", return_value=AgentSubmission(
+                        "preempted", "conv1", "telegram:111111:m2", wait_for_done=False)), \
+                    patch("core.agent_runtime_api.AgentRuntimeAPI.wait_for_done") as wait:
+                out = task.execute(ff)
+
+            assert out == []
+            wait.assert_not_called()
+        finally:
+            IdentityService.reset()
+            _p.USER_CONFIG_DIR = orig_ucd
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_agent_client_returns_no_reply_when_wait_times_out(self):
+        import shutil
+        import tempfile
+        from unittest.mock import patch
+
+        from core.identity_service import IdentityService
+        from core.agent_runtime_api import AgentSubmission
+        from tasks.io.telegram_agent_client import TelegramAgentClientTask
+
+        tmp = tempfile.mkdtemp()
+        IdentityService.reset()
+        import core.paths as _p
+        orig_ucd = _p.USER_CONFIG_DIR
+        _p.USER_CONFIG_DIR = Path(tmp) / "users"
+        try:
+            ids = IdentityService()
+            IdentityService._instance = ids
+            ids.link("alice", "telegram", "111111")
+            ids.set_active_conv("alice", "telegram", "conv1")
+
+            task = TelegramAgentClientTask({"agent_runtime_port": "pawflow_agent.agent_runtime_in"})
+            ff = FlowFile(content=b"long request")
+            ff.set_attribute("telegram.user_id", "111111")
+            ff.set_attribute("telegram.chat_id", "111111")
+            ff.set_attribute("telegram.message_id", "m3")
+
+            with patch.object(TelegramAgentClientTask, "_selected_agent_for_conversation", return_value="assistant"), \
+                    patch("core.agent_runtime_api.AgentRuntimeAPI.submit_message", return_value=AgentSubmission(
+                        "accepted", "conv1", "telegram:111111:m3", wait_for_done=True)), \
+                    patch("core.agent_runtime_api.AgentRuntimeAPI.wait_for_done", return_value=None):
+                out = task.execute(ff)
+
+            assert out == []
+        finally:
+            IdentityService.reset()
+            _p.USER_CONFIG_DIR = orig_ucd
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_agent_client_registers_live_callback_for_telegram_turn(self):
+        import shutil
+        import tempfile
+        from unittest.mock import patch
+
+        from core.identity_service import IdentityService
+        from core.agent_runtime_api import AgentFinalResult
+        from tasks.io.telegram_agent_client import TelegramAgentClientTask
+
+        tmp = tempfile.mkdtemp()
+        IdentityService.reset()
+        import core.paths as _p
+        orig_ucd = _p.USER_CONFIG_DIR
+        _p.USER_CONFIG_DIR = Path(tmp) / "users"
+        try:
+            ids = IdentityService()
+            IdentityService._instance = ids
+            ids.link("alice", "telegram", "111111")
+            ids.set_active_conv("alice", "telegram", "conv1")
+            captured = {}
+
+            def submit(req):
+                captured["live_callback"] = req.live_callback
+                return type("Submission", (), {
+                    "conversation_id": "conv1",
+                    "turn_id": "telegram:111111:m1",
+                })()
+
+            task = TelegramAgentClientTask({
+                "agent_runtime_port": "pawflow_agent.agent_runtime_in",
+                "service_id": "telegram_bot",
+            })
+            ff = FlowFile(content=b"ping")
+            ff.set_attribute("telegram.user_id", "111111")
+            ff.set_attribute("telegram.chat_id", "111111")
+            ff.set_attribute("telegram.message_id", "m1")
+
+            with patch.object(TelegramAgentClientTask, "_selected_agent_for_conversation", return_value="assistant"), \
+                    patch("core.agent_runtime_api.AgentRuntimeAPI.submit_message", side_effect=submit), \
+                    patch("core.agent_runtime_api.AgentRuntimeAPI.wait_for_done", return_value=AgentFinalResult("conv1", "telegram:111111:m1", response="ok")):
+                task.execute(ff)
+
+            assert callable(captured["live_callback"])
+        finally:
+            IdentityService.reset()
+            _p.USER_CONFIG_DIR = orig_ucd
+            shutil.rmtree(tmp, ignore_errors=True)
+
     def test_streaming_user_message_event_includes_attachments(self):
         src = Path("tasks/ai/agent_streaming.py").read_text(encoding="utf-8")
         assert '"attachments": _attachments_body' in src
@@ -570,6 +737,62 @@ class TestTelegramAgentClientTask(unittest.TestCase):
         })
 
         assert text == "[alice] look [attachments: 1 image attachment]"
+
+    def test_conversation_bridge_forwards_assistant_messages_live(self):
+        from tasks.io.telegram_agent_client import TelegramConversationBridgeTask
+        task = TelegramConversationBridgeTask({"service_id": "telegram_bot"})
+        task._send = MagicMock()
+
+        with patch.object(TelegramConversationBridgeTask, "_telegram_subscribers", return_value=[("alice", "chat-1")]):
+            task._on_event("conv1", "new_message", {
+                "role": "assistant",
+                "content": "Je cherche les occurrences exactes.",
+                "msg_id": "a1",
+                "source": {"name": "assistant"},
+            })
+
+        task._send.assert_called_once_with(
+            "alice", "chat-1", "[assistant] Je cherche les occurrences exactes.")
+
+    def test_conversation_bridge_skips_runtime_live_telegram_agent_events(self):
+        from tasks.io.telegram_agent_client import TelegramConversationBridgeTask
+        task = TelegramConversationBridgeTask({"service_id": "telegram_bot"})
+        task._send = MagicMock()
+
+        with patch.object(TelegramConversationBridgeTask, "_telegram_subscribers", return_value=[("alice", "chat-1")]):
+            task._on_event("conv1", "new_message", {
+                "role": "assistant",
+                "content": "live",
+                "source": {"name": "assistant", "channel": "telegram"},
+            })
+            task._on_event("conv1", "tool_call", {
+                "agent_name": "assistant",
+                "tool_name": "read",
+                "source": {"channel": "telegram"},
+            })
+
+        task._send.assert_not_called()
+
+    def test_agent_client_removes_live_assistant_messages_from_final_reply(self):
+        from core.agent_runtime_api import AgentFinalResult
+        from tasks.io.telegram_agent_client import (
+            _TELEGRAM_LIVE_TEXT_BY_TURN,
+            _remove_forwarded_telegram_live_text,
+        )
+
+        _TELEGRAM_LIVE_TEXT_BY_TURN.clear()
+        _TELEGRAM_LIVE_TEXT_BY_TURN["conv1"] = {
+            "a1": "Je cherche les occurrences exactes.",
+            "a2": "Je lis les tâches Telegram.",
+        }
+        result = AgentFinalResult(
+            "conv1", "turn1",
+            response="Je cherche les occurrences exactes.\nJe lis les tâches Telegram.\nCorrigé.",
+            data={"all_msg_ids": ["a1", "a2", "a3"]},
+        )
+
+        assert _remove_forwarded_telegram_live_text("conv1", result) == "Corrigé."
+        assert "conv1" not in _TELEGRAM_LIVE_TEXT_BY_TURN
 
     def test_tts_command_toggles_conversation_audio(self):
         import shutil
@@ -640,11 +863,56 @@ class TestTelegramAgentClientTask(unittest.TestCase):
 
         with patch.object(TelegramConversationBridgeTask, "_telegram_subscribers", return_value=[("alice", "chat-1")]):
             task._on_event("conv1", "thinking", {
-                "channel": "telegram",
                 "agent_name": "assistant",
             })
 
         task._send.assert_called_once_with("alice", "chat-1", "[assistant] thinking...")
+
+    def test_conversation_bridge_coalesces_thinking_variants(self):
+        from tasks.io.telegram_agent_client import TelegramConversationBridgeTask
+        task = TelegramConversationBridgeTask({"service_id": "telegram_bot"})
+        task._send = MagicMock()
+
+        with patch.object(TelegramConversationBridgeTask, "_telegram_subscribers", return_value=[("alice", "chat-1")]):
+            task._on_event("conv1", "thinking", {"agent_name": "assistant"})
+            task._on_event("conv1", "thinking_delta", {"agent_name": "assistant"})
+            task._on_event("conv1", "thinking_content", {"agent_name": "assistant"})
+
+        task._send.assert_called_once_with("alice", "chat-1", "[assistant] thinking...")
+
+    def test_conversation_bridge_forwards_periodic_waiting_progress(self):
+        from tasks.io.telegram_agent_client import TelegramConversationBridgeTask
+        task = TelegramConversationBridgeTask({"service_id": "telegram_bot"})
+        task._send = MagicMock()
+
+        with patch.object(TelegramConversationBridgeTask, "_telegram_subscribers", return_value=[("alice", "chat-1")]), \
+                patch("tasks.io.telegram_agent_client.time.time", side_effect=[100.0, 105.0, 107.0]):
+            task._on_event("conv1", "thinking", {"agent_name": "assistant", "waiting_seconds": 4})
+            task._on_event("conv1", "thinking", {"agent_name": "assistant", "waiting_seconds": 10})
+            task._on_event("conv1", "thinking", {"agent_name": "assistant", "waiting_seconds": 22})
+
+        assert [call.args[2] for call in task._send.call_args_list] == [
+            "[assistant] still working (4s)",
+            "[assistant] still working (22s)",
+        ]
+
+    def test_conversation_bridge_does_not_throttle_tool_progress(self):
+        from tasks.io.telegram_agent_client import TelegramConversationBridgeTask
+        task = TelegramConversationBridgeTask({"service_id": "telegram_bot"})
+        task._send = MagicMock()
+
+        with patch.object(TelegramConversationBridgeTask, "_telegram_subscribers", return_value=[("alice", "chat-1")]):
+            task._on_event("conv1", "tool_call", {"agent_name": "assistant", "tool_name": "read"})
+            task._on_event("conv1", "tool_result", {"agent_name": "assistant", "tool_name": "read"})
+            task._on_event("conv1", "tool_call", {"agent_name": "assistant", "tool_name": "grep"})
+            task._on_event("conv1", "tool_result", {"agent_name": "assistant", "tool_name": "grep"})
+
+        assert [call.args[2] for call in task._send.call_args_list] == [
+            "[assistant] calling read",
+            "[assistant] read done",
+            "[assistant] calling grep",
+            "[assistant] grep done",
+        ]
 
     def test_conversation_bridge_uses_telegram_chat_metadata(self):
         import shutil
@@ -771,6 +1039,7 @@ class TestTelegramFlow(unittest.TestCase):
         assert tasks["receive"]["type"] == "telegramReceiver"
         assert "agent_client" in tasks
         assert tasks["agent_client"]["type"] == "telegramAgentClient"
+        assert tasks["agent_client"]["max_instances"] == 20
         assert "send_reply" in tasks
         assert tasks["send_reply"]["type"] == "telegramSend"
         assert "conversation_bridge" in tasks
@@ -789,7 +1058,9 @@ class TestTelegramFlow(unittest.TestCase):
 
     def test_flow_parser_normalizes_relations_for_execution(self):
         from engine.parser import FlowParser
+        from tasks import register_all_tasks
 
+        register_all_tasks()
         path = _paths.REPOSITORY_DIR / "flows" / "global" / "default" / "telegram_agent" / "versions" / "1.0.0.json"
         raw = json.loads(path.read_text(encoding="utf-8"))
         flow = FlowParser.parse(raw)
@@ -797,6 +1068,7 @@ class TestTelegramFlow(unittest.TestCase):
         assert {rel["from"] for rel in flow.relations} == {"receive", "agent_client"}
         assert {rel["to"] for rel in flow.relations} == {"agent_client", "send_reply"}
         assert all(rel["type"] == "success" for rel in flow.relations)
+        assert flow.tasks["agent_client"]._max_instances == 20
 
     def test_flow_declares_agent_runtime_link(self):
         path = _paths.REPOSITORY_DIR / "flows" / "global" / "default" / "telegram_agent" / "versions" / "1.0.0.json"

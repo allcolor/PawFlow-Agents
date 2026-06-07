@@ -39,8 +39,10 @@
     },
     "agent_client": {
       "type": "telegramAgentClient",
+      "max_instances": 20,
       "parameters": {
-        "agent_runtime_port": "${agent_runtime_port}"
+        "agent_runtime_port": "${agent_runtime_port}",
+        "service_id": "telegram_bot"
       }
     },
     "send_reply": {

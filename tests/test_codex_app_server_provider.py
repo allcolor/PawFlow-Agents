@@ -52,6 +52,38 @@ def test_codex_app_server_uses_app_server_protocol_and_local_images():
     assert "_codex_app_image_item" in src
 
 
+def test_codex_app_server_rejects_non_remote_image_urls():
+    assert LLMCodexAppServerMixin._codex_app_valid_remote_url("https://example.com/a.png")
+    assert LLMCodexAppServerMixin._codex_app_valid_remote_url("http://example.com/a.png")
+    assert LLMCodexAppServerMixin._codex_app_valid_remote_url("data:image/png;base64,abc")
+    assert not LLMCodexAppServerMixin._codex_app_valid_remote_url("/files/abc/image.png")
+    assert not LLMCodexAppServerMixin._codex_app_valid_remote_url("fs://filestore/abc/image.png")
+
+
+def test_codex_app_server_file_id_attachment_wins_over_relative_url(monkeypatch, tmp_path):
+    class FakeStore:
+        def get_required(self, file_id, user_id="", conversation_id=""):
+            assert file_id == "fid1"
+            return "image.png", b"png", "image/png"
+
+    class FakeFileStore:
+        @staticmethod
+        def instance():
+            return FakeStore()
+
+    import core.file_store as file_store
+    monkeypatch.setattr(file_store, "FileStore", FakeFileStore)
+
+    client = LLMCodexAppServerMixin()
+    items = client._codex_app_attachment_items(
+        [{"file_id": "fid1", "url": "/files/fid1/image.png", "mime_type": "image/png"}],
+        user_id="u1", conversation_id="c1", workdir=str(tmp_path), container_dir="/cc_sessions/c1")
+
+    assert items[0]["type"] == "text"
+    assert items[1]["type"] == "localImage"
+    assert not any(item.get("url", "").startswith("/files/") for item in items)
+
+
 def test_codex_app_server_stdio_is_utf8_and_ascii_safe_json():
     src = inspect.getsource(LLMCodexAppServerMixin)
     assert 'encoding="utf-8"' in src

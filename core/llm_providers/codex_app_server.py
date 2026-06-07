@@ -16,6 +16,7 @@ import subprocess  # nosec B404
 import threading
 import time
 import uuid
+from urllib.parse import urlparse
 from typing import Any, Dict, List, Optional
 
 from core.llm_providers.codex_session import CodexSessionMixin, _get_sessions_base
@@ -37,6 +38,17 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
     """
 
     _CODEX_APP_PROVIDER = "codex-app-server"
+
+    @staticmethod
+    def _codex_app_valid_remote_url(value: str) -> bool:
+        """Return True only for URL formats accepted by Codex image input."""
+        if not isinstance(value, str):
+            return False
+        ref = value.strip()
+        if ref.startswith("data:image/"):
+            return True
+        parsed = urlparse(ref)
+        return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
 
     @staticmethod
     def _codex_app_effort(thinking_budget: int = 0, configured_effort: str = "") -> str:
@@ -173,6 +185,10 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                                 logger.warning("Failed to extract image: %s", e)
                         else:
                             new_content.append({"type": "text", "text": "[image]"})
+                        continue
+                    if not LLMCodexAppServerMixin._codex_app_valid_remote_url(url):
+                        label = url or "image"
+                        new_content.append({"type": "text", "text": f"[image: {label}]"})
                         continue
 
                 elif btype == "image":
@@ -1564,11 +1580,7 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
             url = attachment.get("url") or attachment.get("image_url") or ""
             path = attachment.get("path") or ""
             file_id = attachment.get("file_id") or ""
-            if url:
-                items.append({"type": "image", "url": url})
-            elif path:
-                items.append({"type": "localImage", "path": path})
-            elif file_id:
+            if file_id:
                 if not user_id or not conversation_id:
                     logger.warning(
                         "[codex-app] cannot steer FileStore attachment %s without user/conversation scope",
@@ -1608,6 +1620,12 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                 logger.info(
                     "[codex-app] loaded steered FileStore attachment: %s (%d bytes)",
                     file_id, len(data))
+            elif url and self._codex_app_valid_remote_url(str(url)):
+                items.append({"type": "image", "url": url})
+            elif url:
+                items.append({"type": "text", "text": f"Attached image: {url}"})
+            elif path:
+                items.append({"type": "localImage", "path": path})
         return items
 
     @staticmethod

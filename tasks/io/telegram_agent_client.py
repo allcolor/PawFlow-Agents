@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import logging
 import base64
+import html
 import json
+import mimetypes
 import re
 import shlex
 import threading
@@ -199,6 +201,8 @@ class TelegramAgentClientTask(BaseTask):
             if not text:
                 return
             bridge._send(user_id, chat_id, text)
+            if event_type == "tool_result":
+                bridge._send_tool_media(user_id, chat_id, data)
             if event_type == "new_message" and data.get("role") == "assistant":
                 msg_id = str(data.get("msg_id") or "")
                 if msg_id:
@@ -825,9 +829,9 @@ class TelegramConversationBridgeTask(BaseTask):
 
     def _on_event(self, conversation_id: str, event_type: str, data: Any) -> None:
         if event_type not in {
-                "new_message", "done", "error_event", "thinking",
-                "thinking_delta", "thinking_content", "iteration_status",
-                "tool_call", "tool_result"}:
+                "new_message", "done", "thinking",
+                "thinking_delta", "thinking_content", "tool_call",
+                "tool_result"}:
             return
         if not isinstance(data, dict):
             return
@@ -836,7 +840,7 @@ class TelegramConversationBridgeTask(BaseTask):
                 and event_type in {"done", "error_event"}):
             return
         if ((data.get("channel") == "telegram" or source.get("channel") == "telegram")
-                and event_type in {"new_message", "thinking", "thinking_delta", "thinking_content", "iteration_status", "tool_call", "tool_result"}
+                and event_type in {"new_message", "thinking", "thinking_delta", "thinking_content", "tool_call", "tool_result"}
                 and data.get("role") != "user"):
             return
         if (data.get("channel") == "telegram" and event_type == "new_message"
@@ -854,7 +858,8 @@ class TelegramConversationBridgeTask(BaseTask):
             now = time.time()
             if self._last_live_text.get(key) == text:
                 return
-            if now - self._last_live_event.get(key, 0.0) < _LIVE_EVENT_MIN_INTERVAL_SECONDS:
+            if (event_type == "thinking"
+                    and now - self._last_live_event.get(key, 0.0) < _LIVE_EVENT_MIN_INTERVAL_SECONDS):
                 return
             self._last_live_event[key] = now
             self._last_live_text[key] = text
@@ -867,6 +872,8 @@ class TelegramConversationBridgeTask(BaseTask):
             return
         for user_id, chat_id in subscribers:
             self._send(user_id, chat_id, text)
+            if event_type == "tool_result":
+                self._send_tool_media(user_id, chat_id, data)
         if event_type == "new_message" and data.get("role") == "assistant":
             msg_id = str(data.get("msg_id") or "")
             if msg_id:
@@ -878,48 +885,35 @@ class TelegramConversationBridgeTask(BaseTask):
             if role not in {"user", "assistant"}:
                 return ""
             source = data.get("source") if isinstance(data.get("source"), dict) else {}
-            name = source.get("name") or data.get("agent_name") or data.get("channel") or role
+            name = _telegram_agent_badge(data, role)
             content = str(data.get("content") or "").strip()
             attachments = data.get("attachments") if isinstance(data.get("attachments"), list) else []
             attachment_text = _format_attachment_summary(attachments)
-            parts = [part for part in (content, attachment_text) if part]
-            return f"[{name}] {' '.join(parts)}" if parts else ""
+            parts = [html.escape(part) for part in (content, attachment_text) if part]
+            return f"{name}\n{' '.join(parts)}" if parts else ""
         if event_type == "done":
-            agent = data.get("agent_name") or "assistant"
+            agent = _telegram_agent_badge(data)
             response = str(data.get("response") or "").strip()
-            return f"[{agent}] {response}" if response else ""
+            return f"{agent}\n{html.escape(response)}" if response else ""
         if event_type == "error_event":
-            message = str(data.get("message") or "").strip()
-            return f"[error] {message}" if message else ""
-        if event_type == "thinking":
-            agent = data.get("agent_name") or "assistant"
-            detail = str(data.get("detail") or "").strip()
-            waiting = data.get("waiting_seconds")
-            if waiting:
-                return f"[{agent}] still working ({waiting}s)"
-            return f"[{agent}] {detail or 'thinking...'}"
-        if event_type == "thinking_delta":
-            agent = data.get("agent_name") or "assistant"
-            return f"[{agent}] thinking..."
-        if event_type == "thinking_content":
-            agent = data.get("agent_name") or "assistant"
-            return f"[{agent}] thinking..."
-        if event_type == "iteration_status":
-            agent = data.get("agent_name") or "assistant"
-            total_tools = int(data.get("total_tools") or 0)
-            iteration = data.get("iteration") or "?"
-            if total_tools:
-                return f"[{agent}] working, iteration {iteration}, {total_tools} tool call(s) so far"
             return ""
+        if event_type == "thinking":
+            detail = str(data.get("detail") or "").strip()
+            return f"{_telegram_agent_badge(data)}\n{html.escape(detail)}" if detail else ""
+        if event_type == "thinking_delta":
+            text = str(data.get("text") or data.get("content") or "").strip()
+            return f"{_telegram_agent_badge(data)}\n{html.escape(text)}" if text else ""
+        if event_type == "thinking_content":
+            text = str(data.get("text") or data.get("content") or "").strip()
+            return f"{_telegram_agent_badge(data)}\n{html.escape(text)}" if text else ""
         if event_type == "tool_call":
-            agent = data.get("agent_name") or "assistant"
-            tool = data.get("tool_name") or data.get("name") or "tool"
-            return f"[{agent}] calling {tool}"
+            agent = _telegram_agent_badge(data)
+            tool = data.get("tool") or data.get("tool_name") or data.get("name") or "tool"
+            return f"{agent}\ncalling <code>{html.escape(str(tool))}</code>"
         if event_type == "tool_result":
-            agent = data.get("agent_name") or "assistant"
-            tool = data.get("tool_name") or data.get("name") or "tool"
-            preview = _compact_live_text(str(data.get("preview") or data.get("content") or ""), 120)
-            return f"[{agent}] {tool} done" + (f": {preview}" if preview else "")
+            agent = _telegram_agent_badge(data)
+            tool = data.get("tool") or data.get("tool_name") or data.get("name") or "tool"
+            return f"{agent}\n<code>{html.escape(str(tool))}</code> done"
         return ""
 
     @staticmethod
@@ -966,18 +960,63 @@ class TelegramConversationBridgeTask(BaseTask):
 
     def _send(self, user_id: str, chat_id: str, text: str) -> None:
         try:
+            svc = self._active_bridge_service()
+            if not svc:
+                return
             from core.identity_service import IdentityService
             bot_token = IdentityService.instance().get_bot_token(user_id, "telegram")
             if bot_token:
                 from services.telegram_bot_service import TelegramBotPool
-                TelegramBotPool.instance().send_message(bot_token, chat_id, text)
+                TelegramBotPool.instance().send_message(bot_token, chat_id, text, parse_mode="HTML")
                 return
-            svc = self.get_service(self.config.get("service_id", ""))
-            if svc:
-                svc.ensure_connected()
-                svc.send_message(chat_id, text)
+            svc.send_message(chat_id, text, parse_mode="HTML")
         except Exception as exc:
             logger.warning("Telegram bridge send failed for %s: %s", chat_id, exc)
+
+    def _active_bridge_service(self):
+        svc = self.get_service(self.config.get("service_id", ""))
+        if not svc or not getattr(svc, "_initialized", False):
+            return None
+        return svc
+
+    def _send_tool_media(self, user_id: str, chat_id: str, data: Dict[str, Any]) -> None:
+        refs = _extract_filestore_refs(str(data.get("result") or data.get("content") or ""))
+        for file_id in refs[:4]:
+            try:
+                name, raw, content_type = _load_filestore_media(file_id, user_id)
+                self._send_media(user_id, chat_id, raw, name, content_type)
+            except Exception as exc:
+                logger.warning("Telegram bridge media send failed for %s/%s: %s", chat_id, file_id, exc)
+
+    def _send_media(self, user_id: str, chat_id: str, raw: bytes,
+                    filename: str, content_type: str) -> None:
+        content_type = content_type or mimetypes.guess_type(filename)[0] or "application/octet-stream"
+        from core.identity_service import IdentityService
+        bot_token = IdentityService.instance().get_bot_token(user_id, "telegram")
+        svc = self._active_bridge_service()
+        if not svc:
+            return
+        sender = None
+        if bot_token:
+            from services.telegram_bot_service import TelegramBotPool
+            sender = TelegramBotPool.instance()
+            if content_type.startswith("image/") and hasattr(sender, "send_photo"):
+                sender.send_photo(bot_token, chat_id, raw, filename=filename, content_type=content_type)
+            elif content_type.startswith("video/") and hasattr(sender, "send_video"):
+                sender.send_video(bot_token, chat_id, raw, filename=filename, content_type=content_type)
+            elif content_type.startswith("audio/") and hasattr(sender, "send_audio"):
+                sender.send_audio(bot_token, chat_id, raw, filename=filename, content_type=content_type)
+            else:
+                sender.send_document(bot_token, chat_id, raw, filename=filename)
+            return
+        if content_type.startswith("image/") and hasattr(svc, "send_photo"):
+            svc.send_photo(chat_id, raw, filename=filename, content_type=content_type)
+        elif content_type.startswith("video/") and hasattr(svc, "send_video"):
+            svc.send_video(chat_id, raw, filename=filename, content_type=content_type)
+        elif content_type.startswith("audio/") and hasattr(svc, "send_audio"):
+            svc.send_audio(chat_id, raw, filename=filename, content_type=content_type)
+        elif hasattr(svc, "send_document"):
+            svc.send_document(chat_id, raw, filename=filename)
 
 
 def _format_attachment_summary(attachments: List[Dict[str, Any]]) -> str:
@@ -1000,6 +1039,43 @@ def _format_attachment_summary(attachments: List[Dict[str, Any]]) -> str:
     if file_count:
         parts.append(f"{file_count} file attachment{'s' if file_count != 1 else ''}")
     return "[attachments: " + ", ".join(parts) + "]" if parts else "[attachments]"
+
+
+def _telegram_agent_badge(data: Dict[str, Any], fallback: str = "assistant") -> str:
+    source = data.get("source") if isinstance(data.get("source"), dict) else {}
+    name = str(source.get("name") or data.get("agent_name") or data.get("channel") or fallback or "assistant")
+    service = str(source.get("llm_service") or data.get("llm_service") or "")
+    color = "🟩" if fallback == "assistant" or data.get("agent_name") or source.get("llm_service") else "⬜"
+    name_html = html.escape(name)
+    if service and name != service:
+        return f"{color} <b>{name_html}</b> via <code>{html.escape(service)}</code>"
+    return f"{color} <b>{name_html}</b>"
+
+
+def _extract_filestore_refs(text: str) -> List[str]:
+    if not text:
+        return []
+    refs: List[str] = []
+    for match in re.finditer(r"fs://filestore/([A-Za-z0-9_-]+)(?:/[^\s)\]}>\"']+)?", text):
+        fid = match.group(1)
+        if fid and fid not in refs:
+            refs.append(fid)
+    for match in re.finditer(r"/files/([A-Za-z0-9_-]+)(?:/[^\s)\]}>\"']+)?", text):
+        fid = match.group(1)
+        if fid and fid not in refs:
+            refs.append(fid)
+    return refs
+
+
+def _load_filestore_media(file_id: str, user_id: str):
+    from core.file_store import FileStore
+    store = FileStore.instance()
+    result = store.get(file_id, user_id=user_id) if user_id else store.get(file_id)
+    if result is None and user_id:
+        result = store.get(file_id)
+    if result is None:
+        raise FileNotFoundError(file_id)
+    return result
 
 
 def _remove_forwarded_telegram_live_text(conversation_id: str, result) -> str:

@@ -186,6 +186,22 @@ class TelegramBotService(BaseService):
             file_bytes, filename, "application/octet-stream",
             caption=caption)
 
+    def send_photo(self, chat_id: str, file_bytes: bytes,
+                   filename: str = "image.png", caption: str = "",
+                   content_type: str = "image/png") -> dict:
+        """Send an image attachment."""
+        return _api_upload(
+            self._bot_token, "sendPhoto", chat_id, "photo",
+            file_bytes, filename, content_type or "image/png", caption=caption)
+
+    def send_video(self, chat_id: str, file_bytes: bytes,
+                   filename: str = "video.mp4", caption: str = "",
+                   content_type: str = "video/mp4") -> dict:
+        """Send a video attachment."""
+        return _api_upload(
+            self._bot_token, "sendVideo", chat_id, "video",
+            file_bytes, filename, content_type or "video/mp4", caption=caption)
+
     def send_audio(self, chat_id: str, file_bytes: bytes,
                    filename: str = "speech.mp3", caption: str = "",
                    content_type: str = "audio/mpeg") -> dict:
@@ -354,11 +370,17 @@ class TelegramBotPool:
     def register_callback(self, callback: Callable):
         """Register a callback for incoming updates from all bots."""
         with self._store_lock:
-            self._callbacks.append(callback)
+            if callback not in self._callbacks:
+                self._callbacks.append(callback)
+            has_bots = bool(self._bots)
+        if has_bots:
+            self._ensure_polling()
 
     def unregister_callback(self, callback: Callable):
         with self._store_lock:
             self._callbacks = [c for c in self._callbacks if c is not callback]
+            if not self._callbacks:
+                self._stop_event.set()
 
     def send_message(self, token: str, chat_id: str, text: str,
                      parse_mode: str = "Markdown",
@@ -375,6 +397,13 @@ class TelegramBotPool:
             result = _api_call_static(token, "sendMessage", params)
         return result or {}
 
+    def send_document(self, token: str, chat_id: str, file_bytes: bytes,
+                      filename: str, caption: str = "") -> dict:
+        """Send a document/file via a specific bot token."""
+        return _api_upload(
+            token, "sendDocument", chat_id, "document", file_bytes, filename,
+            "application/octet-stream", caption=caption)
+
     def send_audio(self, token: str, chat_id: str, file_bytes: bytes,
                    filename: str = "speech.mp3", caption: str = "",
                    content_type: str = "audio/mpeg") -> dict:
@@ -385,6 +414,22 @@ class TelegramBotPool:
             token, "sendVoice" if as_voice else "sendAudio", chat_id,
             "voice" if as_voice else "audio", file_bytes, filename,
             content_type or "audio/mpeg", caption=caption)
+
+    def send_photo(self, token: str, chat_id: str, file_bytes: bytes,
+                   filename: str = "image.png", caption: str = "",
+                   content_type: str = "image/png") -> dict:
+        """Send an image via a specific bot token."""
+        return _api_upload(
+            token, "sendPhoto", chat_id, "photo", file_bytes, filename,
+            content_type or "image/png", caption=caption)
+
+    def send_video(self, token: str, chat_id: str, file_bytes: bytes,
+                   filename: str = "video.mp4", caption: str = "",
+                   content_type: str = "video/mp4") -> dict:
+        """Send a video via a specific bot token."""
+        return _api_upload(
+            token, "sendVideo", chat_id, "video", file_bytes, filename,
+            content_type or "video/mp4", caption=caption)
 
     def get_file_bytes(self, token: str, file_id: str) -> tuple:
         """Download a file via a specific bot token."""
@@ -437,6 +482,10 @@ class TelegramBotPool:
             for state in bots:
                 if self._stop_event.is_set():
                     break
+                with self._store_lock:
+                    if not self._callbacks:
+                        self._stop_event.set()
+                        break
                 try:
                     updates = _api_call_static(state.token, "getUpdates", {
                         "offset": state.offset + 1,

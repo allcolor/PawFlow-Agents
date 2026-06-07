@@ -736,7 +736,7 @@ class TestTelegramAgentClientTask(unittest.TestCase):
             "attachments": [{"filename": "image.png", "mime_type": "image/png"}],
         })
 
-        assert text == "[alice] look [attachments: 1 image attachment]"
+        assert text == "⬜ <b>alice</b>\nlook [attachments: 1 image attachment]"
 
     def test_conversation_bridge_forwards_assistant_messages_live(self):
         from tasks.io.telegram_agent_client import TelegramConversationBridgeTask
@@ -752,7 +752,22 @@ class TestTelegramAgentClientTask(unittest.TestCase):
             })
 
         task._send.assert_called_once_with(
-            "alice", "chat-1", "[assistant] Je cherche les occurrences exactes.")
+            "alice", "chat-1", "🟩 <b>assistant</b>\nJe cherche les occurrences exactes.")
+
+    def test_conversation_bridge_formats_agent_service_badge(self):
+        from tasks.io.telegram_agent_client import TelegramConversationBridgeTask
+        task = TelegramConversationBridgeTask({"service_id": "telegram_bot"})
+
+        text = task._format_event("new_message", {
+            "role": "assistant",
+            "content": "ok",
+            "source": {
+                "name": "assistant",
+                "llm_service": "codex_appserver_llm_service",
+            },
+        })
+
+        assert text == "🟩 <b>assistant</b> via <code>codex_appserver_llm_service</code>\nok"
 
     def test_conversation_bridge_skips_runtime_live_telegram_agent_events(self):
         from tasks.io.telegram_agent_client import TelegramConversationBridgeTask
@@ -856,7 +871,7 @@ class TestTelegramAgentClientTask(unittest.TestCase):
         assert ff.get_attribute("telegram.tts_content_type") == "audio/mpeg"
         registry.resolve.assert_called_once_with("tts1", user_id="alice", conv_id="conv1")
 
-    def test_conversation_bridge_forwards_live_events_from_telegram_turn(self):
+    def test_conversation_bridge_drops_generic_thinking_heartbeat(self):
         from tasks.io.telegram_agent_client import TelegramConversationBridgeTask
         task = TelegramConversationBridgeTask({"service_id": "telegram_bot"})
         task._send = MagicMock()
@@ -866,19 +881,21 @@ class TestTelegramAgentClientTask(unittest.TestCase):
                 "agent_name": "assistant",
             })
 
-        task._send.assert_called_once_with("alice", "chat-1", "[assistant] thinking...")
+        task._send.assert_not_called()
 
-    def test_conversation_bridge_coalesces_thinking_variants(self):
+    def test_conversation_bridge_forwards_real_thinking_content(self):
         from tasks.io.telegram_agent_client import TelegramConversationBridgeTask
         task = TelegramConversationBridgeTask({"service_id": "telegram_bot"})
         task._send = MagicMock()
 
         with patch.object(TelegramConversationBridgeTask, "_telegram_subscribers", return_value=[("alice", "chat-1")]):
-            task._on_event("conv1", "thinking", {"agent_name": "assistant"})
-            task._on_event("conv1", "thinking_delta", {"agent_name": "assistant"})
-            task._on_event("conv1", "thinking_content", {"agent_name": "assistant"})
+            task._on_event("conv1", "thinking_delta", {"agent_name": "assistant", "text": "Checking logs"})
+            task._on_event("conv1", "thinking_content", {"agent_name": "assistant", "text": "Found the bug"})
 
-        task._send.assert_called_once_with("alice", "chat-1", "[assistant] thinking...")
+        assert [call.args[2] for call in task._send.call_args_list] == [
+            "🟩 <b>assistant</b>\nChecking logs",
+            "🟩 <b>assistant</b>\nFound the bug",
+        ]
 
     def test_conversation_bridge_forwards_periodic_waiting_progress(self):
         from tasks.io.telegram_agent_client import TelegramConversationBridgeTask
@@ -891,28 +908,51 @@ class TestTelegramAgentClientTask(unittest.TestCase):
             task._on_event("conv1", "thinking", {"agent_name": "assistant", "waiting_seconds": 10})
             task._on_event("conv1", "thinking", {"agent_name": "assistant", "waiting_seconds": 22})
 
-        assert [call.args[2] for call in task._send.call_args_list] == [
-            "[assistant] still working (4s)",
-            "[assistant] still working (22s)",
-        ]
+        task._send.assert_not_called()
 
-    def test_conversation_bridge_does_not_throttle_tool_progress(self):
+    def test_conversation_bridge_forwards_tool_progress_by_name(self):
         from tasks.io.telegram_agent_client import TelegramConversationBridgeTask
         task = TelegramConversationBridgeTask({"service_id": "telegram_bot"})
         task._send = MagicMock()
+        task._send_tool_media = MagicMock()
 
         with patch.object(TelegramConversationBridgeTask, "_telegram_subscribers", return_value=[("alice", "chat-1")]):
-            task._on_event("conv1", "tool_call", {"agent_name": "assistant", "tool_name": "read"})
-            task._on_event("conv1", "tool_result", {"agent_name": "assistant", "tool_name": "read"})
-            task._on_event("conv1", "tool_call", {"agent_name": "assistant", "tool_name": "grep"})
-            task._on_event("conv1", "tool_result", {"agent_name": "assistant", "tool_name": "grep"})
+            task._on_event("conv1", "tool_call", {"agent_name": "assistant", "tool": "read"})
+            task._on_event("conv1", "tool_result", {"agent_name": "assistant", "tool": "read"})
+            task._on_event("conv1", "tool_call", {"agent_name": "assistant", "tool": "grep"})
+            task._on_event("conv1", "tool_result", {"agent_name": "assistant", "tool": "grep"})
 
         assert [call.args[2] for call in task._send.call_args_list] == [
-            "[assistant] calling read",
-            "[assistant] read done",
-            "[assistant] calling grep",
-            "[assistant] grep done",
+            "🟩 <b>assistant</b>\ncalling <code>read</code>",
+            "🟩 <b>assistant</b>\n<code>read</code> done",
+            "🟩 <b>assistant</b>\ncalling <code>grep</code>",
+            "🟩 <b>assistant</b>\n<code>grep</code> done",
         ]
+
+    def test_conversation_bridge_does_not_restart_stopped_service(self):
+        from tasks.io.telegram_agent_client import TelegramConversationBridgeTask
+        task = TelegramConversationBridgeTask({"service_id": "telegram_bot"})
+        svc = MagicMock()
+        svc._initialized = False
+        task.get_service = MagicMock(return_value=svc)
+
+        task._send("alice", "chat-1", "hello")
+
+        svc.ensure_connected.assert_not_called()
+        svc.send_message.assert_not_called()
+
+    def test_telegram_receiver_cleanup_unregisters_pool_callback(self):
+        from tasks.io.telegram_receiver import TelegramReceiverTask
+        task = TelegramReceiverTask({"service_id": "telegram_bot"})
+        svc = MagicMock()
+        task.get_service = MagicMock(return_value=svc)
+        pool = MagicMock()
+
+        with patch("services.telegram_bot_service.TelegramBotPool.instance", return_value=pool):
+            task._pool_registered = True
+            task.cleanup()
+
+        pool.unregister_callback.assert_called_once_with(task._on_update)
 
     def test_conversation_bridge_uses_telegram_chat_metadata(self):
         import shutil

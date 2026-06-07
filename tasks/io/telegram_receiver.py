@@ -49,6 +49,7 @@ class TelegramReceiverTask(BaseTask):
         self._queue: queue.Queue = queue.Queue(maxsize=1000)
         self._registered = False
         self._owner_id: Optional[str] = None
+        self._pool_registered = False
 
     def initialize(self):
         self._ensure_registered()
@@ -86,7 +87,9 @@ class TelegramReceiverTask(BaseTask):
             ids = IdentityService.instance()
             all_links = ids.list_all()
             pool = TelegramBotPool.instance()
-            pool.register_callback(self._on_update)
+            if not self._pool_registered:
+                pool.register_callback(self._on_update)
+                self._pool_registered = True
             for user_id, links in all_links.items():
                 bot_token = ids.get_bot_token(user_id, "telegram")
                 if bot_token:
@@ -225,6 +228,13 @@ class TelegramReceiverTask(BaseTask):
             if svc:
                 svc.unregister_handler(self._owner_id)
             self._registered = False
+        if self._pool_registered:
+            try:
+                from services.telegram_bot_service import TelegramBotPool
+                TelegramBotPool.instance().unregister_callback(self._on_update)
+            except Exception:
+                logger.debug("telegramReceiver pool unregister failed", exc_info=True)
+            self._pool_registered = False
 
 
 TaskFactory.register(TelegramReceiverTask)

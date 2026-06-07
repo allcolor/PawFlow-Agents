@@ -981,16 +981,21 @@ class ServiceRegistry:
         if service_type == "packageRuntime":
             result = []
             seen = set()
-            for sdef in self.resolve_all(
-                    user_id=user_id, conv_id=conv_id,
-                    enabled_only=enabled_only).values():
-                if sdef.service_type != service_type:
-                    continue
-                seen_key = _package_runtime_dedupe_key(sdef)
-                if seen_key in seen:
-                    continue
-                result.append(sdef)
-                seen.add(seen_key)
+            for scope, sid in self._scope_chain(user_id=user_id, conv_id=conv_id):
+                self._ensure_loaded(scope, sid)
+                rsid = self._resolve_scope_id(scope, sid)
+                with self._data_lock:
+                    defs = list(self._definitions.get(rsid, {}).values())
+                for sdef in defs:
+                    if sdef.service_type != service_type:
+                        continue
+                    if enabled_only and not sdef.enabled:
+                        continue
+                    seen_key = _package_runtime_dedupe_key(sdef)
+                    if seen_key in seen:
+                        continue
+                    result.append(sdef)
+                    seen.add(seen_key)
             return result
         return [
             sdef for sdef in self.resolve_all(

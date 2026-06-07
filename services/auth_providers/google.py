@@ -41,11 +41,6 @@ class GoogleAuthProvider(OAuthBaseProvider):
                       "description": "OAuth2 scopes"},
         }
 
-    def _customize_authorize_params(self, params: dict):
-        """Google needs access_type=offline for refresh tokens."""
-        params["access_type"] = "offline"
-        params["prompt"] = "consent"
-
     def _build_result(self, userinfo: dict, access_token: str,
                        refresh_token: str, expires_at: float) -> AuthResult:
         email = userinfo.get("email", "")

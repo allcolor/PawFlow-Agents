@@ -8,7 +8,7 @@ from services.auth_providers.oauth_base import OAuthBaseProvider
 class XTwitterAuthProvider(OAuthBaseProvider):
     """X.com (formerly Twitter) OAuth2 provider with PKCE."""
 
-    DEFAULT_SCOPE = "users.read tweet.read offline.access"
+    DEFAULT_SCOPE = "users.read tweet.read"
 
     def __init__(self, config: Dict[str, Any]):
         config.setdefault("scope", self.DEFAULT_SCOPE)

@@ -101,6 +101,23 @@ class TestOAuthProviderService(unittest.TestCase):
 
         assert "scope=read%3Auser+user%3Aemail" in url
 
+    def test_google_login_does_not_force_reconsent(self):
+        from urllib.parse import parse_qs, urlparse
+        from services.auth_providers.google import GoogleAuthProvider
+
+        provider = GoogleAuthProvider({
+            "client_id": "google-id",
+            "client_secret": "google-secret",
+        })
+
+        url = provider.get_authorize_url(
+            "state", "https://webchat.example/auth/callback")
+        params = parse_qs(urlparse(url).query)
+
+        assert params["scope"] == ["openid email profile"]
+        assert "prompt" not in params
+        assert "access_type" not in params
+
     def test_x_token_exchange_uses_basic_auth(self):
         import base64
         import urllib.parse
@@ -140,6 +157,38 @@ class TestOAuthProviderService(unittest.TestCase):
         assert form["client_id"] == "x-client"
         assert form["code_verifier"] == "verifier"
         assert "client_secret" not in form
+
+    def test_x_default_login_scope_does_not_request_offline_access(self):
+        from urllib.parse import parse_qs, urlparse
+        from services.auth_providers.x_twitter import XTwitterAuthProvider
+
+        provider = XTwitterAuthProvider({
+            "client_id": "x-client",
+            "client_secret": "x-secret",
+        })
+
+        url = provider.get_authorize_url(
+            "state", "https://webchat.example/auth/callback")
+        scope = parse_qs(urlparse(url).query)["scope"][0]
+
+        assert scope == "users.read tweet.read"
+        assert "offline.access" not in scope
+
+    def test_x_offline_access_remains_opt_in(self):
+        from urllib.parse import parse_qs, urlparse
+        from services.auth_providers.x_twitter import XTwitterAuthProvider
+
+        provider = XTwitterAuthProvider({
+            "client_id": "x-client",
+            "client_secret": "x-secret",
+            "scope": "users.read tweet.read offline.access",
+        })
+
+        url = provider.get_authorize_url(
+            "state", "https://webchat.example/auth/callback")
+        scope = parse_qs(urlparse(url).query)["scope"][0]
+
+        assert scope == "users.read tweet.read offline.access"
 
     def test_oauth_provider_userinfo_sends_user_agent(self):
         from services.auth_providers.github import GitHubAuthProvider

@@ -5,10 +5,7 @@
   "description": "Telegram client for the shared PawFlow agent runtime. Messages are submitted through the same API contract used by webchat, PawCode, and VSCode.",
   "parameters": {
     "bot_token": "",
-    "allowed_users": "",
-    "target_agent": "",
-    "agent_runtime_port": "pawflow_agent.agent_runtime_in",
-    "agent_timeout": 600
+    "agent_runtime_port": "pawflow_agent.agent_runtime_in"
   },
   "runtime_links": [
     {
@@ -23,8 +20,7 @@
       "type": "telegramBot",
       "parameters": {
         "bot_token": "${bot_token}",
-        "poll_timeout": 30,
-        "allowed_users": "${allowed_users}"
+        "poll_timeout": 30
       }
     }
   },
@@ -38,10 +34,7 @@
     "agent_client": {
       "type": "telegramAgentClient",
       "parameters": {
-        "target_agent": "${target_agent}",
-        "agent_runtime_port": "${agent_runtime_port}",
-        "timeout": "${agent_timeout}",
-        "create_conversation": false
+        "agent_runtime_port": "${agent_runtime_port}"
       }
     },
     "send_reply": {

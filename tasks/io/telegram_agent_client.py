@@ -20,6 +20,7 @@ from core.agent_runtime_api import AgentRequest, AgentRuntimeAPI
 logger = logging.getLogger(__name__)
 
 _WIZARD_TTL_SECONDS = 900
+_AGENT_RESPONSE_TIMEOUT_SECONDS = 600
 _WIZARDS: Dict[str, Dict[str, Any]] = {}
 _WIZARD_LOCK = threading.Lock()
 
@@ -36,22 +37,10 @@ class TelegramAgentClientTask(BaseTask):
 
     def get_parameter_schema(self) -> Dict[str, Any]:
         return {
-            "target_agent": {
-                "type": "string", "required": False, "default": "",
-                "description": "Agent instance to target. Empty uses the active conversation agent.",
-            },
-            "timeout": {
-                "type": "number", "required": False, "default": 600,
-                "description": "Seconds to wait for the final agent response.",
-            },
             "agent_runtime_port": {
                 "type": "string", "required": False,
                 "default": "pawflow_agent.agent_runtime_in",
                 "description": "Visible target runtime port for the shared AgentLoop runtime.",
-            },
-            "create_conversation": {
-                "type": "boolean", "required": False, "default": False,
-                "description": "Deprecated. Telegram requires an explicit /conv select resume.",
             },
         }
 
@@ -84,7 +73,6 @@ class TelegramAgentClientTask(BaseTask):
             _apply_telegram_response(flowfile, command_response)
             return [flowfile]
 
-        configured_target = str(self.config.get("target_agent") or "").strip()
         conversation_id = ids.get_active_conv(user_id, "telegram") or ""
         if not conversation_id:
             flowfile.set_content(
@@ -92,8 +80,7 @@ class TelegramAgentClientTask(BaseTask):
             )
             return [flowfile]
 
-        target_agent = configured_target or self._selected_agent_for_conversation(
-            conversation_id)
+        target_agent = self._selected_agent_for_conversation(conversation_id)
         if not target_agent:
             flowfile.set_content(
                 b"No selected agent for this conversation. Select an agent before sending a message."
@@ -117,9 +104,9 @@ class TelegramAgentClientTask(BaseTask):
         )
         try:
             submission = AgentRuntimeAPI.submit_message(request)
-            timeout = float(self.config.get("timeout", 600) or 600)
             result = AgentRuntimeAPI.wait_for_done(
-                submission.conversation_id, submission.turn_id, timeout=timeout)
+                submission.conversation_id, submission.turn_id,
+                timeout=_AGENT_RESPONSE_TIMEOUT_SECONDS)
         except Exception as exc:
             logger.warning("Telegram agent submit failed: %s", exc, exc_info=True)
             runtime_port = str(self.config.get("agent_runtime_port") or "").strip()

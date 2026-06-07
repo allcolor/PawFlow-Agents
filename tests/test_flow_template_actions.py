@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 from core import FlowFile
 
@@ -28,9 +29,11 @@ def _payload(flowfile):
 
 def test_move_flow_template_package_creates_package_and_updates_fqn(tmp_path, monkeypatch):
     import core.paths as paths
+    from tasks.ai.actions.agent_resource import _FLOW_TEMPLATES_CACHE
     from tasks.ai.actions.service_flow import _handle_service_flow
 
     monkeypatch.setattr(paths, "REPOSITORY_DIR", tmp_path / "repository")
+    _FLOW_TEMPLATES_CACHE["alice"] = {"data": [{"id": "demo"}], "expires": 999999.0}
     root = paths.REPOSITORY_DIR / "flows" / "users" / "alice"
     old_dir = _write_flow_template(root)
 
@@ -52,3 +55,38 @@ def test_move_flow_template_package_creates_package_and_updates_fqn(tmp_path, mo
     raw = json.loads((new_dir / "versions" / "1.0.0.json").read_text(encoding="utf-8"))
     assert raw["package"] == "custom.pkg"
     assert raw["fqn"] == "custom.pkg.demo:1.0.0"
+    assert "alice" not in _FLOW_TEMPLATES_CACHE
+
+
+def test_delete_flow_template_invalidates_resource_cache(tmp_path, monkeypatch):
+    import core.paths as paths
+    from tasks.ai.actions.agent_resource import _FLOW_TEMPLATES_CACHE
+    from tasks.ai.actions.service_flow import _handle_service_flow
+
+    monkeypatch.setattr(paths, "REPOSITORY_DIR", tmp_path / "repository")
+    _FLOW_TEMPLATES_CACHE["alice"] = {"data": [{"id": "demo"}], "expires": 999999.0}
+    root = paths.REPOSITORY_DIR / "flows" / "users" / "alice"
+    flow_dir = _write_flow_template(root)
+    ff = FlowFile(content=b"")
+
+    _handle_service_flow(
+        object(),
+        "delete_flow_template",
+        {"template_id": "demo"},
+        None,
+        "alice",
+        ff,
+    )
+
+    assert _payload(ff)["ok"] is True
+    assert not flow_dir.exists()
+    assert "alice" not in _FLOW_TEMPLATES_CACHE
+
+
+def test_flow_template_mutations_refresh_resource_panel_immediately():
+    service_flow = Path("tasks/ai/actions/service_flow.py").read_text(encoding="utf-8")
+    resources_js = Path("tasks/io/chat_ui/resources.js").read_text(encoding="utf-8")
+
+    assert service_flow.count("invalidate_flow_templates_cache(user_id)") >= 3
+    assert "function _refreshResourcesNow()" in resources_js
+    assert "_refreshResourcesNow();" in resources_js

@@ -2987,6 +2987,8 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 }, indent=2) + "\n", encoding="utf-8")
             shutil.move(str(info["flow_dir"]), str(dest_dir))
             _rewrite_flow_template_package(dest_dir, target_package)
+            from tasks.ai.actions.agent_resource import invalidate_flow_templates_cache
+            invalidate_flow_templates_cache(user_id)
             flowfile.set_content(json.dumps({
                 "ok": True,
                 "template_id": template_id,
@@ -3042,6 +3044,8 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 ScopedRepository().demote(
                     "flows", fqn, from_repo_scope, to_repo_scope,
                     user_id=user_id, conv_id=conv_id, move=True)
+            from tasks.ai.actions.agent_resource import invalidate_flow_templates_cache
+            invalidate_flow_templates_cache(user_id)
             flowfile.set_content(json.dumps({
                 "ok": True,
                 "template_id": template_id,
@@ -3071,6 +3075,8 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 flowfile.set_content(json.dumps(denied).encode())
                 return [flowfile]
             shutil.rmtree(info["flow_dir"])
+            from tasks.ai.actions.agent_resource import invalidate_flow_templates_cache
+            invalidate_flow_templates_cache(user_id)
             flowfile.set_content(json.dumps({
                 "ok": True,
                 "template_id": template_id,

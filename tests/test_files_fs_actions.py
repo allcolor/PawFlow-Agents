@@ -266,6 +266,53 @@ def test_flow_runtime_graph_instance_uses_repository_runtime_links(tmp_path, mon
     }]
 
 
+def test_flow_runtime_graph_running_uses_executor_runtime_links(monkeypatch):
+    from core import Flow
+    from core.executor_registry import ExecutorRegistry
+
+    class FakeExecutor:
+        is_running = True
+        _flow = Flow({
+            "parameters": {"agent_runtime_port": "pawflow_agent.agent_runtime_in"},
+            "runtime_links": [{"from": "agent_client", "to": "${agent_runtime_port}", "type": "agentRuntime"}],
+        })
+
+        def get_all_task_states(self):
+            return {
+                "agent_client": {
+                    "task_type": "telegramAgentClient",
+                    "state": "running",
+                    "flowfiles_in": 1,
+                    "flowfiles_out": 1,
+                },
+            }
+
+        def get_queue_stats(self):
+            return []
+
+    class FakeRegistry:
+        def get(self, instance_id):
+            return FakeExecutor() if instance_id == "telegram_agent" else None
+
+    monkeypatch.setattr(ExecutorRegistry, "get_instance", classmethod(lambda cls: FakeRegistry()))
+    ff = FlowFile(content=b"")
+
+    _handle_files_fs(None, "flow_runtime_graph", {"instance_id": "telegram_agent"}, None, "alice", ff)
+
+    payload = _payload(ff)
+    assert payload["is_running"] is True
+    assert "runtime:pawflow_agent.agent_runtime_in" in payload["nodes"]
+    assert payload["edges"] == [{
+        "source": "agent_client",
+        "target": "runtime:pawflow_agent.agent_runtime_in",
+        "relationship": "agentRuntime",
+        "queue_size": 0,
+        "max_queue": 10000,
+        "backpressured": False,
+        "runtime_link": True,
+    }]
+
+
 def test_flow_runtime_graph_instance_uses_deployed_runtime_parameter(tmp_path, monkeypatch):
     import core.paths as paths
     from core.deployment_registry import DeploymentRegistry

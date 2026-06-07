@@ -933,6 +933,24 @@ class TestTelegramAgentClientTask(unittest.TestCase):
         task._send.assert_called_once_with(
             "alice", "chat-1", "🟩 <b>assistant</b>\nJe cherche les occurrences exactes.")
 
+    def test_conversation_bridge_forwards_user_attachment_media(self):
+        from tasks.io.telegram_agent_client import TelegramConversationBridgeTask
+        task = TelegramConversationBridgeTask({"service_id": "telegram_bot"})
+        task._send = MagicMock(return_value=True)
+        task._send_media = MagicMock()
+
+        with patch.object(TelegramConversationBridgeTask, "_telegram_subscribers", return_value=[("alice", "chat-1")]), \
+                patch("tasks.io.telegram_agent_client._load_filestore_media", return_value=("image.png", b"png", "image/png")) as load:
+            task._on_event("conv1", "new_message", {
+                "role": "user",
+                "content": "look",
+                "source": {"name": "alice"},
+                "attachments": [{"filename": "image.png", "mime_type": "image/png", "file_id": "fid1"}],
+            })
+
+        load.assert_called_once_with("fid1", "alice")
+        task._send_media.assert_called_once_with("alice", "chat-1", b"png", "image.png", "image/png")
+
     def test_conversation_bridge_formats_agent_service_badge(self):
         from tasks.io.telegram_agent_client import TelegramConversationBridgeTask
         task = TelegramConversationBridgeTask({"service_id": "telegram_bot"})

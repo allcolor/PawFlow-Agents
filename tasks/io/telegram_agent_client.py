@@ -892,6 +892,8 @@ class TelegramConversationBridgeTask(BaseTask):
                 self._send(user_id, chat_id, text)
                 if event_type == "new_message" and data.get("role") == "assistant":
                     self._send_tts_audio(user_id, chat_id, conversation_id, data)
+            if event_type == "new_message":
+                self._send_message_attachments(user_id, chat_id, data)
             if event_type == "tool_result":
                 self._send_tool_media(user_id, chat_id, data)
         if event_type == "new_message" and data.get("role") == "assistant":
@@ -998,6 +1000,28 @@ class TelegramConversationBridgeTask(BaseTask):
         if not svc or not getattr(svc, "_initialized", False):
             return None
         return svc
+
+    def _send_message_attachments(self, user_id: str, chat_id: str,
+                                  data: Dict[str, Any]) -> None:
+        attachments = data.get("attachments") if isinstance(data.get("attachments"), list) else []
+        refs: List[str] = []
+        for att in attachments:
+            if not isinstance(att, dict):
+                continue
+            file_id = str(att.get("file_id") or "").strip()
+            if file_id and file_id not in refs:
+                refs.append(file_id)
+                continue
+            ref_text = " ".join(str(att.get(k) or "") for k in ("url", "href", "path"))
+            for ref in _extract_filestore_refs(ref_text):
+                if ref not in refs:
+                    refs.append(ref)
+        for file_id in refs[:4]:
+            try:
+                name, raw, content_type = _load_filestore_media(file_id, user_id)
+                self._send_media(user_id, chat_id, raw, name, content_type)
+            except Exception as exc:
+                logger.warning("Telegram bridge attachment send failed for %s/%s: %s", chat_id, file_id, exc)
 
     def _send_tool_media(self, user_id: str, chat_id: str, data: Dict[str, Any]) -> None:
         refs = _extract_filestore_refs(str(data.get("result") or data.get("content") or ""))

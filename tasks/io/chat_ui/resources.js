@@ -786,6 +786,11 @@ function _flowTemplateMutationOptions(targetScope) {
   return { skipConversationId: !(targetScope === 'conversation') };
 }
 
+function _refreshResourcesNow() {
+  if (_loadResourcesTimer) clearTimeout(_loadResourcesTimer);
+  _loadResourcesNow();
+}
+
 function _moveFlowTemplateToPackage(templateId, tpl) {
   const current = (tpl && tpl.package) || 'default';
   const nextPackage = prompt(t('flowMoveToPackagePrompt', { current: current }), current);
@@ -794,7 +799,7 @@ function _moveFlowTemplateToPackage(templateId, tpl) {
   action$('move_flow_template_package', _flowTemplatePayload(templateId, { package: nextPackage })).subscribe(d => {
     if (d.error) addMsg('error', d.error);
     else addMsg('system', t('flowTemplateMovedToPackage', { id: templateId, package: nextPackage }));
-    loadResources();
+    _refreshResourcesNow();
   });
 }
 
@@ -803,7 +808,7 @@ function _moveFlowTemplateScope(templateId, targetScope) {
   action$('promote_flow_template', _flowTemplatePayload(templateId, { target_scope: targetScope }), _flowTemplateMutationOptions(targetScope)).subscribe(d => {
     if (d.error) addMsg('error', d.error);
     else addMsg('system', t('flowTemplateMovedToScope', { id: templateId, scope: targetScope }));
-    loadResources();
+    _refreshResourcesNow();
   });
 }
 
@@ -812,7 +817,7 @@ function _deleteFlowTemplate(templateId) {
   action$('delete_flow_template', _flowTemplatePayload(templateId)).subscribe(d => {
     if (d.error) addMsg('error', d.error);
     else addMsg('system', t('flowTemplateDeleted', { id: templateId }));
-    loadResources();
+    _refreshResourcesNow();
   });
 }
 

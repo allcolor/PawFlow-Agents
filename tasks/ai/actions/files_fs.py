@@ -59,6 +59,34 @@ def _with_deployed_parameters(raw: Dict[str, Any], inst) -> Dict[str, Any]:
     return merged
 
 
+def _executor_flow_metadata(executor) -> Dict[str, Any]:
+    """Return graph-only metadata preserved on a live Flow object."""
+    flow = getattr(executor, "_flow", None)
+    if flow is None:
+        return {}
+    return {
+        "parameters": getattr(flow, "parameters", {}) or {},
+        "ports": getattr(flow, "ports", {}) or {},
+        "runtime_links": getattr(flow, "runtime_links", []) or [],
+    }
+
+
+def _merge_graph_metadata(raw: Dict[str, Any], fallback: Dict[str, Any]) -> Dict[str, Any]:
+    if not fallback:
+        return raw
+    if not raw:
+        return fallback
+    merged = dict(raw)
+    parameters = dict(fallback.get("parameters") or {})
+    parameters.update(raw.get("parameters") or {})
+    if parameters:
+        merged["parameters"] = parameters
+    for key in ("ports", "runtime_links"):
+        if not merged.get(key) and fallback.get(key):
+            merged[key] = fallback[key]
+    return merged
+
+
 def _static_flow_graph(raw: Dict[str, Any]):
     nodes = {}
     edges = []
@@ -419,14 +447,17 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
                             "max_queue": qs.get("max_queue_size", 10000),
                             "backpressured": qs.get("backpressured", False),
                         })
+                    raw = _executor_flow_metadata(executor)
                     if inst:
                         try:
-                            raw = _with_deployed_parameters(
+                            deployed_raw = _with_deployed_parameters(
                                 _load_deployed_flow_definition(inst), inst)
-                            _add_declared_ports_to_graph(raw, nodes, edges)
-                            _add_runtime_links_to_graph(raw, nodes, edges)
+                            raw = _merge_graph_metadata(deployed_raw, raw)
                         except Exception:
                             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+                    if raw:
+                        _add_declared_ports_to_graph(raw, nodes, edges)
+                        _add_runtime_links_to_graph(raw, nodes, edges)
                 elif inst:
                     try:
                         raw = _with_deployed_parameters(

@@ -18,6 +18,16 @@ _FLOW_TEMPLATES_CACHE: Dict[str, Dict[str, Any]] = {}
 _FLOW_TEMPLATES_REFRESHING: set[str] = set()
 _FLOW_TEMPLATES_LOCK = threading.Lock()
 
+
+def invalidate_flow_templates_cache(user_id: str = "") -> None:
+    """Clear cached flow template listings after repository mutations."""
+    keys = {user_id or "", ""}
+    with _FLOW_TEMPLATES_LOCK:
+        for key in keys:
+            _FLOW_TEMPLATES_CACHE.pop(key, None)
+            _FLOW_TEMPLATES_REFRESHING.discard(key)
+
+
 # Cap on UI-supplied skill bundle uploads (sum of decoded asset bytes).
 _SKILL_PACKAGE_FILES_MAX_BYTES = 2_000_000
 

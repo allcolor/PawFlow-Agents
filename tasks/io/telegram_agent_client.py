@@ -90,7 +90,7 @@ class TelegramAgentClientTask(BaseTask):
             )
             return [flowfile]
 
-        if flowfile.get_attribute("telegram.message_type") == "voice":
+        if flowfile.get_attribute("telegram.message_type") in {"voice", "audio"}:
             transcribed = _transcribe_telegram_voice(
                 text, user_id, conversation_id, target_agent)
             if not transcribed:
@@ -1013,7 +1013,7 @@ def _transcribe_telegram_voice(
         payload = json.loads(content or "{}")
     except json.JSONDecodeError:
         return ""
-    if not isinstance(payload, dict) or payload.get("type") != "voice":
+    if not isinstance(payload, dict) or payload.get("type") not in {"voice", "audio"}:
         return ""
     audio_b64 = str(payload.get("data_base64") or "")
     if not audio_b64:
@@ -1041,8 +1041,8 @@ def _transcribe_telegram_voice(
                 agent_name=agent_name)
         result = svc.transcribe(
             audio_bytes=audio_bytes,
-            mime_type="audio/ogg",
-            filename="telegram_voice.ogg",
+            mime_type=str(payload.get("mime_type") or "audio/ogg"),
+            filename=str(payload.get("file_name") or "telegram_voice.ogg"),
         )
         return str((result or {}).get("text") or "").strip()
     except Exception as exc:

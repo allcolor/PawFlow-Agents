@@ -12,7 +12,7 @@ The task sets these FlowFile attributes:
     telegram.username      — sender's username (may be empty)
     telegram.first_name    — sender's first name
     telegram.message_id    — original message ID (for reply_to)
-    telegram.message_type  — "text", "document", "photo", etc.
+    telegram.message_type  — "text", "document", "photo", "voice", "audio", etc.
 """
 
 import json
@@ -111,6 +111,7 @@ class TelegramReceiverTask(BaseTask):
         user_id = str(user.get("id", ""))
         username = user.get("username", "")
         first_name = user.get("first_name", "")
+        bot_token = str(update.get("_bot_token") or "")
 
         # Determine content and type; download media files
         if callback:
@@ -123,7 +124,7 @@ class TelegramReceiverTask(BaseTask):
             caption = msg.get("caption", "")
             file_id = msg["document"].get("file_id", "")
             file_name = msg["document"].get("file_name", "unknown")
-            file_data = self._try_download(file_id)
+            file_data = self._try_download(file_id, bot_token=bot_token)
             content = json.dumps({
                 "type": "document",
                 "file_id": file_id,
@@ -138,13 +139,13 @@ class TelegramReceiverTask(BaseTask):
             largest = photos[-1] if photos else {}
             caption = msg.get("caption", "")
             file_id = largest.get("file_id", "")
-            file_data = self._try_download(file_id)
+            file_data = self._try_download(file_id, bot_token=bot_token)
             content_text = caption or "(photo)"
             content = content_text.encode("utf-8")
             msg_type = "photo"
         elif "voice" in msg:
             file_id = msg["voice"].get("file_id", "")
-            file_data = self._try_download(file_id)
+            file_data = self._try_download(file_id, bot_token=bot_token)
             content = json.dumps({
                 "type": "voice",
                 "file_id": file_id,
@@ -152,6 +153,18 @@ class TelegramReceiverTask(BaseTask):
                 "data_base64": file_data,
             }).encode("utf-8")
             msg_type = "voice"
+        elif "audio" in msg:
+            file_id = msg["audio"].get("file_id", "")
+            file_data = self._try_download(file_id, bot_token=bot_token)
+            content = json.dumps({
+                "type": "audio",
+                "file_id": file_id,
+                "file_name": msg["audio"].get("file_name", "telegram_audio.ogg"),
+                "duration": msg["audio"].get("duration", 0),
+                "mime_type": msg["audio"].get("mime_type", "audio/ogg"),
+                "data_base64": file_data,
+            }).encode("utf-8")
+            msg_type = "audio"
         else:
             content = json.dumps(msg).encode("utf-8")
             msg_type = "other"
@@ -177,12 +190,16 @@ class TelegramReceiverTask(BaseTask):
         except queue.Full:
             logger.warning("telegramReceiver queue full, dropping message")
 
-    def _try_download(self, file_id: str) -> str:
+    def _try_download(self, file_id: str, bot_token: str = "") -> str:
         """Try to download a file from Telegram and return base64 data."""
         if not file_id:
             return ""
         try:
             import base64
+            if bot_token:
+                from services.telegram_bot_service import TelegramBotPool
+                data, _ = TelegramBotPool.instance().get_file_bytes(bot_token, file_id)
+                return base64.b64encode(data).decode("ascii")
             service_id = self.config.get("service_id", "")
             svc = self.get_service(service_id)
             if not svc:

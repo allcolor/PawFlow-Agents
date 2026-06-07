@@ -218,6 +218,64 @@ class TestTelegramReceiverTask(unittest.TestCase):
         assert ff.get_attribute("telegram.message_type") == "photo"
         # image_base64/image_file_id only set when download succeeds (no service in test)
 
+    def test_voice_download_uses_personal_bot_token(self):
+        from tasks.io.telegram_receiver import TelegramReceiverTask
+        task = TelegramReceiverTask({"service_id": "tg"})
+        task._registered = True
+
+        with patch("services.telegram_bot_service.TelegramBotPool.instance") as pool_instance:
+            pool = MagicMock()
+            pool.get_file_bytes.return_value = (b"voice-bytes", "voice/file.oga")
+            pool_instance.return_value = pool
+            task._on_update({
+                "update_id": 7,
+                "_bot_token": "personal-token",
+                "message": {
+                    "message_id": 46,
+                    "from": {"id": 123, "username": "testuser", "first_name": "Test"},
+                    "chat": {"id": 456},
+                    "voice": {"file_id": "voice_123", "duration": 2},
+                },
+            })
+
+        ff = task.execute()[0]
+        content = json.loads(ff.get_content().decode())
+        assert ff.get_attribute("telegram.message_type") == "voice"
+        assert base64.b64decode(content["data_base64"]) == b"voice-bytes"
+        pool.get_file_bytes.assert_called_once_with("personal-token", "voice_123")
+
+    def test_audio_message_is_marked_for_stt(self):
+        from tasks.io.telegram_receiver import TelegramReceiverTask
+        task = TelegramReceiverTask({"service_id": "tg"})
+        task._registered = True
+
+        with patch("services.telegram_bot_service.TelegramBotPool.instance") as pool_instance:
+            pool = MagicMock()
+            pool.get_file_bytes.return_value = (b"audio-bytes", "audio/file.mp3")
+            pool_instance.return_value = pool
+            task._on_update({
+                "update_id": 8,
+                "_bot_token": "personal-token",
+                "message": {
+                    "message_id": 47,
+                    "from": {"id": 123, "username": "testuser", "first_name": "Test"},
+                    "chat": {"id": 456},
+                    "audio": {
+                        "file_id": "audio_123",
+                        "file_name": "clip.mp3",
+                        "mime_type": "audio/mpeg",
+                        "duration": 3,
+                    },
+                },
+            })
+
+        ff = task.execute()[0]
+        content = json.loads(ff.get_content().decode())
+        assert ff.get_attribute("telegram.message_type") == "audio"
+        assert content["type"] == "audio"
+        assert content["mime_type"] == "audio/mpeg"
+        assert base64.b64decode(content["data_base64"]) == b"audio-bytes"
+
     def test_non_message_update_ignored(self):
         from tasks.io.telegram_receiver import TelegramReceiverTask
         task = TelegramReceiverTask({"service_id": "tg"})
@@ -412,6 +470,35 @@ class TestTelegramAgentClientTask(unittest.TestCase):
         registry.resolve.assert_called_once_with("stt1", user_id="alice", conv_id="conv1")
         assert svc.calls[0]["audio_bytes"] == b"audio"
         assert svc.calls[0]["mime_type"] == "audio/ogg"
+
+    def test_telegram_audio_uses_configured_stt_service(self):
+        from unittest.mock import patch
+        from tasks.io.telegram_agent_client import _transcribe_telegram_voice
+
+        class FakeSTT:
+            def transcribe(self, **kwargs):
+                self.kwargs = kwargs
+                return {"text": "transcribed audio"}
+
+        svc = FakeSTT()
+        registry = MagicMock()
+        registry.resolve.return_value = svc
+        store = MagicMock()
+        store.get_extra.return_value = {"assistant": "stt1"}
+        content = json.dumps({
+            "type": "audio",
+            "file_name": "clip.mp3",
+            "mime_type": "audio/mpeg",
+            "data_base64": base64.b64encode(b"audio").decode("ascii"),
+        })
+
+        with patch("core.conversation_store.ConversationStore.instance", return_value=store), \
+                patch("core.service_registry.ServiceRegistry.get_instance", return_value=registry):
+            text = _transcribe_telegram_voice(content, "alice", "conv1", "assistant")
+
+        assert text == "transcribed audio"
+        assert svc.kwargs["mime_type"] == "audio/mpeg"
+        assert svc.kwargs["filename"] == "clip.mp3"
 
     def test_agent_client_materializes_telegram_image_attachment(self):
         import shutil

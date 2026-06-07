@@ -490,7 +490,7 @@ class TestTelegramAgentClientTask(unittest.TestCase):
             ff.set_attribute("telegram.message_type", "voice")
 
             with patch.object(TelegramAgentClientTask, "_selected_agent_for_conversation", return_value="assistant"), \
-                    patch("tasks.io.telegram_agent_client._configured_stt_service_id", return_value=""), \
+                    patch("tasks.ai.actions.media.resolve_stt_service", return_value=(None, "no STT service available")), \
                     patch("core.agent_runtime_api.AgentRuntimeAPI.submit_message") as submit:
                 out = task.execute(ff)
 
@@ -520,21 +520,16 @@ class TestTelegramAgentClientTask(unittest.TestCase):
                 return {"text": "transcribed voice"}
 
         svc = FakeSTT()
-        registry = MagicMock()
-        registry.resolve.return_value = svc
-        store = MagicMock()
-        store.get_extra.return_value = {"assistant": "stt1"}
         content = json.dumps({
             "type": "voice",
             "data_base64": base64.b64encode(b"audio").decode("ascii"),
         })
 
-        with patch("core.conversation_store.ConversationStore.instance", return_value=store), \
-                patch("core.service_registry.ServiceRegistry.get_instance", return_value=registry):
+        with patch("tasks.ai.actions.media.resolve_stt_service", return_value=(svc, None)) as resolve:
             text = _transcribe_telegram_voice(content, "alice", "conv1", "assistant")
 
         assert text == "transcribed voice"
-        registry.resolve.assert_called_once_with("stt1", user_id="alice", conv_id="conv1")
+        resolve.assert_called_once_with("alice", "conv1", "assistant", ("transcribe",))
         if not svc.calls[0].get("audio_path"):
             assert svc.calls[0]["audio_bytes"] == b"audio"
         assert svc.calls[0]["mime_type"] == "audio/ogg"
@@ -562,12 +557,7 @@ class TestTelegramAgentClientTask(unittest.TestCase):
             ids.link("alice", "telegram", "telegram:111111")
             ids.set_active_conv("alice", "telegram", "conv1")
 
-            store = MagicMock()
-            store.get_extra.side_effect = lambda cid, key: (
-                {"assistant": "stt1"} if cid == "conv1" and key == "stt_services" else {}
-            )
-            registry = MagicMock()
-            registry.resolve.return_value = FakeSTT()
+            svc = FakeSTT()
 
             task = TelegramAgentClientTask({"agent_runtime_port": "pawflow_agent.agent_runtime_in"})
             ff = FlowFile(content=json.dumps({
@@ -580,8 +570,7 @@ class TestTelegramAgentClientTask(unittest.TestCase):
             ff.set_attribute("telegram.message_type", "voice")
 
             with patch.object(TelegramAgentClientTask, "_selected_agent_for_conversation", return_value="assistant"), \
-                    patch("core.conversation_store.ConversationStore.instance", return_value=store), \
-                    patch("core.service_registry.ServiceRegistry.get_instance", return_value=registry), \
+                    patch("tasks.ai.actions.media.resolve_stt_service", return_value=(svc, None)) as resolve, \
                     patch("core.agent_runtime_api.AgentRuntimeAPI.submit_message", return_value=type("Submission", (), {
                         "conversation_id": "conv1",
                         "turn_id": "telegram:111111:m1",
@@ -591,7 +580,7 @@ class TestTelegramAgentClientTask(unittest.TestCase):
                 out = task.execute(ff)
 
             assert out == []
-            registry.resolve.assert_called_once_with("stt1", user_id="alice", conv_id="conv1")
+            resolve.assert_called_once_with("alice", "conv1", "assistant", ("transcribe",))
             submit.assert_called_once()
             request = submit.call_args.args[0]
             assert request.user_id == "alice"
@@ -611,10 +600,6 @@ class TestTelegramAgentClientTask(unittest.TestCase):
                 return {"text": "transcribed audio"}
 
         svc = FakeSTT()
-        registry = MagicMock()
-        registry.resolve.return_value = svc
-        store = MagicMock()
-        store.get_extra.return_value = {"assistant": "stt1"}
         content = json.dumps({
             "type": "audio",
             "file_name": "clip.mp3",
@@ -622,63 +607,42 @@ class TestTelegramAgentClientTask(unittest.TestCase):
             "data_base64": base64.b64encode(b"audio").decode("ascii"),
         })
 
-        with patch("core.conversation_store.ConversationStore.instance", return_value=store), \
-                patch("core.service_registry.ServiceRegistry.get_instance", return_value=registry):
+        with patch("tasks.ai.actions.media.resolve_stt_service", return_value=(svc, None)):
             text = _transcribe_telegram_voice(content, "alice", "conv1", "assistant")
 
         assert text == "transcribed audio"
         assert svc.kwargs["mime_type"] == "audio/mpeg"
         assert svc.kwargs["filename"] == "clip.mp3"
 
-    def test_telegram_voice_prefers_voicebox_stt_when_no_conversation_preference(self):
+    def test_telegram_voice_uses_shared_stt_resolver(self):
         from unittest.mock import patch
         from tasks.io.telegram_agent_client import _transcribe_telegram_voice
 
         class FakeSTT:
             def transcribe(self, **kwargs):
-                return {"text": "auto transcribed"}
-
-        class FakeDef:
-            def __init__(self, service_id):
-                self.service_id = service_id
+                return {"text": "resolved transcribed"}
 
         svc = FakeSTT()
-        registry = MagicMock()
-        registry.resolve_by_type.side_effect = lambda service_type, **kwargs: {
-            "voicebox": [FakeDef("voicebox_service")],
-            "openaiCompatibleSTT": [FakeDef("openai_STT")],
-            "xaiSTT": [],
-        }.get(service_type, [])
-        registry.resolve.return_value = svc
-        store = MagicMock()
-        store.get_extra.return_value = {}
         content = json.dumps({
             "type": "voice",
             "data_base64": base64.b64encode(b"audio").decode("ascii"),
         })
 
-        with patch("core.conversation_store.ConversationStore.instance", return_value=store), \
-                patch("core.service_registry.ServiceRegistry.get_instance", return_value=registry):
+        with patch("tasks.ai.actions.media.resolve_stt_service", return_value=(svc, None)) as resolve:
             text = _transcribe_telegram_voice(content, "alice", "conv1", "assistant")
 
-        assert text == "auto transcribed"
-        registry.resolve.assert_called_once_with("voicebox_service", user_id="alice", conv_id="conv1")
+        assert text == "resolved transcribed"
+        resolve.assert_called_once_with("alice", "conv1", "assistant", ("transcribe",))
 
-    def test_telegram_voice_uses_parent_conversation_stt_preference(self):
+    def test_telegram_voice_passes_task_conversation_to_shared_stt_resolver(self):
         from unittest.mock import patch
         from tasks.io.telegram_agent_client import _transcribe_telegram_voice
 
         class FakeSTT:
             def transcribe(self, **kwargs):
-                return {"text": "parent transcribed"}
+                return {"text": "task transcribed"}
 
         svc = FakeSTT()
-        registry = MagicMock()
-        registry.resolve.return_value = svc
-        store = MagicMock()
-        store.get_extra.side_effect = lambda cid, key: (
-            {"assistant": "stt_parent"} if cid == "conv1" and key == "stt_services" else {}
-        )
         content = json.dumps({
             "type": "voice",
             "file_name": "telegram_voice.ogg",
@@ -686,19 +650,17 @@ class TestTelegramAgentClientTask(unittest.TestCase):
             "data_base64": base64.b64encode(b"audio").decode("ascii"),
         })
 
-        with patch("core.conversation_store.ConversationStore.instance", return_value=store), \
-                patch("core.service_registry.ServiceRegistry.get_instance", return_value=registry):
+        with patch("tasks.ai.actions.media.resolve_stt_service", return_value=(svc, None)) as resolve:
             text = _transcribe_telegram_voice(
                 content, "alice", "conv1::task::t123", "assistant")
 
-        assert text == "parent transcribed"
-        registry.resolve.assert_called_once_with(
-            "stt_parent", user_id="alice", conv_id="conv1::task::t123")
+        assert text == "task transcribed"
+        resolve.assert_called_once_with(
+            "alice", "conv1::task::t123", "assistant", ("transcribe",))
 
-    def test_telegram_voice_auto_selects_any_registered_stt_service(self):
-        from unittest.mock import patch
+    def test_shared_stt_resolver_auto_selects_any_registered_stt_service(self):
         from services.base_stt import BaseSTTService
-        from tasks.io.telegram_agent_client import _single_available_stt_service_id
+        from tasks.ai.actions.media import resolve_stt_service
 
         class CustomTelegramSTT(BaseSTTService):
             TYPE = "customTelegramSTT"
@@ -708,19 +670,26 @@ class TestTelegramAgentClientTask(unittest.TestCase):
 
         class FakeDef:
             service_id = "custom_stt"
+            service_type = "customTelegramSTT"
+            scope = "global"
+            scope_id = ""
 
+        svc = CustomTelegramSTT({})
         ServiceFactory.register(CustomTelegramSTT)
         registry = MagicMock()
         registry.resolve_by_type.side_effect = lambda service_type, **kwargs: (
             [FakeDef()] if service_type == "customTelegramSTT" else []
         )
+        registry.resolve.return_value = svc
         try:
             with patch("core.service_registry.ServiceRegistry.get_instance", return_value=registry):
-                service_id = _single_available_stt_service_id("alice", "conv1")
+                resolved, err = resolve_stt_service("alice", "conv1", "assistant")
         finally:
             ServiceFactory._services.pop("customTelegramSTT", None)
 
-        assert service_id == "custom_stt"
+        assert resolved is svc
+        assert err is None
+        registry.resolve.assert_called_once_with("custom_stt", user_id="alice", conv_id="conv1")
 
     def test_agent_client_materializes_telegram_image_attachment(self):
         import shutil
@@ -1240,6 +1209,17 @@ class TestTelegramAgentClientTask(unittest.TestCase):
 
         assert _remove_forwarded_telegram_live_text("conv1", result) == "Corrigé."
         assert "conv1" not in _TELEGRAM_LIVE_SENT_TEXT_BY_TURN
+
+    def test_conversation_bridge_never_sends_done_as_chat_message(self):
+        from tasks.io.telegram_agent_client import TelegramConversationBridgeTask
+
+        task = TelegramConversationBridgeTask({"service_id": "telegram_bot"})
+
+        with patch.object(TelegramConversationBridgeTask, "_telegram_subscribers", return_value=[("alice", "chat-1")]), \
+                patch.object(TelegramConversationBridgeTask, "_send") as send:
+            task._on_event("conv1", "done", {"response": "concaténé", "agent_name": "assistant"})
+
+        send.assert_not_called()
 
     def test_agent_client_does_not_send_done_aggregate_after_live_assistant_message(self):
         import shutil

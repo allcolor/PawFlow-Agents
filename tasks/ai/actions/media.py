@@ -7,15 +7,28 @@ import threading
 import base64
 import os
 import shutil
-import subprocess  # nosec B404 - ffmpeg conversion uses fixed argv without shell.
+import subprocess  # nosec B404
 import tempfile
 from typing import Dict, Any, List, Optional
 
 from core import FlowFile
 from core.llm_client import LLMMessage, LLMClient
 from core.tool_registry import ToolRegistry
+from tasks.ai.agent_utils import AgentUtilsMixin
 
 logger = logging.getLogger(__name__)
+
+
+class _STTResolver(AgentUtilsMixin):
+    pass
+
+
+def resolve_stt_service(user_id: str, conversation_id: str, agent_name: str,
+                        required_methods=("transcribe",)):
+    """Resolve STT exactly like the conversation STT action."""
+    resolver = _STTResolver()._make_stt_resolver(
+        user_id, conversation_id, agent_name, required_methods)
+    return resolver()
 
 
 def _convert_stt_audio_to_wav(audio_bytes: bytes, mime_type: str, filename: str) -> tuple[bytes, str, str]:
@@ -35,7 +48,7 @@ def _convert_stt_audio_to_wav(audio_bytes: bytes, mime_type: str, filename: str)
             in_fh.write(audio_bytes)
         with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as out_fh:
             dst = out_fh.name
-        subprocess.check_call([  # nosec B603 - fixed ffmpeg argv, temp files are local and shell=False.
+        subprocess.check_call([  # nosec B603
             ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
             "-i", src, "-ac", "1", "-ar", "16000", dst,
         ])
@@ -54,6 +67,13 @@ def _convert_stt_audio_to_wav(audio_bytes: bytes, mime_type: str, filename: str)
 
 def _stt_service_accepts_browser_audio(service) -> bool:
     return bool(getattr(service, "ACCEPTS_BROWSER_STT_AUDIO", False))
+
+
+def prepare_stt_audio_for_service(service, audio_bytes: bytes, mime_type: str,
+                                  filename: str) -> tuple[bytes, str, str]:
+    if _stt_service_accepts_browser_audio(service):
+        return audio_bytes, mime_type, filename
+    return _convert_stt_audio_to_wav(audio_bytes, mime_type, filename)
 
 
 def _handle_media(self, action, body, store, user_id, flowfile):
@@ -89,19 +109,18 @@ def _handle_media(self, action, body, store, user_id, flowfile):
                 svc = None
                 err = f"STT service '{service_name}' failed to resolve: {exc}"
         else:
-            resolver = self._make_stt_resolver(
+            svc, err = resolve_stt_service(
                 user_id, conv_id, agent_name, ("transcribe",))
-            svc, err = resolver()
         if not svc:
             flowfile.set_content(json.dumps({"error": err or "no STT service available"}).encode())
             return [flowfile]
-        if not _stt_service_accepts_browser_audio(svc):
-            try:
-                audio_bytes, mime_type, filename = _convert_stt_audio_to_wav(audio_bytes, mime_type, filename)
-            except Exception as exc:
-                logger.exception("[STT] audio conversion failed")
-                flowfile.set_content(json.dumps({"error": f"audio conversion failed: {exc}"}).encode())
-                return [flowfile]
+        try:
+            audio_bytes, mime_type, filename = prepare_stt_audio_for_service(
+                svc, audio_bytes, mime_type, filename)
+        except Exception as exc:
+            logger.exception("[STT] audio conversion failed")
+            flowfile.set_content(json.dumps({"error": f"audio conversion failed: {exc}"}).encode())
+            return [flowfile]
         logger.info(
             "[STT] transcribe requested: service=%s bytes=%d mime=%s filename=%s conv=%s",
             service_name or getattr(svc, "NAME", "<auto>"), len(audio_bytes), mime_type, filename,

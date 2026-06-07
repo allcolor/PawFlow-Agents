@@ -854,7 +854,7 @@ class TelegramConversationBridgeTask(BaseTask):
 
     def _on_event(self, conversation_id: str, event_type: str, data: Any) -> None:
         if event_type not in {
-                "new_message", "done", "thinking",
+                "new_message", "thinking",
                 "thinking_delta", "thinking_content", "tool_call",
                 "tool_result"}:
             return
@@ -871,7 +871,7 @@ class TelegramConversationBridgeTask(BaseTask):
         if (event_type == "new_message" and data.get("role") == "user"
                 and _is_telegram_origin_event(data)):
             return
-        text = self._format_event(event_type, data)
+        text = self._format_event(event_type, data, conversation_id=conversation_id)
         if not text and event_type != "tool_result":
             return
         if event_type in {"thinking", "iteration_status", "thinking_delta", "thinking_content"}:
@@ -912,7 +912,8 @@ class TelegramConversationBridgeTask(BaseTask):
             if msg_id:
                 _TELEGRAM_LIVE_TEXT_BY_TURN.setdefault(conversation_id, {})[msg_id] = str(data.get("content") or "").strip()
 
-    def _format_event(self, event_type: str, data: Dict[str, Any]) -> str:
+    def _format_event(self, event_type: str, data: Dict[str, Any],
+                      conversation_id: str = "") -> str:
         if event_type == "new_message":
             role = data.get("role") or ""
             if role not in {"user", "assistant"}:
@@ -924,10 +925,6 @@ class TelegramConversationBridgeTask(BaseTask):
             attachment_text = _format_attachment_summary(attachments)
             parts = [html.escape(part) for part in (content, attachment_text) if part]
             return f"{name}\n{' '.join(parts)}" if parts else ""
-        if event_type == "done":
-            agent = _telegram_agent_badge(data)
-            response = str(data.get("response") or "").strip()
-            return f"{agent}\n{html.escape(response)}" if response else ""
         if event_type == "error_event":
             return ""
         if event_type == "thinking":
@@ -1204,9 +1201,16 @@ def _load_filestore_media(file_id: str, user_id: str):
 def _remove_forwarded_telegram_live_text(conversation_id: str, result) -> str:
     response = str(getattr(result, "response", "") or "")
     data = getattr(result, "data", {}) if result is not None else {}
+    return _remove_forwarded_telegram_live_response(conversation_id, response, data)
+
+
+def _remove_forwarded_telegram_live_response(conversation_id: str, response: str,
+                                             data: Dict[str, Any]) -> str:
     all_msg_ids = data.get("all_msg_ids") if isinstance(data, dict) else []
-    if not response or not isinstance(all_msg_ids, list):
+    if not response:
         return response
+    if not isinstance(all_msg_ids, list):
+        all_msg_ids = []
     live_sent = _TELEGRAM_LIVE_SENT_TEXT_BY_TURN.get(conversation_id) or []
     for live_text in list(live_sent):
         response = _remove_one_forwarded_text(response, live_text)
@@ -1397,14 +1401,6 @@ def _transcribe_telegram_voice(
             conversation_id,
         )
         return ""
-    service_id = _configured_stt_service_id(conversation_id, agent_name, user_id=user_id)
-    if not service_id:
-        logger.info(
-            "Telegram voice STT skipped for %s: no STT service configured for agent=%s",
-            conversation_id,
-            agent_name,
-        )
-        return ""
     try:
         audio_bytes = base64.b64decode(audio_b64)
     except Exception:
@@ -1417,12 +1413,18 @@ def _transcribe_telegram_voice(
         )
         return ""
     try:
-        from core.service_registry import ServiceRegistry
-        svc = ServiceRegistry.get_instance().resolve(
-            service_id, user_id=user_id, conv_id=conversation_id)
+        from tasks.ai.actions.media import resolve_stt_service
+
+        svc, err = resolve_stt_service(
+            user_id, conversation_id, agent_name, ("transcribe",))
         if not svc or not callable(getattr(svc, "transcribe", None)):
-            logger.warning("Telegram voice STT service not available: %s", service_id)
+            logger.info(
+                "Telegram voice STT skipped for %s: %s",
+                conversation_id,
+                err or "no STT service available",
+            )
             return ""
+        service_id = str(getattr(svc, "service_id", "") or getattr(svc, "NAME", "") or "<resolved>")
         if hasattr(svc, "set_runtime_context"):
             svc.set_runtime_context(
                 user_id=user_id, conversation_id=conversation_id,
@@ -1433,9 +1435,9 @@ def _transcribe_telegram_voice(
         original_mime_type = mime_type
         original_filename = filename
         try:
-            from tasks.ai.actions.media import _convert_stt_audio_to_wav
-            audio_bytes, mime_type, filename = _convert_stt_audio_to_wav(
-                audio_bytes, mime_type, filename)
+            from tasks.ai.actions.media import prepare_stt_audio_for_service
+            audio_bytes, mime_type, filename = prepare_stt_audio_for_service(
+                svc, audio_bytes, mime_type, filename)
         except Exception as exc:
             logger.warning(
                 "Telegram voice STT audio conversion failed; forwarding original audio: %s",
@@ -1497,67 +1499,6 @@ def _transcribe_telegram_voice(
                 FileStore.instance().delete(stt_file_id, user_id=user_id)
             except Exception:
                 logger.debug("Telegram voice STT transient FileStore cleanup failed", exc_info=True)
-
-
-def _configured_stt_service_id(conversation_id: str, agent_name: str,
-                               user_id: str = "") -> str:
-    if not conversation_id:
-        return ""
-    lookup_ids = [conversation_id]
-    if "::task::" in conversation_id:
-        lookup_ids.append(conversation_id.split("::task::", 1)[0])
-    if "::task_verify::" in conversation_id:
-        lookup_ids.append(conversation_id.split("::task_verify::", 1)[0])
-    try:
-        from core.conversation_store import ConversationStore
-        store = ConversationStore.instance()
-        prefs = {}
-        for cid in lookup_ids:
-            prefs = store.get_extra(cid, "stt_services") or {}
-            if prefs:
-                break
-    except Exception:
-        logger.debug("Telegram voice STT preference lookup failed", exc_info=True)
-        return ""
-    if not isinstance(prefs, dict):
-        return ""
-    service_id = str(prefs.get(agent_name or "agent") or prefs.get("*") or "").strip()
-    if service_id:
-        return service_id
-    return _single_available_stt_service_id(user_id, conversation_id)
-
-
-def _single_available_stt_service_id(user_id: str, conversation_id: str) -> str:
-    try:
-        from core import ServiceFactory
-        from core.service_registry import ServiceRegistry
-        from services.base_stt import BaseSTTService
-        from tasks import _register_all_services
-
-        _register_all_services()
-        service_types = []
-        for service_type, service_class in ServiceFactory._services.items():
-            try:
-                if issubclass(service_class, BaseSTTService):
-                    service_types.append(service_type)
-            except TypeError:
-                continue
-        service_types = sorted(service_types, key=lambda item: (item != "voicebox", item))
-
-        reg = ServiceRegistry.get_instance()
-        candidates = []
-        for service_type in service_types:
-            candidates.extend(reg.resolve_by_type(
-                service_type, user_id=user_id, conv_id=conversation_id))
-        service_ids = [str(getattr(s, "service_id", "") or "") for s in candidates]
-        service_ids = [sid for sid in service_ids if sid]
-        if "voicebox_service" in service_ids:
-            return "voicebox_service"
-        return service_ids[0] if service_ids else ""
-    except Exception:
-        logger.debug("Telegram voice STT auto-selection failed", exc_info=True)
-        return ""
-
 
 def _configured_tts_service_id(conversation_id: str, agent_name: str) -> str:
     if not conversation_id:

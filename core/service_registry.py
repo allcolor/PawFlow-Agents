@@ -997,12 +997,19 @@ class ServiceRegistry:
                     result.append(sdef)
                     seen.add(seen_key)
             return result
-        return [
-            sdef for sdef in self.resolve_all(
-                user_id=user_id, conv_id=conv_id,
-                enabled_only=enabled_only).values()
-            if sdef.service_type == service_type
-        ]
+        result: Dict[str, ServiceDef] = {}
+        for scope, sid in reversed(list(
+                self._scope_chain(user_id=user_id, conv_id=conv_id))):
+            self._ensure_loaded(scope, sid)
+            rsid = self._resolve_scope_id(scope, sid)
+            with self._data_lock:
+                for svc_id, sdef in self._definitions.get(rsid, {}).items():
+                    if sdef.service_type != service_type:
+                        continue
+                    if enabled_only and not sdef.enabled:
+                        continue
+                    result[svc_id] = sdef
+        return list(result.values())
 
     def resolve_all(self, *, user_id: str = "", conv_id: str = "",
                     enabled_only: bool = False) -> Dict[str, ServiceDef]:

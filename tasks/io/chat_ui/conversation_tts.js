@@ -95,7 +95,9 @@ function refreshConversationTTSServices(startAfterRefresh) {
   if (_convTtsRefreshInFlight) return;
   if (typeof action$ !== 'function') { _convTtsUpdateButton(); return; }
   _convTtsRefreshInFlight = true;
-  action$('list_tts_services', {}, { silent: true }).subscribe(data => {
+  action$('list_tts_services', {
+    conversation_id: conversationId,
+  }, { silent: true }).subscribe(data => {
     _convTtsRefreshInFlight = false;
     const services = Array.isArray(data) ? data : ((data && data.services) || []);
     _convTtsSetServices(services);

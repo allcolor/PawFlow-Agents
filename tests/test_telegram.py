@@ -512,6 +512,9 @@ class TestTelegramAgentClientTask(unittest.TestCase):
 
             def transcribe(self, **kwargs):
                 self.calls.append(kwargs)
+                if kwargs.get("audio_path"):
+                    assert Path(kwargs["audio_path"]).read_bytes() == b"audio"
+                    assert kwargs["audio_bytes"] == b""
                 return {"text": "transcribed voice"}
 
         svc = FakeSTT()
@@ -530,7 +533,8 @@ class TestTelegramAgentClientTask(unittest.TestCase):
 
         assert text == "transcribed voice"
         registry.resolve.assert_called_once_with("stt1", user_id="alice", conv_id="conv1")
-        assert svc.calls[0]["audio_bytes"] == b"audio"
+        if not svc.calls[0].get("audio_path"):
+            assert svc.calls[0]["audio_bytes"] == b"audio"
         assert svc.calls[0]["mime_type"] == "audio/ogg"
 
     def test_telegram_audio_uses_configured_stt_service(self):

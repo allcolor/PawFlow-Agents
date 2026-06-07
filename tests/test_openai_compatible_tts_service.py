@@ -74,6 +74,43 @@ def test_media_discovery_returns_installed_openai_compatible_tts_after_late_impo
     ServiceRegistry.reset()
 
 
+def test_media_discovery_returns_conversation_scoped_openai_compatible_tts(monkeypatch, tmp_path):
+    import core.service_registry as service_registry_mod
+    from core.service_registry import SCOPE_CONV, ServiceRegistry
+    from services.base_tts import BaseTTSService
+    from tasks.ai.agent_loop import AgentLoopTask
+
+    ServiceRegistry.reset()
+    monkeypatch.setattr(
+        service_registry_mod,
+        "_global_services_dir",
+        lambda: tmp_path / "global_services",
+    )
+    monkeypatch.setattr(
+        service_registry_mod,
+        "_user_services_dir",
+        lambda: tmp_path / "user_services",
+    )
+    reg = ServiceRegistry.get_instance()
+    reg.install(
+        SCOPE_CONV,
+        "conv1",
+        "openai_TTS",
+        "openaiCompatibleTTS",
+        config={"api_key": "", "response_format": "wav"},
+        enabled=True,
+    )
+
+    without_conv = AgentLoopTask({})._discover_media_services(
+        "alice", BaseTTSService, "")
+    with_conv = AgentLoopTask({})._discover_media_services(
+        "alice", BaseTTSService, "conv1")
+
+    assert all(sid != "openai_TTS" for sid, _stype, _scope in without_conv)
+    assert any(sid == "openai_TTS" for sid, _stype, _scope in with_conv)
+    ServiceRegistry.reset()
+
+
 def test_openai_compatible_tts_posts_openai_speech_json(monkeypatch):
     captured = {}
 

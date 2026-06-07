@@ -1313,6 +1313,7 @@ def _attach_telegram_tts_audio(
 def _transcribe_telegram_voice(
     content: str, user_id: str, conversation_id: str, agent_name: str,
 ) -> str:
+    stt_file_id = ""
     try:
         payload = json.loads(content or "{}")
     except json.JSONDecodeError:
@@ -1343,15 +1344,51 @@ def _transcribe_telegram_voice(
             svc.set_runtime_context(
                 user_id=user_id, conversation_id=conversation_id,
                 agent_name=agent_name)
+        mime_type = str(payload.get("mime_type") or "audio/ogg")
+        filename = str(payload.get("file_name") or "telegram_voice.ogg")
+        try:
+            from tasks.ai.actions.media import _convert_stt_audio_to_wav
+            audio_bytes, mime_type, filename = _convert_stt_audio_to_wav(
+                audio_bytes, mime_type, filename)
+        except Exception as exc:
+            logger.warning(
+                "Telegram voice STT audio conversion failed; forwarding original audio: %s",
+                exc,
+                exc_info=True,
+            )
+        audio_path = ""
+        if user_id and conversation_id:
+            try:
+                from core.file_store import FileStore
+                stt_file_id = FileStore.instance().store(
+                    filename, audio_bytes, mime_type,
+                    conversation_id=conversation_id,
+                    user_id=user_id,
+                    ttl=300,
+                    agent_name=agent_name,
+                    category="telegram_stt",
+                )
+                disk_path = FileStore.instance().get_disk_path(stt_file_id, user_id=user_id)
+                audio_path = str(disk_path) if disk_path else ""
+            except Exception as exc:
+                logger.debug("Telegram voice STT transient FileStore staging skipped: %s", exc)
         result = svc.transcribe(
-            audio_bytes=audio_bytes,
-            mime_type=str(payload.get("mime_type") or "audio/ogg"),
-            filename=str(payload.get("file_name") or "telegram_voice.ogg"),
+            audio_bytes=b"" if audio_path else audio_bytes,
+            audio_path=audio_path,
+            mime_type=mime_type,
+            filename=filename,
         )
         return str((result or {}).get("text") or "").strip()
     except Exception as exc:
         logger.warning("Telegram voice STT failed: %s", exc, exc_info=True)
         return ""
+    finally:
+        if stt_file_id:
+            try:
+                from core.file_store import FileStore
+                FileStore.instance().delete(stt_file_id, user_id=user_id)
+            except Exception:
+                logger.debug("Telegram voice STT transient FileStore cleanup failed", exc_info=True)
 
 
 def _configured_stt_service_id(conversation_id: str, agent_name: str,

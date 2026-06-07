@@ -344,6 +344,19 @@ class TestResolutionChain:
         assert "global_only" in ids
         assert "user_only" in ids
 
+    def test_resolve_by_type_deduplicates_after_type_filtering(self):
+        from core.service_registry import SCOPE_CONV
+
+        self.reg.install(SCOPE_CONV, "conv1", "global_only", "httpClientService",
+                         config={"source": "conv-other"})
+
+        defs = self.reg.resolve_by_type(
+            SVC_TYPE, user_id="alice", conv_id="conv1")
+        ids = {d.service_id for d in defs}
+
+        assert "global_only" in ids
+        assert next(d for d in defs if d.service_id == "global_only").service_type == SVC_TYPE
+
     def test_resolve_by_type_no_user(self):
         defs = self.reg.resolve_by_type(SVC_TYPE)
         ids = {d.service_id for d in defs}

@@ -84,7 +84,9 @@ function refreshConversationSTTServices(startAfterRefresh) {
   if (_convSttRefreshInFlight) return;
   if (typeof action$ !== 'function') { _convSttUpdateButton(); return; }
   _convSttRefreshInFlight = true;
-  action$('list_stt_services', {}, { silent: true }).subscribe(data => {
+  action$('list_stt_services', {
+    conversation_id: conversationId,
+  }, { silent: true }).subscribe(data => {
     _convSttRefreshInFlight = false;
     const services = Array.isArray(data) ? data : ((data && data.services) || []);
     _convSttSetServices(services);

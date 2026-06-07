@@ -806,6 +806,30 @@ class AgentCompactionMixin(AgentSummarizeMixin):
         # closure — re-binding it is how 2c takes effect.
         _pyramid_header = (
             _bucket_store.assemble_summary_header() if _bucket_store else "")
+        try:
+            from core.conversation_store import ConversationStore
+            _restart_ctx = ConversationStore.instance().get_extra(
+                conversation_id, "_restart_from_context") or {}
+        except Exception:
+            logger.debug("restart_from context lookup failed", exc_info=True)
+            _restart_ctx = {}
+        if _pyramid_header and isinstance(_restart_ctx, dict):
+            _restart_msg_id = str(_restart_ctx.get("msg_id") or "").strip()
+            _restart_boundary = str(
+                _restart_ctx.get("boundary_msg_id") or "").strip()
+            if _restart_msg_id:
+                _restart_note = (
+                    "\n[Restart context]\n"
+                    f"Conversation was restarted from msg_id {_restart_msg_id}. "
+                    "Treat summary details after that point as pre-restart "
+                    "history, not current conversation state."
+                )
+                if _restart_boundary:
+                    _restart_note += (
+                        f" The transcript was kept through msg_id "
+                        f"{_restart_boundary}."
+                    )
+                _pyramid_header += _restart_note + "\n"
 
         def _build_output(saved: List[LLMMessage]) -> List[LLMMessage]:
             """Assemble system + pyramid_header (context bridge) + saved.

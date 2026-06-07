@@ -348,6 +348,36 @@ class TestGlobalScopeBlocked:
         assert dr.deploy.call_args.kwargs["conversation_id"] == "conv1"
         assert dr.deploy.call_args.kwargs["agent_name"] == "agentA"
 
+    def test_admin_deploy_flow_global_uses_global_owner(self):
+        """Direct global deployment must create a global instance, not a user one."""
+        from pathlib import Path
+        from tasks.ai.actions.service_flow import _handle_service_flow
+
+        task = self._get_agent_loop()
+        ff = self._make_flowfile({
+            "action": "deploy_flow",
+            "template_id": "pkg.flow:1.0.0",
+            "scope": "global",
+        })
+        ff.set_attribute("http.auth.roles", "admin")
+        dr = MagicMock()
+        dr.deploy.return_value = "flow1"
+        dr.get.return_value = None
+        with patch("tasks.ai.actions.service_flow._resolve_flow_template_path", return_value=Path("/tmp/flow.json")), \
+                patch("pathlib.Path.read_text", return_value=json.dumps({
+                    "id": "flow", "name": "Flow", "scope": "independent",
+                })), \
+                patch("core.deployment_registry.DeploymentRegistry.get_instance", return_value=dr):
+            result = _handle_service_flow(
+                task, "deploy_flow", json.loads(ff.get_content()), None,
+                "test_user", ff)
+
+        assert result is not None
+        body = json.loads(result[0].get_content())
+        assert body["scope"] == "global"
+        assert dr.deploy.call_args.kwargs["owner"] is None
+        assert dr.deploy.call_args.kwargs["conversation_id"] is None
+
     def test_demote_global_flow_requires_admin(self):
         """Moving a global flow down to user scope also modifies global state."""
         from types import SimpleNamespace

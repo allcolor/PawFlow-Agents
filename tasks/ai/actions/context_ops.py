@@ -1478,11 +1478,12 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
                 store.invalidate_claude_sessions(conv_id)
             elif drop_ids:
                 store._remove_msg_ids_from_files(conv_id, drop_ids)
-            try:
-                from core.bucket_store import BucketStore
-                BucketStore.get(store._conv_dir(conv_id)).wipe()
-            except Exception:
-                logger.debug("restart_from bucket wipe failed", exc_info=True)
+            store.set_extra(conv_id, "_restart_from_context", {
+                "msg_id": _rf_target or "",
+                "boundary_msg_id": truncate_boundary_msg_id or "",
+                "restart_original_msg_id": restart_original_msg_id or "",
+                "restart_index": kept_message_count,
+            })
             return {
                 "operation": "restart_from",
                 "kept_messages": kept_message_count,

@@ -1335,6 +1335,9 @@ class TestAgentLoopPersistentContext(unittest.TestCase):
         assert user_data["result"]["restart_index"] == 2
         assert user_data["result"]["restart_original_msg_id"] == "c3"
         assert user_data["result"]["restart_prompt_text"] == "c"
+        restart_ctx = store.get_extra("cx5", "_restart_from_context")
+        assert restart_ctx["msg_id"] == "c3"
+        assert restart_ctx["boundary_msg_id"] == "b2"
         assert [m["msg_id"] for m in store.load("cx5", user_id="testuser")] == ["a1", "b2"]
 
         store.save_agent_context("cx5", "assistant", [

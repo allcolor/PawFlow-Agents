@@ -177,7 +177,13 @@ class IdentityService:
     def resolve_user(self, channel: str, channel_id: str) -> Optional[str]:
         """Resolve a channel identity to a principal user_id. O(1) lookup."""
         data = self._read_mapping(channel_id)
-        return data.get("principal") or None
+        principal = data.get("principal")
+        if principal:
+            return principal
+        if channel and channel_id and ":" not in channel_id:
+            data = self._read_mapping(f"{channel}:{channel_id}")
+            return data.get("principal") or None
+        return None
 
     def get_channel_id(self, user_id: str, channel: str) -> Optional[str]:
         """Get the channel ID for a user."""

@@ -2759,17 +2759,21 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                             {"error": f"Unknown one-shot trigger(s): {invalid}"}).encode())
                         flowfile.set_attribute("http.response.status", "400")
                         return [flowfile]
-                reg._restore_instance(iid, inst.flow_path,
-                                       inst.max_workers, inst.max_retries,
-                                       flow_fqn=getattr(inst, "flow_fqn", "") or "",
-                                       flow_scope=getattr(inst, "flow_scope", "") or "",
-                                       parameters=inst.parameters,
-                                       service_overrides=inst.service_overrides,
-                                       service_configs=inst.service_configs,
-                                       owner=inst.owner or "",
-                                       conversation_id=inst.conversation_id or "",
-                                       agent_name=getattr(inst, "agent_name", "") or "",
-                                       enabled_one_shot_root_task_ids=selected_trigger_ids)
+                restored = reg._restore_instance(iid, inst.flow_path,
+                                                 inst.max_workers, inst.max_retries,
+                                                 flow_fqn=getattr(inst, "flow_fqn", "") or "",
+                                                 flow_scope=getattr(inst, "flow_scope", "") or "",
+                                                 parameters=inst.parameters,
+                                                 service_overrides=inst.service_overrides,
+                                                 service_configs=inst.service_configs,
+                                                 owner=inst.owner or "",
+                                                 conversation_id=inst.conversation_id or "",
+                                                 agent_name=getattr(inst, "agent_name", "") or "",
+                                                 enabled_one_shot_root_task_ids=selected_trigger_ids)
+                if not restored:
+                    flowfile.set_content(json.dumps({"error": "Failed to start flow"}).encode())
+                    flowfile.set_attribute("http.response.status", "500")
+                    return [flowfile]
                 flowfile.set_content(json.dumps({"ok": True, "status": "running"}).encode())
             elif action == "undeploy_flow":
                 ex = reg.get(iid)
@@ -2922,7 +2926,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             dr = DeploymentRegistry.get_instance()
             iid = dr.deploy(
                 template_path=str(tpath),
-                owner=uid,
+                owner=None if deploy_scope == "global" else uid,
                 parameters=params,
                 source="agent",
                 conversation_id=conv_id if deploy_scope == "conversation" else None,

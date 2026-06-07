@@ -45,6 +45,23 @@ ANTHROPIC_RESPONSE = {
 }
 
 
+def test_transport_stream_disconnect_is_retryable_marker():
+    err = (
+        "codex app-server error: {'message': 'Reconnecting... 2/5', "
+        "'codexErrorInfo': {'responseStreamDisconnected': {'httpStatusCode': None}}, "
+        "'additionalDetails': 'stream disconnected before completion: "
+        "websocket closed by server before response.completed'}"
+    )
+
+    assert LLMClient._is_transient_transport_error(err) is True
+
+
+def test_non_transport_cli_exit_is_not_retryable_marker():
+    err = "Claude CLI stream exited with code 1"
+
+    assert LLMClient._is_transient_transport_error(err) is False
+
+
 class TestLLMConnectionService:
 
     def test_register(self):

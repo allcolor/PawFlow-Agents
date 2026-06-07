@@ -835,6 +835,18 @@ class LLMClient(
                 pass
         return 2.0  # default wait
 
+    @staticmethod
+    def _is_transient_transport_error(error_text: str) -> bool:
+        """Return True for provider transport drops that are safe to retry."""
+        text = (error_text or "").lower()
+        return any(marker in text for marker in (
+            "responsestreamdisconnected",
+            "stream disconnected before completion",
+            "websocket closed by server",
+            "connection closed before completion",
+            "connection reset by peer",
+        ))
+
     def _report_tokens(self, response, messages):
         """Report token usage via callback if set. Estimates if not returned by provider."""
         if not self._on_tokens:
@@ -1078,8 +1090,9 @@ class LLMClient(
                 _other_code_re = re.compile(
                     r'\b(503|502|reset|timeout|api_error|server_error)\b',
                     re.IGNORECASE)
+                is_transport_drop = self._is_transient_transport_error(err_str)
                 retryable = (
-                    (is_429 or is_529 or is_500
+                    (is_429 or is_529 or is_500 or is_transport_drop
                      or bool(_other_code_re.search(err_str)))
                     and not _is_cc_our_exit)
                 if retryable and attempt < self.max_retries:
@@ -1328,9 +1341,11 @@ class LLMClient(
                 _other_code_re = re.compile(
                     r'\b(503|502|reset|timeout|api_error|server_error)\b',
                     re.IGNORECASE)
+                is_transport_drop = self._is_transient_transport_error(err_str)
                 retryable = (
                     (is_429 or is_529 or is_500 or is_compact_stall
-                     or is_tool_stall or bool(_other_code_re.search(err_str)))
+                     or is_tool_stall or is_transport_drop
+                     or bool(_other_code_re.search(err_str)))
                     and not _is_cc_our_exit)
 
                 if is_529:

@@ -7,6 +7,7 @@ running a separate Telegram-only AgentLoopTask.
 from __future__ import annotations
 
 import logging
+import base64
 import json
 import shlex
 import threading
@@ -87,12 +88,48 @@ class TelegramAgentClientTask(BaseTask):
             )
             return [flowfile]
 
+        if flowfile.get_attribute("telegram.message_type") == "voice":
+            transcribed = _transcribe_telegram_voice(
+                text, user_id, conversation_id, target_agent)
+            if not transcribed:
+                logger.info(
+                    "Ignoring Telegram voice message for %s: no configured STT or empty transcription",
+                    conversation_id,
+                )
+                return []
+            text = transcribed
+
+        attachments = []
+        image_base64 = flowfile.get_attribute("telegram.image_base64") or ""
+        if image_base64:
+            attachment = {
+                "filename": "telegram_photo.jpg",
+                "mime_type": "image/jpeg",
+                "data": image_base64,
+            }
+            try:
+                raw = base64.b64decode(image_base64)
+                from core.file_store import FileStore
+                file_id = FileStore.instance().store(
+                    "telegram_photo.jpg", raw, "image/jpeg",
+                    conversation_id=conversation_id,
+                    user_id=user_id,
+                    agent_name=target_agent,
+                    category="attachment",
+                )
+                attachment["file_id"] = file_id
+                attachment["url"] = f"/files/{file_id}/telegram_photo.jpg"
+            except Exception as exc:
+                logger.warning("Telegram image FileStore materialization failed: %s", exc, exc_info=True)
+            attachments.append(attachment)
+
         msg_id = f"telegram:{chat_id}:{flowfile.get_attribute('telegram.message_id') or ''}"
         request = AgentRequest(
             user_id=user_id,
             conversation_id=conversation_id,
             target_agent=target_agent,
             message=text,
+            attachments=attachments,
             msg_id=msg_id,
             channel="telegram",
             runtime_port=str(self.config.get("agent_runtime_port") or "").strip(),
@@ -719,7 +756,14 @@ class TelegramConversationBridgeTask(BaseTask):
         text = self._format_event(event_type, data)
         if not text:
             return
-        for user_id, chat_id in self._telegram_subscribers(conversation_id):
+        subscribers = list(self._telegram_subscribers(conversation_id, data))
+        if not subscribers:
+            logger.info(
+                "Telegram bridge skipped event for %s: no active Telegram subscriber",
+                conversation_id,
+            )
+            return
+        for user_id, chat_id in subscribers:
             self._send(user_id, chat_id, text)
 
     def _format_event(self, event_type: str, data: Dict[str, Any]) -> str:
@@ -729,7 +773,10 @@ class TelegramConversationBridgeTask(BaseTask):
             source = data.get("source") if isinstance(data.get("source"), dict) else {}
             name = source.get("name") or data.get("channel") or "user"
             content = str(data.get("content") or "").strip()
-            return f"[{name}] {content}" if content else ""
+            attachments = data.get("attachments") if isinstance(data.get("attachments"), list) else []
+            attachment_text = _format_attachment_summary(attachments)
+            parts = [part for part in (content, attachment_text) if part]
+            return f"[{name}] {' '.join(parts)}" if parts else ""
         if event_type == "done":
             agent = data.get("agent_name") or "assistant"
             response = str(data.get("response") or "").strip()
@@ -740,15 +787,46 @@ class TelegramConversationBridgeTask(BaseTask):
         return ""
 
     @staticmethod
-    def _telegram_subscribers(conversation_id: str):
+    def _telegram_subscribers(conversation_id: str, data: Optional[Dict[str, Any]] = None):
         from core.identity_service import IdentityService
         ids = IdentityService.instance()
-        for user_id, links in ids.list_all().items():
+        yielded = set()
+        all_links = ids.list_all()
+
+        def _yield_linked_user(user_id: str):
+            links = all_links.get(user_id) or {}
+            chat_id = links.get("telegram") if isinstance(links, dict) else ""
+            if not chat_id:
+                return
+            key = (user_id, chat_id)
+            if key in yielded:
+                return
+            yielded.add(key)
+            yield key
+
+        for user_id, links in all_links.items():
             chat_id = links.get("telegram") if isinstance(links, dict) else ""
             if not chat_id:
                 continue
             if ids.get_active_conv(user_id, "telegram") == conversation_id:
-                yield user_id, chat_id
+                yield from _yield_linked_user(user_id)
+        try:
+            from core.conversation_store import ConversationStore
+            store = ConversationStore.instance()
+            chat_id = str(store.get_extra(conversation_id, "telegram_chat_id") or "").strip()
+            if not chat_id:
+                return
+            for user_id, links in all_links.items():
+                linked_chat = links.get("telegram") if isinstance(links, dict) else ""
+                if linked_chat == chat_id and (user_id, chat_id) not in yielded:
+                    yielded.add((user_id, chat_id))
+                    yield user_id, chat_id
+                    return
+            key = ("", chat_id)
+            if key not in yielded:
+                yield key
+        except Exception:
+            logger.debug("Telegram bridge metadata subscriber lookup failed", exc_info=True)
 
     def _send(self, user_id: str, chat_id: str, text: str) -> None:
         try:
@@ -764,6 +842,86 @@ class TelegramConversationBridgeTask(BaseTask):
                 svc.send_message(chat_id, text)
         except Exception as exc:
             logger.warning("Telegram bridge send failed for %s: %s", chat_id, exc)
+
+
+def _format_attachment_summary(attachments: List[Dict[str, Any]]) -> str:
+    if not attachments:
+        return ""
+    image_count = 0
+    file_count = 0
+    for att in attachments:
+        if not isinstance(att, dict):
+            continue
+        mime_type = str(att.get("mime_type") or att.get("content_type") or "")
+        filename = str(att.get("filename") or att.get("name") or "")
+        if mime_type.startswith("image/") or filename.lower().endswith((".png", ".jpg", ".jpeg", ".webp", ".gif")):
+            image_count += 1
+        else:
+            file_count += 1
+    parts = []
+    if image_count:
+        parts.append(f"{image_count} image attachment{'s' if image_count != 1 else ''}")
+    if file_count:
+        parts.append(f"{file_count} file attachment{'s' if file_count != 1 else ''}")
+    return "[attachments: " + ", ".join(parts) + "]" if parts else "[attachments]"
+
+
+def _transcribe_telegram_voice(
+    content: str, user_id: str, conversation_id: str, agent_name: str,
+) -> str:
+    try:
+        payload = json.loads(content or "{}")
+    except json.JSONDecodeError:
+        return ""
+    if not isinstance(payload, dict) or payload.get("type") != "voice":
+        return ""
+    audio_b64 = str(payload.get("data_base64") or "")
+    if not audio_b64:
+        return ""
+    service_id = _configured_stt_service_id(conversation_id, agent_name)
+    if not service_id:
+        return ""
+    try:
+        audio_bytes = base64.b64decode(audio_b64)
+    except Exception:
+        logger.warning("Telegram voice STT skipped: invalid audio payload", exc_info=True)
+        return ""
+    if not audio_bytes:
+        return ""
+    try:
+        from core.service_registry import ServiceRegistry
+        svc = ServiceRegistry.get_instance().resolve(
+            service_id, user_id=user_id, conv_id=conversation_id)
+        if not svc or not callable(getattr(svc, "transcribe", None)):
+            logger.warning("Telegram voice STT service not available: %s", service_id)
+            return ""
+        if hasattr(svc, "set_runtime_context"):
+            svc.set_runtime_context(
+                user_id=user_id, conversation_id=conversation_id,
+                agent_name=agent_name)
+        result = svc.transcribe(
+            audio_bytes=audio_bytes,
+            mime_type="audio/ogg",
+            filename="telegram_voice.ogg",
+        )
+        return str((result or {}).get("text") or "").strip()
+    except Exception as exc:
+        logger.warning("Telegram voice STT failed: %s", exc, exc_info=True)
+        return ""
+
+
+def _configured_stt_service_id(conversation_id: str, agent_name: str) -> str:
+    if not conversation_id:
+        return ""
+    try:
+        from core.conversation_store import ConversationStore
+        prefs = ConversationStore.instance().get_extra(conversation_id, "stt_services") or {}
+    except Exception:
+        logger.debug("Telegram voice STT preference lookup failed", exc_info=True)
+        return ""
+    if not isinstance(prefs, dict):
+        return ""
+    return str(prefs.get(agent_name or "agent") or prefs.get("*") or "").strip()
 
 
 TaskFactory.register(TelegramAgentClientTask)

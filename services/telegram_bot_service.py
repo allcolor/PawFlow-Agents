@@ -37,6 +37,22 @@ class TelegramBotService(BaseService):
     DESCRIPTION = "Telegram Bot API connection (long-polling)"
     TAGS = ["telegram", "bot", "messaging"]
 
+    def get_parameter_schema(self) -> Dict[str, Any]:
+        return {
+            "bot_token": {
+                "type": "string",
+                "required": True,
+                "sensitive": True,
+                "description": "Telegram Bot API token from BotFather",
+            },
+            "poll_timeout": {
+                "type": "integer",
+                "required": False,
+                "default": 30,
+                "description": "Long-poll timeout in seconds",
+            },
+        }
+
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
         self._bot_token = self.config.get("bot_token", "")

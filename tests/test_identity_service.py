@@ -38,6 +38,11 @@ class TestIdentityService(unittest.TestCase):
         user = self.ids.resolve_user("telegram", "123456")
         self.assertEqual(user, "alice@test.com")
 
+    def test_resolve_user_accepts_prefixed_link_for_bare_channel_id(self):
+        self.ids.link("alice@test.com", "telegram", "telegram:123456")
+        user = self.ids.resolve_user("telegram", "123456")
+        self.assertEqual(user, "alice@test.com")
+
     def test_resolve_unknown(self):
         user = self.ids.resolve_user("telegram", "999999")
         self.assertIsNone(user)

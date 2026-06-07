@@ -235,6 +235,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                             "ts": _stamped_user.get("ts"),
                             "source": _stamped_user.get("source") or {},
                             "channel": _channel,
+                            "attachments": _attachments_body,
                         }}])
                     _stream_step("pre_persist_enqueue", _enqueue_started)
                 except Exception as _pe:

@@ -245,7 +245,7 @@ Rebuild the derived context state from the canonical transcript. The command reb
 /restart_from <index|msg_id>
 ```
 
-Truncate the current conversation transcript at an absolute message index or at a message id. The shared context is rebuilt from the kept transcript, all private agent contexts are deleted, and CLI sessions are invalidated. Use 0 to empty the transcript and contexts.
+Truncate the current conversation transcript at an absolute message index or at a message id. Matching shared and private agent contexts are truncated or cleared, and CLI sessions are invalidated. Existing background summary buckets are kept; the next compacted summary context includes the restart msg_id so agents treat any older bucket details after that point as pre-restart history. Use 0 to empty the transcript and contexts.
 
 ```
 /restart_from 0            -- empty transcript, shared context, and agent contexts

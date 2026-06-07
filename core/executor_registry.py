@@ -390,8 +390,7 @@ class ExecutorRegistry:
             executor.start()
             logger.info("[startup-timing] %s executor.start: %.1fms",
                         instance_id, (time.monotonic() - _t0) * 1000)
-            with self._executor_lock:
-                self._executors[instance_id] = executor
+            self.register(instance_id, executor)
             logger.info("Restored executor for '%s'", instance_id)
             logger.info("[startup-timing] %s restore total: %.1fms",
                         instance_id, (time.monotonic() - _restore_t0) * 1000)

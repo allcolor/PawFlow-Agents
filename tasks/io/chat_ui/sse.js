@@ -259,6 +259,7 @@ function connectSSE(cid, onReady, opts) {
       if (data.msg_id && document.querySelector('[data-msgid="' + data.msg_id + '"]')) return;
       const el = addMsg(data.role, data.content, {
         source: data.source, msg_id: data.msg_id, ts: data.ts,
+        attachments: data.attachments || [],
         task_id: data.task_id || '', task_iteration: data.task_iteration,
       });
       if (typeof conversationTTSOnMessage === 'function') {

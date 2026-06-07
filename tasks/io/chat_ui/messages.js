@@ -644,6 +644,9 @@ function addMsg(role, text, extra) {
     }
     text = _textParts.join('\n');
   }
+  if (extra && Array.isArray(extra.attachments) && extra.attachments.length) {
+    _attachHtml += renderUserAttachments(extra.attachments);
+  }
   el.dataset.rawText = (text || '').substring(0, 500);
   if (extra && extra.raw_index !== undefined) el.dataset.rawIndex = extra.raw_index;
   const badge = (extra && extra.source) ? sourceBadge(extra.source) : '';

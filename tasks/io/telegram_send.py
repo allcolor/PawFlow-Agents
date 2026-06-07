@@ -16,7 +16,6 @@ from typing import Any, Dict, List, Optional
 
 from core import FlowFile, TaskFactory
 from core.base_task import BaseTask
-from core.expression import resolve_expression
 from core.tool_registry import ToolHandler
 
 logger = logging.getLogger(__name__)
@@ -66,7 +65,7 @@ class TelegramSendTask(BaseTask):
 
         # Resolve chat_id from config or FlowFile attribute
         chat_id_expr = self.config.get("chat_id", "${telegram.chat_id}")
-        chat_id = resolve_expression(chat_id_expr, flowfile)
+        chat_id = self.resolve_value(chat_id_expr, flowfile=flowfile)
         if not chat_id:
             raise ValueError("No chat_id available (configure or set telegram.chat_id)")
 

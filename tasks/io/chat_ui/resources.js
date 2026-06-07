@@ -2555,14 +2555,18 @@ async function showDeployFlowDialog(initialTemplateId) {
         + escapeHtml(t.name) + ' (' + escapeHtml(String(t.tasks_count)) + ' tasks)' + escapeHtml(versionLabel)
         + ' [' + escapeHtml(scopeLabel) + ']</option>';
     }).join('');
+    const deployScopeOptions = (_isAdmin()
+      ? '<option value="global">' + escapeHtml(t('global')) + '</option>'
+      : '')
+      + '<option value="user">' + escapeHtml(t('user')) + '</option>'
+      + '<option value="conversation">' + escapeHtml(t('conversation')) + '</option>';
     panel.querySelector('div:last-child').innerHTML = `
       <div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">${escapeHtml(t('template'))}</label>
         <select id="deploy-template" onchange="_onDeployTemplateChange()" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;">${optionsHtml}</select></div>
       <div id="deploy-scope-info" style="margin-bottom:8px;font-size:11px;color:var(--pf-muted);"></div>
       <div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">${escapeHtml(t('deployScope'))}</label>
         <select id="deploy-scope" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;">
-          <option value="user">${escapeHtml(t('user'))}</option>
-          <option value="conversation">${escapeHtml(t('conversation'))}</option>
+          ${deployScopeOptions}
         </select></div>
       <div id="deploy-config" style="margin-bottom:8px;color:var(--pf-muted);font-size:12px;">${escapeHtml(t('loadingDeploymentSchema'))}</div>
       <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">

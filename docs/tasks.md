@@ -106,6 +106,20 @@ parameter resolves at execution time to a running flow port such as
 `pawflow_agent.agent_runtime_in`; the target flow must be running and declare an
 `agentRuntime` input port.
 
+`telegramConversationBridge` listens to shared conversation events from webchat,
+PawCode, and other non-Telegram clients and forwards user messages, final agent
+responses, and agent errors to linked Telegram chats whose Telegram active
+conversation matches the event conversation. If the conversation stores
+`telegram_chat_id`, the bridge also uses that metadata as a fallback subscriber
+source. User message attachments are summarized in the Telegram text so the
+remote chat can see that files or images were sent even when Telegram cannot
+receive the original binary payload through the event bus.
+
+Telegram voice messages are submitted to the agent only when the conversation
+has an STT service selected in `stt_services` for the selected agent or `*`.
+Without that explicit STT configuration, voice messages are ignored instead of
+forwarding raw audio JSON to the agent.
+
 ---
 
 ## Data Tasks (27)

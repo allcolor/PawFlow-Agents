@@ -423,6 +423,12 @@ def test_absolute_file_media_urls_are_normalized_to_same_origin():
     assert "normalizePawFlowFileUrl(rawImgSrc)" in ATTACHMENTS_JS
 
 
+def test_live_new_message_renders_event_attachments():
+    assert "attachments: data.attachments || []" in SSE_JS
+    assert "Array.isArray(extra.attachments)" in MESSAGES_JS
+    assert "renderUserAttachments(extra.attachments)" in MESSAGES_JS
+
+
 def test_primary_chat_controls_are_i18n_bound():
     assert 'id="input"' in TEMPLATE_HTML
     assert 'data-i18n-placeholder="placeholder"' in TEMPLATE_HTML

@@ -212,9 +212,28 @@ normalize_version() {
 }
 
 github_latest_version() {
-  local api="https://api.github.com/repos/allcolor/PawFlow-Agents/releases?per_page=20" json latest
+  local api="https://api.github.com/repos/allcolor/PawFlow-Agents/releases?per_page=20" json latest py
   json="$(http_get "$api")"
-  latest="$(printf '%s' "$json" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
+  py="$(optional_python_cmd)"
+  if [[ -n "$py" ]]; then
+    latest="$(printf '%s' "$json" | "$py" -c '
+import json
+import re
+import sys
+
+def version_key(tag):
+    tag = str(tag or "").lstrip("v")
+    return [(0, int(part)) if part.isdigit() else (1, part.lower())
+            for part in re.findall(r"\d+|[A-Za-z]+", tag)]
+
+releases = json.load(sys.stdin)
+tags = [r.get("tag_name", "") for r in releases if not r.get("draft")]
+if tags:
+    print(max(tags, key=version_key))
+')"
+  else
+    latest="$(printf '%s' "$json" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | sort -V | tail -n 1)"
+  fi
   if [[ -z "$latest" ]]; then
     echo "Could not parse latest PawFlow release from GitHub." >&2
     return 1

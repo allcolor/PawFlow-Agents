@@ -189,6 +189,9 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert "--keep-old-images" in install_src
     assert "github_latest_version" in install_src
     assert "releases?per_page=20" in install_src
+    assert "jq -r" not in install_src
+    assert "version_key" in install_src
+    assert "sort -V | tail -n 1" in install_src
     assert "pawflow-install-$latest.zip" in install_src
     assert "cleanup_old_pawflow_images" in install_src
     assert "capture_existing_pawflow_image_ids" in install_src
@@ -276,6 +279,8 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert "Resolve-RelayImageVersion" in install_ps1_src
     assert "Resolve-LatestVersion" in install_ps1_src
     assert "releases?per_page=20" in install_ps1_src
+    assert "Get-VersionSortKey" in install_ps1_src
+    assert "Sort-Object { Get-VersionSortKey $_.tag_name }" in install_ps1_src
     assert "Remove-ManagedRelayContainers" in install_ps1_src
     assert "Sync-PersistentRelayRuntime" not in install_ps1_src
     assert "data\\runtime\\relay_runtime\\current" not in install_ps1_src

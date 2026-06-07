@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import base64
 import json
+import re
 import shlex
 import threading
 import time
@@ -24,6 +25,7 @@ _WIZARD_TTL_SECONDS = 900
 _AGENT_RESPONSE_TIMEOUT_SECONDS = 600
 _WIZARDS: Dict[str, Dict[str, Any]] = {}
 _WIZARD_LOCK = threading.Lock()
+_LIVE_EVENT_MIN_INTERVAL_SECONDS = 6.0
 
 
 class TelegramAgentClientTask(BaseTask):
@@ -157,12 +159,17 @@ class TelegramAgentClientTask(BaseTask):
         if result.error:
             flowfile.set_content(f"Agent error: {result.error}".encode("utf-8"))
             return [flowfile]
-        flowfile.set_content((result.response or "").encode("utf-8"))
+        response_text = result.response or ""
+        flowfile.set_content(response_text.encode("utf-8"))
         flowfile.set_attribute("agent.conversation_id", submission.conversation_id)
         flowfile.set_attribute("agent.turn_id", submission.turn_id)
+        _attach_telegram_tts_audio(
+            flowfile, response_text, user_id, conversation_id, target_agent)
         return [flowfile]
 
     def _handle_command(self, text: str, user_id: str, chat_id: str) -> Optional[str]:
+        if text.startswith("/tts"):
+            return self._handle_tts_command(text, user_id)
         if not text.startswith("/conv"):
             return None
         from core.identity_service import IdentityService
@@ -223,6 +230,35 @@ class TelegramAgentClientTask(BaseTask):
             ids.set_active_conv(user_id, "telegram", selected)
             return f"Selected conversation: {selected}"
         return "Usage: /conv current | /conv list | /conv select <n|id> | /conv new <agent> --title <title> --relay <relay_id> [--llm <service>]"
+
+    def _handle_tts_command(self, text: str, user_id: str) -> str:
+        from core.identity_service import IdentityService
+        from core.conversation_store import ConversationStore
+        ids = IdentityService.instance()
+        store = ConversationStore.instance()
+        conversation_id = ids.get_active_conv(user_id, "telegram") or ""
+        if not conversation_id:
+            return "No resumed conversation. Use /conv list then /conv select <id>."
+        agent_name = self._selected_agent_for_conversation(conversation_id)
+        parts = text.split(maxsplit=1)
+        mode = (parts[1] if len(parts) > 1 else "status").strip().lower()
+        if mode in ("status", ""):
+            enabled = bool(store.get_extra(conversation_id, "telegram_tts_enabled"))
+            service_id = _configured_tts_service_id(conversation_id, agent_name)
+            return (
+                f"Telegram TTS is {'on' if enabled else 'off'}."
+                + (f" Service: {service_id}." if service_id else " No TTS service selected.")
+            )
+        if mode == "on":
+            service_id = _configured_tts_service_id(conversation_id, agent_name)
+            if not service_id:
+                return "No TTS service selected for this conversation. Select one in PawFlow, then retry /tts on."
+            store.set_extra(conversation_id, "telegram_tts_enabled", True)
+            return f"Telegram TTS enabled. Text replies will also include audio via {service_id}."
+        if mode == "off":
+            store.set_extra(conversation_id, "telegram_tts_enabled", False)
+            return "Telegram TTS disabled."
+        return "Usage: /tts on | /tts off | /tts status"
 
     def _handle_wizard_input(
         self, text: str, callback_data: str, user_id: str, chat_id: str,
@@ -720,6 +756,7 @@ class TelegramConversationBridgeTask(BaseTask):
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
         self._registered = False
+        self._last_live_event: Dict[str, float] = {}
 
     def get_parameter_schema(self) -> Dict[str, Any]:
         return {
@@ -747,15 +784,24 @@ class TelegramConversationBridgeTask(BaseTask):
         return [flowfile]
 
     def _on_event(self, conversation_id: str, event_type: str, data: Any) -> None:
-        if event_type not in {"new_message", "done", "error_event"}:
+        if event_type not in {
+                "new_message", "done", "error_event", "thinking",
+                "thinking_delta", "thinking_content", "iteration_status",
+                "tool_call", "tool_result"}:
             return
         if not isinstance(data, dict):
             return
-        if data.get("channel") == "telegram":
+        if data.get("channel") == "telegram" and event_type in {"new_message", "done", "error_event"}:
             return
         text = self._format_event(event_type, data)
         if not text:
             return
+        if event_type in {"thinking", "iteration_status", "thinking_delta", "thinking_content"}:
+            key = f"{conversation_id}:{event_type}:{data.get('agent_name') or ''}"
+            now = time.time()
+            if now - self._last_live_event.get(key, 0.0) < _LIVE_EVENT_MIN_INTERVAL_SECONDS:
+                return
+            self._last_live_event[key] = now
         subscribers = list(self._telegram_subscribers(conversation_id, data))
         if not subscribers:
             logger.info(
@@ -784,6 +830,35 @@ class TelegramConversationBridgeTask(BaseTask):
         if event_type == "error_event":
             message = str(data.get("message") or "").strip()
             return f"[error] {message}" if message else ""
+        if event_type == "thinking":
+            agent = data.get("agent_name") or "assistant"
+            detail = str(data.get("detail") or "").strip()
+            waiting = data.get("waiting_seconds")
+            if waiting:
+                return f"[{agent}] still working ({waiting}s)"
+            return f"[{agent}] {detail or 'thinking...'}"
+        if event_type == "thinking_delta":
+            agent = data.get("agent_name") or "assistant"
+            return f"[{agent}] thinking..."
+        if event_type == "thinking_content":
+            agent = data.get("agent_name") or "assistant"
+            return f"[{agent}] thinking..."
+        if event_type == "iteration_status":
+            agent = data.get("agent_name") or "assistant"
+            total_tools = int(data.get("total_tools") or 0)
+            iteration = data.get("iteration") or "?"
+            if total_tools:
+                return f"[{agent}] working, iteration {iteration}, {total_tools} tool call(s) so far"
+            return ""
+        if event_type == "tool_call":
+            agent = data.get("agent_name") or "assistant"
+            tool = data.get("tool_name") or data.get("name") or "tool"
+            return f"[{agent}] calling {tool}"
+        if event_type == "tool_result":
+            agent = data.get("agent_name") or "assistant"
+            tool = data.get("tool_name") or data.get("name") or "tool"
+            preview = _compact_live_text(str(data.get("preview") or data.get("content") or ""), 120)
+            return f"[{agent}] {tool} done" + (f": {preview}" if preview else "")
         return ""
 
     @staticmethod
@@ -866,6 +941,71 @@ def _format_attachment_summary(attachments: List[Dict[str, Any]]) -> str:
     return "[attachments: " + ", ".join(parts) + "]" if parts else "[attachments]"
 
 
+def _compact_live_text(text: str, limit: int) -> str:
+    text = re.sub(r"\s+", " ", text or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 1)].rstrip() + "…"
+
+
+def _attach_telegram_tts_audio(
+    flowfile: FlowFile, text: str, user_id: str, conversation_id: str,
+    agent_name: str,
+) -> None:
+    if not text.strip() or not conversation_id:
+        return
+    try:
+        from core.conversation_store import ConversationStore
+        store = ConversationStore.instance()
+        if not store.get_extra(conversation_id, "telegram_tts_enabled"):
+            return
+    except Exception:
+        logger.debug("Telegram TTS enabled lookup failed", exc_info=True)
+        return
+    service_id = _configured_tts_service_id(conversation_id, agent_name)
+    if not service_id:
+        return
+    try:
+        from core.service_registry import ServiceRegistry
+        svc = ServiceRegistry.get_instance().resolve(
+            service_id, user_id=user_id, conv_id=conversation_id)
+        if not svc or not callable(getattr(svc, "speak", None)):
+            logger.warning("Telegram TTS service not available: %s", service_id)
+            return
+        if hasattr(svc, "set_runtime_context"):
+            svc.set_runtime_context(
+                user_id=user_id, conversation_id=conversation_id,
+                agent_name=agent_name)
+        result = svc.speak(text=text)
+        audio = (result or {}).get("audio_bytes") or (result or {}).get("bytes") or b""
+        audio_path = (result or {}).get("audio_path") or (result or {}).get("path") or ""
+        if not audio and audio_path:
+            from pathlib import Path
+            audio = Path(str(audio_path)).read_bytes()
+            if (result or {}).get("_delete_media_path"):
+                try:
+                    Path(str(audio_path)).unlink()
+                except OSError:
+                    pass
+        if not audio:
+            logger.warning("Telegram TTS provider returned no audio: %s", service_id)
+            return
+        content_type = str((result or {}).get("content_type") or "audio/mpeg")
+        ext = {
+            "audio/mpeg": "mp3", "audio/mp3": "mp3",
+            "audio/wav": "wav", "audio/x-wav": "wav",
+            "audio/ogg": "ogg", "audio/opus": "ogg",
+            "audio/flac": "flac", "audio/aac": "aac",
+        }.get(content_type.split(";")[0].strip().lower(), "mp3")
+        flowfile.set_attribute(
+            "telegram.tts_audio_base64",
+            base64.b64encode(audio).decode("ascii"))
+        flowfile.set_attribute("telegram.tts_content_type", content_type)
+        flowfile.set_attribute("telegram.tts_filename", f"telegram_reply.{ext}")
+    except Exception as exc:
+        logger.warning("Telegram TTS synthesis failed: %s", exc, exc_info=True)
+
+
 def _transcribe_telegram_voice(
     content: str, user_id: str, conversation_id: str, agent_name: str,
 ) -> str:
@@ -918,6 +1058,20 @@ def _configured_stt_service_id(conversation_id: str, agent_name: str) -> str:
         prefs = ConversationStore.instance().get_extra(conversation_id, "stt_services") or {}
     except Exception:
         logger.debug("Telegram voice STT preference lookup failed", exc_info=True)
+        return ""
+    if not isinstance(prefs, dict):
+        return ""
+    return str(prefs.get(agent_name or "agent") or prefs.get("*") or "").strip()
+
+
+def _configured_tts_service_id(conversation_id: str, agent_name: str) -> str:
+    if not conversation_id:
+        return ""
+    try:
+        from core.conversation_store import ConversationStore
+        prefs = ConversationStore.instance().get_extra(conversation_id, "audio_services") or {}
+    except Exception:
+        logger.debug("Telegram TTS preference lookup failed", exc_info=True)
         return ""
     if not isinstance(prefs, dict):
         return ""

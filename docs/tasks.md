@@ -120,6 +120,14 @@ has an STT service selected in `stt_services` for the selected agent or `*`.
 Without that explicit STT configuration, voice messages are ignored instead of
 forwarding raw audio JSON to the agent.
 
+Telegram chats can opt into spoken agent replies with `/tts on` and disable
+them with `/tts off`. The toggle is stored on the active conversation and uses
+the conversation `audio_services` TTS selection for the selected agent or `*`.
+When enabled, Telegram receives the normal text reply first and then the
+synthesized audio; TTS failures fall back to text only. The Telegram bridge also
+forwards compact live agent progress events such as thinking, iteration status,
+and tool calls so Telegram users are not silent until the final response.
+
 ---
 
 ## Data Tasks (27)

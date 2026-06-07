@@ -12,6 +12,7 @@ Config (task mode):
 
 import json
 import logging
+import base64
 from typing import Any, Dict, List, Optional
 
 from core import FlowFile, TaskFactory
@@ -86,15 +87,18 @@ class TelegramSendTask(BaseTask):
         try:
             if user_bot_token:
                 from services.telegram_bot_service import TelegramBotPool
-                result = TelegramBotPool.instance().send_message(
+                bot_pool = TelegramBotPool.instance()
+                result = bot_pool.send_message(
                     user_bot_token, chat_id, text, parse_mode=parse_mode,
                     reply_markup=reply_markup,
                 )
+                self._send_tts_audio(bot_pool, user_bot_token, chat_id, flowfile)
             else:
                 result = svc.send_message(
                     chat_id, text, parse_mode=parse_mode, reply_to=reply_to,
                     reply_markup=reply_markup,
                 )
+                self._send_tts_audio(svc, "", chat_id, flowfile)
             flowfile.set_attribute("telegram.sent_message_id",
                                    str(result.get("message_id", "")))
             flowfile.set_attribute("telegram.send_status", "sent")
@@ -104,6 +108,25 @@ class TelegramSendTask(BaseTask):
             flowfile.set_attribute("telegram.send_error", str(e))
 
         return [flowfile]
+
+    @staticmethod
+    def _send_tts_audio(sender: Any, token: str, chat_id: str,
+                        flowfile: FlowFile) -> None:
+        raw = flowfile.get_attribute("telegram.tts_audio_base64") or ""
+        if not raw:
+            return
+        try:
+            audio = base64.b64decode(raw)
+            filename = flowfile.get_attribute("telegram.tts_filename") or "speech.mp3"
+            content_type = flowfile.get_attribute("telegram.tts_content_type") or "audio/mpeg"
+            if token:
+                sender.send_audio(token, chat_id, audio, filename=filename,
+                                  content_type=content_type)
+            else:
+                sender.send_audio(chat_id, audio, filename=filename,
+                                  content_type=content_type)
+        except Exception as exc:
+            logger.warning("telegramSend TTS audio failed: %s", exc, exc_info=True)
 
     def _resolve_user_bot_token(self, flowfile: FlowFile) -> Optional[str]:
         """Check if the target user has a personal bot token."""

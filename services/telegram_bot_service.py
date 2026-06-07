@@ -186,41 +186,25 @@ class TelegramBotService(BaseService):
     def send_document(self, chat_id: str, file_bytes: bytes,
                       filename: str, caption: str = "") -> dict:
         """Send a document/file."""
-        # For simplicity, use base64 + sendDocument with multipart
-        # Telegram requires multipart/form-data for file uploads
-        import base64
-        boundary = "----TelegramBotBoundary"
-        body = b""
-        # chat_id field
-        body += f"--{boundary}\r\n".encode()
-        body += f'Content-Disposition: form-data; name="chat_id"\r\n\r\n{chat_id}\r\n'.encode()
-        # caption
-        if caption:
-            body += f"--{boundary}\r\n".encode()
-            body += f'Content-Disposition: form-data; name="caption"\r\n\r\n{caption}\r\n'.encode()
-        # document field
-        body += f"--{boundary}\r\n".encode()
-        body += f'Content-Disposition: form-data; name="document"; filename="{filename}"\r\n'.encode()
-        body += b"Content-Type: application/octet-stream\r\n\r\n"
-        body += file_bytes
-        body += f"\r\n--{boundary}--\r\n".encode()
+        return _api_upload(
+            self._bot_token, "sendDocument", chat_id, "document",
+            file_bytes, filename, "application/octet-stream",
+            caption=caption)
 
-        ctx = ssl.create_default_context()
-        conn = http.client.HTTPSConnection(_API_HOST, timeout=30, context=ctx)
-        try:
-            conn.request(
-                "POST",
-                f"/bot{self._bot_token}/sendDocument",
-                body=body,
-                headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
-            )
-            resp = conn.getresponse()
-            data = json.loads(resp.read().decode("utf-8"))
-            if not data.get("ok"):
-                raise RuntimeError(f"Telegram API error: {data.get('description', 'unknown')}")
-            return data.get("result", {})
-        finally:
-            conn.close()
+    def send_audio(self, chat_id: str, file_bytes: bytes,
+                   filename: str = "speech.mp3", caption: str = "",
+                   content_type: str = "audio/mpeg") -> dict:
+        """Send synthesized speech as Telegram voice/audio.
+
+        Telegram voice notes require OGG/OPUS. Other audio formats are sent as
+        regular audio attachments so TTS providers can work without transcoding.
+        """
+        ct = (content_type or "audio/mpeg").split(";")[0].strip().lower()
+        as_voice = ct in {"audio/ogg", "audio/opus"} or filename.lower().endswith((".ogg", ".opus"))
+        return _api_upload(
+            self._bot_token, "sendVoice" if as_voice else "sendAudio", chat_id,
+            "voice" if as_voice else "audio", file_bytes, filename,
+            content_type or "audio/mpeg", caption=caption)
 
     def get_file_bytes(self, file_id: str) -> tuple:
         """Download a file from Telegram servers.
@@ -399,6 +383,17 @@ class TelegramBotPool:
             return result or {}
         return _api_call_static(token, "sendMessage", params)
 
+    def send_audio(self, token: str, chat_id: str, file_bytes: bytes,
+                   filename: str = "speech.mp3", caption: str = "",
+                   content_type: str = "audio/mpeg") -> dict:
+        """Send synthesized speech via a specific bot token."""
+        ct = (content_type or "audio/mpeg").split(";")[0].strip().lower()
+        as_voice = ct in {"audio/ogg", "audio/opus"} or filename.lower().endswith((".ogg", ".opus"))
+        return _api_upload(
+            token, "sendVoice" if as_voice else "sendAudio", chat_id,
+            "voice" if as_voice else "audio", file_bytes, filename,
+            content_type or "audio/mpeg", caption=caption)
+
     def get_file_bytes(self, token: str, file_id: str) -> tuple:
         """Download a file via a specific bot token."""
         file_info = _api_call_static(token, "getFile", {"file_id": file_id})
@@ -516,5 +511,48 @@ def _api_call_static(token: str, method: str,
                 f"Telegram API error: {data.get('description', 'unknown')}"
             )
         return data.get("result")
+    finally:
+        conn.close()
+
+
+def _api_upload(token: str, method: str, chat_id: str, field_name: str,
+                file_bytes: bytes, filename: str, content_type: str,
+                caption: str = "") -> dict:
+    """Upload a file to Telegram with multipart/form-data."""
+    boundary = "----TelegramBotBoundary"
+    body = b""
+    body += f"--{boundary}\r\n".encode()
+    body += f'Content-Disposition: form-data; name="chat_id"\r\n\r\n{chat_id}\r\n'.encode()
+    if caption:
+        body += f"--{boundary}\r\n".encode()
+        body += f'Content-Disposition: form-data; name="caption"\r\n\r\n{caption}\r\n'.encode()
+    body += f"--{boundary}\r\n".encode()
+    body += (
+        f'Content-Disposition: form-data; name="{field_name}"; '
+        f'filename="{filename}"\r\n'
+    ).encode()
+    body += f"Content-Type: {content_type or 'application/octet-stream'}\r\n\r\n".encode()
+    body += file_bytes
+    body += f"\r\n--{boundary}--\r\n".encode()
+
+    ctx = ssl.create_default_context()
+    conn = http.client.HTTPSConnection(_API_HOST, timeout=60, context=ctx)
+    try:
+        conn.request(
+            "POST", f"/bot{token}/{method}", body=body,
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        )
+        resp = conn.getresponse()
+        raw = resp.read().decode("utf-8")
+        if resp.status != 200:
+            raise RuntimeError(
+                f"Telegram API {method} returned {resp.status}: {raw[:200]}"
+            )
+        data = json.loads(raw)
+        if not data.get("ok"):
+            raise RuntimeError(
+                f"Telegram API error: {data.get('description', 'unknown')}"
+            )
+        return data.get("result", {})
     finally:
         conn.close()

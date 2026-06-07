@@ -84,11 +84,13 @@ def test_codex_app_server_file_id_attachment_wins_over_relative_url(monkeypatch,
     assert not any(item.get("url", "").startswith("/files/") for item in items)
 
 
-def test_codex_app_server_unwraps_mcp_tool_names_for_events():
+def test_codex_app_server_keeps_mcp_live_event_name_and_arguments_raw():
     src = inspect.getsource(LLMCodexAppServerMixin._stream_codex_app_server)
-    assert '"raw_name": raw_name' in src
-    assert '"raw_tool": raw_name' in src
-    assert '"tool": display_name' in src
+    assert '"name": raw_name' in src
+    assert '"arguments": raw_args' in src
+    assert '"tool": raw_name' in src
+    assert '"raw_name": raw_name' not in src
+    assert '"raw_tool": raw_name' not in src
 
 
 def test_codex_app_server_rollout_receipt_marks_preempt_handled():

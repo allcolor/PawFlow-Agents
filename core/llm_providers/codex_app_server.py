@@ -1170,7 +1170,6 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                             "[codex-app] timing mcpToolCall started tc_id=%s raw_id=%s tool=%s conv=%s agent=%s",
                             tc_id, item.get("id") or "", raw_name,
                             conv_id[:8] or "?", agent_name or "")
-                        tc_name = raw_name
                         try:
                             from core.llm_client import unwrap_mcp_tool
                             from core.background_tool import enqueue_cc_tc, _args_hash
@@ -1181,8 +1180,7 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                         if block_callback:
                             block_callback("tool_use", {
                                 "id": tc_id,
-                                "name": tc_name,
-                                "raw_name": raw_name,
+                                "name": raw_name,
                                 "arguments": raw_args,
                                 "thinking": "".join(thinking_parts).strip(),
                                 "tool_origin": "mcp",
@@ -1230,17 +1228,9 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                             tc_id, raw_id, raw_name, provider_ms,
                             len(result_str))
                         if block_callback:
-                            display_name = raw_name
-                            try:
-                                from core.llm_client import unwrap_mcp_tool
-                                display_name, _display_args = unwrap_mcp_tool(
-                                    raw_name, item.get("arguments") or {})
-                            except Exception:
-                                logger.debug("[codex-app] unwrap tool result name skipped", exc_info=True)
                             block_callback("tool_result", {
                                 "tc_id": tc_id,
-                                "tool": display_name,
-                                "raw_tool": raw_name,
+                                "tool": raw_name,
                                 "result": result_str,
                                 "tool_origin": "mcp",
                             })

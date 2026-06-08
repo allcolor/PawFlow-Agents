@@ -875,7 +875,12 @@ class TelegramConversationBridgeTask(BaseTask):
             attachments = data.get("attachments") if isinstance(data.get("attachments"), list) else []
             attachment_text = _format_attachment_summary(attachments)
             parts = [_telegram_render_message_text(part) for part in (content, attachment_text) if part]
-            return f"{name}\n{' '.join(parts)}" if parts else ""
+            if not parts:
+                return ""
+            body = " ".join(parts)
+            if role == "assistant" and "<pre><code>" not in body:
+                body = _telegram_blockquote(body)
+            return f"{name}\n{body}"
         if event_type == "error_event":
             return ""
         if event_type == "thinking":
@@ -890,7 +895,7 @@ class TelegramConversationBridgeTask(BaseTask):
         if event_type == "tool_call":
             agent = _telegram_agent_badge(data)
             tool = _telegram_tool_display_name(data)
-            return f"{agent}\ncalling <code>{html.escape(str(tool))}</code>"
+            return f"{agent}\n{_telegram_blockquote(f'calling <code>{html.escape(str(tool))}</code>')}"
         if event_type == "tool_result":
             return ""
         return ""
@@ -1086,7 +1091,7 @@ def _telegram_agent_badge(data: Dict[str, Any], fallback: str = "assistant") -> 
     color = _telegram_badge_color(name) if fallback == "assistant" or data.get("agent_name") or source.get("llm_service") else "⬜"
     name_html = html.escape(name)
     if service and name != service:
-        return f"{color} <b>{name_html}</b> via <code>{html.escape(service)}</code>"
+        return f"{color} <b>{name_html}</b> <code>{html.escape(service)}</code>"
     return f"{color} <b>{name_html}</b>"
 
 
@@ -1096,7 +1101,14 @@ def _telegram_thinking_message(data: Dict[str, Any], text: str) -> str:
         return ""
     source = data.get("source") if isinstance(data.get("source"), dict) else {}
     name = str(source.get("name") or data.get("agent_name") or "assistant")
-    return f"💭 <i>{html.escape(name)} thinking</i>\n<tg-spoiler>{html.escape(text)}</tg-spoiler>"
+    return f"💭 <i>{html.escape(name)} thinking</i>\n{_telegram_blockquote(html.escape(text))}"
+
+
+def _telegram_blockquote(text: str) -> str:
+    text = str(text or "").strip()
+    if not text:
+        return ""
+    return f"<blockquote>{text}</blockquote>"
 
 
 def _telegram_render_message_text(text: str) -> str:

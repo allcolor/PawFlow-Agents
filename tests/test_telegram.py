@@ -996,7 +996,7 @@ class TestTelegramAgentClientTask(unittest.TestCase):
             })
 
         task._send.assert_called_once_with(
-            "alice", "chat-1", "🟩 <b>assistant</b>\nJe cherche les occurrences exactes.")
+            "alice", "chat-1", "🟩 <b>assistant</b>\n<blockquote>Je cherche les occurrences exactes.</blockquote>")
 
     def test_conversation_bridge_renders_markdown_fences_as_telegram_code_blocks(self):
         from tasks.io.telegram_agent_client import TelegramConversationBridgeTask
@@ -1099,7 +1099,10 @@ class TestTelegramAgentClientTask(unittest.TestCase):
             },
         })
 
-        assert text == "🟩 <b>assistant</b> via <code>codex_appserver_llm_service</code>\nok"
+        assert text == (
+            "🟩 <b>assistant</b> <code>codex_appserver_llm_service</code>\n"
+            "<blockquote>ok</blockquote>"
+        )
 
     def test_conversation_bridge_skips_runtime_live_telegram_agent_events(self):
         from tasks.io.telegram_agent_client import TelegramConversationBridgeTask
@@ -1354,8 +1357,8 @@ class TestTelegramAgentClientTask(unittest.TestCase):
             task._on_event("conv1", "thinking_content", {"agent_name": "assistant", "text": "Found the bug"})
 
         assert [call.args[2] for call in task._send.call_args_list] == [
-            "💭 <i>assistant thinking</i>\n<tg-spoiler>Checking logs</tg-spoiler>",
-            "💭 <i>assistant thinking</i>\n<tg-spoiler>Found the bug</tg-spoiler>",
+            "💭 <i>assistant thinking</i>\n<blockquote>Checking logs</blockquote>",
+            "💭 <i>assistant thinking</i>\n<blockquote>Found the bug</blockquote>",
         ]
 
     def test_conversation_bridge_forwards_periodic_waiting_progress(self):
@@ -1384,8 +1387,8 @@ class TestTelegramAgentClientTask(unittest.TestCase):
             task._on_event("conv1", "tool_result", {"agent_name": "assistant", "tool": "grep"})
 
         assert [call.args[2] for call in task._send.call_args_list] == [
-            "🟩 <b>assistant</b>\ncalling <code>read</code>",
-            "🟩 <b>assistant</b>\ncalling <code>grep</code>",
+            "🟩 <b>assistant</b>\n<blockquote>calling <code>read</code></blockquote>",
+            "🟩 <b>assistant</b>\n<blockquote>calling <code>grep</code></blockquote>",
         ]
         assert task._send_tool_media.call_count == 2
 
@@ -1408,7 +1411,7 @@ class TestTelegramAgentClientTask(unittest.TestCase):
             })
 
         assert [call.args[2] for call in task._send.call_args_list] == [
-            "🟩 <b>assistant</b>\ncalling <code>read</code>",
+            "🟩 <b>assistant</b>\n<blockquote>calling <code>read</code></blockquote>",
         ]
         task._send_tool_media.assert_called_once()
 

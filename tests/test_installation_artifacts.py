@@ -106,6 +106,9 @@ def test_server_dockerfile_supports_bootstrap_docker_builds():
     assert "apt-get install -y --no-install-recommends chromium" in relay_dev
     assert "/usr/bin/chromium --no-sandbox" in relay_dev
     assert "--disk-cache-dir=\"$cache_dir\"" in relay_dev
+    assert "rm -f \"$profile_dir/SingletonLock\"" in relay_dev
+    assert "\"$profile_dir/SingletonSocket\"" in relay_dev
+    assert "\"$profile_dir/SingletonCookie\"" in relay_dev
     assert 'profile_dir="$HOME/.chromium-profile"' in relay_dev
     assert "/home/pawflow/.chromium-profile" not in relay_dev
     assert "update-alternatives --set x-www-browser /usr/local/bin/chromium" in relay_dev

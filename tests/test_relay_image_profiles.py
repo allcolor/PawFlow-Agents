@@ -137,6 +137,9 @@ def test_generator_resolves_implied_features_and_writes_installer_artifacts(tmp_
     assert "/usr/bin/chromium --no-sandbox" in dockerfile
     assert 'profile_dir="$HOME/.chromium-profile"' in dockerfile
     assert "--disk-cache-dir=\"$cache_dir\"" in dockerfile
+    assert "rm -f \"$profile_dir/SingletonLock\"" in dockerfile
+    assert "\"$profile_dir/SingletonSocket\"" in dockerfile
+    assert "\"$profile_dir/SingletonCookie\"" in dockerfile
     assert "update-alternatives --set x-www-browser /usr/local/bin/chromium" in dockerfile
     assert "WebBrowser=chromium" in dockerfile
     assert "X-XFCE-CommandsWithParameter=/usr/local/bin/chromium" in dockerfile

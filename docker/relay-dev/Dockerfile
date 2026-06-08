@@ -221,7 +221,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN apt-get update && apt-get install -y --no-install-recommends software-properties-common \
     && add-apt-repository -y ppa:xtradeb/apps \
     && apt-get update && apt-get install -y --no-install-recommends chromium \
-    && printf '#!/bin/bash\nset -e\nprofile_dir="$PAWFLOW_CHROMIUM_USER_DATA_DIR"\ncache_dir="$PAWFLOW_CHROMIUM_CACHE_DIR"\nif [ -z "$profile_dir" ]; then profile_dir="$HOME/.chromium-profile"; fi\nif [ -z "$cache_dir" ]; then cache_dir=/tmp/pawflow-chromium-cache; fi\nmkdir -p "$profile_dir" "$cache_dir"\nexec /usr/bin/chromium --no-sandbox --disable-dev-shm-usage --user-data-dir="$profile_dir" --disk-cache-dir="$cache_dir" "$@"\n' \
+    && printf '#!/bin/bash\nset -e\nprofile_dir="$PAWFLOW_CHROMIUM_USER_DATA_DIR"\ncache_dir="$PAWFLOW_CHROMIUM_CACHE_DIR"\nif [ -z "$profile_dir" ]; then profile_dir="$HOME/.chromium-profile"; fi\nif [ -z "$cache_dir" ]; then cache_dir=/tmp/pawflow-chromium-cache; fi\nmkdir -p "$profile_dir" "$cache_dir"\nrm -f "$profile_dir/SingletonLock" "$profile_dir/SingletonSocket" "$profile_dir/SingletonCookie" 2>/dev/null || true\nexec /usr/bin/chromium --no-sandbox --disable-dev-shm-usage --user-data-dir="$profile_dir" --disk-cache-dir="$cache_dir" "$@"\n' \
        > /usr/local/bin/chromium \
     && chmod +x /usr/local/bin/chromium \
     && ln -sf /usr/local/bin/chromium /usr/local/bin/chromium-browser \

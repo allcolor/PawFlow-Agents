@@ -998,6 +998,23 @@ class TestTelegramAgentClientTask(unittest.TestCase):
         task._send.assert_called_once_with(
             "alice", "chat-1", "🟩 <b>assistant</b>\nJe cherche les occurrences exactes.")
 
+    def test_conversation_bridge_renders_markdown_fences_as_telegram_code_blocks(self):
+        from tasks.io.telegram_agent_client import TelegramConversationBridgeTask
+        task = TelegramConversationBridgeTask({"service_id": "telegram_bot"})
+
+        text = task._format_event("new_message", {
+            "role": "assistant",
+            "content": "Use this:\n```text\ncopy me <ok>\n```\nThen:\n```python\nprint('ok')\n```",
+            "source": {"name": "assistant"},
+        })
+
+        assert "```" not in text
+        assert text == (
+            "🟩 <b>assistant</b>\n"
+            "Use this:\n<pre><code>copy me &lt;ok&gt;</code></pre>\n"
+            "Then:\n<pre><code>print(&#x27;ok&#x27;)</code></pre>"
+        )
+
     def test_conversation_bridge_forwards_user_attachment_media(self):
         from tasks.io.telegram_agent_client import TelegramConversationBridgeTask
         task = TelegramConversationBridgeTask({"service_id": "telegram_bot"})

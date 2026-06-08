@@ -874,7 +874,7 @@ class TelegramConversationBridgeTask(BaseTask):
             content = str(data.get("content") or "").strip()
             attachments = data.get("attachments") if isinstance(data.get("attachments"), list) else []
             attachment_text = _format_attachment_summary(attachments)
-            parts = [html.escape(part) for part in (content, attachment_text) if part]
+            parts = [_telegram_render_message_text(part) for part in (content, attachment_text) if part]
             return f"{name}\n{' '.join(parts)}" if parts else ""
         if event_type == "error_event":
             return ""
@@ -1097,6 +1097,26 @@ def _telegram_thinking_message(data: Dict[str, Any], text: str) -> str:
     source = data.get("source") if isinstance(data.get("source"), dict) else {}
     name = str(source.get("name") or data.get("agent_name") or "assistant")
     return f"💭 <i>{html.escape(name)} thinking</i>\n<tg-spoiler>{html.escape(text)}</tg-spoiler>"
+
+
+def _telegram_render_message_text(text: str) -> str:
+    text = str(text or "")
+    if "```" not in text:
+        return html.escape(text)
+    parts: List[str] = []
+    pos = 0
+    pattern = re.compile(r"```([^\n`]*)\n?(.*?)```", re.DOTALL)
+    for match in pattern.finditer(text):
+        parts.append(html.escape(text[pos:match.start()]))
+        code = match.group(2)
+        if code.startswith("\n"):
+            code = code[1:]
+        if code.endswith("\n"):
+            code = code[:-1]
+        parts.append(f"<pre><code>{html.escape(code)}</code></pre>")
+        pos = match.end()
+    parts.append(html.escape(text[pos:]))
+    return "".join(parts)
 
 
 def _telegram_badge_color(name: str) -> str:

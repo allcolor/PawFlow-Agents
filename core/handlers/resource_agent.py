@@ -158,6 +158,9 @@ class ManageResourceHandler(ToolHandler):
                 if self._conversation_id and self._agent_name:
                     scope = "conversation"
 
+                if scope == "global":
+                    return "Error: Global resource writes require admin scope. Use the admin UI/API."
+
                 if rtype in ("agent", "skill") and self._agent_name:
                     data["_created_by"] = self._agent_name
 
@@ -231,6 +234,8 @@ class ManageResourceHandler(ToolHandler):
                     return (f"Error: {rtype} '{name}' is read-only in "
                             f"{existing.get('_scope', 'global')} scope for agents. "
                             "Create or edit a conversation-scoped copy instead.")
+                if existing and existing.get("_scope") == "global":
+                    return "Error: Global resource writes require admin scope. Use the admin UI/API."
                 if rtype == "skill":
                     merged = {k: v for k, v in existing.items()
                               if not str(k).startswith("_")}
@@ -287,6 +292,8 @@ class ManageResourceHandler(ToolHandler):
                             return (f"Error: {rtype} '{name}' is read-only in "
                                     f"{existing.get('_scope', 'global')} scope for agents. "
                                     "Create or edit a conversation-scoped copy instead.")
+                        if existing.get("_scope") == "global":
+                            return "Error: Global resource writes require admin scope. Use the admin UI/API."
                         created_by = existing.get("_created_by", existing.get("created_by"))
                         if created_by is not None and created_by != (self._agent_name or ""):
                             return (f"Error: {rtype} '{name}' was created by "
@@ -380,6 +387,8 @@ class ManageResourceHandler(ToolHandler):
                 scope = str(arguments.get("scope", "user") or "user")
                 if self._conversation_id and self._agent_name:
                     scope = "conversation"
+                if scope == "global":
+                    return "Error: Global resource writes require admin scope. Use the admin UI/API."
                 result = import_marketplace_skill(
                     source=str(arguments.get("source", "") or ""),
                     ref=ref,

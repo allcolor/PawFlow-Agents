@@ -318,12 +318,12 @@ HELP: Dict[str, Dict[str, str]] = {
         ),
     },
     "/skill": {
-        "usage": "/skill list | search [--source src] <query> | import [--source src] [--review-only] [--force] [--scope user|conversation] [--name name] <ref> | add [--force] <name> <prompt> | update [--force] <name> <prompt> | del <name> | assign @agent @skill | unassign @agent @skill | assigned @agent | run [@agent] <name> [args...] | //<name> [@agent] [args...]",
+        "usage": "/skill list | search [--source src] <query> | import [--source src] [--review-only] [--force] [--scope global|user|conversation] [--name name] <ref> | add [--force] <name> <prompt> | update [--force] <name> <prompt> | del <name> | assign @agent @skill | unassign @agent @skill | assigned @agent | run [@agent] <name> [args...] | //<name> [@agent] [args...]",
         "short": "Manage skills",
         "detail": (
             "  /skill list                    — List all skills\n"
             "  /skill search [--source src] <query> — Search external skill marketplaces\n"
-            "  /skill import [--source src] [--review-only] [--force] [--scope user|conversation] [--name name] <ref> — Review/import an external skill\n"
+            "  /skill import [--source src] [--review-only] [--force] [--scope global|user|conversation] [--name name] <ref> — Review/import an external skill\n"
             "  /skill add [--force] <name> <prompt> — Create a skill\n"
             "  /skill update [--force] <name> <prompt> — Update a skill\n"
             "  /skill del <name>              — Delete a skill\n"

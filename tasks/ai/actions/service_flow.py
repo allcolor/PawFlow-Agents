@@ -2877,6 +2877,8 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             or ""
         )
         deploy_scope = requested_scope or ("conversation" if conv_id and agent_name else "user")
+        if conv_id and agent_name:
+            deploy_scope = "conversation"
         params = body.get("parameters", {})
         service_overrides = body.get("service_overrides", {})
         service_configs = body.get("service_configs", {})

@@ -90,6 +90,7 @@ class TestGlobalScopePermissions:
         })
         ff.set_attribute("http.auth.roles", "admin")
         rs = MagicMock()
+        rs.get.return_value = None
         with patch("core.resource_store.ResourceStore.instance", return_value=rs), \
                 patch("core.review_bindings.review_for_write", return_value=_SAFE_SKILL_REVIEW):
             result = _handle_agent_resource(
@@ -231,6 +232,81 @@ class TestGlobalScopePermissions:
         body = json.loads(result[0].get_content())
         assert "error" in body
         assert "admin" in body["error"].lower()
+
+    def test_direct_create_skill_global_writes_global_for_admin(self):
+        """Legacy create_skill action must honor global scope for admin."""
+        from core.resource_store import GLOBAL_USER_ID
+        from tasks.ai.actions.agent_resource import _handle_agent_resource
+
+        task = self._get_agent_loop()
+        ff = self._make_flowfile({
+            "action": "create_skill", "name": "admin-global-skill",
+            "description": "desc", "instructions": "do it", "scope": "global",
+        })
+        ff.set_attribute("http.auth.roles", "admin")
+        rs = MagicMock()
+        rs.get.return_value = None
+        with patch("core.resource_store.ResourceStore.instance", return_value=rs), \
+                patch("core.review_bindings.review_for_write", return_value=_SAFE_SKILL_REVIEW):
+            result = _handle_agent_resource(
+                task, "create_skill", json.loads(ff.get_content()), None,
+                "test_user", ff)
+        assert result is not None
+        body = json.loads(result[0].get_content())
+        assert body == {"created": True, "updated": False, "name": "admin-global-skill", "scope": "global"}
+        rs.get.assert_called_once_with("skill", "admin-global-skill", GLOBAL_USER_ID)
+        rs.create.assert_called_once_with(
+            "skill", "admin-global-skill", GLOBAL_USER_ID, {
+                "instructions": "do it",
+                "description": "desc",
+                "review": _SAFE_SKILL_REVIEW,
+            })
+
+    def test_direct_update_skill_global_writes_global_for_admin(self):
+        """Legacy update_skill action must honor global scope for admin."""
+        from core.resource_store import GLOBAL_USER_ID
+        from tasks.ai.actions.agent_resource import _handle_agent_resource
+
+        task = self._get_agent_loop()
+        ff = self._make_flowfile({
+            "action": "update_skill", "name": "admin-global-skill",
+            "description": "desc", "instructions": "do it", "scope": "global",
+        })
+        ff.set_attribute("http.auth.roles", "admin")
+        rs = MagicMock()
+        rs.get.return_value = {"name": "admin-global-skill"}
+        with patch("core.resource_store.ResourceStore.instance", return_value=rs), \
+                patch("core.review_bindings.review_for_write", return_value=_SAFE_SKILL_REVIEW):
+            result = _handle_agent_resource(
+                task, "update_skill", json.loads(ff.get_content()), None,
+                "test_user", ff)
+        assert result is not None
+        body = json.loads(result[0].get_content())
+        assert body == {"created": False, "updated": True, "name": "admin-global-skill", "scope": "global"}
+        rs.update.assert_called_once_with(
+            "skill", "admin-global-skill", GLOBAL_USER_ID, {
+                "instructions": "do it",
+                "description": "desc",
+                "review": _SAFE_SKILL_REVIEW,
+            })
+
+    def test_direct_delete_skill_global_requires_admin(self):
+        """Legacy delete_skill must not delete global skills for non-admin users."""
+        from tasks.ai.actions.agent_resource import _handle_agent_resource
+
+        task = self._get_agent_loop()
+        ff = self._make_flowfile({"action": "delete_skill", "name": "global-skill"})
+        rs = MagicMock()
+        rs.get_any.return_value = {"name": "global-skill", "_scope": "global"}
+        with patch("core.resource_store.ResourceStore.instance", return_value=rs):
+            result = _handle_agent_resource(
+                task, "delete_skill", json.loads(ff.get_content()), None,
+                "test_user", ff)
+        assert result is not None
+        body = json.loads(result[0].get_content())
+        assert "admin" in body["error"].lower()
+        assert result[0].get_attribute("http.response.status") == "403"
+        rs.delete.assert_not_called()
 
     def test_set_param_conversation_scope_allowed(self):
         """set_param with scope=conversation should be allowed."""
@@ -438,6 +514,36 @@ class TestGlobalScopePermissions:
         assert dr.deploy.call_args.kwargs["conversation_id"] == "conv1"
         assert dr.deploy.call_args.kwargs["agent_name"] == "agentA"
 
+    def test_agent_deploy_flow_requested_user_is_forced_to_conversation(self):
+        """Agent flow deployment cannot escape conversation scope."""
+        from pathlib import Path
+        from tasks.ai.actions.service_flow import _handle_service_flow
+
+        task = self._get_agent_loop()
+        task._agent_name = "agentA"
+        ff = self._make_flowfile({
+            "action": "deploy_flow",
+            "template_id": "pkg.flow:1.0.0",
+            "conversation_id": "conv1",
+            "scope": "user",
+        })
+        dr = MagicMock()
+        dr.deploy.return_value = "flow1"
+        dr.get.return_value = None
+        with patch("tasks.ai.actions.service_flow._resolve_flow_template_path", return_value=Path("/tmp/flow.json")), \
+                patch("pathlib.Path.read_text", return_value=json.dumps({
+                    "id": "flow", "name": "Flow", "scope": "conversation",
+                })), \
+                patch("core.deployment_registry.DeploymentRegistry.get_instance", return_value=dr):
+            result = _handle_service_flow(
+                task, "deploy_flow", json.loads(ff.get_content()), None,
+                "test_user", ff)
+        assert result is not None
+        body = json.loads(result[0].get_content())
+        assert body["scope"] == "conversation"
+        assert dr.deploy.call_args.kwargs["owner"] == "test_user"
+        assert dr.deploy.call_args.kwargs["conversation_id"] == "conv1"
+
     def test_admin_deploy_flow_global_uses_global_owner(self):
         """Direct global deployment must create a global instance, not a user one."""
         from pathlib import Path
@@ -585,6 +691,60 @@ class TestPromoteGlobalBlocked:
             "skill", "conv_skill", "test_user",
             {"prompt": "test", "_created_by": "assistant", "review": _SAFE_SKILL_REVIEW},
             conversation_id="test_conv")
+
+    def test_manage_resource_user_create_global_is_rejected_without_admin_context(self):
+        from core.tool_registry import create_default_registry
+
+        registry = create_default_registry()
+        handler = registry.get("manage_resource")
+        if handler is None:
+            pytest.skip("manage_resource handler not found")
+        handler._user_id = "test_user"
+        handler._conversation_id = "test_conv"
+        rs = MagicMock()
+        with patch("core.resource_store.ResourceStore.instance", return_value=rs):
+            result = handler.execute({
+                "action": "create", "resource_type": "skill", "name": "global_skill",
+                "data": {"prompt": "test", "scope": "global"},
+            })
+        assert "Global resource writes require admin" in result
+        rs.create.assert_not_called()
+
+    def test_manage_resource_user_update_global_is_rejected_without_admin_context(self):
+        from core.tool_registry import create_default_registry
+
+        registry = create_default_registry()
+        handler = registry.get("manage_resource")
+        if handler is None:
+            pytest.skip("manage_resource handler not found")
+        handler._user_id = "test_user"
+        handler._conversation_id = "test_conv"
+        rs = MagicMock()
+        rs.get_any.return_value = {"name": "global_skill", "_scope": "global", "prompt": "old"}
+        with patch("core.resource_store.ResourceStore.instance", return_value=rs):
+            result = handler.execute({
+                "action": "update", "resource_type": "skill", "name": "global_skill",
+                "data": {"prompt": "new"},
+            })
+        assert "Global resource writes require admin" in result
+        rs.update.assert_not_called()
+
+    def test_manage_resource_user_import_global_is_rejected_without_admin_context(self):
+        from core.tool_registry import create_default_registry
+
+        registry = create_default_registry()
+        handler = registry.get("manage_resource")
+        if handler is None:
+            pytest.skip("manage_resource handler not found")
+        handler._user_id = "test_user"
+        handler._conversation_id = "test_conv"
+        with patch("core.skill_marketplace.import_marketplace_skill") as importer:
+            result = handler.execute({
+                "action": "import_marketplace", "resource_type": "skill",
+                "ref": "owner/repo", "scope": "global",
+            })
+        assert "Global resource writes require admin" in result
+        importer.assert_not_called()
 
     def test_manage_resource_agent_update_user_scope_is_read_only(self):
         from core.tool_registry import create_default_registry

@@ -407,9 +407,10 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "Missing conversation_id for conversation scope"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
-        from core.resource_store import ResourceStore
+        from core.resource_store import GLOBAL_USER_ID, ResourceStore
         rs = ResourceStore.instance()
         uid = user_id
+        target_uid = GLOBAL_USER_ID if scope == "global" else uid
         try:
             data = {}
             if skill_instructions:
@@ -433,8 +434,8 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                 review_meta = review_for_write(
                     _review_subject,
                     operation="update" if is_update else "create",
-                    user_id=uid,
-                    conversation_id=conv_id,
+                    user_id=target_uid,
+                    conversation_id=conv_id if scope == "conversation" else "",
                     package_files=_pkg_files,
                     force=bool(body.get("force", False)),
                 )
@@ -451,7 +452,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             if review_meta:
                 data = attach_review_metadata(data, review_meta)
             scope_kwargs = {"conversation_id": conv_id} if scope == "conversation" and conv_id else {}
-            exists = rs.get("skill", skill_name, uid, **scope_kwargs)
+            exists = rs.get("skill", skill_name, target_uid, **scope_kwargs)
             if is_update:
                 if not exists:
                     flowfile.set_content(json.dumps({
@@ -459,7 +460,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                     }).encode())
                     flowfile.set_attribute("http.response.status", "404")
                     return [flowfile]
-                rs.update("skill", skill_name, uid, data, **scope_kwargs)
+                rs.update("skill", skill_name, target_uid, data, **scope_kwargs)
                 if conv_id:
                     from core.skill_lifecycle import notify_skill_updated
                     updated_def = rs.get_any(
@@ -474,7 +475,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                     }).encode())
                     flowfile.set_attribute("http.response.status", "409")
                     return [flowfile]
-                rs.create("skill", skill_name, uid, data, **scope_kwargs)
+                rs.create("skill", skill_name, target_uid, data, **scope_kwargs)
             flowfile.set_content(json.dumps({
                 "created": not is_update, "updated": is_update,
                 "name": skill_name, "scope": scope,
@@ -526,6 +527,10 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             flowfile.set_attribute("http.response.status", "404")
             return [flowfile]
         scope = skill_def.get("_scope", "user")
+        if scope == "global" and "admin" not in (flowfile.get_attribute("http.auth.roles") or ""):
+            flowfile.set_content(json.dumps({"error": "Requires admin role for global scope"}).encode())
+            flowfile.set_attribute("http.response.status", "403")
+            return [flowfile]
         delete_kwargs = {"conversation_id": conv_id} if scope == "conversation" and conv_id else {}
         delete_uid = uid if scope in ("conversation", "user") else "__global__"
         deleted = rs.delete("skill", skill_name, delete_uid, **delete_kwargs)

@@ -258,7 +258,9 @@ def test_telegram_agent_client_uses_selected_conversation_agent(monkeypatch):
 
     assert captured["target_agent"] == "assistant"
     assert captured["runtime_port"] == "pawflow_agent.agent_runtime_in"
-    assert out.get_content() == b""
+    # Nothing was forwarded live this turn, so the final agent response must
+    # reach Telegram instead of being suppressed.
+    assert out.get_content() == b"pong"
 
 
 def test_agent_runtime_api_uses_declared_runtime_port(monkeypatch):

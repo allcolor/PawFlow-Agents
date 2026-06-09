@@ -204,7 +204,7 @@ def test_cli_provider_namespace_workdirs_drop_user_segment(tmp_path, monkeypatch
     assert LLMGeminiMixin._gemini_acp_container_dir(
         str(workdir)) == "/cc_sessions/conv1/assistant"
     assert InteractiveClaudeCodePool._physical_container_workdir(
-        "user1", "conv1", "assistant") == "/cc_sessions/user1/conv1/assistant"
+        "user1", "conv1", "assistant") == "/cc_sessions_host/user1/conv1/assistant"
     assert InteractiveClaudeCodePool._container_workdir(
         "user1", "conv1", "assistant") == "/cc_sessions/conv1/assistant"
 

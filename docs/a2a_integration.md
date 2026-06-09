@@ -352,6 +352,112 @@ agent confirm autonomously, the A2A task moves to `input-required` (or
 the `input-required` mapping in "Task State Mapping" and depends on the explicit
 A2A task finalization hook; do not infer approval state from transcript scans.
 
+## Multi-Hop Async Confirmation (Saga)
+
+The confirmation flow can span more than two parties and stay open across an
+arbitrary human delay. A representative flow with three agents (an external
+client, a calendar agent, a confirmation agent) plus the human owner:
+
+```text
+1. external agent  --A2A SendMessage-->  calendar agent        (task T_ext)
+2. calendar agent  --A2A SendMessage-->  confirmation agent     (task T_cnf)
+3. confirmation agent: deposit pending item, reply input-required "received"
+4. calendar agent: reply input-required "confirmation requested" on T_ext
+5. human opens the confirmation conversation, asks what is pending
+6. confirmation agent lists pending items from its store
+7. human confirms one item
+8. confirmation agent --A2A--> calendar agent: "confirmed" (resolves T_cnf)
+9. calendar agent --push--> external agent: "confirmed" (resolves T_ext)
+```
+
+This is realizable with the planned A2A surface (Phase 1 server, Phase 3 client,
+Phase 5 push) on top of the existing async runtime. It is not a single feature:
+it is a small distributed state machine assembled from task records, agent wake,
+outbound A2A calls, and push notifications. PawFlow provides the parts, not an
+orchestrator/saga manager.
+
+Note that agent wake is per-conversation (`AgentLoopTask.wake_agent(
+conversation_id, agent_name)`); there is no direct cross-conversation wake. A
+cross-conversation hop is "write a message into the target conversation, then
+wake its agent" — exactly what the A2A `SendMessage` server handler does. Each
+"call you back later" step (8, 9) is therefore an ordinary agent turn, triggered
+by an event (human input or inbound A2A), that emits an outbound A2A call. It is
+the async delegate pattern, but cross-conversation over A2A.
+
+### Confirmation Inbox over Task Records
+
+The confirmation side is a shared inbox, not an isolated-context surface (see
+"Multi-Client Isolated Contexts" for why isolation fits the calendar side but
+not an agent that aggregates toward one human). Inbound confirmation requests
+must be readable by the human-facing turn, so they belong in a store the
+human-facing agent can query — not in per-request isolated sub-conversations whose
+context the human-facing turn cannot see.
+
+The natural store is the A2A task index itself. Each inbound confirmation request
+is a task in `input-required` on the confirmation side, and its task record
+already carries everything needed:
+
+- `task_id`, `context_id`, `state`: the item to confirm and its status.
+- `remote_agent_url` + `metadata`: the actionable callback reference to the exact
+  calendar sub-conversation (calendar A2A endpoint plus its `context_id`/
+  `task_id`, and by chaining the originating external `task_id`).
+
+So "list what is pending" (step 6) is "list this user's/conversation's tasks in
+`state=input-required`", and "confirm" (step 8) reads `remote_agent_url`/
+`metadata` and emits the outbound A2A call to that precise target, then
+transitions the task to `completed`. The correlation that links a confirmation
+back to the right calendar sub-conversation is the task record; a separate store
+would duplicate it.
+
+### Deterministic Deposit
+
+Prefer depositing the inbound request deterministically: the A2A server handler
+creates the `input-required` task record on disk and notifies the human, with no
+LLM turn required to persist it. An agent-mediated deposit (wake the agent, hope
+it calls a store tool) risks dropping a confirmation request on a bad turn. The
+confirmation agent then only runs for the human interaction — listing pending
+items and acting on a confirmation.
+
+### Actionable, Durable Callback Reference
+
+A stored label is not enough. The pending entry must let the confirmation side
+re-issue an authenticated A2A call to the calendar side, possibly days later:
+
+- Durable credentials. The token used to call back the calendar agent cannot be
+  a short-lived token captured at request time; use a persistent service-account
+  credential stored in the secrets system, valid for the pending entry's whole
+  lifetime, or the callback at step 8 fails on token expiry.
+- Reachable target. If the calendar sub-conversation expired by TTL in the
+  meantime, the callback has nowhere to land. Couple the lifetimes: expiry or
+  cancellation of a calendar sub-conversation must invalidate the matching
+  confirmation entry, so the human is never asked to confirm a dead request.
+
+### State Machine, Idempotency, Scoping
+
+- Per-entry state machine: `pending -> confirmed | rejected -> callback_sent ->
+  done`. A confirmation past TTL is marked stale, not silently actioned.
+- Idempotency: a human confirming twice triggers exactly one callback (dedup on
+  `task_id`); a failed callback is retryable without double-booking the external
+  side.
+- RBAC scoping: the human sees only their own pending confirmations (filter by
+  `user_id`/conversation), consistent with the resource RBAC matrix. Step 6 is a
+  scoped query, never a global dump.
+
+### Cross-Cutting Requirements
+
+1. Outbound A2A as a non-blocking agent capability (Phase 3): the calendar and
+   confirmation agents must be A2A clients with a send-and-continue tool that
+   returns a task immediately, modeled on async delegate.
+2. Long-lived `input-required` tasks with event-driven resumption and a timeout:
+   `T_ext` and `T_cnf` stay open for an arbitrary human delay, persisted in task
+   records (survive restarts), and must expire to a `canceled`/timeout state if
+   the human never responds rather than hanging forever. Depends on the explicit
+   task finalization hook.
+3. The external agent must accept a callback: step 9 only works if it registered
+   a push webhook (Phase 5) or polls its task. An external agent that only does
+   synchronous request/response cannot receive a deferred confirmation. This is a
+   constraint on the third party, outside PawFlow's control.
+
 ## Security
 
 Required controls:
@@ -419,6 +525,12 @@ Required controls:
 - A `display_only` projection into the parent conversation appears in the transcript and web chat but never enters any agent's prompt context.
 - An expired context TTL reclaims the sub-conversation via `ConversationStore.cleanup()`; a resumed context past TTL is rejected, not silently recreated with lost history.
 - Concurrent slot requests from two contexts cannot double-book: the calendar tool enforces atomic check-and-reserve.
+- A multi-hop confirmation keeps `T_ext` and `T_cnf` in `input-required` across the human delay, and a later human confirmation resumes both via outbound A2A callbacks in order.
+- Listing pending confirmations returns only the requesting user's `input-required` tasks; another user's pending items are never disclosed.
+- A pending confirmation entry holds an actionable callback reference (`remote_agent_url` + `metadata`) that resolves to the exact calendar sub-conversation.
+- Confirming the same item twice triggers exactly one outbound callback (idempotent on `task_id`).
+- When a calendar sub-conversation expires by TTL, the matching confirmation entry is marked stale and is not actionable.
+- A human confirmation that never arrives lets `T_ext`/`T_cnf` time out to `canceled` rather than hanging open.
 
 ## Open Questions
 

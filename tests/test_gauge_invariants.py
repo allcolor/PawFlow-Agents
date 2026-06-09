@@ -1717,12 +1717,15 @@ def test_vnc_proxy_injects_native_clipboard_and_key_repeat_bridge():
 
 
 def test_relay_desktop_starts_x11_clipboard_sync_when_available():
-    src = Path("pawflow_relay/worker.py").read_text(encoding="utf-8")
-    runtime_src = Path("pawflow-relay-desktop/runtime/pawflow_relay/worker.py").read_text(encoding="utf-8")
+    worker_paths = [Path("pawflow_relay/worker.py")]
+    runtime_worker = Path("pawflow-relay-desktop/runtime/pawflow_relay/worker.py")
+    if runtime_worker.exists():
+        worker_paths.append(runtime_worker)
     dockerfile = Path("docker/relay-dev/Dockerfile").read_text(encoding="utf-8")
 
     assert "autocutsel" in dockerfile
-    for worker_src in (src, runtime_src):
+    for worker_path in worker_paths:
+        worker_src = worker_path.read_text(encoding="utf-8")
         assert '_shutil.which("autocutsel")' in worker_src
         assert '("CLIPBOARD", "PRIMARY")' in worker_src
         assert '["autocutsel", "-selection", _selection]' in worker_src

@@ -197,6 +197,7 @@ class ReadHistoryHandler(ToolHandler):
             "\n"
             "Actions:\n"
             "  recent         — last N messages (tail).\n"
+            "  oldest         — first N messages (head).\n"
             "  search         — full-text match (case-insensitive), "
             "with keyword fallback for non-contiguous terms.\n"
             "  read           — a single message by numeric index.\n"
@@ -245,11 +246,12 @@ class ReadHistoryHandler(ToolHandler):
                 "action": {
                     "type": "string",
                     "enum": [
-                        "recent", "search", "read", "count",
+                        "recent", "oldest", "search", "read", "count",
                         "range", "range_by_seq", "range_by_date", "around",
                     ],
                     "description": (
                         "recent: last N messages (default). "
+                        "oldest: first N messages. "
                         "search: find messages matching a query. "
                         "read: read a specific message by index. "
                         "count: total message count. "
@@ -266,8 +268,9 @@ class ReadHistoryHandler(ToolHandler):
                     "type": "integer",
                     "description": (
                         "Pagination cursor. For 'recent' it skips the N most "
-                        "recent filtered messages; for every other list "
-                        "action (range, range_by_seq, range_by_date, search) "
+                        "recent filtered messages; for 'oldest' and every "
+                        "other list action (range, range_by_seq, "
+                        "range_by_date, search) "
                         "it skips the first N results of the filtered match "
                         "set. Default 0. Pass the value suggested at the end "
                         "of the previous response to step to the next page."
@@ -381,7 +384,13 @@ class ReadHistoryHandler(ToolHandler):
             return self._do_range_by_date(store, arguments, role_filter, agent_filter)
         if action == "around":
             return self._do_around(store, arguments, role_filter, agent_filter)
-        return self._do_recent(store, arguments, role_filter, agent_filter)
+        if action == "oldest":
+            return self._do_oldest(store, arguments, role_filter, agent_filter)
+        if action in {"recent", ""}:
+            return self._do_recent(store, arguments, role_filter, agent_filter)
+        return ("Error: action must be one of "
+                "['recent', 'oldest', 'search', 'read', 'count', "
+                "'range', 'range_by_seq', 'range_by_date', 'around']")
 
     # ── Loader helper ─────────────────────────────────────────────────
 
@@ -562,7 +571,22 @@ class ReadHistoryHandler(ToolHandler):
                     anchor_idx = i
                     break
             if anchor_idx < 0:
-                return f"Error: no message with seq={fs}"
+                if limit > 0:
+                    for i, m in enumerate(all_msgs):
+                        seq = _msg_seq(m)
+                        if seq and seq >= fs:
+                            anchor_idx = i
+                            break
+                    if anchor_idx < 0:
+                        return f"Error: no message at or after seq={fs}"
+                else:
+                    for i in range(len(all_msgs) - 1, -1, -1):
+                        seq = _msg_seq(all_msgs[i])
+                        if seq and seq <= fs:
+                            anchor_idx = i
+                            break
+                    if anchor_idx < 0:
+                        return f"Error: no message at or before seq={fs}"
         else:
             fts = _parse_date(from_date)
             if fts is None:
@@ -643,6 +667,21 @@ class ReadHistoryHandler(ToolHandler):
             header += (f". More older — repeat with "
                        f"offset={offset + limit}.")
         return header + "\n\n" + "\n\n".join(lines)
+
+    def _do_oldest(self, store, arguments,
+                   role_filter: str, agent_filter: str) -> str:
+        all_msgs = self._load_all(store) or []
+        if role_filter or agent_filter:
+            msgs = _apply_filters(all_msgs, role_filter, agent_filter)
+        else:
+            msgs = all_msgs
+        return self._render_slice(
+            store, msgs, "Oldest messages",
+            role_filter, agent_filter,
+            action="oldest",
+            offset_arg=arguments.get("offset"),
+            limit_arg=arguments.get("limit"),
+            all_msgs=all_msgs)
 
     # ── Rendering ─────────────────────────────────────────────────────
 

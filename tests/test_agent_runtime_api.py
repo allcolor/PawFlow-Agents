@@ -142,6 +142,58 @@ def test_telegram_agent_client_conv_commands(monkeypatch):
     assert listing["reply_markup"]["inline_keyboard"][0][0]["callback_data"].startswith("conv:resume:")
 
 
+def test_telegram_agent_client_dispatches_help_command(monkeypatch):
+    import json
+    from tasks.io.telegram_agent_client import TelegramAgentClientTask
+
+    captured = {}
+
+    class RuntimeTask:
+        def execute(self, flowfile):
+            body = json.loads(flowfile.get_content().decode("utf-8"))
+            captured["body"] = body
+            captured["user_id"] = flowfile.get_attribute("http.auth.principal")
+            flowfile.set_content(json.dumps({
+                "help": "## Available Commands\n\n**Session**\n  `/help` — List commands",
+            }).encode("utf-8"))
+            return [flowfile]
+
+    monkeypatch.setattr(
+        "core.agent_runtime_ports.resolve_agent_runtime_task",
+        lambda runtime_port: RuntimeTask(),
+    )
+
+    result = TelegramAgentClientTask({})._handle_command("/help", "alice", "chat1")
+
+    assert result.startswith("*Available Commands*")
+    assert "*Session*" in result
+    assert "`/help`" in result
+    assert captured["body"]["action"] == "command"
+    assert captured["body"]["text"] == "/help"
+    assert captured["body"]["_inline_response"] is True
+    assert captured["user_id"] == "alice"
+
+
+def test_telegram_agent_client_dispatch_command_requires_active_conversation(monkeypatch):
+    from core.identity_service import IdentityService
+    from tasks.io.telegram_agent_client import TelegramAgentClientTask
+
+    IdentityService.reset()
+    called = False
+
+    def resolve(runtime_port):
+        nonlocal called
+        called = True
+        return None
+
+    monkeypatch.setattr("core.agent_runtime_ports.resolve_agent_runtime_task", resolve)
+
+    result = TelegramAgentClientTask({})._handle_command("/agent list", "alice", "chat1")
+
+    assert result == "No resumed conversation. Use /conv list then /conv select <id>."
+    assert called is False
+
+
 def test_telegram_conv_new_parser_keeps_options_after_title():
     from tasks.io.telegram_agent_client import _parse_new_conversation_args
 

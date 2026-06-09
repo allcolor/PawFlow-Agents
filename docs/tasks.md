@@ -101,7 +101,11 @@ validates the agent, LLM service, and relay in the linked user's scope.
 When called without arguments, `/conv new` opens an inline Telegram wizard for
 title, one or more agents, per-agent LLM service, agent instance names, relays,
 default relay, and confirmation. `/conv list` and `/conv select` without an ID
-show inline buttons to resume an existing conversation. The `agent_runtime_port`
+show inline buttons to resume an existing conversation. Telegram keeps `/conv`
+and `/tts` as channel-local commands; other slash commands are sent through the
+shared server-side command dispatcher. `/help` uses that shared dispatcher and
+renders the command reference for Telegram even before a conversation is
+resumed. The `agent_runtime_port`
 parameter resolves at execution time to a running flow port such as
 `pawflow_agent.agent_runtime_in`; the target flow must be running and declare an
 `agentRuntime` input port. The Telegram client task is concurrent so a second

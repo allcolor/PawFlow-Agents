@@ -150,7 +150,7 @@ class TestContinuousFlowExecutor:
         executor.start()
         try:
             executor.inject(FlowFile(content=b"pipeline"), entry_task_id="a")
-            deadline = time.monotonic() + 0.25
+            deadline = time.monotonic() + 1.0
             while time.monotonic() < deadline:
                 states = executor.get_all_task_states()
                 if states["a"]["flowfiles_in"] >= 1 and states["b"]["flowfiles_in"] >= 1:

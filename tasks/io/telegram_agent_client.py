@@ -193,6 +193,8 @@ class TelegramAgentClientTask(BaseTask):
         if text.startswith("/tts"):
             return self._handle_tts_command(text, user_id)
         if not text.startswith("/conv"):
+            if text.startswith("/"):
+                return self._handle_dispatch_command(text, user_id)
             return None
         from core.identity_service import IdentityService
         from core.conversation_store import ConversationStore
@@ -252,6 +254,35 @@ class TelegramAgentClientTask(BaseTask):
             ids.set_active_conv(user_id, "telegram", selected)
             return f"Selected conversation: {selected}"
         return "Usage: /conv current | /conv list | /conv select <n|id> | /conv new <agent> --title <title> --relay <relay_id> [--llm <service>]"
+
+    def _handle_dispatch_command(self, text: str, user_id: str) -> str:
+        from core.identity_service import IdentityService
+        ids = IdentityService.instance()
+        conversation_id = ids.get_active_conv(user_id, "telegram") or ""
+        command = text.split(None, 1)[0].lower() if text.strip() else ""
+        if not conversation_id and command != "/help":
+            return "No resumed conversation. Use /conv list then /conv select <id>."
+        agent_name = self._selected_agent_for_conversation(conversation_id) if conversation_id else ""
+        body = {
+            "action": "command",
+            "text": text,
+            "conversation_id": conversation_id,
+            "agent_name": agent_name,
+            "_inline_response": True,
+        }
+        ff = FlowFile(content=json.dumps(body, ensure_ascii=False).encode("utf-8"))
+        ff.set_attribute("http.auth.principal", user_id)
+        ff.set_attribute("agent.client_channel", "telegram")
+        ff.set_attribute("conversation_id", conversation_id)
+        from core.agent_runtime_ports import resolve_agent_runtime_task
+        runtime_port = self.config.get("agent_runtime_port", "pawflow_agent.agent_runtime_in")
+        inst = resolve_agent_runtime_task(runtime_port)
+        if inst is None:
+            raise RuntimeError(f"No live AgentLoopTask is available for runtime port: {runtime_port}")
+        outputs = inst.execute(ff)
+        out = outputs[0] if outputs else ff
+        return _format_telegram_command_result(
+            out.get_content().decode("utf-8", errors="replace"))
 
     def _handle_tts_command(self, text: str, user_id: str) -> str:
         from core.identity_service import IdentityService
@@ -493,6 +524,37 @@ def _apply_telegram_response(flowfile: FlowFile, response: Any) -> None:
             flowfile.set_attribute("telegram.reply_markup", json.dumps(markup))
         return
     flowfile.set_content(str(response).encode("utf-8"))
+
+
+def _format_telegram_command_result(raw: str) -> str:
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return raw
+    if not isinstance(payload, dict):
+        return str(payload)
+    if payload.get("help"):
+        return _telegram_markdown_help(str(payload["help"]))
+    if payload.get("error"):
+        text = f"Error: {payload['error']}"
+        if payload.get("hint"):
+            text += f"\n{payload['hint']}"
+        return text
+    if payload.get("output") is not None:
+        return str(payload["output"])
+    if payload.get("message") is not None:
+        return str(payload["message"])
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def _telegram_markdown_help(text: str) -> str:
+    lines = []
+    for line in str(text or "").splitlines():
+        if line.startswith("## "):
+            lines.append(f"*{line[3:].strip()}*")
+        else:
+            lines.append(re.sub(r"\*\*([^*]+)\*\*", r"*\1*", line))
+    return "\n".join(lines).strip()
 
 
 def _inline_keyboard(rows: List[List[Dict[str, str]]]) -> Dict[str, Any]:

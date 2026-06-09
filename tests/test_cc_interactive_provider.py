@@ -1718,12 +1718,13 @@ def test_cc_interactive_event_service_persists_manual_tmux_prompt(monkeypatch):
     captures = []
 
     class _Writer:
-        def enqueue_message(self, msg, agent_name="", user_id="", ttl=0):
+        def enqueue_message(self, msg, agent_name="", user_id="", ttl=0, sse_events=None):
             writes.append({
                 "msg": msg,
                 "agent_name": agent_name,
                 "user_id": user_id,
                 "ttl": ttl,
+                "sse_events": sse_events,
             })
 
     class _ConversationWriter:
@@ -1766,7 +1767,79 @@ def test_cc_interactive_event_service_persists_manual_tmux_prompt(monkeypatch):
     }
     assert msg.get("msg_id")
     assert msg.get("ts")
+    assert writes[0]["sse_events"] == [{"type": "new_message", "data": {
+        "role": "user",
+        "content": "hello from tmux",
+        "msg_id": msg.get("msg_id"),
+        "ts": msg.get("ts"),
+        "source": msg.get("source"),
+        "channel": "tmux",
+    }}]
     assert captures == ["sess"]
+
+
+def test_cc_interactive_event_service_publishes_manual_tmux_response(monkeypatch):
+    from services.cc_interactive_event_service import CCInteractiveEventService
+
+    writes = []
+
+    class _Writer:
+        def enqueue_message(self, msg, agent_name="", user_id="", ttl=0, sse_events=None):
+            writes.append({
+                "msg": msg,
+                "agent_name": agent_name,
+                "user_id": user_id,
+                "ttl": ttl,
+                "sse_events": sse_events,
+            })
+
+    class _ConversationWriter:
+        @staticmethod
+        def for_conversation(cid):
+            assert cid == "cid1"
+            return _Writer()
+
+    class _Response:
+        content = "final from cci"
+
+    class _Coordinator:
+        def __init__(self, service, session_token):
+            assert session_token == "sess"
+
+        def run(self):
+            return _Response()
+
+    monkeypatch.setattr(
+        "core.conversation_writer.ConversationWriter", _ConversationWriter)
+    monkeypatch.setattr(
+        "core.llm_providers.claude_code_interactive._CCITurnCoordinator", _Coordinator)
+
+    svc = CCInteractiveEventService({"token": "tok", "_service_id": "events"})
+    svc.register_session(
+        "sess", user_id="uid1", conversation_id="cid1", agent_name="assistant")
+
+    svc._run_manual_capture("sess")
+
+    assert len(writes) == 1
+    assert writes[0]["agent_name"] == "assistant"
+    assert writes[0]["user_id"] == "uid1"
+    msg = writes[0]["msg"]
+    assert msg["role"] == "assistant"
+    assert msg["content"] == "final from cci"
+    assert msg["channel"] == "tmux"
+    assert msg["source"] == {
+        "type": "agent",
+        "name": "assistant",
+        "input": "cc_interactive_tmux",
+    }
+    assert writes[0]["sse_events"] == [{"type": "new_message", "data": {
+        "role": "assistant",
+        "content": "final from cci",
+        "msg_id": msg.get("msg_id"),
+        "ts": msg.get("ts"),
+        "source": msg.get("source"),
+        "channel": "tmux",
+    }}]
 
 
 def test_cc_interactive_event_service_ignores_pawflow_injected_prompt(monkeypatch):

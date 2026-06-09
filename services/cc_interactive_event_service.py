@@ -314,7 +314,15 @@ class CCInteractiveEventService(BaseService):
             }, state.conversation_id)
             ConversationWriter.for_conversation(
                 state.conversation_id).enqueue_message(
-                    msg, agent_name=state.agent_name, user_id=state.user_id)
+                    msg, agent_name=state.agent_name, user_id=state.user_id,
+                    sse_events=[{"type": "new_message", "data": {
+                        "role": "user",
+                        "content": msg.get("content", ""),
+                        "msg_id": msg.get("msg_id", ""),
+                        "ts": msg.get("ts"),
+                        "source": msg.get("source") or {},
+                        "channel": msg.get("channel", ""),
+                    }}])
             logger.info(
                 "CC interactive manual tmux prompt persisted: conv=%s agent=%s msg=%s chars=%d",
                 state.conversation_id[:8], state.agent_name, msg.get("msg_id", ""),
@@ -414,7 +422,15 @@ class CCInteractiveEventService(BaseService):
             }, state.conversation_id)
             ConversationWriter.for_conversation(
                 state.conversation_id).enqueue_message(
-                    msg, agent_name=state.agent_name, user_id=state.user_id)
+                    msg, agent_name=state.agent_name, user_id=state.user_id,
+                    sse_events=[{"type": "new_message", "data": {
+                        "role": "assistant",
+                        "content": msg.get("content", ""),
+                        "msg_id": msg.get("msg_id", ""),
+                        "ts": msg.get("ts"),
+                        "source": msg.get("source") or {},
+                        "channel": msg.get("channel", ""),
+                    }}])
             logger.info(
                 "CC interactive manual tmux response persisted: conv=%s agent=%s msg=%s chars=%d",
                 state.conversation_id[:8], state.agent_name, msg.get("msg_id", ""),

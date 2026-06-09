@@ -1017,8 +1017,15 @@ def test_server_login_vnc_uses_published_docker_host():
     for block in login_blocks:
         assert "backend_host = _docker_published_host()" in block
         assert "host=backend_host" in block
-        assert "noVNC not reachable on {backend_host}:{free_port}" in block
+        assert "container_host = _docker_container_ip(container_name)" in block
+        assert "_wait_for_vnc_login_backend(session_id, backend_host, free_port" in block
         assert "http://127.0.0.1:{free_port}/" not in block
+
+    assert "def _vnc_login_host_candidates" in src
+    assert 'candidates = [preferred_host, "127.0.0.1", "localhost"]' in src
+    assert "def _docker_container_ip" in src
+    assert '"{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}"' in src
+    assert "update_session_target(session_id, host, target_port)" in src
 
 
 def test_pawflow_agent_auth_routes_cover_login_forms():

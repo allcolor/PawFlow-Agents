@@ -214,6 +214,13 @@ def update_session_ready(session_id: str):
             _sessions[session_id]["ready"] = True
 
 
+def update_session_target(session_id: str, host: str, port: int):
+    with _lock:
+        if session_id in _sessions:
+            _sessions[session_id]["host"] = host
+            _sessions[session_id]["port"] = port
+
+
 def update_session_error(session_id: str, error: str):
     with _lock:
         if session_id in _sessions:

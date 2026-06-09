@@ -104,6 +104,65 @@ def _novnc_backend_http_ready(host: str, port: int, timeout: float = 2.0) -> boo
         return False
 
 
+def _vnc_login_host_candidates(preferred_host: str) -> List[str]:
+    """Return backend hosts to try for Docker-published login noVNC ports."""
+    import socket as _socket
+    candidates = [preferred_host, "127.0.0.1", "localhost"]
+    try:
+        candidates.append(_socket.gethostbyname("host.docker.internal"))
+    except Exception:
+        pass
+    seen = set()
+    out = []
+    for host in candidates:
+        host = str(host or "").strip()
+        if host and host not in seen:
+            seen.add(host)
+            out.append(host)
+    return out
+
+
+def _wait_for_vnc_login_backend(session_id: str, preferred_host: str, port: int, log_prefix: str,
+                                container_host: str = "", container_port: int = 6080) -> str:
+    """Find the reachable noVNC backend for a login container and store it."""
+    last_ready_error = "not checked"
+    targets = []
+    if container_host:
+        targets.append((container_host, int(container_port or 6080)))
+    targets.extend((host, int(port or 0)) for host in _vnc_login_host_candidates(preferred_host))
+    seen_targets = set()
+    targets = [target for target in targets if target not in seen_targets and not seen_targets.add(target)]
+    for _attempt in range(15):
+        for host, target_port in targets:
+            try:
+                if _novnc_backend_http_ready(host, target_port, timeout=0.75):
+                    from services.vnc_proxy import update_session_target
+                    update_session_target(session_id, host, target_port)
+                    logger.info("%s noVNC ready on %s:%d", log_prefix, host, target_port)
+                    return host
+                last_ready_error = f"no HTTP response from {host}:{target_port}"
+            except Exception as e:
+                last_ready_error = f"{host}:{target_port}: {e}"
+        time.sleep(1)
+    from services.vnc_proxy import update_session_error
+    update_session_error(session_id, f"noVNC not reachable on any backend target: {last_ready_error}")
+    return ""
+
+
+def _docker_container_ip(container_name: str) -> str:
+    import subprocess as _sp  # nosec B404
+    try:
+        from core.docker_utils import docker_cmd as _docker_cmd
+        result = _sp.run(
+            _docker_cmd() + ["inspect", "-f", "{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}", container_name],
+            capture_output=True, text=True, timeout=5)  # nosec B603
+        if result.returncode == 0:
+            return result.stdout.strip().splitlines()[0].strip()
+    except Exception:
+        logger.debug("Docker container IP lookup failed for %s", container_name, exc_info=True)
+    return ""
+
+
 def _ensure_terminal_routes(flowfile: FlowFile) -> None:
     """Ensure /terminal/ routes exist on the request's HTTP listener."""
     _req_port = flowfile.get_attribute("http.listener.port") or ""
@@ -2123,22 +2182,11 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 _publish_command_result(_conv_id, {"error": f"Login failed: {e}"})
                 return
 
-            # Wait for noVNC to be ready
-            import urllib.request
-            ready = False
-            last_ready_error = None
-            for _attempt in range(15):
-                try:
-                    urllib.request.urlopen(f"http://{backend_host}:{free_port}/", timeout=2)  # nosec B310 - internal noVNC readiness probe.
-                    logger.info("[vnc-login] noVNC ready on %s:%d", backend_host, free_port)
-                    ready = True
-                    break
-                except Exception as e:
-                    last_ready_error = e
-                    time.sleep(1)
-            if not ready:
-                from services.vnc_proxy import update_session_error
-                update_session_error(session_id, f"noVNC not reachable on {backend_host}:{free_port}: {last_ready_error}")
+            container_host = _docker_container_ip(container_name)
+            # Wait for noVNC to be ready. Different deployments expose Docker
+            # login containers either directly on the Docker bridge or through
+            # a published host port.
+            if not _wait_for_vnc_login_backend(session_id, backend_host, free_port, "[vnc-login]", container_host):
                 return
 
             _ensure_vnc_routes(flowfile)
@@ -4445,21 +4493,8 @@ finally:
                 _publish_command_result(_conv_id, {"error": f"Login failed: {e}"})
                 return
 
-            import urllib.request
-            ready = False
-            last_ready_error = None
-            for _attempt in range(15):
-                try:
-                    urllib.request.urlopen(f"http://{backend_host}:{free_port}/", timeout=2)  # nosec B310 - internal noVNC readiness probe.
-                    logger.info("[codex-login] noVNC ready on %s:%d", backend_host, free_port)
-                    ready = True
-                    break
-                except Exception as e:
-                    last_ready_error = e
-                    time.sleep(1)
-            if not ready:
-                from services.vnc_proxy import update_session_error
-                update_session_error(session_id, f"noVNC not reachable on {backend_host}:{free_port}: {last_ready_error}")
+            container_host = _docker_container_ip(container_name)
+            if not _wait_for_vnc_login_backend(session_id, backend_host, free_port, "[codex-login]", container_host):
                 return
 
             _ensure_vnc_routes(flowfile)
@@ -4677,21 +4712,8 @@ finally:
                 _publish_command_result(_conv_id, {"error": f"Login failed: {e}"})
                 return
 
-            import urllib.request
-            ready = False
-            last_ready_error = None
-            for _attempt in range(15):
-                try:
-                    urllib.request.urlopen(f"http://{backend_host}:{free_port}/", timeout=2)  # nosec B310 - internal noVNC readiness probe.
-                    logger.info("[%s-login] noVNC ready on %s:%d", login_cli, backend_host, free_port)
-                    ready = True
-                    break
-                except Exception as e:
-                    last_ready_error = e
-                    time.sleep(1)
-            if not ready:
-                from services.vnc_proxy import update_session_error
-                update_session_error(session_id, f"noVNC not reachable on {backend_host}:{free_port}: {last_ready_error}")
+            container_host = _docker_container_ip(container_name)
+            if not _wait_for_vnc_login_backend(session_id, backend_host, free_port, f"[{login_cli}-login]", container_host):
                 return
 
             _ensure_vnc_routes(flowfile)
@@ -4928,21 +4950,8 @@ finally:
                 _publish_command_result(_conv_id, {"error": f"Login failed: {e}"})
                 return
 
-            import urllib.request
-            ready = False
-            last_ready_error = None
-            for _attempt in range(15):
-                try:
-                    urllib.request.urlopen(f"http://{backend_host}:{free_port}/", timeout=2)  # nosec B310 - internal noVNC readiness probe.
-                    logger.info("[rclone-login] noVNC ready on %s:%d", backend_host, free_port)
-                    ready = True
-                    break
-                except Exception as e:
-                    last_ready_error = e
-                    time.sleep(1)
-            if not ready:
-                from services.vnc_proxy import update_session_error
-                update_session_error(session_id, f"noVNC not reachable on {backend_host}:{free_port}: {last_ready_error}")
+            container_host = _docker_container_ip(container_name)
+            if not _wait_for_vnc_login_backend(session_id, backend_host, free_port, "[rclone-login]", container_host):
                 return
 
             _ensure_vnc_routes(flowfile)

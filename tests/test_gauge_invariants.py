@@ -1704,6 +1704,30 @@ def test_vnc_proxy_retries_backend_startup_window():
     assert "Backend unavailable" in src
 
 
+def test_vnc_proxy_injects_native_clipboard_and_key_repeat_bridge():
+    src = Path("services/vnc_proxy.py").read_text(encoding="utf-8")
+
+    assert "PawFlowNoVNC" in src
+    assert "navigator.clipboard.readText" in src
+    assert "navigator.clipboard.writeText" in src
+    assert "event.repeat" in src
+    assert "Backspace: 0xff08" in src
+    assert "UI.rfb.addEventListener(\"clipboard\", UI.clipboardReceive);" in src
+    assert "PawFlowNoVNC.attach(UI.rfb)" in src
+
+
+def test_relay_desktop_starts_x11_clipboard_sync_when_available():
+    src = Path("pawflow_relay/worker.py").read_text(encoding="utf-8")
+    runtime_src = Path("pawflow-relay-desktop/runtime/pawflow_relay/worker.py").read_text(encoding="utf-8")
+    dockerfile = Path("docker/relay-dev/Dockerfile").read_text(encoding="utf-8")
+
+    assert "autocutsel" in dockerfile
+    for worker_src in (src, runtime_src):
+        assert '_shutil.which("autocutsel")' in worker_src
+        assert '("CLIPBOARD", "PRIMARY")' in worker_src
+        assert '["autocutsel", "-selection", _selection]' in worker_src
+
+
 def test_bg_bucket_is_independent_from_foreground_agent_state():
     """Background pyramid jobs must not touch foreground agent state.
 

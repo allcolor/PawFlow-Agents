@@ -283,6 +283,103 @@ _MIME_TYPES = {
 }
 
 
+_PAWFLOW_NOVNC_CLIENT_SCRIPT = b"""
+<script>
+(function() {
+  'use strict';
+  const repeatKeysyms = {
+    Backspace: 0xff08,
+    Tab: 0xff09,
+    Enter: 0xff0d,
+    Escape: 0xff1b,
+    Delete: 0xffff,
+    Insert: 0xff63,
+    Home: 0xff50,
+    End: 0xff57,
+    PageUp: 0xff55,
+    PageDown: 0xff56,
+    ArrowLeft: 0xff51,
+    ArrowUp: 0xff52,
+    ArrowRight: 0xff53,
+    ArrowDown: 0xff54,
+  };
+  let rfb = null;
+
+  function canUseClipboard() {
+    return window.isSecureContext && navigator.clipboard;
+  }
+
+  function sendCtrlV() {
+    if (!rfb) return;
+    rfb.sendKey(0xffe3, 'ControlLeft', true);
+    rfb.sendKey(0x0076, 'KeyV');
+    rfb.sendKey(0xffe3, 'ControlLeft', false);
+  }
+
+  function pasteHostClipboard() {
+    if (!rfb || !canUseClipboard() || !navigator.clipboard.readText) {
+      sendCtrlV();
+      return;
+    }
+    navigator.clipboard.readText().then((text) => {
+      rfb.clipboardPasteFrom(text || '');
+      sendCtrlV();
+    }).catch(() => sendCtrlV());
+  }
+
+  function onKeyDown(event) {
+    if (!rfb) return;
+    const pasteShortcut = (event.ctrlKey || event.metaKey) && !event.altKey &&
+      !event.shiftKey && String(event.key || '').toLowerCase() === 'v';
+    if (pasteShortcut) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      pasteHostClipboard();
+      return;
+    }
+    const keysym = repeatKeysyms[event.key];
+    if (!event.repeat || !keysym) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    rfb.sendKey(keysym, event.code || event.key);
+  }
+
+  function onRemoteClipboard(event) {
+    if (!canUseClipboard() || !navigator.clipboard.writeText) return;
+    const text = event && event.detail ? event.detail.text : '';
+    navigator.clipboard.writeText(text || '').catch(() => {});
+  }
+
+  window.PawFlowNoVNC = {
+    attach(nextRfb) {
+      if (rfb === nextRfb) return;
+      if (rfb) rfb.removeEventListener('clipboard', onRemoteClipboard);
+      rfb = nextRfb;
+      if (rfb) rfb.addEventListener('clipboard', onRemoteClipboard);
+    }
+  };
+  document.addEventListener('keydown', onKeyDown, true);
+})();
+</script>
+"""
+
+
+def _patch_novnc_static_body(sub_path: str, body: bytes) -> bytes:
+    """Inject PawFlow desktop behavior without vendoring noVNC files."""
+    safe_path = _os.path.normpath(str(sub_path or "")).lstrip(_os.sep).lstrip("/")
+    if safe_path in {"vnc.html", "vnc_lite.html"}:
+        marker = b'<script type="module" crossorigin="anonymous" src="app/ui.js"></script>'
+        if marker in body and b"PawFlowNoVNC" not in body:
+            return body.replace(marker, marker + b"\n" + _PAWFLOW_NOVNC_CLIENT_SCRIPT, 1)
+        return body
+    if safe_path == "app/ui.js" and b"PawFlowNoVNC.attach" not in body:
+        marker = b'UI.rfb.addEventListener("clipboard", UI.clipboardReceive);'
+        if marker in body:
+            patch = marker + b"\n        if (window.PawFlowNoVNC) { window.PawFlowNoVNC.attach(UI.rfb); }"
+            return body.replace(marker, patch, 1)
+    return body
+
+
 def _is_novnc_static_path(sub_path: str) -> bool:
     """Return True for noVNC UI files that can be served locally."""
     safe_path = _os.path.normpath(str(sub_path or "")).lstrip(_os.sep).lstrip("/")
@@ -307,6 +404,7 @@ def _serve_novnc_local(pending_req, sub_path: str) -> bool:
                     body = f.read()
                 ext = os.path.splitext(full_path)[1].lower()
                 content_type = _MIME_TYPES.get(ext, "application/octet-stream")
+                body = _patch_novnc_static_body(safe_path, body)
                 pending_req.complete(200, {
                 "Content-Type": content_type,
                 "Cross-Origin-Resource-Policy": "same-origin",
@@ -395,6 +493,7 @@ def vnc_http_proxy(pending_req):
                 with urllib.request.urlopen(req, timeout=2) as resp:  # nosec B310 - internal noVNC asset proxy target.
                     body = resp.read()
                     content_type = resp.headers.get("Content-Type", "application/octet-stream")
+                    body = _patch_novnc_static_body(sub_path, body)
                     pending_req.complete(200, {
                         "Content-Type": content_type,
                         "Cross-Origin-Resource-Policy": "same-origin",

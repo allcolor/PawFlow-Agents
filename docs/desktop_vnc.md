@@ -67,6 +67,8 @@ Use `see(path="screen", local=true)` or `see(path="screenshot", local=true)` whe
 
 PawFlow's VNC proxy relays WebSocket frames between the browser and a noVNC/websockify backend. It is used for Docker desktop sessions and server-side login containers. The proxy checks session auth and maps a session id to the backend host/port.
 
+The proxied noVNC page also injects a small PawFlow bridge for native desktop ergonomics. Browser clipboard reads and writes are connected to noVNC clipboard events so ordinary OS copy/paste shortcuts work in the remote desktop without a separate PawFlow clipboard panel. Docker virtual desktops start `autocutsel` when available to keep X11 `CLIPBOARD` and `PRIMARY` selections synchronized with desktop applications. The same bridge handles repeated keydown events for repeatable keys such as Backspace so holding the key behaves like a local desktop session.
+
 Related implementation:
 
 - `services/vnc_proxy.py`

@@ -1012,6 +1012,15 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                     else:
                         _audio_port = 0
 
+                # Keep the X11 clipboard used by desktop apps in sync with the
+                # VNC clipboard, so browser copy/paste behaves like a local desktop.
+                if _shutil.which("autocutsel"):
+                    for _selection in ("CLIPBOARD", "PRIMARY"):
+                        _p_clip = subprocess.Popen(  # nosec B603, B607
+                            ["autocutsel", "-selection", _selection],
+                            env=_user_env, stdout=_log_d, stderr=_log_d)
+                        _procs.append(_p_clip)
+
                 # 4. XFCE desktop session (PA already running — no plugin conflict)
                 _p_wm = subprocess.Popen(  # nosec B603, B607
                     ["startxfce4"], env=_user_env,

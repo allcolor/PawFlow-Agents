@@ -193,7 +193,7 @@ ENV PAWFLOW_DOCKER_IMAGE="${PAWFLOW_DOCKER_IMAGE}"
 # ── Desktop environment (VNC + audio) ───────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
     xvfb xfce4 xfce4-goodies dbus-x11 \
-    x11vnc novnc websockify \
+    x11vnc novnc websockify autocutsel \
     pulseaudio pulseaudio-utils \
     xdotool xclip xsel scrot wmctrl \
     fonts-dejavu fonts-liberation fonts-noto-color-emoji \

@@ -83,7 +83,8 @@ class TelegramAgentClientTask(BaseTask):
 
         command_response = self._handle_command(text, user_id, chat_id)
         if command_response is not None:
-            self._mirror_command_to_conversation(flowfile, text, user_id)
+            if _should_mirror_telegram_command(text):
+                self._mirror_command_to_conversation(flowfile, text, user_id)
             _apply_telegram_response(flowfile, command_response)
             return [flowfile]
 
@@ -184,8 +185,11 @@ class TelegramAgentClientTask(BaseTask):
         if result.error:
             flowfile.set_content(f"Agent error: {result.error}".encode("utf-8"))
             return [flowfile]
-        _telegram_live_assistant_was_forwarded(submission.conversation_id)
-        flowfile.set_content(b"")
+        if _telegram_live_assistant_was_forwarded(
+                submission.conversation_id, result.data):
+            flowfile.set_content(b"")
+        else:
+            flowfile.set_content(str(result.response or "").encode("utf-8"))
         flowfile.set_attribute("agent.conversation_id", submission.conversation_id)
         flowfile.set_attribute("agent.turn_id", submission.turn_id)
         return [flowfile]
@@ -557,6 +561,13 @@ def _clear_wizard(key: str) -> None:
 
 def _telegram_response(text: str, reply_markup: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     return {"text": text, "reply_markup": reply_markup or {}}
+
+
+def _should_mirror_telegram_command(text: str) -> bool:
+    command = str(text or "").strip().split(None, 1)[0].lower()
+    if not command.startswith("/"):
+        return False
+    return command not in {"/conv", "/tts"}
 
 
 def _apply_telegram_response(flowfile: FlowFile, response: Any) -> None:
@@ -1309,9 +1320,26 @@ def _telegram_assistant_msg_id_was_sent(conversation_id: str,
     return bool(key and key in _TELEGRAM_LIVE_SENT_ASSISTANT_MSG_IDS)
 
 
-def _telegram_live_assistant_was_forwarded(conversation_id: str) -> bool:
+def _telegram_live_assistant_was_forwarded(conversation_id: str,
+                                           final_data: Optional[Dict[str, Any]] = None) -> bool:
     if not conversation_id:
         return False
+    final_msg_id = ""
+    if isinstance(final_data, dict):
+        final_msg_id = str(final_data.get("msg_id") or "").strip()
+        if not final_msg_id:
+            all_ids = final_data.get("all_msg_ids")
+            if isinstance(all_ids, list) and all_ids:
+                final_msg_id = str(all_ids[-1] or "").strip()
+    if final_msg_id:
+        key = f"{conversation_id}\x1f{final_msg_id}"
+        seen_final = key in _TELEGRAM_LIVE_SENT_ASSISTANT_MSG_IDS
+        _TELEGRAM_LIVE_ASSISTANT_SENT_TURNS.discard(conversation_id)
+        prefix = conversation_id + "\x1f"
+        for sent_key in list(_TELEGRAM_LIVE_SENT_ASSISTANT_MSG_IDS):
+            if sent_key.startswith(prefix):
+                _TELEGRAM_LIVE_SENT_ASSISTANT_MSG_IDS.discard(sent_key)
+        return seen_final
     seen = conversation_id in _TELEGRAM_LIVE_ASSISTANT_SENT_TURNS
     _TELEGRAM_LIVE_ASSISTANT_SENT_TURNS.discard(conversation_id)
     if seen:

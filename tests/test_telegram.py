@@ -848,6 +848,44 @@ class TestTelegramAgentClientTask(unittest.TestCase):
             _p.USER_CONFIG_DIR = orig_ucd
             shutil.rmtree(tmp, ignore_errors=True)
 
+    def test_agent_client_does_not_mirror_telegram_local_commands(self):
+        import shutil
+        import tempfile
+        from unittest.mock import patch
+
+        from core.conversation_store import ConversationStore
+        from core.identity_service import IdentityService
+        from tasks.io.telegram_agent_client import TelegramAgentClientTask
+
+        tmp = tempfile.mkdtemp()
+        IdentityService.reset()
+        import core.paths as _p
+        orig_ucd = _p.USER_CONFIG_DIR
+        _p.USER_CONFIG_DIR = Path(tmp) / "users"
+        try:
+            ids = IdentityService()
+            IdentityService._instance = ids
+            ids.link("alice", "telegram", "111111")
+            ids.set_active_conv("alice", "telegram", "conv1")
+            store = ConversationStore.instance()
+            store.save("conv1", [], user_id="alice")
+
+            task = TelegramAgentClientTask({"agent_runtime_port": "pawflow_agent.agent_runtime_in"})
+            ff = FlowFile(content=b"/conv list")
+            ff.set_attribute("telegram.user_id", "111111")
+            ff.set_attribute("telegram.chat_id", "111111")
+            ff.set_attribute("telegram.message_id", "m-conv-list")
+
+            with patch("core.conversation_writer.ConversationWriter.for_conversation") as writer:
+                out = task.execute(ff)
+
+            assert b"Conversations:" in out[0].get_content()
+            writer.assert_not_called()
+        finally:
+            IdentityService.reset()
+            _p.USER_CONFIG_DIR = orig_ucd
+            shutil.rmtree(tmp, ignore_errors=True)
+
     def test_selected_agent_lookup_can_avoid_persisting_default(self):
         from tasks.io.telegram_agent_client import TelegramAgentClientTask
 
@@ -866,7 +904,7 @@ class TestTelegramAgentClientTask(unittest.TestCase):
         src = Path("tasks/io/telegram_agent_client.py").read_text(encoding="utf-8")
         assert "conversation_id, persist_default=False" in src
 
-    def test_agent_client_does_not_send_wait_for_done_text_or_tts_audio(self):
+    def test_agent_client_does_not_attach_tts_audio_to_wait_for_done_text(self):
         import shutil
         import tempfile
         from unittest.mock import patch
@@ -904,7 +942,7 @@ class TestTelegramAgentClientTask(unittest.TestCase):
                     patch("core.agent_runtime_api.AgentRuntimeAPI.wait_for_done", return_value=AgentFinalResult("conv1", "telegram:111111:m1", response="final text")):
                 out = task.execute(ff)
 
-            assert out[0].get_content() == b""
+            assert out[0].get_content() == b"final text"
             attach_audio.assert_not_called()
             assert not out[0].get_attribute("telegram.tts_audio_base64")
         finally:
@@ -1233,6 +1271,7 @@ class TestTelegramAgentClientTask(unittest.TestCase):
         from tasks.io.telegram_agent_client import (
             TelegramAgentClientTask,
             _TELEGRAM_LIVE_ASSISTANT_SENT_TURNS,
+            _TELEGRAM_LIVE_SENT_ASSISTANT_MSG_IDS,
         )
 
         tmp = tempfile.mkdtemp()
@@ -1246,6 +1285,7 @@ class TestTelegramAgentClientTask(unittest.TestCase):
             ids.link("alice", "telegram", "111111")
             ids.set_active_conv("alice", "telegram", "conv1")
             _TELEGRAM_LIVE_ASSISTANT_SENT_TURNS.add("conv1")
+            _TELEGRAM_LIVE_SENT_ASSISTANT_MSG_IDS.add("conv1\x1ffinal1")
 
             task = TelegramAgentClientTask({"agent_runtime_port": "pawflow_agent.agent_runtime_in"})
             ff = FlowFile(content=b"hello")
@@ -1263,6 +1303,7 @@ class TestTelegramAgentClientTask(unittest.TestCase):
                     patch("core.agent_runtime_api.AgentRuntimeAPI.wait_for_done", return_value=AgentFinalResult(
                         "conv1", "telegram:111111:m1",
                         response="intermediate text\nfinal text",
+                        data={"msg_id": "final1"},
                     )):
                 out = task.execute(ff)
 
@@ -1271,6 +1312,62 @@ class TestTelegramAgentClientTask(unittest.TestCase):
         finally:
             IdentityService.reset()
             _p.USER_CONFIG_DIR = orig_ucd
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_agent_client_sends_done_final_after_live_intermediate_assistant(self):
+        import shutil
+        import tempfile
+        from unittest.mock import patch
+
+        from core.agent_runtime_api import AgentFinalResult
+        from core.identity_service import IdentityService
+        from tasks.io.telegram_agent_client import (
+            TelegramAgentClientTask,
+            _TELEGRAM_LIVE_ASSISTANT_SENT_TURNS,
+            _TELEGRAM_LIVE_SENT_ASSISTANT_MSG_IDS,
+        )
+
+        tmp = tempfile.mkdtemp()
+        IdentityService.reset()
+        import core.paths as _p
+        orig_ucd = _p.USER_CONFIG_DIR
+        _p.USER_CONFIG_DIR = Path(tmp) / "users"
+        try:
+            ids = IdentityService()
+            IdentityService._instance = ids
+            ids.link("alice", "telegram", "111111")
+            ids.set_active_conv("alice", "telegram", "conv1")
+            _TELEGRAM_LIVE_ASSISTANT_SENT_TURNS.add("conv1")
+            _TELEGRAM_LIVE_SENT_ASSISTANT_MSG_IDS.add("conv1\x1fintermediate1")
+
+            task = TelegramAgentClientTask({"agent_runtime_port": "pawflow_agent.agent_runtime_in"})
+            ff = FlowFile(content=b"hello")
+            ff.set_attribute("telegram.user_id", "111111")
+            ff.set_attribute("telegram.chat_id", "111111")
+            ff.set_attribute("telegram.message_id", "m1")
+
+            with patch.object(TelegramAgentClientTask, "_selected_agent_for_conversation", return_value="assistant"), \
+                    patch("core.agent_runtime_api.AgentRuntimeAPI.submit_message", return_value=type("Submission", (), {
+                        "conversation_id": "conv1",
+                        "turn_id": "telegram:111111:m1",
+                        "wait_for_done": True,
+                        "status": "accepted",
+                    })()), \
+                    patch("core.agent_runtime_api.AgentRuntimeAPI.wait_for_done", return_value=AgentFinalResult(
+                        "conv1", "telegram:111111:m1",
+                        response="final text",
+                        data={"msg_id": "final1"},
+                    )):
+                out = task.execute(ff)
+
+            assert out[0].get_content() == b"final text"
+            assert "conv1" not in _TELEGRAM_LIVE_ASSISTANT_SENT_TURNS
+            assert "conv1\x1fintermediate1" not in _TELEGRAM_LIVE_SENT_ASSISTANT_MSG_IDS
+        finally:
+            IdentityService.reset()
+            _p.USER_CONFIG_DIR = orig_ucd
+            _TELEGRAM_LIVE_ASSISTANT_SENT_TURNS.discard("conv1")
+            _TELEGRAM_LIVE_SENT_ASSISTANT_MSG_IDS.discard("conv1\x1fintermediate1")
             shutil.rmtree(tmp, ignore_errors=True)
 
     def test_bridge_uses_linked_active_telegram_conversation(self):

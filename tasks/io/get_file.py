@@ -27,6 +27,13 @@ class GetFileTask(BaseTask):
         self.recursive = self.config.get('recursive', False)
         self.keep_source = self.config.get('keep_source', True)
 
+    def set_runtime_context(self, *, user_id: str = "", conversation_id: str = "",
+                            scope: str = "", agent_name: str = ""):
+        from core.flow_runtime_access import set_runtime_context
+        set_runtime_context(
+            self, user_id=user_id, conversation_id=conversation_id,
+            scope=scope, agent_name=agent_name)
+
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
         """Read files — via filesystem service if configured, else sandbox FileStore."""
         service_id = self.config.get('service_id')
@@ -75,11 +82,25 @@ class GetFileTask(BaseTask):
         import fnmatch as fnmod
         from core.file_store import FileStore
         store = FileStore.instance()
+        from core.flow_runtime_access import (
+            authorize_filestore_target, runtime_context_from_task,
+            trusted_requester_user_id,
+        )
+        ctx = runtime_context_from_task(self)
+        requester = trusted_requester_user_id(flowfile)
+        target_conv = flowfile.get_attribute('conversation_id') or self.config.get('conversation_id', '')
+        try:
+            user_id, conv_id = authorize_filestore_target(
+                ctx, target_conversation_id=target_conv,
+                requester_user_id=requester,
+                allow_global_admin=self.config.get('allow_global_admin'))
+        except Exception as e:
+            raise TaskError(str(e))
         results = []
-        for f in store.list_files():
+        for f in store.list_files(user_id=user_id, conversation_id=conv_id):
             if not fnmod.fnmatch(f["filename"], self.file_filter):
                 continue
-            result = store.get(f["file_id"])
+            result = store.get(f["file_id"], user_id=user_id)
             if result:
                 ff = self.create_flowfile(
                     content=result[1],

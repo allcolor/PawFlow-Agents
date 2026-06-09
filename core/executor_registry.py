@@ -362,7 +362,7 @@ class ExecutorRegistry:
                 runtime_context={
                     "user_id": owner,
                     "conversation_id": conversation_id,
-                    "scope": "conversation" if conversation_id else "user" if owner else "",
+                    "scope": "conversation" if conversation_id else "user" if owner else "global",
                     "agent_name": agent_name,
                 },
                 enabled_one_shot_root_task_ids=enabled_one_shot_root_task_ids,

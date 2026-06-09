@@ -34,6 +34,13 @@ class PutFileTask(BaseTask):
         else:
             return self._execute_sandbox(flowfile)
 
+    def set_runtime_context(self, *, user_id: str = "", conversation_id: str = "",
+                            scope: str = "", agent_name: str = ""):
+        from core.flow_runtime_access import set_runtime_context
+        set_runtime_context(
+            self, user_id=user_id, conversation_id=conversation_id,
+            scope=scope, agent_name=agent_name)
+
     def _execute_via_service(self, service_id: str, flowfile: FlowFile) -> List[FlowFile]:
         """Write through a filesystem service."""
         svc = self.get_service(service_id)
@@ -68,6 +75,15 @@ class PutFileTask(BaseTask):
         if not _uid or not _cid:
             raise ValueError(
                 "putFile: user_id and conversation_id flowfile attributes required")
+        from core.flow_runtime_access import (
+            authorize_filestore_target, runtime_context_from_task,
+            trusted_requester_user_id,
+        )
+        _uid, _cid = authorize_filestore_target(
+            runtime_context_from_task(self), target_user_id=_uid,
+            target_conversation_id=_cid,
+            requester_user_id=trusted_requester_user_id(flowfile),
+            allow_global_admin=self.config.get('allow_global_admin'))
         file_id = store.store(filename, flowfile.get_content(),
                               user_id=_uid, conversation_id=_cid, ttl=3600)
         flowfile.set_attribute('output.file_id', file_id)

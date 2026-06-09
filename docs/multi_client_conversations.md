@@ -141,6 +141,12 @@ Flows can participate in conversations through tasks:
 
 This lets a deterministic workflow create a conversation, ask an agent to handle part of the work, read the answer, and continue the pipeline.
 
+Conversation and FileStore access is bounded by the deployed flow runtime scope:
+
+- Conversation-scoped flows can only target their own runtime conversation.
+- User-scoped flows can only target conversations and files owned by their runtime user.
+- Global flows are not an automatic bypass for public runtimes. Built-in global runtimes such as `pawflow_agent` and `telegram_agent` can operate across users only after an ingress task has established a trusted requester user, and each target conversation/file is then checked against that requester. Explicit administrative global flows must opt in with task-level admin intent.
+
 ## Operational Notes
 
 - Conversation writes are queued through `ConversationWriter`; shutdown drains the queue to avoid message loss.

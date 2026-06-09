@@ -455,3 +455,24 @@ def test_telegram_new_conversation_wizard_builds_payload(monkeypatch):
     assert created["payload"]["agents"][0]["llm_service"] == "llm1"
     assert ids.selected == ("alice", "telegram", "conv1")
 
+
+def test_telegram_filestore_media_does_not_fallback_to_unscoped_access():
+    from core.file_store import FileStore
+    from tasks.io.telegram_agent_client import _load_filestore_media
+
+    fid = FileStore.instance().store(
+        "secret.txt", b"secret", content_type="text/plain",
+        user_id="alice", conversation_id="conv-a")
+
+    try:
+        _load_filestore_media(fid, "bob")
+    except FileNotFoundError:
+        pass
+    else:
+        raise AssertionError("Telegram media load must not retry without user scope")
+
+    name, raw, content_type = _load_filestore_media(fid, "alice")
+    assert name == "secret.txt"
+    assert raw == b"secret"
+    assert content_type == "text/plain"
+

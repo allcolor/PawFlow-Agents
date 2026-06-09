@@ -28,6 +28,13 @@ class CreateConversationTask(BaseTask):
     DESCRIPTION = "Create a new conversation for publishing messages or spawning agents"
     ICON = "chat"
 
+    def set_runtime_context(self, *, user_id: str = "", conversation_id: str = "",
+                            scope: str = "", agent_name: str = ""):
+        from core.flow_runtime_access import set_runtime_context
+        set_runtime_context(
+            self, user_id=user_id, conversation_id=conversation_id,
+            scope=scope, agent_name=agent_name)
+
     def get_parameter_schema(self) -> Dict[str, Any]:
         return {
             "user_id": {
@@ -47,6 +54,19 @@ class CreateConversationTask(BaseTask):
             flowfile.set_content(json.dumps({
                 "error": "No user_id — requires user or conversation-scoped flow",
             }).encode())
+            return [flowfile]
+
+        try:
+            from core.flow_runtime_access import (
+                authorize_user_target, runtime_context_from_task,
+                trusted_requester_user_id,
+            )
+            user_id = authorize_user_target(
+                runtime_context_from_task(self), user_id,
+                requester_user_id=trusted_requester_user_id(flowfile),
+                allow_global_admin=self.config.get("allow_global_admin"))
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
             return [flowfile]
 
         preview = self.config.get("preview", "")

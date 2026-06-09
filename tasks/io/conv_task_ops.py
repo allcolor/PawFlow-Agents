@@ -30,6 +30,13 @@ class AssignTaskToAgentTask(BaseTask):
     DESCRIPTION = "Assign a recurring task to an agent in a linked conversation"
     ICON = "task"
 
+    def set_runtime_context(self, *, user_id: str = "", conversation_id: str = "",
+                            scope: str = "", agent_name: str = ""):
+        from core.flow_runtime_access import set_runtime_context
+        set_runtime_context(
+            self, user_id=user_id, conversation_id=conversation_id,
+            scope=scope, agent_name=agent_name)
+
     def get_parameter_schema(self) -> Dict[str, Any]:
         return {
             "conversation_id": {
@@ -78,6 +85,25 @@ class AssignTaskToAgentTask(BaseTask):
             flowfile.set_content(json.dumps({
                 "error": "Missing agent_name or task_prompt",
             }).encode())
+            return [flowfile]
+
+        try:
+            from core.flow_runtime_access import (
+                authorize_conversation_target, authorize_user_target,
+                conversation_owner, runtime_context_from_task,
+                trusted_requester_user_id,
+            )
+            ctx = runtime_context_from_task(self)
+            requester = trusted_requester_user_id(flowfile)
+            conv_id = authorize_conversation_target(
+                ctx, conv_id, requester_user_id=requester,
+                allow_global_admin=self.config.get("allow_global_admin"))
+            user_id = authorize_user_target(
+                ctx, user_id or conversation_owner(conv_id),
+                requester_user_id=requester,
+                allow_global_admin=self.config.get("allow_global_admin"))
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
             return [flowfile]
 
         # Override prompt from FlowFile content if present
@@ -131,6 +157,13 @@ class CancelAgentTaskTask(BaseTask):
     DESCRIPTION = "Cancel a running task assigned to an agent"
     ICON = "stop"
 
+    def set_runtime_context(self, *, user_id: str = "", conversation_id: str = "",
+                            scope: str = "", agent_name: str = ""):
+        from core.flow_runtime_access import set_runtime_context
+        set_runtime_context(
+            self, user_id=user_id, conversation_id=conversation_id,
+            scope=scope, agent_name=agent_name)
+
     def get_parameter_schema(self) -> Dict[str, Any]:
         return {
             "conversation_id": {
@@ -161,6 +194,19 @@ class CancelAgentTaskTask(BaseTask):
 
         if not task_id:
             flowfile.set_content(json.dumps({"error": "Missing task_id"}).encode())
+            return [flowfile]
+
+        try:
+            from core.flow_runtime_access import (
+                authorize_conversation_target, runtime_context_from_task,
+                trusted_requester_user_id,
+            )
+            conv_id = authorize_conversation_target(
+                runtime_context_from_task(self), conv_id,
+                requester_user_id=trusted_requester_user_id(flowfile),
+                allow_global_admin=self.config.get("allow_global_admin"))
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
             return [flowfile]
 
         from core.conversation_store import ConversationStore

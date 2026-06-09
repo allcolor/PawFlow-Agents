@@ -1233,11 +1233,11 @@ def _extract_filestore_refs(text: str) -> List[str]:
 
 
 def _load_filestore_media(file_id: str, user_id: str):
+    if not user_id:
+        raise FileNotFoundError(file_id)
     from core.file_store import FileStore
     store = FileStore.instance()
-    result = store.get(file_id, user_id=user_id) if user_id else store.get(file_id)
-    if result is None and user_id:
-        result = store.get(file_id)
+    result = store.get(file_id, user_id=user_id)
     if result is None:
         raise FileNotFoundError(file_id)
     return result

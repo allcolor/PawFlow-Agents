@@ -2714,6 +2714,11 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             if inst and user_id and inst.owner and inst.owner != user_id:
                 flowfile.set_content(json.dumps({"error": "Permission denied"}).encode())
                 return [flowfile]
+            if inst and not inst.owner:
+                roles = flowfile.get_attribute("http.auth.roles") or ""
+                if "admin" not in roles:
+                    flowfile.set_content(json.dumps({"error": "Requires admin role"}).encode())
+                    return [flowfile]
 
             if action == "stop_flow":
                 ex = reg.get(iid)

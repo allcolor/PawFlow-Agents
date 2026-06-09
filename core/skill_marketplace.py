@@ -104,16 +104,23 @@ def import_marketplace_skill(source: str = "", ref: str = "", *,
     # human-review request. Without force, return the findings so the
     # user can decide and rerun with force=true.
     if review_only or ((blocked or requires_human_review) and not force):
+        confirmation_command = _skill_import_command(
+            source, ref, name=name, scope=scope, force=True)
+        message = _review_message(skill_name, blocked, requires_human_review, force)
+        if not review_only:
+            message = f"{message}\nReview the findings, then run `{confirmation_command}` to import anyway."
         return {
             "ok": not blocked,
             "imported": False,
             "review_only": review_only,
             "requires_human_review": requires_human_review,
+            "requires_confirmation": (blocked or requires_human_review) and not review_only,
             "blocked": blocked,
             "skill": _public_skill_preview(skill_data),
             "package": package["package"],
             "review": review,
-            "message": _review_message(skill_name, blocked, requires_human_review, force),
+            "confirmation_command": confirmation_command,
+            "message": message,
         }
 
     from core.package_review import review_hash, review_metadata
@@ -149,6 +156,28 @@ def import_marketplace_skill(source: str = "", ref: str = "", *,
     }
 
 
+def resolve_skill_import_source(ref: str = "", *, selected_ref: str = "",
+                                path: str = "", limit: int = 40) -> Dict[str, Any]:
+    """Resolve a GitHub repository into importable Agent Skill directories."""
+    owner, repo, parsed_ref, parsed_path = _parse_github_import_source(ref)
+    selected_ref = (selected_ref or parsed_ref or "").strip()
+    root_path = (path or parsed_path or "").strip("/")
+    repo_meta = _fetch_json(f"https://api.github.com/repos/{owner}/{repo}")
+    default_ref = selected_ref or str(repo_meta.get("default_branch") or "main")
+    branches = _github_ref_names(owner, repo, "branches")
+    tags = _github_ref_names(owner, repo, "tags")
+    paths = _find_github_skill_paths(owner, repo, default_ref, root_path, limit=limit)
+    return {
+        "ok": True,
+        "repo": f"{owner}/{repo}",
+        "selected_ref": default_ref,
+        "default_ref": str(repo_meta.get("default_branch") or "main"),
+        "refs": {"branches": branches, "tags": tags},
+        "root_path": root_path,
+        "paths": paths,
+    }
+
+
 def fetch_skill_package(source: str, ref: str) -> Dict[str, Any]:
     source = (source or _infer_source(ref)).strip().lower()
     if _is_github_tree_url(ref):
@@ -165,6 +194,8 @@ def fetch_skill_package(source: str, ref: str) -> Dict[str, Any]:
             raise SkillMarketplaceError(
                 "OpenClaw import requires a GitHub tree URL or repo path ref")
         package = _fetch_openclaw_ref(ref)
+    elif source == "github":
+        package = _fetch_github_repo_ref(ref, "github")
     else:
         raise SkillMarketplaceError(f"Unsupported marketplace source: {source}")
     return _normalize_package(package)
@@ -298,6 +329,22 @@ def _fetch_openclaw_ref(ref: str) -> Dict[str, Any]:
         "OpenClaw import requires a GitHub tree URL or openclaw/skills/<path>")
 
 
+def _fetch_github_repo_ref(ref: str, source: str) -> Dict[str, Any]:
+    if _is_github_tree_url(ref):
+        return _fetch_github_tree_url(ref, source)
+    repo_ref, path = (ref.split(":", 1) + [""])[:2] if ":" in ref else (ref, "")
+    owner_repo, selected_ref = (repo_ref.split("@", 1) + [""])[:2] if "@" in repo_ref else (repo_ref, "")
+    parts = [p for p in owner_repo.strip("/").split("/") if p]
+    if len(parts) != 2:
+        raise SkillMarketplaceError("GitHub import requires owner/repo@ref:path or a GitHub tree URL")
+    owner, repo = parts
+    _validate_github_ref_part(owner, "owner")
+    _validate_github_ref_part(repo, "repo")
+    if not selected_ref:
+        selected_ref = str(_fetch_json(f"https://api.github.com/repos/{owner}/{repo}").get("default_branch") or "main")
+    return _fetch_github_tree(owner, repo, selected_ref, path, source)
+
+
 def _normalize_package(package: Dict[str, Any]) -> Dict[str, Any]:
     files = package["files"]
     skill_md = files.get("SKILL.md")
@@ -344,7 +391,7 @@ def _fetch_github_tree_url(url: str, source: str) -> Dict[str, Any]:
     if parsed.netloc.lower() != "github.com":
         raise SkillMarketplaceError("Only github.com tree URLs are supported")
     parts = [p for p in parsed.path.split("/") if p]
-    if len(parts) < 5 or parts[2] != "tree":
+    if len(parts) < 4 or parts[2] != "tree":
         raise SkillMarketplaceError("GitHub URL must point to a repository tree path")
     owner, repo, ref = parts[0], parts[1], parts[3]
     _validate_github_ref_part(owner, "owner")
@@ -352,6 +399,38 @@ def _fetch_github_tree_url(url: str, source: str) -> Dict[str, Any]:
     _validate_github_ref_part(ref, "ref")
     path = "/".join(parts[4:])
     return _fetch_github_tree(owner, repo, ref, path, source)
+
+
+def _parse_github_import_source(ref: str) -> Tuple[str, str, str, str]:
+    ref = (ref or "").strip()
+    if not ref:
+        raise SkillMarketplaceError("GitHub repository is required")
+    parsed = urlparse(ref)
+    if parsed.scheme in {"http", "https"}:
+        if parsed.netloc.lower() != "github.com":
+            raise SkillMarketplaceError("Only github.com repositories are supported")
+        parts = [p for p in parsed.path.split("/") if p]
+        if len(parts) < 2:
+            raise SkillMarketplaceError("GitHub URL must include owner and repo")
+        owner, repo = parts[0], parts[1]
+        if len(parts) >= 4 and parts[2] == "tree":
+            selected_ref = parts[3]
+            path = "/".join(parts[4:])
+        else:
+            selected_ref = ""
+            path = ""
+    else:
+        repo_ref, path = (ref.split(":", 1) + [""])[:2] if ":" in ref else (ref, "")
+        parts = [p for p in repo_ref.strip("/").split("/") if p]
+        if len(parts) != 2:
+            raise SkillMarketplaceError("Use owner/repo or https://github.com/owner/repo")
+        owner, repo = parts
+        selected_ref = ""
+    _validate_github_ref_part(owner, "owner")
+    _validate_github_ref_part(repo, "repo")
+    if selected_ref:
+        _validate_github_ref_part(selected_ref, "ref")
+    return owner, repo, selected_ref, path.strip("/")
 
 
 def _fetch_github_tree(owner: str, repo: str, ref: str, path: str,
@@ -448,7 +527,57 @@ def _github_contents(owner: str, repo: str, path: str, ref: str = "main"):
     return _fetch_json(url)
 
 
+def _github_ref_names(owner: str, repo: str, kind: str) -> List[str]:
+    rows = _fetch_json(f"https://api.github.com/repos/{owner}/{repo}/{kind}?per_page=100")
+    if not isinstance(rows, list):
+        return []
+    return [str(row.get("name") or "") for row in rows if row.get("name")]
+
+
+def _find_github_skill_paths(owner: str, repo: str, ref: str, root_path: str,
+                             *, limit: int) -> List[Dict[str, Any]]:
+    limit = max(1, min(int(limit or 40), _MAX_RESULTS * 2))
+    queue = [root_path.strip("/")]
+    seen = set()
+    matches: List[Dict[str, Any]] = []
+    while queue and len(matches) < limit:
+        current = queue.pop(0)
+        if current in seen:
+            continue
+        seen.add(current)
+        items = _github_contents(owner, repo, current, ref=ref)
+        if isinstance(items, dict):
+            continue
+        names = {str(item.get("name") or "") for item in items}
+        if "SKILL.md" in names:
+            matches.append({
+                "name": _path_basename(current) or repo,
+                "path": current,
+                "ref": ref,
+                "url": f"https://github.com/{owner}/{repo}/tree/{ref}/{current}" if current else f"https://github.com/{owner}/{repo}/tree/{ref}",
+                "import_ref": f"{owner}/{repo}@{ref}:{current}",
+            })
+            continue
+        for item in items:
+            if item.get("type") != "dir":
+                continue
+            item_path = str(item.get("path") or "").strip("/")
+            try:
+                _reject_unsafe_path(item_path or item.get("name", ""), is_dir=True)
+            except SkillMarketplaceError:
+                continue
+            if len(seen) + len(queue) < 160:
+                queue.append(item_path)
+    return matches
+
+
 def _validate_github_ref_part(value: str, label: str) -> None:
+    if label == "ref":
+        parts = [p for p in str(value or "").split("/") if p]
+        if (not value or not re.match(r"^[A-Za-z0-9_./-]+$", value)
+                or any(p in {".", ".."} for p in parts)):
+            raise SkillMarketplaceError(f"Invalid GitHub {label}: {value}")
+        return
     if not value or not _GITHUB_REF_RE.match(value) or value in {".", ".."}:
         raise SkillMarketplaceError(f"Invalid GitHub {label}: {value}")
 
@@ -518,6 +647,30 @@ def _fetch_bytes(url: str, *, readme: bool = False) -> bytes:
             raise SkillMarketplaceError(f"Fetched file exceeds import cap: {url}")
         chunks.append(chunk)
     return b"".join(chunks)
+
+
+def _skill_import_command(source: str, ref: str, *, name: str = "",
+                          scope: str = "user", force: bool = False) -> str:
+    parts = ["/skill", "import"]
+    if source:
+        parts.extend(["--source", source])
+    if force:
+        parts.append("--force")
+    if scope and scope != "user":
+        parts.extend(["--scope", scope])
+    if name:
+        parts.extend(["--name", name])
+    parts.append(ref)
+    return " ".join(_quote_command_part(part) for part in parts)
+
+
+def _quote_command_part(value: str) -> str:
+    value = str(value or "")
+    if not value:
+        return "''"
+    if re.search(r"[\s'\"\\]", value):
+        return "'" + value.replace("'", "'\\''") + "'"
+    return value
 
 
 def _decode_text_file(content: Any, path: str) -> str:

@@ -954,8 +954,28 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                 scope=body.get("scope", "user") or "user",
             )
             flowfile.set_content(json.dumps(result, ensure_ascii=False).encode())
-            if result.get("blocked"):
-                flowfile.set_attribute("http.response.status", "400")
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+        return [flowfile]
+
+    if action == "resolve_skill_import_source":
+        ref = body.get("ref", "") or ""
+        if not ref:
+            flowfile.set_content(json.dumps({
+                "error": "Missing repository. Use owner/repo or https://github.com/owner/repo",
+            }).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        try:
+            from core.skill_marketplace import resolve_skill_import_source
+            result = resolve_skill_import_source(
+                ref=ref,
+                selected_ref=body.get("selected_ref", "") or "",
+                path=body.get("path", "") or "",
+                limit=int(body.get("limit", 40) or 40),
+            )
+            flowfile.set_content(json.dumps(result, ensure_ascii=False).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
             flowfile.set_attribute("http.response.status", "400")

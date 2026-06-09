@@ -182,6 +182,64 @@ def test_import_marketplace_review_only_does_not_create(monkeypatch):
     assert created == []
 
 
+def test_resolve_skill_import_source_lists_refs_and_skill_paths(monkeypatch):
+    from core import skill_marketplace
+
+    def fake_fetch_json(url):
+        if url == "https://api.github.com/repos/acme/skills":
+            return {"default_branch": "main"}
+        if url == "https://api.github.com/repos/acme/skills/branches?per_page=100":
+            return [{"name": "main"}, {"name": "dev"}]
+        if url == "https://api.github.com/repos/acme/skills/tags?per_page=100":
+            return [{"name": "v1"}]
+        if url.endswith("/contents/?ref=main"):
+            return [
+                {"name": "code-review", "path": "code-review", "type": "dir"},
+                {"name": "docs", "path": "docs", "type": "dir"},
+            ]
+        if url.endswith("/contents/code-review?ref=main"):
+            return [{"name": "SKILL.md", "path": "code-review/SKILL.md", "type": "file"}]
+        if url.endswith("/contents/docs?ref=main"):
+            return []
+        raise AssertionError(url)
+
+    monkeypatch.setattr(skill_marketplace, "_fetch_json", fake_fetch_json)
+
+    result = skill_marketplace.resolve_skill_import_source("acme/skills")
+
+    assert result["repo"] == "acme/skills"
+    assert result["selected_ref"] == "main"
+    assert result["refs"]["branches"] == ["main", "dev"]
+    assert result["refs"]["tags"] == ["v1"]
+    assert result["paths"][0]["path"] == "code-review"
+    assert result["paths"][0]["import_ref"] == "acme/skills@main:code-review"
+
+
+def test_import_marketplace_review_response_includes_force_command(monkeypatch):
+    from core import skill_marketplace
+    import core.review_bindings as review_bindings
+
+    monkeypatch.setattr(skill_marketplace, "fetch_skill_package", lambda source, ref: {
+        "skill": {"name": "risky-skill", "description": "Risky.", "instructions": "Do risky work."},
+        "package_files": {},
+        "package": {"source": source, "url": ref},
+    })
+    monkeypatch.setattr(review_bindings, "review_now", lambda *args, **kwargs: {
+        "risk": "high",
+        "allowed": False,
+        "requires_human_review": True,
+        "findings": [{"severity": "high", "category": "test", "reason": "blocked"}],
+    })
+
+    result = skill_marketplace.import_marketplace_skill(
+        "github", "https://github.com/acme/skills/tree/main/risky skill",
+        user_id="alice", scope="conversation", conversation_id="conv1")
+
+    assert result["requires_confirmation"] is True
+    assert result["confirmation_command"].startswith("/skill import --source github --force --scope conversation")
+    assert result["confirmation_command"] in result["message"]
+
+
 def test_import_marketplace_preserves_binary_assets(monkeypatch):
     from core import skill_marketplace
 
@@ -229,6 +287,37 @@ def test_import_marketplace_preserves_binary_assets(monkeypatch):
     assert result["ok"] is True
     assert result["package"]["package_files_count"] == 1
     assert "package_hash" in result["package"]
+
+
+def test_import_github_repo_ref_supports_slash_branch(monkeypatch):
+    from core import skill_marketplace
+
+    _patch_safe_review(monkeypatch)
+
+    def fake_get(url, headers=None, **kwargs):
+        if url.endswith("/contents/skills/review-pr?ref=feature/review"):
+            return _Response([{
+                "name": "SKILL.md",
+                "path": "skills/review-pr/SKILL.md",
+                "type": "file",
+                "size": 96,
+                "download_url": "https://raw.test/SKILL.md",
+            }])
+        if url == "https://raw.test/SKILL.md":
+            return _Response(
+                "---\nname: review-pr\ndescription: Review pull requests.\n---\n\nReview the requested PR.",
+                content_type="text/plain")
+        raise AssertionError(url)
+
+    monkeypatch.setattr(skill_marketplace.requests, "get", fake_get)
+
+    result = skill_marketplace.import_marketplace_skill(
+        "github", "acme/skills@feature/review:skills/review-pr",
+        user_id="alice", review_only=True)
+
+    assert result["skill"]["name"] == "review-pr"
+    assert result["package"]["repo"] == "acme/skills"
+    assert result["package"]["ref"] == "feature/review"
 
 
 def test_import_marketplace_creates_low_risk_skill(monkeypatch):
@@ -321,3 +410,31 @@ def test_import_action_blocks_human_review_without_force(monkeypatch):
     body = json.loads(ff.get_content().decode("utf-8"))
     assert body["requires_human_review"] is True
     assert body["imported"] is False
+    assert ff.get_attribute("http.response.status") != "400"
+
+
+def test_resolve_import_action_returns_skill_paths(monkeypatch):
+    result_payload = {
+        "ok": True,
+        "repo": "acme/skills",
+        "selected_ref": "main",
+        "paths": [{"path": "code-review", "import_ref": "https://github.com/acme/skills/tree/main/code-review"}],
+    }
+
+    import core.skill_marketplace as skill_marketplace
+    monkeypatch.setattr(
+        skill_marketplace,
+        "resolve_skill_import_source",
+        lambda **kwargs: result_payload,
+    )
+
+    ff = FlowFile(content=b"")
+    result = _handle_agent_resource(object(), "resolve_skill_import_source", {
+        "conversation_id": "conv1",
+        "ref": "acme/skills",
+    }, object(), "alice", ff)
+
+    assert result == [ff]
+    body = json.loads(ff.get_content().decode("utf-8"))
+    assert body["repo"] == "acme/skills"
+    assert body["paths"][0]["path"] == "code-review"

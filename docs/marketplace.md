@@ -34,10 +34,13 @@ Skills can be searched and imported independently from `.pfp` packages:
 ```text
 /skill search --source all code review
 /skill import --source codex openai/skills/path/to/skill
+/skill import --source github --force owner/repo@main:path/to/skill
 /skill assign @agent @skill-name
 ```
 
-Agent tools expose the same path through `manage_resource(action="search_marketplace", resource_type="skill", ...)` and `manage_resource(action="import_marketplace", resource_type="skill", ...)`.
+The web Resources sidebar exposes the same flow from the Skills repository `+` button: choose **Create** for a local skill or **Import** to resolve a GitHub repository, select a branch/tag and a directory containing `SKILL.md`, review it, then import it. Review decisions are not web-only: when an import is blocked or needs human review, the response includes a `/skill import --force ...` confirmation command that can be run from any client, including Telegram and CLI-style clients.
+
+Agent tools expose the same path through `manage_resource(action="search_marketplace", resource_type="skill", ...)`, `manage_resource(action="resolve_import_source", resource_type="skill", ref="owner/repo", ...)`, and `manage_resource(action="import_marketplace", resource_type="skill", ...)`.
 
 Imported skills are treated as untrusted content. PawFlow fetches a bounded skill directory, requires a UTF-8 root `SKILL.md`, rejects unsafe paths and oversized packages, records provenance and package hashes, and runs the configured skill review before writing. Package scripts and `allowed-tools` declarations are stored as package data only; they are never executed automatically and never grant tool permissions.
 

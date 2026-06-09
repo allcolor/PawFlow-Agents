@@ -623,15 +623,15 @@ function cmdResourceAction(action, extra) {
           cmdResourceAction(action, Object.assign({}, extra, { force: true }));
         });
       } else {
-        addMsg('error', data.message || 'Skill review requires confirmation.');
+        addMsg('error', data.message || t('skillReviewRequiresConfirmation'));
       }
       return data;
     }
     if (data.error) { addMsg('error', data.error); return data; }
-    if (data.created) addMsg('system', `Created: ${extra.name || ''}`);
-    else if (data.deleted) addMsg('system', `Deleted: ${extra.name || ''}`);
-    else if (data.activated) addMsg('system', `Activated ${data.type} "${data.name}" in this conversation`);
-    else if (data.deactivated) addMsg('system', `Deactivated ${data.type} "${data.name}"`);
+    if (data.created) addMsg('system', t('resourceCreated', { type: data.type || '', name: extra.name || data.name || '' }));
+    else if (data.deleted) addMsg('system', t('resourceDeleted', { type: data.type || '', name: extra.name || data.name || '' }));
+    else if (data.activated) addMsg('system', t('resourceActivated', { type: data.type || '', name: data.name || '' }));
+    else if (data.deactivated) addMsg('system', t('resourceDeactivated', { type: data.type || '', name: data.name || '' }));
     else if (data.shared) addMsg('system', `Shared ${data.type} "${data.name}" to conversation ${data.target.substring(0,8)}...`);
     else if (data.message) addMsg('system', data.message);
     else addMsg('system', JSON.stringify(data, null, 2));

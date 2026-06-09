@@ -41,6 +41,7 @@ class ManageResourceHandler(ToolHandler):
             "- get: Get details of a specific resource\n"
             "- review: Review an untrusted skill before import\n"
             "- search_marketplace: Search external skill marketplaces\n"
+            "- resolve_import_source: Resolve a GitHub repo into importable skill paths\n"
             "- import_marketplace: Review/import an external Agent Skill\n"
             "- assign_skill: Assign a skill to an agent and notify it\n"
             "- unassign_skill: Remove a skill from an agent and notify it\n"
@@ -65,7 +66,7 @@ class ManageResourceHandler(ToolHandler):
                 "action": {
                     "type": "string",
                     "enum": ["create", "update", "delete", "list",
-                             "get", "review", "search_marketplace",
+                             "get", "review", "search_marketplace", "resolve_import_source",
                              "import_marketplace", "assign_skill", "unassign_skill",
                              "activate", "deactivate"],
                     "description": "Action to perform",
@@ -85,7 +86,7 @@ class ManageResourceHandler(ToolHandler):
                 },
                 "source": {
                     "type": "string",
-                    "description": "Marketplace source for skill search/import: codex, claude, hermes, openclaw, all.",
+                    "description": "Marketplace source for skill search/import: codex, claude, hermes, openclaw, github, all.",
                 },
                 "query": {
                     "type": "string",
@@ -93,7 +94,15 @@ class ManageResourceHandler(ToolHandler):
                 },
                 "ref": {
                     "type": "string",
-                    "description": "Marketplace skill ref or GitHub tree URL for skill import.",
+                    "description": "Marketplace skill ref, GitHub repo, or GitHub tree URL for skill import.",
+                },
+                "selected_ref": {
+                    "type": "string",
+                    "description": "Git branch or tag to inspect when resolving a skill import source.",
+                },
+                "path": {
+                    "type": "string",
+                    "description": "Repository subdirectory to inspect when resolving a skill import source.",
                 },
                 "agent_name": {
                     "type": "string",
@@ -367,6 +376,21 @@ class ManageResourceHandler(ToolHandler):
                     review_only=bool(arguments.get("review_only", False)),
                     force=bool(arguments.get("force", False)),
                     scope=str(arguments.get("scope", "user") or "user"),
+                )
+                return json.dumps(result, ensure_ascii=False, indent=2)
+
+            elif action == "resolve_import_source":
+                if rtype != "skill":
+                    return "Error: resolve_import_source is only supported for skills"
+                ref = str(arguments.get("ref", "") or "")
+                if not ref:
+                    return "Error: 'ref' is required for resolve_import_source"
+                from core.skill_marketplace import resolve_skill_import_source
+                result = resolve_skill_import_source(
+                    ref=ref,
+                    selected_ref=str(arguments.get("selected_ref", "") or ""),
+                    path=str(arguments.get("path", "") or ""),
+                    limit=int(arguments.get("limit", 40) or 40),
                 )
                 return json.dumps(result, ensure_ascii=False, indent=2)
 

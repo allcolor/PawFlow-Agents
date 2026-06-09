@@ -1503,7 +1503,7 @@ async function _renderResourcesData(data) {
 
     // ── Skills Repository ──
     repoHtml += _repoSectionHeader(t('skillsRepository'), 'skill', {
-      createOnclick: "showResourceCreator('skill')",
+      createOnclick: "showSkillAddDialog()",
     });
     { const allSkills = data.skills || [];
       if (allSkills.length) {
@@ -3054,9 +3054,9 @@ function _showSkillReviewConfirm(review, message, onForce) {
   overlay.style.cssText = 'position:fixed;inset:0;background:var(--pf-shadow);display:flex;align-items:center;justify-content:center;z-index:10001;';
   var panel = document.createElement('div');
   panel.style.cssText = 'background:var(--pf-panel);border-radius:8px;padding:20px;width:540px;max-height:80vh;overflow-y:auto;border:1px solid var(--pf-border);';
-  var html = '<h3 style="margin:0 0 10px;color:var(--pf-text);font-size:14px;">⚠ Skill review</h3>';
+  var html = '<h3 style="margin:0 0 10px;color:var(--pf-text);font-size:14px;">' + escapeHtml(t('skillReviewTitle')) + '</h3>';
   html += '<div style="color:var(--pf-muted);font-size:12px;margin-bottom:8px;">' + escapeHtml(String(message || '')) + '</div>';
-  html += '<div style="color:var(--pf-text);font-size:11px;margin-bottom:6px;">Risk: <strong>' + escapeHtml(String(review.risk || 'unknown')) + '</strong></div>';
+  html += '<div style="color:var(--pf-text);font-size:11px;margin-bottom:6px;">' + escapeHtml(t('skillReviewRisk', { risk: String(review.risk || 'unknown') })) + '</div>';
   if (findings.length) {
     html += '<div style="background:var(--pf-sidebar);border:1px solid var(--pf-border);border-radius:4px;padding:8px;margin-bottom:10px;">';
     findings.forEach(function(f) {
@@ -3069,10 +3069,10 @@ function _showSkillReviewConfirm(review, message, onForce) {
     });
     html += '</div>';
   }
-  html += '<div style="color:var(--pf-muted);font-size:11px;margin-bottom:10px;">You have the final word. Review the findings above and decide.</div>';
+  html += '<div style="color:var(--pf-muted);font-size:11px;margin-bottom:10px;">' + escapeHtml(t('skillReviewFinalWord')) + '</div>';
   html += '<div style="display:flex;gap:8px;justify-content:flex-end;">'
     + '<button id="reviewCancelBtn" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">' + escapeHtml(t('contextCancel')) + '</button>'
-    + '<button id="reviewForceBtn" style="background:var(--pf-danger,#e05260);color:#fff;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Proceed anyway</button>'
+    + '<button id="reviewForceBtn" style="background:var(--pf-danger,#e05260);color:#fff;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">' + escapeHtml(t('skillReviewProceedAnyway')) + '</button>'
     + '</div>';
   panel.innerHTML = html;
   overlay.appendChild(panel);
@@ -3122,6 +3122,197 @@ function _saveResourceEdit(rtype, name, scope) {
   _submit(false);
 }
 
+function showSkillAddDialog() {
+  let overlay = document.getElementById('resourceEditorOverlay');
+  if (overlay) overlay.remove();
+  overlay = document.createElement('div');
+  overlay.id = 'resourceEditorOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:var(--pf-shadow);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  const panel = document.createElement('div');
+  panel.style.cssText = 'background:var(--pf-panel);border-radius:8px;padding:20px;width:720px;max-width:calc(100vw - 32px);max-height:88vh;overflow-y:auto;border:1px solid var(--pf-border);';
+  const tabStyle = 'border:1px solid var(--pf-border);border-radius:4px;padding:6px 10px;cursor:pointer;font-size:12px;';
+  panel.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">'
+    + '<h3 style="margin:0;color:var(--pf-text);font-size:14px;">' + escapeHtml(t('skillAddTitle')) + '</h3>'
+    + '<button onclick="document.getElementById(\'resourceEditorOverlay\').remove()" style="background:none;border:none;color:var(--pf-muted);cursor:pointer;font-size:18px;">&times;</button>'
+    + '</div>'
+    + '<div style="display:flex;gap:6px;margin-bottom:12px;">'
+    + '<button id="skill-create-tab" style="' + tabStyle + '">' + escapeHtml(t('skillCreateMode')) + '</button>'
+    + '<button id="skill-import-tab" style="' + tabStyle + '">' + escapeHtml(t('skillImportMode')) + '</button>'
+    + '</div>'
+    + '<div id="skill-add-body"></div>';
+  overlay.appendChild(panel);
+  document.body.appendChild(overlay);
+
+  const body = panel.querySelector('#skill-add-body');
+  const createTab = panel.querySelector('#skill-create-tab');
+  const importTab = panel.querySelector('#skill-import-tab');
+  function setMode(mode) {
+    createTab.style.background = mode === 'create' ? 'var(--pf-accent)' : 'var(--pf-border)';
+    createTab.style.color = mode === 'create' ? 'var(--pf-bg)' : 'var(--pf-text)';
+    importTab.style.background = mode === 'import' ? 'var(--pf-accent)' : 'var(--pf-border)';
+    importTab.style.color = mode === 'import' ? 'var(--pf-bg)' : 'var(--pf-text)';
+    if (mode === 'create') {
+      body.innerHTML = _buildResourceForm('skill', {}, true)
+        + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">'
+        + '<button onclick="document.getElementById(\'resourceEditorOverlay\').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">' + escapeHtml(t('contextCancel')) + '</button>'
+        + '<button onclick="_saveResourceCreate(\'skill\', true)" style="background:color-mix(in srgb, var(--pf-accent) 16%, var(--pf-panel));color:var(--pf-accent);border:1px solid var(--pf-accent);padding:8px 16px;border-radius:4px;cursor:pointer;">' + escapeHtml(t('create')) + ' + ' + escapeHtml(t('assign')) + '</button>'
+        + '<button onclick="_saveResourceCreate(\'skill\')" style="background:var(--pf-accent);color:var(--pf-bg);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">' + escapeHtml(t('create')) + '</button>'
+        + '</div>';
+      var saWidget = body.querySelector('[data-type="skill_assets"]');
+      if (saWidget) _renderSkillAssets(saWidget);
+      return;
+    }
+    body.innerHTML = '<div style="color:var(--pf-muted);font-size:11px;margin-bottom:10px;">' + escapeHtml(t('skillImportSourceHelp')) + '</div>'
+      + '<div style="display:grid;grid-template-columns:1fr auto;gap:8px;margin-bottom:8px;">'
+      + '<input id="skill-import-ref" placeholder="' + _pfpAttr(t('skillImportRepoPlaceholder')) + '" style="' + _svcInputStyle + '"/>'
+      + '<button id="skill-import-resolve" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:7px 12px;border-radius:4px;cursor:pointer;">' + escapeHtml(t('skillImportResolve')) + '</button>'
+      + '</div>'
+      + '<div style="display:grid;grid-template-columns:1fr 1fr 130px;gap:8px;margin-bottom:8px;">'
+      + '<select id="skill-import-selected-ref" style="' + _svcInputStyle + '"></select>'
+      + '<input id="skill-import-root-path" placeholder="' + _pfpAttr(t('skillImportPathPlaceholder')) + '" style="' + _svcInputStyle + '"/>'
+      + '<select id="skill-import-scope" style="' + _svcInputStyle + '"><option value="user">' + escapeHtml(t('user')) + '</option><option value="conversation">' + escapeHtml(t('conversation')) + '</option></select>'
+      + '</div>'
+      + '<div id="skill-import-paths" style="border:1px solid var(--pf-border);border-radius:4px;padding:8px;min-height:70px;margin-bottom:8px;color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('skillImportResolveFirst')) + '</div>'
+      + '<div id="skill-import-review" style="border-top:1px solid var(--pf-border);padding-top:10px;color:var(--pf-text);margin-bottom:10px;"></div>'
+      + '<div style="display:flex;gap:8px;justify-content:flex-end;">'
+      + '<button onclick="document.getElementById(\'resourceEditorOverlay\').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">' + escapeHtml(t('contextCancel')) + '</button>'
+      + '<button id="skill-import-review-btn" disabled style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;opacity:0.6;">' + escapeHtml(t('skillImportReview')) + '</button>'
+      + '<button id="skill-import-btn" disabled style="background:var(--pf-accent);color:var(--pf-bg);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;opacity:0.6;">' + escapeHtml(t('import')) + '</button>'
+      + '</div>';
+    wireImportMode();
+  }
+
+  function selectedImportRef() {
+    const checked = body.querySelector('input[name="skill-import-path"]:checked');
+    return checked ? checked.value : '';
+  }
+
+  function renderResolved(data) {
+    const refSelect = body.querySelector('#skill-import-selected-ref');
+    const refs = (data && data.refs) || {};
+    const options = [];
+    (refs.branches || []).forEach(v => options.push([v, t('skillImportBranch')]));
+    (refs.tags || []).forEach(v => options.push([v, t('skillImportTag')]));
+    if (!options.some(row => row[0] === data.selected_ref)) options.unshift([data.selected_ref || '', t('skillImportSelectedRef')]);
+    refSelect.innerHTML = options.map(row => '<option value="' + _pfpAttr(row[0]) + '"' + (row[0] === data.selected_ref ? ' selected' : '') + '>' + escapeHtml(row[0] + (row[1] ? ' · ' + row[1] : '')) + '</option>').join('');
+    const rows = data.paths || [];
+    const pathBox = body.querySelector('#skill-import-paths');
+    if (!rows.length) {
+      pathBox.innerHTML = '<div style="color:var(--pf-warning);font-size:11px;">' + escapeHtml(t('skillImportNoPaths')) + '</div>';
+    } else {
+      pathBox.innerHTML = '<div style="color:var(--pf-muted);font-size:11px;margin-bottom:6px;">' + escapeHtml(t('skillImportFoundPaths', { n: rows.length })) + '</div>'
+        + rows.map((row, idx) => '<label style="display:flex;align-items:center;gap:6px;margin-bottom:4px;cursor:pointer;color:var(--pf-text);font-size:12px;">'
+          + '<input type="radio" name="skill-import-path" value="' + _pfpAttr(row.import_ref || row.url || '') + '"' + (idx === 0 ? ' checked' : '') + '/>'
+          + '<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escapeHtml(row.path || '/') + '</span>'
+          + '<code style="color:var(--pf-muted);font-size:10px;">' + escapeHtml(row.ref || '') + '</code>'
+          + '</label>').join('');
+    }
+    setImportButtons(!!rows.length);
+  }
+
+  function setImportButtons(enabled) {
+    ['#skill-import-review-btn', '#skill-import-btn'].forEach(sel => {
+      const btn = body.querySelector(sel);
+      btn.disabled = !enabled;
+      btn.style.opacity = enabled ? '1' : '0.6';
+    });
+  }
+
+  function renderReview(data) {
+    const review = body.querySelector('#skill-import-review');
+    if (!data) { review.innerHTML = ''; return; }
+    if (data.error) { review.innerHTML = '<div style="color:var(--pf-danger);font-size:12px;">' + escapeHtml(data.error) + '</div>'; return; }
+    const skill = data.skill || {};
+    const pkg = data.package || {};
+    const rv = data.review || {};
+    const riskColor = rv.risk === 'high' || data.blocked ? 'var(--pf-danger)' : rv.risk === 'medium' ? 'var(--pf-warning)' : 'var(--pf-muted)';
+    review.innerHTML = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">'
+      + '<div style="font-size:13px;color:var(--pf-text);font-weight:600;flex:1;">' + escapeHtml(skill.name || pkg.skill_name || '') + '</div>'
+      + '<span style="font-size:10px;color:' + riskColor + ';border:1px solid ' + riskColor + ';border-radius:3px;padding:1px 5px;">' + escapeHtml(rv.risk || 'unknown') + '</span>'
+      + '</div>'
+      + '<div style="color:var(--pf-muted);font-size:11px;margin-bottom:6px;">' + escapeHtml(skill.description || '') + '</div>'
+      + '<div style="color:var(--pf-muted);font-size:10px;word-break:break-all;">' + escapeHtml(pkg.url || selectedImportRef()) + '</div>'
+      + (data.message ? '<div style="color:' + (data.blocked || data.requires_human_review ? 'var(--pf-warning)' : 'var(--pf-muted)') + ';font-size:11px;margin-top:8px;white-space:pre-wrap;">' + escapeHtml(data.message) + '</div>' : '');
+  }
+
+  function wireImportMode() {
+    const resolveBtn = body.querySelector('#skill-import-resolve');
+    const refInput = body.querySelector('#skill-import-ref');
+    const selectedRef = body.querySelector('#skill-import-selected-ref');
+    const rootPath = body.querySelector('#skill-import-root-path');
+    const reviewBtn = body.querySelector('#skill-import-review-btn');
+    const importBtn = body.querySelector('#skill-import-btn');
+    async function resolve() {
+      const ref = (refInput.value || '').trim();
+      if (!ref) { alert(t('skillImportRepoRequired')); return; }
+      resolveBtn.disabled = true;
+      resolveBtn.textContent = t('loading');
+      body.querySelector('#skill-import-paths').innerHTML = '<div style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('loading')) + '</div>';
+      renderReview(null);
+      setImportButtons(false);
+      try {
+        const data = await rxjs.firstValueFrom(action$('resolve_skill_import_source', {
+          ref,
+          selected_ref: (selectedRef.value || '').trim(),
+          path: (rootPath.value || '').trim(),
+          limit: 40,
+        }));
+        if (data.error) { body.querySelector('#skill-import-paths').innerHTML = '<div style="color:var(--pf-danger);font-size:11px;">' + escapeHtml(data.error) + '</div>'; return; }
+        renderResolved(data);
+      } catch (e) {
+        body.querySelector('#skill-import-paths').innerHTML = '<div style="color:var(--pf-danger);font-size:11px;">' + escapeHtml(e.message) + '</div>';
+      } finally {
+        resolveBtn.disabled = false;
+        resolveBtn.textContent = t('skillImportResolve');
+      }
+    }
+    async function importSkill(reviewOnly, force) {
+      const importRef = selectedImportRef();
+      if (!importRef) { alert(t('skillImportSelectedPathRequired')); return; }
+      const btn = reviewOnly ? reviewBtn : importBtn;
+      btn.disabled = true;
+      btn.textContent = reviewOnly ? t('loading') : t('importing');
+      try {
+        const payload = {
+          source: 'github',
+          ref: importRef,
+          review_only: !!reviewOnly,
+          force: !!force,
+          scope: body.querySelector('#skill-import-scope').value,
+          conversation_id: conversationId,
+        };
+        const data = await rxjs.firstValueFrom(action$('import_skill_marketplace', payload));
+        renderReview(data);
+        if (data && data.requires_confirmation) {
+          _showSkillReviewConfirm(data.review, data.message, function() { importSkill(false, true); });
+          return;
+        }
+        if (data.error) { addMsg('error', data.error); return; }
+        if (data.imported) {
+          addMsg('system', data.message || t('skillImportImported', { name: data.name || '' }));
+          overlay.remove();
+          loadResources();
+        }
+      } catch (e) {
+        renderReview({ error: e.message });
+      } finally {
+        btn.disabled = false;
+        btn.textContent = reviewOnly ? t('skillImportReview') : t('import');
+      }
+    }
+    resolveBtn.addEventListener('click', resolve);
+    refInput.addEventListener('keydown', event => { if (event.key === 'Enter') resolve(); });
+    selectedRef.addEventListener('change', resolve);
+    rootPath.addEventListener('keydown', event => { if (event.key === 'Enter') resolve(); });
+    reviewBtn.addEventListener('click', () => importSkill(true, false));
+    importBtn.addEventListener('click', () => importSkill(false, false));
+  }
+
+  createTab.addEventListener('click', () => setMode('create'));
+  importTab.addEventListener('click', () => setMode('import'));
+  setMode('create');
+}
+
 async function showResourceCreator(rtype) {
   if (rtype === '_flow') { showDeployFlowDialog(); return; }
   if (rtype === '_svc') { showServiceInstallForm(); return; }
@@ -3163,8 +3354,7 @@ function _saveResourceCreate(rtype, assignAfterCreate) {
   if (rtype === 'skill' && (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(name)
       || name.length > 64
       || name.indexOf('anthropic') >= 0 || name.indexOf('claude') >= 0)) {
-    alert('Skill name must be lowercase letters, digits and single hyphens, '
-      + 'at most 64 characters, and must not contain "anthropic" or "claude".');
+    alert(t('skillNameInvalid'));
     return;
   }
   const fields = _RESOURCE_FIELDS[rtype] || [];

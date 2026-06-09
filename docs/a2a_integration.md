@@ -40,7 +40,7 @@ A2A should therefore be an adapter layer over existing conversation and agent me
 | --- | --- |
 | Agent Card | Generated from a PawFlow agent resource plus conversation-scoped metadata. |
 | Agent Skill | Agent description, assigned skills, enabled tools, optional published flow capabilities. |
-| Context ID | PawFlow `conversation_id`, or an opaque remote context ID for remote agents. |
+| Context ID | PawFlow `conversation_id`. For the multi-client server pattern it maps to a per-client isolated ephemeral sub-conversation (see "Multi-Client Isolated Contexts"). For remote agents it can be an opaque remote context ID. |
 | Task ID | A PawFlow A2A task record linked to an initiating message ID and target agent. |
 | Message | PawFlow message rows with `role`, `content`, `source`, `msg_id`, `ts`, and `conversation_id`. |
 | Part: text | Plain message content. |
@@ -235,6 +235,123 @@ A future improvement can make `delegate` transport-aware:
 - Remote PawFlow or generic A2A agent: A2A client path.
 - Tool-like stateless capability: MCP path.
 
+## Multi-Client Isolated Contexts
+
+A common server-side use case is a single PawFlow agent that exposes a stateful
+capability to many external A2A clients at once. Example: a calendar/booking
+agent backed by a calendar MCP tool, where external agents request appointments
+and receive confirmations. Each external client must get an isolated working
+context — one client's negotiation must never leak into another's — while the
+human owner still sees all activity inside one conversation in the web chat.
+
+PawFlow already has the primitives for this. The A2A layer only wires them
+together; it does not introduce a new context mechanism.
+
+### Context Model Constraint
+
+A PawFlow conversation partitions context by agent name only: `shared.jsonl`
+plus one `{agent}.jsonl` per agent (`core/conversation_store.py`). There is no
+notion of multiple independent contexts inside a single `conversation_id`.
+Therefore per-client isolation must be realized as separate sub-conversations,
+not as sub-partitions of one conversation. "One conversation with N client
+contexts" is, in implementation terms, one parent conversation plus N isolated
+sub-conversations.
+
+### Mapping
+
+- The user-facing "calendar conversation" is a parent conversation that owns the
+  calendar agent.
+- Each A2A `context_id` (one per external client/session) maps to an isolated
+  ephemeral sub-conversation that targets the calendar agent.
+- The sub-conversation starts empty and is persisted and resumable, so multi-turn
+  booking negotiation (propose slot, counter, confirm) continues in a clean
+  per-client context.
+
+This reuses the isolated sub-agent primitive. `delegate context='isolated'`
+spawns a separate sub-agent with an empty context (`_resolve_context()` returns
+`[]` for isolated; `core/handlers/resource_agent.py`), and `persist=true` keeps
+the sub-conversation for later resume. The A2A server invokes the same
+`SubAgentExecutor` / isolated sub-conversation path, but the entry point is an
+inbound `SendMessage` instead of an agent's delegate tool call. Note the
+existing restriction: an agent that is itself running as a delegate can only use
+`context='shared'`, so a calendar agent inside an A2A sub-context must not fan
+out with nested isolated delegates.
+
+### Lifecycle: empty, persist, TTL
+
+1. First `SendMessage` from a client with no `context_id`: create a fresh
+   isolated sub-conversation (empty context), bound to the calendar agent, with
+   `persist=true` and a TTL.
+2. Subsequent `SendMessage` carrying that `context_id`: resume the same
+   sub-conversation.
+3. Expiry: conversations carry a TTL. `save(..., ttl=...)` sets
+   `_meta_expires_at` and `ConversationStore.cleanup()` deletes expired
+   conversations. The A2A context is reclaimed when the TTL elapses or the A2A
+   task reaches a terminal state.
+
+Use a sliding TTL — re-stamp `_meta_expires_at` on each inbound message — if the
+context should live for the duration of the A2A session rather than a fixed
+window. The cleanup scheduler that calls `ConversationStore.cleanup()` must be
+running for reclamation to happen.
+
+### Shared Backend, Isolated Contexts: Concurrency
+
+Context isolation does not protect the underlying capability. All clients book
+against the same calendar backend, so two isolated contexts can request the same
+slot concurrently. Double-booking prevention must live in the calendar MCP tool
+or backend (atomic slot check-and-reserve, slot locking), not in the context
+model. This is the real concurrency risk of the pattern and must be handled at
+the tool layer.
+
+### Web Chat Rendering: Visibility Without Context Leakage
+
+The human owner selects the parent calendar conversation and sees one collapsible
+block per client, with sub-blocks per turn. This reuses the existing delegate
+block rendering (`delegate-block` / `delegate-sub-block`, grouped by
+`delegate_tc_id` / `data-delegate-group`; `tasks/io/chat_ui/messages.js`).
+
+Visibility and isolation are in tension. Projecting per-client activity into the
+parent conversation as normal or `agent_delegate` messages would route it into
+shared/agent context and break isolation. Resolve this with `display_only`
+messages, which `append_message` writes to the transcript only and to no context
+file (`core/conversation_store.py`). The A2A adapter projects, per client turn, a
+`display_only` summary into the parent conversation keyed by `context_id`, so:
+
+- the web chat groups it as one block per client (UI visibility), and
+- nothing enters any agent's prompt context (isolation preserved).
+
+Rendering options:
+
+- Reuse the delegate block path by stamping the projected `display_only` message
+  with the group key set to `context_id`, but without the delegate context
+  routing (the projection stays transcript-only).
+- Or add a dedicated `a2a-block` renderer modeled on `delegate-block`.
+
+Optional drill-down: open the full isolated sub-conversation from its block.
+Inline viewing of a sub-conversation inside the parent is not an existing feature
+and is additional work; the `display_only` summary block is sufficient for the
+common case.
+
+Hide the per-client sub-conversations from the main conversation list with a
+parent/child flag so they do not flood the sidebar; they live under the parent
+calendar conversation.
+
+### Dependencies
+
+This pattern builds on Phase 1 (local A2A server, `SendMessage`, `GetTask`, task
+records) plus Phase 2 (streaming) or Phase 5 (push notifications) for delivering
+confirmations. Push notifications fit asynchronous booking confirmations better
+than a long-lived SSE subscription, because a confirmation may depend on a freed
+slot or human approval that arrives much later.
+
+### Human-in-the-Loop Confirmation
+
+If the conversation owner must approve each appointment rather than letting the
+agent confirm autonomously, the A2A task moves to `input-required` (or
+`auth-required`) and stays open while the owner approves in the web chat. This is
+the `input-required` mapping in "Task State Mapping" and depends on the explicit
+A2A task finalization hook; do not infer approval state from transcript scans.
+
 ## Security
 
 Required controls:
@@ -297,6 +414,11 @@ Required controls:
 - Remote A2A client handles direct message responses, task responses, streaming responses, and failed tasks.
 - File parts are copied or referenced safely with user and conversation scoping.
 - Push webhook URLs are rejected for private/internal networks unless explicitly allowlisted.
+- A new client `context_id` creates an isolated sub-conversation with an empty context; a repeated `context_id` resumes the same sub-conversation.
+- Two clients never see each other's messages: each isolated sub-conversation context contains only its own turns.
+- A `display_only` projection into the parent conversation appears in the transcript and web chat but never enters any agent's prompt context.
+- An expired context TTL reclaims the sub-conversation via `ConversationStore.cleanup()`; a resumed context past TTL is rejected, not silently recreated with lost history.
+- Concurrent slot requests from two contexts cannot double-book: the calendar tool enforces atomic check-and-reserve.
 
 ## Open Questions
 
@@ -304,3 +426,6 @@ Required controls:
 - Whether one public Agent Card should represent the whole PawFlow instance or only individually published agents.
 - How much of assigned skills and tool filters should be reflected in Agent Skills.
 - Whether remote A2A agents should be implemented as a new agent backend or a separate resource type linked into `conv_agents`.
+- How an external client obtains its target in the multi-client pattern: the well-known Agent Card is instance-level but `SendMessage` is conversation-scoped. Options include an instance-level booking endpoint that allocates a sub-conversation on first contact, or a published conversation-scoped card per service.
+- How parent/child sub-conversation links are modeled (a parent-id field in extras, a dedicated index, or both) and how they are hidden from the main conversation list.
+- Whether the per-client `display_only` projection should be a summary or a full mirror of the sub-conversation turns, and where the drill-down view loads the full sub-conversation from.

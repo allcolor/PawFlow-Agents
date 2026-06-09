@@ -2071,6 +2071,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
 
             session_id = _uuid.uuid4().hex[:12]
             free_port = _find_free_port()
+            backend_host = _docker_published_host()
             container_name = f"pawflow-claude-login-{session_id}"
             volume_name = f"pawflow_ws_{conversation_id}" if conversation_id else f"pawflow_login_{session_id}"
             image = "pawflow-claude-code:latest"
@@ -2085,7 +2086,8 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 login_session_id=getattr(flowfile, "auth_session_id", "") or "",
                 container=container_name, service_id=service_id,
                 user_id=user_id, volume=volume_name,
-                launch_time=time.time(), ready=False)
+                launch_time=time.time(), ready=False,
+                host=backend_host)
         except Exception as e:
             logger.error("[vnc-login] Setup failed: %s", e, exc_info=True)
             flowfile.set_content(json.dumps({"error": f"Login setup failed: {e}"}).encode())
@@ -2123,13 +2125,21 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
 
             # Wait for noVNC to be ready
             import urllib.request
+            ready = False
+            last_ready_error = None
             for _attempt in range(15):
                 try:
-                    urllib.request.urlopen(f"http://127.0.0.1:{free_port}/", timeout=2)  # nosec B310 - local noVNC readiness probe.
-                    logger.info("[vnc-login] noVNC ready on port %d", free_port)
+                    urllib.request.urlopen(f"http://{backend_host}:{free_port}/", timeout=2)  # nosec B310 - internal noVNC readiness probe.
+                    logger.info("[vnc-login] noVNC ready on %s:%d", backend_host, free_port)
+                    ready = True
                     break
-                except Exception:
+                except Exception as e:
+                    last_ready_error = e
                     time.sleep(1)
+            if not ready:
+                from services.vnc_proxy import update_session_error
+                update_session_error(session_id, f"noVNC not reachable on {backend_host}:{free_port}: {last_ready_error}")
+                return
 
             _ensure_vnc_routes(flowfile)
 
@@ -4602,6 +4612,7 @@ finally:
             from pawflow_relay.utils import find_free_port as _find_free_port
             session_id = _uuid.uuid4().hex[:12]
             free_port = _find_free_port()
+            backend_host = _docker_published_host()
             container_name = f"pawflow-{login_cli}-login-{session_id}"
             volume_name = f"pawflow_ws_{conversation_id}" if conversation_id else f"pawflow_login_{session_id}"
             image = "pawflow-claude-code:latest"
@@ -4613,7 +4624,8 @@ finally:
                 login_session_id=flowfile.get_attribute("auth.session_id") or "",
                 container=container_name, service_id=service_id,
                 user_id=user_id, volume=volume_name,
-                launch_time=time.time(), ready=False)
+                launch_time=time.time(), ready=False,
+                host=backend_host)
         except Exception as e:
             logger.error("[%s-login] Setup failed: %s", login_cli, e, exc_info=True)
             flowfile.set_content(json.dumps({"error": f"Login setup failed: {e}"}).encode())
@@ -4666,13 +4678,21 @@ finally:
                 return
 
             import urllib.request
+            ready = False
+            last_ready_error = None
             for _attempt in range(15):
                 try:
-                    urllib.request.urlopen(f"http://127.0.0.1:{free_port}/", timeout=2)  # nosec B310 - local noVNC readiness probe.
-                    logger.info("[%s-login] noVNC ready on port %d", login_cli, free_port)
+                    urllib.request.urlopen(f"http://{backend_host}:{free_port}/", timeout=2)  # nosec B310 - internal noVNC readiness probe.
+                    logger.info("[%s-login] noVNC ready on %s:%d", login_cli, backend_host, free_port)
+                    ready = True
                     break
-                except Exception:
+                except Exception as e:
+                    last_ready_error = e
                     time.sleep(1)
+            if not ready:
+                from services.vnc_proxy import update_session_error
+                update_session_error(session_id, f"noVNC not reachable on {backend_host}:{free_port}: {last_ready_error}")
+                return
 
             _ensure_vnc_routes(flowfile)
 
@@ -4842,6 +4862,7 @@ finally:
             from pawflow_relay.utils import find_free_port as _find_free_port
             session_id = _uuid.uuid4().hex[:12]
             free_port = _find_free_port()
+            backend_host = _docker_published_host()
             container_name = f"pawflow-rclone-login-{session_id}"
             image = "pawflow-claude-code:latest"
             logger.info("[rclone-login] Creating session %s (port %d)", session_id, free_port)
@@ -4854,7 +4875,8 @@ finally:
                 container=container_name, service_id=service_id,
                 service_scope=sdef.scope, service_scope_id=sdef.scope_id,
                 rclone_type=rclone_type, user_id=user_id,
-                launch_time=time.time(), ready=False)
+                launch_time=time.time(), ready=False,
+                host=backend_host)
         except Exception as e:
             logger.error("[rclone-login] Setup failed: %s", e, exc_info=True)
             flowfile.set_content(json.dumps({"error": f"Login setup failed: {e}"}).encode())
@@ -4907,13 +4929,21 @@ finally:
                 return
 
             import urllib.request
+            ready = False
+            last_ready_error = None
             for _attempt in range(15):
                 try:
-                    urllib.request.urlopen(f"http://127.0.0.1:{free_port}/", timeout=2)  # nosec B310 - local noVNC readiness probe.
-                    logger.info("[rclone-login] noVNC ready on port %d", free_port)
+                    urllib.request.urlopen(f"http://{backend_host}:{free_port}/", timeout=2)  # nosec B310 - internal noVNC readiness probe.
+                    logger.info("[rclone-login] noVNC ready on %s:%d", backend_host, free_port)
+                    ready = True
                     break
-                except Exception:
+                except Exception as e:
+                    last_ready_error = e
                     time.sleep(1)
+            if not ready:
+                from services.vnc_proxy import update_session_error
+                update_session_error(session_id, f"noVNC not reachable on {backend_host}:{free_port}: {last_ready_error}")
+                return
 
             _ensure_vnc_routes(flowfile)
 

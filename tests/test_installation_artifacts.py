@@ -993,6 +993,22 @@ def test_server_relay_desktop_uses_container_ip_without_published_host():
     assert 'Desktop started but backend port not found' not in open_desktop
 
 
+def test_server_login_vnc_uses_published_docker_host():
+    src = Path("tasks/ai/actions/service_flow.py").read_text(encoding="utf-8")
+    login_blocks = [
+        src[src.index('if action == "claude_code_server_login"'):src.index('if action == "claude_code_server_login_cleanup"')],
+        src[src.index('if action == "codex_server_login"'):src.index('if action == "codex_server_login_cleanup"')],
+        src[src.index('if action in {"gemini_server_login", "agy_server_login"}'):src.index('if action in {"gemini_server_login_cleanup", "agy_server_login_cleanup"}')],
+        src[src.index('if action == "rclone_server_login"'):src.index('if action == "rclone_server_login_cleanup"')],
+    ]
+
+    for block in login_blocks:
+        assert "backend_host = _docker_published_host()" in block
+        assert "host=backend_host" in block
+        assert "noVNC not reachable on {backend_host}:{free_port}" in block
+        assert "http://127.0.0.1:{free_port}/" not in block
+
+
 def test_pawflow_agent_auth_routes_cover_login_forms():
     template = Path("data/repository/flows/global/default/pawflow_agent/versions/1.0.0.json")
     flow = json.loads(template.read_text(encoding="utf-8"))

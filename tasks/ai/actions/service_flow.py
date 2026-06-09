@@ -3697,7 +3697,7 @@ except Exception:
     pass
 env = dict(os.environ)
 env.setdefault("TERM", "xterm-256color")
-for option in (("mouse", "off"), ("history-limit", "50000")):
+for option in (("mouse", "on"), ("history-limit", "50000")):
     try:
         subprocess.run(["tmux", "set-option", "-g", *option],
                        capture_output=True, timeout=2)
@@ -3855,7 +3855,7 @@ except Exception:
     pass
 env = dict(os.environ)
 env.setdefault("TERM", "xterm-256color")
-for option in (("mouse", "off"), ("history-limit", "50000")):
+for option in (("mouse", "on"), ("history-limit", "50000")):
     try:
         subprocess.run(["tmux", "set-option", "-g", *option],
                        capture_output=True, timeout=2)

@@ -178,13 +178,12 @@ provider-owned Docker container. The bridge creates the PTY inside that Linux
 container, then runs `tmux attach-session -t pawflow`. This is a live debug view
 of the same tmux session receiving prompts, interrupts, and force-stop keys;
 model output is still assembled only from MITM-observed response events.
-The web terminal keeps local scrollback and disables tmux mouse mode for the
-attached session. Browser/xterm selection therefore remains available for normal
-copy/paste from visible terminal text, while wheel/trackpad scrolling uses the
-web terminal scrollback instead of being captured by tmux copy-mode. Before
-PawFlow injects a chat turn into the live tmux, it also sends a best-effort
-`tmux send-keys -X cancel` so a debug attach left in copy-mode cannot swallow the
-server-side paste or final `Enter`.
+The web terminal keeps local scrollback and enables tmux mouse mode for the
+attached session, so wheel/trackpad scrolling can enter tmux copy-mode and move
+back through Claude Code's interactive history instead of showing only the last
+screenful. Before PawFlow injects a chat turn into the live tmux, it also sends a
+best-effort `tmux send-keys -X cancel` so a debug attach left in copy-mode cannot
+swallow the server-side paste or final `Enter`.
 
 ## Vision
 

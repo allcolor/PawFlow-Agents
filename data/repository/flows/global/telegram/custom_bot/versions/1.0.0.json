@@ -1,0 +1,70 @@
+{
+  "id": "telegram-custom-bot",
+  "name": "custom_bot",
+  "version": "1.0.0",
+  "description": "Example custom Telegram bot built only with generic PawFlow Telegram receive/send tasks. It checks an allowed user list from a flow parameter and handles a few simple commands.",
+  "parameters": {
+    "bot_token": {
+      "type": "string",
+      "default": "",
+      "sensitive": true,
+      "required": true,
+      "description": "Telegram Bot API token from BotFather"
+    },
+    "allowed_users": {
+      "type": "string",
+      "default": "",
+      "required": false,
+      "description": "Comma-separated Telegram user IDs allowed to use this bot. Empty means all users."
+    }
+  },
+  "services": {
+    "telegram_bot": {
+      "type": "telegramBot",
+      "parameters": {
+        "bot_token": "${bot_token}",
+        "poll_timeout": 30
+      }
+    }
+  },
+  "tasks": {
+    "receive": {
+      "type": "telegramReceiver",
+      "parameters": {
+        "service_id": "telegram_bot"
+      }
+    },
+    "handle_command": {
+      "type": "executeScript",
+      "parameters": {
+        "script": "import ast, json\n\nallowed_raw = '''${allowed_users}'''.strip()\nif allowed_raw.startswith('{'):\n    try:\n        allowed_raw = str(ast.literal_eval(allowed_raw).get('default', ''))\n    except Exception:\n        allowed_raw = ''\nallowed_users = {item.strip() for item in allowed_raw.split(',') if item.strip()}\nuser_id = attributes.get('telegram.user_id', '').strip()\nchat_id = attributes.get('telegram.chat_id', '').strip()\nusername = attributes.get('telegram.username', '').strip()\nfirst_name = attributes.get('telegram.first_name', '').strip()\nmessage_type = attributes.get('telegram.message_type', '').strip()\ncallback_data = attributes.get('telegram.callback_data', '').strip()\ntext = content.strip()\n\ndef set_reply(body, markup=None, flow_file=flow_file):\n    flow_file.content = body.encode('utf-8')\n    if markup:\n        flow_file.set_attribute('telegram.reply_markup', json.dumps(markup))\n\ndef help_text():\n    return (\n        'Commands:\\n'\n        '/start - Show this menu\\n'\n        '/hello - Say hello\\n'\n        '/ping - Health check\\n'\n        '/whoami - Show Telegram IDs'\n    )\n\nif allowed_users and user_id not in allowed_users:\n    set_reply('Access denied. Your Telegram user ID is ' + (user_id or 'unknown') + '.')\nelif message_type == 'callback_query' and callback_data == 'hello':\n    name = first_name or username or user_id or 'there'\n    set_reply('Hello ' + name + '.')\nelse:\n    command = text.split(None, 1)[0].lower() if text else ''\n    if command in ('/start', '/help'):\n        set_reply(help_text(), {\n            'inline_keyboard': [[\n                {'text': 'Say hello', 'callback_data': 'hello'},\n                {'text': 'Who am I?', 'callback_data': 'whoami'}\n            ]]\n        })\n    elif command == '/hello':\n        name = first_name or username or user_id or 'there'\n        set_reply('Hello ' + name + '.')\n    elif command == '/ping':\n        set_reply('pong')\n    elif command == '/whoami' or (message_type == 'callback_query' and callback_data == 'whoami'):\n        set_reply('Telegram user: ' + (user_id or 'unknown') + '\\nChat: ' + (chat_id or 'unknown'))\n    else:\n        set_reply('Unknown command. Send /help for available commands.')"
+      }
+    },
+    "send_reply": {
+      "type": "telegramSend",
+      "parameters": {
+        "service_id": "telegram_bot",
+        "chat_id": "${telegram.chat_id}",
+        "parse_mode": "Markdown"
+      }
+    }
+  },
+  "relations": [
+    {
+      "source": "receive",
+      "target": "handle_command",
+      "relationships": [
+        "success"
+      ]
+    },
+    {
+      "source": "handle_command",
+      "target": "send_reply",
+      "relationships": [
+        "success"
+      ]
+    }
+  ],
+  "fqn": "telegram.custom_bot:1.0.0",
+  "package": "telegram"
+}

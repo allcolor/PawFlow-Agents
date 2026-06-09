@@ -1617,6 +1617,58 @@ class TestTelegramFlow(unittest.TestCase):
             "description": "Submit Telegram messages to the shared PawFlow agent runtime",
         }]
 
+    def test_custom_bot_flow_file_valid(self):
+        path = _paths.REPOSITORY_DIR / "flows" / "global" / "telegram" / "custom_bot" / "versions" / "1.0.0.json"
+        assert path.exists()
+        flow = json.loads(path.read_text(encoding="utf-8"))
+        assert flow["id"] == "telegram-custom-bot"
+        assert flow["fqn"] == "telegram.custom_bot:1.0.0"
+        assert flow["package"] == "telegram"
+        assert flow["tasks"]["receive"]["type"] == "telegramReceiver"
+        assert flow["tasks"]["handle_command"]["type"] == "executeScript"
+        assert flow["tasks"]["send_reply"]["type"] == "telegramSend"
+
+    def test_custom_bot_flow_parser_normalizes_relations(self):
+        from engine.parser import FlowParser
+        from tasks import register_all_tasks
+
+        register_all_tasks()
+        path = _paths.REPOSITORY_DIR / "flows" / "global" / "telegram" / "custom_bot" / "versions" / "1.0.0.json"
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        flow = FlowParser.parse(raw)
+
+        assert {rel["from"] for rel in flow.relations} == {"receive", "handle_command"}
+        assert {rel["to"] for rel in flow.relations} == {"handle_command", "send_reply"}
+        assert all(rel["type"] == "success" for rel in flow.relations)
+
+    def test_custom_bot_script_checks_allowed_users_and_commands(self):
+        from engine.parser import FlowParser
+        from tasks import register_all_tasks
+
+        register_all_tasks()
+        path = _paths.REPOSITORY_DIR / "flows" / "global" / "telegram" / "custom_bot" / "versions" / "1.0.0.json"
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        raw["parameters"]["allowed_users"] = "42"
+        flow = FlowParser.parse(raw)
+        task = flow.tasks["handle_command"]
+
+        denied = FlowFile(content=b"/hello")
+        denied.set_attribute("telegram.user_id", "100")
+        [out] = task.execute(denied)
+        assert out.get_content().decode("utf-8").startswith("Access denied.")
+
+        allowed = FlowFile(content=b"/hello")
+        allowed.set_attribute("telegram.user_id", "42")
+        allowed.set_attribute("telegram.first_name", "Ada")
+        [out] = task.execute(allowed)
+        assert out.get_content() == b"Hello Ada."
+
+        help_ff = FlowFile(content=b"/help")
+        help_ff.set_attribute("telegram.user_id", "42")
+        [out] = task.execute(help_ff)
+        assert "/hello - Say hello" in out.get_content().decode("utf-8")
+        assert json.loads(out.get_attribute("telegram.reply_markup"))["inline_keyboard"]
+
     def test_pawflow_agent_declares_agent_runtime_input_port(self):
         path = _paths.REPOSITORY_DIR / "flows" / "global" / "default" / "pawflow_agent" / "versions" / "1.0.0.json"
         flow = json.loads(path.read_text(encoding="utf-8"))

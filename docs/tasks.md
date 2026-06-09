@@ -93,6 +93,12 @@ code duplication.
 | `whatsappReceiver` | Receive messages from WhatsApp |
 | `whatsappSend` | Send a message via WhatsApp |
 
+The repository also includes `telegram.custom_bot:1.0.0`, a generic custom bot
+example that wires `telegramReceiver -> executeScript -> telegramSend`. Its
+script reads the `allowed_users` flow parameter, rejects unauthorized Telegram
+user IDs, and handles `/start`, `/help`, `/hello`, `/ping`, and `/whoami` without
+using the agent runtime.
+
 `telegramAgentClient` uses the shared conversation runtime. Telegram messages
 must target an explicitly resumed conversation with a selected agent; the task
 does not auto-create conversations. Telegram `/conv new` requires

@@ -4858,7 +4858,7 @@ async function showServiceEditForm(serviceId, scope, readonly) {
       formHtml += '<div style="border-top:1px solid var(--pf-border);padding-top:8px;margin-top:8px;">'
         + '<div style="color:var(--pf-muted);font-size:11px;margin-bottom:6px;font-weight:600;">' + escapeHtml(t('parameters')) + '</div>'
         + _renderSchemaFields(schema, config, ro)
-        + (ro ? '' : _renderServiceActions(actions, serviceId, scope))
+        + _renderServiceActions(actions, serviceId, scope)
         + '</div>';
     } else {
       for (const [k, v] of Object.entries(config)) {

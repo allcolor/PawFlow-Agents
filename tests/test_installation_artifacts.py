@@ -941,6 +941,13 @@ def test_pawflow_installer_flow_template_exists():
     assert "window.location.href='/chat'" in ui_content
 
 
+def test_service_view_mode_keeps_service_actions_visible():
+    ui_content = Path("tasks/io/chat_ui/resources.js").read_text(encoding="utf-8")
+
+    assert "+ _renderSchemaFields(schema, config, ro)\n        + _renderServiceActions(actions, serviceId, scope)" in ui_content
+    assert "(ro ? '' : _renderServiceActions(actions, serviceId, scope))" not in ui_content
+
+
 def test_install_bootstrap_reset_is_implemented():
     src = Path("core/install_bootstrap.py").read_text(encoding="utf-8")
 

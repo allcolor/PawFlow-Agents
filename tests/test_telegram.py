@@ -848,6 +848,24 @@ class TestTelegramAgentClientTask(unittest.TestCase):
             _p.USER_CONFIG_DIR = orig_ucd
             shutil.rmtree(tmp, ignore_errors=True)
 
+    def test_selected_agent_lookup_can_avoid_persisting_default(self):
+        from tasks.io.telegram_agent_client import TelegramAgentClientTask
+
+        store = MagicMock()
+        store.get_extra.return_value = {}
+
+        with patch("core.conversation_store.ConversationStore.instance", return_value=store), \
+                patch("core.conv_agent_config.get_all_agent_configs", return_value={"assistant": {}}):
+            selected = TelegramAgentClientTask._selected_agent_for_conversation(
+                "conv1", persist_default=False)
+
+        assert selected == "assistant"
+        store.set_extra.assert_not_called()
+
+    def test_telegram_command_paths_use_passive_agent_lookup(self):
+        src = Path("tasks/io/telegram_agent_client.py").read_text(encoding="utf-8")
+        assert "conversation_id, persist_default=False" in src
+
     def test_agent_client_does_not_send_wait_for_done_text_or_tts_audio(self):
         import shutil
         import tempfile

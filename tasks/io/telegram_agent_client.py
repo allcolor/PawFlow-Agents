@@ -198,7 +198,8 @@ class TelegramAgentClientTask(BaseTask):
             conversation_id = IdentityService.instance().get_active_conv(user_id, "telegram") or ""
             if not conversation_id:
                 return
-            target_agent = self._selected_agent_for_conversation(conversation_id)
+            target_agent = self._selected_agent_for_conversation(
+                conversation_id, persist_default=False)
             if not target_agent:
                 return
             from core.conversation_writer import ConversationWriter
@@ -302,7 +303,8 @@ class TelegramAgentClientTask(BaseTask):
         command = text.split(None, 1)[0].lower() if text.strip() else ""
         if not conversation_id and command != "/help":
             return "No resumed conversation. Use /conv list then /conv select <id>."
-        agent_name = self._selected_agent_for_conversation(conversation_id) if conversation_id else ""
+        agent_name = (self._selected_agent_for_conversation(
+            conversation_id, persist_default=False) if conversation_id else "")
         body = {
             "action": "command",
             "text": text,
@@ -390,7 +392,8 @@ class TelegramAgentClientTask(BaseTask):
         return None
 
     @staticmethod
-    def _selected_agent_for_conversation(conversation_id: str) -> str:
+    def _selected_agent_for_conversation(conversation_id: str,
+                                         persist_default: bool = True) -> str:
         from core.conversation_store import ConversationStore
         from core.conv_agent_config import get_all_agent_configs
         store = ConversationStore.instance()
@@ -402,7 +405,7 @@ class TelegramAgentClientTask(BaseTask):
         if not members:
             return ""
         selected = next(iter(members.keys()), "")
-        if selected:
+        if selected and persist_default:
             active["agent"] = selected
             store.set_extra(conversation_id, "active_resources", active)
         return selected

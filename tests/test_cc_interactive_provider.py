@@ -114,6 +114,67 @@ def test_turn_coordinator_assembles_text_thinking_and_native_tool_use():
     assert turns == []
 
 
+def test_turn_coordinator_captures_effective_model_from_message_start():
+    events = [
+        _sse("message_start", {
+            "type": "message_start",
+            "message": {
+                "model": "claude-opus-4-5-20251101",
+                "usage": {"input_tokens": 2588},
+            },
+        }),
+        _sse("content_block_delta", {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "text_delta", "text": "ok"},
+        }),
+        _sse("content_block_stop", {"type": "content_block_stop", "index": 0}),
+        _sse("message_delta", {
+            "type": "message_delta",
+            "usage": {"output_tokens": 6208},
+        }),
+        _sse("message_stop", {"type": "message_stop"}),
+        {"type": "hook", "hook_event_name": "Stop", "input": {"hook_event_name": "Stop"}},
+    ]
+
+    resp = _CCITurnCoordinator(_Events(events), "sess").run()
+
+    # The model resolved by Anthropic for the alias (e.g. "best") is
+    # surfaced from the message_start SSE event, not the configured alias.
+    assert resp.model == "claude-opus-4-5-20251101"
+    assert resp.raw["effective_model"] == "claude-opus-4-5-20251101"
+    # input_tokens come from message_start, output_tokens from message_delta.
+    assert resp.tokens_in == 2588
+    assert resp.tokens_out == 6208
+
+
+def test_turn_coordinator_keeps_last_model_across_multiple_requests():
+    events = [
+        _sse("message_start", {
+            "type": "message_start",
+            "message": {"model": "claude-haiku-4-5-20251001"},
+        }),
+        _sse("message_start", {
+            "type": "message_start",
+            "message": {"model": "claude-opus-4-5-20251101"},
+        }),
+        _sse("content_block_delta", {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "text_delta", "text": "done"},
+        }),
+        _sse("content_block_stop", {"type": "content_block_stop", "index": 0}),
+        _sse("message_stop", {"type": "message_stop"}),
+        {"type": "hook", "hook_event_name": "Stop", "input": {"hook_event_name": "Stop"}},
+    ]
+
+    resp = _CCITurnCoordinator(_Events(events), "sess").run()
+
+    # A turn may issue several /v1/messages calls; the last observed model
+    # (the final assistant request) wins.
+    assert resp.model == "claude-opus-4-5-20251101"
+
+
 def test_turn_coordinator_persists_final_thinking_with_live_callback():
     events = [
         _sse("content_block_start", {

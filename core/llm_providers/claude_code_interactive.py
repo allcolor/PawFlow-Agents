@@ -114,6 +114,10 @@ class _CCITurnCoordinator:
         self.emitted_tool_result_ids: set[str] = (
             emitted_tool_result_ids if emitted_tool_result_ids is not None else set())
         self.usage = {}
+        # Effective model resolved by Anthropic for the configured alias
+        # (e.g. "best" -> "claude-opus-4-5-..."), observed on the wire via
+        # the message_start SSE event. Empty until a message_start is seen.
+        self.effective_model = ""
         self.lifecycle_events: list[dict] = []
         self.current_block_type = None
         self._text_block_buf = ""
@@ -215,7 +219,18 @@ class _CCITurnCoordinator:
             payload = event.get("payload") or {}
             ptype = payload.get("type") or name
             request_id = event.get("request_id", "") or ""
-            if ptype == "content_block_start":
+            if ptype == "message_start":
+                msg = payload.get("message") or {}
+                model = msg.get("model")
+                if model:
+                    # Last observed wins: a turn may issue several
+                    # /v1/messages calls; the final assistant request
+                    # carries the model actually used for the response.
+                    self.effective_model = str(model)
+                usage = msg.get("usage") or {}
+                if usage:
+                    self.usage.update(usage)
+            elif ptype == "content_block_start":
                 self._saw_model_content = True
                 if not self._first_model_content_at:
                     self._first_model_content_at = time.time()
@@ -323,9 +338,11 @@ class _CCITurnCoordinator:
             total_tokens=(int(self.usage.get("input_tokens", 0) or 0)
                           + int(self.usage.get("output_tokens", 0) or 0)),
             thinking="".join(self.thinking_parts),
+            model=self.effective_model,
             raw={
                 "provider": "claude-code-interactive",
                 "usage": self.usage,
+                "effective_model": self.effective_model,
                 "lifecycle_events": self.lifecycle_events,
             },
         )
@@ -596,7 +613,9 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
             emitted_tool_use_ids=state.emitted_tool_use_ids,
             emitted_tool_result_ids=state.emitted_tool_result_ids)
         response = coord.run(getattr(self, "_abort", None))
-        response.model = model or self.default_model
+        # Prefer the model resolved on the wire (message_start); fall back to
+        # the configured alias (e.g. "best") then the provider default.
+        response.model = response.model or model or self.default_model
         return response
 
     def interrupt_claude_code_interactive(
@@ -630,7 +649,9 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
             emitted_tool_use_ids=state.emitted_tool_use_ids,
             emitted_tool_result_ids=state.emitted_tool_result_ids)
         response = coord.run(getattr(self, "_abort", None))
-        response.model = model or self.default_model
+        # Prefer the model resolved on the wire (message_start); fall back to
+        # the configured alias (e.g. "best") then the provider default.
+        response.model = response.model or model or self.default_model
         return response
 
     def _cci_prompt(self, messages, tools, workdir: str, container_workdir: str,

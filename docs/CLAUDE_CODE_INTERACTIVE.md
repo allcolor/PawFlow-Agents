@@ -41,6 +41,17 @@ response back to Claude Code, the proxy parses a copy of Anthropic SSE bytes or
 non-stream JSON message responses and sends scrubbed events to PawFlow over
 `/ws/cc-interactive/events/<service_id>`.
 
+The turn coordinator reads the resolved model from the `message_start` SSE event
+(`message.model`). Because the proxy observes the real `/v1/messages` traffic,
+this is the model Anthropic actually served for the configured alias (for
+example `best` resolves to the latest Opus or Fable). It is exposed as
+`LLMResponse.model` (and `raw["effective_model"]`) so conversation metadata
+shows the effective model name rather than the alias; when no `message_start` is
+observed the coordinator falls back to the configured alias and then the
+provider default. The `message_start` usage block also seeds `input_tokens`,
+which `message_delta` later completes with `output_tokens`. When a turn issues
+several `/v1/messages` requests, the last observed model wins.
+
 For transport debugging, the proxy can emit `wire` events for raw socket chunks
 received and sent on both directions (`client_to_upstream` and
 `upstream_to_client`). This dump is disabled by default because Claude Code also

@@ -625,6 +625,11 @@ def test_terminal_frontend_keeps_scrollback_and_cci_tmux_mouse():
     assert "except Exception:\n        pass" in service_flow_src
 
 
+def test_telegram_user_messages_wait_for_pre_persist_before_ack():
+    src = Path("tasks/ai/agent_streaming.py").read_text(encoding="utf-8")
+    assert 'wait=(_channel == "telegram")' in src
+
+
 def test_open_desktop_backend_does_not_emit_audio_session_without_token():
     src = Path("tasks/ai/actions/service_flow.py").read_text(encoding="utf-8")
     assert "_audio_token = register_audio_source" in src

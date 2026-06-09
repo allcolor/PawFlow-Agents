@@ -228,6 +228,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                     _cw.enqueue_message(
                         dict(_stamped_user), agent_name=_target or "",
                         user_id=_uid,
+                        wait=(_channel == "telegram"),
                         sse_events=[{"type": "new_message", "data": {
                             "role": "user",
                             "content": _stamped_user.get("content", ""),

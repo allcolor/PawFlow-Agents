@@ -44,15 +44,6 @@ function Normalize-Version($value) {
     if (-not $value) { return "" }
     return ($value -replace '^v', '')
 }
-function Get-VersionSortKey($value) {
-    $tag = Normalize-Version $value
-    $parts = [regex]::Matches($tag, '\d+|[A-Za-z]+') | ForEach-Object {
-        $part = $_.Value
-        if ($part -match '^\d+$') { 'N{0:D12}' -f [int64]$part }
-        else { 'S' + $part.ToLowerInvariant() }
-    }
-    return ($parts -join '.')
-}
 function Image-Tag($image) {
     if (-not $image -or -not $image.Contains(':')) { return "" }
     return Normalize-Version($image.Substring($image.LastIndexOf(':') + 1))
@@ -69,7 +60,7 @@ function Resolve-RelayImageVersion($repoDir) {
 }
 function Resolve-LatestVersion {
     $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/allcolor/PawFlow-Agents/releases?per_page=20" -Headers @{ "User-Agent" = "pawflow-installer" }
-    $release = @($releases | Where-Object { -not $_.draft } | Sort-Object { Get-VersionSortKey $_.tag_name } | Select-Object -Last 1)[0]
+    $release = @($releases | Where-Object { -not $_.draft -and $_.tag_name } | Sort-Object { if ($_.published_at) { [datetime]$_.published_at } else { [datetime]$_.created_at } } -Descending | Select-Object -First 1)[0]
     if (-not $release) { Fail "Could not find a published PawFlow release on GitHub." }
     return Normalize-Version($release.tag_name)
 }

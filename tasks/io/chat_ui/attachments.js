@@ -76,13 +76,23 @@ function copyMsg(btn) {
 function messageTextForAction(msg) {
   if (!msg) return '';
   const clone = msg.cloneNode(true);
-  for (const sel of ['.msg-actions', '.source-badge', '.msg-time', '.msg-meta']) {
-    const el = clone.querySelector(sel);
-    if (el) el.remove();
+  for (const sel of ['.msg-actions', '.source-badge', '.msg-time', '.msg-meta', '.code-block-copy']) {
+    clone.querySelectorAll(sel).forEach(el => el.remove());
   }
   let text = (clone.textContent || clone.innerText).trim();
   // Strip target badge prefix like "[→ assistant] " or "[btw → agent] "
   return text.replace(/^\[(btw\s*)?\u2192\s*[^\]]+\]\s*/, '');
+}
+
+function copyCodeBlock(btn, event) {
+  if (event) event.stopPropagation();
+  const block = btn && btn.closest ? btn.closest('.code-block') : null;
+  const code = block ? block.querySelector('pre code') : null;
+  if (!code) return;
+  navigator.clipboard.writeText(code.textContent || '').then(() => {
+    btn.textContent = '\u2705';
+    setTimeout(() => { btn.textContent = '\u{1F4CB}'; }, 1500);
+  });
 }
 
 function speakMsg(btn) {

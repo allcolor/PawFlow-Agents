@@ -1613,7 +1613,11 @@ function renderMarkdown(text) {
   const _codeBlocks = [];
   text = text.replace(/```(\w*)\n([\s\S]*?)```/g, function(_, lang, code) {
     var cls = lang ? ' class="language-' + lang + '"' : '';
-    _codeBlocks.push('<pre><code' + cls + '>' + escapeHtml(code) + '</code></pre>');
+    const copyLabel = escapeHtml(t('copy'));
+    _codeBlocks.push('<div class="code-block">'
+      + '<button class="code-block-copy" onclick="copyCodeBlock(this,event)" title="' + copyLabel + '" aria-label="' + copyLabel + '">\u{1F4CB}</button>'
+      + '<pre><code' + cls + '>' + escapeHtml(code) + '</code></pre>'
+      + '</div>');
     return '\x00CB' + (_codeBlocks.length - 1) + '\x00';
   });
   const _inlineCodes = [];

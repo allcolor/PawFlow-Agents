@@ -165,6 +165,14 @@ Translation: /workspace/data/claude_sessions/abc/
 | `python:3.12-slim` | ~150MB | Python only |
 | `node:22-slim` | ~200MB | Node.js + npm |
 
+Interactive Claude Code and Antigravity containers need a private mount namespace
+for the per-user `/cc_sessions` bind. PawFlow starts those containers as root
+with `SYS_ADMIN` plus `apparmor:unconfined` and `seccomp=unconfined` so
+`unshare` and `mount --bind` are available inside the provider container. Treat
+those containers as privileged runtime surfaces: credentials are scoped per
+user/conversation/service, and workloads should remain isolated to the generated
+session directory.
+
 Build:
 ```bash
 bash docker/claude-code/build.sh

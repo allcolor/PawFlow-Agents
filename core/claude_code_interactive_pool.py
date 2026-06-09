@@ -138,7 +138,7 @@ class InteractiveClaudeCodePool:
 
     @staticmethod
     def _physical_container_workdir(user_id: str, conversation_id: str, agent_name: str) -> str:
-        return "/cc_sessions/{}/{}/{}".format(
+        return "/cc_sessions_host/{}/{}/{}".format(
             InteractiveClaudeCodePool._safe(user_id),
             (conversation_id or "").replace(":", "_"),
             agent_name,
@@ -254,13 +254,29 @@ class InteractiveClaudeCodePool:
         if not self._is_alive(state.name):
             state.last_error = f"Container {state.name} is not running"
             return False
+        self._cancel_copy_mode(state)
         self._remember_injected_prompt(state, text)
         self._remember_injected_prompt_for_event_service(state, text)
         if not self._load_buffer(state, text):
             return False
         if not self._paste_buffer(state):
             return False
+        try:
+            delay = float(os.environ.get("PAWFLOW_CCI_SUBMIT_DELAY_SECONDS", "1.0") or "1.0")
+        except ValueError:
+            delay = 1.0
+        if delay > 0:
+            time.sleep(delay)
         return self.send_keys(state, ["Enter"])
+
+    def _cancel_copy_mode(self, state: InteractiveContainer) -> None:
+        try:
+            subprocess.run(  # nosec B603
+                docker_cmd() + ["exec", "--user", "1000:1000", state.name,
+                                "tmux", "send-keys", "-t", "pawflow", "-X", "cancel"],
+                capture_output=True, timeout=5)
+        except Exception:
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     def _load_buffer(self, state: InteractiveContainer, text: str) -> bool:
         cmd = docker_cmd() + [
@@ -317,6 +333,7 @@ class InteractiveClaudeCodePool:
         if not self._is_alive(state.name):
             state.last_error = f"Container {state.name} is not running"
             return False
+        self._cancel_copy_mode(state)
         self._remember_injected_prompt(state, text)
         self._remember_injected_prompt_for_event_service(state, text)
         return (self._load_buffer(state, text)
@@ -529,20 +546,15 @@ class InteractiveClaudeCodePool:
         _paths.CLAUDE_SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
         project_root = Path(__file__).resolve().parents[1]
         sessions_host = translate_path(to_host_path(str(_paths.CLAUDE_SESSIONS_DIR.resolve())))
-        mounts = ["-v", f"{sessions_host}:/cc_sessions"]
-        files = [
+        mounts = ["-v", f"{sessions_host}:/cc_sessions_host"]
+        runtime_files = [
             (project_root / "tools" / "mcp_bridge.py", "/opt/pawflow/mcp_bridge.py"),
             (project_root / "tools" / "cc_interactive_filters.py", "/opt/pawflow/cc_interactive_filters.py"),
             (project_root / "tools" / "cc_interactive_proxy.py", "/opt/pawflow/cc_interactive_proxy.py"),
             (project_root / "tools" / "cc_interactive_hook.py", "/opt/pawflow/cc_interactive_hook.py"),
             (project_root / "docker" / "pawflow_sdk" / "pawflow.py", "/opt/pawflow/pawflow.py"),
         ]
-        for src, dst in files:
-            if src.exists():
-                mounts += ["-v", f"{translate_path(to_host_path(str(src)))}:{dst}:ro"]
         pkg_dir = project_root / "pawflow_relay"
-        if pkg_dir.is_dir():
-            mounts += ["-v", f"{translate_path(to_host_path(str(pkg_dir)))}:/opt/pawflow/pawflow_relay:ro"]
         # Bind-mount the skill repository scope dirs read-only so SKILL.md
         # asset references (${CLAUDE_SKILL_DIR}/...) resolve inside the
         # persistent interactive container, like the batch claude-code pool.
@@ -564,6 +576,8 @@ class InteractiveClaudeCodePool:
             "--add-host", "api.anthropic.com:127.0.0.1",
             "--add-host", "host.docker.internal:host-gateway",
             "--cap-add", "SYS_ADMIN",
+            "--security-opt", "apparmor:unconfined",
+            "--security-opt", "seccomp=unconfined",
             "--shm-size", "512m",
             "--tmpfs", "/tmp:rw,nosuid,size=512m",  # nosec B108 - Docker tmpfs mount target inside ephemeral container.
             "--user", "root",
@@ -575,9 +589,32 @@ class InteractiveClaudeCodePool:
                                 capture_output=True, text=True, timeout=30)
         if result.returncode != 0:
             raise RuntimeError(f"Failed to spawn CC interactive container: {result.stderr[:500]}")
+        self._copy_runtime_files(name, runtime_files, pkg_dir)
         subprocess.run(docker_cmd() + ["exec", "--user", "root", name, "chronyd"],  # nosec B603
                        capture_output=True, timeout=5)
         return name
+
+    @staticmethod
+    def _copy_runtime_files(name: str, files: list[tuple[Path, str]], pkg_dir: Path) -> None:
+        mkdir = subprocess.run(  # nosec B603
+            docker_cmd() + ["exec", "--user", "root", name, "mkdir", "-p", "/opt/pawflow"],
+            capture_output=True, text=True, timeout=10)
+        if mkdir.returncode != 0:
+            raise RuntimeError(f"Failed to prepare CC interactive runtime dir: {mkdir.stderr[:300]}")
+        for src, dst in files:
+            if not src.exists():
+                continue
+            cp = subprocess.run(  # nosec B603
+                docker_cmd() + ["cp", str(src), f"{name}:{dst}"],
+                capture_output=True, text=True, timeout=15)
+            if cp.returncode != 0:
+                raise RuntimeError(f"Failed to copy {src.name} into CC interactive container: {cp.stderr[:300]}")
+        if pkg_dir.is_dir():
+            cp = subprocess.run(  # nosec B603
+                docker_cmd() + ["cp", str(pkg_dir), f"{name}:/opt/pawflow/pawflow_relay"],
+                capture_output=True, text=True, timeout=30)
+            if cp.returncode != 0:
+                raise RuntimeError(f"Failed to copy pawflow_relay into CC interactive container: {cp.stderr[:300]}")
 
     def _install_ca(self, name: str, container_workdir: str) -> None:
         ca_path = f"{container_workdir}/.pawflow_cci/certs/pawflow-ca.crt"
@@ -613,7 +650,8 @@ class InteractiveClaudeCodePool:
                 env += ["-e", f"{key}={value}"]
         r = subprocess.run(  # nosec B603
             docker_cmd() + ["exec", "-d", "--user", "root", *env, name,
-                            "python3", "/opt/pawflow/cc_interactive_proxy.py"],
+                            "bash", "-lc",
+                            "exec python3 /opt/pawflow/cc_interactive_proxy.py >> /tmp/cci_proxy.log 2>&1"],
             capture_output=True, text=True, timeout=10)
         if r.returncode != 0:
             raise RuntimeError(f"Failed to start CC interactive proxy: {r.stderr[:300]}")
@@ -713,12 +751,12 @@ class InteractiveClaudeCodePool:
                            session_token: str, event_url: str,
                            event_token: str, internal_token: str) -> None:
         parts = container_workdir.lstrip("/").split("/")
-        if len(parts) < 3 or parts[0] != "cc_sessions":
+        if len(parts) < 3 or parts[0] != "cc_sessions_host":
             raise ValueError(
-                f"container_workdir must look like /cc_sessions/<user>/<conv>/...; "
+                f"container_workdir must look like /cc_sessions_host/<user>/<conv>/...; "
                 f"got {container_workdir!r}")
-        user_slot = "/cc_sessions/" + parts[1]
-        ns_workdir = "/" + "/".join(parts[:1] + parts[2:])
+        user_slot = "/cc_sessions_host/" + parts[1]
+        ns_workdir = "/cc_sessions/" + "/".join(parts[2:])
         args = [
             "claude",
             # Interactive sessions are append-only while the tmux/container is
@@ -739,6 +777,7 @@ class InteractiveClaudeCodePool:
         quoted = " ".join(shlex.quote(a) for a in args)
         drop_privs = "setpriv --reuid=1000 --regid=1000 --clear-groups --"
         shell = (
+            "mkdir -p /cc_sessions && "
             f"mount --bind {shlex.quote(user_slot)} /cc_sessions && "
             f"cd {shlex.quote(ns_workdir)} && ("
             f"{drop_privs} tmux kill-session -t pawflow 2>/dev/null || true; "
@@ -756,7 +795,8 @@ class InteractiveClaudeCodePool:
         )
         r = subprocess.run(  # nosec B603
             docker_cmd() + ["exec", "--user", "root", name,
-                            "setsid", "--wait", "unshare", "-m", "--",
+                            "setsid", "--wait", "unshare", "-m",
+                            "--propagation", "unchanged", "--",
                             "bash", "-lc", shell],
             capture_output=True, text=True, timeout=15)
         if r.returncode != 0:

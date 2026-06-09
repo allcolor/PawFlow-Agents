@@ -108,6 +108,9 @@ def add_credential_to_pool(access_token: str, refresh_token: str,
                            conv_id: str = ""):
     """Add a credential to the pool."""
     import time
+    sid = _find_cc_service_id(service_id, user_id=user_id, conv_id=conv_id)
+    if not sid:
+        raise ValueError(f"Claude Code credential service '{service_id}' not found")
     pool = _load_credentials_pool(service_id, user_id=user_id, conv_id=conv_id)
     # Dedup: if same refresh_token exists, update it (same account re-login)
     for i, existing in enumerate(pool):
@@ -122,8 +125,7 @@ def add_credential_to_pool(access_token: str, refresh_token: str,
             _save_credentials_pool(
                 pool, service_id, user_id=user_id, conv_id=conv_id)
             logger.info("[claude-code] credential updated in pool (slot %d) for '%s'",
-                        i, _find_cc_service_id(
-                            service_id, user_id=user_id, conv_id=conv_id))
+                        i, sid)
             return
     pool.append({
         "access_token": access_token,
@@ -134,8 +136,7 @@ def add_credential_to_pool(access_token: str, refresh_token: str,
     })
     _save_credentials_pool(pool, service_id, user_id=user_id, conv_id=conv_id)
     logger.info("[claude-code] credential added to pool (now %d) for '%s'",
-                len(pool), _find_cc_service_id(
-                    service_id, user_id=user_id, conv_id=conv_id))
+                len(pool), sid)
 
 
 def remove_credential_from_pool(index: int, service_id: str = "",

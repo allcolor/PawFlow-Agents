@@ -7,6 +7,12 @@ PawFlow supports Google Antigravity CLI (`agy`) as an interactive LLM provider:
 
 It starts `agy` in a tmux session with:
 
+- A Docker mount of the host session root at `/cc_sessions_host`; the tmux launch
+  creates a private mount namespace and bind-mounts `/cc_sessions_host/<user>`
+  over `/cc_sessions` so prompts, MCP config, credentials, and attachments keep
+  the same in-container paths as other CLI providers.
+- Runtime support files copied into `/opt/pawflow` once at container spawn time
+  instead of live read-only bind mounts.
 - Gemini OAuth credentials from the existing Gemini credential pool.
 - PawFlow MCP configuration under the session `HOME` using Antigravity's
   documented `~/.gemini/antigravity/mcp_config.json` file.

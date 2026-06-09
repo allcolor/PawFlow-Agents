@@ -34,7 +34,8 @@ def test_observer_container_routes_antigravity_backend_to_local_proxy(monkeypatc
     run_cmd = calls[0]
     assert "--add-host" in run_cmd
     assert "daily-cloudcode-pa.googleapis.com:127.0.0.1" in run_cmd
-    assert "/opt/pawflow/ag_observer_proxy.py:ro" in " ".join(run_cmd)
+    assert "/opt/pawflow/ag_observer_proxy.py:ro" not in " ".join(run_cmd)
+    assert any(cmd[:2] == ["docker", "cp"] and cmd[-1].endswith(":/opt/pawflow/ag_observer_proxy.py") for cmd in calls)
 
 
 def test_observer_proxy_receives_log_and_cert_env(monkeypatch, tmp_path):
@@ -758,10 +759,13 @@ def test_observer_tmux_starts_agy_without_prompt_injection(monkeypatch):
     monkeypatch.setattr("core.antigravity_observer_pool.subprocess.run", fake_run)
 
     AntigravityObserverPool()._start_agy_tmux(
-        name="container", container_workdir="/cc_sessions/u/c/a")
+        name="container", container_workdir="/cc_sessions_host/u/c/a")
 
+    assert calls[0][calls[0].index("unshare"):calls[0].index("bash")] == [
+        "unshare", "-m", "--propagation", "unchanged", "--"]
     shell = calls[0][-1]
-    assert "mount --bind /cc_sessions/u /cc_sessions" in shell
+    assert "mkdir -p /cc_sessions" in shell
+    assert "mount --bind /cc_sessions_host/u /cc_sessions" in shell
     assert "cd /cc_sessions/c/a" in shell
     assert "tmux new-session -d -s pawflow-agy" in shell
     assert "HOME=/cc_sessions/c/a" in shell
@@ -803,10 +807,11 @@ def test_antigravity_tmux_submit_pastes_complete_prompt_before_enter(monkeypatch
 
     assert AntigravityObserverPool().send_text(state, "hello") is True
     flat = [cmd for cmd, _kw in calls]
-    assert flat[0][-3:] == ["tmux", "load-buffer", "-"]
-    assert calls[0][1]["input"] == b"hello"
-    assert flat[1][-4:] == ["paste-buffer", "-p", "-t", "pawflow-agy:0.0"]
-    assert flat[2][-4:] == ["send-keys", "-t", "pawflow-agy:0.0", "Enter"]
+    assert flat[0][-6:] == ["tmux", "send-keys", "-t", "pawflow-agy:0.0", "-X", "cancel"]
+    assert flat[1][-3:] == ["tmux", "load-buffer", "-"]
+    assert calls[1][1]["input"] == b"hello"
+    assert flat[2][-4:] == ["paste-buffer", "-p", "-t", "pawflow-agy:0.0"]
+    assert flat[3][-4:] == ["send-keys", "-t", "pawflow-agy:0.0", "Enter"]
     assert sleeps and sleeps[0] >= 0.15
 
 
@@ -837,9 +842,10 @@ def test_antigravity_tmux_submit_strips_trailing_submit_newline(monkeypatch, tmp
 
     assert AntigravityObserverPool().send_text(state, "hello\n") is True
     flat = [cmd for cmd, _kw in calls]
-    assert calls[0][1]["input"] == b"hello"
-    assert flat[1][-4:] == ["paste-buffer", "-p", "-t", "pawflow-agy:0.0"]
-    assert flat[2][-4:] == ["send-keys", "-t", "pawflow-agy:0.0", "Enter"]
+    assert flat[0][-6:] == ["tmux", "send-keys", "-t", "pawflow-agy:0.0", "-X", "cancel"]
+    assert calls[1][1]["input"] == b"hello"
+    assert flat[2][-4:] == ["paste-buffer", "-p", "-t", "pawflow-agy:0.0"]
+    assert flat[3][-4:] == ["send-keys", "-t", "pawflow-agy:0.0", "Enter"]
 
 
 def test_antigravity_tmux_submit_rejects_duplicate_in_flight_prompt(monkeypatch, tmp_path):
@@ -912,10 +918,11 @@ def test_antigravity_tmux_submit_does_not_replay_large_prompt_in_chunks(monkeypa
 
     assert AntigravityObserverPool().send_text(state, payload) is True
     flat = [cmd for cmd, _kw in calls]
-    assert calls[0][1]["input"] == payload.encode("utf-8")
-    assert flat[1][-4:] == ["paste-buffer", "-p", "-t", "pawflow-agy:0.0"]
-    assert flat[2][-4:] == ["send-keys", "-t", "pawflow-agy:0.0", "Enter"]
-    assert len(flat) == 3
+    assert flat[0][-6:] == ["tmux", "send-keys", "-t", "pawflow-agy:0.0", "-X", "cancel"]
+    assert calls[1][1]["input"] == payload.encode("utf-8")
+    assert flat[2][-4:] == ["paste-buffer", "-p", "-t", "pawflow-agy:0.0"]
+    assert flat[3][-4:] == ["send-keys", "-t", "pawflow-agy:0.0", "Enter"]
+    assert len(flat) == 4
     assert sleeps[-1] >= 0.15
 
 
@@ -956,8 +963,9 @@ def test_antigravity_tmux_submit_aborts_if_session_invalidated_after_paste(monke
     assert pool.send_text(state, "hello") is False
     assert state.last_error == "Container container was invalidated during tmux submit"
     flat = [cmd for cmd, _kw in calls]
-    assert flat[0][-3:] == ["tmux", "load-buffer", "-"]
-    assert flat[1][-4:] == ["paste-buffer", "-p", "-t", "pawflow-agy:0.0"]
+    assert flat[0][-6:] == ["tmux", "send-keys", "-t", "pawflow-agy:0.0", "-X", "cancel"]
+    assert flat[1][-3:] == ["tmux", "load-buffer", "-"]
+    assert flat[2][-4:] == ["paste-buffer", "-p", "-t", "pawflow-agy:0.0"]
     assert all(cmd[-1] != "Enter" for cmd in flat)
 
 

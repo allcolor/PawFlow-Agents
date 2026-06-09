@@ -1052,7 +1052,7 @@ class TestHTTPListenerIntegration:
         finally:
             svc.disconnect()
 
-    def test_relay_websocket_accepts_internal_cookie_with_private_gateway(self, monkeypatch):
+    def test_internal_websockets_accept_internal_cookie_with_private_gateway(self, monkeypatch):
         from core import internal_auth
 
         port = 19935
@@ -1075,22 +1075,26 @@ class TestHTTPListenerIntegration:
         svc.connect()
         try:
             svc._server._private_gateway = _Gateway()
-            svc.register_route(
-                "GET", "/ws/relay/MyWorkspace", "test", callback=None,
-                ws_handler=_ws_handler, private_only=True)
-            with socket.create_connection(("127.0.0.1", port), timeout=5) as sock:
-                sock.sendall((
-                    "GET /ws/relay/MyWorkspace HTTP/1.1\r\n"
-                    f"Host: 127.0.0.1:{port}\r\n"
-                    "Upgrade: websocket\r\n"
-                    "Connection: Upgrade\r\n"
-                    "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
-                    "Sec-WebSocket-Version: 13\r\n"
-                    f"Cookie: pawflow_internal={token}\r\n"
-                    "\r\n"
-                ).encode("ascii"))
-                data = sock.recv(1024)
-            assert b"101 Switching Protocols" in data
+            for route in (
+                "/ws/relay/MyWorkspace",
+                "/ws/cc-interactive/events/_cc_interactive_events",
+            ):
+                svc.register_route(
+                    "GET", route, f"test-{route}", callback=None,
+                    ws_handler=_ws_handler, private_only=True)
+                with socket.create_connection(("127.0.0.1", port), timeout=5) as sock:
+                    sock.sendall((
+                        f"GET {route} HTTP/1.1\r\n"
+                        f"Host: 127.0.0.1:{port}\r\n"
+                        "Upgrade: websocket\r\n"
+                        "Connection: Upgrade\r\n"
+                        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+                        "Sec-WebSocket-Version: 13\r\n"
+                        f"Cookie: pawflow_internal={token}\r\n"
+                        "\r\n"
+                    ).encode("ascii"))
+                    data = sock.recv(1024)
+                assert b"101 Switching Protocols" in data
         finally:
             internal_auth.revoke_token(token)
             svc.disconnect()

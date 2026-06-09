@@ -12,6 +12,13 @@ proxy. The provider does not read Claude Code transcripts or terminal output.
 - A root-owned local TLS proxy listens on port `443` and forwards requests to
   the real Anthropic endpoint with SNI `api.anthropic.com`.
 - Claude Code runs as user `pawflow` inside tmux.
+- The Docker container sees the host session root at `/cc_sessions_host`. Each
+  tmux launch creates a private mount namespace and bind-mounts
+  `/cc_sessions_host/<user>` over `/cc_sessions`, keeping Claude Code paths stable
+  while avoiding a global container bind over `/cc_sessions`.
+- Runtime support files under `/opt/pawflow` are copied into the container once at
+  spawn time instead of mounted read-only, so host-side development edits require
+  a new interactive container before they are visible inside the session.
 - MCP tools still go through the existing PawFlow MCP bridge.
 - A live tmux/container receives appended turns. If that live instance is gone
   after idle reaping or restart, PawFlow starts a fresh Claude Code interactive
@@ -79,6 +86,9 @@ Timing controls are read once when the provider modules are imported:
   failed. Default: `300` seconds.
 - `PAWFLOW_CCI_NO_PROXY_EVENT_TIMEOUT_MS` is the millisecond alias for the same
   value. The seconds variable wins if both are set.
+- `PAWFLOW_CCI_SUBMIT_DELAY_SECONDS` sets the delay between tmux paste-buffer and
+  the final `Enter` key. Default: `1.0` second, which avoids submitting before
+  the pasted prompt is fully present in slower terminal sessions.
 - `PAWFLOW_CCI_IDLE_TTL_SECONDS` controls idle container eviction. Default:
   `1800` seconds. A service request timeout can only extend this process-wide
   TTL, never shorten an explicitly configured or already larger value.
@@ -144,12 +154,13 @@ current conversation. It opens directly when only one tmux exists and shows a
 chooser when several agents have live interactive sessions.
 
 OAuth credentials use the same session-local `.credentials.json` path as the
-regular `claude-code` provider. The interactive tmux launcher also mirrors the
-regular provider's private mount namespace: it bind-mounts `/cc_sessions/<user>`
-over `/cc_sessions`, then starts Claude Code with `HOME` and
-`CLAUDE_CONFIG_DIR` set to `/cc_sessions/<conversation>/<agent>`. This keeps the
-credential, MCP config, prompt file, and attachment paths identical to the
-working `claude-code` execution path. Before launch, PawFlow also writes the
+regular `claude-code` provider. The interactive tmux launcher mirrors the
+regular provider's private mount namespace from a host-root mount at
+`/cc_sessions_host`: it bind-mounts `/cc_sessions_host/<user>` over
+`/cc_sessions`, then starts Claude Code with `HOME` and `CLAUDE_CONFIG_DIR` set
+to `/cc_sessions/<conversation>/<agent>`. This keeps the credential, MCP config,
+prompt file, and attachment paths identical to the working `claude-code`
+execution path. Before launch, PawFlow also writes the
 session-local Claude settings that mark onboarding complete, trust the generated
 session workdir, approve the PawFlow MCP server from `.mcp.json`, accept
 bypass-permissions mode inside the isolated container, and add `Agent` plus
@@ -167,10 +178,13 @@ provider-owned Docker container. The bridge creates the PTY inside that Linux
 container, then runs `tmux attach-session -t pawflow`. This is a live debug view
 of the same tmux session receiving prompts, interrupts, and force-stop keys;
 model output is still assembled only from MITM-observed response events.
-The web terminal keeps local scrollback and enables tmux mouse mode for the
-attached session, so wheel/trackpad scrolling can enter tmux copy-mode and move
-back through Claude Code's interactive history instead of showing only the last
-screenful.
+The web terminal keeps local scrollback and disables tmux mouse mode for the
+attached session. Browser/xterm selection therefore remains available for normal
+copy/paste from visible terminal text, while wheel/trackpad scrolling uses the
+web terminal scrollback instead of being captured by tmux copy-mode. Before
+PawFlow injects a chat turn into the live tmux, it also sends a best-effort
+`tmux send-keys -X cancel` so a debug attach left in copy-mode cannot swallow the
+server-side paste or final `Enter`.
 
 ## Vision
 

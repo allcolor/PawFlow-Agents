@@ -604,7 +604,7 @@ def test_view_menu_has_three_grouping_toggles():
             assert f'"{key}"' in i18n, f"{lang} missing {key}"
 
 
-def test_terminal_frontend_keeps_scrollback_and_cci_tmux_mouse():
+def test_terminal_frontend_keeps_scrollback_and_browser_copyable_tmux():
     terminal_src = Path("tasks/io/chat_ui/terminal.js").read_text(encoding="utf-8")
     service_flow_src = Path("tasks/ai/actions/service_flow.py").read_text(encoding="utf-8")
 
@@ -619,7 +619,8 @@ def test_terminal_frontend_keeps_scrollback_and_cci_tmux_mouse():
     assert "rows: termSize.rows" in terminal_src
     assert "_fitAndNotifyTerminal(container)" in terminal_src
     assert "container._fitAddon.fit()" in terminal_src
-    assert '("mouse", "on")' in service_flow_src
+    assert '("mouse", "off")' in service_flow_src
+    assert '("mouse", "on")' not in service_flow_src
     assert '("history-limit", "50000")' in service_flow_src
     assert '["tmux", "set-option", "-g", *option]' in service_flow_src
     assert "except Exception:\n        pass" in service_flow_src

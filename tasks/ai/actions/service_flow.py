@@ -111,7 +111,7 @@ def _vnc_login_host_candidates(preferred_host: str) -> List[str]:
     try:
         candidates.append(_socket.gethostbyname("host.docker.internal"))
     except Exception:
-        pass
+        logger.debug("host.docker.internal lookup failed", exc_info=True)
     seen = set()
     out = []
     for host in candidates:
@@ -499,29 +499,32 @@ def _credential_module(provider: str):
     raise ValueError(f"Unsupported credential provider: {provider}")
 
 
-def _store_claude_tokens(service_id, access_token, refresh_token, expires_at):
+def _store_claude_tokens(service_id, access_token, refresh_token, expires_at,
+                         user_id="", conv_id=""):
     from core.llm_providers.claude_code_session import add_credential_to_pool
     add_credential_to_pool(
         access_token, refresh_token, expires_at,
-        service_id=service_id)
+        service_id=service_id, user_id=user_id, conv_id=conv_id)
     logger.info("Claude Code credential added to pool for '%s'", service_id)
 
 
 def _store_codex_tokens(service_id, access_token, refresh_token, expires_at,  # nosec B107
-                        account="", id_token=""):
+                        account="", id_token="", user_id="", conv_id=""):
     from core.llm_providers.codex_session import add_credential_to_pool
     add_credential_to_pool(
         access_token, refresh_token, expires_at,
-        account=account, service_id=service_id, id_token=id_token)
+        account=account, service_id=service_id, id_token=id_token,
+        user_id=user_id, conv_id=conv_id)
     logger.info("Codex credential added to pool for '%s'", service_id)
 
 
 def _store_gemini_tokens(service_id, access_token, refresh_token, expires_at,
-                          account=""):
+                          account="", user_id="", conv_id=""):
     from core.llm_providers.gemini_session import add_credential_to_pool
     add_credential_to_pool(
         access_token, refresh_token, expires_at,
-        account=account, service_id=service_id)
+        account=account, service_id=service_id, user_id=user_id,
+        conv_id=conv_id)
     logger.info("Gemini credential added to pool for '%s'", service_id)
 
 
@@ -1966,7 +1969,9 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 _publish_command_result(conversation_id, {"error": "No accessToken in credentials"})
                 return
 
-            _store_claude_tokens(service_id, access_token, refresh_token, expires_at)
+            _store_claude_tokens(
+                service_id, access_token, refresh_token, expires_at,
+                user_id=user_id, conv_id=conversation_id)
             logger.info("[relay-login] Credentials saved for %s", service_id)
             _publish_command_result(conversation_id, {
                 "ok": True, "message": "Claude Code credentials saved!"})
@@ -2028,7 +2033,10 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             if not access_token:
                 _publish_command_result(conversation_id, {"error": "No access_token in codex auth.json"})
                 return
-            _store_codex_tokens(service_id, access_token, refresh_token, expires_at, account=account, id_token=id_token)
+            _store_codex_tokens(
+                service_id, access_token, refresh_token, expires_at,
+                account=account, id_token=id_token, user_id=user_id,
+                conv_id=conversation_id)
             logger.info("[codex-relay-login] Credentials saved for %s", service_id)
             _publish_command_result(conversation_id, {
                 "ok": True, "message": "Codex credentials saved!"})
@@ -2090,7 +2098,9 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             if not access_token:
                 _publish_command_result(conversation_id, {"error": "No access_token in gemini oauth_creds.json"})
                 return
-            _store_gemini_tokens(service_id, access_token, refresh_token, expires_at, account=account)
+            _store_gemini_tokens(
+                service_id, access_token, refresh_token, expires_at,
+                account=account, user_id=user_id, conv_id=conversation_id)
             logger.info("[gemini-relay-login] Credentials saved for %s", service_id)
             _publish_command_result(conversation_id, {
                 "ok": True, "message": "Gemini credentials saved!"})
@@ -2142,6 +2152,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             _vnc_token = register_session(
                 session_id, free_port,
                 owner_user_id=user_id,
+                conversation_id=conversation_id,
                 login_session_id=getattr(flowfile, "auth_session_id", "") or "",
                 container=container_name, service_id=service_id,
                 user_id=user_id, volume=volume_name,
@@ -2243,6 +2254,11 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         if not session:
             flowfile.set_content(json.dumps({"error": "Unknown session"}).encode())
             return [flowfile]
+        service_id = service_id or session.get("service_id", "")
+        if not service_id:
+            flowfile.set_content(json.dumps({"error": "Missing service_id"}).encode())
+            return [flowfile]
+        conv_id = body.get("conversation_id", "") or session.get("conversation_id", "") or ""
 
         # Background setup error
         if session.get("error"):
@@ -2318,9 +2334,15 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
 
         if access_token and _remaining > 0:
             try:
-                _store_claude_tokens(service_id, access_token, refresh_token, expires_at)
+                _store_claude_tokens(
+                    service_id, access_token, refresh_token, expires_at,
+                    user_id=user_id, conv_id=conv_id)
             except Exception as e:
                 logger.warning("Failed to save credentials: %s", e)
+                _sp.run(_docker_cmd() + ["rm", "-f", container], capture_output=True, timeout=10)  # nosec B603
+                unregister_session(session_id)
+                flowfile.set_content(json.dumps({"error": f"Failed to save credentials: {e}"}).encode())
+                return [flowfile]
         elif access_token and _remaining <= 0:
             logger.error("[vnc-login] REFUSING to save EXPIRED token (expires_at=%s, %.1fh ago)",
                          expires_at, abs(_remaining) / 3600)
@@ -2421,7 +2443,10 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                         "error": f"Service '{service_id}' is not a codex credential provider"
                     }).encode())
                     return [flowfile]
-                _store_codex_tokens(service_id, access_token, refresh_token, expires_at, account=account, id_token=id_token)
+                _store_codex_tokens(
+                    service_id, access_token, refresh_token, expires_at,
+                    account=account, id_token=id_token, user_id=user_id,
+                    conv_id=body.get("conversation_id", ""))
                 _stored = True
             if not _stored:
                 try:
@@ -2432,7 +2457,10 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                                 "error": f"Service '{service_id}' is not a codex credential provider"
                             }).encode())
                             return [flowfile]
-                        _store_codex_tokens(service_id, access_token, refresh_token, expires_at, account=account, id_token=id_token)
+                        _store_codex_tokens(
+                            service_id, access_token, refresh_token, expires_at,
+                            account=account, id_token=id_token, user_id=user_id,
+                            conv_id=body.get("conversation_id", ""))
                         _stored = True
                 except Exception:
                     logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
@@ -2501,7 +2529,9 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                         "error": f"Service '{service_id}' is not a gemini credential provider"
                     }).encode())
                     return [flowfile]
-                _store_gemini_tokens(service_id, access_token, refresh_token, expires_at)
+                _store_gemini_tokens(
+                    service_id, access_token, refresh_token, expires_at,
+                    user_id=user_id, conv_id=body.get("conversation_id", ""))
                 _stored = True
             if not _stored:
                 try:
@@ -2512,7 +2542,9 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                                 "error": f"Service '{service_id}' is not a gemini credential provider"
                             }).encode())
                             return [flowfile]
-                        _store_gemini_tokens(service_id, access_token, refresh_token, expires_at)
+                        _store_gemini_tokens(
+                            service_id, access_token, refresh_token, expires_at,
+                            user_id=user_id, conv_id=body.get("conversation_id", ""))
                         _stored = True
                 except Exception:
                     logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
@@ -2576,7 +2608,9 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                         "error": f"Service '{service_id}' is not a claude-code credential provider"
                     }).encode())
                     return [flowfile]
-                _store_claude_tokens(service_id, access_token, refresh_token, expires_at)
+                _store_claude_tokens(
+                    service_id, access_token, refresh_token, expires_at,
+                    user_id=user_id, conv_id=body.get("conversation_id", ""))
                 _stored = True
 
             if not _stored:
@@ -2591,7 +2625,9 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                                 "error": f"Service '{service_id}' is not a claude-code credential provider"
                             }).encode())
                             return [flowfile]
-                        _store_claude_tokens(service_id, access_token, refresh_token, expires_at)
+                        _store_claude_tokens(
+                            service_id, access_token, refresh_token, expires_at,
+                            user_id=user_id, conv_id=body.get("conversation_id", ""))
                         _stored = True
                 except Exception:
                     logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
@@ -3661,7 +3697,7 @@ except Exception:
     pass
 env = dict(os.environ)
 env.setdefault("TERM", "xterm-256color")
-for option in (("mouse", "on"), ("history-limit", "50000")):
+for option in (("mouse", "off"), ("history-limit", "50000")):
     try:
         subprocess.run(["tmux", "set-option", "-g", *option],
                        capture_output=True, timeout=2)
@@ -3819,7 +3855,7 @@ except Exception:
     pass
 env = dict(os.environ)
 env.setdefault("TERM", "xterm-256color")
-for option in (("mouse", "on"), ("history-limit", "50000")):
+for option in (("mouse", "off"), ("history-limit", "50000")):
     try:
         subprocess.run(["tmux", "set-option", "-g", *option],
                        capture_output=True, timeout=2)
@@ -4452,6 +4488,7 @@ finally:
             _vnc_token = register_session(
                 session_id, free_port,
                 owner_user_id=user_id,
+                conversation_id=conversation_id,
                 login_session_id=flowfile.get_attribute("auth.session_id") or "",
                 container=container_name, service_id=service_id,
                 user_id=user_id, volume=volume_name,
@@ -4546,6 +4583,11 @@ finally:
         if not session:
             flowfile.set_content(json.dumps({"error": "Unknown session"}).encode())
             return [flowfile]
+        service_id = service_id or session.get("service_id", "")
+        if not service_id:
+            flowfile.set_content(json.dumps({"error": "Missing service_id"}).encode())
+            return [flowfile]
+        conv_id = body.get("conversation_id", "") or session.get("conversation_id", "") or ""
         if session.get("error"):
             unregister_session(session_id)
             flowfile.set_content(json.dumps({"error": session["error"]}).encode())
@@ -4600,9 +4642,16 @@ finally:
         id_token = parsed.get("id_token", "")
         if access_token and refresh_token:
             try:
-                _store_codex_tokens(service_id, access_token, refresh_token, expires_at, account=account, id_token=id_token)
+                _store_codex_tokens(
+                    service_id, access_token, refresh_token, expires_at,
+                    account=account, id_token=id_token, user_id=user_id,
+                    conv_id=conv_id)
             except Exception as e:
                 logger.warning("Failed to save codex credentials: %s", e)
+                _sp.run(_docker_cmd() + ["rm", "-f", container], capture_output=True, timeout=10)  # nosec B603
+                unregister_session(session_id)
+                flowfile.set_content(json.dumps({"error": f"Failed to save codex credentials: {e}"}).encode())
+                return [flowfile]
         try:
             _sp.run(_docker_cmd() + ["rm", "-f", container], capture_output=True, timeout=10)  # nosec B603
         except Exception:
@@ -4656,6 +4705,7 @@ finally:
             _vnc_token = register_session(
                 session_id, free_port,
                 owner_user_id=user_id,
+                conversation_id=conversation_id,
                 login_session_id=flowfile.get_attribute("auth.session_id") or "",
                 container=container_name, service_id=service_id,
                 user_id=user_id, volume=volume_name,
@@ -4765,6 +4815,11 @@ finally:
         if not session:
             flowfile.set_content(json.dumps({"error": "Unknown session"}).encode())
             return [flowfile]
+        service_id = service_id or session.get("service_id", "")
+        if not service_id:
+            flowfile.set_content(json.dumps({"error": "Missing service_id"}).encode())
+            return [flowfile]
+        conv_id = body.get("conversation_id", "") or session.get("conversation_id", "") or ""
         if session.get("error"):
             unregister_session(session_id)
             flowfile.set_content(json.dumps({"error": session["error"]}).encode())
@@ -4830,9 +4885,15 @@ finally:
         expires_at = parsed.get("expires_at", 0)
         if access_token and refresh_token:
             try:
-                _store_gemini_tokens(service_id, access_token, refresh_token, expires_at, account=account)
+                _store_gemini_tokens(
+                    service_id, access_token, refresh_token, expires_at,
+                    account=account, user_id=user_id, conv_id=conv_id)
             except Exception as e:
                 logger.warning("Failed to save gemini credentials: %s", e)
+                _sp.run(_docker_cmd() + ["rm", "-f", container], capture_output=True, timeout=10)  # nosec B603
+                unregister_session(session_id)
+                flowfile.set_content(json.dumps({"error": f"Failed to save gemini credentials: {e}"}).encode())
+                return [flowfile]
         try:
             _sp.run(_docker_cmd() + ["rm", "-f", container], capture_output=True, timeout=10)  # nosec B603
         except Exception:
@@ -4999,6 +5060,10 @@ finally:
         session = _vnc_sessions.get(session_id)
         if not session:
             flowfile.set_content(json.dumps({"error": "Unknown session"}).encode())
+            return [flowfile]
+        service_id = service_id or session.get("service_id", "")
+        if not service_id:
+            flowfile.set_content(json.dumps({"error": "Missing service_id"}).encode())
             return [flowfile]
         if session.get("error"):
             unregister_session(session_id)

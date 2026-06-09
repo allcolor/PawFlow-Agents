@@ -1028,6 +1028,26 @@ def test_server_login_vnc_uses_published_docker_host():
     assert "update_session_target(session_id, host, target_port)" in src
 
 
+def test_server_login_status_falls_back_to_registered_service_id():
+    src = Path("tasks/ai/actions/service_flow.py").read_text(encoding="utf-8")
+
+    def block_between(start_marker: str, end_marker: str) -> str:
+        start = src.index(start_marker)
+        end = src.index(end_marker, start)
+        return src[start:end]
+
+    status_blocks = [
+        block_between('if action == "claude_code_server_login_status"', 'if action == "claude_code_login_url"'),
+        block_between('if action == "codex_server_login_status"', 'if action in {"gemini_server_login", "agy_server_login"}'),
+        block_between('if action in {"gemini_server_login_status", "agy_server_login_status"}', 'if action == "rclone_server_login"'),
+        block_between('if action == "rclone_server_login_status"', '    return None'),
+    ]
+
+    for block in status_blocks:
+        assert 'service_id = service_id or session.get("service_id", "")' in block
+        assert 'flowfile.set_content(json.dumps({"error": "Missing service_id"}).encode())' in block
+
+
 def test_pawflow_agent_auth_routes_cover_login_forms():
     template = Path("data/repository/flows/global/default/pawflow_agent/versions/1.0.0.json")
     flow = json.loads(template.read_text(encoding="utf-8"))

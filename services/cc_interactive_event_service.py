@@ -535,6 +535,8 @@ def get_or_create_cc_interactive_event_service() -> tuple[str, str, CCInteractiv
         cfg = getattr(sdef, "config", {}) or {}
         token = cfg.get("token", "")
         if svc and token:
+            if not getattr(svc, "_initialized", False) or not getattr(svc, "_route_path", ""):
+                svc.connect()
             url = f"wss://localhost:{main_port}/ws/cc-interactive/events/{sdef.service_id}"
             return url, token, svc
         try:

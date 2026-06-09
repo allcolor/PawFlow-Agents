@@ -1,6 +1,7 @@
 from pathlib import Path
 from types import SimpleNamespace
 import inspect
+import pytest
 
 from services.llm_connection import LLMConnectionService
 from services.llm_credential_oauth import (
@@ -159,6 +160,24 @@ def test_credential_pool_actions_pass_user_scope_to_cli_helpers():
     assert "mod.reset_credentials_pool(svc_id, user_id=user_id, conv_id=conv_id)" in src
     assert "mod.remove_credential_from_pool(idx, svc_id, user_id=user_id, conv_id=conv_id)" in src
     assert "_load_credentials_pool(svc_id, user_id=user_id, conv_id=conv_id)" in src
+    assert "service_id=service_id, user_id=user_id, conv_id=conv_id" in src
+    assert "id_token=id_token, user_id=user_id" in src
+    assert "conv_id=conv_id" in src
+
+
+def test_add_credential_refuses_unresolved_service(monkeypatch):
+    cases = [
+        (claude_code_session, "_find_cc_service_id"),
+        (codex_session, "_find_codex_service_id"),
+        (gemini_session, "_find_gemini_service_id"),
+    ]
+
+    for module, finder_name in cases:
+        monkeypatch.setattr(module, finder_name, lambda *args, **kwargs: "")
+        with pytest.raises(ValueError):
+            module.add_credential_to_pool(
+                "access", "refresh", 1234567890,
+                service_id="missing_service", user_id="alice", conv_id="conv-1")
 
 
 def test_claude_code_interactive_reuses_claude_code_credentials(monkeypatch):

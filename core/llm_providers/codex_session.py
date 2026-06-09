@@ -107,6 +107,9 @@ def add_credential_to_pool(access_token: str, refresh_token: str,  # nosec B107
     id_token ("invalid ID token format"). Stored alongside access/refresh
     so we can reproduce the exact auth.json shape codex wrote on disk.
     """
+    sid = _find_codex_service_id(service_id, user_id=user_id, conv_id=conv_id)
+    if not sid:
+        raise ValueError(f"Codex credential service '{service_id}' not found")
     pool = _load_credentials_pool(service_id, user_id=user_id, conv_id=conv_id)
     for i, existing in enumerate(pool):
         if existing.get("refresh_token") == refresh_token:
@@ -131,8 +134,7 @@ def add_credential_to_pool(access_token: str, refresh_token: str,  # nosec B107
     })
     _save_credentials_pool(pool, service_id, user_id=user_id, conv_id=conv_id)
     logger.info("[codex] credential added to pool (now %d) for '%s'",
-                len(pool), _find_codex_service_id(
-                    service_id, user_id=user_id, conv_id=conv_id))
+                len(pool), sid)
 
 
 def remove_credential_from_pool(index: int, service_id: str = "",

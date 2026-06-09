@@ -96,6 +96,9 @@ def add_credential_to_pool(access_token: str, refresh_token: str,
                             expires_at, account: str = "",
                             service_id: str = "", user_id: str = "",
                             conv_id: str = ""):
+    sid = _find_gemini_service_id(service_id, user_id=user_id, conv_id=conv_id)
+    if not sid:
+        raise ValueError(f"Gemini credential service '{service_id}' not found")
     pool = _load_credentials_pool(service_id, user_id=user_id, conv_id=conv_id)
     for i, existing in enumerate(pool):
         if existing.get("refresh_token") == refresh_token:
@@ -118,8 +121,7 @@ def add_credential_to_pool(access_token: str, refresh_token: str,
     })
     _save_credentials_pool(pool, service_id, user_id=user_id, conv_id=conv_id)
     logger.info("[gemini] credential added to pool (now %d) for '%s'",
-                len(pool), _find_gemini_service_id(
-                    service_id, user_id=user_id, conv_id=conv_id))
+                len(pool), sid)
 
 
 def remove_credential_from_pool(index: int, service_id: str = "",

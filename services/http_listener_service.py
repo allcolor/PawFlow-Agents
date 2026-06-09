@@ -1427,13 +1427,15 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
 
             # Internal-auth bypass for server-spawned components (CC
             # container MCP bridge, server-side relays). A valid
-            # `pawflow_internal` cookie on /ws/tools/* and /ws/relay/* skips
+            # `pawflow_internal` cookie on server-spawned WebSocket routes skips
             # gateway + session checks. Route-level register-step token
             # auth (inside the tool relay register message) still runs.
             # Tokens are minted fresh per MCP config write and held
             # in-memory only.
             _internal_ok = False
-            if path.startswith("/ws/tools/") or path.startswith("/ws/relay/"):
+            if (path.startswith("/ws/tools/")
+                    or path.startswith("/ws/relay/")
+                    or path.startswith("/ws/cc-interactive/events/")):
                 try:
                     from core.internal_auth import validate_token
                     _ch = headers_lc.get("cookie", "")

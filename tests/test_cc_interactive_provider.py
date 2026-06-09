@@ -1007,6 +1007,46 @@ def test_interactive_pool_preaccepts_claude_interactive_prompts(tmp_path, monkey
     assert claude_json["projects"]["/cc_sessions/conv/agent"]["hasTrustDialogAccepted"] is True
 
 
+def test_interactive_pool_send_text_pastes_then_sends_enter(monkeypatch):
+    from core.claude_code_interactive_pool import InteractiveClaudeCodePool, InteractiveContainer
+
+    calls = []
+
+    class _Run:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def fake_run(cmd, **kwargs):
+        calls.append((cmd, kwargs.get("input")))
+        return _Run()
+
+    monkeypatch.setattr("core.claude_code_interactive_pool.docker_cmd", lambda: ["docker"])
+    monkeypatch.setattr("core.claude_code_interactive_pool.subprocess.run", fake_run)
+    sleeps = []
+    monkeypatch.setattr("core.claude_code_interactive_pool.time.sleep", lambda value: sleeps.append(value))
+
+    pool = InteractiveClaudeCodePool()
+    monkeypatch.setattr(pool, "_is_alive", lambda name: True)
+    state = InteractiveContainer(
+        key=("u", "c", "a", "svc"),
+        name="container",
+        workdir="/host",
+        container_workdir="/cc_sessions/u/c/a",
+        session_token="sess",
+        event_service_id="events",
+        internal_token="internal",
+    )
+
+    assert pool.send_text(state, "hello") is True
+    assert calls[0][0][-6:] == ["tmux", "send-keys", "-t", "pawflow", "-X", "cancel"]
+    assert calls[1][0][-2:] == ["load-buffer", "-"]
+    assert calls[1][1] == b"hello"
+    assert calls[2][0][-3:] == ["paste-buffer", "-t", "pawflow"]
+    assert sleeps == [1.0]
+    assert calls[3][0][-1:] == ["Enter"]
+
+
 def test_interactive_pool_interrupt_and_force_stop_keys(monkeypatch):
     from core.claude_code_interactive_pool import InteractiveClaudeCodePool, InteractiveContainer
 
@@ -1037,11 +1077,12 @@ def test_interactive_pool_interrupt_and_force_stop_keys(monkeypatch):
     )
 
     assert pool.send_interrupt(state, "interrupt message") is True
-    assert calls[0][0][-2:] == ["load-buffer", "-"]
-    assert calls[0][1] == b"interrupt message"
-    assert calls[1][0][-3:] == ["paste-buffer", "-t", "pawflow"]
-    assert calls[2][0][-1:] == ["Escape"]
-    assert calls[3][0][-1:] == ["Enter"]
+    assert calls[0][0][-6:] == ["tmux", "send-keys", "-t", "pawflow", "-X", "cancel"]
+    assert calls[1][0][-2:] == ["load-buffer", "-"]
+    assert calls[1][1] == b"interrupt message"
+    assert calls[2][0][-3:] == ["paste-buffer", "-t", "pawflow"]
+    assert calls[3][0][-1:] == ["Escape"]
+    assert calls[4][0][-1:] == ["Enter"]
 
     calls.clear()
     assert pool.force_stop(state) is True
@@ -1259,7 +1300,7 @@ def test_interactive_pool_starts_tmux_in_normal_provider_namespace(monkeypatch):
     pool = InteractiveClaudeCodePool()
     pool._start_claude_tmux(
         name="container",
-        container_workdir="/cc_sessions/u/c/a",
+        container_workdir="/cc_sessions_host/u/c/a",
         mcp_path="/cc_sessions/c/a/.mcp.json",
         model="opus",
         effort="high",
@@ -1273,8 +1314,11 @@ def test_interactive_pool_starts_tmux_in_normal_provider_namespace(monkeypatch):
     start_cmd = calls[0]
     assert start_cmd[:6] == ["docker", "exec", "--user", "root", "container", "setsid"]
     assert "unshare" in start_cmd
+    assert start_cmd[start_cmd.index("unshare"):start_cmd.index("bash")] == [
+        "unshare", "-m", "--propagation", "unchanged", "--"]
     shell = start_cmd[-1]
-    assert "mount --bind /cc_sessions/u /cc_sessions" in shell
+    assert "mkdir -p /cc_sessions" in shell
+    assert "mount --bind /cc_sessions_host/u /cc_sessions" in shell
     assert "cd /cc_sessions/c/a" in shell
     assert "HOME=/cc_sessions/c/a" in shell
     assert "CLAUDE_CONFIG_DIR=/cc_sessions/c/a" in shell
@@ -1526,6 +1570,44 @@ def test_cc_interactive_event_route_bypasses_gateway_but_stays_private(monkeypat
     assert args[:3] == ("GET", "/ws/cc-interactive/events/events", "events")
     assert kwargs["public"] is True
     assert kwargs["private_only"] is True
+
+
+def test_cc_interactive_event_service_reconnects_existing_live_service(monkeypatch):
+    from types import SimpleNamespace
+    from services.cc_interactive_event_service import (
+        CCInteractiveEventService,
+        get_or_create_cc_interactive_event_service,
+    )
+
+    class _Listener:
+        pass
+
+    svc = CCInteractiveEventService({"token": "tok", "_service_id": "events"})
+    calls = []
+    monkeypatch.setattr(svc, "connect", lambda: calls.append("connect"))
+
+    class _Registry:
+        def resolve_by_type(self, _type):
+            return [SimpleNamespace(scope="global", scope_id="", service_id="events", config={"token": "tok"})]
+
+        def get_live_instance(self, *_args):
+            return svc
+
+    monkeypatch.setattr(
+        "services.http_listener_service.HTTPListenerService.all_instances",
+        staticmethod(lambda: {9090: _Listener()}),
+    )
+    monkeypatch.setattr(
+        "core.service_registry.ServiceRegistry.get_instance",
+        staticmethod(lambda: _Registry()),
+    )
+
+    url, token, found = get_or_create_cc_interactive_event_service()
+
+    assert calls == ["connect"]
+    assert url == "wss://localhost:9090/ws/cc-interactive/events/events"
+    assert token == "tok"
+    assert found is svc
 
 
 def test_cc_interactive_event_service_accepts_hook_disconnect():

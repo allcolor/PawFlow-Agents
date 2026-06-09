@@ -815,6 +815,8 @@ class TestTelegramAgentClientTask(unittest.TestCase):
 
             class RuntimeTask:
                 def execute(self, flowfile):
+                    recorded["runtime_body"] = json.loads(
+                        flowfile.get_content().decode("utf-8"))
                     flowfile.set_content(json.dumps({"help": "Available commands"}).encode("utf-8"))
                     return [flowfile]
 
@@ -824,7 +826,7 @@ class TestTelegramAgentClientTask(unittest.TestCase):
                     recorded["kwargs"] = kwargs
 
             task = TelegramAgentClientTask({"agent_runtime_port": "pawflow_agent.agent_runtime_in"})
-            ff = FlowFile(content=b"/help")
+            ff = FlowFile(content=b"/help@SomeBot")
             ff.set_attribute("telegram.user_id", "111111")
             ff.set_attribute("telegram.chat_id", "111111")
             ff.set_attribute("telegram.message_id", "m-help")
@@ -835,14 +837,15 @@ class TestTelegramAgentClientTask(unittest.TestCase):
                 out = task.execute(ff)
 
             assert b"Available commands" in out[0].get_content()
-            assert recorded["msg"]["content"] == "/help"
+            assert recorded["runtime_body"]["text"] == "/help"
+            assert recorded["msg"]["content"] == "/help@SomeBot"
             assert recorded["msg"]["channel"] == "telegram"
             assert recorded["msg"]["msg_id"] == "telegram:111111:m-help"
             assert recorded["kwargs"]["wait"] is True
             evt = recorded["kwargs"]["sse_events"][0]
             assert evt["type"] == "new_message"
             assert evt["data"]["channel"] == "telegram"
-            assert evt["data"]["content"] == "/help"
+            assert evt["data"]["content"] == "/help@SomeBot"
         finally:
             IdentityService.reset()
             _p.USER_CONFIG_DIR = orig_ucd
@@ -871,7 +874,7 @@ class TestTelegramAgentClientTask(unittest.TestCase):
             store.save("conv1", [], user_id="alice")
 
             task = TelegramAgentClientTask({"agent_runtime_port": "pawflow_agent.agent_runtime_in"})
-            ff = FlowFile(content=b"/conv list")
+            ff = FlowFile(content=b"/conv@SomeBot list")
             ff.set_attribute("telegram.user_id", "111111")
             ff.set_attribute("telegram.chat_id", "111111")
             ff.set_attribute("telegram.message_id", "m-conv-list")

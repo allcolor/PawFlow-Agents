@@ -235,9 +235,10 @@ class TelegramAgentClientTask(BaseTask):
             logger.warning("Telegram command mirror to conversation failed", exc_info=True)
 
     def _handle_command(self, text: str, user_id: str, chat_id: str) -> Optional[str]:
-        if text.startswith("/tts"):
+        command = _telegram_command_name(text)
+        if command == "/tts":
             return self._handle_tts_command(text, user_id)
-        if not text.startswith("/conv"):
+        if command != "/conv":
             if text.startswith("/"):
                 return self._handle_dispatch_command(text, user_id)
             return None
@@ -304,14 +305,14 @@ class TelegramAgentClientTask(BaseTask):
         from core.identity_service import IdentityService
         ids = IdentityService.instance()
         conversation_id = ids.get_active_conv(user_id, "telegram") or ""
-        command = text.split(None, 1)[0].lower() if text.strip() else ""
+        command = _telegram_command_name(text)
         if not conversation_id and command != "/help":
             return "No resumed conversation. Use /conv list then /conv select <id>."
         agent_name = (self._selected_agent_for_conversation(
             conversation_id, persist_default=False) if conversation_id else "")
         body = {
             "action": "command",
-            "text": text,
+            "text": _normalize_telegram_command_text(text),
             "conversation_id": conversation_id,
             "agent_name": agent_name,
             "_inline_response": True,
@@ -563,8 +564,24 @@ def _telegram_response(text: str, reply_markup: Optional[Dict[str, Any]] = None)
     return {"text": text, "reply_markup": reply_markup or {}}
 
 
-def _should_mirror_telegram_command(text: str) -> bool:
+def _telegram_command_name(text: str) -> str:
     command = str(text or "").strip().split(None, 1)[0].lower()
+    if "@" in command:
+        command = command.split("@", 1)[0]
+    return command
+
+
+def _normalize_telegram_command_text(text: str) -> str:
+    stripped = str(text or "").strip()
+    if not stripped:
+        return ""
+    parts = stripped.split(None, 1)
+    command = _telegram_command_name(stripped)
+    return command + ((" " + parts[1]) if len(parts) > 1 else "")
+
+
+def _should_mirror_telegram_command(text: str) -> bool:
+    command = _telegram_command_name(text)
     if not command.startswith("/"):
         return False
     return command not in {"/conv", "/tts"}

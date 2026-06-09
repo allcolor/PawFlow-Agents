@@ -114,6 +114,18 @@ def test_resource_editor_sends_conversation_id_for_conversation_scope():
     assert "!opts.skipConversationId" in rxbus
 
 
+def test_resource_scope_options_include_global_only_for_admin():
+    state_js = Path("tasks/io/chat_ui/state.js").read_text(encoding="utf-8")
+    resources_js = Path("tasks/io/chat_ui/resources.js").read_text(encoding="utf-8")
+
+    assert "function _resourceWritableScopes()" in state_js
+    assert "_isAdmin() ? ['global', 'user', 'conversation'] : ['user', 'conversation']" in state_js
+    assert "function _resourceScopeOptions()" in state_js
+    assert "<select id=\"skill-import-scope\"" in resources_js
+    assert "+ _resourceScopeOptions() + '</select>'" in resources_js
+    assert "<select id=\"res-scope\"" in resources_js
+
+
 def test_agent_skills_dialog_surfaces_assign_errors():
     js = Path("tasks/io/chat_ui/resources.js").read_text(encoding="utf-8")
 

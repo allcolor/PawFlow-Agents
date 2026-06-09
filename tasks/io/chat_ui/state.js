@@ -38,6 +38,16 @@ function _canEditScope(scope) {
   // Global scope: only admin can edit
   return _isAdmin();
 }
+function _resourceWritableScopes() {
+  const scopes = _isAdmin() ? ['global', 'user', 'conversation'] : ['user', 'conversation'];
+  return scopes;
+}
+function _resourceScopeOptions() {
+  const labels = { global: t('global'), user: t('user'), conversation: t('conversation') };
+  return _resourceWritableScopes()
+    .map(scope => '<option value="' + scope + '">' + labels[scope] + '</option>')
+    .join('');
+}
 
 // ── Password visibility toggle ──
 function _togglePwdVis(inputId, btn) {

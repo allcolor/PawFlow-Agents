@@ -931,6 +931,11 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
 
     if action == "import_skill_marketplace":
         ref = body.get("ref", "") or ""
+        scope = body.get("scope", "user") or "user"
+        if scope == "global" and "admin" not in (flowfile.get_attribute("http.auth.roles") or ""):
+            flowfile.set_content(json.dumps({"error": "Requires admin role for global scope"}).encode())
+            flowfile.set_attribute("http.response.status", "403")
+            return [flowfile]
         if body.get("error"):
             flowfile.set_content(json.dumps({"error": body.get("error")}).encode())
             flowfile.set_attribute("http.response.status", "400")
@@ -951,7 +956,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                 conversation_id=body.get("conversation_id", "") or "",
                 review_only=bool(body.get("review_only", False)),
                 force=bool(body.get("force", False)),
-                scope=body.get("scope", "user") or "user",
+                scope=scope,
             )
             flowfile.set_content(json.dumps(result, ensure_ascii=False).encode())
         except Exception as e:

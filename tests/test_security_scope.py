@@ -1,4 +1,4 @@
-"""Tests for security scope enforcement -- global writes blocked."""
+"""Tests for security scope enforcement across resource scopes."""
 import json
 import pytest
 from unittest.mock import patch, MagicMock
@@ -13,8 +13,8 @@ _SAFE_SKILL_REVIEW = {
 }
 
 
-class TestGlobalScopeBlocked:
-    """Verify that global scope writes are blocked from chat actions."""
+class TestGlobalScopePermissions:
+    """Verify global writes are admin-only while user/conv scopes stay writable."""
 
     def _make_flowfile(self, body: dict) -> FlowFile:
         ff = FlowFile(content=json.dumps(body).encode())
@@ -77,6 +77,33 @@ class TestGlobalScopeBlocked:
         assert "error" in body
         assert "admin" in body["error"].lower()
 
+    def test_create_resource_global_allowed_for_admin(self):
+        """create_resource with scope=global should write as global for admin."""
+        from core.resource_store import GLOBAL_USER_ID
+        from tasks.ai.actions.agent_resource import _handle_agent_resource
+
+        task = self._get_agent_loop()
+        ff = self._make_flowfile({
+            "action": "create_resource", "resource_type": "skill",
+            "name": "admin_global_skill", "scope": "global",
+            "data": {"prompt": "test"},
+        })
+        ff.set_attribute("http.auth.roles", "admin")
+        rs = MagicMock()
+        with patch("core.resource_store.ResourceStore.instance", return_value=rs), \
+                patch("core.review_bindings.review_for_write", return_value=_SAFE_SKILL_REVIEW):
+            result = _handle_agent_resource(
+                task, "create_resource", json.loads(ff.get_content()), None,
+                "test_user", ff)
+        assert result is not None
+        body = json.loads(result[0].get_content())
+        assert body == {"ok": True, "scope": "global"}
+        rs.create.assert_called_once_with(
+            "skill", "admin_global_skill", GLOBAL_USER_ID, {
+                "prompt": "test",
+                "review": _SAFE_SKILL_REVIEW,
+            })
+
     def test_update_resource_global_blocked(self):
         """update_resource with scope=global should be rejected."""
         task = self._get_agent_loop()
@@ -90,6 +117,69 @@ class TestGlobalScopeBlocked:
         body = json.loads(result[0].get_content())
         assert "error" in body
         assert "admin" in body["error"].lower()
+
+    def test_update_resource_global_allowed_for_admin(self):
+        """update_resource with scope=global should update global for admin."""
+        from core.resource_store import GLOBAL_USER_ID
+        from tasks.ai.actions.agent_resource import _handle_agent_resource
+
+        task = self._get_agent_loop()
+        ff = self._make_flowfile({
+            "action": "update_resource", "resource_type": "agent",
+            "name": "admin_global_agent", "scope": "global",
+            "data": {"prompt": "updated", "description": "desc"},
+        })
+        ff.set_attribute("http.auth.roles", "admin")
+        rs = MagicMock()
+        with patch("core.resource_store.ResourceStore.instance", return_value=rs):
+            result = _handle_agent_resource(
+                task, "update_resource", json.loads(ff.get_content()), None,
+                "test_user", ff)
+        assert result is not None
+        body = json.loads(result[0].get_content())
+        assert body == {"ok": True}
+        rs.update.assert_called_once_with(
+            "agent", "admin_global_agent", GLOBAL_USER_ID,
+            {"prompt": "updated", "description": "desc"})
+
+    def test_import_skill_global_requires_admin(self):
+        """Skill marketplace import must not allow non-admin global writes."""
+        from tasks.ai.actions.agent_resource import _handle_agent_resource
+
+        task = self._get_agent_loop()
+        ff = self._make_flowfile({
+            "action": "import_skill_marketplace", "resource_type": "skill",
+            "ref": "owner/repo", "scope": "global",
+        })
+        with patch("core.skill_marketplace.import_marketplace_skill") as importer:
+            result = _handle_agent_resource(
+                task, "import_skill_marketplace", json.loads(ff.get_content()), None,
+                "test_user", ff)
+        assert result is not None
+        body = json.loads(result[0].get_content())
+        assert "admin" in body["error"].lower()
+        assert result[0].get_attribute("http.response.status") == "403"
+        importer.assert_not_called()
+
+    def test_import_skill_global_allowed_for_admin(self):
+        """Admin can import marketplace skills to global scope."""
+        from tasks.ai.actions.agent_resource import _handle_agent_resource
+
+        task = self._get_agent_loop()
+        ff = self._make_flowfile({
+            "action": "import_skill_marketplace", "resource_type": "skill",
+            "ref": "owner/repo", "scope": "global",
+        })
+        ff.set_attribute("http.auth.roles", "admin")
+        with patch("core.skill_marketplace.import_marketplace_skill", return_value={"ok": True}) as importer:
+            result = _handle_agent_resource(
+                task, "import_skill_marketplace", json.loads(ff.get_content()), None,
+                "test_user", ff)
+        assert result is not None
+        body = json.loads(result[0].get_content())
+        assert body == {"ok": True}
+        importer.assert_called_once()
+        assert importer.call_args.kwargs["scope"] == "global"
 
     def test_delete_resource_global_blocked(self):
         """delete_resource with scope=global should be rejected."""
@@ -495,3 +585,42 @@ class TestPromoteGlobalBlocked:
             "skill", "conv_skill", "test_user",
             {"prompt": "test", "_created_by": "assistant", "review": _SAFE_SKILL_REVIEW},
             conversation_id="test_conv")
+
+    def test_manage_resource_agent_update_user_scope_is_read_only(self):
+        from core.tool_registry import create_default_registry
+
+        registry = create_default_registry()
+        handler = registry.get("manage_resource")
+        if handler is None:
+            pytest.skip("manage_resource handler not found")
+        handler._user_id = "test_user"
+        handler._conversation_id = "test_conv"
+        handler._agent_name = "assistant"
+        rs = MagicMock()
+        rs.get_any.return_value = {"name": "user_skill", "_scope": "user", "prompt": "old"}
+        with patch("core.resource_store.ResourceStore.instance", return_value=rs):
+            result = handler.execute({
+                "action": "update", "resource_type": "skill", "name": "user_skill",
+                "data": {"prompt": "new"},
+            })
+        assert "read-only" in result
+        rs.update.assert_not_called()
+
+    def test_manage_resource_agent_import_forces_conversation_scope(self):
+        from core.tool_registry import create_default_registry
+
+        registry = create_default_registry()
+        handler = registry.get("manage_resource")
+        if handler is None:
+            pytest.skip("manage_resource handler not found")
+        handler._user_id = "test_user"
+        handler._conversation_id = "test_conv"
+        handler._agent_name = "assistant"
+        with patch("core.skill_marketplace.import_marketplace_skill", return_value={"ok": True}) as importer:
+            result = handler.execute({
+                "action": "import_marketplace", "resource_type": "skill",
+                "ref": "owner/repo", "scope": "global",
+            })
+        assert json.loads(result) == {"ok": True}
+        importer.assert_called_once()
+        assert importer.call_args.kwargs["scope"] == "conversation"

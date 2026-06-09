@@ -133,7 +133,7 @@ def import_marketplace_skill(source: str = "", ref: str = "", *,
     if review_meta:
         skill_data = attach_review_metadata(skill_data, review_meta)
 
-    from core.resource_store import ResourceStore
+    from core.resource_store import GLOBAL_USER_ID, ResourceStore
     store = ResourceStore.instance()
     write_scope = (scope or "user").strip().lower()
     if write_scope == "conversation":
@@ -143,8 +143,10 @@ def import_marketplace_skill(source: str = "", ref: str = "", *,
                      conversation_id=conversation_id)
     elif write_scope == "user":
         store.create("skill", skill_name, user_id, skill_data)
+    elif write_scope == "global":
+        store.create("skill", skill_name, GLOBAL_USER_ID, skill_data)
     else:
-        raise SkillMarketplaceError("scope must be user or conversation")
+        raise SkillMarketplaceError("scope must be global, user, or conversation")
     return {
         "ok": True,
         "imported": True,

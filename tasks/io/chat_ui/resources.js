@@ -2754,8 +2754,7 @@ function _buildResourceForm(rtype, data, isNew, readonly) {
     }
     if (rtype !== '_tool') {
       html += '<div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">' + t('scope') + '</label><select id="res-scope" style="background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;">'
-        + (_isAdmin() ? '<option value="global">' + t('global') + '</option>' : '')
-        + '<option value="user">' + t('user') + '</option><option value="conversation">' + t('conversation') + '</option></select></div>';
+        + _resourceScopeOptions() + '</select></div>';
     }
   }
   if (rtype === 'skill' && !isNew && data && data._invalid) {
@@ -3170,7 +3169,7 @@ function showSkillAddDialog() {
       + '<div style="display:grid;grid-template-columns:1fr 1fr 130px;gap:8px;margin-bottom:8px;">'
       + '<select id="skill-import-selected-ref" style="' + _svcInputStyle + '"></select>'
       + '<input id="skill-import-root-path" placeholder="' + _pfpAttr(t('skillImportPathPlaceholder')) + '" style="' + _svcInputStyle + '"/>'
-      + '<select id="skill-import-scope" style="' + _svcInputStyle + '"><option value="user">' + escapeHtml(t('user')) + '</option><option value="conversation">' + escapeHtml(t('conversation')) + '</option></select>'
+      + '<select id="skill-import-scope" style="' + _svcInputStyle + '">' + _resourceScopeOptions() + '</select>'
       + '</div>'
       + '<div id="skill-import-paths" style="border:1px solid var(--pf-border);border-radius:4px;padding:8px;min-height:70px;margin-bottom:8px;color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('skillImportResolveFirst')) + '</div>'
       + '<div id="skill-import-review" style="border-top:1px solid var(--pf-border);padding-top:10px;color:var(--pf-text);margin-bottom:10px;"></div>'

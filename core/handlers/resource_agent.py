@@ -226,6 +226,11 @@ class ManageResourceHandler(ToolHandler):
                 existing = store.get_any(
                     rtype, name, user_id,
                     conversation_id=self._conversation_id) or {}
+                if (self._agent_name and existing
+                        and existing.get("_scope") != "conversation"):
+                    return (f"Error: {rtype} '{name}' is read-only in "
+                            f"{existing.get('_scope', 'global')} scope for agents. "
+                            "Create or edit a conversation-scoped copy instead.")
                 if rtype == "skill":
                     merged = {k: v for k, v in existing.items()
                               if not str(k).startswith("_")}
@@ -277,6 +282,11 @@ class ManageResourceHandler(ToolHandler):
                         rtype, name, user_id,
                         conversation_id=self._conversation_id)
                     if existing:
+                        if (self._agent_name
+                                and existing.get("_scope") != "conversation"):
+                            return (f"Error: {rtype} '{name}' is read-only in "
+                                    f"{existing.get('_scope', 'global')} scope for agents. "
+                                    "Create or edit a conversation-scoped copy instead.")
                         created_by = existing.get("_created_by", existing.get("created_by"))
                         if created_by is not None and created_by != (self._agent_name or ""):
                             return (f"Error: {rtype} '{name}' was created by "
@@ -367,6 +377,9 @@ class ManageResourceHandler(ToolHandler):
                 if not ref:
                     return "Error: 'ref' is required for import_marketplace"
                 from core.skill_marketplace import import_marketplace_skill
+                scope = str(arguments.get("scope", "user") or "user")
+                if self._conversation_id and self._agent_name:
+                    scope = "conversation"
                 result = import_marketplace_skill(
                     source=str(arguments.get("source", "") or ""),
                     ref=ref,
@@ -375,7 +388,7 @@ class ManageResourceHandler(ToolHandler):
                     conversation_id=self._conversation_id,
                     review_only=bool(arguments.get("review_only", False)),
                     force=bool(arguments.get("force", False)),
-                    scope=str(arguments.get("scope", "user") or "user"),
+                    scope=scope,
                 )
                 return json.dumps(result, ensure_ascii=False, indent=2)
 

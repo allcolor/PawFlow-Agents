@@ -4,6 +4,28 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.0-alpha.9] — 2026-06-10
+
+### Fixed
+
+- Media reference sharing now actually reaches the provider. The temporary
+  public `?k=` (gateway_key) URL minted for image/video/audio reference
+  inputs was rejected with `401 Unauthorized` by the HTTP listener's inline
+  session-auth gate, which had no notion of public/gateway_key file access
+  (the private gateway and the flow auth task already did). `/files/<id>`
+  downloads that authenticate via a public access level or a valid `?k=`
+  now bypass the session gate; `_handle_filestore_download` still enforces
+  `check_access`. This unblocks image-to-video and other media-ref flows.
+- Claude Code interactive containers now run the in-container CLI as
+  `PAWFLOW_RUN_UID`/`PAWFLOW_RUN_GID` (the host user that launched the
+  PawFlow Docker server) instead of a hardcoded uid 1000 — matching the
+  batch claude-code pool. The session `projects/` and `memory/` trees are
+  created and chowned to that uid, so server-side tools (e.g. the memory
+  skill's `write` via the combined-fs) and the CLI share one uid and no
+  longer hit `Permission denied` across the uid boundary. Existing
+  on-disk sessions created before this fix stay owned by the old uid and
+  may need a one-time `chown` of their `projects/` trees.
+
 ## [1.0.0-alpha.8] — 2026-06-10
 
 ### Added

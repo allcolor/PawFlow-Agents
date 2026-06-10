@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import threading
+
 from pathlib import Path
 
 
@@ -796,7 +798,12 @@ def test_antigravity_tmux_submit_pastes_complete_prompt_before_enter(monkeypatch
 
     monkeypatch.setattr("core.antigravity_observer_pool.docker_cmd", lambda: ["docker"])
     monkeypatch.setattr("core.antigravity_observer_pool.subprocess.run", fake_run)
-    monkeypatch.setattr("core.antigravity_observer_pool.time.sleep", sleeps.append)
+    # Patch lands on the shared stdlib time module — only record this test
+    # thread's sleeps so leaked background pollers cannot pollute asserts.
+    monkeypatch.setattr(
+        "core.antigravity_observer_pool.time.sleep",
+        lambda value, _t=threading.get_ident(): (
+            sleeps.append(value) if threading.get_ident() == _t else None))
     monkeypatch.setattr(AntigravityObserverPool, "_is_alive", lambda self, name: True)
 
     state = AntigravityObserverSession(
@@ -905,7 +912,12 @@ def test_antigravity_tmux_submit_does_not_replay_large_prompt_in_chunks(monkeypa
 
     monkeypatch.setattr("core.antigravity_observer_pool.docker_cmd", lambda: ["docker"])
     monkeypatch.setattr("core.antigravity_observer_pool.subprocess.run", fake_run)
-    monkeypatch.setattr("core.antigravity_observer_pool.time.sleep", sleeps.append)
+    # Patch lands on the shared stdlib time module — only record this test
+    # thread's sleeps so leaked background pollers cannot pollute asserts.
+    monkeypatch.setattr(
+        "core.antigravity_observer_pool.time.sleep",
+        lambda value, _t=threading.get_ident(): (
+            sleeps.append(value) if threading.get_ident() == _t else None))
     monkeypatch.setattr(AntigravityObserverPool, "_is_alive", lambda self, name: True)
 
     state = AntigravityObserverSession(

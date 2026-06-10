@@ -1,6 +1,7 @@
 import asyncio
 import inspect
 import json
+import threading
 from queue import Queue
 
 import pytest
@@ -1131,7 +1132,13 @@ def test_interactive_pool_send_text_pastes_then_sends_enter(monkeypatch):
     monkeypatch.setattr("core.claude_code_interactive_pool.docker_cmd", lambda: ["docker"])
     monkeypatch.setattr("core.claude_code_interactive_pool.subprocess.run", fake_run)
     sleeps = []
-    monkeypatch.setattr("core.claude_code_interactive_pool.time.sleep", lambda value: sleeps.append(value))
+    # The patch lands on the SHARED stdlib time module, so daemon threads
+    # leaked by earlier tests (executor/poller loops sleeping 0.05) would
+    # pollute the capture — record only this test thread's sleeps.
+    monkeypatch.setattr(
+        "core.claude_code_interactive_pool.time.sleep",
+        lambda value, _t=threading.get_ident(): (
+            sleeps.append(value) if threading.get_ident() == _t else None))
 
     pool = InteractiveClaudeCodePool()
     monkeypatch.setattr(pool, "_is_alive", lambda name: True)

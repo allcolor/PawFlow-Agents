@@ -745,6 +745,67 @@ class _PixazoBaseService(BaseService):
         raise ServiceError(
             f"Pixazo webhook completed but no media URL: {json.dumps(payload)[:300]}")
 
+    def _wait_webhook_or_poll(self, ticket, op: Dict[str, Any],
+                              polling_url: str) -> str:
+        """Wait for the webhook callback while also polling ``polling_url``.
+
+        Webhook delivery can silently never arrive (a provider that does not
+        honour ``X-Webhook-URL`` for this model, or a dropped callback). The
+        generate ack carries a ``polling_url``, so poll it in lockstep with
+        checking the webhook ticket and return whichever completes first.
+        Cancellation and the configured timeout are honoured. Falls back to a
+        webhook-only wait when no ``polling_url`` is available.
+
+        Polling-endpoint failures (e.g. the Cloudflare challenge that is the
+        very reason webhook mode exists) are swallowed so the wait keeps
+        relying on the callback; only a terminal ``failed`` status raises.
+        """
+        if not polling_url:
+            return self._wait_webhook(ticket, op)
+        output_path = op.get("output_path", "")
+        url_field = op.get("url_field", "")
+        try:
+            from services.tool_relay_service import current_cancel_event
+            cancel = current_cancel_event()
+        except Exception:
+            cancel = None
+        start = time.time()
+        logged = False
+        while True:
+            if cancel is not None and cancel.is_set():
+                raise ServiceError("Pixazo generation cancelled by user")
+            ready, payload = ticket.try_result()
+            if ready:
+                return self._webhook_media_url(
+                    payload if isinstance(payload, dict) else {}, op)
+            try:
+                data = self._get_url(polling_url)
+            except ServiceError:
+                # Polling blocked (CF) or transient — keep waiting on the
+                # webhook instead of failing the whole generation.
+                data = None
+            if isinstance(data, dict):
+                status = (data.get("status", "") or "").lower()
+                if status in ("failed", "error"):
+                    msg = (data.get("message", "") or data.get("error", "")
+                           or str(data)[:200])
+                    raise ServiceError(f"Pixazo generation failed: {msg}")
+                if status in ("completed", "done", "success", "ready") or not status:
+                    u = _extract_media_url(
+                        data, output_path=output_path, url_field=url_field)
+                    if u:
+                        return u
+            if not logged:
+                logger.info("[PIXAZO] webhook+poll fallback active for %s",
+                            self._short_url(polling_url))
+                logged = True
+            if self.timeout and (time.time() - start) > self.timeout:
+                raise ServiceError(
+                    f"Pixazo timed out after {int(self.timeout)}s "
+                    f"(webhook callback never arrived and polling did not "
+                    f"complete)")
+            time.sleep(max(0.5, self.poll_interval))
+
     def _wait_webhook(self, ticket, op: Dict[str, Any]) -> str:
         try:
             from services.tool_relay_service import current_cancel_event
@@ -835,7 +896,12 @@ class _PixazoBaseService(BaseService):
                     err = _error_in_response(data)
                     if err:
                         raise ServiceError(f"Pixazo generation failed: {err}")
-                    url = self._wait_webhook(webhook_ticket, op)
+                    # Wait for the callback, but also poll the status URL the
+                    # ack handed us — a webhook that never arrives then falls
+                    # back to polling instead of hanging until timeout.
+                    polling_url = data.get(status_url_field, "") or ""
+                    url = self._wait_webhook_or_poll(
+                        webhook_ticket, op, polling_url)
             else:
                 polling_url = data.get(status_url_field, "") or ""
                 if polling_url:

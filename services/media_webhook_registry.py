@@ -82,6 +82,20 @@ class MediaWebhookTicket:
         self._error = error or "webhook failed"
         self._event.set()
 
+    def try_result(self) -> Tuple[bool, Any]:
+        """Non-blocking peek. Returns ``(ready, payload)``.
+
+        ``ready`` is False while no callback has arrived yet. Raises
+        ServiceError if the callback reported a failure. Lets a caller poll
+        a provider status endpoint in lockstep with the webhook so a
+        callback that never arrives can't hang the call.
+        """
+        if not self._event.is_set():
+            return False, None
+        if self._error:
+            raise ServiceError(self._error)
+        return True, self._payload
+
     def wait(self, *, timeout: float = 0,
              cancel_event: Optional[threading.Event] = None,
              poll_interval: float = 1.0) -> Any:

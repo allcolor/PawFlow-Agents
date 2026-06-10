@@ -218,6 +218,85 @@ def test_public_only_route_is_still_challenged_for_public_ip():
     assert handler.responses  # a challenge/redirect response was sent
 
 
+def test_pixazo_webhook_mode_falls_back_to_polling_when_callback_never_arrives(monkeypatch):
+    listener = _FakeListener()
+    monkeypatch.setattr(
+        "services.http_listener_service.HTTPListenerService.all_instances",
+        lambda: {9090: listener},
+    )
+    svc = PixazoImageService({
+        "api_key": "key",
+        "model": "nano-banana-pro",
+        "poll_interval": 0,
+        "timeout": 5,
+        "use_webhook": True,
+    })
+    svc._create_connection = lambda: {"ready": True}  # type: ignore[method-assign]
+    svc.set_callback_base_url("https://webchat.example.org")
+
+    # The ack hands us a polling_url but the provider never POSTs the webhook.
+    svc._post = lambda endpoint, body, **kwargs: {  # type: ignore[assignment]
+        "request_id": "rid", "status": "QUEUED",
+        "polling_url": "https://gw/v2/requests/status/rid",
+    }
+    polls = {"n": 0}
+
+    def _get_url(url):
+        polls["n"] += 1
+        return {"status": "completed",
+                "output": {"media_url": ["https://cdn.example/p.png"]}}
+
+    svc._get_url = _get_url  # type: ignore[assignment]
+    svc._download_image = lambda url: (b"PNG", "image/png")  # type: ignore[assignment]
+
+    out = svc.generate(prompt="robot")
+
+    # Polling rescued the call instead of hanging until the 5s timeout.
+    assert out["source_url"] == "https://cdn.example/p.png"
+    assert out["image_bytes"] == b"PNG"
+    assert polls["n"] >= 1
+    assert listener.unregistered
+
+
+def test_pixazo_webhook_callback_wins_over_polling_when_it_arrives(monkeypatch):
+    listener = _FakeListener()
+    monkeypatch.setattr(
+        "services.http_listener_service.HTTPListenerService.all_instances",
+        lambda: {9090: listener},
+    )
+    svc = PixazoImageService({
+        "api_key": "key",
+        "model": "nano-banana-pro",
+        "poll_interval": 0,
+        "timeout": 5,
+        "use_webhook": True,
+    })
+    svc._create_connection = lambda: {"ready": True}  # type: ignore[method-assign]
+    svc.set_callback_base_url("https://webchat.example.org")
+
+    def _post(endpoint, body, **kwargs):
+        # Fire the callback synchronously, and also hand back a polling_url.
+        callback = listener.routes[-1]["callback"]
+        req = _FakeRequest(json.dumps({
+            "status": "completed",
+            "output": {"media_url": ["https://cdn.example/webhook.png"]},
+        }).encode())
+        callback(req)
+        return {"request_id": "rid", "status": "QUEUED",
+                "polling_url": "https://gw/v2/requests/status/rid"}
+
+    svc._post = _post  # type: ignore[assignment]
+    # If polling is consulted at all the webhook result was ignored — fail loud.
+    svc._get_url = lambda _url: (_ for _ in ()).throw(  # type: ignore[assignment]
+        AssertionError("polled despite an available webhook result"))
+    svc._download_image = lambda url: (b"PNG", "image/png")  # type: ignore[assignment]
+
+    out = svc.generate(prompt="robot")
+
+    assert out["source_url"] == "https://cdn.example/webhook.png"
+    assert listener.unregistered
+
+
 def test_image_handler_passes_callback_base_url_to_service():
     class _Service:
         def __init__(self):

@@ -295,3 +295,7 @@ To include a literal `${...}` in a string (for example, in a task definition pro
 ```
 
 The backslash prevents resolution during the current pass, and the `\` is stripped, leaving `${variable_name}` for later resolution.
+
+## Unresolved expressions
+
+If an expression cannot be resolved in any scope, it is returned **verbatim**, with its operators preserved rather than stripped. Text that merely resembles an expression -- for example a shell parameter expansion (a default-substitution or a suffix-removal) embedded in file content or a script -- is therefore never silently altered by the resolver.

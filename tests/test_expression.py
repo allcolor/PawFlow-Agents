@@ -72,6 +72,40 @@ class TestExpression(unittest.TestCase):
         """Sans attributs ni parametres, les expressions restent."""
         self.assertEqual(resolve_expression("${foo}"), "${foo}")
 
+    # Helper builds a dollar-brace expression at runtime; the source keeps
+    # the opener split so this file survives editing through PawFlow fs
+    # tools, which themselves resolve expressions.
+    @staticmethod
+    def _e(inner):
+        return "$" + "{" + inner + "}"
+
+    def test_unresolved_expression_with_ops_kept_verbatim(self):
+        """An unresolved expression with operations keeps them verbatim
+        instead of being truncated to the bare key, which would corrupt
+        shell parameter expansions embedded in file content."""
+        for inner in ("foo:bar", "spec%:*", "var:0:3"):
+            expr = self._e(inner)
+            self.assertEqual(resolve_expression(expr), expr)
+
+    def test_escaped_expression_outputs_literal(self):
+        """A backslash-escaped expression yields the literal text: the
+        backslash is dropped and the expression is never resolved."""
+        bs = chr(92)
+        self.assertEqual(resolve_expression(bs + self._e("tutu")), self._e("tutu"))
+        # Even a defined key is not resolved when escaped.
+        self.assertEqual(
+            resolve_expression(bs + self._e("name"), parameters={"name": "Alice"}),
+            self._e("name"),
+        )
+
+    def test_escaped_expression_mixed_with_resolution(self):
+        """A real expression resolves while an adjacent escaped one stays
+        literal."""
+        bs = chr(92)
+        result = resolve_expression(
+            self._e("a") + "-" + bs + self._e("b"), parameters={"a": "1"})
+        self.assertEqual(result, "1-" + self._e("b"))
+
     def test_lazy_resolve_dict_resolves_nested_values(self):
         """Lazy config resolution recurses through dicts and lists."""
         from unittest.mock import patch

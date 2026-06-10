@@ -382,6 +382,31 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert "Port $Port" in doctor_ps1_src
 
 
+def test_claude_code_image_pins_latest_cli_versions():
+    """The CLI LLM image installs the latest published agent CLIs at build time
+    and rebuilds the npm layer only when an upstream version actually changes."""
+    build_src = Path("docker/claude-code/build.sh").read_text(encoding="utf-8")
+    dockerfile = Path("docker/claude-code/Dockerfile").read_text(encoding="utf-8")
+
+    # build.sh resolves the latest published version of each CLI (in the image's
+    # own base, so no host npm is needed) and feeds it as a build arg, making the
+    # version part of the npm layer's cache key.
+    assert "npm view" in build_src
+    assert "node:22-slim" in build_src
+    assert "--build-arg" in build_src
+    for pkg in ("@anthropic-ai/claude-code", "@openai/codex", "@google/gemini-cli"):
+        assert pkg in build_src
+
+    # Dockerfile declares the args (defaulting to latest for bare docker build)
+    # and pins each npm install to the injected version.
+    assert "ARG CLAUDE_CODE_VERSION=latest" in dockerfile
+    assert "ARG CODEX_VERSION=latest" in dockerfile
+    assert "ARG GEMINI_VERSION=latest" in dockerfile
+    assert "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" in dockerfile
+    assert "@openai/codex@${CODEX_VERSION}" in dockerfile
+    assert "@google/gemini-cli@${GEMINI_VERSION}" in dockerfile
+
+
 def test_minimal_install_zip_contains_only_bootstrap_files(tmp_path):
     subprocess.run(
         [

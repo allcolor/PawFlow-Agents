@@ -17,7 +17,20 @@ RUN curl -fsSL "https://downloads.rclone.org/rclone-${DOWNLOAD_RCLONE_VERSION}-l
 
 # Install agent CLIs (Claude Code + Codex + Gemini + Antigravity) — single image hosts them;
 # the pool decides which binary to exec per-spawn so they share base layers + caches.
-RUN npm install -g @anthropic-ai/claude-code @openai/codex @google/gemini-cli \
+#
+# CLI versions are injected as build args by build.sh, which resolves the latest
+# published npm version of each at build time. Pinning to the resolved version
+# makes the version part of this layer's cache key: an unchanged version reuses
+# the cached layer (no reinstall), while a new upstream release changes the arg
+# and invalidates the layer so the rebuild installs the new CLI. Defaults to
+# `latest` for direct `docker build` invocations that do not pass the args.
+ARG CLAUDE_CODE_VERSION=latest
+ARG CODEX_VERSION=latest
+ARG GEMINI_VERSION=latest
+RUN npm install -g \
+        "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
+        "@openai/codex@${CODEX_VERSION}" \
+        "@google/gemini-cli@${GEMINI_VERSION}" \
     && curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir /usr/local/bin
 
 # Create non-root user (Claude Code refuses --dangerously-skip-permissions as root)

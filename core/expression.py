@@ -6,6 +6,7 @@ Resolves ${...} expressions from secrets, parameters, environment
 variables, and FlowFile attributes through a unified cascade.
 """
 
+import base64
 import json
 import logging
 import os
@@ -16,6 +17,26 @@ from typing import Dict, Any, Optional
 logger = logging.getLogger(__name__)
 
 import core.paths as _paths
+
+# Opaque markers for an escaped expression (\${...}). The scanner replaces the
+# escaped span with _ESC_OPEN<base64>_ESC_CLOSE so it carries no '${' and is not
+# re-detected by the recursive resolution passes; the outermost call decodes it
+# back to the literal '${...}'. base64 (urlsafe) only emits [A-Za-z0-9_-=], so a
+# token can never reintroduce '${'. The NUL bytes keep tokens from colliding
+# with ordinary text.
+_ESC_OPEN = "\x00pf-esc["
+_ESC_CLOSE = "]pf-esc\x00"
+_ESC_TOKEN_RE = re.compile(re.escape(_ESC_OPEN) + r"([A-Za-z0-9_\-=]*)" + re.escape(_ESC_CLOSE))
+
+
+def _decode_escapes(text: str) -> str:
+    """Turn escape tokens back into the literal ${...} text they protected."""
+    def _dec(m):
+        try:
+            return base64.urlsafe_b64decode(m.group(1).encode("ascii")).decode("utf-8")
+        except Exception:
+            return m.group(0)
+    return _ESC_TOKEN_RE.sub(_dec, text)
 
 
 
@@ -63,6 +84,29 @@ def _substitute_expressions(template: str, resolver_fn) -> str:
     result = []
     i = 0
     while i < len(template):
+        # Escaped expression: \${...} emits a literal ${...} and is never
+        # resolved. Encode the whole balanced span as an opaque token so the
+        # recursive passes leave it alone; the outermost call decodes it.
+        if (template[i] == '\\' and i + 2 < len(template)
+                and template[i + 1] == '$' and template[i + 2] == '{'):
+            depth = 1
+            j = i + 3
+            while j < len(template) and depth > 0:
+                if template[j] == '{' and template[j - 1] == '$':
+                    depth += 1
+                elif template[j] == '}':
+                    depth -= 1
+                j += 1
+            if depth == 0:
+                literal = template[i + 1:j]  # the ${...} text, without the backslash
+                enc = base64.urlsafe_b64encode(literal.encode('utf-8')).decode('ascii')
+                result.append(_ESC_OPEN + enc + _ESC_CLOSE)
+                i = j
+                continue
+            # Unbalanced — leave the backslash as an ordinary character.
+            result.append(template[i])
+            i += 1
+            continue
         if template[i] == '$' and i + 1 < len(template) and template[i + 1] == '{':
             # Find matching closing brace (balanced)
             depth = 1
@@ -358,6 +402,10 @@ def resolve_expression(template: str, parameters: Optional[Dict[str, Any]] = Non
     def replacer_core(expr):
         nonlocal secrets, variables
 
+        # Keep the original inner text verbatim for the unresolved fallback,
+        # before parse_important / parse_pipeline strip the ops off it.
+        original_expr = expr
+
         # Parse :!important(scope) BEFORE pipeline (it's not a pipeline op)
         expr, exact_scope = _parse_important(expr)
 
@@ -414,7 +462,12 @@ def resolve_expression(template: str, parameters: Optional[Dict[str, Any]] = Non
         # recursive resolution from ignoring the scope constraint
         if exact_scope:
             return "${" + scope_key + ":!important(" + exact_scope + ")}"
-        return "${" + scope_key + "}"
+        # Unresolved: return the ORIGINAL inner text verbatim. Rebuilding from
+        # scope_key alone silently drops the pipeline ops, which corrupts any
+        # literal that only looks like an expression (a shell parameter
+        # expansion, or code/content with colon-modified braces) by eating its
+        # trailing operations. Verbatim output also keeps the original suffix.
+        return "${" + original_expr + "}"
 
     # Custom substitution that handles nested ${...} in arguments
     result = _substitute_expressions(template, replacer_core)
@@ -424,6 +477,11 @@ def resolve_expression(template: str, parameters: Optional[Dict[str, Any]] = Non
         result = resolve_expression(result, parameters, owner,
                                     conversation_id=conversation_id,
                                     _depth=_depth + 1)
+
+    # The outermost call turns protected \${...} escapes back into literal
+    # ${...}. Done only at depth 0 so the tokens survive every recursive pass.
+    if _depth == 0 and _ESC_OPEN in result:
+        result = _decode_escapes(result)
 
     return result
 

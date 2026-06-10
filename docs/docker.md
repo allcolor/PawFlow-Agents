@@ -336,6 +336,8 @@ This creates `pawflow-claude-code:latest` (~500MB) with:
 - Python 3 + MCP bridge
 - Git
 
+The build resolves the latest published version of each agent CLI (Claude Code, Codex, Gemini) and pins it. The version is part of the npm-install layer's cache key, so a rebuild reinstalls a CLI only when a new version is actually published; otherwise it reuses the cached layer.
+
 ### Enable in service config
 
 In the admin panel, edit your `claude_code_llm_service`:

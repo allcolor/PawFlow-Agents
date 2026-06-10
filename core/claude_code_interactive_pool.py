@@ -93,6 +93,14 @@ class InteractiveClaudeCodePool:
         self._tick_seconds = 60
         self._idle_ttl = float(os.environ.get("PAWFLOW_CCI_IDLE_TTL_SECONDS", "1800"))
         self._shutdown_once = False
+        # Run the in-container CLI as the host launcher's uid/gid (the same
+        # PAWFLOW_RUN_UID/GID the batch claude_code_pool honours) instead of a
+        # hardcoded 1000. The server provisions the session workdir under this
+        # uid, and server-side tools (e.g. the memory-skill `write`) write into
+        # projects/ via the combined-fs as this uid — so the CLI must own those
+        # subtrees with the SAME uid or those writes hit EACCES.
+        self.run_uid = self._numeric_env("PAWFLOW_RUN_UID", "1000")
+        self.run_gid = self._numeric_env("PAWFLOW_RUN_GID", "1000")
 
     def _register_death_handlers(self):
         """Kill tracked interactive containers when the Python process exits."""
@@ -128,6 +136,15 @@ class InteractiveClaudeCodePool:
                         logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         except Exception:
             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+
+    @staticmethod
+    def _numeric_env(name: str, default: str) -> str:
+        value = os.environ.get(name, default).strip()
+        return value if value.isdigit() else default
+
+    def _user_spec(self) -> str:
+        """`<uid>:<gid>` for `docker exec --user`, mapped to the host launcher."""
+        return f"{self.run_uid}:{self.run_gid}"
 
     @staticmethod
     def _safe(value: str) -> str:
@@ -318,7 +335,7 @@ class InteractiveClaudeCodePool:
         """
         try:
             r = subprocess.run(  # nosec B603
-                docker_cmd() + ["exec", "--user", "1000:1000", name,
+                docker_cmd() + ["exec", "--user", self._user_spec(), name,
                                 "tmux", "capture-pane", "-p", "-t", "pawflow"],
                 capture_output=True, text=True, timeout=10)
         except Exception:
@@ -355,7 +372,7 @@ class InteractiveClaudeCodePool:
     def _cancel_copy_mode(self, state: InteractiveContainer) -> None:
         try:
             subprocess.run(  # nosec B603
-                docker_cmd() + ["exec", "--user", "1000:1000", state.name,
+                docker_cmd() + ["exec", "--user", self._user_spec(), state.name,
                                 "tmux", "send-keys", "-t", "pawflow", "-X", "cancel"],
                 capture_output=True, timeout=5)
         except Exception:
@@ -363,7 +380,7 @@ class InteractiveClaudeCodePool:
 
     def _load_buffer(self, state: InteractiveContainer, text: str) -> bool:
         cmd = docker_cmd() + [
-            "exec", "-i", "--user", "1000:1000", state.name,
+            "exec", "-i", "--user", self._user_spec(), state.name,
             "tmux", "load-buffer", "-",
         ]
         r = subprocess.run(cmd, input=text.encode("utf-8"), capture_output=True, timeout=15)  # nosec B603
@@ -374,7 +391,7 @@ class InteractiveClaudeCodePool:
 
     def _paste_buffer(self, state: InteractiveContainer) -> bool:
         r = subprocess.run(  # nosec B603
-            docker_cmd() + ["exec", "--user", "1000:1000", state.name,
+            docker_cmd() + ["exec", "--user", self._user_spec(), state.name,
                             "tmux", "paste-buffer", "-t", "pawflow"],
             capture_output=True, timeout=10)
         if r.returncode != 0:
@@ -434,7 +451,7 @@ class InteractiveClaudeCodePool:
             state.last_error = f"Container {state.name} is not running"
             return False
         r = subprocess.run(  # nosec B603
-            docker_cmd() + ["exec", "--user", "1000:1000", state.name,
+            docker_cmd() + ["exec", "--user", self._user_spec(), state.name,
                             "tmux", "send-keys", "-t", "pawflow", *keys],
             capture_output=True, timeout=10)
         if r.returncode != 0:
@@ -858,17 +875,21 @@ class InteractiveClaudeCodePool:
             args.extend(["--effort", effort])
         args.extend(["--disallowedTools", self._disallowed_builtin_tools])
         quoted = " ".join(shlex.quote(a) for a in args)
-        drop_privs = "setpriv --reuid=1000 --regid=1000 --clear-groups --"
+        drop_privs = (f"setpriv --reuid={self.run_uid} --regid={self.run_gid} "
+                      "--clear-groups --")
         shell = (
             "mkdir -p /cc_sessions && "
             f"mount --bind {shlex.quote(user_slot)} /cc_sessions && "
             f"cd {shlex.quote(ns_workdir)} && "
             # The server provisions the workdir host-side under its own uid
-            # with 755 dirs, so the uid-1000 CLI cannot create its own state
-            # there. Pre-create and adopt the CLI-owned subtrees (task store,
-            # transcripts/memory under projects/) — the server never writes
-            # inside them, everything else stays server-owned.
-            "mkdir -p tasks projects && chown -R 1000:1000 tasks projects && ("
+            # with 755 dirs. We run the CLI as that SAME uid (run_uid =
+            # PAWFLOW_RUN_UID), so pre-create the CLI-written subtrees (task
+            # store, transcripts/memory under projects/) and chown them to
+            # run_uid. Sharing one uid lets both the CLI and server-side tools
+            # (the memory-skill `write` via the combined-fs) write here without
+            # an EACCES across the uid boundary.
+            f"mkdir -p tasks projects && chown -R {self.run_uid}:{self.run_gid} "
+            "tasks projects && ("
             f"{drop_privs} tmux kill-session -t pawflow 2>/dev/null || true; "
             f"{drop_privs} tmux new-session -d -s pawflow "
             f"'env HOME={shlex.quote(ns_workdir)} USER=pawflow "
@@ -891,7 +912,7 @@ class InteractiveClaudeCodePool:
         if r.returncode != 0:
             raise RuntimeError(f"Failed to start Claude tmux: {r.stderr[:500]}")
         probe = subprocess.run(  # nosec B603
-            docker_cmd() + ["exec", "--user", "1000:1000", name,
+            docker_cmd() + ["exec", "--user", self._user_spec(), name,
                             "tmux", "has-session", "-t", "pawflow"],
             capture_output=True, text=True, timeout=10)
         if probe.returncode != 0:

@@ -1263,6 +1263,10 @@ def test_interactive_pool_interrupt_and_force_stop_keys(monkeypatch):
 
     monkeypatch.setattr("core.claude_code_interactive_pool.docker_cmd", lambda: ["docker"])
     monkeypatch.setattr("core.claude_code_interactive_pool.subprocess.run", fake_run)
+    # Pin the run uid/gid to the default so the exec --user is deterministic
+    # regardless of the ambient PAWFLOW_RUN_UID in the dev/CI environment.
+    monkeypatch.delenv("PAWFLOW_RUN_UID", raising=False)
+    monkeypatch.delenv("PAWFLOW_RUN_GID", raising=False)
 
     pool = InteractiveClaudeCodePool()
     monkeypatch.setattr(pool, "_is_alive", lambda name: True)
@@ -1496,6 +1500,8 @@ def test_interactive_pool_starts_tmux_in_normal_provider_namespace(monkeypatch):
 
     monkeypatch.setattr("core.claude_code_interactive_pool.docker_cmd", lambda: ["docker"])
     monkeypatch.setattr("core.claude_code_interactive_pool.subprocess.run", fake_run)
+    monkeypatch.delenv("PAWFLOW_RUN_UID", raising=False)
+    monkeypatch.delenv("PAWFLOW_RUN_GID", raising=False)
 
     pool = InteractiveClaudeCodePool()
     pool._start_claude_tmux(
@@ -1534,6 +1540,53 @@ def test_interactive_pool_starts_tmux_in_normal_provider_namespace(monkeypatch):
     assert "--effort high" in shell
     assert "NODE_EXTRA_CA_CERTS=/cc_sessions/c/a/ca.crt" in shell
     assert "--resume" not in shell
+
+
+def test_interactive_pool_maps_cli_uid_to_host_launcher(monkeypatch):
+    """The in-container CLI must run as PAWFLOW_RUN_UID/GID (the host launcher),
+    not a hardcoded 1000, so projects/ + memory/ it creates are owned by the
+    same uid the server uses to write the memory skill via the combined-fs.
+    """
+    from core.claude_code_interactive_pool import InteractiveClaudeCodePool
+
+    calls = []
+
+    class _Run:
+        returncode = 0
+        stdout = "true"
+        stderr = ""
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return _Run()
+
+    monkeypatch.setattr("core.claude_code_interactive_pool.docker_cmd", lambda: ["docker"])
+    monkeypatch.setattr("core.claude_code_interactive_pool.subprocess.run", fake_run)
+    monkeypatch.setenv("PAWFLOW_RUN_UID", "1234")
+    monkeypatch.setenv("PAWFLOW_RUN_GID", "5678")
+
+    pool = InteractiveClaudeCodePool()
+    assert pool._user_spec() == "1234:5678"
+    pool._start_claude_tmux(
+        name="container",
+        container_workdir="/cc_sessions_host/u/c/a",
+        mcp_path="/cc_sessions/c/a/.mcp.json",
+        model="opus",
+        effort="",
+        ca_path="/cc_sessions/c/a/ca.crt",
+        session_token="s",
+        event_url="wss://events",
+        event_token="e",
+        internal_token="i",
+    )
+    shell = calls[0][-1]
+    # CLI-owned subtrees adopted by the host launcher uid, and the privilege
+    # drop targets it too — no 1000 left.
+    assert "chown -R 1234:5678 tasks projects" in shell
+    assert "setpriv --reuid=1234 --regid=5678" in shell
+    assert "1000:1000" not in shell
+    # The tmux client exec (has-session probe) also uses the mapped uid.
+    assert any(c[:4] == ["docker", "exec", "--user", "1234:5678"] for c in calls)
 
 
 def test_interactive_pool_proxy_passes_wire_log_env(monkeypatch):

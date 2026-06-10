@@ -306,6 +306,8 @@ pre { margin: 0; padding: 18px; overflow-x: auto; color: #d9f5ff; font-size: 14p
 .recipe.media-recipe { display: grid; grid-template-columns: minmax(260px, .8fr) 1fr; gap: 24px; align-items: center; }
 .recipe figure { margin: 0; border-radius: 8px; overflow: hidden; border: 1px solid var(--line-soft); }
 .recipe figure img { aspect-ratio: 16 / 10; object-fit: cover; width: 100%; }
+.recipe figure.phone-shot { background: #0c1118; }
+.recipe figure.phone-shot img { aspect-ratio: 3 / 4; object-fit: contain; max-height: 540px; }
 .recipe-meta { color: var(--amber); text-transform: uppercase; font-weight: 900; font-size: 13px; margin-bottom: 8px; }
 .recipe h2 { font-size: clamp(26px, 3vw, 38px); }
 .recipe ol { color: var(--muted); padding-left: 20px; }

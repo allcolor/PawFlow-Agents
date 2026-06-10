@@ -334,11 +334,15 @@ class ExecutorRegistry:
                 owner, conversation_id)
             if source_dir:
                 clean["_source_dir"] = source_dir
-            if parameters:
-                clean["parameters"] = {
-                    **(clean.get("parameters") or {}),
-                    **parameters,
-                }
+            # Expose the unique deploy-time instance_id as a reserved flow
+            # parameter so flows can mint per-instance values (e.g. a webhook
+            # route /hook/${_instance_id} that never collides across deploys).
+            # It is injected last so it always wins over any supplied value.
+            clean["parameters"] = {
+                **(clean.get("parameters") or {}),
+                **(parameters or {}),
+                "_instance_id": instance_id,
+            }
             _merge_service_configs(clean, service_configs)
             from engine.parser import FlowParser
             _t0 = time.monotonic()

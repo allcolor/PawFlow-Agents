@@ -155,6 +155,44 @@ class TestExecutorRegistry(unittest.TestCase):
             assert listener.config.get("port") == 19991
             assert listener.port == 19991
 
+    def test_restore_injects_instance_id_parameter(self):
+        """The unique deploy id is exposed as the reserved ${_instance_id} param.
+
+        Flows mint per-instance, collision-free routes from it (e.g.
+        /webhooks/github/${_instance_id}). It must be present even when no
+        deployment parameters are supplied.
+        """
+        from engine.continuous_executor import ContinuousFlowExecutor
+        from tasks import register_all_tasks
+
+        register_all_tasks()
+        with tempfile.TemporaryDirectory() as td:
+            flow_path = Path(td) / "flow.json"
+            flow_path.write_text(json.dumps({
+                "id": "installer",
+                "name": "Installer",
+                "version": "1.0.0",
+                "parameters": {"port": 9090},
+                "services": {
+                    "http_listener": {
+                        "type": "httpListener",
+                        "parameters": {"host": "0.0.0.0", "port": "${port}"},
+                    },
+                },
+                "tasks": {},
+                "relations": [],
+            }), encoding="utf-8")
+
+            with patch.object(ContinuousFlowExecutor, "start", lambda self: None):
+                ok = self.registry._restore_instance(
+                    "installer__xyz789", str(flow_path))
+
+            executor = self.registry.get("installer__xyz789")
+            assert ok is True
+            assert executor._flow.parameters.get("_instance_id") == "installer__xyz789"
+            # Template defaults survive the injection.
+            assert executor._flow.parameters.get("port") == 9090
+
 
 if __name__ == "__main__":
     unittest.main()

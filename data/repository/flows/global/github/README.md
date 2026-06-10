@@ -8,8 +8,13 @@ verifies the HMAC signature, and when a CI run **fails** on the configured
 branch, injects a message into a **configurable conversation** asking the
 selected agent to fix the failure and push the correction.
 
+The webhook route is **per-instance**: the path carries a `${webhook_slot}`
+segment that defaults to the deploy-time unique `${_instance_id}`. Every deploy
+(different project, different user) therefore registers a **distinct** path on
+the shared main listener — no route collision, no manual coordination.
+
 ```
-webhook_in (POST /webhooks/github, public)
+webhook_in (POST /webhooks/github/${webhook_slot}, public)
   -> inject_secret   (loads ${github_webhook_secret} into an attribute)
   -> decide          (HMAC verify + parse workflow_run; decision = bad_sig|ignore|fix)
   -> route
@@ -36,6 +41,15 @@ used: it opens its own server on :9090, which would need a separate Caddy route.
 | `target_conversation_id` | yes | Conversation the fix request is injected into. |
 | `target_user_id` | yes | User that owns `target_conversation_id` (agent resolution). |
 | `target_agent` | yes (default `claude`) | Agent woken up in that conversation. |
+| `webhook_slot` | no (default `${_instance_id}`) | Path segment that makes the route unique: `POST /webhooks/github/<webhook_slot>`. Leave it on the default to get the auto-generated, collision-free deploy id, or set a friendly value (e.g. the repo name) you control. |
+
+### Resolving the actual webhook path
+
+`${_instance_id}` is a reserved flow parameter injected by the deploy layer; it
+equals the `instance_id` returned when the flow is deployed (e.g.
+`github-ci-autofix__a1b2c3`). So with the default `webhook_slot`, the live path
+is `POST /webhooks/github/<instance_id>`. Read it back from the deploy result or
+the deployed-flows list, or pin a known value via `webhook_slot` at deploy time.
 
 ## Required secret
 
@@ -48,7 +62,8 @@ used: it opens its own server on :9090, which would need a separate Caddy route.
 
 Repo → **Settings → Webhooks → Add webhook**:
 
-- **Payload URL**: `https://<your-pawflow-domain>/webhooks/github`
+- **Payload URL**: `https://<your-pawflow-domain>/webhooks/github/<webhook_slot>`
+  (use the resolved slot from above — the deploy `instance_id` by default)
 - **Content type**: `application/json`
 - **Secret**: the same value as the `github_webhook_secret` PawFlow secret
 - **Events**: *Let me select individual events* → **Workflow runs** only

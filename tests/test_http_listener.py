@@ -288,6 +288,74 @@ def test_websocket_only_route_callbacks_complete_plain_http(monkeypatch):
         assert b"WebSocket upgrade required" in req.response_body
 
 
+def test_http_receiver_resolves_pattern_via_parameters():
+    """Route patterns support ${...} so a deploy can mint a per-instance path.
+
+    The pattern cascades webhook_slot -> _instance_id, mirroring the
+    github.ci_autofix flow whose default slot is the unique deploy id. This is
+    what guarantees two deploys never register the same route.
+    """
+    from core.parameter_context import ParameterContext
+
+    captured = []
+
+    class FakeListener:
+        def ensure_connected(self):
+            pass
+
+        def register_route(self, method, pattern, owner_id, callback,
+                           ws_handler=None, public=False, private_only=False):
+            captured.append({"method": method, "pattern": pattern,
+                             "owner": owner_id, "public": public})
+
+    task = HTTPReceiverTask({
+        "service_id": "http",
+        "_flow_id": "inst123",
+        "routes": [{
+            "method": "POST",
+            "pattern": "/webhooks/github/${webhook_slot}",
+            "relationship": "github_webhook",
+            "public": True,
+        }],
+    })
+    task.set_services({"http": FakeListener()})
+    task.set_parameter_context(ParameterContext({
+        "webhook_slot": "${_instance_id}",
+        "_instance_id": "github-ci-autofix__abc123",
+    }))
+
+    task._ensure_routes_registered()
+
+    assert len(captured) == 1
+    assert captured[0]["pattern"] == "/webhooks/github/github-ci-autofix__abc123"
+    assert captured[0]["method"] == "POST"
+    assert captured[0]["public"] is True
+    assert captured[0]["owner"] == "httpReceiver_inst123"
+
+
+def test_http_receiver_literal_pattern_is_unchanged():
+    """A plain pattern with no ${...} passes through untouched."""
+    captured = []
+
+    class FakeListener:
+        def ensure_connected(self):
+            pass
+
+        def register_route(self, method, pattern, owner_id, callback,
+                           ws_handler=None, public=False, private_only=False):
+            captured.append(pattern)
+
+    task = HTTPReceiverTask({
+        "service_id": "http",
+        "routes": [{"method": "GET", "pattern": "/health"}],
+    })
+    task.set_services({"http": FakeListener()})
+
+    task._ensure_routes_registered()
+
+    assert captured == ["/health"]
+
+
 # ---------------------------------------------------------------------------
 # RouteRegistry tests
 # ---------------------------------------------------------------------------

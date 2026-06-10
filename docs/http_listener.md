@@ -68,6 +68,14 @@ Self-triggering source task. Registers routes on the listener and converts HTTP 
 }
 ```
 
+`method` and `pattern` are resolved through the flow parameter cascade at
+registration time, so they may contain `${...}` expressions. This lets a deploy
+mint a **per-instance route** that never collides across deploys/users — e.g.
+`"pattern": "/webhooks/github/${_instance_id}"` (the reserved `${_instance_id}`
+parameter is the unique deploy id; see `docs/EXPRESSION_LANGUAGE.md`).
+Parse-time config resolution skips dicts nested in lists, so route-pattern
+expressions are resolved by the task itself, not the parser.
+
 **FlowFile attributes set:**
 | Attribute | Description |
 |-----------|-------------|

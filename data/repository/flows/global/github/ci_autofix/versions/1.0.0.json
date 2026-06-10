@@ -2,13 +2,14 @@
   "id": "github-ci-autofix",
   "name": "ci_autofix",
   "version": "1.0.0",
-  "description": "GitHub webhook (workflow_run) on the main PawFlow listener: verifies the HMAC signature, and when a CI run fails on the configured branch, injects a message into a configurable conversation asking the agent to fix and push.",
+  "description": "GitHub webhook (workflow_run) on the main PawFlow listener: verifies the HMAC signature, and when a CI run fails on the configured branch, injects a message into a configurable conversation asking the agent to fix and push. The webhook route is per-instance (/webhooks/github/<slot>), so multiple deploys/users never collide.",
   "parameters": {
     "port": "",
     "ci_branch": "main",
     "target_conversation_id": "",
     "target_user_id": "",
-    "target_agent": "claude"
+    "target_agent": "claude",
+    "webhook_slot": "${_instance_id}"
   },
   "services": {
     "http_listener": {
@@ -27,7 +28,7 @@
         "routes": [
           {
             "method": "POST",
-            "pattern": "/webhooks/github",
+            "pattern": "/webhooks/github/${webhook_slot}",
             "relationship": "github_webhook",
             "public": true
           }

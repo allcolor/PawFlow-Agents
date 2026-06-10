@@ -102,8 +102,12 @@ class HTTPReceiverTask(BaseTask):
         self._owner_id = f"httpReceiver_{flow_id}"
 
         for route_def in routes:
-            method = route_def.get("method", "GET").upper()
-            pattern = route_def.get("pattern", "/")
+            method = self.resolve_value(route_def.get("method", "GET")).upper()
+            # Resolve ${...} in the pattern via the flow parameter cascade so a
+            # deploy can mint a per-instance route (e.g. /hook/${_instance_id}).
+            # Parse-time config resolution skips dicts nested in lists, so the
+            # route pattern would otherwise stay literal — resolve it here.
+            pattern = self.resolve_value(route_def.get("pattern", "/"))
             relationship = route_def.get("relationship", f"{method}:{pattern}")
             _public = bool(route_def.get("public", False))
             _private_only = bool(route_def.get("private_only", False))

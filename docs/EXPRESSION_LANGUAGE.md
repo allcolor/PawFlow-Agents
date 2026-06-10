@@ -31,6 +31,17 @@ Resolution order for parameters (first match wins):
 4. **Global parameters** -- shared across all users (`config/global_parameters.json`)
 5. **Environment variables** -- OS environment (`${PATH}`, `${HOME}`, etc.)
 
+### Reserved parameters
+
+The deploy layer injects reserved flow parameters that flows can reference but
+should not override:
+
+- **`${_instance_id}`** -- the unique deployment instance id (e.g.
+  `github-ci-autofix__a1b2c3`), stable across restarts. Use it to mint
+  per-instance, collision-free values such as a webhook route
+  `/webhooks/github/${_instance_id}` so multiple deploys of the same flow
+  (different projects/users) never clash on a shared resource.
+
 ### Secret Cascade
 
 Secrets are checked before parameters (first match wins):

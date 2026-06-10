@@ -281,6 +281,7 @@ class RouteEntry:
     ws_handler: Any = None  # callable(socket, path_params) for WebSocket upgrades
     public: bool = False    # if True: skip session auth; gateway still applies
     private_only: bool = False  # if True: only accept private-IP clients
+    gateway_exempt: bool = False  # if True: bypass the private gateway challenge
 
 
 class RouteConflictError(Exception):
@@ -297,7 +298,8 @@ class RouteRegistry:
 
     def register(self, method: str, pattern: str, owner_id: str, callback,
                  ws_handler=None, public: bool = False,
-                 private_only: bool = False) -> RouteEntry:
+                 private_only: bool = False,
+                 gateway_exempt: bool = False) -> RouteEntry:
         """Register a route.  Raises RouteConflictError on overlap.
 
         public=True skips session auth (use for login pages, callbacks, proxy
@@ -305,6 +307,11 @@ class RouteRegistry:
         unless the route is also private_only.
         private_only=True rejects non-RFC1918 clients even if public=True
         (use for proxy endpoints leaked URLs must not allow external abuse).
+        gateway_exempt=True bypasses the private gateway challenge while still
+        accepting public IPs — use for provider callbacks (media webhooks)
+        whose URL carries its own unguessable token credential. Unlike
+        private_only, it does not reject internet clients, which is required
+        for callbacks delivered from a provider's public egress.
         """
         method = method.upper()
         regex = self._compile_pattern(pattern)
@@ -317,6 +324,7 @@ class RouteRegistry:
                         existing.callback = callback
                         existing.public = public
                         existing.private_only = private_only
+                        existing.gateway_exempt = gateway_exempt
                         return existing
                     raise RouteConflictError(
                         f"Route {method} {pattern} already registered by '{existing.owner_id}'"
@@ -327,6 +335,7 @@ class RouteRegistry:
                 owner_id=owner_id, callback=callback,
                 ws_handler=ws_handler,
                 public=public, private_only=private_only,
+                gateway_exempt=gateway_exempt,
             )
             self._routes.append(entry)
             return entry
@@ -1925,7 +1934,8 @@ class HTTPListenerService(BaseService):
 
     def register_route(self, method: str, pattern: str, owner_id: str, callback,
                        ws_handler=None, public: bool = False,
-                       private_only: bool = False) -> RouteEntry:
+                       private_only: bool = False,
+                       gateway_exempt: bool = False) -> RouteEntry:
         """Register a route for a flow/task.
 
         Args:
@@ -1937,10 +1947,15 @@ class HTTPListenerService(BaseService):
                     still applies unless private_only is also true.
             private_only: if True, only clients with private IPs (RFC 1918 /
                     localhost) are accepted — even if the route is public.
+            gateway_exempt: if True, the private gateway challenge is skipped
+                    for this route while public IPs are still accepted — use
+                    for provider callbacks (media webhooks) whose URL carries
+                    its own unguessable token credential.
         """
         return self._registry.register(method, pattern, owner_id, callback,
                                         ws_handler=ws_handler,
-                                        public=public, private_only=private_only)
+                                        public=public, private_only=private_only,
+                                        gateway_exempt=gateway_exempt)
 
     def unregister_routes(self, owner_id: str):
         """Remove all routes for a flow/task."""

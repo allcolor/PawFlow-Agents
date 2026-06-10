@@ -147,7 +147,7 @@ class MediaWebhookRegistry:
             listener.register_route(
                 "POST", route_path, owner,
                 lambda req, _ticket=ticket: self._handle_request(_ticket, req),
-                public=True)
+                public=True, gateway_exempt=True)
             owners.append((listener, owner))
 
         if not owners:

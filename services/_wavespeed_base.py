@@ -416,6 +416,13 @@ class _WaveSpeedBaseService(BaseService):
             elif webhook_ticket is not None:
                 url = _extract_output_url(data, output_path=output_path)
                 if not url:
+                    # The ack may already report a failure; surface it now
+                    # instead of blocking on a callback that won't arrive.
+                    if status == "failed":
+                        payload = self._prediction_payload(data)
+                        msg = (payload.get("error") or data.get("message")
+                               or json.dumps(data)[:300])
+                        raise ServiceError(f"WaveSpeed generation failed: {msg}")
                     url = self._wait_webhook(webhook_ticket, output_path=output_path)
             else:
                 url = self._poll(data, output_path=output_path)

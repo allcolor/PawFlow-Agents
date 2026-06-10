@@ -187,6 +187,29 @@ def _extract_media_url(data: Any, *, output_path: str = "",
     return ""
 
 
+def _error_in_response(data: Any) -> str:
+    """Return a failure message if a Pixazo response body signals an error.
+
+    The synchronous generate POST can come back 200 with a failed/error
+    status (or an `error` field) instead of a media URL. In webhook mode
+    we must surface that immediately rather than block waiting for a
+    callback the provider will never send. Returns an empty string when
+    the body carries no error signal.
+    """
+    if not isinstance(data, dict):
+        return ""
+    status = str(data.get("status") or data.get("state") or "").lower()
+    if status in ("failed", "error", "cancelled", "canceled"):
+        return (data.get("message") or data.get("error")
+                or json.dumps(data, default=str)[:300])
+    err = data.get("error")
+    if err:
+        if isinstance(err, dict):
+            return err.get("message") or json.dumps(err, default=str)[:300]
+        return str(err)[:300]
+    return ""
+
+
 class _PixazoBaseService(BaseService):
     """Generic Pixazo catalog dispatcher. Subclass per category."""
 
@@ -806,6 +829,12 @@ class _PixazoBaseService(BaseService):
                 url = _extract_media_url(
                     data, output_path=output_path, url_field=url_field)
                 if not url:
+                    # The ack itself may already report a failure (bad input
+                    # URL, unsupported format, ...). Surface it now instead of
+                    # blocking on a callback the provider won't send.
+                    err = _error_in_response(data)
+                    if err:
+                        raise ServiceError(f"Pixazo generation failed: {err}")
                     url = self._wait_webhook(webhook_ticket, op)
             else:
                 polling_url = data.get(status_url_field, "") or ""

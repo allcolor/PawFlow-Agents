@@ -329,18 +329,6 @@ class EditImageHandler(ToolHandler):
         """Set a resolver: () -> (service, error_msg). Same shape as ImageGenerationHandler."""
         self._service_resolver = resolver
 
-    def _resolve_filestore_url(self, url: str, service=None) -> str:
-        """Convert fs://filestore/<id>/<name> to HTTP unless service reads it locally."""
-        if not url.startswith("fs://filestore/"):
-            return url
-        if service is not None and getattr(service, "ACCEPTS_FILESTORE_URLS", False):
-            return url
-        rest = url[len("fs://filestore/"):]
-        fid = rest.split("/", 1)[0]
-        if not fid:
-            return url
-        return f"{self._base_url}/files/{fid}"
-
     def execute(self, arguments: Dict[str, Any]) -> str:
         import time as _time
 
@@ -368,14 +356,17 @@ class EditImageHandler(ToolHandler):
             image_urls = [image_urls]
         if not image_urls:
             return "Error: image_urls is required (at least one source URL)"
-        # Resolve fs://filestore/... to HTTP only for providers that cannot read FileStore locally.
-        image_urls = [self._resolve_filestore_url(u, service=service) for u in image_urls]
-
         destination = arguments.get("destination", "filestore")
         if not hasattr(service, "edit_image"):
             return ("Error: the active image service does not implement "
                     "edit_image. Switch to a model with an edit_image "
                     "operation (e.g. 'nano-banana').")
+        # Share source images as public, gateway-key URLs for the duration
+        # of this call (revoked in the finally below) for providers that
+        # cannot read FileStore locally.
+        from core.media_share import TemporaryPublicRefs
+        share = TemporaryPublicRefs(self._base_url, self._user_id)
+        image_urls = [share.public_url(u, service=service) for u in image_urls]
 
         try:
             if hasattr(service, "set_runtime_context"):
@@ -413,6 +404,9 @@ class EditImageHandler(ToolHandler):
                     f"{write_result.get('path', filename)}")
         except Exception as e:
             return f"Error editing image: {e}"
+        finally:
+            # Revoke the temporary public access granted to source images.
+            share.restore()
 
 
 class VideoGenerationHandler(ToolHandler):
@@ -572,18 +566,6 @@ class VideoGenerationHandler(ToolHandler):
             return ("image_to_video", "reference_to_video")
         return ("generate",)
 
-    def _rewrite(self, url: str, service=None) -> str:
-        """Convert fs://filestore/<id>/<name> to HTTP unless service reads it locally."""
-        if not url or not url.startswith("fs://filestore/"):
-            return url
-        if service is not None and getattr(service, "ACCEPTS_FILESTORE_URLS", False):
-            return url
-        rest = url[len("fs://filestore/"):]
-        fid = rest.split("/", 1)[0]
-        if not fid:
-            return url
-        return f"{self._base_url}/files/{fid}"
-
     def execute(self, arguments: Dict[str, Any]) -> str:
         import time as _time
 
@@ -624,13 +606,18 @@ class VideoGenerationHandler(ToolHandler):
         if not prompt:
             return "Error: no prompt provided"
 
-        image_url = self._rewrite(arguments.get("image_url", "") or "", service=service)
-        video_url = self._rewrite(arguments.get("video_url", "") or "", service=service)
-        end_image_url = self._rewrite(arguments.get("end_image_url", "") or "", service=service)
+        # Reference inputs (image/video frames) are shared as public,
+        # gateway-key URLs only for the duration of this call, then revoked
+        # in the finally below — the provider fetches them over HTTP.
+        from core.media_share import TemporaryPublicRefs
+        share = TemporaryPublicRefs(self._base_url, self._user_id)
+        image_url = share.public_url(arguments.get("image_url", "") or "", service=service)
+        video_url = share.public_url(arguments.get("video_url", "") or "", service=service)
+        end_image_url = share.public_url(arguments.get("end_image_url", "") or "", service=service)
         reference_image_urls = arguments.get("reference_image_urls") or []
         if isinstance(reference_image_urls, str):
             reference_image_urls = [reference_image_urls]
-        reference_image_urls = [self._rewrite(u, service=service) for u in reference_image_urls]
+        reference_image_urls = [share.public_url(u, service=service) for u in reference_image_urls]
         destination = arguments.get("destination", "filestore")
 
         try:
@@ -720,6 +707,9 @@ class VideoGenerationHandler(ToolHandler):
 
         except Exception as e:
             return f"Error generating video: {e}"
+        finally:
+            # Revoke the temporary public access granted to reference inputs.
+            share.restore()
 
 
 class AudioGenerationHandler(ToolHandler):

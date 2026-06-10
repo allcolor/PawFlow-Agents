@@ -25,13 +25,15 @@ class _FakeListener:
         self.unregistered = []
 
     def register_route(self, method, pattern, owner_id, callback,
-                       ws_handler=None, public=False, private_only=False):
+                       ws_handler=None, public=False, private_only=False,
+                       gateway_exempt=False):
         self.routes.append({
             "method": method,
             "pattern": pattern,
             "owner_id": owner_id,
             "callback": callback,
             "public": public,
+            "gateway_exempt": gateway_exempt,
         })
 
     def unregister_routes(self, owner_id):
@@ -52,6 +54,10 @@ def test_media_webhook_registry_builds_public_prefixed_route(monkeypatch):
             "https://webchat.example.org/chat/webhooks/media/pixazo/")
         assert listener.routes[0]["pattern"] == ticket.route_path
         assert listener.routes[0]["public"] is True
+        # The callback comes from the provider's public egress, so the route
+        # must bypass the private gateway challenge — otherwise the POST gets
+        # the Matrix page and the waiting job times out with no error.
+        assert listener.routes[0]["gateway_exempt"] is True
     finally:
         ticket.close()
 
@@ -104,6 +110,112 @@ def test_pixazo_webhook_mode_sends_header_and_waits_for_callback(monkeypatch):
     assert captured_headers["X-Webhook-URL"].startswith(
         "https://webchat.example.org/webhooks/media/pixazo/")
     assert listener.unregistered
+
+
+def test_pixazo_webhook_mode_surfaces_ack_error_without_waiting(monkeypatch):
+    listener = _FakeListener()
+    monkeypatch.setattr(
+        "services.http_listener_service.HTTPListenerService.all_instances",
+        lambda: {9090: listener},
+    )
+    svc = PixazoImageService({
+        "api_key": "key",
+        "model": "nano-banana-pro",
+        "poll_interval": 0,
+        "timeout": 5,
+        "use_webhook": True,
+    })
+    svc._create_connection = lambda: {"ready": True}  # type: ignore[method-assign]
+    svc.set_callback_base_url("https://webchat.example.org")
+
+    # The generate POST acks 200 but already reports a failure.
+    svc._post = lambda endpoint, body, **kwargs: {  # type: ignore[assignment]
+        "status": "failed",
+        "error": "URL must be a valid HTTP or HTTPS URL",
+    }
+    # If the fix regresses, the code would block on the callback instead of
+    # raising — make that an explicit failure.
+    svc._wait_webhook = lambda *a, **k: (_ for _ in ()).throw(  # type: ignore[assignment]
+        AssertionError("waited for callback despite an ack-level error"))
+
+    with pytest.raises(ServiceError, match="valid HTTP or HTTPS URL"):
+        svc.generate(prompt="robot")
+    # The one-shot webhook route is still torn down.
+    assert listener.unregistered
+
+
+class _FakeRouteEntry:
+    def __init__(self, public=False, private_only=False, gateway_exempt=False):
+        self.public = public
+        self.private_only = private_only
+        self.gateway_exempt = gateway_exempt
+
+
+class _FakeRegistry:
+    def __init__(self, entry):
+        self._entry = entry
+
+    def match(self, command, path):
+        return (self._entry, {}) if self._entry is not None else None
+
+
+class _FakeServer:
+    def __init__(self, entry):
+        self._route_registry = _FakeRegistry(entry)
+
+
+class _FakeWFile:
+    def write(self, _data):
+        pass
+
+    def flush(self):
+        pass
+
+
+class _FakeGatewayHandler:
+    def __init__(self, entry, *, ip="203.0.113.7"):
+        self.server = _FakeServer(entry)
+        self.command = "POST"
+        self.path = "/webhooks/media/pixazo/sometoken"
+        self.headers = {}
+        self.client_address = (ip, 4321)
+        self.wfile = _FakeWFile()
+        self.responses = []
+
+    def send_response(self, code):
+        self.responses.append(code)
+
+    def send_header(self, *_args):
+        pass
+
+    def end_headers(self):
+        pass
+
+
+def test_gateway_exempt_route_bypasses_private_gateway_for_public_ip():
+    from services import private_gateway
+
+    entry = _FakeRouteEntry(public=True, gateway_exempt=True)
+    handler = _FakeGatewayHandler(entry)
+    # enabled gateway + a public-internet client IP (the provider egress).
+    handled = private_gateway._check_request_inner(
+        handler, {"enabled": True, "secret_refs": ""})
+    # False == 'let it proceed to the route'; the challenge page must NOT fire.
+    assert handled is False
+    assert handler.responses == []
+
+
+def test_public_only_route_is_still_challenged_for_public_ip():
+    from services import private_gateway
+
+    # public=True but NOT gateway_exempt: the old behaviour that served the
+    # Matrix page to the provider callback and caused the silent timeout.
+    entry = _FakeRouteEntry(public=True, gateway_exempt=False)
+    handler = _FakeGatewayHandler(entry)
+    handled = private_gateway._check_request_inner(
+        handler, {"enabled": True, "secret_refs": ""})
+    assert handled is True
+    assert handler.responses  # a challenge/redirect response was sent
 
 
 def test_image_handler_passes_callback_base_url_to_service():

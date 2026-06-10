@@ -29,8 +29,10 @@ class _FakeListener:
         self.unregistered = []
 
     def register_route(self, method, pattern, owner_id, callback,
-                       ws_handler=None, public=False, private_only=False):
-        self.routes.append({"callback": callback, "pattern": pattern, "public": public})
+                       ws_handler=None, public=False, private_only=False,
+                       gateway_exempt=False):
+        self.routes.append({"callback": callback, "pattern": pattern,
+                            "public": public, "gateway_exempt": gateway_exempt})
 
     def unregister_routes(self, owner_id):
         self.unregistered.append(owner_id)

@@ -384,6 +384,17 @@ def _check_request_inner(handler, config: Dict[str, Any]) -> bool:
                     and getattr(_entry, "public", False)
                     and getattr(_entry, "private_only", False)):
                 return False
+            # Routes flagged `gateway_exempt` carry their own URL-embedded
+            # token credential and must be reachable from the public
+            # internet (provider callbacks / media webhooks). Unlike
+            # private_only they accept external IPs, so the human challenge
+            # page must not intercept them — otherwise the provider's POST
+            # gets the Matrix HTML, our handler never runs, and the waiting
+            # job silently times out. The unguessable token in the path is
+            # the guarantee against abuse.
+            if (_entry is not None
+                    and getattr(_entry, "gateway_exempt", False)):
+                return False
     except Exception:
         logger.debug(
             "gateway public+private_only exempt check failed",

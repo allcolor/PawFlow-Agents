@@ -10,7 +10,28 @@ Most media tools accept:
 - `path`: output filename/path when writing to a filesystem service;
 - provider-specific model overrides such as `model`.
 
-`fs://filestore/...` inputs are rewritten to HTTP URLs when a provider needs to fetch the file.
+### Reference inputs (temporary public sharing)
+
+Most media tools accept reference inputs — a source image (`image_url`,
+`image_urls`, `end_image_url`, `reference_image_urls`), a source video
+(`video_url`), or a reference audio sample. When the input is an
+`fs://filestore/<id>/<name>` URL and the provider must fetch it over HTTP
+(i.e. the service does not declare `ACCEPTS_FILESTORE_URLS`), PawFlow shares the
+file **only for the duration of that one generation call**:
+
+- the referenced FileStore file is flipped to `gateway_key` access and the input
+  is rewritten to a signed `…/files/<id>?k=<hmac>` URL. That URL needs no login
+  and bypasses the private gateway challenge, so an external provider can fetch
+  the bytes;
+- when the call returns — success or failure — the file's original access level
+  is restored, so nothing stays publicly reachable beyond the generation.
+
+This requires the agent `file_base_url` (or the service `public_callback_base_url`)
+to be a public HTTPS root such as `https://webchat.example.org`. When the base
+URL is `localhost`/private, no access flip is performed and the legacy
+`<base>/files/<id>` form is returned (a public URL cannot be produced anyway).
+Providers that read FileStore locally (`ACCEPTS_FILESTORE_URLS`) keep the
+`fs://filestore/...` reference unchanged and are never flipped.
 
 ## Image Tools
 
@@ -182,6 +203,17 @@ public route only for the lifetime of the media job. The route bypasses session
 auth because providers cannot hold a PawFlow browser session, but the token is
 unpredictable and the route is removed after success, failure, cancellation, or
 timeout.
+
+The callback route is also flagged `gateway_exempt`, so it bypasses the private
+gateway challenge while still accepting public IPs. This is required: a provider
+callback arrives from the internet, and a `public`-only route is still served the
+gateway challenge page — the provider's POST would get HTML instead of reaching
+the handler, the waiting job would never be notified, and it would silently time
+out with no error. `gateway_exempt` differs from `private_only` (which rejects
+external IPs); the unpredictable URL token is what protects the route. As an
+extra safeguard, if a generate POST returns an error status synchronously
+(invalid input URL, unsupported format, ...), the error is surfaced immediately
+instead of blocking on a callback the provider will never send.
 
 Relay-aware provider URLs use one standard shape everywhere:
 `http(s)://<relay_id>/<host>:<port>/<path>`. The first path segment containing

@@ -7,6 +7,7 @@ through `core.storage_resolver.StorageResolver`, same pattern as
 `ImageGenerationHandler` / `VideoGenerationHandler`.
 """
 
+import functools
 import logging
 import os
 import time
@@ -91,6 +92,33 @@ class _CapabilityHandlerBase(ToolHandler):
     _user_id: str = ""
     _conversation_id: str = ""
     _agent_name: str = ""
+    _share = None  # active TemporaryPublicRefs for the current execute() call
+
+    def __init_subclass__(cls, **kwargs):
+        """Wrap each concrete handler's execute() in a temporary-share scope.
+
+        Every capability handler routes its reference inputs through
+        ``_rewrite``; wrapping ``execute`` here means each call shares the
+        referenced FileStore files as public, gateway-key URLs for the
+        duration of the call and revokes them afterwards — success or
+        failure — without per-handler boilerplate.
+        """
+        super().__init_subclass__(**kwargs)
+        raw_execute = cls.__dict__.get("execute")
+        if raw_execute is None:
+            return  # inherits an already-wrapped execute
+
+        @functools.wraps(raw_execute)
+        def _execute_with_share(self, arguments, _raw=raw_execute):
+            from core.media_share import TemporaryPublicRefs
+            self._share = TemporaryPublicRefs(self._base_url, self._user_id)
+            try:
+                return _raw(self, arguments)
+            finally:
+                self._share.restore()
+                self._share = None
+
+        cls.execute = _execute_with_share
 
     def set_base_url(self, base_url: str):
         self._base_url = base_url.rstrip("/")
@@ -150,6 +178,12 @@ class _CapabilityHandlerBase(ToolHandler):
         return svc, err
 
     def _rewrite(self, url: str, service=None) -> str:
+        # Inside execute() the call runs within a temporary-share scope, so
+        # FileStore refs become public gateway-key URLs that are revoked when
+        # the call returns. Outside that scope, fall back to the legacy form.
+        share = getattr(self, "_share", None)
+        if share is not None:
+            return share.public_url(url, service=service)
         return _resolve_filestore_url(url, self._base_url, service=service)
 
     def _persist(self, destination: str, filename: str, result: Dict[str, Any],
@@ -997,7 +1031,9 @@ class SpeakHandler(_CapabilityHandlerBase):
             # URL string, not a raw/base64 sample in this call path).
             ref_url = ""
             if (not ref_bytes or getattr(svc, "REQUIRES_REFERENCE_AUDIO_URL", False)) and ref_fid:
-                ref_url = f"{self._base_url.rstrip('/')}/files/{ref_fid}"
+                # Share the reference sample publicly for the duration of
+                # this call (revoked when execute() returns).
+                ref_url = self._rewrite(f"fs://filestore/{ref_fid}", service=svc)
             r = svc.clone_speak(
                 text=text,
                 reference_audio_url=ref_url,

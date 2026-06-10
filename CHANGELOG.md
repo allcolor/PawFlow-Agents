@@ -4,22 +4,77 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [1.0.0-alpha.6] — 2026-06-10
 
 ### Added
 
-- Skills repository FUSE mount (`skfs.*`): relay containers now mount
-  the Agent Skills repository read-only at `/skills`, so non-CLI
-  providers can reach a skill's asset files referenced from its
-  instructions.
+- `github.ci_autofix` flow package: auto-fix CI failures via webhooks.
+- Per-instance webhook routes minted through the reserved
+  `${_instance_id}` parameter.
+- Website: hero install command, SEO metadata, release links resolved
+  live from the GitHub API, and generated hero/diagram/docs-map/FAQ
+  visuals.
 
 ### Fixed
 
-- `SKILL.md` frontmatter no longer accumulates the read-derived
-  `declared_allowed_tools` alias on update.
-- `/skill update` is now routed to the server from the chat UI, and
-  `/add-skill` derives a short manifest description instead of copying
-  the full instructions body.
+- CI tests no longer download models from HuggingFace, and the CI job is
+  capped at 30 minutes — a stalled download could otherwise hang the job
+  until the 6h Actions limit.
+- OpenAI image generation filesystem handling and request timeout.
+- The interactive final response is now emitted as the last message
+  only; CLI task store writes fixed.
+- tmux submit tests record only the test thread's sleeps, removing a CI
+  flake.
+
+## [1.0.0-alpha.5] — 2026-06-10
+
+### Added
+
+- Expression language: documented `${...}` escaping via opaque tokens
+  that survive recursive resolution passes.
+- claude-code image: resolve and pin the latest published npm version of
+  each agent CLI so a rebuild reinstalls only on an upstream change.
+
+### Fixed
+
+- Expression resolver no longer mangles unresolved `${...}` expressions
+  (pipeline ops in content, e.g. shell parameter expansions, were
+  truncated).
+
+## [1.0.0-alpha.4] — 2026-06-09
+
+### Added
+
+- Surface the effective CCI model from `message_start`.
+- Documentation: A2A multi-hop async confirmation saga and A2A
+  multi-client isolated context patterns.
+
+### Fixed
+
+- Normalize suffixed Telegram bot commands (e.g. `/cmd@botname`).
+- Telegram command mirroring and CCI final-response relay.
+
+## [1.0.0-alpha.3] — 2026-06-09
+
+### Added
+
+- Manual tmux messages in Claude Code Interactive (CCI) are now
+  published live.
+
+### Fixed
+
+- Avoid side effects when mirroring Telegram commands into conversations.
+
+## [1.0.0-alpha.2] — 2026-06-09
+
+### Added
+
+- Telegram commands are mirrored into active conversations.
+
+### Fixed
+
+- Interactive tmux runtime isolation.
+- Preserve tmux mouse scroll in interactive terminals.
 
 ## [1.0.0-alpha.1] — 2026-05-19
 
@@ -89,6 +144,21 @@ First public release.
 - PawCode CLI (Claude Code-compatible terminal client)
 - VS Code extension connected to the same relay/runtime model
 - 4105 tests
+
+**Skills**
+- Agent Skills system: per-skill `SKILL.md` manifests with bind-mounted
+  asset directories and allowed-tools enforcement.
+- Skills repository FUSE mount (`skfs.*`): relay containers mount the
+  Agent Skills repository read-only at `/skills`, so non-CLI providers
+  can reach a skill's asset files referenced from its instructions.
+
+### Fixed
+
+- `SKILL.md` frontmatter no longer accumulates the read-derived
+  `declared_allowed_tools` alias on update.
+- `/skill update` is routed to the server from the chat UI, and
+  `/add-skill` derives a short manifest description instead of copying
+  the full instructions body.
 
 ### Security
 - Secrets encrypted at rest with AEAD v2

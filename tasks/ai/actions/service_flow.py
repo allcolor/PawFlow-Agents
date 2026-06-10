@@ -3665,7 +3665,13 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             from core.docker_utils import docker_cmd
             from services.terminal_proxy import register_terminal
 
-            state = InteractiveClaudeCodePool.instance().find_session(
+            pool = InteractiveClaudeCodePool.instance()
+            # The terminal viewer must attach tmux as the SAME uid the pool
+            # used to start the session (PAWFLOW_RUN_UID, not a hardcoded
+            # 1000) — otherwise tmux looks in /tmp/tmux-<other-uid>/ and
+            # reports "no sessions".
+            user_spec = pool._user_spec()
+            state = pool.find_session(
                 user_id, conversation_id, agent_name, service_id=service_id)
             if not state:
                 flowfile.set_content(json.dumps({
@@ -3755,7 +3761,7 @@ finally:
         pass
 '''
             cmd = docker_cmd() + [
-                "exec", "-i", "--user", "1000:1000",
+                "exec", "-i", "--user", user_spec,
                 "-e", f"PAWFLOW_TERM_COLS={cols}",
                 "-e", f"PAWFLOW_TERM_ROWS={rows}",
                 "-e", "TERM=xterm-256color",
@@ -3769,7 +3775,7 @@ finally:
                 login_session_id=flowfile.get_attribute("auth.session_id") or "",
                 server_pipe_command=cmd,
                 server_pipe_resize_command=(docker_cmd() + [
-                    "exec", "--user", "1000:1000", state.name,
+                    "exec", "--user", user_spec, state.name,
                     "tmux", "resize-window", "-t", "pawflow",
                     "-x", "{cols}", "-y", "{rows}",
                 ]))

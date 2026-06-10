@@ -27,7 +27,6 @@ _WIZARD_TTL_SECONDS = 900
 _AGENT_RESPONSE_TIMEOUT_SECONDS = 600
 _WIZARDS: Dict[str, Dict[str, Any]] = {}
 _WIZARD_LOCK = threading.Lock()
-_LIVE_EVENT_MIN_INTERVAL_SECONDS = 6.0
 _TELEGRAM_LIVE_ASSISTANT_SENT_TURNS: set[str] = set()
 _TELEGRAM_LIVE_SENT_ASSISTANT_MSG_IDS: set[str] = set()
 
@@ -911,8 +910,13 @@ class TelegramConversationBridgeTask(BaseTask):
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
         self._registered = False
-        self._last_live_event: Dict[str, float] = {}
-        self._last_live_text: Dict[str, str] = {}
+        # Pending thinking accumulator, keyed "{conversation}:thinking:{agent}".
+        # Thinking is delivered as many small blocks/snapshots; Telegram can
+        # only post discrete messages, so we buffer the burst here and flush a
+        # SINGLE consolidated block on the next non-thinking event instead of
+        # spamming every fragment plus a final duplicate.
+        self._thinking_buf: Dict[str, str] = {}
+        self._thinking_meta: Dict[str, Dict[str, Any]] = {}
 
     def get_parameter_schema(self) -> Dict[str, Any]:
         return {
@@ -955,6 +959,24 @@ class TelegramConversationBridgeTask(BaseTask):
                 and event_type in {"new_message", "thinking", "thinking_delta", "thinking_content", "tool_call", "tool_result"}
                 and data.get("role") != "user"):
             return
+        # Thinking arrives as many small blocks/snapshots. Forwarding each one
+        # floods Telegram with fragments ("bouts") plus a final duplicate of the
+        # whole thing. Instead, accumulate the thinking and emit ONE
+        # consolidated block when the burst ends — i.e. on the next tool call,
+        # tool result, or message for this agent.
+        if event_type in {"thinking", "thinking_delta", "thinking_content"}:
+            raw = _extract_thinking_text(event_type, data)
+            if raw:
+                agent_key = data.get("agent_name") or ""
+                key = f"{conversation_id}:thinking:{agent_key}"
+                self._thinking_buf[key] = _merge_thinking(
+                    self._thinking_buf.get(key, ""), raw)
+                self._thinking_meta[key] = data
+            return
+        # A non-thinking event closes the current thinking burst for this agent:
+        # flush the consolidated block before handling it.
+        self._flush_pending_thinking(conversation_id, data.get("agent_name") or "")
+
         if (event_type == "new_message" and data.get("role") == "assistant"
                 and _telegram_assistant_msg_id_was_sent(conversation_id, data)):
             return
@@ -964,20 +986,6 @@ class TelegramConversationBridgeTask(BaseTask):
         text = self._format_event(event_type, data, conversation_id=conversation_id)
         if not text and event_type != "tool_result":
             return
-        if event_type in {"thinking", "iteration_status", "thinking_delta", "thinking_content"}:
-            agent_key = data.get("agent_name") or ""
-            if event_type in {"thinking", "thinking_delta", "thinking_content"}:
-                key = f"{conversation_id}:thinking:{agent_key}"
-            else:
-                key = f"{conversation_id}:progress:{agent_key}"
-            now = time.time()
-            if self._last_live_text.get(key) == text:
-                return
-            if (event_type == "thinking"
-                    and now - self._last_live_event.get(key, 0.0) < _LIVE_EVENT_MIN_INTERVAL_SECONDS):
-                return
-            self._last_live_event[key] = now
-            self._last_live_text[key] = text
         subscribers = list(self._telegram_subscribers(conversation_id, data))
         if not subscribers:
             logger.info(
@@ -996,6 +1004,21 @@ class TelegramConversationBridgeTask(BaseTask):
                 self._send_message_attachments(user_id, chat_id, data)
             if event_type == "tool_result":
                 self._send_tool_media(user_id, chat_id, data)
+
+    def _flush_pending_thinking(self, conversation_id: str, agent_key: str) -> None:
+        """Emit the accumulated thinking for one agent as a single consolidated
+        Telegram message, then clear the buffer. No-op when nothing is pending."""
+        key = f"{conversation_id}:thinking:{agent_key}"
+        buf = self._thinking_buf.pop(key, "")
+        meta = self._thinking_meta.pop(key, None) or {}
+        if not buf.strip():
+            return
+        text = _telegram_thinking_message(meta, buf)
+        if not text:
+            return
+        for user_id, chat_id in self._telegram_subscribers(conversation_id, meta):
+            self._send(user_id, chat_id, text)
+
     def _format_event(self, event_type: str, data: Dict[str, Any],
                       conversation_id: str = "") -> str:
         if event_type == "new_message":
@@ -1226,6 +1249,33 @@ def _telegram_agent_badge(data: Dict[str, Any], fallback: str = "assistant") -> 
     if service and name != service:
         return f"{color} <b>{name_html}</b> <code>{html.escape(service)}</code>"
     return f"{color} <b>{name_html}</b>"
+
+
+def _extract_thinking_text(event_type: str, data: Dict[str, Any]) -> str:
+    """Pull the raw thinking text out of a thinking/-delta/-content event."""
+    if event_type == "thinking":
+        return str(data.get("detail") or "").strip()
+    return str(data.get("text") or data.get("content") or "").strip()
+
+
+def _merge_thinking(old: str, new: str) -> str:
+    """Accumulate consecutive thinking blocks into one consolidated text.
+
+    Handles both segmented providers (disjoint blocks — append) and providers
+    that re-send a growing snapshot (cumulative superset — replace), and drops
+    exact/substring duplicates so the consolidated block has no repetition.
+    """
+    new = (new or "").strip()
+    if not new:
+        return old or ""
+    old = old or ""
+    if not old:
+        return new
+    if new in old:
+        return old
+    if old in new:
+        return new
+    return f"{old}\n\n{new}"
 
 
 def _telegram_thinking_message(data: Dict[str, Any], text: str) -> str:

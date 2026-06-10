@@ -4,6 +4,25 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.0-alpha.10] — 2026-06-10
+
+### Fixed
+
+- Telegram now shows agent thinking as a single consolidated block per
+  reasoning burst instead of flooding the chat with every streamed fragment
+  ("bouts") followed by a duplicate of the whole thing. The conversation
+  bridge accumulates `thinking`/`thinking_delta`/`thinking_content` events and
+  flushes one merged message when the burst ends (next tool call, tool result,
+  or message), de-duplicating cumulative snapshots. This also removes the
+  message-flood that could rate-limit the bot and stall inbound Telegram
+  messages. Most visible with the Claude Code interactive provider, whose CLI
+  now emits thinking in many small blocks.
+- Claude Code interactive terminal viewer ("open in tmux") no longer reports
+  "no sessions". The webchat viewer attached/resized the tmux session as a
+  hardcoded uid 1000, but alpha.9 moved the in-container CLI (and its tmux
+  server) to `PAWFLOW_RUN_UID`; the viewer now derives the same uid from the
+  pool, so it looks in the correct `/tmp/tmux-<uid>/` socket dir.
+
 ## [1.0.0-alpha.9] — 2026-06-10
 
 ### Fixed

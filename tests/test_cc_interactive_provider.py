@@ -2227,3 +2227,30 @@ def test_cci_coordinator_dedup_sets_default_to_per_instance():
     c = _CCITurnCoordinator(event_service=None, session_token="tok")
     assert c.emitted_tool_use_ids == set()
     assert c.emitted_tool_result_ids == set()
+
+
+def test_cci_terminal_viewer_attaches_tmux_as_pool_uid_not_hardcoded():
+    """Regression: the open_cc_interactive_terminal viewer must attach/resize
+    tmux as the pool's PAWFLOW_RUN_UID-derived user_spec, not a hardcoded
+    1000:1000. When the pool starts tmux under a different uid, a hardcoded
+    viewer uid lands in the wrong /tmp/tmux-<uid>/ and reports 'no sessions'
+    (broke alpha.9, where the pool moved off 1000 but the viewer did not).
+    """
+    from pathlib import Path
+
+    src = Path("tasks/ai/actions/service_flow.py").read_text(encoding="utf-8")
+    start = src.index('if action == "open_cc_interactive_terminal":')
+    end = src.index('if action in {"open_antigravity_interactive_terminal"')
+    block = src[start:end]
+
+    # The CCI viewer derives the uid from the pool and uses it for both the
+    # attach exec and the resize exec.
+    assert "user_spec = pool._user_spec()" in block
+    assert block.count('"--user", user_spec') == 2
+    # And never pins the CLI uid to a literal inside this block.
+    assert "1000:1000" not in block
+
+    # The Antigravity viewer is a separate block whose pool is still 1000, so
+    # it legitimately keeps the literal — guard that we did not touch it.
+    agy = src[end:]
+    assert agy.count('"--user", "1000:1000"') >= 1

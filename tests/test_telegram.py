@@ -1525,14 +1525,19 @@ class TestTelegramAgentClientTask(unittest.TestCase):
         from tasks.io.telegram_agent_client import TelegramConversationBridgeTask
         task = TelegramConversationBridgeTask({"service_id": "telegram_bot"})
         task._send = MagicMock()
+        task._send_tool_media = MagicMock()
 
         with patch.object(TelegramConversationBridgeTask, "_telegram_subscribers", return_value=[("alice", "chat-1")]):
+            # Streamed thinking blocks are buffered, NOT sent as separate
+            # "bouts" — Telegram only gets discrete messages.
             task._on_event("conv1", "thinking_delta", {"agent_name": "assistant", "text": "Checking logs"})
             task._on_event("conv1", "thinking_content", {"agent_name": "assistant", "text": "Found the bug"})
+            task._send.assert_not_called()
+            # The next non-thinking event flushes ONE consolidated block.
+            task._on_event("conv1", "tool_result", {"agent_name": "assistant", "tool": "read"})
 
         assert [call.args[2] for call in task._send.call_args_list] == [
-            "💭 <i>assistant thinking</i>\n<blockquote>Checking logs</blockquote>",
-            "💭 <i>assistant thinking</i>\n<blockquote>Found the bug</blockquote>",
+            "💭 <i>assistant thinking</i>\n<blockquote>Checking logs\n\nFound the bug</blockquote>",
         ]
 
     def test_conversation_bridge_forwards_periodic_waiting_progress(self):
@@ -1855,4 +1860,52 @@ class TestTelegramFlow(unittest.TestCase):
 
 
 # ── i18n ────────────────────────────────────────────────────────────
+
+
+def _make_bridge():
+    from tasks.io.telegram_agent_client import TelegramConversationBridgeTask
+    bridge = TelegramConversationBridgeTask({"service_id": "svc"})
+    sends = []
+    bridge._send = lambda uid, cid, text: (sends.append(text), True)[1]
+    bridge._telegram_subscribers = lambda cid, data=None: [("u1", "c1")]
+    bridge._send_tool_media = lambda *a, **k: None
+    bridge._send_message_attachments = lambda *a, **k: None
+    return bridge, sends
+
+
+def test_telegram_bridge_coalesces_thinking_into_one_block():
+    """Regression: CCI thinking arrives as many small blocks. Telegram must get
+    ONE consolidated thinking message per burst, never the fragments ("bouts")
+    nor a final duplicate."""
+    bridge, sends = _make_bridge()
+    conv = "conv1"
+
+    # Three streamed thinking blocks — buffered, nothing sent yet.
+    for part in ("First part.", "Second part.", "Third part."):
+        bridge._on_event(conv, "thinking_content",
+                         {"agent_name": "claude", "text": part})
+    assert sends == [], "thinking fragments must not be sent individually"
+
+    # A tool result closes the burst -> exactly one consolidated thinking block.
+    bridge._on_event(conv, "tool_result", {"agent_name": "claude"})
+    thinking_sends = [s for s in sends if "thinking" in s]
+    assert len(thinking_sends) == 1, f"expected 1 consolidated block, got {sends!r}"
+    block = thinking_sends[0]
+    assert "First part." in block
+    assert "Second part." in block
+    assert "Third part." in block
+    assert bridge._thinking_buf == {}, "buffer must be cleared after flush"
+
+
+def test_telegram_bridge_thinking_merge_dedups_cumulative_snapshots():
+    """Providers that re-send a growing snapshot must not produce repeated text
+    in the consolidated block."""
+    bridge, sends = _make_bridge()
+    conv = "conv2"
+    bridge._on_event(conv, "thinking_content", {"agent_name": "a", "text": "Step one"})
+    bridge._on_event(conv, "thinking_content", {"agent_name": "a", "text": "Step one Step two"})
+    bridge._on_event(conv, "tool_result", {"agent_name": "a"})
+    block = [s for s in sends if "thinking" in s][0]
+    assert block.count("Step one") == 1
+    assert "Step two" in block
 

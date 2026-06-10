@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#090b0f">
   <meta name="description" content="PawFlow is a self-hosted agent runtime for real infrastructure: durable AI agents, relay-backed tools, shared context, and deterministic flows.">
   <title>PawFlow - Self-hosted agent runtime</title>
   <link rel="canonical" href="https://pawflow.allcolor.org/">
@@ -12,12 +13,54 @@
   <meta property="og:description" content="Run durable AI agents against your own files, tools, browsers, desktops, services, and workflows. Self-hosted, open source.">
   <meta property="og:url" content="https://pawflow.allcolor.org/">
   <meta property="og:image" content="https://pawflow.allcolor.org/assets/hero-banner.png">
+  <meta property="og:image:width" content="1024">
+  <meta property="og:image:height" content="1024">
+  <meta property="og:image:alt" content="PawFlow - self-hosted agent runtime">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="PawFlow - Self-hosted agent runtime">
   <meta name="twitter:description" content="Run durable AI agents against your own files, tools, browsers, desktops, services, and workflows. Self-hosted, open source.">
   <meta name="twitter:image" content="https://pawflow.allcolor.org/assets/hero-banner.png">
+  <meta name="twitter:image:alt" content="PawFlow - self-hosted agent runtime">
   <link rel="icon" href="assets/logo.png" type="image/png">
   <link rel="stylesheet" href="style.css">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "Organization",
+        "@id": "https://pawflow.allcolor.org/#organization",
+        "name": "PawFlow",
+        "url": "https://pawflow.allcolor.org/",
+        "logo": "https://pawflow.allcolor.org/assets/logo.png",
+        "sameAs": ["https://github.com/allcolor/PawFlow-Agents"]
+      },
+      {
+        "@type": "WebSite",
+        "@id": "https://pawflow.allcolor.org/#website",
+        "name": "PawFlow",
+        "url": "https://pawflow.allcolor.org/",
+        "publisher": {"@id": "https://pawflow.allcolor.org/#organization"}
+      },
+      {
+        "@type": "SoftwareApplication",
+        "@id": "https://pawflow.allcolor.org/#software",
+        "name": "PawFlow",
+        "description": "Self-hosted AI agent orchestration platform: durable agents, relay-backed tools, shared context, and deterministic flows on your own infrastructure.",
+        "url": "https://pawflow.allcolor.org/",
+        "image": "https://pawflow.allcolor.org/assets/hero-banner.png",
+        "applicationCategory": "DeveloperApplication",
+        "operatingSystem": "Linux, macOS, Windows (Docker)",
+        "softwareVersion": "1.0.0-alpha.10",
+        "license": "https://github.com/allcolor/PawFlow-Agents/blob/main/LICENSE",
+        "installUrl": "https://pawflow.allcolor.org/quickstart.html",
+        "downloadUrl": "https://github.com/allcolor/PawFlow-Agents",
+        "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"},
+        "author": {"@id": "https://pawflow.allcolor.org/#organization"}
+      }
+    ]
+  }
+  </script>
 </head>
 <body data-page="home">
   <header class="site-header" data-header>

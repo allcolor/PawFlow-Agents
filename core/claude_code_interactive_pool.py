@@ -265,6 +265,14 @@ class InteractiveClaudeCodePool:
             delay = float(os.environ.get("PAWFLOW_CCI_SUBMIT_DELAY_SECONDS", "1.0") or "1.0")
         except ValueError:
             delay = 1.0
+        # Submit with a double Enter separated by a short wait. At container
+        # restart the Claude Code TUI can drop the first Enter before its input
+        # box is focused, leaving the pasted prompt unsent. The first Enter
+        # submits in the normal case; the second guarantees submission after a
+        # restart. An extra Enter on an already-submitted or empty prompt is a
+        # no-op in the CC TUI.
+        if not self.send_keys(state, ["Enter"]):
+            return False
         if delay > 0:
             time.sleep(delay)
         return self.send_keys(state, ["Enter"])

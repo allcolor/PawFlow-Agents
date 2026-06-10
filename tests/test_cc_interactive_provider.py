@@ -1157,8 +1157,12 @@ def test_interactive_pool_send_text_pastes_then_sends_enter(monkeypatch):
     assert calls[1][0][-2:] == ["load-buffer", "-"]
     assert calls[1][1] == b"hello"
     assert calls[2][0][-3:] == ["paste-buffer", "-t", "pawflow"]
-    assert sleeps == [1.0]
+    # Double Enter separated by the submit delay: the first submits in the
+    # normal case, the second guarantees submission when the TUI drops the
+    # first Enter at container restart.
     assert calls[3][0][-1:] == ["Enter"]
+    assert sleeps == [1.0]
+    assert calls[4][0][-1:] == ["Enter"]
 
 
 def test_interactive_pool_interrupt_and_force_stop_keys(monkeypatch):

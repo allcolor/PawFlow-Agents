@@ -273,6 +273,8 @@ p { color: var(--muted); }
 .doc-body { max-width: 860px; }
 .section-block { margin-top: 54px; }
 .code-card { border: 1px solid var(--line); background: #080b10; border-radius: 8px; overflow: hidden; margin: 20px 0; }
+.hero-install { max-width: 760px; margin: 26px auto 0; text-align: left; }
+.hero-install pre { margin: 0; padding: 12px 14px; overflow-x: auto; font-size: 13px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; }
 .code-top { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; background: #111720; border-bottom: 1px solid var(--line); color: var(--quiet); font-size: 13px; }
 .code-top button { border: 1px solid var(--line); color: var(--text); background: var(--surface); border-radius: 8px; padding: 6px 10px; cursor: pointer; }
 pre { margin: 0; padding: 18px; overflow-x: auto; color: #d9f5ff; font-size: 14px; line-height: 1.65; }

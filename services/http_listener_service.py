@@ -515,6 +515,33 @@ class _RequestHandler(BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(message)
 
+    @staticmethod
+    def _filestore_request_is_public(path: str, query: str) -> bool:
+        """True when a /files/<id> GET self-authenticates (no session needed).
+
+        A public file is reachable by anyone; a gateway_key file is reachable
+        by anyone presenting the matching ?k=. Mirrors the bypass already in
+        services.private_gateway and tasks.io.validate_session_auth so the
+        inline session gate doesn't 401 a valid keyed request.
+        """
+        file_id = path.split("/")[2] if len(path.split("/")) >= 3 else ""
+        if not file_id:
+            return False
+        try:
+            from core.file_store import (
+                FileStore, ACCESS_PUBLIC, ACCESS_GATEWAY_KEY)
+            store = FileStore.instance()
+            level = store.get_access_level(file_id)
+            if level == ACCESS_PUBLIC:
+                return True
+            if level == ACCESS_GATEWAY_KEY:
+                key = (parse_qs(query or "").get("k") or [""])[0]
+                return bool(key and store.check_access(
+                    file_id, gateway_key=key))
+        except Exception:
+            logger.debug("filestore public-access probe failed", exc_info=True)
+        return False
+
     def _handle_filestore_download(self, path_params: Dict[str, str],
                                    query: str, session) -> bool:
         """Stream FileStore downloads directly from disk.
@@ -609,6 +636,16 @@ class _RequestHandler(BaseHTTPRequestHandler):
         _matched = _match[0] if _match else None
         _is_public = bool(_matched and _matched.public)
         _is_private_only = bool(_matched and _matched.private_only)
+
+        # FileStore downloads carry their own access control: a public file,
+        # or a gateway_key file fetched with a valid ?k=, authenticates
+        # without a session cookie. _handle_filestore_download still calls
+        # check_access, so let these through the session gate instead of
+        # 401-ing an unauthenticated (e.g. media-provider asset-proxy)
+        # request that holds a valid key.
+        if (not _is_public and method in ("GET", "HEAD")
+                and path.startswith("/files/")):
+            _is_public = self._filestore_request_is_public(path, query)
 
         # Private-only routes: reject public IPs immediately
         if _is_private_only:

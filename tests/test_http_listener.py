@@ -1596,3 +1596,60 @@ class TestBaseTaskPendingInput:
 
         task = DummyTask({})
         assert task.has_pending_input() is False
+
+
+# ---------------------------------------------------------------------------
+# Inline session-auth bypass for self-authenticating FileStore downloads
+# ---------------------------------------------------------------------------
+
+class TestFilestoreRequestIsPublic:
+    """_RequestHandler._filestore_request_is_public — the gate that lets a
+    public / valid-?k= /files download skip the session cookie so an
+    unauthenticated media-provider asset-proxy fetch isn't 401'd.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _store(self, tmp_path):
+        from core.file_store import FileStore
+        store = FileStore(base_dir=str(tmp_path / "files"))
+        FileStore._instance = store
+        yield store
+        FileStore._instance = None
+
+    @staticmethod
+    def _probe(file_id, key=""):
+        path = f"/files/{file_id}/logo.png"
+        query = f"k={key}" if key else ""
+        return _RequestHandler._filestore_request_is_public(path, query)
+
+    def _make(self, store):
+        return store.store("logo.png", b"\x89PNG", "image/png",
+                           user_id="u1", conversation_id="c1")
+
+    def test_public_file_bypasses_session(self, _store):
+        fid = self._make(_store)
+        _store.set_access(fid, "public", owner_user_id="u1")
+        assert self._probe(fid) is True
+
+    def test_gateway_key_with_valid_key_bypasses_session(self, _store):
+        fid = self._make(_store)
+        _store.set_access(fid, "gateway_key", owner_user_id="u1")
+        key = _store._derive_gateway_key(fid)
+        assert self._probe(fid, key=key) is True
+
+    def test_gateway_key_without_key_does_not_bypass(self, _store):
+        fid = self._make(_store)
+        _store.set_access(fid, "gateway_key", owner_user_id="u1")
+        assert self._probe(fid) is False
+
+    def test_gateway_key_with_wrong_key_does_not_bypass(self, _store):
+        fid = self._make(_store)
+        _store.set_access(fid, "gateway_key", owner_user_id="u1")
+        assert self._probe(fid, key="deadbeef") is False
+
+    def test_private_file_still_requires_session(self, _store):
+        fid = self._make(_store)  # default access is private
+        assert self._probe(fid) is False
+
+    def test_unknown_file_is_not_public(self, _store):
+        assert self._probe("nope") is False

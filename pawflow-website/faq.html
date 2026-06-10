@@ -57,7 +57,7 @@
       "name": "What is the difference between a server relay and a remote relay?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "The server relay is the managed PawFlow-side relay service used for brokering and diagnostics. A remote relay is the client installed on the machine that owns the workspace or desktop, using Relay Desktop for a GUI install or Relay CLI for terminal/server machines."
+        "text": "A server relay is a full relay that runs on the PawFlow server itself, with the same filesystem, shell, browser, and tool surfaces as any other relay. It is the pure remote self-hosted setup: agents (and you) work directly in server-side workspaces, no extra machine needed. A remote relay is the client installed on the machine that owns the workspace or desktop, using Relay Desktop for a GUI install or Relay CLI for terminal/server machines."
       }
     },
     {
@@ -73,7 +73,7 @@
       "name": "Can I open terminals from webchat?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Yes. The webchat workspace menu can expose terminals for the remote Docker relay workspace, the local host surface when `allow_local` is enabled, and the relay server/runtime environment for diagnostics. Keep those surfaces separate so operators know whether commands run in Docker, on the host, or in the relay runtime."
+        "text": "Yes. The webchat workspace menu can expose terminals for the remote Docker relay workspace, the local host surface when `allow_local` is enabled, and the server relay workspace for working directly on the PawFlow server. Keep those surfaces separate so operators know whether commands run in Docker, on the host, or on the server."
       }
     },
     {
@@ -204,9 +204,9 @@
       <details open data-reveal><summary>Is PawFlow a hosted agent cloud?</summary><p>No. PawFlow is designed to be self-hosted. You run the server and decide which LLM providers, relays, workspaces, secrets, and media services are connected.</p></details>
       <details data-reveal id="security"><summary>What leaves my machine?</summary><p>It depends on provider and tool configuration. Prompts and selected context go to the chosen LLM provider. Relay tool requests cross from PawFlow to the relay. Media prompts and source media may go to configured media providers. Your deployment controls those boundaries.</p></details>
       <details data-reveal><summary>Why use a relay?</summary><p>The relay lets agents work next to a filesystem, shell, browser, desktop, or local service without giving the PawFlow server permanent direct filesystem access. It is the main boundary between orchestration and execution.</p></details>
-      <details data-reveal><summary>What is the difference between a server relay and a remote relay?</summary><p>The server relay is the managed PawFlow-side relay service used for brokering and diagnostics. A remote relay is the client installed on the machine that owns the workspace or desktop, using Relay Desktop for a GUI install or Relay CLI for terminal/server machines.</p></details>
+      <details data-reveal><summary>What is the difference between a server relay and a remote relay?</summary><p>A server relay is a full relay that runs on the PawFlow server itself, with the same filesystem, shell, browser, and tool surfaces as any other relay. It is the pure remote self-hosted setup: agents (and you) work directly in server-side workspaces, no extra machine needed. A remote relay is the client installed on the machine that owns the workspace or desktop, using Relay Desktop for a GUI install or Relay CLI for terminal/server machines.</p></details>
       <details data-reveal><summary>Can agents use a full desktop?</summary><p>Yes. With Desktop Relay, agents can inspect and operate a full desktop through screen, browser, and VNC-style tools. If the relay is started with `allow_local`, the accessible desktop can be the local desktop where that relay runs; otherwise the boundary is the relay container or configured remote desktop.</p></details>
-      <details data-reveal><summary>Can I open terminals from webchat?</summary><p>Yes. The webchat workspace menu can expose terminals for the remote Docker relay workspace, the local host surface when `allow_local` is enabled, and the relay server/runtime environment for diagnostics. Keep those surfaces separate so operators know whether commands run in Docker, on the host, or in the relay runtime.</p></details>
+      <details data-reveal><summary>Can I open terminals from webchat?</summary><p>Yes. The webchat workspace menu can expose terminals for the remote Docker relay workspace, the local host surface when `allow_local` is enabled, and the server relay workspace for working directly on the PawFlow server. Keep those surfaces separate so operators know whether commands run in Docker, on the host, or on the server.</p></details>
       <details data-reveal><summary>What are the context and memory editors?</summary><p>The context editor lets an operator inspect and adjust the short-term context sent to the selected agent. The memory editor is for durable long-term memory: review, correct, delete, and audit remembered facts before they influence future turns.</p></details>
       <details data-reveal><summary>How do interactive CLI providers run?</summary><p>Subscription-backed interactive providers such as Claude Code interactive and Antigravity/Agy run through observable CLI sessions, including tmux-backed runtime state. This makes login, approvals, streaming, and provider-side issues inspectable from the relay/webchat tooling.</p></details>
       <details data-reveal><summary>Where does VS Code/code-server fit?</summary><p>The webchat can open VS Code/code-server against a linked relay workspace, so a human can inspect diffs, edit files, and run manual review while agents continue using the same relay-backed filesystem and tools.</p></details>

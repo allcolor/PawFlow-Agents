@@ -98,6 +98,12 @@ class _CCITurnCoordinator:
         self.block_callback = block_callback
         self.turn_callback = turn_callback
         self.text_parts: list[str] = []
+        # Per-API-message text tracking: a CCI turn spans several
+        # /v1/messages calls (text → tool use → text …). The final visible
+        # answer is the LAST message's text, not the whole-turn join —
+        # channel bridges (Telegram) relay LLMResponse.content verbatim.
+        self._message_text_parts: list[str] = []
+        self._last_message_text = ""
         self.thinking_parts: list[str] = []
         self.turn_tool_calls: list[dict] = []
         self.tool_blocks: dict[int, dict] = {}
@@ -220,6 +226,10 @@ class _CCITurnCoordinator:
             ptype = payload.get("type") or name
             request_id = event.get("request_id", "") or ""
             if ptype == "message_start":
+                # A new API message begins — fold the previous one so
+                # _last_message_text always holds the latest completed
+                # message that produced text.
+                self._finalize_message_text()
                 msg = payload.get("message") or {}
                 model = msg.get("model")
                 if model:
@@ -310,7 +320,8 @@ class _CCITurnCoordinator:
             elif ptype == "message_stop":
                 continue
 
-        text = "".join(self.text_parts)
+        self._finalize_message_text()
+        text = self._last_message_text
         total_ms = (time.time() - started_at) * 1000.0
         first_event_ms = ((self._first_event_at - started_at) * 1000.0
                           if self._first_event_at else 0.0)
@@ -360,8 +371,14 @@ class _CCITurnCoordinator:
         if text:
             self._text_block_buf += text
             self.text_parts.append(text)
+            self._message_text_parts.append(text)
             if self.callback:
                 self.callback(text)
+
+    def _finalize_message_text(self) -> None:
+        if self._message_text_parts:
+            self._last_message_text = "".join(self._message_text_parts)
+            self._message_text_parts = []
 
     def _append_thinking(self, text: str) -> None:
         if text:

@@ -111,6 +111,12 @@ class _AntigravityTurnCoordinator:
         self.emitted_tool_result_ids = emitted_tool_result_ids if emitted_tool_result_ids is not None else set()
         self.text_parts: list[str] = []
         self._text_block_buf = ""
+        # Per-segment text tracking: segments are delimited by tool
+        # boundaries (every _flush_text_block call-site). The final visible
+        # answer is the LAST segment, not the whole-turn join — channel
+        # bridges (Telegram) relay LLMResponse.content verbatim.
+        self._segment_text_parts: list[str] = []
+        self._last_segment_text = ""
         self.thinking_parts: list[str] = []
         self.turn_tool_calls: list[dict] = []
         self.tool_by_id: dict[str, dict] = {}
@@ -156,7 +162,8 @@ class _AntigravityTurnCoordinator:
             if not self._handle_event(event):
                 continue
 
-        text = "".join(self.text_parts)
+        self._finalize_segment_text()
+        text = self._last_segment_text
         thinking = "".join(self.thinking_parts)
         return LLMResponse(
             content=text,
@@ -240,6 +247,7 @@ class _AntigravityTurnCoordinator:
         text = event.get("text", "") or "".join(event.get("texts") or [])
         if text:
             self.text_parts.append(text)
+            self._segment_text_parts.append(text)
             self._text_block_buf += text
             if self._awaiting_tool_followup:
                 self._awaiting_tool_followup = False
@@ -267,7 +275,13 @@ class _AntigravityTurnCoordinator:
             self._done_at = time.time()
         return True
 
+    def _finalize_segment_text(self) -> None:
+        if self._segment_text_parts:
+            self._last_segment_text = "".join(self._segment_text_parts)
+            self._segment_text_parts = []
+
     def _flush_text_block(self) -> None:
+        self._finalize_segment_text()
         if not self.block_callback:
             return
         text = self._text_block_buf

@@ -11,7 +11,15 @@ proxy. The provider does not read Claude Code transcripts or terminal output.
 - The container maps `api.anthropic.com` to `127.0.0.1`.
 - A root-owned local TLS proxy listens on port `443` and forwards requests to
   the real Anthropic endpoint with SNI `api.anthropic.com`.
-- Claude Code runs as user `pawflow` inside tmux.
+- Claude Code runs as user `pawflow` (uid 1000) inside tmux.
+- The session workdir is provisioned host-side by the server under the
+  server's own uid with 755 dirs. The tmux launcher therefore pre-creates
+  and chowns the CLI-owned state subtrees (`tasks/` for the CLI task store,
+  `projects/` for transcripts and the memory directory) to uid 1000 before
+  dropping privileges — without this the CLI cannot write its own state
+  (TaskCreate fails with ENOENT/EACCES on the task-list lock). Everything
+  else in the workdir stays server-owned; the server never writes inside
+  those two subtrees.
 - The Docker container sees the host session root at `/cc_sessions_host`. Each
   tmux launch creates a private mount namespace and bind-mounts
   `/cc_sessions_host/<user>` over `/cc_sessions`, keeping Claude Code paths stable

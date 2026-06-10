@@ -114,6 +114,52 @@ def test_turn_coordinator_assembles_text_thinking_and_native_tool_use():
     assert turns == []
 
 
+def test_turn_coordinator_final_content_is_last_api_message_text():
+    """A CCI turn spans several API messages (narration -> tool -> answer).
+
+    LLMResponse.content must carry ONLY the last message's text — channel
+    bridges (Telegram) relay it verbatim as the final reply. Joining the
+    whole turn concatenated every intermediate narration above the final
+    answer in the relayed message.
+    """
+    events = [
+        _sse("message_start", {"type": "message_start",
+                               "message": {"model": "claude-opus-4-8"}}),
+        _sse("content_block_delta", {
+            "type": "content_block_delta", "index": 0,
+            "delta": {"type": "text_delta", "text": "Je lis les fichiers."}}),
+        _sse("content_block_stop", {"type": "content_block_stop", "index": 0}),
+        _sse("content_block_start", {
+            "type": "content_block_start", "index": 1,
+            "content_block": {"type": "tool_use", "id": "toolu_1", "name": "read"}}),
+        _sse("content_block_delta", {
+            "type": "content_block_delta", "index": 1,
+            "delta": {"type": "input_json_delta", "partial_json": '{"path":"a.md"}'}}),
+        _sse("content_block_stop", {"type": "content_block_stop", "index": 1}),
+        _sse("message_stop", {"type": "message_stop"}),
+        _sse("message_start", {"type": "message_start",
+                               "message": {"model": "claude-opus-4-8"}}),
+        _sse("content_block_delta", {
+            "type": "content_block_delta", "index": 0,
+            "delta": {"type": "text_delta", "text": "Voici la review finale."}}),
+        _sse("content_block_stop", {"type": "content_block_stop", "index": 0}),
+        _sse("message_stop", {"type": "message_stop"}),
+        {"type": "hook", "hook_event_name": "Stop", "input": {"hook_event_name": "Stop"}},
+    ]
+
+    blocks = []
+    resp = _CCITurnCoordinator(
+        _Events(events), "sess",
+        block_callback=lambda kind, payload: blocks.append((kind, payload)),
+    ).run()
+
+    assert resp.content == "Voici la review finale."
+    # Every message of the turn is still published individually (the
+    # live-stream protocol shared by webchat and Telegram).
+    assert ("text", {"text": "Je lis les fichiers."}) in blocks
+    assert ("text", {"text": "Voici la review finale."}) in blocks
+
+
 def test_turn_coordinator_captures_effective_model_from_message_start():
     events = [
         _sse("message_start", {
@@ -1381,6 +1427,10 @@ def test_interactive_pool_starts_tmux_in_normal_provider_namespace(monkeypatch):
     assert "mkdir -p /cc_sessions" in shell
     assert "mount --bind /cc_sessions_host/u /cc_sessions" in shell
     assert "cd /cc_sessions/c/a" in shell
+    # CLI-owned state subtrees are pre-created and chowned to the tmux
+    # uid so the claude CLI can write its task store and transcripts in
+    # the server-provisioned (server-owned, 755) workdir.
+    assert "mkdir -p tasks projects && chown -R 1000:1000 tasks projects" in shell
     assert "HOME=/cc_sessions/c/a" in shell
     assert "CLAUDE_CONFIG_DIR=/cc_sessions/c/a" in shell
     assert "--mcp-config /cc_sessions/c/a/.mcp.json" in shell

@@ -779,7 +779,13 @@ class InteractiveClaudeCodePool:
         shell = (
             "mkdir -p /cc_sessions && "
             f"mount --bind {shlex.quote(user_slot)} /cc_sessions && "
-            f"cd {shlex.quote(ns_workdir)} && ("
+            f"cd {shlex.quote(ns_workdir)} && "
+            # The server provisions the workdir host-side under its own uid
+            # with 755 dirs, so the uid-1000 CLI cannot create its own state
+            # there. Pre-create and adopt the CLI-owned subtrees (task store,
+            # transcripts/memory under projects/) — the server never writes
+            # inside them, everything else stays server-owned.
+            "mkdir -p tasks projects && chown -R 1000:1000 tasks projects && ("
             f"{drop_privs} tmux kill-session -t pawflow 2>/dev/null || true; "
             f"{drop_privs} tmux new-session -d -s pawflow "
             f"'env HOME={shlex.quote(ns_workdir)} USER=pawflow "

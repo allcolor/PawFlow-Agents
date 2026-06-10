@@ -94,7 +94,10 @@ def test_antigravity_turn_coordinator_flushes_text_at_tool_boundaries(monkeypatc
         turn_callback=lambda text, tool_calls, thinking="": turns.append((text, tool_calls, thinking)),
     ).run()
 
-    assert response.content == "I will inspect.Done."
+    # content is the FINAL visible message (last segment), not the
+    # whole-turn join — channel bridges relay it verbatim as the final
+    # reply, while each segment is still published individually below.
+    assert response.content == "Done."
     assert blocks == [
         ("text", {"text": "I will inspect."}),
         ("tool_use", {"id": "tc1", "name": "list_dir", "arguments": {"DirectoryPath": "."}, "tool_origin": "native"}),
@@ -194,6 +197,39 @@ def test_antigravity_turn_coordinator_ignores_tool_step_stop(monkeypatch, tmp_pa
     assert response.content == "final answer"
 
 
+def test_antigravity_final_content_is_last_segment_not_turn_join(monkeypatch, tmp_path):
+    """content carries only the final visible message (last segment).
+
+    Channel bridges (Telegram) relay LLMResponse.content verbatim as the
+    final reply; joining the whole turn concatenated every intermediate
+    narration above the final answer.
+    """
+    import core.llm_providers.antigravity_interactive as agi
+
+    monkeypatch.setattr(agi, "_POST_DONE_IDLE_DRAIN_SECONDS", 0)
+    log_path = tmp_path / "observer.jsonl"
+    events = [
+        {"type": "ag_text_delta", "text": "Je lis les fichiers."},
+        {"type": "ag_text_delta", "tool_calls": [{
+            "id": "tc1", "name": "read", "arguments": {"path": "a.md"},
+        }]},
+        {"type": "ag_text_delta", "tool_results": [{
+            "tool_use_id": "tc1", "content": "ok",
+        }]},
+        {"type": "ag_text_delta", "text": "Voici la review finale.", "done": True},
+    ]
+    log_path.write_text("".join(json.dumps(e) + "\n" for e in events), encoding="utf-8")
+
+    blocks = []
+    response = _AntigravityTurnCoordinator(
+        str(log_path), offset=0,
+        block_callback=lambda kind, payload: blocks.append((kind, payload)),
+    ).run()
+
+    assert response.content == "Voici la review finale."
+    assert ("text", {"text": "Je lis les fichiers."}) in blocks
+
+
 def test_antigravity_turn_coordinator_does_not_finish_on_text_stop_without_done(monkeypatch, tmp_path):
     import threading
     import time
@@ -214,7 +250,9 @@ def test_antigravity_turn_coordinator_does_not_finish_on_text_stop_without_done(
     threading.Thread(target=append_late_answer, daemon=True).start()
     response = _AntigravityTurnCoordinator(str(log_path), offset=0).run()
 
-    assert response.content == "first part second part"
+    # finish_reason flushes a segment boundary: the late continuation is
+    # the final visible message, so content carries only that segment.
+    assert response.content == " second part"
 
 
 def test_antigravity_turn_coordinator_waits_for_tool_result_after_step_stop(monkeypatch, tmp_path):

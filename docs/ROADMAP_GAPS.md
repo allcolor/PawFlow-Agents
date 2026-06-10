@@ -469,3 +469,95 @@ C7 (permissions) ← tool approval gate [done]
 | **Sprint 8** | A4 (PWA mobile), C2 (/diff viewer) | 1 week |
 | **Sprint 9** | C5 (sparse), C6 (file hooks), D3 (themes) | 1 day |
 | **Sprint 10** | D1 (marketplace), D2 (channels), D5 (remote), D6 (@mention) | ongoing |
+
+---
+
+## G. Review Follow-ups (weekly review, 2026-06-10)
+
+Findings from the read-only review of the 2026-06-03 → 2026-06-10 commit range
+(159 commits, full suite green at HEAD `84fa2e08`). None are regressions; all
+three are hardening/robustness improvements to schedule later.
+
+### G1. Narrow container security-opt (drop blanket `unconfined`)
+**Priority:** P2 — security hardening
+**Effort:** Medium (0.5–1 day, includes empirical verification)
+**Dependencies:** None
+
+**Context:** `a59f3333` added `--security-opt apparmor:unconfined` and
+`--security-opt seccomp=unconfined` to the CC interactive and Antigravity
+observer containers (`core/claude_code_interactive_pool.py` and
+`core/antigravity_observer_pool.py`, docker run builders) so the in-container
+`unshare -m` + `mount --bind` tmux isolation works. Combined with
+`--cap-add SYS_ADMIN` and `--user root`, isolation of containers that run
+agent CLIs with `--dangerously-skip-permissions` is much weaker than needed.
+
+**Plan:**
+1. Empirically determine which opt is actually required. Docker's *default*
+   seccomp profile conditionally allows `mount`/`umount2`/`unshare` when the
+   container has `CAP_SYS_ADMIN` — the blocker was most likely only the
+   `docker-default` AppArmor profile (denies `mount` regardless of caps).
+   Test matrix on an Ubuntu host: SYS_ADMIN + default seccomp +
+   `apparmor:unconfined` → run the bind-mount/tmux sequence.
+2. If default seccomp passes: remove `seccomp=unconfined` from both pools.
+3. Replace `apparmor:unconfined` with a custom profile (new file
+   `docker/apparmor/pawflow-mount`): clone of `docker-default` plus
+   `mount options=(rw, bind) -> /cc_sessions/**` and matching `umount` rules.
+   Loaded via `apparmor_parser -r` at install time (installer step + docs).
+4. Runtime wiring: probe whether the `pawflow-mount` profile is loaded
+   (`/sys/kernel/security/apparmor/profiles`); if yes use
+   `--security-opt apparmor=pawflow-mount`, else fall back to today's
+   `apparmor:unconfined` with a WARNING bulletin so hosts without AppArmor
+   (non-Ubuntu) keep working.
+5. Tests: unit-test the docker-args builder for both branches (profile
+   present / absent) in `tests/test_cc_interactive_provider.py` and
+   `tests/test_antigravity_observer.py`; manual smoke on a real host.
+6. Docs: security section of `docs/docker.md` + `docs/CLAUDE_CODE_INTERACTIVE.md`.
+
+### G2. Rotate interactive proxy logs inside containers
+**Priority:** P3 — robustness
+**Effort:** Small (1–2h)
+**Dependencies:** None
+
+**Context:** the CCI proxy is launched with
+`exec python3 /opt/pawflow/cc_interactive_proxy.py >> /tmp/cci_proxy.log 2>&1`
+(`core/claude_code_interactive_pool.py`) and the AG observer proxy with the
+same pattern (`core/antigravity_observer_pool.py`). `/tmp` is a 512 MB tmpfs;
+a long-lived interactive container can slowly fill it (proxy log grows
+unbounded), which would break tool calls writing to `/tmp`.
+
+**Plan:**
+1. Keep the shell `>>` redirect (it captures interpreter-level tracebacks
+   before logging is configured) and add a size guard inside each proxy:
+   at startup and then periodically (existing event/poll loop), if the log
+   file exceeds ~20 MB, `os.truncate(path, 0)` — safe with `O_APPEND`
+   writers, no fd dance needed.
+2. Factor the guard as a small helper shared by both proxies (each file is
+   copied standalone into the container, so duplicate the ~10-line helper
+   rather than adding an import dependency).
+3. Tests: unit test the truncate guard (size below/above threshold) for both
+   proxy modules.
+4. Docs: log location + rotation note in `docs/CLAUDE_CODE_INTERACTIVE.md`
+   and `docs/ANTIGRAVITY_OBSERVER.md`.
+
+### G3. Branch discipline for risky relay/WebSocket work
+**Priority:** Process
+**Effort:** Trivial
+**Dependencies:** None
+
+**Context:** 7 revert commits landed on `main` in one week (code-server WS
+routing ×2, desktop relay fallback ×2, gateway bypass, private-only routes,
+Codex event unwrap). Net state is coherent and tested, but `main` carried
+transient broken states for transport-layer changes that are hard to unit
+test.
+
+**Plan:**
+1. Adopt `feat/<topic>` branches for relay/WebSocket/proxy transport work;
+   merge to `main` only after CI + a manual smoke of the affected surface
+   (code-server iframe, VNC, desktop relay). CI already runs on
+   `pull_request` (`.github/workflows/ci.yml`), so no pipeline change needed.
+2. Add a short note to `CONTRIBUTING.md`: “`main` must stay releasable;
+   transport-layer changes (relay tunnels, WebSocket proxying, capability
+   routes) go through a feature branch with a manual smoke checklist.”
+3. Optional: a `docs/smoke_checklist.md` with the 5-minute manual pass
+   (code-server loads, VNC connects, desktop relay tunnel, Telegram bridge
+   round-trip) to make the pre-merge smoke repeatable.

@@ -1440,11 +1440,12 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
             return msg.get("result") or {}
 
     def _codex_app_initialize(self, proc, stderr_lines: Optional[queue.Queue[str]] = None) -> None:
+        from core import __version__
         self._codex_app_request(proc, "initialize", {
             "clientInfo": {
                 "name": "pawflow_codex_app_server",
                 "title": "PawFlow Codex App Server",
-                "version": "1.0.0a1",
+                "version": __version__,
             },
             "capabilities": {"experimentalApi": True},
         }, stderr_lines=stderr_lines)

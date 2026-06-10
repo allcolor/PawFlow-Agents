@@ -14,7 +14,7 @@ from datetime import datetime
 import uuid
 import io
 
-__version__ = "1.0.0a1"
+__version__ = "1.0.0a6"
 __author__ = "PawFlow Team"
 
 

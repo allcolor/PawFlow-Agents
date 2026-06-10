@@ -1402,13 +1402,14 @@ class LLMGeminiMixin(GeminiSessionMixin):
             return msg.get("result") or {}
 
     def _gemini_acp_initialize(self, proc) -> dict:
+        from core import __version__
         return self._gemini_acp_request(proc, "initialize", {
             "protocolVersion": 1,
             "clientCapabilities": {},
             "clientInfo": {
                 "name": "pawflow_gemini_acp",
                 "title": "PawFlow Gemini ACP",
-                "version": "1.0.0a1",
+                "version": __version__,
             },
         }, timeout_s=30.0)
 

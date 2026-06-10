@@ -4,6 +4,31 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.0-alpha.7] — 2026-06-10
+
+### Added
+
+- Media reference inputs (image/video/audio) are shared as public,
+  gateway-key URLs only for the duration of a single generation call and
+  revoked afterwards, letting external providers fetch FileStore assets
+  without leaving them publicly reachable. Wired into `generate_video`,
+  `edit_image`, and every capability handler.
+- Website: Telegram surfaced as a first-class agent client — homepage
+  showcase section and a Channels how-to recipe with a real chat
+  screenshot.
+
+### Fixed
+
+- Media provider webhooks: callback routes now bypass the private gateway
+  challenge (`gateway_exempt`) while still accepting public IPs, so a
+  provider's internet callback reaches PawFlow instead of the challenge
+  page — previously the job was never notified and silently timed out.
+- Webhook mode now surfaces a synchronous-ack error (invalid input URL,
+  unsupported format, ...) immediately instead of blocking on a callback
+  that will never arrive.
+- CC interactive: double-Enter submit so a message is not dropped when it
+  is sent right after a restart.
+
 ## [1.0.0-alpha.6] — 2026-06-10
 
 ### Added

@@ -1,0 +1,163 @@
+{
+  "id": "github-ci-autofix",
+  "name": "ci_autofix",
+  "version": "1.0.0",
+  "description": "GitHub webhook (workflow_run) on the main PawFlow listener: verifies the HMAC signature, and when a CI run fails on the configured branch, injects a message into a configurable conversation asking the agent to fix and push.",
+  "parameters": {
+    "port": "",
+    "ci_branch": "main",
+    "target_conversation_id": "",
+    "target_user_id": "",
+    "target_agent": "claude"
+  },
+  "services": {
+    "http_listener": {
+      "type": "httpListener",
+      "parameters": {
+        "host": "0.0.0.0",
+        "port": "${port}"
+      }
+    }
+  },
+  "tasks": {
+    "webhook_in": {
+      "type": "httpReceiver",
+      "parameters": {
+        "service_id": "http_listener",
+        "routes": [
+          {
+            "method": "POST",
+            "pattern": "/webhooks/github",
+            "relationship": "github_webhook",
+            "public": true
+          }
+        ]
+      }
+    },
+    "inject_secret": {
+      "type": "updateAttribute",
+      "parameters": {
+        "set": {
+          "webhook.secret": "${github_webhook_secret}"
+        }
+      }
+    },
+    "decide": {
+      "type": "executeScript",
+      "parameters": {
+        "script_engine": "python",
+        "script": "import hmac, hashlib, json\nsecret = (attributes.get('webhook.secret') or '')\nsig = (attributes.get('http.header.x-hub-signature-256') or '')\nraw = content.encode('utf-8')\nexpected = 'sha256=' + hmac.new(secret.encode('utf-8'), raw, hashlib.sha256).hexdigest()\nvalid = bool(secret) and bool(sig) and hmac.compare_digest(sig, expected)\ntarget_branch = '${ci_branch}'\ndecision = 'ignore'\nif not valid:\n    decision = 'bad_sig'\nelse:\n    try:\n        body = json.loads(content)\n    except Exception:\n        body = {}\n    wr = body.get('workflow_run') or {}\n    action = body.get('action', '')\n    branch = wr.get('head_branch', '')\n    conclusion = wr.get('conclusion', '')\n    repo = (body.get('repository') or {}).get('full_name', '')\n    flowfile.set_attribute('gh.action', action)\n    flowfile.set_attribute('gh.branch', branch)\n    flowfile.set_attribute('gh.conclusion', conclusion)\n    flowfile.set_attribute('gh.run_url', wr.get('html_url', ''))\n    flowfile.set_attribute('gh.sha', wr.get('head_sha', ''))\n    flowfile.set_attribute('gh.workflow', wr.get('name', ''))\n    flowfile.set_attribute('gh.run_id', str(wr.get('id', '')))\n    flowfile.set_attribute('gh.repo', repo)\n    if action == 'completed' and branch == target_branch and conclusion == 'failure':\n        decision = 'fix'\nflowfile.set_attribute('flow.decision', decision)\n"
+      }
+    },
+    "route": {
+      "type": "routeOnAttribute",
+      "parameters": {
+        "routing_strategy": "route_to_matched",
+        "routes": {
+          "bad_sig": {
+            "attribute": "flow.decision",
+            "operator": "equals",
+            "value": "bad_sig"
+          },
+          "fix": {
+            "attribute": "flow.decision",
+            "operator": "equals",
+            "value": "fix"
+          },
+          "ignore": {
+            "attribute": "flow.decision",
+            "operator": "equals",
+            "value": "ignore"
+          }
+        },
+        "default_relationship": "ignore"
+      }
+    },
+    "build_prompt": {
+      "type": "executeScript",
+      "parameters": {
+        "script_engine": "python",
+        "script": "repo = attributes.get('gh.repo', '')\nbranch = attributes.get('gh.branch', '')\nrun_url = attributes.get('gh.run_url', '')\nsha = attributes.get('gh.sha', '')\nwf = attributes.get('gh.workflow', '')\nresult = (\n    'Le CI GitHub a echoue sur ' + repo + ' (branche ' + branch + ').\\n'\n    'Workflow: ' + wf + '\\n'\n    'Run: ' + run_url + '\\n'\n    'Commit: ' + sha + '\\n\\n'\n    'Analyse les logs du run echoue (gh run view --log-failed, ou via le web), identifie la cause racine, '\n    'corrige le code, puis commit + push la correction sur ' + branch + '.\\n'\n    'Garde-fou: si apres 3 tentatives le CI echoue toujours, arrete, ne repush pas, et signale le blocage.'\n)\n"
+      }
+    },
+    "spawn_fix": {
+      "type": "spawnAgent",
+      "parameters": {
+        "conversation_id": "${target_conversation_id}",
+        "user_id": "${target_user_id}",
+        "agent_name": "${target_agent}",
+        "mode": "async",
+        "context_mode": "isolated"
+      }
+    },
+    "finalize_ack": {
+      "type": "executeScript",
+      "parameters": {
+        "script_engine": "python",
+        "script": "import json\ndecision = attributes.get('flow.decision', 'ignore')\nstatus = '401' if decision == 'bad_sig' else '200'\nflowfile.set_attribute('http.response.status', status)\nflowfile.set_attribute('http.response.header.Content-Type', 'application/json')\nlabel = {'bad_sig': 'rejected', 'fix': 'accepted', 'ignore': 'ignored'}.get(decision, 'ignored')\nresult = json.dumps({'status': label, 'decision': decision})\n"
+      }
+    },
+    "respond": {
+      "type": "handleHTTPResponse",
+      "parameters": {
+        "service_id": "http_listener",
+        "content_type": "application/json"
+      }
+    }
+  },
+  "relations": [
+    {
+      "from": "webhook_in",
+      "to": "inject_secret",
+      "type": "github_webhook"
+    },
+    {
+      "from": "inject_secret",
+      "to": "decide",
+      "type": "success"
+    },
+    {
+      "from": "decide",
+      "to": "route",
+      "type": "success"
+    },
+    {
+      "from": "route",
+      "to": "finalize_ack",
+      "type": "bad_sig"
+    },
+    {
+      "from": "route",
+      "to": "finalize_ack",
+      "type": "ignore"
+    },
+    {
+      "from": "route",
+      "to": "build_prompt",
+      "type": "fix"
+    },
+    {
+      "from": "build_prompt",
+      "to": "spawn_fix",
+      "type": "success"
+    },
+    {
+      "from": "spawn_fix",
+      "to": "finalize_ack",
+      "type": "success"
+    },
+    {
+      "from": "finalize_ack",
+      "to": "respond",
+      "type": "success"
+    }
+  ],
+  "entries": [
+    "webhook_in"
+  ],
+  "exits": [
+    "respond"
+  ],
+  "fqn": "github.ci_autofix:1.0.0",
+  "package": "github"
+}

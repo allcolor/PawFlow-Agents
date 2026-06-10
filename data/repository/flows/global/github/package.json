@@ -1,0 +1,5 @@
+{
+  "name": "github",
+  "description": "GitHub integration flows (webhooks, CI automation)",
+  "author": "PawFlow"
+}

@@ -4,6 +4,31 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.0-alpha.8] — 2026-06-10
+
+### Added
+
+- Share FileStore files publicly from the chat: the file context menu now
+  offers "Share public link" (mints an unguessable gateway-key URL that
+  needs no login and bypasses the private gateway) and "Make private" to
+  revoke it, backed by a new owner-only `set_file_access` action.
+- Media webhook mode now polls the provider status URL in lockstep with
+  the callback (Pixazo): a callback that never arrives falls back to
+  polling instead of hanging until the timeout.
+
+### Fixed
+
+- Media reference inputs no longer leak the dead `localhost:9090` handler
+  default to external providers. The temporary public share resolves the
+  reachable base from the media service `public_callback_base_url` (the
+  value already used for webhooks), so image-to-video and other reference
+  flows work without a separate relay `file_base_url`; a clear warning is
+  logged when no public base can be resolved.
+- Claude Code interactive: the first message after a cold container/tmux
+  start is no longer dropped. The sender now waits for the TUI input
+  prompt to be on screen before pasting, fixing the race that required a
+  manual Enter.
+
 ## [1.0.0-alpha.7] — 2026-06-10
 
 ### Added

@@ -80,13 +80,37 @@ class TemporaryPublicRefs:
         # file_id -> previous access level (only files we actually flipped)
         self._restore: Dict[str, str] = {}
 
+    def _effective_base(self, service=None):
+        """Resolve the public base URL to rewrite a ref against.
+
+        The handler ``base_url`` comes from the tool relay ``file_base_url``
+        and is frequently the dead ``http://localhost:9090`` dev default
+        when no relay file base is configured. The media *service* already
+        carries the correct internet-reachable root in its
+        ``public_callback_base_url`` (the same value used for provider
+        webhooks). Prefer it when the handler base is not public, so a
+        single configured value (the service callback base) drives both
+        webhooks and reference sharing — no separate ``file_base_url``
+        needed. Returns ``(base, is_public)``.
+        """
+        if self._public:
+            return self._base_url, True
+        if service is not None:
+            svc_base = (getattr(service, "public_callback_base_url", "")
+                        or getattr(service, "_callback_base_url", "") or "")
+            svc_base = svc_base.rstrip("/")
+            if svc_base and _is_public_base(svc_base):
+                return svc_base, True
+        return self._base_url, False
+
     def public_url(self, url: str, service=None) -> str:
         """Return a provider-fetchable URL for a reference input.
 
         ``fs://filestore/<id>/<name>`` is flipped to a gateway-key share
-        URL when the base URL is public; otherwise the legacy HTTP form is
-        returned. Non-FileStore refs and ``ACCEPTS_FILESTORE_URLS``
-        services are returned unchanged.
+        URL when a public base URL is available (the handler base, or the
+        service ``public_callback_base_url`` as fallback); otherwise the
+        legacy HTTP form is returned. Non-FileStore refs and
+        ``ACCEPTS_FILESTORE_URLS`` services are returned unchanged.
         """
         if not url or not url.startswith(_FS_PREFIX):
             return url
@@ -95,14 +119,29 @@ class TemporaryPublicRefs:
         file_id = url[len(_FS_PREFIX):].split("/", 1)[0]
         if not file_id:
             return url
-        if self._public:
+        base, is_public = self._effective_base(service)
+        if is_public:
             self._flip_to_gateway_key(file_id)
             from core.file_store import FileStore
             share = FileStore.instance().get_share_url(
-                file_id, base_url=self._base_url)
+                file_id, base_url=base)
             if share:
                 return share
-        return f"{self._base_url}/files/{file_id}"
+        # No internet-reachable base could be resolved (no public
+        # file_base_url and no service public_callback_base_url). The
+        # returned URL is a non-public host (typically the dead
+        # localhost:9090 dev default) that an external provider cannot
+        # fetch — warn loudly with the actionable fix rather than letting
+        # a cryptic provider-side 403 "Asset proxy failed" be the only clue.
+        provider = getattr(service, "TYPE", service.__class__.__name__) \
+            if service is not None else ""
+        logger.warning(
+            "media_share: ref %s resolved against non-public base %r%s; an "
+            "external provider cannot fetch it. Set public_callback_base_url "
+            "on the media service (or file_base_url on the tool relay) to a "
+            "public HTTPS root.",
+            file_id, base, f" (service {provider})" if provider else "")
+        return f"{base}/files/{file_id}"
 
     def _flip_to_gateway_key(self, file_id: str) -> None:
         from core.file_store import (FileStore, ACCESS_GATEWAY_KEY,

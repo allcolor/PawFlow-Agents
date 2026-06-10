@@ -89,6 +89,43 @@ def test_non_public_base_does_not_flip_and_returns_legacy_url(_store):
     assert _store.get_access_level(fid) == "private"
 
 
+def test_service_public_callback_base_used_when_handler_base_is_localhost(_store):
+    """Regression: the dead localhost:9090 handler default must not win.
+
+    When the tool relay has no file_base_url, the handler base is the dev
+    default http://localhost:9090. The media service still carries the real
+    public root in public_callback_base_url (same value used for webhooks),
+    so the ref must be flipped and rewritten against THAT, not localhost.
+    """
+    fid = _make_file(_store)
+
+    class _Svc:
+        public_callback_base_url = _PUBLIC
+
+    share = TemporaryPublicRefs("http://localhost:9090", "u1")
+    url = share.public_url(f"fs://filestore/{fid}/logo.png", service=_Svc())
+
+    assert url.startswith(f"{_PUBLIC}/files/{fid}")
+    assert "?k=" in url
+    assert "localhost" not in url
+    assert _store.get_access_level(fid) == "gateway_key"
+    share.restore()
+    assert _store.get_access_level(fid) == "private"
+
+
+def test_service_with_non_public_callback_base_still_no_flip(_store):
+    fid = _make_file(_store)
+
+    class _Svc:
+        public_callback_base_url = "http://localhost:9090"
+
+    share = TemporaryPublicRefs("http://localhost:9090", "u1")
+    url = share.public_url(f"fs://filestore/{fid}/logo.png", service=_Svc())
+
+    assert url == f"http://localhost:9090/files/{fid}"
+    assert _store.get_access_level(fid) == "private"
+
+
 def test_already_public_file_not_restored_to_private(_store):
     fid = _make_file(_store)
     _store.set_access(fid, "public", owner_user_id="u1")

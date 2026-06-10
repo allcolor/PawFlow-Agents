@@ -88,6 +88,93 @@ def test_delete_files_deletes_only_accessible_conversation_files(tmp_path, monke
     assert file_store.exists(keep_id)
 
 
+def test_set_file_access_shares_via_gateway_key_link(tmp_path, monkeypatch):
+    conv_store = ConversationStore(store_dir=str(tmp_path / "conversations"))
+    conv_store.save("conv1", [], user_id="alice")
+    file_store = FileStore(base_dir=str(tmp_path / "files"))
+    monkeypatch.setattr(FileStore, "_instance", file_store)
+    file_id = file_store.store(
+        "logo.png", b"\x89PNG", "image/png",
+        conversation_id="conv1", user_id="alice")
+    assert file_store.get_access_level(file_id) == "private"
+
+    ff = FlowFile(content=b"")
+    result = _handle_files_fs(
+        None, "set_file_access",
+        {"conversation_id": "conv1", "file_id": file_id,
+         "access": "gateway_key", "origin": "https://webchat.example.org"},
+        conv_store, "alice", ff)
+
+    assert result == [ff]
+    payload = _payload(ff)
+    assert payload["ok"] is True
+    assert payload["access"] == "gateway_key"
+    assert payload["url"].startswith("https://webchat.example.org/files/" + file_id)
+    assert "?k=" in payload["url"]
+    assert file_store.get_access_level(file_id) == "gateway_key"
+
+
+def test_set_file_access_revoke_to_private(tmp_path, monkeypatch):
+    conv_store = ConversationStore(store_dir=str(tmp_path / "conversations"))
+    conv_store.save("conv1", [], user_id="alice")
+    file_store = FileStore(base_dir=str(tmp_path / "files"))
+    monkeypatch.setattr(FileStore, "_instance", file_store)
+    file_id = file_store.store(
+        "logo.png", b"\x89PNG", "image/png",
+        conversation_id="conv1", user_id="alice")
+    file_store.set_access(file_id, "gateway_key", owner_user_id="alice")
+
+    ff = FlowFile(content=b"")
+    _handle_files_fs(
+        None, "set_file_access",
+        {"conversation_id": "conv1", "file_id": file_id, "access": "private"},
+        conv_store, "alice", ff)
+
+    payload = _payload(ff)
+    assert payload["ok"] is True
+    assert payload["access"] == "private"
+    assert payload["url"] == ""
+    assert file_store.get_access_level(file_id) == "private"
+
+
+def test_set_file_access_rejects_non_owner(tmp_path, monkeypatch):
+    conv_store = ConversationStore(store_dir=str(tmp_path / "conversations"))
+    conv_store.save("conv1", [], user_id="alice")
+    file_store = FileStore(base_dir=str(tmp_path / "files"))
+    monkeypatch.setattr(FileStore, "_instance", file_store)
+    file_id = file_store.store(
+        "logo.png", b"\x89PNG", "image/png",
+        conversation_id="conv1", user_id="alice")
+
+    ff = FlowFile(content=b"")
+    _handle_files_fs(
+        None, "set_file_access",
+        {"conversation_id": "conv1", "file_id": file_id, "access": "gateway_key"},
+        conv_store, "mallory", ff)
+
+    assert ff.get_attribute("http.response.status") == "403"
+    assert file_store.get_access_level(file_id) == "private"  # unchanged
+
+
+def test_set_file_access_rejects_invalid_level(tmp_path, monkeypatch):
+    conv_store = ConversationStore(store_dir=str(tmp_path / "conversations"))
+    conv_store.save("conv1", [], user_id="alice")
+    file_store = FileStore(base_dir=str(tmp_path / "files"))
+    monkeypatch.setattr(FileStore, "_instance", file_store)
+    file_id = file_store.store(
+        "logo.png", b"\x89PNG", "image/png",
+        conversation_id="conv1", user_id="alice")
+
+    ff = FlowFile(content=b"")
+    _handle_files_fs(
+        None, "set_file_access",
+        {"conversation_id": "conv1", "file_id": file_id, "access": "banana"},
+        conv_store, "alice", ff)
+
+    assert ff.get_attribute("http.response.status") == "400"
+    assert file_store.get_access_level(file_id) == "private"
+
+
 def test_filestore_list_hides_transient_stt_and_tts(tmp_path):
     file_store = FileStore(base_dir=str(tmp_path / "files"))
     visible_id = file_store.store(

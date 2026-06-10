@@ -388,6 +388,56 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
         }).encode())
         return [flowfile]
 
+    if action == "set_file_access":
+        # Owner-only: change a FileStore file's access level so it can be
+        # shared via a link (gateway_key = unguessable ?k= URL, no login,
+        # bypasses the private gateway), made fully public, or reverted to
+        # private. The chat UI exposes this as the file context menu's
+        # "Share link" / "Make private" actions.
+        from core.file_store import (FileStore, ACCESS_PRIVATE,
+                                      ACCESS_GATEWAY_KEY, ACCESS_PUBLIC)
+        file_id = str(body.get("file_id", "") or "").strip()
+        level = str(body.get("access", "") or "").strip()
+        conv_id = body.get("conversation_id", "")
+        origin = str(body.get("origin", "") or "").strip().rstrip("/")
+        allowed = {ACCESS_PRIVATE, ACCESS_GATEWAY_KEY, ACCESS_PUBLIC}
+        if not file_id:
+            flowfile.set_content(json.dumps({"error": "Missing file_id"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        if level not in allowed:
+            flowfile.set_content(json.dumps({
+                "error": f"Invalid access level (use one of {sorted(allowed)})"
+            }).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        fstore = FileStore.instance()
+        meta = fstore.get_metadata(file_id)
+        if not meta or not fstore.exists(file_id):
+            flowfile.set_content(json.dumps({"error": "File not found"}).encode())
+            flowfile.set_attribute("http.response.status", "404")
+            return [flowfile]
+        if conv_id and meta.get("conversation_id") != conv_id:
+            flowfile.set_content(json.dumps({"error": "File not in this conversation"}).encode())
+            flowfile.set_attribute("http.response.status", "403")
+            return [flowfile]
+        # set_access enforces owner-only; pass user_id so a non-owner is
+        # rejected rather than silently changing another user's file.
+        if not fstore.set_access(file_id, level, owner_user_id=user_id):
+            flowfile.set_content(json.dumps({"error": "Access denied"}).encode())
+            flowfile.set_attribute("http.response.status", "403")
+            return [flowfile]
+        url = ""
+        if level in (ACCESS_GATEWAY_KEY, ACCESS_PUBLIC):
+            url = fstore.get_share_url(file_id, base_url=origin)
+        flowfile.set_content(json.dumps({
+            "ok": True,
+            "file_id": file_id,
+            "access": level,
+            "url": url,
+        }).encode())
+        return [flowfile]
+
     if action == "flow_runtime_graph":
         instance_id = body.get("instance_id", "")
         template_id = body.get("template_id", "")

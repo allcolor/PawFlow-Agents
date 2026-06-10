@@ -1151,6 +1151,9 @@ def test_interactive_pool_send_text_pastes_then_sends_enter(monkeypatch):
         event_service_id="events",
         internal_token="internal",
     )
+    # Steady state: the TUI prompt is already up, so the readiness gate is
+    # a no-op and the send goes straight to cancel/paste/enter.
+    state.prompt_ready = True
 
     assert pool.send_text(state, "hello") is True
     assert calls[0][0][-6:] == ["tmux", "send-keys", "-t", "pawflow", "-X", "cancel"]
@@ -1163,6 +1166,85 @@ def test_interactive_pool_send_text_pastes_then_sends_enter(monkeypatch):
     assert calls[3][0][-1:] == ["Enter"]
     assert sleeps == [1.0]
     assert calls[4][0][-1:] == ["Enter"]
+
+
+def test_interactive_pool_send_text_waits_for_prompt_ready_on_cold_start(monkeypatch):
+    """Cold start: the first send must poll the TUI until its input box is
+    drawn, then paste — never paste into a not-yet-ready prompt (the race
+    that left the first message unsent until a human pressed Enter)."""
+    from core.claude_code_interactive_pool import InteractiveClaudeCodePool, InteractiveContainer
+
+    calls = []
+    captures = {"n": 0}
+
+    class _Run:
+        def __init__(self, stdout=""):
+            self.returncode = 0
+            self.stdout = stdout
+            self.stderr = ""
+
+    def fake_run(cmd, **kwargs):
+        calls.append((cmd, kwargs.get("input")))
+        if "capture-pane" in cmd:
+            captures["n"] += 1
+            # TUI still booting for the first two probes, then ready.
+            out = ("Welcome back\n   loading..." if captures["n"] < 3
+                   else "│ > │\n  ? for shortcuts")
+            return _Run(out)
+        return _Run("")
+
+    monkeypatch.setattr("core.claude_code_interactive_pool.docker_cmd", lambda: ["docker"])
+    monkeypatch.setattr("core.claude_code_interactive_pool.subprocess.run", fake_run)
+    sleeps = []
+    monkeypatch.setattr(
+        "core.claude_code_interactive_pool.time.sleep",
+        lambda value, _t=threading.get_ident(): (
+            sleeps.append(value) if threading.get_ident() == _t else None))
+
+    pool = InteractiveClaudeCodePool()
+    monkeypatch.setattr(pool, "_is_alive", lambda name: True)
+    state = InteractiveContainer(
+        key=("u", "c", "a", "svc"),
+        name="container",
+        workdir="/host",
+        container_workdir="/cc_sessions/u/c/a",
+        session_token="sess",
+        event_service_id="events",
+        internal_token="internal",
+    )
+    assert state.prompt_ready is False
+
+    assert pool.send_text(state, "hello") is True
+
+    # Polled the pane until ready (3 probes: not-ready, not-ready, ready).
+    capture_idx = [i for i, c in enumerate(calls) if "capture-pane" in c[0]]
+    assert len(capture_idx) == 3
+    # Paste happened only AFTER readiness was confirmed.
+    paste_idx = next(i for i, c in enumerate(calls) if "paste-buffer" in c[0])
+    assert paste_idx > capture_idx[-1]
+    # The readiness gate latched so later sends skip the wait.
+    assert state.prompt_ready is True
+    # Two 0.4s readiness sleeps + the 1.0s double-Enter submit delay.
+    assert sleeps == [0.4, 0.4, 1.0]
+
+
+def test_wait_for_prompt_ready_times_out_best_effort(monkeypatch):
+    """When the prompt never appears, readiness returns False (caller then
+    submits best-effort) instead of blocking forever."""
+    from core.claude_code_interactive_pool import InteractiveClaudeCodePool
+
+    class _Run:
+        returncode = 0
+        stdout = "still booting, no prompt"
+        stderr = ""
+
+    monkeypatch.setattr("core.claude_code_interactive_pool.docker_cmd", lambda: ["docker"])
+    monkeypatch.setattr("core.claude_code_interactive_pool.subprocess.run", lambda *a, **k: _Run())
+    monkeypatch.setattr("core.claude_code_interactive_pool.time.sleep", lambda *_a, **_k: None)
+
+    pool = InteractiveClaudeCodePool()
+    # timeout<=0 => single probe, no blocking loop.
+    assert pool._wait_for_prompt_ready("container", timeout=0) is False
 
 
 def test_interactive_pool_interrupt_and_force_stop_keys(monkeypatch):

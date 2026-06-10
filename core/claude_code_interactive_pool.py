@@ -57,6 +57,10 @@ class InteractiveContainer:
     initial_context_loaded: bool = False
     proxy_started: bool = False
     claude_started: bool = False
+    # Set once the Claude Code TUI has drawn its input prompt and is ready
+    # to accept a pasted message. Stays False until the first send confirms
+    # readiness, which gates the cold-start paste race (see send_text).
+    prompt_ready: bool = False
     last_error: str = ""
     # Session-scoped dedup of observed tool_use/tool_result ids. A live
     # Claude Code session replays its full context (every prior tool_use
@@ -254,6 +258,22 @@ class InteractiveClaudeCodePool:
         if not self._is_alive(state.name):
             state.last_error = f"Container {state.name} is not running"
             return False
+        # Cold-start race: the Claude Code TUI takes a moment to draw its
+        # input box after `tmux new-session`. A paste + Enter that lands
+        # before the box is interactive is silently dropped, leaving the
+        # very first message unsent until a human presses Enter. Block the
+        # first send until the TUI prompt is actually on screen. Subsequent
+        # sends short-circuit on the flag (no capture cost in steady state),
+        # and a fresh container gets a fresh state with prompt_ready=False.
+        if not state.prompt_ready:
+            if self._wait_for_prompt_ready(state.name):
+                state.prompt_ready = True
+            else:
+                # Best-effort: never make sends worse than before. Proceed
+                # with the paste + double-Enter and hope the TUI catches up.
+                logging.getLogger(__name__).warning(
+                    "[cci] TUI prompt not detected ready before first send to "
+                    "%s; submitting best-effort", state.name)
         self._cancel_copy_mode(state)
         self._remember_injected_prompt(state, text)
         self._remember_injected_prompt_for_event_service(state, text)
@@ -276,6 +296,61 @@ class InteractiveClaudeCodePool:
         if delay > 0:
             time.sleep(delay)
         return self.send_keys(state, ["Enter"])
+
+    # Footer/affordance strings the Claude Code TUI only renders once its
+    # input box is interactive. Matching any (case-insensitive substring) is
+    # a robust, version-tolerant readiness signal that does not depend on
+    # box-drawing layout. The bypass-permissions footer is always present in
+    # our `--dangerously-skip-permissions` configuration.
+    _PROMPT_READY_MARKERS = (
+        "for shortcuts",
+        "shift+tab",
+        "bypass permissions",
+        "auto-accept edits",
+    )
+
+    def _pane_text(self, name: str) -> str:
+        """Return the visible tmux pane text, or '' on any failure.
+
+        Reads output solely to detect input-prompt readiness (transport
+        concern); the provider still never parses tmux output to assemble a
+        response.
+        """
+        try:
+            r = subprocess.run(  # nosec B603
+                docker_cmd() + ["exec", "--user", "1000:1000", name,
+                                "tmux", "capture-pane", "-p", "-t", "pawflow"],
+                capture_output=True, text=True, timeout=10)
+        except Exception:
+            return ""
+        return r.stdout or ""
+
+    def _pane_shows_prompt(self, text: str) -> bool:
+        low = (text or "").lower()
+        return any(marker in low for marker in self._PROMPT_READY_MARKERS)
+
+    def _wait_for_prompt_ready(self, name: str, *,
+                               timeout: Optional[float] = None) -> bool:
+        """Block until the Claude Code TUI input prompt is on screen.
+
+        Polls the pane until a readiness marker appears. Returns True when
+        ready, False if the timeout elapses first (caller proceeds best-
+        effort). A non-positive timeout performs a single probe so callers
+        and tests can opt out of waiting.
+        """
+        if timeout is None:
+            try:
+                timeout = float(os.environ.get(
+                    "PAWFLOW_CCI_PROMPT_READY_TIMEOUT_SECONDS", "45") or "45")
+            except ValueError:
+                timeout = 45.0
+        deadline = time.time() + max(0.0, timeout)
+        while True:
+            if self._pane_shows_prompt(self._pane_text(name)):
+                return True
+            if time.time() >= deadline:
+                return False
+            time.sleep(0.4)
 
     def _cancel_copy_mode(self, state: InteractiveContainer) -> None:
         try:

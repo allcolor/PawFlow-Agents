@@ -13,8 +13,50 @@ function showFileMenu(e, fileId, filename) {
   menu.innerHTML =
     '<div class="ctx-menu-item" onclick="event.stopPropagation();openFileViewer(\'' + href + '\');closeFileMenu();">&#x1F441; ' + escapeHtml(t('view')) + '</div>' +
     '<div class="ctx-menu-item" onclick="event.stopPropagation();window.open(\'' + href + '\',\'_blank\');closeFileMenu();">&#x2B07; ' + escapeHtml(t('download')) + '</div>' +
+    '<div class="ctx-menu-item" onclick="event.stopPropagation();shareFilePublic(\'' + fileId + '\');closeFileMenu();">&#x1F517; ' + escapeHtml(t('shareLink')) + '</div>' +
+    '<div class="ctx-menu-item" onclick="event.stopPropagation();makeFilePrivate(\'' + fileId + '\');closeFileMenu();">&#x1F512; ' + escapeHtml(t('makePrivate')) + '</div>' +
     '<div class="ctx-menu-item danger" onclick="event.stopPropagation();deleteFile(\'' + fileId + '\');closeFileMenu();">&#x1F5D1; ' + escapeHtml(t('delete')) + '</div>';
   setTimeout(() => document.addEventListener('click', closeFileMenu, {once: true}), 0);
+}
+
+// Share a FileStore file via an unguessable gateway-key link (no login,
+// bypasses the private gateway). The URL is copied to the clipboard and
+// echoed into the chat. Revoke with makeFilePrivate().
+function shareFilePublic(fileId) {
+  action$('set_file_access', {
+    file_id: fileId,
+    access: 'gateway_key',
+    origin: window.location.origin,
+    conversation_id: conversationId,
+  }).subscribe(data => {
+    if (data.error) {
+      addMsg('system', t('shareFailed', { error: data.error || t('unknownError') }));
+      return;
+    }
+    const url = data.url || (window.location.origin + '/files/' + fileId);
+    const done = () => addMsg('system', t('shareLinkCopied') + '\n' + url);
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(url).then(done, () => addMsg('system', t('shareLinkReady', { url: url })));
+    } else {
+      addMsg('system', t('shareLinkReady', { url: url }));
+    }
+    loadConvFiles();
+  });
+}
+
+function makeFilePrivate(fileId) {
+  action$('set_file_access', {
+    file_id: fileId,
+    access: 'private',
+    conversation_id: conversationId,
+  }).subscribe(data => {
+    if (data.error) {
+      addMsg('system', t('shareFailed', { error: data.error || t('unknownError') }));
+      return;
+    }
+    addMsg('system', t('madePrivate'));
+    loadConvFiles();
+  });
 }
 
 function closeFileMenu() {

@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://pawflow.allcolor.org/">
-    <img src="pawflow_logo.png" alt="PawFlow" width="180">
+    <img src="pawflow-logo-512.png" alt="PawFlow" width="180">
   </a>
 </p>
 

@@ -15,6 +15,7 @@
 
 # Binary files
 *.png binary
+*.mp4 binary
 *.jpg binary
 *.gif binary
 *.ico binary

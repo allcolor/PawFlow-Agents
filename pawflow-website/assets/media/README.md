@@ -69,6 +69,7 @@ All website media should live under `pawflow-website/assets/media/`. Keep origin
 
 | Priority | Target path | Duration | Page/section | Brief |
 |---|---|---:|---|---|
+| P0 | `video/pawflow-logo-intro.mp4` | 8s | Homepage hero | Animated PawFlow logo intro: cyan/white particle swarm converges into the hexagon badge (paw + three agent nodes + wordmark), radial light bloom, settle with idle shimmer. Synchronized sound (whoosh + impact + chime) generated with the video. Plays muted-autoplay with a click-to-unmute control. Poster is `assets/logo.png`. |
 | P0 | `video/install-to-first-chat.mp4` | 45-75s | Quickstart | From clone/install command to browser installer to first conversation with `assistant` selected. Include a poster at `video/install-to-first-chat-poster.webp`. |
 | P1 | `video/relay-tool-run.mp4` | 30-45s | How-to: relay | Link a relay, run a safe filesystem/search command, show result streaming back into the chat. Include approvals if relevant. |
 | P1 | `video/server-relay-install.mp4` | 30-45s | How-to: server relay | Add a managed `relay` service, save it, and show healthy status in the resource panel. Include a poster at `video/server-relay-install-poster.webp`. |

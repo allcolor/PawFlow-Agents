@@ -38,9 +38,11 @@ def _relay(monkeypatch):
 def test_openai_image_service_uses_relay_aware_base_url(monkeypatch):
     _relay(monkeypatch)
     calls = []
+    timeouts = []
 
     def fake_urlopen(req, timeout=0):
         calls.append(req.full_url)
+        timeouts.append(timeout)
         if req.full_url.endswith("/images/generations"):
             return _Resp(json.dumps({"data": [{"url": "https://cdn.example/i.png"}]}).encode())
         return _Resp(b"PNG", "image/png")
@@ -56,6 +58,25 @@ def test_openai_image_service_uses_relay_aware_base_url(monkeypatch):
 
     assert out["image_bytes"] == b"PNG"
     assert calls[0] == "http://10.0.0.2:9090/relay-proxy/relay1/tok/localhost:8080/v1/images/generations"
+    assert timeouts == [900, 900]
+
+
+def test_openai_image_service_forwards_configured_timeout_to_api_and_download(monkeypatch):
+    timeouts = []
+
+    def fake_urlopen(req, timeout=0):
+        timeouts.append(timeout)
+        if req.full_url.endswith("/images/generations"):
+            return _Resp(json.dumps({"data": [{"url": "https://cdn.example/i.png"}]}).encode())
+        return _Resp(b"PNG", "image/png")
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    svc = OpenAIImageService({"api_key": "sk-test", "timeout": 1234})
+
+    out = svc.generate(prompt="cat")
+
+    assert out["image_bytes"] == b"PNG"
+    assert timeouts == [1234, 1234]
 
 
 def test_openai_image_service_handles_gpt_image_base64(monkeypatch):
@@ -120,6 +141,32 @@ def test_openai_image_service_edits_filestore_image(monkeypatch, tmp_path):
     assert b"webp" in body
     assert b'name="image"; filename="source.png"' in body
     assert b"SOURCE" in body
+
+
+def test_openai_image_service_uses_configured_timeout_for_external_edit_input(monkeypatch):
+    timeouts = []
+
+    def fake_urlopen(req, timeout=0):
+        timeouts.append(timeout)
+        if req.full_url == "https://cdn.example/source.png":
+            return _Resp(b"SOURCE", "image/png")
+        payload = base64.b64encode(b"EDITED").decode("ascii")
+        return _Resp(json.dumps({"data": [{"b64_json": payload}]}).encode())
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    svc = OpenAIImageService({
+        "api_key": "sk-test",
+        "model": "gpt-image-1",
+        "timeout": 1234,
+    })
+
+    out = svc.edit_image(
+        prompt="add a blue badge",
+        image_urls=["https://cdn.example/source.png"],
+    )
+
+    assert out == {"image_bytes": b"EDITED", "content_type": "image/png"}
+    assert timeouts == [1234, 1234]
 
 
 def test_http_client_service_resolves_relay_shaped_urls(monkeypatch):

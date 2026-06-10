@@ -2453,6 +2453,48 @@ class TestImageServiceResolution(unittest.TestCase):
         assert Path(tmp.name).exists()
         Path(tmp.name).unlink(missing_ok=True)
 
+    def test_image_handler_preserves_case_sensitive_destination(self):
+        """Relay filesystem IDs are case-sensitive and must not be lowercased."""
+        from core.tool_registry import ImageGenerationHandler
+
+        handler = ImageGenerationHandler()
+        mock_service = MagicMock()
+        mock_service.generate.return_value = {
+            "image_bytes": b"\x89PNG fake",
+            "content_type": "image/png",
+        }
+        handler.set_service_resolver(lambda: (mock_service, None))
+
+        with patch("core.storage_resolver.StorageResolver") as mock_storage:
+            mock_storage.return_value.write.return_value = {
+                "destination": "MyWorkspace",
+                "path": "out/hero.png",
+            }
+            result = handler.execute({
+                "prompt": "a cat",
+                "destination": "MyWorkspace",
+                "path": "out/hero.png",
+            })
+
+        mock_storage.return_value.write.assert_called_once_with(
+            "MyWorkspace", "out/hero.png", b"\x89PNG fake", "image/png")
+        assert "MyWorkspace" in result
+
+    def test_storage_resolver_preserves_case_sensitive_service_id(self):
+        """StorageResolver must resolve relay service IDs by exact case."""
+        from core.storage_resolver import StorageResolver
+
+        svc = MagicMock()
+        with patch("core.service_registry.ServiceRegistry.get_instance") as get_registry:
+            get_registry.return_value.resolve.return_value = svc
+            result = StorageResolver(user_id="user1").write(
+                "MyWorkspace", "out/hero.png", b"PNG", "image/png")
+
+        get_registry.return_value.resolve.assert_called_once_with(
+            "MyWorkspace", user_id="user1", conv_id="")
+        svc.write_file.assert_called_once_with("out/hero.png", b"PNG")
+        assert result["destination"] == "MyWorkspace"
+
     def test_image_handler_service_arg_overrides_resolver(self):
         """Explicit service=<id> resolves that media service for this call."""
         from core.tool_registry import ImageGenerationHandler

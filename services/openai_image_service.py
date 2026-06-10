@@ -57,7 +57,7 @@ class OpenAIImageService(BaseImageGenerationService):
                 "description": "Model: gpt-image-1 (ChatGPT Image), dall-e-3, dall-e-2",
             },
             "timeout": {
-                "type": "integer", "required": False, "default": 120,
+                "type": "integer", "required": False, "default": 900,
                 "description": "HTTP request timeout in seconds",
             },
         }
@@ -72,7 +72,7 @@ class OpenAIImageService(BaseImageGenerationService):
         self._runtime_conversation_id = ""
         self._runtime_agent_name = ""
         self.model = self.config.get("model", "gpt-image-1")
-        self.timeout = int(self.config.get("timeout", 120))
+        self.timeout = int(self.config.get("timeout", 900))
 
     def set_runtime_context(self, user_id: str = "", conversation_id: str = "",
                             agent_name: str = "", **_: object):
@@ -144,7 +144,7 @@ class OpenAIImageService(BaseImageGenerationService):
             )
             return filename, data, content_type or "image/png"
         req = urllib.request.Request(ref, headers={"User-Agent": "PawFlow-Agent/1.0"})
-        with urllib.request.urlopen(req, timeout=60) as resp:  # nosec B310 - user/provider supplied image URL for edit input.
+        with urllib.request.urlopen(req, timeout=self.timeout) as resp:  # nosec B310 - user/provider supplied image URL for edit input.
             data = resp.read()
             content_type = resp.headers.get("Content-Type", "") or ""
         filename = ref.rstrip("/").rsplit("/", 1)[-1] or f"image-{index}.png"
@@ -242,7 +242,7 @@ class OpenAIImageService(BaseImageGenerationService):
         img_req = urllib.request.Request(
             image_url, headers={"User-Agent": "PawFlow-Agent/1.0"},
         )
-        with urllib.request.urlopen(img_req, timeout=60) as img_resp:  # nosec B310 - provider-returned image download URL.
+        with urllib.request.urlopen(img_req, timeout=self.timeout) as img_resp:  # nosec B310 - provider-returned image download URL.
             image_bytes = img_resp.read()
             content_type = img_resp.headers.get("Content-Type", "image/png")
 

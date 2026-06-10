@@ -6,7 +6,7 @@ PawFlow agents can create, inspect, edit, and transform media through provider-b
 
 Most media tools accept:
 
-- `destination`: `filestore` by default, or a relay filesystem service name;
+- `destination`: `filestore` by default, or a relay filesystem service name. Filesystem service IDs are case-sensitive;
 - `path`: output filename/path when writing to a filesystem service;
 - provider-specific model overrides such as `model`.
 
@@ -128,7 +128,9 @@ OpenRouter/OpenAI-compatible base URL such as `https://openrouter.ai/api/v1`.
 The direct `openaiImageGeneration` provider supports both `generate_image` and
 `edit_image` against OpenAI's images API. `edit_image` sends multipart image
 inputs to `POST /images/edits`, accepts `fs://filestore/...` sources directly,
-and returns the edited image to the requested PawFlow storage destination.
+and returns the edited image to the requested PawFlow storage destination. Its
+default HTTP timeout is 900 seconds because `gpt-image-*` generations can run
+longer than ordinary API calls.
 The image service supports `protocol=auto`, `openai_images`, and
 `chat_completions`/`openrouter`: bare OpenAI image models normally use
 `POST /images/generations`, while OpenRouter image models use chat completions

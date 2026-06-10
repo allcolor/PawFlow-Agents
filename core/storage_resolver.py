@@ -90,10 +90,11 @@ class StorageResolver:
         """Normalize target name."""
         if not target:
             return ""
-        t = target.strip().lower()
-        if t in _FILESTORE_ALIASES:
+        t = target.strip()
+        t_lower = t.lower()
+        if t_lower in _FILESTORE_ALIASES:
             return ""
-        if t.startswith("fs:"):
+        if t_lower.startswith("fs:"):
             return t[3:]
         return t
 

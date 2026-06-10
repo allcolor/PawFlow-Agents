@@ -422,7 +422,13 @@ class TestEmbeddingProvider:
             # Check that the method was called; the provider resolution should pick openai
             # We verify by checking it doesn't raise ValueError for "auto"
 
-    def test_auto_detection_without_api_key_returns_local(self):
+    def test_auto_detection_without_api_key_returns_local(self, monkeypatch):
+        # Forbid HuggingFace downloads: on a fresh CI runner the local
+        # provider would fetch a real model, and a stalled hf_xet download
+        # hangs the whole suite until the 6h Actions limit. With a cached
+        # model the embed still works offline; without one it raises fast
+        # and the except branch below absorbs it.
+        monkeypatch.setenv("HF_HUB_OFFLINE", "1")
         from core.embeddings import EmbeddingProvider
         provider = EmbeddingProvider.instance()
         try:

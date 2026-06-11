@@ -82,6 +82,13 @@ function _unwrapDisplayedToolCall(name, args) {
   return { toolName, toolArgs };
 }
 
+function _argText(v) {
+  if (v !== null && typeof v === 'object') {
+    try { return JSON.stringify(v); } catch(e) { return String(v); }
+  }
+  return String(v);
+}
+
 function _toolCallSummary(name, args) {
   const normalized = _unwrapDisplayedToolCall(name, args);
   name = normalized.toolName;
@@ -95,14 +102,14 @@ function _toolCallSummary(name, args) {
       summary = '';
     } else if (keys.length === 1) {
       // Single arg: show value directly (truncated)
-      const val = String(args[keys[0]]);
+      const val = _argText(args[keys[0]]);
       summary = val.length > 200 ? val.substring(0, 200) + '...' : val;
     } else {
       // Multiple args: show key=value pairs (truncated)
       const parts = [];
       let total = 0;
       for (const k of keys) {
-        const val = String(args[k]);
+        const val = _argText(args[k]);
         const short = val.length > 80 ? val.substring(0, 80) + '...' : val;
         const part = k + '=' + short;
         if (total + part.length > 200) { parts.push('...'); break; }

@@ -39,7 +39,14 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
           this.sendMessage(msg.text, msg.attachments, msg.reply_to, msg.msg_id);
           break;
         case 'newConversation':
-          this.newConversation();
+        case 'openNewConversation':
+          this.openNewConversation();
+          break;
+        case 'createConversation':
+          this.createConversation({
+            agent: msg.agent, llm_service: msg.llm_service,
+            relays: msg.relays, title: msg.title,
+          });
           break;
         case 'loadConversations':
           this.loadConversations();
@@ -121,13 +128,22 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
       return;
     }
 
+    // A message only exists inside a conversation. Never create one
+    // implicitly on send — require an explicit New conversation or a
+    // selection from the Conversations tab first (same rule as the webchat).
+    if (!this.conversationId) {
+      this.postMessage({ type: 'error',
+        message: 'No conversation selected. Click “+ New” to create one (pick an agent and relays), or open one from the Conversations tab.' });
+      this.postMessage({ type: 'requireConversation' });
+      return;
+    }
+
     try {
       const allAttachments = [...this.pendingAttachments, ...(attachments || [])];
       this.pendingAttachments = [];
 
-      // The server requires a target agent for user messages. When none was
-      // picked yet (fresh panel, no history loaded), resolve the
-      // conversation's active agent — or the first available one.
+      // The conversation's active agent is the target; fall back to resolving
+      // it once if the panel hasn't captured it yet.
       if (!this.selectedAgent) {
         await this.resolveDefaultAgent();
       }
@@ -183,12 +199,82 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  newConversation(): void {
-    this.conversationId = null;
-    this.selectedAgent = '';
-    const sse = this.getSse();
-    if (sse) { sse.disconnect(); }
-    this.postMessage({ type: 'newConversation' });
+  // "+ New" opens a creation panel (agent / LLM / relays / title) like the
+  // webchat, then creates the conversation server-side. A bare clear is not
+  // enough — a message can only exist inside a real conversation.
+  async openNewConversation(): Promise<void> {
+    const api = this.getApi();
+    if (!api) {
+      this.postMessage({ type: 'error', message: 'Not logged in. Run PawFlow: Login.' });
+      return;
+    }
+    try {
+      const [agentsResp, svcResp, relayResp] = await Promise.all([
+        api.sendAction('list_repo_agents', { conversation_id: '' }),
+        api.sendAction('list_services', { service_type: 'llmConnection', conversation_id: '' }),
+        api.sendAction('relay_list_available', {}),
+      ]);
+      const agents = ((agentsResp as any).agents || [])
+        .map((a: any) => ({ name: a.name || a.id || '', description: a.description || '' }))
+        .filter((a: any) => a.name);
+      const services = ((svcResp as any).services || [])
+        .filter((s: any) => s.enabled !== false)
+        .map((s: any) => s.service_id || s.id || '').filter(Boolean);
+      const relays = ((relayResp as any).relays || [])
+        .map((r: any) => ({ id: r.relay_id || r.id || '', connected: r.connected !== false }))
+        .filter((r: any) => r.id);
+      if (!agents.length) {
+        this.postMessage({ type: 'error',
+          message: 'No agent definitions available. Create an agent in the webchat first.' });
+        return;
+      }
+      this.postMessage({ type: 'newConversationForm', agents, services, relays });
+    } catch (e: any) {
+      this.postMessage({ type: 'error', message: `Could not load creation options: ${e?.message || e}` });
+    }
+  }
+
+  async createConversation(opts: { agent: string; llm_service?: string;
+                                   relays?: string[]; title?: string }): Promise<void> {
+    const api = this.getApi();
+    if (!api) { return; }
+    const agent = (opts.agent || '').trim();
+    if (!agent) {
+      this.postMessage({ type: 'error', message: 'Pick an agent to create a conversation.' });
+      return;
+    }
+    const agentEntry: any = {
+      instance_name: agent, definition: agent, params: { name: agent },
+    };
+    if (opts.llm_service) { agentEntry.llm_service = opts.llm_service; }
+    const payload: any = { agents: [agentEntry] };
+    if (opts.title && opts.title.trim()) { payload.title = opts.title.trim(); }
+    const relays = (opts.relays || []).filter(Boolean);
+    if (relays.length) { payload.relays = relays; payload.default_relay = relays[0]; }
+    try {
+      const data = await api.sendAction('create_conversation', payload);
+      if ((data as any).error) {
+        this.postMessage({ type: 'error', message: (data as any).error });
+        return;
+      }
+      const cid = (data as any).conversation_id || '';
+      if (!cid) {
+        this.postMessage({ type: 'error', message: 'Conversation creation returned no id.' });
+        return;
+      }
+      const sse = this.getSse();
+      if (sse) { sse.disconnect(); }
+      this.conversationId = cid;
+      this.selectedAgent = agent;
+      this.saveLastConversation(cid);
+      this._sseConversationId = null;
+      this.setupSSE();
+      this.postMessage({ type: 'conversationCreated', conversationId: cid, agent });
+      this.postMessage({ type: 'newConversation' });
+      this.postMessage({ type: 'agentSelected', agent });
+    } catch (e: any) {
+      this.postMessage({ type: 'error', message: `Create failed: ${e?.message || e}` });
+    }
   }
 
   selectAgent(name: string): void {

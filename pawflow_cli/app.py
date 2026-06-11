@@ -380,6 +380,12 @@ class PawCode:
 
     def _send_message(self, text: str):
         """Send a message to the agent (non-blocking — events rendered by background thread)."""
+        # A message only exists inside a conversation — never create one
+        # implicitly. Require an explicit /new or /conv first.
+        if not self.conversation_id:
+            self.renderer.print_error(
+                "No active conversation. Use /new to create one or /conv <id> to select one.")
+            return
         if not self.selected_agent:
             self.renderer.print_error("No active agent selected. Use /new [agent] or /conv <id> first.")
             return
@@ -416,6 +422,10 @@ class PawCode:
 
     def _send_targeted_message(self, text: str, target_agent: str = ""):
         """Send a message to a specific agent without blocking the prompt."""
+        if not self.conversation_id:
+            self.renderer.print_error(
+                "No active conversation. Use /new to create one or /conv <id> to select one.")
+            return
         target = target_agent or self.selected_agent
         if not target:
             self.renderer.print_error("No target agent selected")

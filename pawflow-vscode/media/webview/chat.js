@@ -271,12 +271,59 @@ function backToChat() { closePanel(); setActiveTab('tbChat'); }
 
 function newChat() {
   closePanel();
-  stopActiveSync();
-  vscode.postMessage({ type: 'newConversation' });
-  messagesEl.innerHTML = '<div class="msg system">New conversation</div>';
-  currentHistoryConvId = null;
-  currentHistoryOffset = 0;
-  setActiveTab('tbChat');
+  // Open the creation panel (agent / LLM / relays / title). A conversation
+  // must be created explicitly before any message can be sent.
+  vscode.postMessage({ type: 'openNewConversation' });
+}
+
+function renderNewConversationForm(agents, services, relays) {
+  var overlay = document.getElementById('panelOverlay');
+  overlay.className = 'panel-overlay visible';
+  var h = '<div class="panel-header"><h4>New conversation</h4>'
+    + '<button class="panel-close" onclick="closePanel()">✕</button></div>';
+  h += '<div style="padding:8px 10px;font-size:12px">';
+  h += '<label style="display:block;margin:6px 0 2px;font-weight:600">Agent</label>';
+  h += '<select id="ncAgent" style="width:100%;padding:4px">';
+  for (var i = 0; i < agents.length; i++) {
+    h += '<option value="' + esc(agents[i].name) + '">' + esc(agents[i].name)
+      + (agents[i].description ? ' — ' + esc(agents[i].description.slice(0, 50)) : '') + '</option>';
+  }
+  h += '</select>';
+  h += '<label style="display:block;margin:8px 0 2px;font-weight:600">LLM service <span style="color:var(--vscode-descriptionForeground);font-weight:400">(optional)</span></label>';
+  h += '<select id="ncLlm" style="width:100%;padding:4px"><option value="">Auto</option>';
+  for (var j = 0; j < services.length; j++) {
+    h += '<option value="' + esc(services[j]) + '">' + esc(services[j]) + '</option>';
+  }
+  h += '</select>';
+  if (relays.length) {
+    h += '<label style="display:block;margin:8px 0 2px;font-weight:600">Relays <span style="color:var(--vscode-descriptionForeground);font-weight:400">(optional)</span></label>';
+    for (var k = 0; k < relays.length; k++) {
+      var rid = relays[k].id;
+      h += '<label style="display:block;margin:2px 0"><input type="checkbox" class="ncRelay" value="'
+        + esc(rid) + '"' + (relays[k].connected ? '' : ' disabled') + '> ' + esc(rid)
+        + (relays[k].connected ? '' : ' (disconnected)') + '</label>';
+    }
+  } else {
+    h += '<div style="margin:8px 0 2px;color:var(--vscode-descriptionForeground)">No relays available (manage them from webchat / Relay Desktop).</div>';
+  }
+  h += '<label style="display:block;margin:8px 0 2px;font-weight:600">Title <span style="color:var(--vscode-descriptionForeground);font-weight:400">(optional)</span></label>';
+  h += '<input id="ncTitle" type="text" placeholder="Untitled" style="width:100%;padding:4px">';
+  h += '<div style="margin-top:12px;display:flex;gap:8px">'
+    + '<button onclick="createNewConversation()" style="flex:1;padding:6px">Create</button>'
+    + '<button onclick="closePanel()" style="flex:1;padding:6px">Cancel</button></div>';
+  h += '</div>';
+  overlay.innerHTML = h;
+}
+
+function createNewConversation() {
+  var agent = document.getElementById('ncAgent') ? document.getElementById('ncAgent').value : '';
+  if (!agent) { addMsg('error', 'Pick an agent.'); return; }
+  var llm = document.getElementById('ncLlm') ? document.getElementById('ncLlm').value : '';
+  var title = document.getElementById('ncTitle') ? document.getElementById('ncTitle').value : '';
+  var relays = [];
+  var boxes = document.querySelectorAll('.ncRelay:checked');
+  for (var i = 0; i < boxes.length; i++) relays.push(boxes[i].value);
+  vscode.postMessage({ type: 'createConversation', agent: agent, llm_service: llm, relays: relays, title: title });
 }
 function loadConvs() { closePanel(); setActiveTab('tbConvs'); vscode.postMessage({ type: 'loadConversations' }); }
 function sendCmd(cmd, arg) { vscode.postMessage({ type: 'command', command: cmd, arg: arg }); }
@@ -583,13 +630,27 @@ window.addEventListener('message', function(e) {
         replayHistory(msg.data);
       }
       break;
-    case 'newConversation':
-      messagesEl.innerHTML = '<div class="msg system">New conversation</div>';
+    case 'newConversationForm':
+      renderNewConversationForm(msg.agents || [], msg.services || [], msg.relays || []);
+      break;
+    case 'conversationCreated':
+      closePanel();
+      messagesEl.innerHTML = '<div class="msg system">New conversation — agent: ' + esc(msg.agent || '') + '</div>';
       _seenMsgIds = {};
       _msgRawIndex = 0;
-      currentHistoryConvId = null;
+      currentHistoryConvId = msg.conversationId || null;
       currentHistoryOffset = 0;
-      statusEl.textContent = '';
+      statusEl.textContent = 'Agent: ' + esc(msg.agent || '');
+      setActiveTab('tbChat');
+      break;
+    case 'requireConversation':
+      break;
+    case 'newConversation':
+      // Legacy clear (kept for compatibility); creation now goes through
+      // the form + conversationCreated.
+      _seenMsgIds = {};
+      _msgRawIndex = 0;
+      currentHistoryOffset = 0;
       break;
     case 'error':
       addMsg('error', msg.message);

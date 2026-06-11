@@ -100,7 +100,7 @@ export function activate(context: vscode.ExtensionContext) {
     }),
 
     vscode.commands.registerCommand('pawflow.newConversation', () => {
-      chatProvider.newConversation();
+      void chatProvider.openNewConversation();
     }),
 
      vscode.commands.registerCommand('pawflow.explainSelection', () => {

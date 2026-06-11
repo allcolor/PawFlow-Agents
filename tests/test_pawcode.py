@@ -521,6 +521,24 @@ class TestOfflineHelpAndGuards:
         assert "login" in printed["error"][0].lower()
 
 
+class TestRequiresConversation:
+    """A message can only be sent inside an existing conversation."""
+
+    def test_send_message_blocked_without_conversation(self):
+        app, api = _fake_pawcode()
+        app.conversation_id = None
+        app._send_message("hello")
+        assert api.messages == []
+        assert any("conversation" in s.lower() for s in app.renderer.errors)
+
+    def test_targeted_message_blocked_without_conversation(self):
+        app, api = _fake_pawcode()
+        app.conversation_id = None
+        app._send_targeted_message("hello", "claude")
+        assert api.messages == []
+        assert any("conversation" in s.lower() for s in app.renderer.errors)
+
+
 class TestHeadlessLogin:
     """Copy/paste login for SSH / remote / no-browser machines."""
 

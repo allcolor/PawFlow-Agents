@@ -322,6 +322,50 @@ def render_failure_redirect(submitted: str, skin="matrix") -> str:
         return ""
 
 
+def _effective_client_ip(direct_ip: str, headers, config: Dict[str, Any]) -> str:
+    """Resolve the client IP used for bans and cookie binding.
+
+    By default the direct TCP peer is the client (PawFlow terminates TLS
+    itself). Deployments behind a reverse proxy can set ``trusted_proxies``
+    (comma-separated IPs/CIDRs); the gateway then takes the client from
+    X-Forwarded-For — but only when the direct peer is one of the declared
+    proxies, so the header cannot be spoofed from the open internet.
+    """
+    raw = str(_raw_value(config.get("trusted_proxies")) or "").strip()
+    if not raw:
+        return direct_ip
+    import ipaddress
+    nets = []
+    for part in raw.replace(";", ",").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            nets.append(ipaddress.ip_network(part, strict=False))
+        except ValueError:
+            logger.warning("PrivateGateway: ignoring invalid trusted_proxies entry %r", part)
+
+    def _trusted(ip: str) -> bool:
+        try:
+            addr = ipaddress.ip_address(ip)
+        except (ValueError, TypeError):
+            return False
+        return any(addr in n for n in nets)
+
+    if not _trusted(direct_ip):
+        return direct_ip
+    try:
+        xff = headers.get("X-Forwarded-For", "") or headers.get("x-forwarded-for", "")
+    except Exception:
+        xff = ""
+    # Walk right-to-left: the right-most hop that is not itself a trusted
+    # proxy is the real client; everything left of it is client-supplied.
+    for hop in reversed([h.strip() for h in str(xff).split(",") if h.strip()]):
+        if not _trusted(hop):
+            return hop
+    return direct_ip
+
+
 _EXEMPT_PATHS = frozenset(["/health", "/favicon.ico"])
 
 
@@ -379,6 +423,7 @@ def _check_request_inner(handler, config: Dict[str, Any]) -> bool:
         return False
 
     ip = handler.client_address[0] if handler.client_address else "0.0.0.0"  # nosec B104 - client IP fallback, not a bind.
+    ip = _effective_client_ip(ip, handler.headers, config)
     path = handler.path.split('?', 1)[0]
     cookie_name = str(_raw_value(config.get("cookie_name")) or _COOKIE_NAME)
     cookie_max_age = int(_raw_value(config.get("cookie_max_age")) or _COOKIE_MAX_AGE)
@@ -577,6 +622,13 @@ class PrivateGateway(BaseService):
                 "type": "integer", "required": False, "default": _COOKIE_MAX_AGE,
                 "description": "Challenge pass cookie lifetime in seconds",
             },
+            "trusted_proxies": {
+                "type": "string", "required": False, "default": "",
+                "description": ("Comma-separated reverse-proxy IPs/CIDRs. When the "
+                                 "direct peer matches, the client IP is taken from "
+                                 "X-Forwarded-For (for bans and cookie binding). "
+                                 "Leave empty when PawFlow faces clients directly."),
+            },
         }
 
     def is_enabled(self) -> bool:
@@ -605,6 +657,7 @@ class PrivateGateway(BaseService):
         if not self.is_enabled() or internal_ok:
             return False
         ip = client_address[0] if client_address else "0.0.0.0"  # nosec B104 - client IP fallback, not a bind.
+        ip = _effective_client_ip(ip, headers, self.config)
         if is_banned(ip):
             return True
         gateway_key = headers.get("X-PawFlow-Gateway-Key", "")

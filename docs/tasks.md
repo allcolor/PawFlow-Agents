@@ -111,10 +111,13 @@ show inline buttons to resume an existing conversation. Telegram keeps `/conv`
 and `/tts` as channel-local commands; other slash commands are sent through the
 shared server-side command dispatcher. `/help` uses that shared dispatcher and
 renders the command reference for Telegram even before a conversation is
-resumed. The `agent_runtime_port`
+resumed. The optional `agent_runtime_port`
 parameter resolves at execution time to a running flow port such as
 `pawflow_agent.agent_runtime_in`; the target flow must be running and declare an
-`agentRuntime` input port. The Telegram client task is concurrent so a second
+`agentRuntime` input port. When the parameter is empty, both regular messages
+and slash commands fall back to the live `agentLoop` instance. Command-handling
+failures are reported back to the Telegram chat as `Command failed: ...` instead
+of silently dropping the message. The Telegram client task is concurrent so a second
 Telegram message can reach the running agent and preempt or queue while an older
 Telegram request is still waiting for its final response. Runtime ACKs that are
 only preemption or queue acknowledgements do not wait for a separate `done`

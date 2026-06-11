@@ -854,6 +854,94 @@ class TestTelegramAgentClientTask(unittest.TestCase):
             _p.USER_CONFIG_DIR = orig_ucd
             shutil.rmtree(tmp, ignore_errors=True)
 
+    def test_agent_client_dispatch_command_falls_back_to_live_instance(self):
+        """Without agent_runtime_port, commands use AgentLoopTask._live_instance
+        — the same fallback as regular messages."""
+        import shutil
+        import tempfile
+        from unittest.mock import patch
+
+        from core.identity_service import IdentityService
+        from tasks.ai.agent_loop import AgentLoopTask
+        from tasks.io.telegram_agent_client import TelegramAgentClientTask
+
+        tmp = tempfile.mkdtemp()
+        IdentityService.reset()
+        import core.paths as _p
+        orig_ucd = _p.USER_CONFIG_DIR
+        _p.USER_CONFIG_DIR = Path(tmp) / "users"
+        try:
+            ids = IdentityService()
+            IdentityService._instance = ids
+            ids.link("alice", "telegram", "111111")
+            ids.set_active_conv("alice", "telegram", "conv1")
+
+            class RuntimeTask:
+                def execute(self, flowfile):
+                    flowfile.set_content(json.dumps({"help": "Available commands"}).encode("utf-8"))
+                    return [flowfile]
+
+            class Writer:
+                def enqueue_message(self, msg, **kwargs):
+                    pass
+
+            task = TelegramAgentClientTask({})
+            ff = FlowFile(content=b"/help")
+            ff.set_attribute("telegram.user_id", "111111")
+            ff.set_attribute("telegram.chat_id", "111111")
+            ff.set_attribute("telegram.message_id", "m-help")
+
+            with patch.object(TelegramAgentClientTask, "_selected_agent_for_conversation", return_value="assistant"), \
+                    patch.object(AgentLoopTask, "_live_instance", RuntimeTask()), \
+                    patch("core.conversation_writer.ConversationWriter.for_conversation", return_value=Writer()):
+                out = task.execute(ff)
+
+            assert b"Available commands" in out[0].get_content()
+        finally:
+            IdentityService.reset()
+            _p.USER_CONFIG_DIR = orig_ucd
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_agent_client_command_failure_replies_instead_of_silence(self):
+        """A command-handling failure must answer the user, not drop the
+        flowfile through an unhandled exception."""
+        import shutil
+        import tempfile
+        from unittest.mock import patch
+
+        from core.identity_service import IdentityService
+        from tasks.ai.agent_loop import AgentLoopTask
+        from tasks.io.telegram_agent_client import TelegramAgentClientTask
+
+        tmp = tempfile.mkdtemp()
+        IdentityService.reset()
+        import core.paths as _p
+        orig_ucd = _p.USER_CONFIG_DIR
+        _p.USER_CONFIG_DIR = Path(tmp) / "users"
+        try:
+            ids = IdentityService()
+            IdentityService._instance = ids
+            ids.link("alice", "telegram", "111111")
+            ids.set_active_conv("alice", "telegram", "conv1")
+
+            task = TelegramAgentClientTask({})
+            ff = FlowFile(content=b"/help")
+            ff.set_attribute("telegram.user_id", "111111")
+            ff.set_attribute("telegram.chat_id", "111111")
+            ff.set_attribute("telegram.message_id", "m-help")
+
+            with patch.object(TelegramAgentClientTask, "_selected_agent_for_conversation", return_value="assistant"), \
+                    patch.object(AgentLoopTask, "_live_instance", None):
+                out = task.execute(ff)
+
+            content = out[0].get_content().decode("utf-8")
+            assert content.startswith("Command failed:")
+            assert "No live AgentLoopTask" in content
+        finally:
+            IdentityService.reset()
+            _p.USER_CONFIG_DIR = orig_ucd
+            shutil.rmtree(tmp, ignore_errors=True)
+
     def test_agent_client_does_not_mirror_telegram_local_commands(self):
         import shutil
         import tempfile

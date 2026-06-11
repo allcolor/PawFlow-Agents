@@ -80,7 +80,12 @@ class TelegramAgentClientTask(BaseTask):
             _apply_telegram_response(flowfile, wizard_response)
             return [flowfile]
 
-        command_response = self._handle_command(text, user_id, chat_id)
+        try:
+            command_response = self._handle_command(text, user_id, chat_id)
+        except Exception as exc:
+            logger.warning("Telegram command handling failed: %s", exc, exc_info=True)
+            flowfile.set_content(f"Command failed: {exc}".encode("utf-8"))
+            return [flowfile]
         if command_response is not None:
             if _should_mirror_telegram_command(text):
                 self._mirror_command_to_conversation(flowfile, text, user_id)
@@ -332,11 +337,19 @@ class TelegramAgentClientTask(BaseTask):
         ff.set_attribute("http.auth.principal", user_id)
         ff.set_attribute("agent.client_channel", "telegram")
         ff.set_attribute("conversation_id", conversation_id)
-        from core.agent_runtime_ports import resolve_agent_runtime_task
-        runtime_port = self.config.get("agent_runtime_port", "pawflow_agent.agent_runtime_in")
-        inst = resolve_agent_runtime_task(runtime_port)
+        # Resolve the dispatcher the same way AgentRuntimeAPI.submit_message
+        # does for regular messages: an explicit runtime port when configured,
+        # otherwise the live AgentLoopTask singleton.
+        runtime_port = str(self.config.get("agent_runtime_port") or "").strip()
+        if runtime_port:
+            from core.agent_runtime_ports import resolve_agent_runtime_task
+            inst = resolve_agent_runtime_task(runtime_port)
+        else:
+            from tasks.ai.agent_loop import AgentLoopTask
+            inst = AgentLoopTask._live_instance
         if inst is None:
-            raise RuntimeError(f"No live AgentLoopTask is available for runtime port: {runtime_port}")
+            raise RuntimeError(
+                f"No live AgentLoopTask is available for runtime port: {runtime_port or '(default)'}")
         outputs = inst.execute(ff)
         out = outputs[0] if outputs else ff
         return _format_telegram_command_result(

@@ -14,7 +14,17 @@ export class SSEClient extends EventEmitter {
   private shouldReconnect = true;
   private retryDelay = 1000;
   private retryCount = 0;
-  private static readonly MAX_RETRIES = 30;
+  // True once we've connected at least once, so the next (re)connection is a
+  // RECONNECT and must trigger a history catch-up.
+  private everConnected = false;
+  // Liveness watchdog: the server sends an sse_ping (and `: keepalive`
+  // comment) every ~15s. If no bytes arrive for this long the socket is
+  // silently half-open (laptop sleep, proxy idle-kill after going to the
+  // browser for a while) even though Node never fired 'end'/'error' — force
+  // a reconnect so the live stream resumes like the webchat does.
+  private lastActivity = 0;
+  private watchdog: NodeJS.Timeout | null = null;
+  private static readonly STALE_MS = 45000;
 
   constructor(serverUrl: string, sessionToken: string, gatewayCookie: string = '') {
     super();
@@ -25,16 +35,35 @@ export class SSEClient extends EventEmitter {
 
   connect(conversationId: string): void {
     this.shouldReconnect = true;
+    this._startWatchdog(conversationId);
     this._connect(conversationId);
   }
 
   disconnect(): void {
     this.shouldReconnect = false;
+    if (this.watchdog) { clearInterval(this.watchdog); this.watchdog = null; }
     if (this.request) {
       this.request.destroy();
       this.request = null;
     }
     this.connected = false;
+  }
+
+  private _startWatchdog(conversationId: string): void {
+    if (this.watchdog) { clearInterval(this.watchdog); }
+    this.watchdog = setInterval(() => {
+      if (!this.shouldReconnect || !this.lastActivity) { return; }
+      if (Date.now() - this.lastActivity > SSEClient.STALE_MS) {
+        // Stream is silently dead — tear it down and reconnect.
+        this.lastActivity = 0;
+        if (this.request) {
+          try { this.request.removeAllListeners(); this.request.destroy(); } catch { /* noop */ }
+          this.request = null;
+        }
+        this.connected = false;
+        this._connect(conversationId);
+      }
+    }, 10000);
   }
 
   isConnected(): boolean {
@@ -81,13 +110,23 @@ export class SSEClient extends EventEmitter {
       this.connected = true;
       this.retryDelay = 1000;
       this.retryCount = 0;
+      this.lastActivity = Date.now();
       this.emit('connected');
+      // A reconnect (not the first connect) means we may have missed events
+      // while the stream was down — tell listeners to catch up from history.
+      if (this.everConnected) {
+        this.emit('reconnected');
+      }
+      this.everConnected = true;
 
       let eventType = '';
       let dataLines: string[] = [];
       let buffer = '';
 
       res.on('data', (chunk: Buffer) => {
+        // Any byte — event, sse_ping, or `: keepalive` comment — proves the
+        // socket is alive; refresh the watchdog clock.
+        this.lastActivity = Date.now();
         buffer += chunk.toString('utf-8');
         const lines = buffer.split('\n');
         buffer = lines.pop() || '';
@@ -103,8 +142,19 @@ export class SSEClient extends EventEmitter {
               const rawData = dataLines.join('\n');
               let parsed: Record<string, any> = {};
               try { parsed = JSON.parse(rawData); } catch { parsed = { raw: rawData }; }
-              const event: SSEEvent = { event: eventType || 'message', data: parsed };
-              this.emit('event', event);
+              // sse_ping / sse_reconnect are transport control events.
+              if (eventType === 'sse_ping') {
+                // keepalive only — already refreshed lastActivity above.
+              } else if (eventType === 'sse_reconnect') {
+                // Server intentionally closed this long-lived stream; open a
+                // fresh one (its 'end' will also fire, but reconnect is
+                // idempotent via the destroy-previous-request guard).
+                this.connected = false;
+                this._connect(conversationId);
+              } else {
+                const event: SSEEvent = { event: eventType || 'message', data: parsed };
+                this.emit('event', event);
+              }
             }
             eventType = '';
             dataLines = [];

@@ -435,6 +435,26 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     }
   }
 
+  private async _catchUpHistory(): Promise<void> {
+    // Reload the latest history for the live conversation after an SSE
+    // reconnect, without re-arming SSE (it's already connected). The webview
+    // dedups by msg_id, so already-shown messages are not duplicated.
+    const api = this.getApi();
+    const cid = this.conversationId;
+    if (!api || !cid) { return; }
+    try {
+      const data = await api.sendAction('load_history', {
+        conversation_id: cid, limit: 50, offset: 0,
+      });
+      if (!data.error) {
+        if (data.active_agent) { this.selectedAgent = data.active_agent; }
+        this.postMessage({ type: 'history', data, append: false });
+      }
+    } catch (e: any) {
+      console.warn('[PawFlow] catch-up history failed:', e?.message || e);
+    }
+  }
+
   private async resumeConversation(cid: string, offset?: number): Promise<void> {
     const api = this.getApi();
     if (!api) { return; }
@@ -486,6 +506,13 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     // a dropped SSE connection must never take the extension down.
     sse.on('error', (e: Error) => {
       console.warn('[PawFlow] SSE error:', e.message);
+    });
+    // On reconnect (after a stale stream / long sleep / proxy idle-kill),
+    // events that fired while disconnected were missed. Reload history so
+    // the panel catches up — the same effect as re-selecting the
+    // conversation, but automatic, like the webchat.
+    sse.on('reconnected', () => {
+      void this._catchUpHistory();
     });
     sse.on('event', (event: SSEEvent) => {
       this.postMessage({ type: 'sseEvent', event });

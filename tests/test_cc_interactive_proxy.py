@@ -717,10 +717,14 @@ def test_upstream_socket_is_blocking_after_connect(monkeypatch):
     class _Socket:
         def __init__(self):
             self.timeout = "connect-timeout"
+            self.sockopts = []
 
         def settimeout(self, value):
             self.timeout = value
             calls.append(value)
+
+        def setsockopt(self, level, opt, value):
+            self.sockopts.append((level, opt, value))
 
     class _Context:
         def wrap_socket(self, raw, server_hostname=None):
@@ -735,6 +739,8 @@ def test_upstream_socket_is_blocking_after_connect(monkeypatch):
     assert proxy._connect_upstream() is raw
     assert calls == [None, None]
     assert raw.timeout is None
+    # Nagle disabled so SSE chunks are forwarded without delayed-ACK bursts.
+    assert (proxy.socket.IPPROTO_TCP, proxy.socket.TCP_NODELAY, 1) in raw.sockopts
 
 
 def test_hook_compacts_lifecycle_input():

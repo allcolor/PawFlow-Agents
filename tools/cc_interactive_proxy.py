@@ -364,6 +364,13 @@ def _connect_upstream():
         try:
             raw = socket.create_connection((ip, UPSTREAM_PORT), timeout=10)
             raw.settimeout(None)
+            # Disable Nagle: SSE flows token-by-token in small writes, and
+            # Nagle + delayed-ACK would coalesce them into bursts, making the
+            # stream feel choppy. We forward each chunk as it arrives.
+            try:
+                raw.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            except OSError:
+                pass
             ctx = ssl.create_default_context()
             wrapped = ctx.wrap_socket(raw, server_hostname=UPSTREAM_HOST)
             wrapped.settimeout(None)
@@ -1135,6 +1142,12 @@ def main():
     EVENTS.connect()
     while True:
         raw, _addr = lsock.accept()
+        # Disable Nagle on the TUI-facing socket too, so forwarded SSE chunks
+        # reach the Claude Code client without delayed-ACK coalescing.
+        try:
+            raw.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        except OSError:
+            pass
         try:
             client = ctx.wrap_socket(raw, server_side=True)
         except Exception as exc:

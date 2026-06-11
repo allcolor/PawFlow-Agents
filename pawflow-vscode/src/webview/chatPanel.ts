@@ -24,7 +24,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     view.webview.options = {
       enableScripts: true,
       localResourceRoots: [
-        vscode.Uri.joinPath(this.context.extensionUri, 'src', 'webview'),
+        vscode.Uri.joinPath(this.context.extensionUri, 'media', 'webview'),
         this.context.extensionUri,
       ],
     };
@@ -588,19 +588,19 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     const v = `?v=${Date.now()}`;
 
     const styleUri = webview.asWebviewUri(
-      vscode.Uri.joinPath(extensionUri, 'src', 'webview', 'styles.css')
+      vscode.Uri.joinPath(extensionUri, 'media', 'webview', 'styles.css')
     ) + v;
     const chatUri = webview.asWebviewUri(
-      vscode.Uri.joinPath(extensionUri, 'src', 'webview', 'chat.js')
+      vscode.Uri.joinPath(extensionUri, 'media', 'webview', 'chat.js')
     ) + v;
     const commandsUri = webview.asWebviewUri(
-      vscode.Uri.joinPath(extensionUri, 'src', 'webview', 'commands.js')
+      vscode.Uri.joinPath(extensionUri, 'media', 'webview', 'commands.js')
     ) + v;
     const panelsUri = webview.asWebviewUri(
-      vscode.Uri.joinPath(extensionUri, 'src', 'webview', 'panels.js')
+      vscode.Uri.joinPath(extensionUri, 'media', 'webview', 'panels.js')
     ) + v;
     const formsUri = webview.asWebviewUri(
-      vscode.Uri.joinPath(extensionUri, 'src', 'webview', 'forms.js')
+      vscode.Uri.joinPath(extensionUri, 'media', 'webview', 'forms.js')
     ) + v;
 
     return `<!DOCTYPE html>

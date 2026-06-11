@@ -12,11 +12,41 @@ let statusBar: StatusBarProvider;
 let chatProvider: ChatPanelProvider;
 let gatewayCookie = '';
 
-export function activate(context: vscode.ExtensionContext) {
+function getSettings(): { serverUrl: string; gatewayKey: string; configured: boolean } {
   const config = vscode.workspace.getConfiguration('pawflow');
-  const serverUrl = config.get<string>('serverUrl', 'http://localhost:9090');
-  const gatewayKey = config.get<string>('gatewayKey', '');
+  const inspected = config.inspect<string>('serverUrl');
+  return {
+    serverUrl: config.get<string>('serverUrl', 'http://localhost:9090'),
+    gatewayKey: config.get<string>('gatewayKey', ''),
+    configured: Boolean(inspected?.globalValue || inspected?.workspaceValue),
+  };
+}
 
+async function configureServer(): Promise<boolean> {
+  const settings = getSettings();
+  const serverUrl = await vscode.window.showInputBox({
+    title: 'PawFlow server URL',
+    prompt: 'Base URL of your PawFlow server',
+    value: settings.serverUrl,
+    placeHolder: 'https://pawflow.example.org:19990',
+    ignoreFocusOut: true,
+  });
+  if (!serverUrl) { return false; }
+  const gatewayKey = await vscode.window.showInputBox({
+    title: 'Private gateway key (optional)',
+    prompt: 'Leave empty if the private gateway is disabled',
+    value: settings.gatewayKey,
+    password: true,
+    ignoreFocusOut: true,
+  });
+  if (gatewayKey === undefined) { return false; }
+  const config = vscode.workspace.getConfiguration('pawflow');
+  await config.update('serverUrl', serverUrl.replace(/\/+$/, ''), vscode.ConfigurationTarget.Global);
+  await config.update('gatewayKey', gatewayKey, vscode.ConfigurationTarget.Global);
+  return true;
+}
+
+export function activate(context: vscode.ExtensionContext) {
   // Initialize components. Commands and views are registered synchronously
   // below — no network call may run before that, so a dead/unreachable
   // server can never leave the extension without its commands.
@@ -35,8 +65,21 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.commands.executeCommand('pawflow.chatView.focus');
     }),
 
+    vscode.commands.registerCommand('pawflow.configure', async () => {
+      if (await configureServer()) {
+        void initializeSession();
+      }
+    }),
+
     vscode.commands.registerCommand('pawflow.login', async () => {
       try {
+        // First login on an unconfigured install: ask for the server first
+        // instead of silently sending the user to the localhost default.
+        if (!getSettings().configured && !(await configureServer())) { return; }
+        const { serverUrl, gatewayKey } = getSettings();
+        if (gatewayKey && !gatewayCookie) {
+          try { gatewayCookie = await acquireGatewayCookie(serverUrl, gatewayKey); } catch { /* login may still work */ }
+        }
         const session = await auth.login(serverUrl);
         if (apiClient) {
           apiClient.setToken(session.token);
@@ -126,10 +169,11 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(statusBar);
 
   // Session/network bring-up runs after registration and is fully guarded.
-  void initializeSession(serverUrl, gatewayKey);
+  void initializeSession();
 }
 
-async function initializeSession(serverUrl: string, gatewayKey: string) {
+async function initializeSession() {
+  const { serverUrl, gatewayKey, configured } = getSettings();
   try {
     // Acquire gateway cookie if key is configured
     if (gatewayKey) {
@@ -179,11 +223,16 @@ async function initializeSession(serverUrl: string, gatewayKey: string) {
 
   // Show login prompt if not authenticated
   if (!apiClient) {
+    const message = configured
+      ? 'PawFlow: Not logged in. Login now?'
+      : 'PawFlow: No server configured yet.';
     const choice = await vscode.window.showInformationMessage(
-      'PawFlow: Not logged in. Login now?', 'Login', 'Later'
+      message, configured ? 'Login' : 'Configure', 'Later'
     );
     if (choice === 'Login') {
       vscode.commands.executeCommand('pawflow.login');
+    } else if (choice === 'Configure') {
+      vscode.commands.executeCommand('pawflow.configure');
     }
   }
 }

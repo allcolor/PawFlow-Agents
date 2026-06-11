@@ -1119,6 +1119,87 @@ class TestOAuthCallbackTask(unittest.TestCase):
         assert results[0].get_attribute("http.auth.valid") == "true"
 
 
+# ── Security regression: relay_callback open-redirect ───────────────
+
+
+class TestRelayCallbackLoopbackOnly(unittest.TestCase):
+    """relay_callback receives the freshly minted session token in its query
+    string, so it must be restricted to loopback targets or it becomes a
+    session-token exfiltration vector (open redirect)."""
+
+    def test_loopback_validator_accepts_local(self):
+        from tasks.io.oauth_redirect import is_loopback_relay_callback
+        for url in (
+            "http://127.0.0.1:54321/callback",
+            "http://localhost:8080/callback",
+            "https://127.0.0.1:9000/cb",
+            "http://[::1]:7000/callback",
+        ):
+            assert is_loopback_relay_callback(url), url
+
+    def test_loopback_validator_rejects_external(self):
+        from tasks.io.oauth_redirect import is_loopback_relay_callback
+        for url in (
+            "https://evil.tld/steal",
+            "http://attacker.example/callback",
+            "http://127.0.0.1.evil.tld/cb",
+            "//evil.tld/cb",
+            "javascript:alert(1)",
+            "http://169.254.169.254/latest/meta-data",
+            "",
+        ):
+            assert not is_loopback_relay_callback(url), url
+
+    def test_sanitize_drops_external(self):
+        from tasks.io.oauth_redirect import sanitize_relay_callback
+        assert sanitize_relay_callback("https://evil.tld/x") == ""
+        assert (sanitize_relay_callback("http://127.0.0.1:1/cb")
+                == "http://127.0.0.1:1/cb")
+
+    @patch("tasks.io.oauth_callback._http_post")
+    @patch("tasks.io.oauth_callback._http_get")
+    def test_external_relay_callback_does_not_leak_token(self, mock_get, mock_post):
+        """A crafted state with an external relay_callback must NOT redirect the
+        browser (and the session token) off-site — it falls back to the local
+        success redirect."""
+        mock_post.return_value = {"access_token": "at-evil"}
+        mock_get.return_value = {
+            "sub": "google-uid-evil",
+            "email": "victim@example.com",
+            "name": "Victim",
+        }
+        from services.oauth_provider_service import OAuthProviderService
+        svc = OAuthProviderService({
+            "provider": "google", "client_id": "id", "client_secret": "sec",
+            "redirect_uri": "http://localhost/cb",
+        })
+        state = svc.generate_state(metadata={"relay_callback": "https://evil.tld/steal"})
+
+        from core.identity_service import IdentityService
+        from core.security import SecurityManager, Role
+        sm = SecurityManager.get_instance()
+        try:
+            sm.create_user("oauth_victim_user", "pass", Role.USER,
+                           email="victim@example.com")
+        except ValueError:
+            pass
+        IdentityService.instance().link("oauth_victim_user", "google", "google-uid-evil")
+
+        from tasks.io.oauth_callback import OAuthCallbackTask
+        task = OAuthCallbackTask({"success_redirect": "/chat"})
+        task._services = {"oauth": svc}
+        task.config["oauth_service_id"] = "oauth"
+
+        ff = FlowFile(content=b"")
+        ff.set_attribute("http.query", f"code=evil-code&state={state}")
+        results = task.execute(ff)
+
+        location = results[0].get_attribute("http.response.header.Location")
+        assert location == "/chat", location
+        assert "evil.tld" not in location
+        assert "token=" not in location
+
+
 # ── OAuthLogoutTask ─────────────────────────────────────────────────
 
 

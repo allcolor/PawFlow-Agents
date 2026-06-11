@@ -497,8 +497,18 @@ All string values may use `${...}` expressions. They are resolved recursively at
         # linking existed: match an existing passwordless PawFlow account by
         # verified provider email, then persist the explicit link for subsequent
         # logins. Password-backed users still require an onboarding/link token.
+        #
+        # The email MUST be provider-verified. Several providers report an
+        # unverified, user-settable email (GitHub public profile email, many
+        # generic OIDC IdPs); matching on those would let an attacker set their
+        # provider email to a victim's and take over the victim's passwordless
+        # account. We therefore only trust an email the provider explicitly
+        # asserts as verified (`email_verified` claim, e.g. Google/OIDC).
+        # Providers that don't assert verification fall through to requiring an
+        # admin onboarding/link token — the module's default posture.
         email = str(auth_result.email or "").strip().lower()
-        if email:
+        email_verified = bool((auth_result.claims or {}).get("email_verified"))
+        if email and email_verified:
             for listed_user in sm.list_users():
                 user_email = str(listed_user.get("email") or "").strip().lower()
                 if user_email == email:

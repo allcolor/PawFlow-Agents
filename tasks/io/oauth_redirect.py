@@ -31,6 +31,44 @@ def is_self_auth_login_url(url: str, host: str = "") -> bool:
     return bool(host) and parsed.netloc.lower() == host.lower()
 
 
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+
+
+def is_loopback_relay_callback(url: str) -> bool:
+    """Return True only for a loopback http(s) relay callback URL.
+
+    The post-login redirect appends the freshly minted session token to
+    `relay_callback` as a query parameter, so this value MUST never point
+    anywhere but the local CLI/relay callback server. The only legitimate
+    callers (`pawflow_cli/auth.py`, `pawflow_relay/register.py`) always
+    pass `http://127.0.0.1:<port>/callback`. Anything else is treated as
+    an open-redirect token-exfiltration attempt and dropped.
+    """
+    raw = str(url or "").strip()
+    if not raw:
+        return False
+    try:
+        parsed = urlparse(raw)
+    except (ValueError, TypeError):
+        return False
+    if parsed.scheme not in ("http", "https"):
+        return False
+    host = (parsed.hostname or "").strip().lower()
+    return host in _LOOPBACK_HOSTS
+
+
+def sanitize_relay_callback(url: str) -> str:
+    """Return `url` if it is a safe loopback callback, else "" (with a warn)."""
+    if not url:
+        return ""
+    if is_loopback_relay_callback(url):
+        return url
+    logger.warning(
+        "Dropping non-loopback relay_callback (open-redirect / token-exfil "
+        "attempt): %r", url)
+    return ""
+
+
 def oauth_config_error(flowfile: FlowFile, provider_name: str, authorize_url: str) -> List[FlowFile]:
     """Return an explicit HTTP response for OAuth self-redirect config bugs."""
     import html
@@ -99,7 +137,8 @@ class OAuthRedirectTask(BaseTask):
         import urllib.parse as _urlparse
         query_string = flowfile.get_attribute("http.query") or ""
         query_params = _urlparse.parse_qs(query_string)
-        relay_callback = query_params.get("relay_callback", [""])[0]
+        relay_callback = sanitize_relay_callback(
+            query_params.get("relay_callback", [""])[0])
 
         # PawFlow auth gateway: serve login page instead of redirect
         if getattr(service, 'provider', '') == 'pawflow':

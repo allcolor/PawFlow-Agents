@@ -243,10 +243,13 @@ class OAuthCallbackTask(BaseTask):
         cookie_max_age = int(self.config.get("cookie_max_age", 28800))
         success_redirect = self.config.get("success_redirect", "/chat")
 
-        # Check if this auth was initiated by a relay
+        # Check if this auth was initiated by a relay. Re-validate the
+        # callback target: the session token is appended to it below, so a
+        # non-loopback value here would exfiltrate the token (open redirect).
+        from tasks.io.oauth_redirect import sanitize_relay_callback
         relay_callback = ""
         if isinstance(state_meta, dict):
-            relay_callback = state_meta.get("relay_callback", "")
+            relay_callback = sanitize_relay_callback(state_meta.get("relay_callback", ""))
 
         cookie = (
             f"{cookie_name}={session.session_id}; "
@@ -403,10 +406,13 @@ class OAuthCallbackTask(BaseTask):
             except Exception as e:
                 logger.warning(f"Failed to persist refresh token: {e}")
 
-        # Check if this auth was initiated by a relay (CLI/plugin)
+        # Check if this auth was initiated by a relay (CLI/plugin). The
+        # session token is appended to this URL below — re-validate it is a
+        # loopback target so a crafted state cannot exfiltrate the token.
+        from tasks.io.oauth_redirect import sanitize_relay_callback
         relay_callback = ""
         if isinstance(state_data, dict):
-            relay_callback = state_data.get("relay_callback", "")
+            relay_callback = sanitize_relay_callback(state_data.get("relay_callback", ""))
 
         redirect = self.config.get("success_redirect", "/chat")
         cookie = self.config.get("cookie_name", "pawflow_token")

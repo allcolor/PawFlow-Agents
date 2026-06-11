@@ -371,6 +371,7 @@ class TestAuthGatewayService(unittest.TestCase):
                 user_id="google-sub-123",
                 email="quentin.anciaux@allcolor.org",
                 username="quentin.anciaux",
+                claims={"email_verified": True},
             )
 
             user = gw._find_existing_user(sm, result)
@@ -381,6 +382,42 @@ class TestAuthGatewayService(unittest.TestCase):
                 IdentityService.instance().resolve("google", "google-sub-123"),
                 "quentin.anciaux",
             )
+        finally:
+            IdentityService.reset()
+            SecurityManager._instance = None
+
+    def test_unverified_email_does_not_match_passwordless_user(self):
+        """An attacker-controlled, unverified provider email must NOT auto-link
+        to an existing passwordless account (account-takeover guard)."""
+        from core.identity_service import IdentityService
+        from core.security import SecurityManager, Role
+        from services.auth_gateway_service import AuthGatewayService
+
+        IdentityService.reset()
+        SecurityManager._instance = None
+        sm = SecurityManager.get_instance()
+        try:
+            victim = sm.create_user(
+                "victim", "", Role.ADMIN,
+                email="victim@allcolor.org", display_name="Victim")
+            victim.password_hash = ""
+            sm._save_users()
+            gw = AuthGatewayService({"providers": {}})
+            # Provider reports the victim's email but does NOT assert it verified.
+            result = AuthResult(
+                success=True,
+                provider="github",
+                user_id="github-attacker-1",
+                email="victim@allcolor.org",
+                username="attacker",
+                claims={"email_verified": False},
+            )
+
+            user = gw._find_existing_user(sm, result)
+
+            self.assertIsNone(user)
+            self.assertIsNone(
+                IdentityService.instance().resolve("github", "github-attacker-1"))
         finally:
             IdentityService.reset()
             SecurityManager._instance = None

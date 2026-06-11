@@ -66,6 +66,12 @@ class CCInteractiveSessionEvents:
     pending_injected_prompt_ignores: list[float] = field(default_factory=list)
     created_at: float = field(default_factory=time.time)
     last_event_at: float = 0.0
+    # Listener liveness: when a PawFlow-injected prompt is submitted while
+    # no request coordinator is polling wait_event anymore (it timed out or
+    # died), the turn would run invisibly — these timestamps let the service
+    # detect that and capture the orphan turn like a manual tmux one.
+    last_wait_at: float = 0.0
+    injected_intent_at: float = 0.0
 
 
 class CCInteractiveEventService(BaseService):
@@ -179,6 +185,9 @@ class CCInteractiveEventService(BaseService):
                 if ts >= cutoff
             ]
             state.pending_injected_prompt_ignores.append(now)
+            # A coordinator will start polling as soon as the tmux send
+            # returns — suppress orphan-turn capture for the send window.
+            state.injected_intent_at = now
 
     def session_state(self, session_token: str) -> Optional[CCInteractiveSessionEvents]:
         with self._sessions_lock:
@@ -190,6 +199,7 @@ class CCInteractiveEventService(BaseService):
             raise RuntimeError("Unknown CC interactive session")
         if state.unreliable:
             raise RuntimeError(state.error or "CC interactive session is unreliable")
+        state.last_wait_at = time.time()
         try:
             event = state.events.get(timeout=timeout)
         except queue.Empty:
@@ -223,6 +233,7 @@ class CCInteractiveEventService(BaseService):
         if event.get("type") == "wire":
             return
         self._maybe_ingest_manual_prompt(state, event)
+        self._maybe_adopt_orphan_turn(state, event)
         try:
             state.events.put(event, block=block, timeout=5 if block else 0)
         except queue.Full as exc:
@@ -289,8 +300,10 @@ class CCInteractiveEventService(BaseService):
             prompt = ""
         if data.get("pawflow_injected_prompt"):
             self._consume_pending_injected_prompt(state)
+            self._capture_orphan_injected_turn(state)
             return
         if self._consume_injected_prompt(state, prompt):
+            self._capture_orphan_injected_turn(state)
             return
         if data.get("pawflow_managed_prompt"):
             return
@@ -331,6 +344,67 @@ class CCInteractiveEventService(BaseService):
         except Exception:
             logger.warning("CC interactive manual prompt persist failed", exc_info=True)
             return
+        self._start_manual_capture(state)
+
+    # A live request coordinator polls wait_event at least every 0.25s;
+    # a last_wait_at older than this means nobody is streaming the turn.
+    _LISTENER_FRESH_SECONDS = 3.0
+    # Worst-case gap between the prompt injection (tmux paste) and the
+    # coordinator's first wait_event poll — the send blocks through paste,
+    # settle, double-Enter and submit verification before run() starts.
+    _INJECT_INTENT_GRACE_SECONDS = 60.0
+
+    def _request_listener_recent(self, state: CCInteractiveSessionEvents) -> bool:
+        now = time.time()
+        return (state.manual_capture_active
+                or now - state.last_wait_at < self._LISTENER_FRESH_SECONDS
+                or now - state.injected_intent_at < self._INJECT_INTENT_GRACE_SECONDS)
+
+    def _capture_orphan_injected_turn(self, state: CCInteractiveSessionEvents) -> None:
+        """Safety net for injected prompts submitted with no listener.
+
+        Scenario: PawFlow injects a prompt, the submit Enter is swallowed by
+        the TUI, the request coordinator eventually times out and dies; a
+        human then presses Enter in the tmux. The hook reports the injected
+        digest, so the manual-prompt path is skipped — and the whole turn
+        would run invisibly (tmux active, webchat silent). When no request
+        coordinator has polled recently, capture the response like a manual
+        tmux turn. The user message is NOT re-persisted: an injected prompt
+        already originates from the conversation, so only the assistant
+        response is missing.
+        """
+        self._adopt_orphan_turn(state, "injected prompt submitted")
+
+    def _maybe_adopt_orphan_turn(self, state: CCInteractiveSessionEvents,
+                                 event: dict) -> None:
+        """Tmux is working but nobody is streaming the turn: adopt it.
+
+        A request_start for a real /v1/messages call means the CC session is
+        actively running a turn. If no request coordinator has polled
+        wait_event recently (it died or never existed) the turn is invisible
+        to the conversation — attach a capture so the activity and response
+        reach the webchat. request_start is the trigger (rather than every
+        event) because it only fires mid-turn: post-Stop stragglers can
+        never spawn a capture that would outlive its turn and steal events
+        from the next request's coordinator.
+        """
+        if event.get("type") != "request_start":
+            return
+        path = event.get("path", "") or ""
+        if not path.startswith("/v1/messages") or event.get("ignore_reason"):
+            return
+        self._adopt_orphan_turn(state, "request in flight")
+
+    def _adopt_orphan_turn(self, state: CCInteractiveSessionEvents,
+                           reason: str) -> None:
+        if self._request_listener_recent(state):
+            return
+        if not state.conversation_id or not state.agent_name:
+            logger.debug("orphan CC turn ignored without session binding")
+            return
+        logger.warning(
+            "CC interactive turn with no listening request (%s, session=%s); "
+            "capturing orphan turn", reason, state.session_token[:8])
         self._start_manual_capture(state)
 
     @staticmethod

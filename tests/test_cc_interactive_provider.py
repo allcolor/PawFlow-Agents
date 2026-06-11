@@ -2274,6 +2274,11 @@ def test_cc_interactive_event_service_ignores_pawflow_injected_prompt(monkeypatc
     svc = CCInteractiveEventService({"token": "tok", "_service_id": "events"})
     svc.register_session(
         "sess", user_id="uid1", conversation_id="cid1", agent_name="assistant")
+    # The container-side hook only flags pawflow_injected_prompt for prompts
+    # PawFlow itself pasted — which always go through remember_injected_prompt
+    # first (this also marks a request coordinator as imminent, so the
+    # orphan-turn safety net stays out of the way).
+    svc.remember_injected_prompt("sess", "prompt PawFlow pasted into tmux")
     svc.publish_event("sess", {
         "type": "hook",
         "hook_event_name": "UserPromptSubmit",
@@ -2340,6 +2345,103 @@ def test_cc_interactive_event_service_ignores_next_prompt_after_server_injection
     event = svc.wait_event("sess", timeout=0)
     assert event["type"] == "hook"
     assert event["hook_event_name"] == "UserPromptSubmit"
+
+
+def test_cc_interactive_event_service_adopts_orphan_injected_turn(monkeypatch):
+    """Safety net: an injected prompt submitted long after injection (human
+    pressed Enter in the tmux after the swallowed-Enter race) with no
+    request coordinator polling anymore must spawn a response capture —
+    otherwise the whole turn runs invisibly (tmux active, webchat silent)."""
+    import time as _time
+    from services.cc_interactive_event_service import CCInteractiveEventService
+
+    captured = []
+    monkeypatch.setattr(
+        CCInteractiveEventService, "_start_manual_capture",
+        lambda self, state: captured.append(state.session_token))
+
+    svc = CCInteractiveEventService({"token": "tok", "_service_id": "events"})
+    svc.register_session(
+        "sess", user_id="uid1", conversation_id="cid1", agent_name="assistant")
+    injected = "exact text PawFlow pasted into tmux"
+    svc.remember_injected_prompt("sess", injected)
+    # The coordinator died (no wait_event polls) and the injection is old:
+    # simulate the stranded-prompt timeline.
+    state = svc.session_state("sess")
+    state.injected_intent_at = _time.time() - 120
+    state.last_wait_at = 0.0
+
+    svc.publish_event("sess", {
+        "type": "hook",
+        "hook_event_name": "UserPromptSubmit",
+        "input": {
+            "hook_event_name": "UserPromptSubmit",
+            "prompt": injected,
+            "pawflow_injected_prompt": False,
+        },
+    })
+
+    assert captured == ["sess"]
+    # The injected digest was still consumed (no manual user-message
+    # persist — the prompt already lives in the conversation).
+    assert state.injected_prompts == {}
+
+
+def test_cc_interactive_event_service_adopts_orphan_running_request(monkeypatch):
+    """Tmux is mid-turn (live /v1/messages request) with no coordinator
+    polling: the turn must be adopted even without a UserPromptSubmit
+    (the hook can be lost too)."""
+    from services.cc_interactive_event_service import CCInteractiveEventService
+
+    captured = []
+    monkeypatch.setattr(
+        CCInteractiveEventService, "_start_manual_capture",
+        lambda self, state: captured.append(state.session_token))
+
+    svc = CCInteractiveEventService({"token": "tok", "_service_id": "events"})
+    svc.register_session(
+        "sess", user_id="uid1", conversation_id="cid1", agent_name="assistant")
+
+    # Ignored/background requests must not adopt.
+    svc.publish_event("sess", {
+        "type": "request_start", "request_id": "r0",
+        "path": "/v1/messages?beta=true", "ignore_reason": "telemetry"})
+    svc.publish_event("sess", {
+        "type": "request_start", "request_id": "r1", "path": "/v1/other"})
+    assert captured == []
+
+    svc.publish_event("sess", {
+        "type": "request_start", "request_id": "r2",
+        "path": "/v1/messages?beta=true"})
+    assert captured == ["sess"]
+
+
+def test_cc_interactive_event_service_does_not_adopt_with_live_listener(monkeypatch):
+    """A live request coordinator (recent wait_event poll) or a fresh
+    injection must suppress orphan adoption — no double consumers."""
+    from services.cc_interactive_event_service import CCInteractiveEventService
+
+    monkeypatch.setattr(
+        CCInteractiveEventService, "_start_manual_capture",
+        lambda self, state: (_ for _ in ()).throw(AssertionError("should not capture")))
+
+    svc = CCInteractiveEventService({"token": "tok", "_service_id": "events"})
+    svc.register_session(
+        "sess", user_id="uid1", conversation_id="cid1", agent_name="assistant")
+
+    # Coordinator alive: it polled wait_event just now.
+    svc.wait_event("sess", timeout=0)
+    svc.publish_event("sess", {
+        "type": "request_start", "request_id": "r1",
+        "path": "/v1/messages?beta=true"})
+
+    # Fresh injection: the send window is still open, coordinator imminent.
+    state = svc.session_state("sess")
+    state.last_wait_at = 0.0
+    svc.remember_injected_prompt("sess", "fresh injected prompt")
+    svc.publish_event("sess", {
+        "type": "request_start", "request_id": "r2",
+        "path": "/v1/messages?beta=true"})
 
 
 def test_cci_tool_results_not_re_emitted_across_turns():

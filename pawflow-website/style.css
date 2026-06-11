@@ -203,7 +203,7 @@ p { color: var(--muted); }
   overflow: hidden;
   box-shadow: var(--shadow);
 }
-.visual-card img { width: 100%; aspect-ratio: 16 / 10; object-fit: cover; background: #0d1117; }
+.visual-card img, .visual-card video { width: 100%; aspect-ratio: 16 / 10; object-fit: cover; background: #0d1117; }
 .visual-card.phone-shot img { aspect-ratio: 9 / 16; object-fit: contain; max-height: 520px; }
 .visual-card figcaption { color: var(--quiet); border-top: 1px solid var(--line-soft); padding: 12px 14px; font-size: 13px; }
 

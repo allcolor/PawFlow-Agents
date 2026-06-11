@@ -379,7 +379,10 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  private async resumeLastConversation(): Promise<void> {
+  async resumeLastConversation(): Promise<void> {
+    // Re-entrant: also called by the session bring-up once the API client
+    // is ready (the view usually resolves before login completes).
+    if (this.conversationId) { return; }
     const lastCid = this.context.globalState.get<string>('pawflow.lastConversationId');
     if (!lastCid) { return; }
     let api = this.getApi();

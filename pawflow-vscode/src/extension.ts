@@ -92,6 +92,7 @@ export function activate(context: vscode.ExtensionContext) {
         }
         sseClient = new SSEClient(serverUrl, session.token, gatewayCookie);
         statusBar.setConnected(session.username);
+        void chatProvider.resumeLastConversation();
         vscode.window.showInformationMessage(`PawFlow: Logged in as ${session.username}`);
       } catch (e: any) {
         vscode.window.showErrorMessage(`PawFlow login failed: ${e.message}`);
@@ -198,6 +199,9 @@ async function initializeSession() {
       if (session && apiClient) {
         sseClient = new SSEClient(serverUrl, session.token, gatewayCookie);
         statusBar.setConnected(session.username);
+        // The chat view resolves before login finishes — its own resume
+        // attempt gave up waiting for the API client, so retrigger it.
+        void chatProvider.resumeLastConversation();
       }
     }
   } catch (e: any) {

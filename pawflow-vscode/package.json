@@ -18,6 +18,7 @@
     "Chat",
     "Other"
   ],
+  "icon": "media/pawflow-icon.png",
   "main": "./dist/extension.js",
   "activationEvents": [
     "onStartupFinished"

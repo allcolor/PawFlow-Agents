@@ -56,6 +56,16 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         case 'killTool':
           this.handleKillTool(msg.tcId);
           break;
+        case 'attachImage':
+          if (msg.data && msg.mime_type) {
+            this.pendingAttachments.push({
+              filename: msg.filename || 'pasted.png',
+              mime_type: msg.mime_type,
+              data: msg.data,
+            });
+            this.postMessage({ type: 'fileAttached', filename: msg.filename, count: this.pendingAttachments.length });
+          }
+          break;
         case 'openFile':
           // Open a local file in VS Code. Relay-backed fs:// paths are owned
           // by server relay bindings and cannot be mapped by the extension.

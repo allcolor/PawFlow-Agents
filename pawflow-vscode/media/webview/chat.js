@@ -613,6 +613,16 @@ function handleSSE(event) {
   var agent = data.agent_name || '';
 
   switch (evType) {
+    case 'new_message':
+      // Messages appended by other clients (webchat, Telegram, flows) —
+      // assistant text and user messages alike. addMsg dedups by msg_id,
+      // so our own locally-rendered sends are not duplicated.
+      if (data.role && data.content) {
+        addMsg(data.role, data.content, data);
+        scrollBottom();
+      }
+      break;
+
     case 'thinking':
       updateActiveAgents(agent, 'thinking');
       break;
@@ -1049,6 +1059,33 @@ function _addLoadMoreBanner(data) {
   };
   messagesEl.insertBefore(more, messagesEl.firstChild);
 }
+
+// Paste images from the clipboard as message attachments
+inputEl.addEventListener('paste', function(e) {
+  var items = (e.clipboardData && e.clipboardData.items) || [];
+  for (var i = 0; i < items.length; i++) {
+    var it = items[i];
+    if (it.kind !== 'file' || it.type.indexOf('image/') !== 0) continue;
+    e.preventDefault();
+    var file = it.getAsFile();
+    if (!file) continue;
+    var mime = it.type;
+    var reader = new FileReader();
+    reader.onload = function(ev) {
+      var dataUrl = String(ev.target.result || '');
+      var b64 = dataUrl.split(',')[1] || '';
+      if (!b64) return;
+      var ext = (mime.split('/')[1] || 'png').replace('jpeg', 'jpg');
+      vscode.postMessage({
+        type: 'attachImage',
+        filename: 'pasted_' + Date.now() + '.' + ext,
+        mime_type: mime,
+        data: b64,
+      });
+    };
+    reader.readAsDataURL(file);
+  }
+});
 
 // Auto-resize textarea
 inputEl.addEventListener('input', function() {

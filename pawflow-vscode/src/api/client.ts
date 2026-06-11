@@ -77,6 +77,59 @@ export class AgentAPIClient {
     return this.post(API_PATH, request);
   }
 
+  async uploadFile(filename: string, mimeType: string, base64Data: string,
+                   conversationId?: string): Promise<{ file_id?: string; url?: string; error?: string }> {
+    return new Promise((resolve, reject) => {
+      const url = new URL(this.serverUrl + '/api/upload');
+      const isHttps = url.protocol === 'https:';
+      const boundary = '----pawflow' + Date.now().toString(16) + Math.random().toString(16).slice(2);
+      const safeName = filename.replace(/["\r\n]/g, '_');
+      const parts: Buffer[] = [Buffer.from(
+        `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${safeName}"\r\n` +
+        `Content-Type: ${mimeType}\r\n\r\n`)];
+      parts.push(Buffer.from(base64Data, 'base64'));
+      if (conversationId) {
+        parts.push(Buffer.from(
+          `\r\n--${boundary}\r\nContent-Disposition: form-data; name="conversation_id"\r\n\r\n${conversationId}`));
+      }
+      parts.push(Buffer.from(`\r\n--${boundary}--\r\n`));
+      const payload = Buffer.concat(parts);
+
+      const headers: Record<string, string> = {
+        'Content-Type': `multipart/form-data; boundary=${boundary}`,
+        'Content-Length': String(payload.length),
+        'Authorization': `Bearer ${this.sessionToken}`,
+      };
+      if (this.gatewayCookie) {
+        headers['Cookie'] = `_pf_gw=${this.gatewayCookie}`;
+      }
+      const mod = isHttps ? https : http;
+      const req = mod.request({
+        hostname: url.hostname, port: url.port, path: url.pathname,
+        method: 'POST', headers, timeout: 60000,
+      }, (res) => {
+        let data = '';
+        res.on('data', (chunk) => { data += chunk; });
+        res.on('end', () => {
+          try {
+            const parsed = JSON.parse(data);
+            if (parsed.ok && parsed.files && parsed.files.length) {
+              resolve(parsed.files[0]);
+            } else {
+              resolve({ error: parsed.error || `HTTP ${res.statusCode}` });
+            }
+          } catch {
+            resolve({ error: data || `HTTP ${res.statusCode}` });
+          }
+        });
+      });
+      req.on('error', (e) => reject(e));
+      req.on('timeout', () => { req.destroy(); reject(new Error('Upload timeout')); });
+      req.write(payload);
+      req.end();
+    });
+  }
+
   async sendAction(action: string, params: Record<string, any> = {}): Promise<AgentResponse> {
     // _inline_response: the agent actions endpoint otherwise ACKs the HTTP
     // request and publishes the real result on the conversation's SSE

@@ -17,6 +17,7 @@ export interface SendMessageRequest {
   target_agent?: string;
   attachments?: Attachment[];
   reply_to?: ReplyTo;
+  msg_id?: string;
 }
 
 export interface AgentResponse {

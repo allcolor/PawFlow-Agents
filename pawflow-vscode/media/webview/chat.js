@@ -242,8 +242,12 @@ function send() {
     }
   }
 
-  addMsg('user', text, _replyTo ? { source: { reply_to: _replyTo } } : undefined);
-  var msg = { type: 'sendMessage', text: text };
+  // Client-side msg_id so the SSE new_message echo dedups against this
+  // locally rendered copy (same scheme as the webchat).
+  var msgId = 'vsc' + Date.now().toString(16) + Math.random().toString(16).slice(2, 10);
+  var meta = _replyTo ? { source: { reply_to: _replyTo }, msg_id: msgId } : { msg_id: msgId };
+  addMsg('user', text, meta);
+  var msg = { type: 'sendMessage', text: text, msg_id: msgId };
   if (_replyTo) msg.reply_to = _replyTo;
   vscode.postMessage(msg);
   cancelReply();

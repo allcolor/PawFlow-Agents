@@ -36,7 +36,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
       // in the message loop — that would block subsequent message processing.
       switch (msg.type) {
         case 'sendMessage':
-          this.sendMessage(msg.text, msg.attachments, msg.reply_to);
+          this.sendMessage(msg.text, msg.attachments, msg.reply_to, msg.msg_id);
           break;
         case 'newConversation':
           this.newConversation();
@@ -114,7 +114,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
   }
 
  
-  async sendMessage(text: string, attachments?: Attachment[], replyTo?: ReplyTo): Promise<void> {
+  async sendMessage(text: string, attachments?: Attachment[], replyTo?: ReplyTo, msgId?: string): Promise<void> {
     const api = this.getApi();
     if (!api) {
       this.postMessage({ type: 'error', message: 'Not logged in. Run PawFlow: Login.' });
@@ -132,12 +132,33 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         await this.resolveDefaultAgent();
       }
 
+      // Upload attachments to the FileStore and send file_id references —
+      // the webchat renders user attachments from file_id, raw base64
+      // payloads display as broken images there. Base64 is the fallback
+      // when the upload fails (the agent still receives the image).
+      const sendAttachments: any[] = [];
+      for (const att of allAttachments) {
+        if ((att as any).file_id || !att.data) { sendAttachments.push(att); continue; }
+        try {
+          const info = await api.uploadFile(
+            att.filename, att.mime_type, att.data, this.conversationId || undefined);
+          if (info && info.file_id) {
+            sendAttachments.push({ filename: att.filename, mime_type: att.mime_type, file_id: info.file_id });
+            continue;
+          }
+        } catch (e) {
+          console.warn('[PawFlow] attachment upload failed, sending inline:', e);
+        }
+        sendAttachments.push(att);
+      }
+
       const resp = await api.sendMessage({
         message: text,
         conversation_id: this.conversationId || undefined,
         target_agent: this.selectedAgent || undefined,
-        attachments: allAttachments.length ? allAttachments : undefined,
+        attachments: sendAttachments.length ? sendAttachments : undefined,
         reply_to: replyTo || undefined,
+        msg_id: msgId || undefined,
       });
       console.log('[PawFlow] sendMessage response:', JSON.stringify(resp).slice(0, 500));
 

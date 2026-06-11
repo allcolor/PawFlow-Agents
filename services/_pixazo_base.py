@@ -776,6 +776,10 @@ class _PixazoBaseService(BaseService):
                 raise ServiceError("Pixazo generation cancelled by user")
             ready, payload = ticket.try_result()
             if ready:
+                logger.info(
+                    "[PIXAZO] Webhook callback won for %s after %ds "
+                    "(poll fallback not needed)",
+                    self._short_url(polling_url), int(time.time() - start))
                 return self._webhook_media_url(
                     payload if isinstance(payload, dict) else {}, op)
             try:
@@ -794,6 +798,11 @@ class _PixazoBaseService(BaseService):
                     u = _extract_media_url(
                         data, output_path=output_path, url_field=url_field)
                     if u:
+                        logger.info(
+                            "[PIXAZO] Poll fallback won for %s after %ds "
+                            "(webhook callback never arrived)",
+                            self._short_url(polling_url),
+                            int(time.time() - start))
                         return u
             if not logged:
                 logger.info("[PIXAZO] webhook+poll fallback active for %s",

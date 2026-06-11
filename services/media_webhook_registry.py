@@ -196,6 +196,8 @@ class MediaWebhookRegistry:
             payload = json.loads(body.decode("utf-8", errors="replace")) if body else {}
         except json.JSONDecodeError:
             payload = {"raw_body": body.decode("utf-8", errors="replace")}
+        logger.info("[media-webhook] callback received on %s (%d bytes)",
+                    ticket.route_path.rsplit("/", 1)[0] + "/<token>", len(body))
         ticket.complete(payload)
         req.complete(200, headers, b'{"ok": true}')
 

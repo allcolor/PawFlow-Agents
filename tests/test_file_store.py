@@ -121,6 +121,17 @@ class TestListFiles:
         assert len(files) == 1
         assert files[0]["filename"] == "keep.txt"
 
+    def test_list_hides_expired_ttl_files(self, store):
+        import time
+        # A permanent file and one past its TTL.
+        store.store("perm.txt", b"x", "text/plain")
+        fid = store.store("old.txt", b"y", "text/plain", ttl=60)
+        # Age the TTL'd entry past expiry without waiting.
+        store._entries[fid]["created_at"] = time.time() - 3600
+        files = store.list_files()
+        names = {f["filename"] for f in files}
+        assert names == {"perm.txt"}, "expired file must not appear in the panel listing"
+
 
 # -- Singleton pattern -------------------------------------------------------
 

@@ -1751,6 +1751,18 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
         if text.strip():
             parts.append({"type": "text", "text": text})
 
+        # Attachments re-materialized into the conversation FileStore get a
+        # finite TTL (configurable; 24h default) instead of being permanent.
+        # An attachment carrying a file_id reuses the pre-uploaded copy and
+        # its TTL, so only the inline-base64 path (no prior upload) needs this.
+        from core.file_ttl import resolve_ttl_seconds
+        _attach_ttl = resolve_ttl_seconds(
+            conversation_id=conversation_id or "",
+            conv_keys=("attachment_ttl_seconds", "webchat_upload_ttl_seconds"),
+            env_key="PAWFLOW_ATTACHMENT_TTL_SECONDS",
+            default=86400,
+        )
+
         for att in attachments:
             mime = att.get("mime_type", "application/octet-stream")
             filename = att.get("filename", "file")
@@ -1781,6 +1793,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                     _img_fname, raw, mime,
                     user_id=user_id,
                     conversation_id=conversation_id or "",
+                    ttl=_attach_ttl,
                     category="attachment")
                 logger.info("Attachment image: %s (%d bytes) -> %s",
                             filename, len(raw), _img_fid)
@@ -1797,6 +1810,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                         filename, raw, mime,
                         user_id=user_id,
                         conversation_id=conversation_id or "",
+                        ttl=_attach_ttl,
                         category="attachment")
                     logger.info("Attachment stored: %s (%s, %d bytes) -> %s",
                                 filename, mime, len(raw), _fid)

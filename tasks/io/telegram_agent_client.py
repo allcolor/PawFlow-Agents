@@ -131,11 +131,19 @@ class TelegramAgentClientTask(BaseTask):
             try:
                 raw = base64.b64decode(image_base64)
                 from core.file_store import FileStore
+                from core.file_ttl import resolve_ttl_seconds
+                _photo_ttl = resolve_ttl_seconds(
+                    conversation_id=conversation_id or "",
+                    conv_keys=("attachment_ttl_seconds", "webchat_upload_ttl_seconds"),
+                    env_key="PAWFLOW_ATTACHMENT_TTL_SECONDS",
+                    default=86400,
+                )
                 file_id = FileStore.instance().store(
                     "telegram_photo.jpg", raw, "image/jpeg",
                     conversation_id=conversation_id,
                     user_id=user_id,
                     agent_name=target_agent,
+                    ttl=_photo_ttl,
                     category="attachment",
                 )
                 attachment["file_id"] = file_id

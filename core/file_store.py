@@ -494,10 +494,16 @@ class FileStore:
         Use include_internal=True to see them.
         """
         result = []
+        now = time.time()
         with self._store_lock:
             self._ensure_loaded()
             for fid, entry in self._entries.items():
                 if not self._accessible(entry, user_id):
+                    continue
+                # Hide files past their TTL even before the hourly cleanup
+                # sweep deletes them, so the panel never shows stale entries.
+                _ttl = entry.get("ttl", 0)
+                if _ttl > 0 and (now - entry.get("created_at", 0)) > _ttl:
                     continue
                 if conversation_id and entry.get("conversation_id") != conversation_id:
                     continue

@@ -58,8 +58,13 @@ class AuthProvider(ABC):
         """Build the OAuth2 authorization URL. Not used for builtin."""
 
     @abstractmethod
-    def exchange_code(self, code: str, redirect_uri: str) -> AuthResult:
-        """Exchange an OAuth2 authorization code for user info."""
+    def exchange_code(self, code: str, redirect_uri: str,
+                      state: str = "") -> AuthResult:
+        """Exchange an OAuth2 authorization code for user info.
+
+        ``state`` is the CSRF state token from the callback; PKCE providers
+        use it to look up the code_verifier minted for that authorize URL.
+        """
 
     def validate_credentials(self, username: str, password: str) -> AuthResult:
         """Validate username/password. Only used by builtin provider."""

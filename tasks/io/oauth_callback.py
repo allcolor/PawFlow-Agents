@@ -322,7 +322,8 @@ class OAuthCallbackTask(BaseTask):
         scheme = self._detect_scheme(flowfile)
         redirect_uri = f"{scheme}://{host}/auth/callback"
         link_token = _cookie_value(flowfile, OAUTH_LINK_COOKIE)
-        result = auth_svc.authenticate_oauth(provider_name, code, redirect_uri, ip=ip)
+        result = auth_svc.authenticate_oauth(provider_name, code, redirect_uri,
+                                             ip=ip, state=state)
 
         if not result.success:
             pending_id = getattr(result, "pending_oauth_id", "")

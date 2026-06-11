@@ -38,7 +38,8 @@ class BuiltinAuthProvider(AuthProvider):
     def get_authorize_url(self, state: str, redirect_uri: str) -> str:
         return ""  # Not OAuth-based
 
-    def exchange_code(self, code: str, redirect_uri: str) -> AuthResult:
+    def exchange_code(self, code: str, redirect_uri: str,
+                      state: str = "") -> AuthResult:
         return AuthResult(success=False, error="Builtin provider does not use OAuth")
 
     def validate_credentials(self, username: str, password: str) -> AuthResult:

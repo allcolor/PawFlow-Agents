@@ -1,8 +1,13 @@
 """X.com (Twitter) OAuth2 authentication provider."""
 
+import threading
+import time
 from typing import Any, Dict
 from services.auth_providers.base import AuthResult
 from services.auth_providers.oauth_base import OAuthBaseProvider
+
+# PKCE verifiers expire with the authorize flow; OAuth states use a 600s TTL.
+_VERIFIER_TTL = 600
 
 
 class XTwitterAuthProvider(OAuthBaseProvider):
@@ -17,6 +22,10 @@ class XTwitterAuthProvider(OAuthBaseProvider):
         self._token_url = "https://api.twitter.com/2/oauth2/token"  # nosec B105
         self._userinfo_url = "https://api.twitter.com/2/users/me"
         self._code_verifier = ""
+        # PKCE verifiers keyed by OAuth state so concurrent logins don't
+        # clobber each other; _code_verifier is the stateless fallback.
+        self._verifiers: Dict[str, tuple] = {}
+        self._verifiers_lock = threading.Lock()
 
     @property
     def name(self) -> str:
@@ -41,14 +50,33 @@ class XTwitterAuthProvider(OAuthBaseProvider):
     def _customize_authorize_params(self, params: dict):
         """X requires PKCE (code_challenge)."""
         import hashlib, base64, secrets
-        self._code_verifier = secrets.token_urlsafe(64)
+        verifier = secrets.token_urlsafe(64)
+        self._code_verifier = verifier
+        state = str(params.get("state") or "")
+        if state:
+            now = time.time()
+            with self._verifiers_lock:
+                self._verifiers = {
+                    s: v for s, v in self._verifiers.items()
+                    if v[1] > now}
+                self._verifiers[state] = (verifier, now + _VERIFIER_TTL)
         code_challenge = base64.urlsafe_b64encode(
-            hashlib.sha256(self._code_verifier.encode()).digest()
+            hashlib.sha256(verifier.encode()).digest()
         ).rstrip(b"=").decode()
         params["code_challenge"] = code_challenge
         params["code_challenge_method"] = "S256"
 
-    def _request_token(self, code: str, redirect_uri: str) -> dict:
+    def _verifier_for(self, state: str) -> str:
+        """Pop the PKCE verifier minted for this state, or the fallback."""
+        if state:
+            with self._verifiers_lock:
+                entry = self._verifiers.pop(state, None)
+            if entry and entry[1] > time.time():
+                return entry[0]
+        return self._code_verifier
+
+    def _request_token(self, code: str, redirect_uri: str,
+                       state: str = "") -> dict:
         """Override to include code_verifier for PKCE."""
         import base64
         import urllib.parse
@@ -60,7 +88,7 @@ class XTwitterAuthProvider(OAuthBaseProvider):
             "code": code,
             "redirect_uri": redirect_uri,
             "grant_type": "authorization_code",
-            "code_verifier": self._code_verifier,
+            "code_verifier": self._verifier_for(state),
         }).encode()
         basic = base64.b64encode(
             f"{client_id}:{client_secret}".encode()).decode("ascii")

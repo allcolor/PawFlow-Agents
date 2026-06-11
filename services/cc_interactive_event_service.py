@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import hmac
 import json
 import logging
 import queue
@@ -481,7 +482,9 @@ class CCInteractiveEventService(BaseService):
             if reg.get("type") != "register":
                 return
             token = reg.get("token", "")
-            if not token or token != self.config.get("token", ""):
+            expected_token = self.config.get("token", "") or ""
+            if not token or not hmac.compare_digest(
+                    str(token), str(expected_token)):
                 await _ws_send_frame(writer, json.dumps({
                     "type": "error", "message": "Token mismatch"}).encode())
                 return

@@ -158,6 +158,70 @@ class TestOAuthProviderService(unittest.TestCase):
         assert form["code_verifier"] == "verifier"
         assert "client_secret" not in form
 
+    def test_x_pkce_verifier_keyed_by_state_survives_concurrent_logins(self):
+        """Two interleaved X logins must each exchange with their own PKCE
+        verifier; a single shared verifier gets clobbered by the second
+        authorize and breaks the first login's token exchange."""
+        import base64
+        import hashlib
+        import urllib.parse
+        from urllib.parse import parse_qs, urlparse
+        from services.auth_providers.x_twitter import XTwitterAuthProvider
+
+        captured = {}
+
+        class Response:
+            def read(self):
+                return b'{"access_token":"x-token"}'
+
+        class Conn:
+            def request(self, method, path, body=None, headers=None, **_kwargs):
+                captured["body"] = body or b""
+
+            def getresponse(self):
+                return Response()
+
+            def close(self):
+                pass
+
+        provider = XTwitterAuthProvider({
+            "client_id": "x-client",
+            "client_secret": "x-secret",
+        })
+        provider._make_conn = lambda _parsed: Conn()
+
+        url_a = provider.get_authorize_url(
+            "state-a", "https://webchat.example/auth/callback")
+        url_b = provider.get_authorize_url(
+            "state-b", "https://webchat.example/auth/callback")
+        challenge_a = parse_qs(urlparse(url_a).query)["code_challenge"][0]
+        challenge_b = parse_qs(urlparse(url_b).query)["code_challenge"][0]
+        assert challenge_a != challenge_b
+
+        def challenge_of(verifier):
+            return base64.urlsafe_b64encode(
+                hashlib.sha256(verifier.encode()).digest()
+            ).rstrip(b"=").decode()
+
+        # Login A completes second, after B's authorize overwrote the
+        # shared fallback verifier — it must still use A's verifier.
+        provider._request_token(
+            "code-a", "https://webchat.example/auth/callback", state="state-a")
+        form = dict(urllib.parse.parse_qsl(captured["body"].decode()))
+        assert challenge_of(form["code_verifier"]) == challenge_a
+
+        provider._request_token(
+            "code-b", "https://webchat.example/auth/callback", state="state-b")
+        form = dict(urllib.parse.parse_qsl(captured["body"].decode()))
+        assert challenge_of(form["code_verifier"]) == challenge_b
+
+        # A verifier is single-use: replaying the state falls back to the
+        # last-minted verifier instead of the consumed one.
+        provider._request_token(
+            "code-a", "https://webchat.example/auth/callback", state="state-a")
+        form = dict(urllib.parse.parse_qsl(captured["body"].decode()))
+        assert challenge_of(form["code_verifier"]) == challenge_b
+
     def test_x_default_login_scope_does_not_request_offline_access(self):
         from urllib.parse import parse_qs, urlparse
         from services.auth_providers.x_twitter import XTwitterAuthProvider
@@ -682,7 +746,7 @@ class TestOAuthRedirectTask(unittest.TestCase):
             def __init__(self):
                 self.providers = []
 
-            def authenticate_oauth(self, provider_name, code, redirect_uri, ip=""):
+            def authenticate_oauth(self, provider_name, code, redirect_uri, ip="", state=""):
                 self.providers.append(provider_name)
                 assert provider_name == "github"
                 assert code == "gh-code"
@@ -719,7 +783,7 @@ class TestOAuthRedirectTask(unittest.TestCase):
             def __init__(self):
                 self.telegram_data = None
 
-            def authenticate_oauth(self, provider_name, code, redirect_uri, ip=""):
+            def authenticate_oauth(self, provider_name, code, redirect_uri, ip="", state=""):
                 raise AssertionError("Telegram widget callbacks do not use OAuth code exchange")
 
             def authenticate_telegram(self, data, ip=""):
@@ -895,7 +959,7 @@ class TestOAuthCallbackTask(unittest.TestCase):
             def validate_state(self, state):
                 return None
 
-            def authenticate_oauth(self, provider_name, code, redirect_uri, ip=""):
+            def authenticate_oauth(self, provider_name, code, redirect_uri, ip="", state=""):
                 result = AuthResult(
                     success=False,
                     error="OAuth account is not linked to a PawFlow user. Enter an OAuth onboarding token.",

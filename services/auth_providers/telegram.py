@@ -59,7 +59,8 @@ class TelegramAuthProvider(AuthProvider):
         # Not used — Telegram uses a widget embedded in the login page
         return ""
 
-    def exchange_code(self, code: str, redirect_uri: str) -> AuthResult:
+    def exchange_code(self, code: str, redirect_uri: str,
+                      state: str = "") -> AuthResult:
         # Not used — Telegram sends signed user data, not an auth code
         return AuthResult(success=False, error="Use validate_telegram_data instead")
 

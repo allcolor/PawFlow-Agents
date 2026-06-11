@@ -54,10 +54,11 @@ class OAuthBaseProvider(AuthProvider):
         """Override in subclasses to add provider-specific params."""
         pass
 
-    def exchange_code(self, code: str, redirect_uri: str) -> AuthResult:
+    def exchange_code(self, code: str, redirect_uri: str,
+                      state: str = "") -> AuthResult:
         """Exchange authorization code for tokens and user info."""
         # 1. Exchange code for tokens
-        token_data = self._request_token(code, redirect_uri)
+        token_data = self._request_token(code, redirect_uri, state)
         if "error" in token_data:
             return AuthResult(success=False,
                               error=token_data.get("error_description",
@@ -114,7 +115,8 @@ class OAuthBaseProvider(AuthProvider):
         except Exception as e:
             return AuthResult(success=False, error=f"Refresh failed: {e}")
 
-    def _request_token(self, code: str, redirect_uri: str) -> dict:
+    def _request_token(self, code: str, redirect_uri: str,
+                       state: str = "") -> dict:
         """Exchange authorization code for tokens."""
         parsed = urllib.parse.urlparse(self._token_url)
         body = urllib.parse.urlencode({

@@ -262,7 +262,7 @@ class TestAuthGatewayService(unittest.TestCase):
         from services.auth_providers.base import AuthResult
 
         class FailingOAuthProvider:
-            def exchange_code(self, code, redirect_uri):
+            def exchange_code(self, code, redirect_uri, state=""):
                 return AuthResult(success=False, error="provider rejected credentials")
 
         gw = AuthGatewayService({"providers": {}, "rate_limit_base_delay": 1})
@@ -277,7 +277,7 @@ class TestAuthGatewayService(unittest.TestCase):
         from services.auth_providers.base import AuthResult
 
         class FailingGitHubProvider:
-            def exchange_code(self, code, redirect_uri):
+            def exchange_code(self, code, redirect_uri, state=""):
                 return AuthResult(success=False, error="The client_id and/or client_secret passed are incorrect.")
 
         gw = AuthGatewayService({"providers": {}})
@@ -474,7 +474,7 @@ class _SuccessfulOAuthProvider:
         self.username = username
         self.email = email
 
-    def exchange_code(self, code, redirect_uri):
+    def exchange_code(self, code, redirect_uri, state=""):
         return AuthResult(
             success=True,
             provider=self.provider,

@@ -220,13 +220,14 @@ All string values may use `${...}` expressions. They are resolved recursively at
         return entry
 
     def authenticate_oauth(self, provider_name: str, code: str,
-                            redirect_uri: str, ip: str = "") -> AuthResult:
+                            redirect_uri: str, ip: str = "",
+                            state: str = "") -> AuthResult:
         """Complete OAuth flow: exchange code, provision user, check rules."""
         provider = self._providers.get(provider_name)
         if not provider:
             return AuthResult(success=False, error=f"Provider '{provider_name}' not enabled")
 
-        result = provider.exchange_code(code, redirect_uri)
+        result = provider.exchange_code(code, redirect_uri, state=state)
         if not result.success:
             result.error = self._format_oauth_exchange_error(provider_name, result.error)
             return result

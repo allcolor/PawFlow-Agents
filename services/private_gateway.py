@@ -325,15 +325,42 @@ def render_failure_redirect(submitted: str, skin="matrix") -> str:
 _EXEMPT_PATHS = frozenset(["/health", "/favicon.ico"])
 
 
+def _active_gateway_config() -> Dict[str, Any]:
+    """Resolve the live PrivateGateway service config, or {} if none.
+
+    Used by the module-level ``check_request`` fallback so a direct call
+    honours the operator's real gateway settings rather than silently
+    treating the gateway as disabled.
+    """
+    try:
+        from core.service_registry import ServiceRegistry
+        reg = ServiceRegistry.get_instance()
+        for service_id, sdef in reg.get_all("global", "").items():
+            if sdef.service_type != PrivateGateway.TYPE:
+                continue
+            svc = reg.resolve(service_id)
+            if svc is not None:
+                return dict(getattr(svc, "config", {}) or {})
+    except Exception:
+        logger.debug("_active_gateway_config resolve failed", exc_info=True)
+    return {}
+
+
 def check_request(handler) -> bool:
     """Check an incoming HTTP request against the private gateway.
 
     Called from _RequestHandler._handle() BEFORE route matching.
     Returns True if the request was handled (blocked/challenged).
     Returns False if the request should proceed normally.
+
+    The live request path uses ``PrivateGateway.check_request`` (the bound
+    method, with the service's real config). This module-level helper is a
+    fallback for direct callers: it resolves the active gateway's config
+    from the registry instead of defaulting to an empty (always-disabled)
+    config, so a stray call can't silently wave every request through.
     """
     try:
-        return _check_request_inner(handler, {})
+        return _check_request_inner(handler, _active_gateway_config())
     except Exception as e:
         logger.error("Private gateway error: %s", e, exc_info=True)
         try:

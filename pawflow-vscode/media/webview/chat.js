@@ -102,6 +102,8 @@ var _activeSyncTimer = null;
 
 function _agentKey(name) { return (name || '').toLowerCase(); }
 
+var _statusFromActive = false;
+
 function updateActiveAgents(agent, status) {
   if (!agent) return;
   if (status === 'done' || status === 'cancelled') {
@@ -167,7 +169,10 @@ function _renderActiveAgents() {
   var keys = Object.keys(activeAgents);
   if (keys.length === 0) {
     el.style.display = 'none';
-    // Don't clear statusEl — other handlers (done, compact) set their own status
+    // Clear the status only if WE wrote it — a late thinking/list_active
+    // event after done used to leave 'Verbing... agent [tool]' on screen
+    // forever. Statuses set by other handlers (done token footer) stay.
+    if (_statusFromActive) { statusEl.textContent = ''; _statusFromActive = false; }
     return;
   }
   el.style.display = 'block';
@@ -182,6 +187,7 @@ function _renderActiveAgents() {
     var timeStr = secs < 60 ? secs + 's' : Math.floor(secs / 60) + 'm' + (secs % 60) + 's';
     // Status details
     var parts = [];
+    if (info.iteration) parts.push('iter ' + info.iteration);
     if (info.totalTools > 0) parts.push(info.totalTools + ' tools');
     if (info.lastTool) parts.push('[' + info.lastTool + ']');
     var statusText = parts.length > 0 ? parts.join(' \u00b7 ') : 'thinking...';
@@ -200,6 +206,7 @@ function _renderActiveAgents() {
     return info.name + (info.lastTool ? ' [' + info.lastTool + ']' : '');
   });
   statusEl.innerHTML = '<span class="thinking">' + randomVerb() + '... ' + esc(agentParts.join(', ')) + '</span>';
+  _statusFromActive = true;
 }
 
 function _stopAgent(agentName, taskId) {
@@ -797,6 +804,7 @@ function handleSSE(event) {
       var tout2 = data.tokens_out || 0;
       var model2 = data.model || '';
       statusEl.innerHTML = '<span class="token-footer">' + tin2 + '\u2191 ' + tout2 + '\u2193' + (model2 ? ' \u00b7 ' + model2 : '') + '</span>';
+      _statusFromActive = false;
       break;
     }
 

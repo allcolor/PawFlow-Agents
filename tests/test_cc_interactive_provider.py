@@ -1556,6 +1556,10 @@ def test_interactive_pool_records_tmux_paste_errors(monkeypatch):
         event_service_id="events",
         internal_token="internal",
     )
+    # This test exercises the load-buffer failure path, not the cold-start
+    # readiness gate. Mark the prompt ready so send_text doesn't spend the
+    # real 45s readiness poll before reaching the paste.
+    state.prompt_ready = True
 
     assert pool.send_text(state, "hello") is False
     assert state.last_error == "tmux load-buffer failed: can't find session: pawflow"

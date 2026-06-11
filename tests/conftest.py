@@ -10,6 +10,21 @@ import pytest
 from pathlib import Path
 
 
+@pytest.fixture(autouse=True)
+def _neutralize_cci_realtime_waits(monkeypatch):
+    """Default the CCI tmux-submit settle/verify waits to 0 in tests.
+
+    `send_text`/`send_interrupt` sleep a settle delay and then poll the tmux
+    pane for up to several seconds to confirm submission. Those are real
+    wall-clock waits; left at their production defaults they make every test
+    that drives a send pay seconds each, ballooning the suite. Tests that
+    specifically exercise the settle/verify behaviour set their own values,
+    which override these defaults for that test.
+    """
+    monkeypatch.setenv("PAWFLOW_CCI_PASTE_SETTLE_SECONDS", "0")
+    monkeypatch.setenv("PAWFLOW_CCI_SUBMIT_VERIFY_SECONDS", "0")
+
+
 @pytest.fixture(autouse=True, scope="session")
 def _isolate_data_dir(tmp_path_factory):
     """Redirect ALL data paths to a session-scoped temp directory."""

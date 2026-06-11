@@ -52,7 +52,50 @@ _DEFAULT_ALG = "aesgcm"
 _SCRYPT_N = 2 ** 14
 _SCRYPT_R = 8
 _SCRYPT_P = 1
-_SCRYPT_SALT = b"pawflow-secrets-v2"
+# Legacy fixed salt. Kept as the fallback so existing password-derived
+# installs (whose secrets were encrypted with a key derived from this salt)
+# keep decrypting after an upgrade. New installs get a per-install random
+# salt persisted to SECRET_SALT_FILE (see _resolve_scrypt_salt /
+# ensure_install_salt) so two installs sharing a password never share a key
+# and the salt can't be precomputed against.
+_LEGACY_SCRYPT_SALT = b"pawflow-secrets-v2"
+_SALT_ENV = "PAWFLOW_SECRET_SALT_B64"
+_MIN_SALT_LEN = 16
+
+
+def _resolve_scrypt_salt() -> bytes:
+    """Return the scrypt salt for password-based key derivation.
+
+    Resolution order:
+      1. ``PAWFLOW_SECRET_SALT_B64`` env — explicit operator control; lets a
+         password-based deployment pin its own per-install salt.
+      2. Persisted ``SECRET_SALT_FILE`` — written once on a fresh install.
+      3. Legacy fixed salt — guarantees existing installs (no salt file)
+         keep deriving the same key, so nothing breaks on upgrade.
+    """
+    env_val = os.environ.get(_SALT_ENV)
+    if env_val:
+        try:
+            raw = base64.b64decode(env_val.strip())
+        except Exception as e:
+            raise SecretDecryptError(
+                f"{_SALT_ENV} is not valid base64: {e}")
+        if len(raw) < _MIN_SALT_LEN:
+            raise SecretDecryptError(
+                f"{_SALT_ENV} must decode to at least {_MIN_SALT_LEN} bytes, "
+                f"got {len(raw)}")
+        return raw
+    try:
+        from core.paths import SECRET_SALT_FILE
+        if SECRET_SALT_FILE.exists():
+            data = SECRET_SALT_FILE.read_bytes()
+            if len(data) >= _MIN_SALT_LEN:
+                return data
+    except Exception:
+        logging.getLogger(__name__).debug(
+            "[secrets] salt file read failed — using legacy salt",
+            exc_info=True)
+    return _LEGACY_SCRYPT_SALT
 
 
 class SecretDecryptError(ValueError):
@@ -142,7 +185,7 @@ class SecretsManager:
     @staticmethod
     def _derive_from_password(password: str) -> bytes:
         kdf = Scrypt(
-            salt=_SCRYPT_SALT, length=32,
+            salt=_resolve_scrypt_salt(), length=32,
             n=_SCRYPT_N, r=_SCRYPT_R, p=_SCRYPT_P)
         return kdf.derive(password.encode("utf-8"))
 
@@ -300,6 +343,52 @@ def get_secrets_manager() -> SecretsManager:
         if _instance is None:
             _instance = SecretsManager()
     return _instance
+
+
+def ensure_install_salt() -> bool:
+    """Persist a fresh random per-install scrypt salt on a brand-new install.
+
+    Call this once during first-run bootstrap, BEFORE any secret is
+    encrypted, so a password-derived master key is salted uniquely per
+    install instead of with the shared legacy salt.
+
+    No-op (returns False) when any of these hold, so existing deployments
+    keep their current key and nothing breaks:
+      - ``PAWFLOW_SECRET_SALT_B64`` is set (operator already pinned a salt);
+      - a salt file already exists;
+      - the install already has encrypted state (global secret store or a
+        generated master key file) — i.e. it is not a fresh install.
+
+    Returns True iff a new salt file was written. When it writes, it also
+    drops the secrets singleton so the next derivation picks up the new
+    salt (safe here precisely because no secret has been encrypted yet).
+    """
+    global _instance
+    if os.environ.get(_SALT_ENV):
+        return False
+    from core.paths import SECRET_SALT_FILE, SECRET_KEY_FILE, GLOBAL_SECRETS_FILE
+    if SECRET_SALT_FILE.exists():
+        return False
+    # Not a fresh install: pre-existing secrets/key were derived with the
+    # legacy salt; introducing a random salt now would orphan them.
+    if GLOBAL_SECRETS_FILE.exists() or SECRET_KEY_FILE.exists():
+        return False
+    salt = os.urandom(32)
+    try:
+        SECRET_SALT_FILE.parent.mkdir(parents=True, exist_ok=True)
+        SECRET_SALT_FILE.write_bytes(salt)
+        try:
+            os.chmod(SECRET_SALT_FILE, 0o600)
+        except Exception:
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+    except OSError as e:
+        logger.warning("[secrets] could not persist per-install salt %s: %s "
+                       "— falling back to legacy salt", SECRET_SALT_FILE, e)
+        return False
+    with _instance_lock:
+        _instance = None
+    logger.info("[secrets] wrote per-install scrypt salt at %s", SECRET_SALT_FILE)
+    return True
 
 
 def _reset_for_tests() -> None:

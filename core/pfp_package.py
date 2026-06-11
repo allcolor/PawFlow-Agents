@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
 import json
 import logging
 import os
@@ -248,6 +249,7 @@ def install_pfp(path: str, *, user_id: str, conversation_id: str = "",
         raise PfpError("user_id is required")
     scope = _normalize_scope(scope, conversation_id)
     package = _load_package(path, require_verified=True)
+    _verify_pinned_developer_key(package, user_id, conversation_id, scope, force=force)
     plan = inspect_pfp(path, user_id=user_id, conversation_id=conversation_id, scope=scope)
     selected = _selected_ids(plan["objects"], include, exclude)
     secret_bindings = _normalize_secret_bindings(secret_bindings or {})
@@ -2438,6 +2440,61 @@ def _find_replacement_flow_task_record(task_type: str,
                 continue
             return obj
     return None
+
+
+def _pinned_developer_key(package_id: str, user_id: str, conversation_id: str,
+                          scope: str) -> str:
+    """Return the developer.public_key pinned by a prior install of this
+    package name in this scope, or "" if the package was never installed.
+
+    Trust-on-first-use: the first signed install records the developer key;
+    later updates MUST present the same key. The .pfp signature only proves
+    the package is internally consistent with whatever key it carries, not
+    that the key belongs to the original author — so without this pin a
+    registry (or MITM) could ship an update signed by an attacker key and it
+    would verify fine. The pin closes that gap.
+    """
+    path = _install_record_path(package_id, user_id, conversation_id, scope)
+    if not path.exists():
+        return ""
+    try:
+        record = _read_json_file(path)
+    except Exception:
+        return ""
+    return str((record.get("developer") or {}).get("public_key") or "")
+
+
+def _verify_pinned_developer_key(package: Dict[str, Any], user_id: str,
+                                 conversation_id: str, scope: str,
+                                 force: bool = False) -> None:
+    """Enforce trust-on-first-use on the package's developer key.
+
+    Raises PfpError if a prior install of the same package name pinned a
+    different developer.public_key. `force=True` overrides the pin (the
+    operator explicitly accepts the key change), mirroring how `force`
+    overrides conflict/local-modification gates elsewhere.
+    """
+    manifest = package.get("manifest") or {}
+    package_id = str(manifest.get("package") or "")
+    if not package_id:
+        return
+    new_key = str((manifest.get("developer") or {}).get("public_key") or "")
+    pinned = _pinned_developer_key(package_id, user_id, conversation_id, scope)
+    if not pinned or not new_key:
+        return
+    if not hmac.compare_digest(pinned, new_key):
+        if force:
+            logger.warning(
+                "[pfp] developer key for %s changed from pinned %s... to %s... "
+                "— accepted because force=True",
+                package_id, pinned[:16], new_key[:16])
+            return
+        raise PfpError(
+            f"Developer key mismatch for package '{package_id}': this update "
+            f"is signed by a different key than the one pinned at first "
+            f"install. Refusing to install (the package may have been "
+            f"compromised or hijacked at its registry). Re-run with force=True "
+            f"only if you trust the new signer.")
 
 
 def _write_install_record(package: Dict[str, Any], user_id: str, conversation_id: str,

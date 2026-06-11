@@ -425,13 +425,29 @@ class BaseFsHandler(ToolHandler):
 
     @staticmethod
     def _sandbox_path(path: str, base: str) -> str:
-        """Resolve path relative to base, preventing ../ escape."""
-        if os.path.isabs(path):
-            return path  # absolute paths pass through (service handles sandboxing)
-        resolved = os.path.normpath(os.path.join(base, path))
-        if not resolved.startswith(os.path.normpath(base)):
-            raise ValueError(f"Path '{path}' escapes sandbox '{base}'")
-        return resolved
+        """Resolve path against base, blocking ``../`` and symlink escapes.
+
+        Both relative and absolute inputs are resolved with symlinks
+        followed (``realpath``) and must land inside ``base``. A symlink
+        planted under the workdir that points outside it therefore cannot
+        be used to read or write server files beyond the sandbox, and an
+        absolute path outside the workdir is refused rather than passed
+        through. This mirrors the containment the relay-side resolver
+        already enforces for remote filesystem tools.
+        """
+        if not base:
+            # No sandbox configured: preserve prior pass-through behaviour.
+            if os.path.isabs(path):
+                return path
+            return os.path.normpath(os.path.join(base, path))
+        base_real = os.path.realpath(base)
+        # os.path.join(base, abs_path) yields abs_path (POSIX/Path semantics),
+        # so an absolute input is resolved on its own merits, then checked
+        # for containment just like a relative one.
+        target = os.path.realpath(os.path.join(base_real, path))
+        if target == base_real or target.startswith(base_real + os.sep):
+            return target
+        raise ValueError(f"Path '{path}' escapes sandbox '{base}'")
 
     # ── Checkpoint ──
 

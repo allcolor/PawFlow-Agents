@@ -44,6 +44,12 @@ Media tools may send prompts, source images, videos, audio, or voice samples to 
 
 Use PawFlow secret storage or environment variables for API keys. Never hard-code secrets in flows, agent prompts, or docs. When writing examples, use `${SECRET_NAME}` placeholders.
 
+The master key encrypts stored secrets with AEAD (AES-GCM). Resolution order: `PAWFLOW_SECRET_KEY_B64` (raw 32-byte key, preferred), `PAWFLOW_SECRET_KEY` (password, derived via scrypt), then the dev-only generated on-disk key file. When a password is used, the scrypt salt is per-install: a fresh install writes a random salt to `data/system/secret.salt` before the first secret is encrypted, so two installs sharing a password never share a key. Existing installs (no salt file) keep the legacy salt so secrets stay decryptable across upgrades. To pin a salt explicitly (e.g. password-based deployments that predate the salt file), set `PAWFLOW_SECRET_SALT_B64` to a base64 value of at least 16 bytes.
+
+## Packages (PFP)
+
+A `.pfp` is signed with an ed25519 key whose public half is embedded in the manifest, so the signature proves the package is internally consistent but not who authored it. PawFlow pins the developer key on first install (trust-on-first-use): an update to an already-installed package name signed by a different key is refused unless installed with `force=True`. This blocks a compromised or hijacked registry from shipping a malicious update under an existing package's name.
+
 ## Private Gateway
 
 The private gateway is configured as a `privateGateway` service and enabled for a listener through `httpListener.private_gateway_service_id`. Accepted challenge keys are explicit `secret_refs` on that service. The challenge skin is selected by the service `skin` field and resolved from repository resources under `data/repository/private_gateway_skin`. Each skin lives in a directory containing `skin.json` metadata and `template.html`; templates can use `{{ next_url }}`, `{{ error }}`, and `{{ cooldown }}` placeholders.

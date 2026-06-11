@@ -204,3 +204,87 @@ def test_password_env_key_derives_via_scrypt(monkeypatch):
     sm_arg = SecretsManager("some-password")
     # Both derive the same key from the same password.
     assert sm_env._keyring["k1"] == sm_arg._keyring["k1"]
+
+
+# ---------------------------------------------------------------------------
+# Per-install scrypt salt
+# ---------------------------------------------------------------------------
+
+
+def test_no_salt_file_uses_legacy_salt(monkeypatch, tmp_path):
+    # No env, no salt file -> legacy fixed salt (existing installs unchanged).
+    import core.paths as paths
+    import core.secrets as secrets
+    monkeypatch.delenv("PAWFLOW_SECRET_SALT_B64", raising=False)
+    monkeypatch.setattr(paths, "SECRET_SALT_FILE", tmp_path / "secret.salt")
+    assert secrets._resolve_scrypt_salt() == secrets._LEGACY_SCRYPT_SALT
+
+
+def test_salt_file_overrides_legacy(monkeypatch, tmp_path):
+    import core.paths as paths
+    import core.secrets as secrets
+    monkeypatch.delenv("PAWFLOW_SECRET_SALT_B64", raising=False)
+    salt_file = tmp_path / "secret.salt"
+    salt_file.write_bytes(b"x" * 32)
+    monkeypatch.setattr(paths, "SECRET_SALT_FILE", salt_file)
+    assert secrets._resolve_scrypt_salt() == b"x" * 32
+
+
+def test_salt_env_takes_priority(monkeypatch, tmp_path):
+    import base64 as _b64
+    import core.paths as paths
+    import core.secrets as secrets
+    salt_file = tmp_path / "secret.salt"
+    salt_file.write_bytes(b"f" * 32)
+    monkeypatch.setattr(paths, "SECRET_SALT_FILE", salt_file)
+    env_salt = b"e" * 24
+    monkeypatch.setenv("PAWFLOW_SECRET_SALT_B64", _b64.b64encode(env_salt).decode())
+    assert secrets._resolve_scrypt_salt() == env_salt
+
+
+def test_per_install_salt_changes_derived_key(monkeypatch, tmp_path):
+    # Same password, different salt -> different master key. This is the
+    # whole point: two installs sharing a password do not share a key.
+    import core.paths as paths
+    import core.secrets as secrets
+    monkeypatch.delenv("PAWFLOW_SECRET_SALT_B64", raising=False)
+    salt_file = tmp_path / "secret.salt"
+    monkeypatch.setattr(paths, "SECRET_SALT_FILE", salt_file)
+
+    legacy_key = SecretsManager("shared-pw")._keyring["k1"]
+    salt_file.write_bytes(os.urandom(32))
+    salted_key = SecretsManager("shared-pw")._keyring["k1"]
+    assert legacy_key != salted_key
+
+
+def test_ensure_install_salt_writes_on_fresh_install(monkeypatch, tmp_path):
+    import core.paths as paths
+    import core.secrets as secrets
+    monkeypatch.delenv("PAWFLOW_SECRET_SALT_B64", raising=False)
+    salt_file = tmp_path / "secret.salt"
+    monkeypatch.setattr(paths, "SECRET_SALT_FILE", salt_file)
+    monkeypatch.setattr(paths, "SECRET_KEY_FILE", tmp_path / "secret.key")
+    monkeypatch.setattr(paths, "GLOBAL_SECRETS_FILE", tmp_path / "global_secrets.json")
+
+    assert secrets.ensure_install_salt() is True
+    assert salt_file.exists()
+    assert len(salt_file.read_bytes()) >= secrets._MIN_SALT_LEN
+    # Idempotent: a second call is a no-op (salt already present).
+    assert secrets.ensure_install_salt() is False
+
+
+def test_ensure_install_salt_noop_when_secrets_exist(monkeypatch, tmp_path):
+    # Existing install (global secrets already encrypted under legacy salt):
+    # must NOT introduce a random salt that would orphan them.
+    import core.paths as paths
+    import core.secrets as secrets
+    monkeypatch.delenv("PAWFLOW_SECRET_SALT_B64", raising=False)
+    salt_file = tmp_path / "secret.salt"
+    monkeypatch.setattr(paths, "SECRET_SALT_FILE", salt_file)
+    monkeypatch.setattr(paths, "SECRET_KEY_FILE", tmp_path / "secret.key")
+    gsf = tmp_path / "global_secrets.json"
+    gsf.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(paths, "GLOBAL_SECRETS_FILE", gsf)
+
+    assert secrets.ensure_install_salt() is False
+    assert not salt_file.exists()

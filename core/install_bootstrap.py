@@ -328,6 +328,11 @@ def _store_global_secret(secret_ref: str, value: str) -> str:
 
 def _store_bootstrap_gateway_secret(bootstrap_key: str) -> str:
     """Persist the temporary bootstrap gateway key as an encrypted secret."""
+    # First secret written on a fresh install: seed a per-install scrypt salt
+    # before any key is derived, so password-based master keys are salted
+    # uniquely. No-op on existing installs (keeps the legacy salt).
+    from core.secrets import ensure_install_salt
+    ensure_install_salt()
     _store_global_secret(BOOTSTRAP_GATEWAY_SECRET_REF, bootstrap_key)
     return BOOTSTRAP_GATEWAY_SECRET_REF
 

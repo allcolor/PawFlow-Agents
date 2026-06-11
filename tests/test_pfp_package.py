@@ -217,6 +217,51 @@ def test_pfp_build_inspect_and_selective_install(tmp_path, monkeypatch):
     assert listed["packages"][0]["package"] == "community.wavespeed"
 
 
+def test_pfp_update_with_different_developer_key_is_rejected(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    # First install pins the original developer key.
+    keypair = pfp_package.create_signing_key()
+    pkgdir = _write_package_dir(tmp_path, keypair)
+    built = pfp_package.build_pfp(str(pkgdir), private_key=keypair["private_key"])
+    first = pfp_package.install_pfp(
+        built["path"], user_id="alice", include=["skill:pkg-skill"], force=True)
+    assert first["ok"] is True
+
+    # A v2 signed by a DIFFERENT key (registry hijack / MITM) must be refused.
+    attacker = pfp_package.create_signing_key()
+    assert attacker["public_key"] != keypair["public_key"]
+    (tmp_path / "v2").mkdir()
+    pkgdir2 = _write_package_dir(tmp_path / "v2", attacker, version="2.0.0")
+    built2 = pfp_package.build_pfp(str(pkgdir2), private_key=attacker["private_key"])
+
+    import pytest
+    with pytest.raises(pfp_package.PfpError, match="[Dd]eveloper key mismatch"):
+        pfp_package.install_pfp(
+            built2["path"], user_id="alice", include=["skill:pkg-skill"])
+
+    # force=True is the explicit operator override and is allowed.
+    forced = pfp_package.install_pfp(
+        built2["path"], user_id="alice", include=["skill:pkg-skill"], force=True)
+    assert forced["ok"] is True
+
+
+def test_pfp_update_with_same_developer_key_is_allowed(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    keypair = pfp_package.create_signing_key()
+    pkgdir = _write_package_dir(tmp_path, keypair)
+    built = pfp_package.build_pfp(str(pkgdir), private_key=keypair["private_key"])
+    pfp_package.install_pfp(
+        built["path"], user_id="alice", include=["skill:pkg-skill"], force=True)
+
+    # Same signer ships v2 — the pin matches, install proceeds.
+    (tmp_path / "v2").mkdir()
+    pkgdir2 = _write_package_dir(tmp_path / "v2", keypair, version="2.0.0")
+    built2 = pfp_package.build_pfp(str(pkgdir2), private_key=keypair["private_key"])
+    result = pfp_package.install_pfp(
+        built2["path"], user_id="alice", include=["skill:pkg-skill"])
+    assert result["ok"] is True
+
+
 def test_pfp_inspect_blocks_invalid_agent_skill_name(tmp_path, monkeypatch):
     _reset_repo(tmp_path, monkeypatch)
     keypair = pfp_package.create_signing_key()

@@ -172,6 +172,7 @@ SESSIONS_FILE = SYSTEM_DIR / "sessions.json"
 SECURITY_FILE = SYSTEM_DIR / "security.json"
 OAUTH_INVITE_TOKENS_FILE = SYSTEM_DIR / "oauth_invite_tokens.json"
 SECRET_KEY_FILE = SYSTEM_DIR / "secret.key"
+SECRET_SALT_FILE = SYSTEM_DIR / "secret.salt"
 SERVER_ID_FILE = SYSTEM_DIR / "server_id"
 SSL_DIR = SYSTEM_DIR / "ssl"
 

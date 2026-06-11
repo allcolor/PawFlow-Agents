@@ -298,6 +298,12 @@ class InteractiveClaudeCodePool:
             return False
         if not self._paste_buffer(state):
             return False
+        # Let the TUI finish ingesting the paste before pressing Enter: an
+        # Enter that lands inside the paste-detection window is treated as
+        # pasted newline (inserts a blank line) instead of submitting.
+        settle = self._paste_settle_seconds()
+        if settle > 0:
+            time.sleep(settle)
         try:
             delay = float(os.environ.get("PAWFLOW_CCI_SUBMIT_DELAY_SECONDS", "1.0") or "1.0")
         except ValueError:
@@ -312,7 +318,10 @@ class InteractiveClaudeCodePool:
             return False
         if delay > 0:
             time.sleep(delay)
-        return self.send_keys(state, ["Enter"])
+        if not self.send_keys(state, ["Enter"]):
+            return False
+        self._verify_submitted(state, text)
+        return True
 
     # Footer/affordance strings the Claude Code TUI only renders once its
     # input box is interactive. Matching any (case-insensitive substring) is
@@ -345,6 +354,90 @@ class InteractiveClaudeCodePool:
     def _pane_shows_prompt(self, text: str) -> bool:
         low = (text or "").lower()
         return any(marker in low for marker in self._PROMPT_READY_MARKERS)
+
+    # Rendered by the CC TUI only while a turn is running — the strongest
+    # version-tolerant signal that a submitted prompt was accepted.
+    _RUNNING_MARKERS = ("esc to interrupt",)
+
+    def _pane_shows_running(self, text: str) -> bool:
+        low = (text or "").lower()
+        return any(marker in low for marker in self._RUNNING_MARKERS)
+
+    @staticmethod
+    def _paste_settle_seconds() -> float:
+        try:
+            return max(0.0, float(os.environ.get(
+                "PAWFLOW_CCI_PASTE_SETTLE_SECONDS", "0.2") or "0.2"))
+        except ValueError:
+            return 0.2
+
+    @staticmethod
+    def _submit_probe_fragment(text: str) -> str:
+        """A distinctive tail of the injected text to look for in the pane.
+
+        Short enough to usually survive line wrapping, long enough not to
+        match TUI chrome. Empty when no line is distinctive enough — the
+        verifier then relies on the running marker alone.
+        """
+        for line in reversed((text or "").strip().splitlines()):
+            line = line.strip()
+            if len(line) >= 8:
+                return line[-24:]
+        return ""
+
+    def _verify_submitted(self, state: InteractiveContainer, text: str) -> None:
+        """Best-effort post-submit check with Enter retries.
+
+        Despite the settle delay, an Enter can still be coalesced into the
+        paste burst and inserted as a literal newline, leaving the message
+        sitting in the input box (forcing a human to press Enter in the
+        tmux — the bug this guards against). Poll the pane: a running
+        marker means the prompt was accepted; an idle prompt with the
+        pasted text still visible means the Enter was swallowed — press it
+        again. Never makes a send fail: extra Enters on an empty or
+        already-submitted prompt are no-ops in the CC TUI.
+        """
+        try:
+            window = float(os.environ.get(
+                "PAWFLOW_CCI_SUBMIT_VERIFY_SECONDS", "6.0") or "6.0")
+        except ValueError:
+            window = 6.0
+        if window <= 0:
+            return
+        fragment = self._submit_probe_fragment(text)
+        interval = 0.3
+        polls = max(1, int(window / interval))
+        retries = 0
+        log = logging.getLogger(__name__)
+        for _ in range(polls):
+            pane = self._pane_text(state.name)
+            if pane:
+                if self._pane_shows_running(pane):
+                    if not fragment or fragment not in pane:
+                        return
+                    # Running but our text is still on screen: either the
+                    # interrupted OLD turn is winding down, or the TUI echoes
+                    # the submitted prompt. Keep polling — never press Enter
+                    # while a turn is running.
+                    time.sleep(interval)
+                    continue
+                if fragment and fragment not in pane:
+                    # Input box no longer holds the prompt: submitted.
+                    return
+                if self._pane_shows_prompt(pane):
+                    if retries >= 3:
+                        break
+                    retries += 1
+                    log.warning(
+                        "[cci] pasted prompt still unsubmitted in %s; "
+                        "pressing Enter again (retry %d)", state.name, retries)
+                    if not self.send_keys(state, ["Enter"]):
+                        break
+            time.sleep(interval)
+        if retries:
+            log.warning(
+                "[cci] submit verification inconclusive for %s after %d "
+                "Enter retries", state.name, retries)
 
     def _wait_for_prompt_ready(self, name: str, *,
                                timeout: Optional[float] = None) -> bool:
@@ -436,10 +529,25 @@ class InteractiveClaudeCodePool:
         self._cancel_copy_mode(state)
         self._remember_injected_prompt(state, text)
         self._remember_injected_prompt_for_event_service(state, text)
-        return (self._load_buffer(state, text)
-                and self._paste_buffer(state)
-                and self.send_keys(state, ["Escape"])
-                and self.send_keys(state, ["Enter"]))
+        if not (self._load_buffer(state, text) and self._paste_buffer(state)):
+            return False
+        if not self.send_keys(state, ["Escape"]):
+            return False
+        # The Escape interrupts the running turn and triggers a TUI
+        # re-render; an Enter pressed during it is dropped or inserted as a
+        # newline, stranding the message in the input box. Settle first,
+        # then verify (the verifier re-presses Enter if it was swallowed).
+        settle = self._paste_settle_seconds()
+        if settle > 0:
+            time.sleep(settle)
+        if not self.send_keys(state, ["Enter"]):
+            return False
+        if settle > 0:
+            # Let the interrupted turn's running marker leave the pane so
+            # the verifier doesn't mistake the OLD turn for the new one.
+            time.sleep(settle)
+        self._verify_submitted(state, text)
+        return True
 
     def force_stop(self, state: InteractiveContainer) -> bool:
         return self.send_keys(

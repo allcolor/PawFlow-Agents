@@ -1131,6 +1131,10 @@ def test_interactive_pool_send_text_pastes_then_sends_enter(monkeypatch):
 
     monkeypatch.setattr("core.claude_code_interactive_pool.docker_cmd", lambda: ["docker"])
     monkeypatch.setattr("core.claude_code_interactive_pool.subprocess.run", fake_run)
+    # This test pins the exact call sequence; the settle delay and the
+    # post-submit verifier are covered by their own tests below.
+    monkeypatch.setenv("PAWFLOW_CCI_PASTE_SETTLE_SECONDS", "0")
+    monkeypatch.setenv("PAWFLOW_CCI_SUBMIT_VERIFY_SECONDS", "0")
     sleeps = []
     # The patch lands on the SHARED stdlib time module, so daemon threads
     # leaked by earlier tests (executor/poller loops sleeping 0.05) would
@@ -1195,6 +1199,8 @@ def test_interactive_pool_send_text_waits_for_prompt_ready_on_cold_start(monkeyp
 
     monkeypatch.setattr("core.claude_code_interactive_pool.docker_cmd", lambda: ["docker"])
     monkeypatch.setattr("core.claude_code_interactive_pool.subprocess.run", fake_run)
+    monkeypatch.setenv("PAWFLOW_CCI_PASTE_SETTLE_SECONDS", "0")
+    monkeypatch.setenv("PAWFLOW_CCI_SUBMIT_VERIFY_SECONDS", "0")
     sleeps = []
     monkeypatch.setattr(
         "core.claude_code_interactive_pool.time.sleep",
@@ -1226,6 +1232,165 @@ def test_interactive_pool_send_text_waits_for_prompt_ready_on_cold_start(monkeyp
     assert state.prompt_ready is True
     # Two 0.4s readiness sleeps + the 1.0s double-Enter submit delay.
     assert sleeps == [0.4, 0.4, 1.0]
+
+
+def _make_verify_pool(monkeypatch, fake_run):
+    from core.claude_code_interactive_pool import InteractiveClaudeCodePool, InteractiveContainer
+
+    monkeypatch.setattr("core.claude_code_interactive_pool.docker_cmd", lambda: ["docker"])
+    monkeypatch.setattr("core.claude_code_interactive_pool.subprocess.run", fake_run)
+    monkeypatch.setenv("PAWFLOW_CCI_PASTE_SETTLE_SECONDS", "0")
+    monkeypatch.setenv("PAWFLOW_CCI_SUBMIT_VERIFY_SECONDS", "3")
+    monkeypatch.setenv("PAWFLOW_CCI_SUBMIT_DELAY_SECONDS", "0")
+    monkeypatch.setattr(
+        "core.claude_code_interactive_pool.time.sleep",
+        lambda value, _t=threading.get_ident(): None)
+    pool = InteractiveClaudeCodePool()
+    monkeypatch.setattr(pool, "_is_alive", lambda name: True)
+    state = InteractiveContainer(
+        key=("u", "c", "a", "svc"),
+        name="container",
+        workdir="/host",
+        container_workdir="/cc_sessions/u/c/a",
+        session_token="sess",
+        event_service_id="events",
+        internal_token="internal",
+    )
+    state.prompt_ready = True
+    return pool, state
+
+
+def test_send_text_represses_enter_when_submit_swallowed(monkeypatch):
+    """Regression: the Enter after a paste can be coalesced into the paste
+    burst and inserted as a literal newline, stranding the message in the
+    input box until a human presses Enter in the tmux. The verifier must
+    notice the idle prompt still holding the text and press Enter again."""
+    calls = []
+    panes = {"n": 0}
+    text = "please fix the gateway bug"
+
+    class _Run:
+        def __init__(self, stdout=""):
+            self.returncode = 0
+            self.stdout = stdout
+            self.stderr = ""
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if "capture-pane" in cmd:
+            panes["n"] += 1
+            if panes["n"] <= 2:
+                # Idle TUI, message stranded in the input box.
+                return _Run(f"│ > {text} │\n  ? for shortcuts")
+            # After the retried Enter the turn is running and the input
+            # box is empty.
+            return _Run("✶ Cooking… (esc to interrupt)")
+        return _Run("")
+
+    pool, state = _make_verify_pool(monkeypatch, fake_run)
+    assert pool.send_text(state, text) is True
+
+    enters = [c for c in calls if c[-2:] == ["pawflow", "Enter"]]
+    # Double-Enter submit plus at least one verifier retry.
+    assert len(enters) >= 3
+    # The verifier stopped polling once the running marker appeared.
+    assert panes["n"] == 3
+
+
+def test_send_text_verifier_accepts_running_turn_without_retry(monkeypatch):
+    """Happy path: the pane shows a running turn and the pasted text is
+    gone — the verifier must not press any extra Enter."""
+    calls = []
+    text = "please fix the gateway bug"
+
+    class _Run:
+        def __init__(self, stdout=""):
+            self.returncode = 0
+            self.stdout = stdout
+            self.stderr = ""
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if "capture-pane" in cmd:
+            return _Run("✶ Cooking… (esc to interrupt)")
+        return _Run("")
+
+    pool, state = _make_verify_pool(monkeypatch, fake_run)
+    assert pool.send_text(state, text) is True
+
+    enters = [c for c in calls if c[-2:] == ["pawflow", "Enter"]]
+    assert len(enters) == 2  # the standard double-Enter only
+
+
+def test_send_interrupt_represses_enter_when_submit_swallowed(monkeypatch):
+    """The interrupt path (Escape + Enter while a turn streams) is the most
+    race-prone: the Enter lands during the post-Escape re-render. The
+    verifier must recover it the same way as send_text."""
+    calls = []
+    panes = {"n": 0}
+    text = "urgent: stop and reconsider"
+
+    class _Run:
+        def __init__(self, stdout=""):
+            self.returncode = 0
+            self.stdout = stdout
+            self.stderr = ""
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if "capture-pane" in cmd:
+            panes["n"] += 1
+            if panes["n"] == 1:
+                # Idle after the Escape, message stranded in the box.
+                return _Run(f"│ > {text} │\n  ? for shortcuts")
+            return _Run("✶ Cooking… (esc to interrupt)")
+        return _Run("")
+
+    pool, state = _make_verify_pool(monkeypatch, fake_run)
+    assert pool.send_interrupt(state, text) is True
+
+    assert any(c[-2:] == ["pawflow", "Escape"] for c in calls)
+    enters = [c for c in calls if c[-2:] == ["pawflow", "Enter"]]
+    # Initial Enter plus the verifier's retry.
+    assert len(enters) >= 2
+
+
+def test_send_interrupt_verifier_waits_out_old_turn_running_marker(monkeypatch):
+    """Right after the Escape the OLD turn's 'esc to interrupt' can still
+    be on screen while our text sits in the box: the verifier must not
+    mistake it for a successful submit, and must retry Enter once the
+    pane settles to an idle prompt."""
+    calls = []
+    panes = {"n": 0}
+    text = "urgent: stop and reconsider"
+
+    class _Run:
+        def __init__(self, stdout=""):
+            self.returncode = 0
+            self.stdout = stdout
+            self.stderr = ""
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if "capture-pane" in cmd:
+            panes["n"] += 1
+            if panes["n"] == 1:
+                # Stale running marker from the interrupted turn, with our
+                # message still in the input box.
+                return _Run(
+                    f"✶ Wibbling… (esc to interrupt)\n│ > {text} │")
+            if panes["n"] == 2:
+                return _Run(f"│ > {text} │\n  ? for shortcuts")
+            return _Run("✶ Cooking… (esc to interrupt)")
+        return _Run("")
+
+    pool, state = _make_verify_pool(monkeypatch, fake_run)
+    assert pool.send_interrupt(state, text) is True
+
+    enters = [c for c in calls if c[-2:] == ["pawflow", "Enter"]]
+    # Initial Enter + one retry after the stale marker cleared.
+    assert len(enters) >= 2
+    assert panes["n"] == 3
 
 
 def test_wait_for_prompt_ready_times_out_best_effort(monkeypatch):

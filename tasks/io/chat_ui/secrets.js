@@ -134,7 +134,7 @@ function loadConvFiles() {
         tr.appendChild(dateTd);
         tr.addEventListener('click', (e) => handleFileRowSelection(e, f.file_id));
         tr.addEventListener('contextmenu',
-          (e) => showFileMenu(e, f.file_id, f.filename || f.file_id));
+          (e) => showFileMenu(e, f.file_id, f.filename || f.file_id, f.access));
         tbody.appendChild(tr);
       }
       table.appendChild(tbody);

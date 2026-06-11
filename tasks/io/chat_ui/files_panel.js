@@ -2,7 +2,7 @@
 var _convFilesSelected = new Set();
 var _convFilesLastSelected = '';
 
-function showFileMenu(e, fileId, filename) {
+function showFileMenu(e, fileId, filename, access) {
   e.preventDefault();
   closeFileMenu();
   const menu = document.createElement('div');
@@ -10,11 +10,18 @@ function showFileMenu(e, fileId, filename) {
   menu.id = 'fileCtxMenu';
   _positionMenu(menu, e);
   const href = window.location.origin + '/files/' + fileId;
+  // A file is conversation-private by default. Show only the relevant
+  // toggle: "Share public link" when private, "Make private" (revoke the
+  // public link) when it is currently shared — not both, which read as
+  // contradictory.
+  const isShared = access && access !== 'private';
+  const shareToggle = isShared
+    ? '<div class="ctx-menu-item" onclick="event.stopPropagation();makeFilePrivate(\'' + fileId + '\');closeFileMenu();">&#x1F512; ' + escapeHtml(t('makePrivate')) + '</div>'
+    : '<div class="ctx-menu-item" onclick="event.stopPropagation();shareFilePublic(\'' + fileId + '\');closeFileMenu();">&#x1F517; ' + escapeHtml(t('shareLink')) + '</div>';
   menu.innerHTML =
     '<div class="ctx-menu-item" onclick="event.stopPropagation();openFileViewer(\'' + href + '\');closeFileMenu();">&#x1F441; ' + escapeHtml(t('view')) + '</div>' +
     '<div class="ctx-menu-item" onclick="event.stopPropagation();window.open(\'' + href + '\',\'_blank\');closeFileMenu();">&#x2B07; ' + escapeHtml(t('download')) + '</div>' +
-    '<div class="ctx-menu-item" onclick="event.stopPropagation();shareFilePublic(\'' + fileId + '\');closeFileMenu();">&#x1F517; ' + escapeHtml(t('shareLink')) + '</div>' +
-    '<div class="ctx-menu-item" onclick="event.stopPropagation();makeFilePrivate(\'' + fileId + '\');closeFileMenu();">&#x1F512; ' + escapeHtml(t('makePrivate')) + '</div>' +
+    shareToggle +
     '<div class="ctx-menu-item danger" onclick="event.stopPropagation();deleteFile(\'' + fileId + '\');closeFileMenu();">&#x1F5D1; ' + escapeHtml(t('delete')) + '</div>';
   setTimeout(() => document.addEventListener('click', closeFileMenu, {once: true}), 0);
 }

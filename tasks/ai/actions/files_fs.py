@@ -315,6 +315,9 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
                 "size": int(r.get("size", 0) or 0),
                 "created_at": float(r.get("created_at", 0) or 0),
                 "available": fstore.exists(fid),
+                # Surfaces the share state so the UI shows "Share" vs
+                # "Make private" contextually instead of both at once.
+                "access": r.get("access", "private"),
             })
         # Newest first; the UI sorts again on the client side but
         # pre-sorting here keeps non-UI consumers consistent.

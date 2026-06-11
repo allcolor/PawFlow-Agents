@@ -617,6 +617,23 @@ class TerminalRenderer:
         """Render a classified history message with clear visual separation."""
         mtype = msg.get("type", msg.get("role", ""))
         content = msg.get("content", "")
+        # User messages with attachments arrive as multi-part lists
+        # (image_ref/file_ref parts pass through for thumbnail clients).
+        if isinstance(content, list):
+            parts = []
+            for p in content:
+                if isinstance(p, str):
+                    parts.append(p)
+                elif isinstance(p, dict):
+                    if p.get("type") == "text":
+                        parts.append(p.get("text", ""))
+                    elif p.get("type") in ("image_ref", "image_url", "image"):
+                        parts.append(f"[Image: {p.get('filename', 'image')}]")
+                    elif p.get("type") in ("file_ref", "document"):
+                        parts.append(f"[File: {p.get('filename', 'file')}]")
+            content = "\n".join(x for x in parts if x)
+        elif not isinstance(content, str):
+            content = str(content) if content else ""
         source = msg.get("source", {})
         agent = source.get("name", "") if isinstance(source, dict) else ""
         svc = source.get("llm_service", "") if isinstance(source, dict) else ""

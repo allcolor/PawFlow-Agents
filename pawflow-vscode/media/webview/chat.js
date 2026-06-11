@@ -340,6 +340,30 @@ function renderToolResult(content, toolHint, pathHint) {
 
 var _seenMsgIds = {};
 function addMsg(type, content, meta) {
+  // User messages with attachments arrive as multi-part lists (the server
+  // passes image_ref/file_ref parts through for thumbnail rendering).
+  // Normalize to text + attachment badges — a non-string here used to
+  // throw and abort the whole history replay after the first such message.
+  var attachHtml = '';
+  if (content && typeof content !== 'string') {
+    if (Array.isArray(content)) {
+      var textParts = [];
+      for (var pi = 0; pi < content.length; pi++) {
+        var part = content[pi];
+        if (typeof part === 'string') { textParts.push(part); }
+        else if (part && part.type === 'text') { textParts.push(part.text || ''); }
+        else if (part && (part.type === 'image_ref' || part.type === 'image_url' || part.type === 'image')) {
+          attachHtml += '<span class="doc-badge">🖼 ' + esc(part.filename || 'image') + '</span> ';
+        }
+        else if (part && (part.type === 'file_ref' || part.type === 'document')) {
+          attachHtml += '<span class="doc-badge">📎 ' + esc(part.filename || 'file') + '</span> ';
+        }
+      }
+      content = textParts.join('\n');
+    } else {
+      try { content = JSON.stringify(content); } catch (e) { content = String(content); }
+    }
+  }
   var msgId = (meta && meta.msg_id) || '';
   if (msgId) {
     if (_seenMsgIds[msgId]) return null;
@@ -374,7 +398,7 @@ function addMsg(type, content, meta) {
   }
 
   if (type === 'user') {
-    div.innerHTML = actionsHtml + replyQuoteHtml + esc(content);
+    div.innerHTML = actionsHtml + replyQuoteHtml + esc(content) + (attachHtml ? '<div>' + attachHtml + '</div>' : '');
   } else if (type === 'assistant') {
     var agent = (meta && meta.agent_name) || (meta && meta.source && meta.source.name) || '';
     var svc = (meta && meta.source && meta.source.llm_service) || '';
@@ -1028,9 +1052,12 @@ function replayHistory(data) {
   _addLoadMoreBanner(data);
   var msgs = data.messages || [];
   for (var i = 0; i < msgs.length; i++) {
-    addMsg(msgs[i].type || msgs[i].role, msgs[i].content || '', msgs[i]);
+    // One malformed message must not truncate the rest of the history.
+    try { addMsg(msgs[i].type || msgs[i].role, msgs[i].content || '', msgs[i]); }
+    catch (e) { console.error('addMsg failed for message', i, e); }
   }
   statusEl.textContent = currentHistoryOffset + ' of ' + (data.message_count || '?') + ' messages';
+  messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
 function prependHistory(data) {
@@ -1048,7 +1075,8 @@ function prependHistory(data) {
   var beforeCount = messagesEl.children.length;
   var msgs = data.messages || [];
   for (var i = 0; i < msgs.length; i++) {
-    addMsg(msgs[i].type || msgs[i].role, msgs[i].content || '', msgs[i]);
+    try { addMsg(msgs[i].type || msgs[i].role, msgs[i].content || '', msgs[i]); }
+    catch (e) { console.error('addMsg failed for message', i, e); }
   }
   // Move newly added (appended at end) to after banner
   var insertPoint = messagesEl.querySelector('.load-more');

@@ -313,7 +313,26 @@
       </div>
     </section>
 
-    <section class="section surface">
+    <section class="section surface" id="builtin-ide">
+      <div class="container split reverse">
+        <figure class="visual-card" data-reveal>
+          <img src="assets/media/product/vscode-code-server.webp" onerror="this.onerror=null;this.src='assets/feature-agent-flows.png';" alt="Built-in code-server IDE open on the relay workspace in a webchat tab">
+          <figcaption>code-server on the relay workspace, opened as a tab next to the conversation.</figcaption>
+        </figure>
+        <div data-reveal>
+          <p class="eyebrow">Built-in IDE</p>
+          <h2>A full VS Code IDE, served by your own relay.</h2>
+          <p class="lead">Every relay workspace ships code-server: type <code>/code</code> or pick VS Code from the webchat workspace menu and a complete browser IDE opens on the exact files your agents are working on. Review diffs, search, and edit by hand — no local install, nothing leaves your infrastructure.</p>
+          <div class="compare-row">
+            <div><strong>You review</strong><span>Full editor, search, and git view on the relay workspace, in a browser tab.</span></div>
+            <div><strong>Agents keep working</strong><span>Manual edits and agent tools share the same workspace boundary and conversation.</span></div>
+          </div>
+          <a class="inline-link" href="howtos.html#vscode-code-server">Open code-server on a relay</a>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
       <div class="container split reverse">
         <figure class="visual-card" data-reveal>
           <img src="assets/media/diagrams/agent-to-flow-pattern.webp" onerror="this.onerror=null;this.src='assets/feature-architecture.png';" alt="Agent-created deterministic flow pattern">

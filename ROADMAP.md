@@ -15,8 +15,9 @@ The alpha release includes:
 - **90+ Built-in Tools** — Filesystem, bash, code editing, web fetch/search, desktop screen interaction, browser automation, image/video/audio/voice/3D generation, security scanning, memory, knowledge graph, plans, and resources.
 - **Shared Multi-Client Conversations** — Web chat, PawCode CLI, VS Code, API/channel clients, and flows can attach to the same conversation stream and state.
 - **Persistent Memory** — Semantic memory, knowledge graphs, agent diaries, project graphs that survive across conversations.
-- **Web Chat & Desktop Control** — SSE streaming, file explorer, context editor, 60+ slash commands, @file mentions, multi-agent switching, `/desktop`, VNC-style desktop sessions, screenshots, and audio-capable remote desktop notes.
-- **Authentication** — 9 OAuth providers, JWT tokens, API keys, RBAC.
+- **Web Chat & Desktop Control** — SSE streaming, file explorer, context editor, 60+ slash commands, @file mentions, multi-agent switching, `/desktop`, VNC-style desktop sessions, screenshots, audio-capable remote desktop notes, voice in/out (STT/TTS), and a built-in IDE (code-server on the relay workspace via `/code`).
+- **Authentication & Private Gateway** — 9 OAuth providers, JWT tokens, API keys, RBAC, and a private gateway that keeps the server invisible until sign-in: camouflage skins, multi-provider sign-in (Google, GitHub, X, Telegram, Microsoft, Facebook, Amazon), and `trusted_proxies` support for reverse-proxy deployments.
+- **Telegram Agent Client** — Talk to your agents from Telegram with shared conversation history, streaming updates, consolidated thinking, voice messages (STT), and identity linking.
 - **Docker Support** — Containerized deployment with relay for isolated tool execution.
 - **PawCode CLI & VS Code** — Terminal and editor clients connected to the same PawFlow runtime.
 - **Package Ecosystem** — Signed `.pfp` packages, package registries, package runtime proxies, Resources sidebar package workflows, and external skill marketplace import.
@@ -62,7 +63,7 @@ Ollama, Mistral, vLLM, LM Studio, Together.ai — most work via the OpenAI-compa
 Progressive Web App installable on iOS and Android. Offline caching, push notifications when agents respond, mobile-optimized layout.
 
 ### External webchat clients
-Telegram, Discord, Slack, and WhatsApp clients that attach to PawFlow conversations with shared history, agent selection, streaming updates, and identity linking.
+Telegram is shipped as a first-class agent client (shared history, streaming, voice messages, identity linking). Remaining work: bring Discord, Slack, and WhatsApp to the same level — the bot services and flow-level receiver/send tasks exist, but not the full conversation-client experience.
 
 ---
 
@@ -90,6 +91,12 @@ Spans for each task execution in the pipeline engine, exportable to Jaeger, Zipk
 
 These were shipped as part of the alpha development cycle:
 
+- Telegram as a first-class agent client: shared conversations, streaming updates, consolidated thinking blocks, voice messages via STT, command mirroring, and identity linking
+- Private gateway: server invisible until sign-in, camouflage skins, multi-provider sign-in (Google, GitHub, X, Telegram, Microsoft, Facebook, Amazon), and opt-in `trusted_proxies` for reverse-proxy deployments
+- Security hardening pass over gateway/OAuth: constant-time token compares, state-keyed PKCE verifiers, and auth gap fixes
+- Built-in IDE: code-server served on the relay workspace via `/code`
+- Media generation hardening: hybrid webhook+poll completion (validated end-to-end with Pixazo), temporary public reference URLs for provider fetches, and public file share links from the chat
+- Voice input (STT) in web chat and Telegram, with TTS voice replies
 - Hard cost cap per conversation (budget limits with 80% warning threshold)
 - Agent instructions file (`.md`) that survives context compaction
 - Permission modes (read-only / approve-edits / auto) with quick toggle
@@ -110,7 +117,7 @@ These were shipped as part of the alpha development cycle:
 - PFP packages: signed `.pfp` artifacts, selectable install plans, export/build/dev-load, update/uninstall, and decentralized registries
 - External skill marketplace search/import with package review and provenance
 - Resource sidebar package install/update/uninstall workflows
-- User-selectable web chat themes
+- User-selectable workspace themes, global or per conversation
 
 ---
 

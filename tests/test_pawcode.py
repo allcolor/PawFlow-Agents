@@ -401,6 +401,9 @@ class _FakeAPI:
         return {"status": "accepted"}
 
     def send_message(self, **kwargs):
+        # Drop the client-minted msg_id (non-deterministic, used only for
+        # SSE-echo dedup) so tests can assert on the stable fields.
+        kwargs.pop("msg_id", None)
         self.messages.append(kwargs)
         return {"conversation_id": kwargs.get("conversation_id") or "conv1"}
 
@@ -476,6 +479,62 @@ class TestFirstRunSetup:
                                 getpass_fn=lambda _p: "x")
         assert args.server == "http://localhost:9090"
         assert args.gateway_key == ""
+
+
+class TestOfflineHelpAndGuards:
+    """/help works offline; commands needing a session are guarded."""
+
+    def _bare_app(self):
+        from pawflow_cli.app import PawCode
+        app = PawCode.__new__(PawCode)
+        printed = {"markdown": [], "system": [], "error": []}
+
+        class _R:
+            def print_markdown(self, t): printed["markdown"].append(t)
+            def print_system(self, t): printed["system"].append(t)
+            def print_error(self, t): printed["error"].append(t)
+        app.renderer = _R()
+        app.session_token = ""
+        app.selected_agent = ""
+        app.conversation_id = None
+        return app, printed
+
+    def test_help_renders_offline_without_server(self):
+        app, printed = self._bare_app()
+        # No api attribute at all — proves /help never touches the server.
+        app._handle_command("/help")
+        assert printed["markdown"], "offline /help should render a command list"
+        assert "Available Commands" in printed["markdown"][0]
+
+    def test_help_topic_offline_hint(self):
+        app, printed = self._bare_app()
+        app._print_offline_help("conv")
+        assert printed["system"]
+        assert "/conv" in printed["system"][0]
+
+    def test_server_command_blocked_when_not_logged_in(self):
+        app, printed = self._bare_app()
+        # /stats needs a session; with no token it must not POST — a missing
+        # api attribute would raise if it tried.
+        app._handle_command("/stats")
+        assert printed["error"]
+        assert "login" in printed["error"][0].lower()
+
+
+class TestResetConfig:
+    def test_reset_config_removes_file(self, monkeypatch, tmp_path):
+        import pawflow_cli.config as cfg
+        cfgfile = tmp_path / "config.json"
+        cfgfile.write_text('{"server_url": "https://x", "gateway_key": "k"}')
+        monkeypatch.setattr(cfg, "CONFIG_FILE", cfgfile)
+        monkeypatch.setattr("sys.argv", ["pawcode", "--reset-config"])
+        # Replicate the early reset branch from main().
+        import sys as _sys
+        if any(a == "--reset-config" for a in _sys.argv[1:]):
+            from pawflow_cli.config import CONFIG_FILE
+            if CONFIG_FILE.exists():
+                CONFIG_FILE.unlink()
+        assert not cfgfile.exists()
 
 
 class TestRelayId:

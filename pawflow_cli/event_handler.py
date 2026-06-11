@@ -3,6 +3,27 @@
 import sys
 
 
+def _flatten_multipart(content) -> str:
+    """Reduce a multi-part message content list to display text.
+
+    User messages with attachments arrive as a list of parts; rendering
+    the raw list would show Python repr. Mirror the webchat normalization.
+    """
+    parts = []
+    for p in content:
+        if isinstance(p, str):
+            parts.append(p)
+        elif isinstance(p, dict):
+            ptype = p.get("type", "")
+            if ptype == "text":
+                parts.append(p.get("text", ""))
+            elif ptype in ("image_ref", "image_url", "image"):
+                parts.append(f"[Image: {p.get('filename', 'image')}]")
+            elif ptype in ("file_ref", "document"):
+                parts.append(f"[File: {p.get('filename', 'file')}]")
+    return "\n".join(x for x in parts if x)
+
+
 def dispatch_event(app, event, streaming_agent, thinking_agent):
     """Dispatch a single SSE event. Returns (keep_waiting, streaming_agent, thinking_agent)."""
     ev_type = event.get("event", "")
@@ -10,14 +31,49 @@ def dispatch_event(app, event, streaming_agent, thinking_agent):
 
     if ev_type in ("thinking", "thinking_content", "thinking_delta"):
         agent = data.get("agent_name", "")
-        if ev_type == "thinking" and not thinking_agent:
-            thinking_agent = agent
-            app.renderer.start_thinking(agent)
-        elif ev_type == "thinking_delta":
-            app.renderer.thinking_token(agent, data.get("text", ""))
-        elif ev_type == "thinking_content":
-            app.renderer.thinking_token(
-                agent, data.get("text", ""), replace=bool(data.get("msg_id")))
+        if ev_type == "thinking_content":
+            # Durable, complete reasoning block (one per burst). This is the
+            # ONLY thinking signal some providers deliver (Claude Code
+            # interactive emits no `token` stream, so the buffered
+            # end_thinking path below never fires) — render it directly.
+            # Drop any buffered live-delta text for this agent so it is not
+            # rendered a second time by a later end_thinking.
+            app.renderer._thinking.pop(agent, None)
+            if thinking_agent == agent:
+                thinking_agent = ""
+            app.renderer.print_thinking_block(agent, data.get("text", ""))
+        else:
+            # `thinking` (legacy start marker) / `thinking_delta` (transient
+            # live preview) — buffer for the status bar; a trailing
+            # thinking_content block is the durable render.
+            if not thinking_agent:
+                thinking_agent = agent
+                app.renderer.start_thinking(agent)
+            if ev_type == "thinking_delta":
+                app.renderer.thinking_token(agent, data.get("text", ""))
+
+    elif ev_type == "new_message":
+        # Messages appended by OTHER clients (webchat, Telegram, flows) for
+        # this shared conversation. Without this, a message you post from
+        # webchat never shows up in the attached terminal. The assistant's
+        # reply still arrives via token/done, so only user messages are
+        # rendered here. Our own locally-echoed sends carry a client msg_id
+        # we pre-registered, so they dedup out.
+        msg_id = data.get("msg_id", "")
+        seen = getattr(app, "_seen_msg_ids", None)
+        if msg_id and seen is not None and msg_id in seen:
+            pass  # our own echo or already shown
+        else:
+            if msg_id and seen is not None:
+                seen.add(msg_id)
+            role = data.get("role", "")
+            content = data.get("content", "")
+            if isinstance(content, list):
+                content = _flatten_multipart(content)
+            if role == "user" and content.strip():
+                src = data.get("source", {})
+                target = src.get("target_agent", "") if isinstance(src, dict) else ""
+                app.renderer.print_user_message(content, target)
 
     elif ev_type == "token":
         agent = data.get("agent_name", "")
@@ -131,6 +187,15 @@ def dispatch_event(app, event, streaming_agent, thinking_agent):
     elif ev_type == "done":
         response_text = data.get("response", "")
         agent = data.get("agent_name", "")
+        # Mark this turn's message ids as seen so the assistant text's
+        # new_message echo (rendered here via done) is not duplicated.
+        seen = getattr(app, "_seen_msg_ids", None)
+        if seen is not None:
+            for _mid in (data.get("all_msg_ids") or []):
+                if _mid:
+                    seen.add(_mid)
+            if data.get("msg_id"):
+                seen.add(data["msg_id"])
         # End this specific agent's stream (multi-agent safe)
         if agent in app.renderer._streams:
             app.renderer.end_stream(agent, response_text)

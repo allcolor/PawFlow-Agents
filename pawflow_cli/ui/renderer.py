@@ -320,16 +320,24 @@ class TerminalRenderer:
 
     def end_thinking(self, agent: str):
         text = self._thinking.pop(agent, "")
-        if text.strip():
-            from rich.markup import escape
-            lines = text.strip().split("\n")
-            preview = "\n".join(lines[:8])
-            if len(lines) > 8:
-                preview += f"\n... ({len(lines) - 8} more lines)"
-            if self.console:
-                self.console.print(f"[dim italic]▼ Thought ({len(lines)} lines)\n{escape(preview)}[/dim italic]")
-            else:
-                print(f"▼ Thought ({len(lines)} lines)\n{preview}")
+        self.print_thinking_block(agent, text)
+
+    def print_thinking_block(self, agent: str, text: str):
+        """Render a completed reasoning block. Used both for buffered live
+        thinking (end_thinking) and for durable `thinking_content` SSE
+        blocks (the only thinking signal some providers — e.g. Claude Code
+        interactive — deliver, so the dispatcher must render them directly)."""
+        if not text or not text.strip():
+            return
+        from rich.markup import escape
+        lines = text.strip().split("\n")
+        preview = "\n".join(lines[:8])
+        if len(lines) > 8:
+            preview += f"\n... ({len(lines) - 8} more lines)"
+        if self.console:
+            self.console.print(f"[dim italic]▼ Thought ({len(lines)} lines)\n{escape(preview)}[/dim italic]")
+        else:
+            print(f"▼ Thought ({len(lines)} lines)\n{preview}")
 
     # ── Tool calls ──
 

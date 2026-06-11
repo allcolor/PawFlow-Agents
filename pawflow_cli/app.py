@@ -90,6 +90,22 @@ class PawCode:
         self._approval_queue = queue.Queue()  # background → main thread approval requests
         self._approval_response = queue.Queue()  # main thread → background approval responses
         self._active_agents = {}  # server-polled active agents (single source of truth for typing)
+        # Message ids already rendered (our own sends + finished turns), so
+        # new_message SSE echoes from the shared conversation don't duplicate.
+        self._seen_msg_ids = set()
+
+    def _new_outgoing_msg_id(self) -> str:
+        """Mint a client msg_id and pre-register it so the server's
+        new_message SSE echo of our own message does not render twice."""
+        from uuid import uuid4
+        if getattr(self, "_seen_msg_ids", None) is None:
+            self._seen_msg_ids = set()
+        mid = uuid4().hex[:12]
+        self._seen_msg_ids.add(mid)
+        if len(self._seen_msg_ids) > 2000:
+            # Bound memory in long sessions — drop the oldest arbitrary half.
+            self._seen_msg_ids = set(list(self._seen_msg_ids)[-1000:])
+        return mid
 
     def _on_relay_token_refresh(self, new_token):
         """Called when the server sends a refreshed session token via relay."""
@@ -381,6 +397,7 @@ class PawCode:
                 conversation_id=self.conversation_id,
                 target_agent=self.selected_agent,
                 attachments=attachments,
+                msg_id=self._new_outgoing_msg_id(),
             )
             if resp.get("error"):
                 self.renderer.print_error(resp["error"])
@@ -415,6 +432,7 @@ class PawCode:
                 conversation_id=self.conversation_id,
                 target_agent=target,
                 attachments=attachments,
+                msg_id=self._new_outgoing_msg_id(),
             )
             if resp.get("error"):
                 self.renderer.print_error(resp["error"])
@@ -623,8 +641,8 @@ class PawCode:
                         detail_parts = []
                         if info.get("iteration"):
                             detail_parts.append(f"iter {info['iteration']}")
-                        if info.get("round") and info.get("max_rounds", 0) > 1:
-                            detail_parts.append(f"round {info['round']}/{info['max_rounds']}")
+                        # `round x/y` removed: it tracks an internal agent-loop
+                        # counter that is meaningless to the user.
                         if info.get("total_tools"):
                             detail_parts.append(f"{info['total_tools']} tools")
                         if info.get("last_tool"):
@@ -705,6 +723,42 @@ class PawCode:
         except Exception as e:
             self.renderer.print_error(f"Approval error: {e}")
 
+    # Client-side help: categories mirror the server's /help so the terminal
+    # always has a usable command reference, even offline or before login.
+    _HELP_CATEGORIES = {
+        "Conversation": ["/new", "/conv", "/delete", "/rename", "/export",
+                         "/history", "/search", "/fork"],
+        "Agent": ["/agent", "/msg", "/btw", "/stop", "/resume", "/setname"],
+        "Context": ["/compact", "/git-prune", "/context", "/model", "/llm",
+                    "/effort", "/fast", "/rebuild", "/restart", "/rewind",
+                    "/summary", "/cc_restart", "/cc_live"],
+        "Resources": ["/resources", "/tools", "/call", "/skill", "/task",
+                      "/service", "/flow", "/prompt", "/memory", "/cost"],
+        "Secrets & Variables": ["/secrets", "/add-secret", "/variables",
+                                "/add-variable"],
+        "Scheduling": ["/schedules", "/autoconv", "/loop"],
+        "Files": ["/files", "/upload", "/paste", "/copy", "/view", "/run",
+                  "/diff", "/relay", "/workspace"],
+        "Mode": ["/plan", "/hooks", "/permission"],
+        "Session": ["/login", "/help", "/doctor", "/clear", "/quit"],
+        "Analysis": ["/stats", "/insights", "/security-review", "/feedback"],
+    }
+
+    def _print_offline_help(self, topic: str = ""):
+        """Render the command reference client-side (no server round-trip)."""
+        if topic:
+            cmd = topic if topic.startswith("/") else f"/{topic}"
+            self.renderer.print_system(
+                f"For detailed help on {cmd}, run it with no argument or see "
+                "the docs. (Full per-command help requires a logged-in session.)")
+            return
+        lines = ["## Available Commands"]
+        for cat, cmds in self._HELP_CATEGORIES.items():
+            lines.append(f"\n**{cat}**: " + "  ".join(cmds))
+        lines.append("\nType a message to talk to the selected agent. "
+                     "/login to authenticate, /quit to exit.")
+        self.renderer.print_markdown("\n".join(lines))
+
     def _handle_command(self, text: str):
         """Handle slash commands — server-first, client-only exceptions.
 
@@ -718,6 +772,13 @@ class PawCode:
         # Blocked commands (not available in CLI/relay context)
         if cmd in ("/cls", "/claude-login-server"):
             self.renderer.print_error("Server login is only available from the webchat.")
+            return
+
+        # /help is rendered client-side: it must work offline (before login
+        # or when the server is unreachable) and never round-trips, so it
+        # can't hang waiting on the server.
+        if cmd == "/help":
+            self._print_offline_help(arg.strip())
             return
 
         # Client-only commands (UI-specific, never sent to server)
@@ -736,6 +797,13 @@ class PawCode:
                 return
 
         if self._handle_agent_stream_command(cmd, arg, text):
+            return
+
+        # Everything past this point needs an authenticated session. Without
+        # one the POST would 401/block — tell the user to /login instead.
+        if not self.session_token:
+            self.renderer.print_error(
+                f"Not logged in — {cmd} needs a server session. Run /login first.")
             return
 
         # Everything else → server (single source of truth)
@@ -1130,6 +1198,20 @@ def main():
                         help="Subcommand: 'auth login' or 'auth status'")
     parser.add_argument("subcommand", nargs="?", default=None,
                         help=argparse.SUPPRESS)
+    # --reset-config: wipe saved server/gateway settings BEFORE reading them,
+    # so the defaults below fall back to env/localhost and first-run setup
+    # asks the questions again. Checked from argv directly because the saved
+    # config is consumed while building the argument defaults.
+    if any(a == "--reset-config" for a in sys.argv[1:]):
+        from pawflow_cli.config import CONFIG_FILE
+        try:
+            if CONFIG_FILE.exists():
+                CONFIG_FILE.unlink()
+            print("[PawCode] Saved settings cleared (~/.pawflow/config.json).",
+                  file=sys.stderr)
+        except Exception as _re:
+            print(f"[PawCode] Could not clear config: {_re}", file=sys.stderr)
+
     # Defaults: CLI arg > env > saved config (~/.pawflow/config.json) >
     # localhost. The config values are persisted on every successful start
     # so a bare `pawcode` keeps working after the first configured run.
@@ -1153,6 +1235,9 @@ def main():
                         help="Deprecated for PawCode; configure local execution via pawflow-relay")
     parser.add_argument("--login", action="store_true",
                         help="Force re-authentication")
+    parser.add_argument("--reset-config", action="store_true",
+                        help="Erase saved server/gateway settings (~/.pawflow/config.json) "
+                             "and re-run first-time setup")
     parser.add_argument("-p", "--prompt", nargs="?", const="-", default=None,
                         help="Prompt mode: send a prompt and exit. "
                              "Use -p \"prompt\" or pipe via stdin with -p -")

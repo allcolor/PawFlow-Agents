@@ -217,9 +217,12 @@ class AgentAPIClient:
 
     def send_message(self, message: str, conversation_id: str = None,
                      target_agent: str = "", attachments: list = None,
-                     pending_agent: str = "", reply_to: dict = None) -> dict:
+                     pending_agent: str = "", reply_to: dict = None,
+                     msg_id: str = "") -> dict:
         """Send a chat message to the agent."""
         body = {"message": message}
+        if msg_id:
+            body["msg_id"] = msg_id
         if conversation_id:
             body["conversation_id"] = conversation_id
         if target_agent:

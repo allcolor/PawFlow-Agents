@@ -125,6 +125,13 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
       const allAttachments = [...this.pendingAttachments, ...(attachments || [])];
       this.pendingAttachments = [];
 
+      // The server requires a target agent for user messages. When none was
+      // picked yet (fresh panel, no history loaded), resolve the
+      // conversation's active agent — or the first available one.
+      if (!this.selectedAgent) {
+        await this.resolveDefaultAgent();
+      }
+
       const resp = await api.sendMessage({
         message: text,
         conversation_id: this.conversationId || undefined,
@@ -166,6 +173,25 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
   selectAgent(name: string): void {
     this.selectedAgent = name;
     this.postMessage({ type: 'agentSelected', agent: name });
+  }
+
+  private async resolveDefaultAgent(): Promise<void> {
+    const api = this.getApi();
+    if (!api) { return; }
+    try {
+      const data = await api.sendAction('list_agents', {
+        conversation_id: this.conversationId || '',
+      });
+      // list_agents returns {agents: {name: {...}}, selected: '...'}
+      const agents = data.agents || {};
+      const names = Array.isArray(agents)
+        ? agents.map((a: any) => a.name || a)
+        : Object.keys(agents);
+      const name = (data.selected as string) || names[0] || '';
+      if (name) { this.selectAgent(name); }
+    } catch (e) {
+      console.warn('[PawFlow] resolveDefaultAgent failed:', e);
+    }
   }
 
   sendPlan(description: string): void {
@@ -351,6 +377,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
       if (!data.error) {
         this.conversationId = lastCid;
         this.saveLastConversation(lastCid);
+        if (data.active_agent) { this.selectedAgent = data.active_agent; }
         this.setupSSE();
         this.postMessage({ type: 'history', data });
         console.log(`[PawFlow] Resumed last conversation: ${lastCid.slice(0, 8)}`);
@@ -395,6 +422,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
       } else {
         this.conversationId = cid;
         this.saveLastConversation(cid);
+        if (data.active_agent) { this.selectedAgent = data.active_agent; }
         this.setupSSE();
         const isLoadMore = (offset || 0) > 0;
         this.postMessage({ type: 'history', data, append: isLoadMore });
@@ -466,7 +494,10 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     let agentNames: string[] = [];
     try {
       const data = await api.sendAction('list_agents', { conversation_id: this.conversationId || '' });
-      agentNames = (data.agents || []).map((a: any) => a.name || a);
+      const rawAgents = data.agents || {};
+      agentNames = Array.isArray(rawAgents)
+        ? rawAgents.map((a: any) => a.name || a)
+        : Object.keys(rawAgents);
     } catch {}
 
     const agent = await vscode.window.showQuickPick(agentNames, {

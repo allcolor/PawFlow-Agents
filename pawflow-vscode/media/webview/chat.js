@@ -557,6 +557,8 @@ window.addEventListener('message', function(e) {
       break;
     case 'fileAttached':
       statusEl.textContent = msg.count + ' file(s) attached';
+      addMsg('system', '📎 ' + (msg.filename || 'file') + ' attached (' + msg.count + ' pending) — sent with your next message');
+      scrollBottom();
       break;
     case 'agentSelected':
       statusEl.textContent = 'Agent: ' + msg.agent;

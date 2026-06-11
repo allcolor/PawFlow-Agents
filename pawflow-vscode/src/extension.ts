@@ -140,7 +140,8 @@ export function activate(context: vscode.ExtensionContext) {
       const data = await apiClient.sendAction('list_agents', {
         conversation_id: chatProvider.getConversationId() || '',
       });
-      const agents = (data.agents || []).map((a: any) => a.name);
+      const raw = data.agents || {};
+      const agents = Array.isArray(raw) ? raw.map((a: any) => a.name || a) : Object.keys(raw);
       const pick = await vscode.window.showQuickPick(agents, { title: 'Select Agent' });
       if (pick) { chatProvider.selectAgent(pick); }
     }),

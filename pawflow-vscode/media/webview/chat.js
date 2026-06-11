@@ -756,20 +756,12 @@ function handleSSE(event) {
       var doneText = data.response || streaming[agent] || '';
       var aKey = (agent || '').toLowerCase();
       var existingEl = streamEls[aKey];
-      // Register all msg_ids from this turn
-      var allIds = data.all_msg_ids || [];
-      if (data.msg_id) allIds.push(data.msg_id);
-      for (var ii = 0; ii < allIds.length; ii++) {
-        if (allIds[ii]) _seenMsgIds[allIds[ii]] = true;
-      }
-      // Find existing element (streaming or finalized by turn_complete)
-      if (!existingEl) {
-        for (var mi = 0; mi < allIds.length; mi++) {
-          if (allIds[mi]) {
-            var found = document.querySelector('[data-msgid="' + allIds[mi] + '"]');
-            if (found) { existingEl = found; break; }
-          }
-        }
+      // Find an existing element for THIS final message only: the live
+      // streaming element, or a rendered message with the final msg_id.
+      // Matching any id of the turn used to hit intermediate messages and
+      // skip rendering the final response entirely.
+      if (!existingEl && data.msg_id) {
+        existingEl = document.querySelector('[data-msgid="' + data.msg_id + '"]');
       }
       if (existingEl) {
         // Convert streaming element to permanent with metadata
@@ -791,10 +783,18 @@ function handleSSE(event) {
         }
         delete streamEls[aKey];
       } else if (doneText) {
-        // No element found — check msg_id dedup before adding
-        if (!data.msg_id || !_seenMsgIds[data.msg_id]) {
-          addMsg('assistant', doneText, data);
-        }
+        // No element for the final message — render it. Clear any
+        // pre-registration (message_meta) so addMsg doesn't drop it.
+        if (data.msg_id) delete _seenMsgIds[data.msg_id];
+        addMsg('assistant', doneText, data);
+        scrollBottom();
+      }
+      // Register the turn's msg_ids AFTER the render decision so late
+      // duplicate events (history echo) dedup against what is on screen.
+      var allIds = data.all_msg_ids || [];
+      if (data.msg_id) allIds.push(data.msg_id);
+      for (var ii = 0; ii < allIds.length; ii++) {
+        if (allIds[ii]) _seenMsgIds[allIds[ii]] = true;
       }
       streaming[agent] = '';
       _hadToolCalls = false;

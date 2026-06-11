@@ -349,6 +349,9 @@ function addMsg(type, content, meta) {
   }
   var div = document.createElement('div');
   div.className = 'msg ' + type;
+  // dataset.msgid makes the element findable for DOM-based dedup
+  // (new_message / done) and message_meta footer updates.
+  if (msgId) div.dataset.msgid = msgId;
 
   var rawIdx = meta && meta.raw_index !== undefined ? meta.raw_index : _msgRawIndex++;
   div.dataset.rawIndex = rawIdx;
@@ -613,6 +616,10 @@ window.addEventListener('message', function(e) {
   }
 });
 
+function scrollBottom() {
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
 function handleSSE(event) {
   var evType = event.event;
   var data = event.data;
@@ -620,10 +627,13 @@ function handleSSE(event) {
 
   switch (evType) {
     case 'new_message':
-      // Messages appended by other clients (webchat, Telegram, flows) —
-      // assistant text and user messages alike. addMsg dedups by msg_id,
-      // so our own locally-rendered sends are not duplicated.
+      // Messages appended by any client (webchat, Telegram, flows) and
+      // assistant text. Dedup by DOM presence — NOT _seenMsgIds, which
+      // message_meta pre-registers for footer updates before the text
+      // event arrives (that registration must not eat the message).
       if (data.role && data.content) {
+        if (data.msg_id && document.querySelector('[data-msgid="' + data.msg_id + '"]')) break;
+        if (data.msg_id) delete _seenMsgIds[data.msg_id];
         addMsg(data.role, data.content, data);
         scrollBottom();
       }

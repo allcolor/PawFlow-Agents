@@ -10,57 +10,18 @@ let sseClient: SSEClient | undefined;
 let auth: PawFlowAuth;
 let statusBar: StatusBarProvider;
 let chatProvider: ChatPanelProvider;
+let gatewayCookie = '';
 
-export async function activate(context: vscode.ExtensionContext) {
+export function activate(context: vscode.ExtensionContext) {
   const config = vscode.workspace.getConfiguration('pawflow');
   const serverUrl = config.get<string>('serverUrl', 'http://localhost:9090');
   const gatewayKey = config.get<string>('gatewayKey', '');
 
-  // Acquire gateway cookie if key is configured
-  let gatewayCookie = '';
-  if (gatewayKey) {
-    try {
-      gatewayCookie = await acquireGatewayCookie(serverUrl, gatewayKey);
-      if (gatewayCookie) {
-        console.log('[PawFlow] Gateway cookie acquired.');
-      } else {
-        console.warn('[PawFlow] Gateway POST returned no cookie.');
-      }
-    } catch (e: any) {
-      console.warn(`[PawFlow] Gateway cookie acquisition failed: ${e.message}`);
-    }
-  }
-
-  // Initialize components
+  // Initialize components. Commands and views are registered synchronously
+  // below — no network call may run before that, so a dead/unreachable
+  // server can never leave the extension without its commands.
   auth = new PawFlowAuth(context);
   statusBar = new StatusBarProvider();
-
-  // Try cached auth — validate token before using it
-  let session = await auth.getSession(serverUrl);
-  if (session) {
-    apiClient = new AgentAPIClient(serverUrl, session.token, gatewayCookie);
-    apiClient.onAuthExpired(() => { vscode.commands.executeCommand('pawflow.login'); });
-
-    // Validate token with a lightweight API call
-    const check = await apiClient.sendAction('get_usage');
-    if ((check as any)._auth_expired) {
-      // Cached token expired — force re-login before continuing
-      console.log('[PawFlow] Cached token expired, triggering login...');
-      try {
-        session = await auth.login(serverUrl);
-        apiClient.setToken(session.token);
-      } catch {
-        // Login failed or cancelled — continue without auth
-        apiClient = undefined;
-        session = null;
-      }
-    }
-
-    if (session && apiClient) {
-      sseClient = new SSEClient(serverUrl, session.token, gatewayCookie);
-      statusBar.setConnected(session.username);
-    }
-  }
 
   // Chat panel
   chatProvider = new ChatPanelProvider(context, () => apiClient, () => sseClient);
@@ -163,6 +124,58 @@ export async function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(statusBar);
+
+  // Session/network bring-up runs after registration and is fully guarded.
+  void initializeSession(serverUrl, gatewayKey);
+}
+
+async function initializeSession(serverUrl: string, gatewayKey: string) {
+  try {
+    // Acquire gateway cookie if key is configured
+    if (gatewayKey) {
+      try {
+        gatewayCookie = await acquireGatewayCookie(serverUrl, gatewayKey);
+        if (gatewayCookie) {
+          console.log('[PawFlow] Gateway cookie acquired.');
+        } else {
+          console.warn('[PawFlow] Gateway POST returned no cookie.');
+        }
+      } catch (e: any) {
+        console.warn(`[PawFlow] Gateway cookie acquisition failed: ${e.message}`);
+      }
+    }
+
+    // Try cached auth — validate token before using it
+    let session = await auth.getSession(serverUrl);
+    if (session) {
+      apiClient = new AgentAPIClient(serverUrl, session.token, gatewayCookie);
+      apiClient.onAuthExpired(() => { vscode.commands.executeCommand('pawflow.login'); });
+
+      // Validate token with a lightweight API call
+      const check = await apiClient.sendAction('get_usage');
+      if ((check as any)._auth_expired) {
+        // Cached token expired — force re-login before continuing
+        console.log('[PawFlow] Cached token expired, triggering login...');
+        try {
+          session = await auth.login(serverUrl);
+          apiClient.setToken(session.token);
+        } catch {
+          // Login failed or cancelled — continue without auth
+          apiClient = undefined;
+          session = null;
+        }
+      }
+
+      if (session && apiClient) {
+        sseClient = new SSEClient(serverUrl, session.token, gatewayCookie);
+        statusBar.setConnected(session.username);
+      }
+    }
+  } catch (e: any) {
+    // Server unreachable, TLS error, ... — stay usable, login can retry.
+    console.warn(`[PawFlow] Session init failed: ${e?.message || e}`);
+    apiClient = undefined;
+  }
 
   // Show login prompt if not authenticated
   if (!apiClient) {

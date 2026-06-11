@@ -25,6 +25,13 @@ export class SSEClient extends EventEmitter {
   private lastActivity = 0;
   private watchdog: NodeJS.Timeout | null = null;
   private static readonly STALE_MS = 45000;
+  // Set when the previous stream was dead long enough that buffered replay
+  // can't be trusted to cover the gap — the next successful connect then
+  // emits 'reconnected' so the panel does a full history catch-up. A routine
+  // ~10min server-lifetime bounce (pings were flowing) leaves this false, so
+  // an idle session does NOT reload every few minutes.
+  private pendingCatchUp = false;
+  private static readonly CATCHUP_GAP_MS = 30000;
 
   constructor(serverUrl: string, sessionToken: string, gatewayCookie: string = '') {
     super();
@@ -49,13 +56,24 @@ export class SSEClient extends EventEmitter {
     this.connected = false;
   }
 
+  private _markGap(): void {
+    // If the stream was quiet for a while before it dropped, the next
+    // connect should catch up from history; a fresh drop (pings were
+    // flowing) is covered by the server's buffered replay.
+    if (this.lastActivity && Date.now() - this.lastActivity > SSEClient.CATCHUP_GAP_MS) {
+      this.pendingCatchUp = true;
+    }
+  }
+
   private _startWatchdog(conversationId: string): void {
     if (this.watchdog) { clearInterval(this.watchdog); }
     this.watchdog = setInterval(() => {
       if (!this.shouldReconnect || !this.lastActivity) { return; }
       if (Date.now() - this.lastActivity > SSEClient.STALE_MS) {
-        // Stream is silently dead — tear it down and reconnect.
+        // Stream is silently dead — tear it down and reconnect, and flag a
+        // catch-up since we likely missed events while it was half-open.
         this.lastActivity = 0;
+        this.pendingCatchUp = true;
         if (this.request) {
           try { this.request.removeAllListeners(); this.request.destroy(); } catch { /* noop */ }
           this.request = null;
@@ -112,11 +130,14 @@ export class SSEClient extends EventEmitter {
       this.retryCount = 0;
       this.lastActivity = Date.now();
       this.emit('connected');
-      // A reconnect (not the first connect) means we may have missed events
-      // while the stream was down — tell listeners to catch up from history.
-      if (this.everConnected) {
+      // Only catch up from history when the previous stream was dead long
+      // enough that buffered replay can't cover the gap. Routine server
+      // lifetime bounces (pings flowing) don't set pendingCatchUp, so an
+      // idle session does not reload the panel every few minutes.
+      if (this.everConnected && this.pendingCatchUp) {
         this.emit('reconnected');
       }
+      this.pendingCatchUp = false;
       this.everConnected = true;
 
       let eventType = '';
@@ -164,12 +185,14 @@ export class SSEClient extends EventEmitter {
 
       res.on('end', () => {
         this.connected = false;
+        this._markGap();
         this.emit('disconnected');
         this._scheduleReconnect(conversationId);
       });
 
       res.on('error', (e) => {
         this.connected = false;
+        this._markGap();
         this.emit('error', e);
         this._scheduleReconnect(conversationId);
       });
@@ -177,6 +200,7 @@ export class SSEClient extends EventEmitter {
 
     this.request.on('error', (e) => {
       this.connected = false;
+      this._markGap();
       this.emit('error', e);
       this._scheduleReconnect(conversationId);
     });

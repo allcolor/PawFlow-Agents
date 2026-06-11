@@ -460,7 +460,7 @@ class TestTelegramAgentClientTask(unittest.TestCase):
         assert '"mime_type": "image/jpeg"' in src
         assert "attachments=attachments" in src
 
-    def test_agent_client_ignores_voice_without_stt(self):
+    def test_agent_client_reports_voice_without_stt(self):
         import shutil
         import tempfile
         from unittest.mock import patch
@@ -494,7 +494,10 @@ class TestTelegramAgentClientTask(unittest.TestCase):
                     patch("core.agent_runtime_api.AgentRuntimeAPI.submit_message") as submit:
                 out = task.execute(ff)
 
-            assert out == []
+            assert len(out) == 1
+            reply = out[0].get_content().decode("utf-8")
+            assert "Speech transcription failed" in reply
+            assert "no STT service available" in reply
             submit.assert_not_called()
         finally:
             IdentityService.reset()

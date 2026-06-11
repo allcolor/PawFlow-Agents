@@ -110,10 +110,14 @@ class TelegramAgentClientTask(BaseTask):
                 return [flowfile]
             if not transcribed:
                 logger.info(
-                    "Ignoring Telegram voice message for %s: no STT service available or empty transcription",
+                    "Telegram voice message for %s produced an empty transcription",
                     conversation_id,
                 )
-                return []
+                flowfile.set_content(
+                    b"Voice message received but the transcription came back "
+                    b"empty. Try again, or check the STT service with "
+                    b"/sttservice.")
+                return [flowfile]
             text = transcribed
 
         attachments = []
@@ -1521,7 +1525,7 @@ def _transcribe_telegram_voice_result(
             "Telegram voice STT skipped for %s: empty audio payload",
             conversation_id,
         )
-        return "", ""
+        return "", "voice download failed (empty audio payload)"
     try:
         audio_bytes = base64.b64decode(audio_b64)
     except Exception:
@@ -1532,7 +1536,7 @@ def _transcribe_telegram_voice_result(
             "Telegram voice STT skipped for %s: decoded audio payload is empty",
             conversation_id,
         )
-        return "", ""
+        return "", "voice download failed (empty audio payload)"
     try:
         from tasks.ai.actions.media import resolve_stt_service
 
@@ -1544,7 +1548,8 @@ def _transcribe_telegram_voice_result(
                 conversation_id,
                 err or "no STT service available",
             )
-            return "", ""
+            return "", (err or "no STT service configured — deploy one, "
+                        "then pick it with /sttservice")
         service_id = str(getattr(svc, "service_id", "") or getattr(svc, "NAME", "") or "<resolved>")
         if hasattr(svc, "set_runtime_context"):
             svc.set_runtime_context(

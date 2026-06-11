@@ -182,8 +182,6 @@ function _renderActiveAgents() {
     var timeStr = secs < 60 ? secs + 's' : Math.floor(secs / 60) + 'm' + (secs % 60) + 's';
     // Status details
     var parts = [];
-    if (info.iteration) parts.push('iter ' + info.iteration);
-    if (info.round && info.maxRounds > 1) parts.push('round ' + info.round + '/' + info.maxRounds);
     if (info.totalTools > 0) parts.push(info.totalTools + ' tools');
     if (info.lastTool) parts.push('[' + info.lastTool + ']');
     var statusText = parts.length > 0 ? parts.join(' \u00b7 ') : 'thinking...';
@@ -556,8 +554,11 @@ window.addEventListener('message', function(e) {
       break;
     case 'newConversation':
       messagesEl.innerHTML = '<div class="msg system">New conversation</div>';
+      _seenMsgIds = {};
+      _msgRawIndex = 0;
       currentHistoryConvId = null;
       currentHistoryOffset = 0;
+      statusEl.textContent = '';
       break;
     case 'error':
       addMsg('error', msg.message);
@@ -1015,6 +1016,10 @@ function showConvList(convs) {
 
 function replayHistory(data) {
   messagesEl.innerHTML = '';
+  // Full re-render: the DOM is wiped, so the msg_id dedup registry must be
+  // wiped too — otherwise re-opening a conversation drops every message
+  // already seen and the panel renders near-empty.
+  _seenMsgIds = {};
   _msgRawIndex = 0;
   currentHistoryConvId = data.conversation_id || currentHistoryConvId;
   currentHistoryOffset = data.raw_count || (data.messages || []).length;

@@ -208,7 +208,9 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
       const names = Array.isArray(agents)
         ? agents.map((a: any) => a.name || a)
         : Object.keys(agents);
-      const name = (data.selected as string) || names[0] || '';
+      const name = (data.selected as string)
+        || names.find(n => n === 'assistant')
+        || names[0] || '';
       if (name) { this.selectAgent(name); }
     } catch (e) {
       console.warn('[PawFlow] resolveDefaultAgent failed:', e);

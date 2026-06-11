@@ -521,6 +521,48 @@ class TestOfflineHelpAndGuards:
         assert "login" in printed["error"][0].lower()
 
 
+class TestHeadlessLogin:
+    """Copy/paste login for SSH / remote / no-browser machines."""
+
+    def test_parse_pasted_credential_from_redirect_url(self):
+        from pawflow_cli.auth import parse_pasted_credential
+        tok, user = parse_pasted_credential(
+            "http://127.0.0.1:55808/callback?token=abc123&username=quentin")
+        assert tok == "abc123"
+        assert user == "quentin"
+
+    def test_parse_pasted_credential_from_bare_token(self):
+        from pawflow_cli.auth import parse_pasted_credential
+        assert parse_pasted_credential("  opaque-token-xyz  ") == ("opaque-token-xyz", "")
+
+    def test_parse_pasted_credential_rejects_junk(self):
+        from pawflow_cli.auth import parse_pasted_credential
+        assert parse_pasted_credential("") == ("", "")
+        assert parse_pasted_credential("some words here") == ("", "")
+
+    def test_manual_login_uses_loopback_callback_and_parses_paste(self, monkeypatch):
+        from pawflow_cli import auth as cli_auth
+        captured = {}
+        monkeypatch.setattr(cli_auth, "save_session", lambda *a, **k: captured.setdefault("saved", a))
+        monkeypatch.setattr(cli_auth, "check_session", lambda *a, **k: {})
+
+        pasted = "https://webchat.example/auth/login... http://127.0.0.1:1/callback?token=TKN&username=u"
+        # The user pastes the redirected URL; parse_pasted_credential pulls
+        # the token from the query string.
+        result = cli_auth.authenticate(
+            "https://webchat.example", force=True, no_browser=True,
+            input_fn=lambda _p: "http://127.0.0.1:1/callback?token=TKN&username=u")
+        assert result["token"] == "TKN"
+        assert result["username"] == "u"
+
+    def test_manual_login_cancel_on_blank(self, monkeypatch):
+        from pawflow_cli import auth as cli_auth
+        monkeypatch.setattr(cli_auth, "check_session", lambda *a, **k: {})
+        with pytest.raises(RuntimeError, match="cancelled"):
+            cli_auth.authenticate("https://x", force=True, no_browser=True,
+                                  input_fn=lambda _p: "")
+
+
 class TestResetConfig:
     def test_reset_config_removes_file(self, monkeypatch, tmp_path):
         import pawflow_cli.config as cfg

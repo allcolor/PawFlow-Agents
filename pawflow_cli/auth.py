@@ -98,62 +98,139 @@ def check_session(server_url: str, gateway_cookie: str = "") -> dict:
         return {}
 
 
+def parse_pasted_credential(pasted: str) -> tuple:
+    """Extract (token, username) from a pasted login redirect URL or token.
+
+    After login the browser is redirected to
+    ``http://127.0.0.1:<port>/callback?token=...&username=...``. On a
+    headless/remote machine that loopback address is unreachable, but the
+    token still sits in the browser's address bar — the user copies either
+    the whole URL or just the token and pastes it back here.
+    """
+    pasted = (pasted or "").strip()
+    if not pasted:
+        return "", ""
+    if "token=" in pasted or pasted.lower().startswith("http"):
+        try:
+            q = urlparse(pasted).query or pasted.split("?", 1)[-1]
+            params = parse_qs(q)
+            return (params.get("token", [""])[0],
+                    params.get("username", [""])[0])
+        except Exception:
+            return "", ""
+    # A bare token: no whitespace, looks like an opaque id.
+    if " " not in pasted and "/" not in pasted:
+        return pasted, ""
+    return "", ""
+
+
+def _manual_login(server_url: str, auth_url: str, input_fn) -> dict:
+    """No-browser login: print the URL, let the user authenticate on ANY
+    machine, then paste the redirected URL (or token) back here."""
+    sys.stderr.write(
+        "\nHeadless login — open this URL in a browser on any machine:\n"
+        f"  {auth_url}\n\n"
+        "After signing in, your browser is redirected to a "
+        "127.0.0.1/callback URL.\nThat address may not load (normal on a "
+        "remote machine) — copy the full URL from the address bar (or just "
+        "the token=... value) and paste it here.\n\n")
+    for _ in range(5):
+        try:
+            pasted = input_fn("Paste the redirected URL or token (blank to cancel): ")
+        except (EOFError, KeyboardInterrupt):
+            raise RuntimeError("Login cancelled")
+        if not pasted.strip():
+            raise RuntimeError("Login cancelled")
+        token, username = parse_pasted_credential(pasted)
+        if token:
+            return {"token": token, "username": username}
+        sys.stderr.write("Couldn't find a token in that input — try again.\n")
+    raise RuntimeError("No valid token pasted")
+
+
 def authenticate(server_url: str, force: bool = False,
-                 gateway_cookie: str = "") -> dict:
+                 gateway_cookie: str = "", no_browser: bool = False,
+                 input_fn=input) -> dict:
     """Authenticate with PawFlow server. Returns {token, username, server_url}.
 
-    Tries cached session first. Opens browser if needed.
+    Tries cached session first. Opens a browser and listens on a loopback
+    callback by default; with ``no_browser`` (or when no browser is
+    available) it falls back to a copy/paste flow that works over SSH and
+    on headless machines.
     """
     if not force:
         cached = check_session(server_url, gateway_cookie=gateway_cookie)
         if cached:
             return cached
 
-    # Start local callback server
+    # A loopback relay_callback makes the server embed the token in the
+    # post-login redirect (the only place it surfaces). Even in paste mode
+    # we keep it loopback so the token lands in the browser's address bar.
+    callback_port = 0
     result = {"token": None, "username": None}  # nosec B105
     ready = Event()
+    server = None
 
-    class CallbackHandler(BaseHTTPRequestHandler):
-        def do_GET(self):
-            parsed = urlparse(self.path)
-            params = parse_qs(parsed.query)
-            result["token"] = params.get("token", [None])[0]
-            result["username"] = params.get("username", [None])[0]
-            html = (
-                '<!DOCTYPE html><html><body style="font-family:sans-serif;'
-                'text-align:center;padding:60px;background:#1a1a2e;color:#e0e0e0">'
-                '<h2>&#10004; PawCode authenticated</h2>'
-                '<p>You can close this window.</p></body></html>'
-            )
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html")
-            self.end_headers()
-            self.wfile.write(html.encode())
-            ready.set()
+    if not no_browser:
+        class CallbackHandler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                parsed = urlparse(self.path)
+                params = parse_qs(parsed.query)
+                result["token"] = params.get("token", [None])[0]
+                result["username"] = params.get("username", [None])[0]
+                html = (
+                    '<!DOCTYPE html><html><body style="font-family:sans-serif;'
+                    'text-align:center;padding:60px;background:#1a1a2e;color:#e0e0e0">'
+                    '<h2>&#10004; PawCode authenticated</h2>'
+                    '<p>You can close this window.</p></body></html>'
+                )
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html")
+                self.end_headers()
+                self.wfile.write(html.encode())
+                ready.set()
 
-        def log_message(self, *args):
-            pass
+            def log_message(self, *args):
+                pass
 
-    server = HTTPServer(("127.0.0.1", 0), CallbackHandler)
-    port = server.server_address[1]
-    Thread(target=server.handle_request, daemon=True).start()
+        server = HTTPServer(("127.0.0.1", 0), CallbackHandler)
+        callback_port = server.server_address[1]
+        Thread(target=server.handle_request, daemon=True).start()
+    else:
+        # Manual mode still needs a loopback callback in the URL so the
+        # server includes the token in its redirect; the port need not be
+        # listening since the user pastes the URL back instead.
+        callback_port = 1
 
-    callback_url = f"http://127.0.0.1:{port}/callback"
+    callback_url = f"http://127.0.0.1:{callback_port}/callback"
     auth_url = f"{server_url}/auth/login?relay_callback={quote(callback_url)}"
 
-    sys.stderr.write(f"Opening browser for login...\n")
-    try:
-        webbrowser.open(auth_url)
-    except Exception:
-        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-    # Always print URL — browser may fail in headless/WSL/SSH environments
-    sys.stderr.write(f"\nIf the browser didn't open, visit this URL:\n{auth_url}\n\n")
-
-    if not ready.wait(timeout=120):
-        server.server_close()
-        raise TimeoutError("Authentication timed out (120s)")
-
-    server.server_close()
+    # Manual / headless path: no loopback race, just paste the result.
+    if no_browser:
+        creds = _manual_login(server_url, auth_url, input_fn)
+        result["token"] = creds["token"]
+        result["username"] = creds["username"]
+    else:
+        sys.stderr.write("Opening browser for login...\n")
+        opened = False
+        try:
+            opened = webbrowser.open(auth_url)
+        except Exception:
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+        # Always print URL — browser may fail in headless/WSL/SSH environments
+        sys.stderr.write(f"\nIf the browser didn't open, visit this URL:\n{auth_url}\n\n")
+        sys.stderr.write(
+            "Waiting for the browser callback... (on a headless/remote "
+            "machine, press Ctrl+C and re-run `/login paste`)\n")
+        if not ready.wait(timeout=120):
+            if server:
+                server.server_close()
+            raise TimeoutError(
+                "Authentication timed out (120s). On a headless/remote "
+                "machine use the paste flow: `/login paste` (or "
+                "`pawcode auth login --no-browser`).")
+        if server:
+            server.server_close()
 
     if not result["token"]:
         raise RuntimeError("No token received from login")

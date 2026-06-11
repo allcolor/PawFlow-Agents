@@ -756,7 +756,8 @@ class PawCode:
         for cat, cmds in self._HELP_CATEGORIES.items():
             lines.append(f"\n**{cat}**: " + "  ".join(cmds))
         lines.append("\nType a message to talk to the selected agent. "
-                     "/login to authenticate, /quit to exit.")
+                     "/login to authenticate (/login paste for headless/SSH), "
+                     "/quit to exit.")
         self.renderer.print_markdown("\n".join(lines))
 
     def _handle_command(self, text: str):
@@ -1238,6 +1239,9 @@ def main():
     parser.add_argument("--reset-config", action="store_true",
                         help="Erase saved server/gateway settings (~/.pawflow/config.json) "
                              "and re-run first-time setup")
+    parser.add_argument("--no-browser", action="store_true",
+                        help="Headless login: print the URL and paste the redirected "
+                             "URL/token back (for SSH / remote / no-browser machines)")
     parser.add_argument("-p", "--prompt", nargs="?", const="-", default=None,
                         help="Prompt mode: send a prompt and exit. "
                              "Use -p \"prompt\" or pipe via stdin with -p -")
@@ -1318,7 +1322,8 @@ def main():
             from pawflow_cli.auth import authenticate
             try:
                 auth = authenticate(args.server, force=True,
-                                    gateway_cookie=gateway_cookie)
+                                    gateway_cookie=gateway_cookie,
+                                    no_browser=args.no_browser)
                 print(f"Authenticated as {auth['username']}")
                 print(f"Token saved to ~/.pawflow/session.json (encrypted)")
             except Exception as e:

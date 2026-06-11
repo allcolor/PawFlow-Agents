@@ -35,8 +35,12 @@ def handle_session_commands(app, cmd, arg, text):
 
     if cmd == "/login":
         from pawflow_cli.auth import authenticate
+        # `/login paste` (or `/login --no-browser`) uses the headless
+        # copy/paste flow for SSH / remote / no-browser machines.
+        _no_browser = arg.strip().lower() in ("paste", "--no-browser", "--paste", "manual")
         auth = authenticate(app.server_url, force=True,
-                           gateway_cookie=getattr(app, 'gateway_cookie', ''))
+                           gateway_cookie=getattr(app, 'gateway_cookie', ''),
+                           no_browser=_no_browser)
         app.session_token = auth["token"]
         app.username = auth["username"]
         app.api.session_token = app.session_token

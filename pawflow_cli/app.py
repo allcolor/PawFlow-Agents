@@ -1081,6 +1081,44 @@ class PawCode:
             self.sse.disconnect()
 
 
+def _normalize_server_url(entered: str) -> str:
+    """Add a scheme when the user types a bare host: http for loopback,
+    https for everything else (production servers sit behind TLS)."""
+    entered = entered.strip().rstrip("/")
+    if not entered or "://" in entered:
+        return entered
+    host = entered.split("/", 1)[0].split(":", 1)[0].lower()
+    scheme = "http" if host in ("localhost", "127.0.0.1", "::1") else "https"
+    return f"{scheme}://{entered}"
+
+
+def _prompt_first_run_setup(args, input_fn=input, getpass_fn=None):
+    """Interactive first-run setup: ask for the server URL and, if the
+    server sits behind a Private Gateway, the gateway key.
+
+    Mutates ``args.server`` / ``args.gateway_key`` in place. Any abort
+    (Ctrl+C / EOF) keeps the current defaults — setup must never block
+    the prompt from starting.
+    """
+    if getpass_fn is None:
+        import getpass
+        getpass_fn = getpass.getpass
+    try:
+        entered = _normalize_server_url(
+            input_fn(f"PawFlow server URL [{args.server}]: "))
+        if entered:
+            args.server = entered
+        if not args.gateway_key:
+            yn = input_fn(
+                "Is the server behind a Private Gateway? [y/N]: ").strip().lower()
+            if yn in ("y", "yes", "o", "oui"):
+                key = getpass_fn("Private Gateway key (input hidden): ").strip()
+                if key:
+                    args.gateway_key = key
+    except (EOFError, KeyboardInterrupt):
+        sys.stderr.write("\n[PawCode] Setup skipped — using defaults.\n")
+
+
 def main():
     """Entry point for the CLI."""
     import argparse
@@ -1137,6 +1175,24 @@ def main():
     parser.add_argument("--resume", default="",
                         help="Resume session (alias for --session-id)")
     args = parser.parse_args()
+
+    # First-run interactive setup: a bare `pawcode` with no server from
+    # CLI/env/config asks for the server URL (and gateway key when the
+    # server is behind a Private Gateway) instead of silently targeting
+    # localhost and appearing dead. Skipped in non-interactive contexts
+    # (-p prompt mode, stream-json, piped stdin) so scripts never block.
+    _server_from_cli = any(
+        a == "--server" or a.startswith("--server=") for a in sys.argv[1:])
+    _server_configured = bool(
+        _server_from_cli
+        or os.environ.get("PAWFLOW_SERVER")
+        or _saved_cfg.get("server_url"))
+    _interactive = (sys.stdin.isatty()
+                    and args.prompt is None
+                    and args.input_format != "stream-json"
+                    and args.command is None)
+    if not _server_configured and _interactive:
+        _prompt_first_run_setup(args)
 
     # Acquire gateway cookie if key provided. If it fails, just warn
     # and continue — the user can still authenticate with /login at the

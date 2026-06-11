@@ -423,6 +423,61 @@ def _fake_pawcode():
     return app, api
 
 
+class TestFirstRunSetup:
+    """Interactive first-run prompt: server URL + optional gateway key."""
+
+    def _args(self, server="http://localhost:9090", gateway_key=""):
+        import types
+        return types.SimpleNamespace(server=server, gateway_key=gateway_key)
+
+    def test_normalize_server_url_adds_scheme(self):
+        from pawflow_cli.app import _normalize_server_url
+        assert _normalize_server_url("webchat.example.org") == "https://webchat.example.org"
+        assert _normalize_server_url("localhost:19990") == "http://localhost:19990"
+        assert _normalize_server_url("127.0.0.1:9090") == "http://127.0.0.1:9090"
+        assert _normalize_server_url("https://x.org/") == "https://x.org"
+        assert _normalize_server_url("  ") == ""
+
+    def test_prompt_sets_server_and_gateway_key(self):
+        from pawflow_cli.app import _prompt_first_run_setup
+        args = self._args()
+        answers = iter(["webchat.example.org", "y"])
+        _prompt_first_run_setup(args, input_fn=lambda _p: next(answers),
+                                getpass_fn=lambda _p: "sekret ")
+        assert args.server == "https://webchat.example.org"
+        assert args.gateway_key == "sekret"
+
+    def test_prompt_empty_answers_keep_defaults(self):
+        from pawflow_cli.app import _prompt_first_run_setup
+        args = self._args()
+        answers = iter(["", ""])
+        _prompt_first_run_setup(args, input_fn=lambda _p: next(answers),
+                                getpass_fn=lambda _p: "never-called")
+        assert args.server == "http://localhost:9090"
+        assert args.gateway_key == ""
+
+    def test_prompt_skips_gateway_question_when_key_already_set(self):
+        from pawflow_cli.app import _prompt_first_run_setup
+        args = self._args(gateway_key="already")
+        # Only ONE input call (the server URL) must happen — a second one
+        # would raise StopIteration and fail the test.
+        answers = iter(["srv.example"])
+        _prompt_first_run_setup(args, input_fn=lambda _p: next(answers))
+        assert args.server == "https://srv.example"
+        assert args.gateway_key == "already"
+
+    def test_prompt_abort_keeps_defaults(self):
+        from pawflow_cli.app import _prompt_first_run_setup
+        args = self._args()
+
+        def _interrupt(_p):
+            raise KeyboardInterrupt
+        _prompt_first_run_setup(args, input_fn=_interrupt,
+                                getpass_fn=lambda _p: "x")
+        assert args.server == "http://localhost:9090"
+        assert args.gateway_key == ""
+
+
 class TestRelayId:
     """Test relay ID generation consistency."""
 

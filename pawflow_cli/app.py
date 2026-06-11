@@ -1092,7 +1092,13 @@ def main():
                         help="Subcommand: 'auth login' or 'auth status'")
     parser.add_argument("subcommand", nargs="?", default=None,
                         help=argparse.SUPPRESS)
-    default_server = os.environ.get("PAWFLOW_SERVER", "http://localhost:9090")
+    # Defaults: CLI arg > env > saved config (~/.pawflow/config.json) >
+    # localhost. The config values are persisted on every successful start
+    # so a bare `pawcode` keeps working after the first configured run.
+    _saved_cfg = load_config()
+    default_server = (os.environ.get("PAWFLOW_SERVER")
+                      or _saved_cfg.get("server_url")
+                      or "http://localhost:9090")
     parser.add_argument("--server", default=default_server,
                         help=f"PawFlow server URL (env: PAWFLOW_SERVER, default: {default_server})")
     parser.add_argument("--dir", default=".",
@@ -1117,8 +1123,11 @@ def main():
     parser.add_argument("--output", choices=["text", "json", "markdown", "full"],
                         default="text",
                         help="Output format for -p mode (default: text)")
-    parser.add_argument("--gateway-key", default=os.environ.get("PAWFLOW_GATEWAY_KEY", ""),
-                        help="Private gateway access key (env: PAWFLOW_GATEWAY_KEY)")
+    parser.add_argument("--gateway-key",
+                        default=(os.environ.get("PAWFLOW_GATEWAY_KEY")
+                                 or _saved_cfg.get("gateway_key", "")),
+                        help="Private gateway access key (env: PAWFLOW_GATEWAY_KEY, "
+                             "persisted in ~/.pawflow/config.json after first use)")
     parser.add_argument("--input-format", choices=["text", "stream-json"], default="text",
                         help="Input format (stream-json for Claude Code compatible NDJSON)")
     parser.add_argument("--output-format", choices=["text", "stream-json"], default="text",
@@ -1147,6 +1156,19 @@ def main():
             print("[PawCode] Gateway returned no cookie — continuing "
                   "without it; use /login at the prompt.",
                   file=sys.stderr)
+
+    # Persist working connection settings so the next bare `pawcode`
+    # talks to the same server with the same gateway key.
+    _cfg_update = {}
+    if args.server and args.server != _saved_cfg.get("server_url"):
+        _cfg_update["server_url"] = args.server
+    if gateway_cookie and args.gateway_key != _saved_cfg.get("gateway_key"):
+        _cfg_update["gateway_key"] = args.gateway_key
+    if _cfg_update:
+        try:
+            save_config(_cfg_update)
+        except Exception:
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     # ── Subcommands: pawcode auth login | pawcode auth status ──
     if args.command == "auth":

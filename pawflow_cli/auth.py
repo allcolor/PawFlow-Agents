@@ -68,12 +68,20 @@ def check_session(server_url: str, gateway_cookie: str = "") -> dict:
                     conn = http.client.HTTPConnection(_rh, _rpt, timeout=5)
                 conn.request("POST", _rp.path or "/api/ui", body=_body, headers=_headers)
                 resp = conn.getresponse()
-        resp.read()
+        _resp_body = resp.read().decode("utf-8", errors="replace")
         # Server may send a refreshed token in header (silent OAuth refresh)
         new_token = resp.getheader("X-Session-Token")
         conn.close()
         if resp.status == 401 or resp.status == 403:
             clear_session()
+            return {}
+        # Private Gateway challenge page (HTTP 200 + HTML): the ping never
+        # reached the server, so this proves nothing about the session —
+        # and every later request will be blocked the same way. Surface it
+        # instead of mistaking the page for a valid ping response.
+        from pawflow_cli.api import looks_like_gateway_challenge, GATEWAY_BLOCKED_HINT
+        if looks_like_gateway_challenge(_resp_body):
+            sys.stderr.write(f"[PawCode] {GATEWAY_BLOCKED_HINT}\n")
             return {}
         if new_token:
             token = new_token

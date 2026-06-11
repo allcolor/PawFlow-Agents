@@ -12,6 +12,23 @@ from urllib.parse import urlparse, urlencode
 from uuid import uuid4
 
 
+def looks_like_gateway_challenge(data: str) -> bool:
+    """True when a response body is the Private Gateway HTML challenge page.
+
+    The gateway answers HTTP 200 with an HTML page to any route it blocks,
+    so a JSON client must detect it explicitly — otherwise it either hangs
+    waiting for events that never come or dies on a JSON parse error.
+    """
+    head = (data or "").lstrip()[:200].lower()
+    return head.startswith("<!doctype") or head.startswith("<html")
+
+
+GATEWAY_BLOCKED_HINT = (
+    "This server's Private Gateway blocked the request. Restart PawCode "
+    "with --gateway-key <key> (or set PAWFLOW_GATEWAY_KEY)."
+)
+
+
 def acquire_gateway_cookie(server_url: str, gateway_key: str) -> str:
     """POST /_gateway with the access key, return the _pf_gw cookie value.
 
@@ -169,7 +186,14 @@ class AgentAPIClient:
         call_id = kwargs.pop("_call_id", "") or uuid4().hex
         body = {"action": action, "_call_id": call_id}
         body.update(kwargs)
-        resp = self._post("/api/ui", body)
+        # _inline_response: ask the server to run the action synchronously
+        # and return the result in the HTTP response. Without it the server
+        # ACKs and publishes the result on the conversation's SSE channel —
+        # which deadlocks whenever the CLI's SSE is attached to a DIFFERENT
+        # conversation (e.g. /conv <id> loads the new conversation's history
+        # before switching SSE) or to none at all.
+        body.setdefault("_inline_response", True)
+        resp = self._post("/api/ui", body, timeout=120)
 
         # If server returned data directly (no conversation_id = sync), use it
         if resp.get("status") != "accepted":
@@ -219,13 +243,15 @@ class AgentAPIClient:
                 raise PermissionError("Session expired — re-authenticate")
             if resp.status >= 400:
                 raise Exception(f"API error {resp.status}: {data[:500]}")
+            if looks_like_gateway_challenge(data):
+                raise RuntimeError(GATEWAY_BLOCKED_HINT)
             return json.loads(data) if data else {}
         finally:
             conn.close()
 
-    def _post(self, path: str, body: dict) -> dict:
+    def _post(self, path: str, body: dict, timeout: int = 30) -> dict:
         """HTTP POST with JSON body, return parsed response."""
-        conn = self._get_conn()
+        conn = self._get_conn(timeout=timeout)
         try:
             payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
             conn.request("POST", path, body=payload, headers=self._headers())
@@ -235,6 +261,8 @@ class AgentAPIClient:
                 raise PermissionError("Session expired — re-authenticate")
             if resp.status >= 400:
                 raise Exception(f"API error {resp.status}: {data[:500]}")
+            if looks_like_gateway_challenge(data):
+                raise RuntimeError(GATEWAY_BLOCKED_HINT)
             return json.loads(data) if data else {}
         finally:
             conn.close()
@@ -327,6 +355,15 @@ class SSEClient:
 
         if resp.status != 200:
             raise Exception(f"SSE connection failed: {resp.status}")
+        # The Private Gateway answers 200 + an HTML challenge page when the
+        # request carries no valid _pf_gw cookie — without this check the
+        # client would treat the static page as a live stream and silently
+        # reconnect forever while no event ever arrives.
+        ctype = (resp.getheader("Content-Type") or "").lower()
+        if "text/event-stream" not in ctype:
+            resp.read()
+            conn.close()
+            raise Exception(GATEWAY_BLOCKED_HINT)
 
         self.connected = True
         self.events.put({"event": "_sse_connected", "data": {}})

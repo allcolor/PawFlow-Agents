@@ -1471,6 +1471,26 @@ class TestContextActionsAsync(unittest.TestCase):
         finally:
             self._bus.unsubscribe(reply_conv, writer)
 
+    def test_inline_response_command_returns_result_in_http_response(self):
+        """Regression: a `command` action with conversation_id used to route
+        its result to the conversation's SSE channel even when the caller
+        asked for an inline response — deadlocking HTTP-response clients
+        (PawCode) whose SSE is attached to another conversation or none."""
+        task = self._make_task()
+        ff = FlowFile(content=json.dumps({
+            "action": "command",
+            "text": "/help",
+            "conversation_id": "inline_cmd",
+            "_inline_response": True,
+            "_call_id": "call-inline-help",
+        }).encode())
+        result = task._handle_action(ff)
+        payload = json.loads(result[0].get_content())
+        assert payload.get("status") != "accepted", (
+            "inline command result must come back in the HTTP response, "
+            "not as an SSE-published ack")
+        assert payload.get("help")
+
     def test_ui_action_status_registry_is_server_source_of_truth(self):
         import time
 

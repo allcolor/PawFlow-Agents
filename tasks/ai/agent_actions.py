@@ -284,7 +284,14 @@ class AgentActionsMixin:
         from core.conversation_store import ConversationStore
         store = ConversationStore.instance()
 
-        reply_conversation_id = body.get("_reply_conversation_id", "") or body.get("conversation_id", "")
+        # _inline_response: the caller reads results from the HTTP response
+        # (PawCode, VS Code) — never route them to the conversation's SSE
+        # channel, even for the early "command" dispatch below. Routing them
+        # to SSE deadlocks clients whose SSE is attached to another
+        # conversation (or none).
+        _inline_early = bool(body.get("_inline_response"))
+        reply_conversation_id = body.get("_reply_conversation_id", "") or (
+            "" if _inline_early else body.get("conversation_id", ""))
         call_id = body.get("_call_id", "")
 
         if action == "list_ui_action_status":

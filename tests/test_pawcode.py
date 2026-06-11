@@ -86,7 +86,7 @@ class TestPawCodeImports:
 
         client = AgentAPIClient("http://server", "tok")
 
-        def fake_post(path, body):
+        def fake_post(path, body, timeout=30):
             assert path == "/api/ui"
             call_id = body["_call_id"]
             client._sse_result_queue.push(
@@ -99,6 +99,78 @@ class TestPawCodeImports:
         client._post = fake_post
 
         assert client.send_action("command", text="/help") == {"help": "ok"}
+
+    def test_send_action_requests_inline_response(self):
+        """send_action must ask for inline results: the SSE command_result
+        channel is the conversation's — waiting on it deadlocks whenever the
+        CLI's SSE is attached to a different conversation (the /conv <id>
+        hang) or to none at all (bare startup behind a gateway)."""
+        from pawflow_cli.api import AgentAPIClient
+
+        client = AgentAPIClient("http://server", "tok")
+        seen = {}
+
+        def fake_post(path, body, timeout=30):
+            seen.update(body)
+            return {"messages": [], "conversation_id": "abc"}
+
+        client._post = fake_post
+        result = client.send_action("load_history", conversation_id="abc")
+        assert seen["_inline_response"] is True
+        assert result["conversation_id"] == "abc"
+
+    def test_gateway_challenge_page_is_detected_not_parsed(self):
+        """The Private Gateway answers 200 + HTML to blocked requests; the
+        client must surface a clear --gateway-key hint instead of a JSON
+        parse error (or a silent hang on the SSE side)."""
+        from pawflow_cli.api import looks_like_gateway_challenge, GATEWAY_BLOCKED_HINT
+
+        challenge = "<!DOCTYPE html><html><body>Wake up, Neo...</body></html>"
+        assert looks_like_gateway_challenge(challenge)
+        assert looks_like_gateway_challenge("  \n<html lang='en'>")
+        assert not looks_like_gateway_challenge('{"status": "accepted"}')
+        assert not looks_like_gateway_challenge("")
+        assert "--gateway-key" in GATEWAY_BLOCKED_HINT
+
+    def test_check_session_rejects_gateway_challenge_page(self, monkeypatch, tmp_path, capsys):
+        """A 200 HTML challenge must not be mistaken for a valid ping — it
+        used to mark the session as authenticated while every later call
+        was blocked by the gateway."""
+        import pawflow_cli.config as cfg
+        from pawflow_cli import auth as cli_auth
+
+        monkeypatch.setattr(cfg, "SESSION_FILE", tmp_path / "session.json")
+        monkeypatch.setattr(cfg, "CONFIG_DIR", tmp_path)
+        import time as _time
+        monkeypatch.setattr(cli_auth, "load_session", lambda include_expired=False: {
+            "token": "tok", "username": "u", "server_url": "http://server",
+            "expires_at": _time.time() + 3600,
+        })
+
+        class _Resp:
+            status = 200
+            def read(self):
+                return b"<!DOCTYPE html><html>challenge</html>"
+            def getheader(self, name, default=None):
+                return default
+
+        class _Conn:
+            def __init__(self, *a, **k):
+                pass
+            def request(self, *a, **k):
+                pass
+            def getresponse(self):
+                return _Resp()
+            def close(self):
+                pass
+
+        import http.client as _http
+        monkeypatch.setattr(_http, "HTTPConnection", _Conn)
+        saved = []
+        monkeypatch.setattr(cli_auth, "save_session", lambda *a, **k: saved.append(a))
+
+        assert cli_auth.check_session("http://server") == {}
+        assert not saved
 
     def test_resume_command_sends_agent_message_without_waiting_for_command_result(self):
         from pawflow_cli.app import PawCode

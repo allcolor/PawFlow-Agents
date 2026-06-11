@@ -120,13 +120,10 @@ function showInstallHelp() { addMsg('system', 'To install a tool, drag & drop a 
 function showWatchNotAvailable() { addMsg('system', '/watch is not available in VSCode. Use the CLI.'); }
 function clearAttachments() { vscode.postMessage({ type: 'command', command: 'clear_attachments' }); addMsg('system', 'Attachments cleared.'); }
 function disconnectRelay(arg) {
-  vscode.postMessage({ type: 'relayDisconnect', path: arg || '' });
-  addMsg('system', 'Disconnecting relay' + (arg ? ' for ' + arg : '') + '...');
+  addMsg('system', 'PawFlow relays are managed from webchat resources or PawFlow Relay Desktop/CLI.');
 }
 function connectParser(parts, text) {
-  var path = parts.slice(1).join(' ');
-  vscode.postMessage({ type: 'relayConnect', path: path || '' });
-  addMsg('system', 'Connecting relay' + (path ? ' to ' + path : '') + '...');
+  addMsg('system', 'PawFlow relays are managed from webchat resources or PawFlow Relay Desktop/CLI.');
   return null;
 }
 function showLoginMsg() { addMsg('system', 'Use the PawFlow: Login command from the command palette (Ctrl+Shift+P).'); }

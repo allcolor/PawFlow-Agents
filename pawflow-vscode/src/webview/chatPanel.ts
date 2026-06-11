@@ -56,15 +56,6 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         case 'killTool':
           this.handleKillTool(msg.tcId);
           break;
-        case 'reconnectRelay':
-          vscode.commands.executeCommand('pawflow.toggleRelay');
-          break;
-        case 'relayConnect':
-          vscode.commands.executeCommand('pawflow.connectRelay', msg.path || '');
-          break;
-        case 'relayDisconnect':
-          vscode.commands.executeCommand('pawflow.disconnectRelay', msg.path || '');
-          break;
         case 'openFile':
           // Open a local file in VS Code. Relay-backed fs:// paths are owned
           // by server relay bindings and cannot be mapped by the extension.
@@ -112,10 +103,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     this.setupSSE();
   }
 
-  postRelayStatus(status: string): void {
-    this.postMessage({ type: 'relayStatus', status });
-  }
-
+ 
   async sendMessage(text: string, attachments?: Attachment[], replyTo?: ReplyTo): Promise<void> {
     const api = this.getApi();
     if (!api) {
@@ -401,8 +389,9 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         const isLoadMore = (offset || 0) > 0;
         this.postMessage({ type: 'history', data, append: isLoadMore });
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error('[PawFlow] resumeConversation failed:', e);
+      this.postMessage({ type: 'error', message: `Failed to load conversation: ${e?.message || e}` });
     }
   }
 
@@ -429,6 +418,11 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     sse.disconnect();
     sse.removeAllListeners();
     this._sseConversationId = this.conversationId;
+    // EventEmitter 'error' with no listener throws in the extension host —
+    // a dropped SSE connection must never take the extension down.
+    sse.on('error', (e: Error) => {
+      console.warn('[PawFlow] SSE error:', e.message);
+    });
     sse.on('event', (event: SSEEvent) => {
       this.postMessage({ type: 'sseEvent', event });
 
@@ -623,7 +617,6 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
   <button onclick="showPanel('tools')" title="Tools">&#128295; Tools</button>
   <button onclick="showPanel('accounts')" title="Linked Accounts">&#128279; Accounts</button>
   <button onclick="showPanel('plans')" title="Plans">&#128203; Plans</button>
-  <span class="relay-badge" id="relayBadge" oncontextmenu="relayContextMenu(event)"><span class="relay-dot off" id="relayDot"></span> <span id="relayLabel">Relay</span></span>
 </div>
 <div id="activeAgents" style="display:none;padding:2px 8px;border-bottom:1px solid var(--vscode-panel-border);font-size:10px;color:var(--vscode-descriptionForeground)"></div>
 <div style="position:relative;flex:1;display:flex;flex-direction:column;overflow:hidden;min-height:0">

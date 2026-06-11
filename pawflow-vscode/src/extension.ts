@@ -102,23 +102,7 @@ export function activate(context: vscode.ExtensionContext) {
       chatProvider.newConversation();
     }),
 
-    vscode.commands.registerCommand('pawflow.toggleRelay', async () => {
-      vscode.window.showInformationMessage(
-        'PawFlow relays are managed from webchat resources or PawFlow Relay Desktop/CLI.'
-      );
-    }),
-
-    vscode.commands.registerCommand('pawflow.connectRelay', async () => {
-      vscode.window.showInformationMessage(
-        'PawFlow relays are managed from webchat resources or PawFlow Relay Desktop/CLI.'
-      );
-    }),
-
-    vscode.commands.registerCommand('pawflow.disconnectRelay', async () => {
-      vscode.window.showInformationMessage('VS Code has no managed PawFlow relay to disconnect.');
-    }),
-
-    vscode.commands.registerCommand('pawflow.explainSelection', () => {
+     vscode.commands.registerCommand('pawflow.explainSelection', () => {
       sendSelectionToChat('Explain this code in detail:');
     }),
     vscode.commands.registerCommand('pawflow.fixSelection', () => {

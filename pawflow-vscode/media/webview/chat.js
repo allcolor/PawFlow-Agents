@@ -562,7 +562,7 @@ window.addEventListener('message', function(e) {
       statusEl.textContent = 'Agent: ' + msg.agent;
       break;
     case 'actionResult':
-      if (msg.action === 'list_active') break;  // handled via SSE command_result
+      if (msg.action === 'list_active') { _handleListActiveResult(msg.data || {}); break; }
       if (renderPanelResult(msg.action, msg.data)) break;
       if (msg.data && msg.data.error) { addMsg('error', msg.data.error); break; }
       var d = msg.data || {};
@@ -603,9 +603,6 @@ window.addEventListener('message', function(e) {
       break;
     case 'clipboardContent':
       if (msg.text) { inputEl.value += msg.text; addMsg('system', 'Pasted from clipboard.'); }
-      break;
-    case 'relayStatus':
-      updateRelayStatus(msg.status);
       break;
   }
 });
@@ -972,10 +969,12 @@ function showConvList(convs) {
     div.style.cssText = 'padding:8px 10px;cursor:pointer;border-bottom:1px solid var(--vscode-panel-border);font-size:12px;transition:background 0.1s';
     div.onmouseenter = function() { this.style.background = 'var(--vscode-list-hoverBackground)'; };
     div.onmouseleave = function() { this.style.background = ''; };
+    var title = (c.title || '').slice(0, 70);
     var preview = (c.preview || '').slice(0, 70);
     var count = c.message_count || '?';
     var date = c.updated_at ? new Date(c.updated_at * 1000).toLocaleString() : '';
-    div.innerHTML = '<div style="font-weight:500;color:var(--vscode-editor-foreground)">' + esc(preview || '(new conversation)') + '</div>'
+    div.innerHTML = '<div style="font-weight:500;color:var(--vscode-editor-foreground)">' + esc(title || preview || '(new conversation)') + '</div>'
+      + (title && preview ? '<div style="font-size:11px;color:var(--vscode-descriptionForeground);margin-top:1px">' + esc(preview) + '</div>' : '')
       + '<div style="font-size:10px;color:var(--vscode-descriptionForeground);margin-top:2px">'
       + esc(c.conversation_id.slice(0, 8)) + ' \u2022 ' + count + ' msgs'
       + (date ? ' \u2022 ' + date : '')
@@ -1049,53 +1048,6 @@ function _addLoadMoreBanner(data) {
     });
   };
   messagesEl.insertBefore(more, messagesEl.firstChild);
-}
-
-function updateRelayStatus(status) {
-  var dot = document.getElementById('relayDot');
-  var label = document.getElementById('relayLabel');
-  if (status === 'running') {
-    dot.className = 'relay-dot on';
-    label.textContent = 'Relay \u2713';
-  } else {
-    dot.className = 'relay-dot off';
-    label.textContent = 'Relay \u2717';
-  }
-}
-
-function relayContextMenu(e) {
-  e.preventDefault();
-  e.stopPropagation();
-  // Remove any existing context menu
-  var old = document.getElementById('relayCtxMenu');
-  if (old) old.remove();
-
-  var dot = document.getElementById('relayDot');
-  var isOn = dot && dot.classList.contains('on');
-
-  var menu = document.createElement('div');
-  menu.id = 'relayCtxMenu';
-  menu.className = 'ctx-menu';
-  menu.style.position = 'fixed';
-  menu.style.left = e.clientX + 'px';
-  menu.style.top = e.clientY + 'px';
-
-  var item = document.createElement('div');
-  item.className = 'ctx-menu-item';
-  item.textContent = isOn ? 'Disconnect relay' : 'Reconnect relay';
-  item.onclick = function() {
-    menu.remove();
-    vscode.postMessage({ type: 'reconnectRelay' });
-  };
-  menu.appendChild(item);
-
-  document.body.appendChild(menu);
-  setTimeout(function() {
-    document.addEventListener('click', function removeCtx() {
-      menu.remove();
-      document.removeEventListener('click', removeCtx);
-    });
-  }, 0);
 }
 
 // Auto-resize textarea

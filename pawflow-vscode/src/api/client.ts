@@ -78,7 +78,11 @@ export class AgentAPIClient {
   }
 
   async sendAction(action: string, params: Record<string, any> = {}): Promise<AgentResponse> {
-    return this.post(API_PATH, { action, ...params });
+    // _inline_response: the agent actions endpoint otherwise ACKs the HTTP
+    // request and publishes the real result on the conversation's SSE
+    // channel (webchat behaviour). This client reads results from the HTTP
+    // response, so ask for them inline.
+    return this.post(API_PATH, { action, _inline_response: true, ...params });
   }
 
   private async post(path: string, body: Record<string, any>): Promise<AgentResponse> {

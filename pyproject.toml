@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pawflow"
-version = "1.0.0a12"
+version = "1.0.0a13"
 description = "Self-hosted AI agent orchestration platform — Apache NiFi meets Claude Code"
 readme = "README.md"
 license = {text = "MIT"}

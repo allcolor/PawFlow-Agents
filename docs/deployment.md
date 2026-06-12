@@ -171,7 +171,12 @@ with `SYS_ADMIN` plus `apparmor:unconfined` so `unshare` and `mount --bind` are
 available inside the provider container. The default seccomp profile stays in
 place: it already allows `unshare`/`mount` when `CAP_SYS_ADMIN` is granted (the
 blocker is AppArmor's `docker-default` profile, which denies the mount syscall
-family even with the capability). Treat
+family even with the capability). To tighten further, load the
+`docker/apparmor/pawflow-mount` profile on the host (`sudo apparmor_parser -r
+-W docker/apparmor/pawflow-mount`) and validate it with
+`scripts/test_apparmor_profile.sh`: it allows only the per-user session-slot
+bind (`/cc_sessions_host/** -> /cc_sessions/`) and keeps every other mount —
+including root propagation changes — denied. Treat
 those containers as privileged runtime surfaces: credentials are scoped per
 user/conversation/service, and workloads should remain isolated to the generated
 session directory.

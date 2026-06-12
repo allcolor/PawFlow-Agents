@@ -1,0 +1,51 @@
+# AppArmor profile for PawFlow provider-pool containers (claude_code,
+# claude_code_interactive, codex, gemini, antigravity_observer).
+#
+# Replaces apparmor:unconfined. The pools run, inside the container:
+#   unshare -m --propagation unchanged -- \
+#     sh -c 'mount --bind /cc_sessions_host/<slot> /cc_sessions && ...'
+# so the only mount this profile allows is that exact bind. Everything
+# else is docker-default verbatim (deny rules included), with mount
+# mediation switched from "deny mount" to the single allowed bind.
+#
+# Load on the host:   sudo apparmor_parser -r -W docker/apparmor/pawflow-mount
+# Persist:            sudo cp docker/apparmor/pawflow-mount /etc/apparmor.d/ && \
+#                     sudo apparmor_parser -r -W /etc/apparmor.d/pawflow-mount
+# Use:                docker run --security-opt apparmor=pawflow-mount ...
+# Validate first:     bash scripts/test_apparmor_profile.sh
+
+abi <abi/3.0>,
+
+include <tunables/global>
+
+profile pawflow-mount flags=(attach_disconnected,mediate_deleted) {
+  include <abstractions/base>
+
+  network,
+  capability,
+  file,
+  umount,
+
+  # The per-user session slot bind — the only mount the pools perform.
+  # `--propagation unchanged` means no remount of / is ever attempted,
+  # so no propagation rule is needed (and plain `unshare -m` stays denied).
+  mount options=(rw, bind) /cc_sessions_host/** -> /cc_sessions/,
+
+  # docker-default hardening, kept verbatim.
+  deny @{PROC}/* w,
+  deny @{PROC}/{[^1-9],[^1-9][^0-9],[^1-9s][^0-9y][^0-9s],[^1-9][^0-9][^0-9][^0-9/]*}/** w,
+  deny @{PROC}/sys/[^k]** w,
+  deny @{PROC}/sys/kernel/{?,??,[^s][^h][^m]**} w,
+  deny @{PROC}/sysrq-trigger rwklx,
+  deny @{PROC}/kcore rwklx,
+  deny /sys/[^f]*/** wklx,
+  deny /sys/f[^s]*/** wklx,
+  deny /sys/fs/[^c]*/** wklx,
+  deny /sys/fs/c[^g]*/** wklx,
+  deny /sys/fs/cg[^r]*/** wklx,
+  deny /sys/firmware/** rwklx,
+  deny /sys/kernel/security/** rwklx,
+
+  signal (send,receive) peer=pawflow-mount,
+  ptrace (trace,read,tracedby,readby) peer=pawflow-mount,
+}

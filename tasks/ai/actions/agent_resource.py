@@ -1458,28 +1458,35 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                 try:
                     from core.service_registry import ServiceRegistry
                     _greg2 = ServiceRegistry.get_instance()
-                    # Walk conv > global > user so conv-scoped relay services
-                    # report their real connection status (red/green dot).
-                    _relay_scopes = []
-                    if conv_id:
-                        _relay_scopes.append(("conv", conv_id))
-                    _relay_scopes.append(("global", ""))
-                    if user_id:
-                        _relay_scopes.append(("user", user_id))
+                    # Resolve each linked relay's definition across the full
+                    # scope chain (conv > user > global, parents included) and
+                    # query the connection status against the definition's OWN
+                    # scope — the same path as the relay link dialog
+                    # (core.relay_bindings.list_available_relays), which is the
+                    # reference for the red/green dot. resolve_all() also
+                    # ensure-loads each scope, so a conv-scoped relay is seen
+                    # even when nothing else touched the conv registry yet.
+                    _all_defs = _greg2.resolve_all(user_id=user_id, conv_id=conv_id)
                     for _rid in _all_ids:
                         _rsvc = None
                         _connected = False
-                        for _rscope, _rsid in _relay_scopes:
+                        _sdef = _all_defs.get(_rid)
+                        if _sdef is not None:
                             try:
-                                _c = _greg2.is_connected(_rscope, _rsid, _rid)
-                                _s = _greg2.get_live_instance_cached(_rscope, _rsid, _rid)
+                                _connected = _greg2.is_connected(
+                                    _sdef.scope, _sdef.scope_id, _rid)
+                                _rsvc = _greg2.get_live_instance_cached(
+                                    _sdef.scope, _sdef.scope_id, _rid)
                             except Exception:
                                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-                                continue
-                            if _s is not None or _c:
-                                _connected = _c
-                                _rsvc = _s
-                                break
+                        if not _connected:
+                            logging.getLogger(__name__).info(
+                                "[relay-panel] linked relay '%s' reports not connected "
+                                "(def=%s, live=%s, conv=%s)",
+                                _rid,
+                                f"{_sdef.scope}/{_sdef.scope_id[:8]}" if _sdef is not None else "missing",
+                                "present" if _rsvc is not None else "absent",
+                                conv_id[:8])
                         _ri2 = getattr(_rsvc, '_relay_info', {}) or {} if _rsvc else {}
                         _relay_details[_rid] = {
                             "root": _ri2.get("root", ""),

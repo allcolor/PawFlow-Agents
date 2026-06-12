@@ -22,6 +22,42 @@ from pawflow_relay.utils import (
 )
 
 
+_RELAY_APPARMOR_PROFILE = "pawflow-relay"
+_relay_apparmor_resolved = None
+
+
+def _relay_apparmor_security_opts(image: str) -> list:
+    """AppArmor option for the relay container, resolved once per process.
+
+    Mirrors core.apparmor (not importable here: this module runs on the
+    relay host, which may not ship the server codebase): if the
+    pawflow-relay profile is loaded on the Docker host, confine the relay
+    with it; otherwise fall back to apparmor=unconfined (previous
+    behaviour, and a no-op on hosts without AppArmor such as
+    Windows/macOS Docker Desktop). PAWFLOW_RELAY_APPARMOR_PROFILE
+    overrides the detection with a verbatim profile name.
+    """
+    global _relay_apparmor_resolved
+    forced = os.environ.get("PAWFLOW_RELAY_APPARMOR_PROFILE", "").strip()
+    if forced:
+        return ["--security-opt", f"apparmor={forced}"]
+    if _relay_apparmor_resolved is None:
+        try:
+            probe = subprocess.run(  # nosec B603
+                docker_cmd() + [
+                    "run", "--rm",
+                    "--security-opt", f"apparmor={_RELAY_APPARMOR_PROFILE}",
+                    "--entrypoint", "/bin/true", image,
+                ],
+                capture_output=True, text=True, timeout=60)
+            _relay_apparmor_resolved = (
+                _RELAY_APPARMOR_PROFILE if probe.returncode == 0
+                else "unconfined")
+        except Exception:
+            _relay_apparmor_resolved = "unconfined"
+    return ["--security-opt", f"apparmor={_relay_apparmor_resolved}"]
+
+
 def _relay_container_prefix(relay_id: str) -> str:
     return f"pf-{relay_id[:12].replace('.', '-').replace('_', '-')}"
 
@@ -566,13 +602,15 @@ class RelayThread:
                 # It disables the setuid bit on /usr/bin/fusermount3, which
                 # the unprivileged pawflow user needs to mount the server-fs
                 # FUSE endpoint at /cc_sessions.
-                # FUSE (server-fs tunnel mount at /cc_sessions): SYS_ADMIN lets
-                # pyfuse3 call mount() directly, /dev/fuse is the kernel char
-                # device the FUSE lib opens, and apparmor:unconfined stops
-                # Ubuntu's docker-default profile from blocking mount/umount.
+                # FUSE (server-fs tunnel mount at /cc_sessions): SYS_ADMIN +
+                # /dev/fuse let the mount come up. AppArmor: the
+                # pawflow-relay profile when loaded on the host (FUSE mounts
+                # allowed only under /tmp/pf_combined_fs and /remote),
+                # apparmor=unconfined fallback otherwise — docker-default
+                # would block mount/umount entirely.
                 "--cap-add", "SYS_ADMIN",
                 "--device", "/dev/fuse",
-                "--security-opt", "apparmor:unconfined",
+                *_relay_apparmor_security_opts(self.docker_image),
                 "-e", "GIT_CONFIG_COUNT=4",
                 "-e", "GIT_CONFIG_KEY_0=safe.directory",
                 "-e", "GIT_CONFIG_VALUE_0=/workspace",

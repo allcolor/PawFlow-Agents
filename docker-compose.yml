@@ -60,7 +60,11 @@ services:
       - PAWFLOW_SERVER=ws://pawflow:${PAWFLOW_PORT}/ws/relay
       - PAWFLOW_SERVER_MOUNT=/cc_sessions
     # FUSE in a container needs CAP_SYS_ADMIN, /dev/fuse, and an apparmor
-    # profile that doesn't sandbox the mount syscall.
+    # profile that doesn't sandbox the mount syscall. Compose can't probe
+    # the host, so the default stays unconfined; once you've loaded
+    # docker/apparmor/pawflow-relay (apparmor_parser -r -W) and validated
+    # it with scripts/test_apparmor_relay_profile.sh, switch the line below
+    # to `apparmor:pawflow-relay` to confine the relay's mounts.
     cap_add:
       - SYS_ADMIN
     devices:

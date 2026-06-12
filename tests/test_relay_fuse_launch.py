@@ -30,7 +30,6 @@ class RelayFuseLaunchTests(unittest.TestCase):
     _FUSE_DOCKER_FLAGS = (
         '"--cap-add", "SYS_ADMIN"',
         '"--device", "/dev/fuse"',
-        '"--security-opt", "apparmor:unconfined"',
     )
 
     def _assert_all_present(self, src: str, needles: tuple, where: str):
@@ -47,6 +46,14 @@ class RelayFuseLaunchTests(unittest.TestCase):
         src = inspect.getsource(thread)
         self._assert_all_present(src, self._FUSE_DOCKER_FLAGS,
                                   'pawflow_relay/thread.py docker run')
+
+    def test_thread_py_resolves_apparmor_profile(self):
+        """AppArmor: pawflow-relay when loaded on the host, unconfined
+        fallback otherwise — never the hardcoded unconfined literal."""
+        from pawflow_relay import thread
+        src = inspect.getsource(thread)
+        self.assertIn('*_relay_apparmor_security_opts(', src)
+        self.assertNotIn('"--security-opt", "apparmor:unconfined"', src)
 
     def test_thread_py_passes_server_mount_to_launcher(self):
         from pawflow_relay import thread
@@ -79,6 +86,12 @@ class RelayFuseLaunchTests(unittest.TestCase):
         src = inspect.getsource(server_relay_manager)
         self._assert_all_present(src, self._FUSE_DOCKER_FLAGS,
                                   'core/server_relay_manager.py docker run')
+
+    def test_server_relay_manager_resolves_apparmor_profile(self):
+        from core import server_relay_manager
+        src = inspect.getsource(server_relay_manager)
+        self.assertIn('*relay_apparmor_security_opts(', src)
+        self.assertNotIn('"--security-opt", "apparmor:unconfined"', src)
 
     def test_server_relay_manager_sets_server_mount_env(self):
         from core import server_relay_manager

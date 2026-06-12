@@ -18,7 +18,7 @@ def test_profile_used_when_probe_succeeds(monkeypatch):
     with patch.object(apparmor, "_profile_usable", return_value=True) as probe:
         opts = apparmor.apparmor_security_opts("img:latest")
     assert opts == ["--security-opt", "apparmor=pawflow-mount"]
-    probe.assert_called_once_with("img:latest")
+    probe.assert_called_once_with("img:latest", "pawflow-mount")
 
 
 def test_falls_back_to_unconfined_when_profile_missing(monkeypatch):
@@ -72,3 +72,40 @@ def test_probe_failure_is_handled(monkeypatch):
     with patch.object(apparmor.subprocess, "run", side_effect=OSError("no docker")), \
             patch("core.docker_utils.docker_cmd", return_value=["docker"]):
         assert apparmor._profile_usable("img:latest") is False
+
+
+def test_relay_profile_used_when_probe_succeeds(monkeypatch):
+    monkeypatch.delenv("PAWFLOW_RELAY_APPARMOR_PROFILE", raising=False)
+    with patch.object(apparmor, "_profile_usable", return_value=True) as probe:
+        opts = apparmor.relay_apparmor_security_opts("img:latest")
+    assert opts == ["--security-opt", "apparmor=pawflow-relay"]
+    probe.assert_called_once_with("img:latest", "pawflow-relay")
+
+
+def test_relay_falls_back_to_unconfined(monkeypatch):
+    monkeypatch.delenv("PAWFLOW_RELAY_APPARMOR_PROFILE", raising=False)
+    with patch.object(apparmor, "_profile_usable", return_value=False):
+        opts = apparmor.relay_apparmor_security_opts("img:latest")
+    assert opts == ["--security-opt", "apparmor=unconfined"]
+
+
+def test_relay_env_override_skips_probe(monkeypatch):
+    monkeypatch.setenv("PAWFLOW_RELAY_APPARMOR_PROFILE", "unconfined")
+    with patch.object(apparmor, "_profile_usable") as probe:
+        opts = apparmor.relay_apparmor_security_opts("img:latest")
+    assert opts == ["--security-opt", "apparmor=unconfined"]
+    probe.assert_not_called()
+
+
+def test_pool_and_relay_profiles_cache_independently(monkeypatch):
+    monkeypatch.delenv("PAWFLOW_APPARMOR_PROFILE", raising=False)
+    monkeypatch.delenv("PAWFLOW_RELAY_APPARMOR_PROFILE", raising=False)
+
+    def usable(_image, profile):
+        return profile == "pawflow-relay"
+
+    with patch.object(apparmor, "_profile_usable", side_effect=usable):
+        pool = apparmor.apparmor_security_opts("img:latest")
+        relay = apparmor.relay_apparmor_security_opts("img:latest")
+    assert pool == ["--security-opt", "apparmor=unconfined"]
+    assert relay == ["--security-opt", "apparmor=pawflow-relay"]

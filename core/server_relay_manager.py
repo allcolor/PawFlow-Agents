@@ -101,6 +101,7 @@ def _chown_for_host_runner(path: Path) -> None:
         logger.warning("Could not chown relay runtime path %s to %s:%s", path, uid, gid)
 
 
+from core.apparmor import relay_apparmor_security_opts
 from core.docker_utils import docker_cmd, get_host_ip, to_host_path
 
 
@@ -369,13 +370,14 @@ class ServerRelayManager:
             #     virtualized RO view of files visible to this user.
             #   /skills — Agent Skills sister-protocol (skfs.*), the
             #     virtualized RO view of the skills repository.
-            # SYS_ADMIN lets pyfuse3 call mount() directly, /dev/fuse is
-            # the kernel char device the FUSE lib opens, and apparmor:
-            # unconfined stops Ubuntu's docker-default profile from
-            # blocking mount/umount.
+            # SYS_ADMIN + /dev/fuse let the FUSE mounts come up. AppArmor:
+            # the pawflow-relay profile when loaded on the host (FUSE
+            # mounts allowed only under /tmp/pf_combined_fs and /remote),
+            # apparmor=unconfined fallback otherwise — docker-default
+            # would block mount/umount entirely.
             "--cap-add", "SYS_ADMIN",
             "--device", "/dev/fuse",
-            "--security-opt", "apparmor:unconfined",
+            *relay_apparmor_security_opts(relay_image),
             "--env", f"PAWFLOW_RELAY_SERVER={ws_url_for_container}",
             "--env", f"PAWFLOW_RELAY_TOKEN={token}",
             "--env", f"PAWFLOW_RELAY_ID={relay_id}",
@@ -555,7 +557,7 @@ class ServerRelayManager:
             "--memory", relay_memory,
             "--cap-add", "SYS_ADMIN",
             "--device", "/dev/fuse",
-            "--security-opt", "apparmor:unconfined",
+            *relay_apparmor_security_opts(relay_image),
             "--env", f"PAWFLOW_RELAY_SERVER={ws_url_for_container}",
             "--env", f"PAWFLOW_RELAY_TOKEN={token}",
             "--env", f"PAWFLOW_RELAY_ID={relay_id}",

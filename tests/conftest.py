@@ -35,6 +35,7 @@ def _skip_apparmor_probe(monkeypatch):
     core.apparmor tests delete this variable to exercise the probe path.
     """
     monkeypatch.setenv("PAWFLOW_APPARMOR_PROFILE", "unconfined")
+    monkeypatch.setenv("PAWFLOW_RELAY_APPARMOR_PROFILE", "unconfined")
 
 
 @pytest.fixture(autouse=True, scope="session")

@@ -186,19 +186,26 @@ those containers as privileged runtime surfaces: credentials are scoped per
 user/conversation/service, and workloads should remain isolated to the generated
 session directory.
 
-The **relay** container still runs `apparmor:unconfined` because it creates
-FUSE mounts (the combined server-fs at `/tmp/pf_combined_fs`; rclone remote
-mounts under `/remote`) that `docker-default` blocks. A candidate profile
-`docker/apparmor/pawflow-relay` keeps the docker-default `/proc`+`/sys`
-hardening and allows only `fuse`/`fuse.*` mounts under those two roots, while
-denying arbitrary binds and propagation changes (the relay runs arbitrary dev
-tooling, so `file`/`capability` stay broad — the win over unconfined is mount
-mediation plus proc/sys hardening). It is **not yet wired in**. To adopt it:
-load it (`sudo apparmor_parser -r -W docker/apparmor/pawflow-relay`), run
-`scripts/test_apparmor_relay_profile.sh` (needs `pawflow-relay-dev`), then boot
-a real relay with `--security-opt apparmor=pawflow-relay` and confirm
-`[FSRelay] combined-fs mounted` in its log before switching `thread.py` /
-`docker-compose.yml` off `unconfined`.
+The **relay** container creates FUSE mounts (the combined server-fs at
+`/tmp/pf_combined_fs`; rclone remote mounts under `/remote`) that
+`docker-default` blocks. The `docker/apparmor/pawflow-relay` profile keeps
+the docker-default `/proc`+`/sys` hardening and allows only `fuse`/`fuse.*`
+mounts under those two roots — performed by setuid `fusermount3`, which the
+profile forces to inherit (`ix`) so its `mount(2)` is mediated — while
+denying arbitrary binds and propagation changes. The relay runs arbitrary
+dev tooling, so `file`/`capability` stay broad: the win over unconfined is
+mount mediation plus proc/sys hardening. Both relay launchers
+(`pawflow_relay/thread.py` for user-side relays, `core/server_relay_manager.py`
+for server-spawned relays) resolve the profile once per process like the
+pools: `pawflow-relay` when loaded on the Docker host, `apparmor:unconfined`
+fallback otherwise. `PAWFLOW_RELAY_APPARMOR_PROFILE` overrides the detection
+(set it to `unconfined` to force the old behaviour). To adopt: load the
+profile (`sudo apparmor_parser -r -W docker/apparmor/pawflow-relay`, copy to
+`/etc/apparmor.d/` to persist), validate with
+`scripts/test_apparmor_relay_profile.sh`, restart the relay, and confirm
+`[FSRelay] combined-fs mounted` in its log. The compose `relay` service
+stays on `unconfined` (compose can't probe) — switch its `security_opt`
+manually once the profile is loaded.
 
 Build:
 ```bash

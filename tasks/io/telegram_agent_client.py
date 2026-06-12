@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import base64
+import hashlib
 import html
 import json
 import mimetypes
@@ -29,6 +30,18 @@ _WIZARDS: Dict[str, Dict[str, Any]] = {}
 _WIZARD_LOCK = threading.Lock()
 _TELEGRAM_LIVE_ASSISTANT_SENT_TURNS: set[str] = set()
 _TELEGRAM_LIVE_SENT_ASSISTANT_MSG_IDS: set[str] = set()
+# Content backstop against the bridge forwarding the SAME final assistant
+# message twice. The msg_id dedup above only collapses re-publications that
+# reuse the msg_id; the CCI tmux-capture path (_run_manual_capture /
+# _adopt_orphan_turn) re-stamps a FRESH msg_id when it races the live
+# coordinator, so the same final text reaches the bus twice with two msg_ids
+# and slips past msg_id dedup. This claims (conversation, final-text) pairs
+# atomically with a short TTL so the second copy is suppressed regardless of
+# msg_id. TTL-bounded so a genuinely-identical message resent much later is
+# still delivered.
+_TELEGRAM_SENT_ASSISTANT_CONTENT: Dict[str, float] = {}
+_TELEGRAM_SENT_CONTENT_LOCK = threading.Lock()
+_TELEGRAM_ASSISTANT_CONTENT_TTL = 120.0
 
 
 class TelegramAgentClientTask(BaseTask):
@@ -969,6 +982,18 @@ class TelegramConversationBridgeTask(BaseTask):
                 conversation_id,
             )
             return
+        # Backstop against forwarding the SAME final assistant message twice:
+        # the CCI tmux-capture re-publishes it with a fresh msg_id (racing the
+        # live coordinator), slipping past the msg_id dedup above. Claim the
+        # (conversation, final-text) pair now that a send is certain; a
+        # concurrent or later duplicate within the TTL is suppressed.
+        if event_type == "new_message" and data.get("role") == "assistant":
+            if _telegram_assistant_content_already_sent(
+                    conversation_id, data, time.time()):
+                logger.info(
+                    "Telegram bridge: suppressed duplicate final assistant "
+                    "message for %s (content backstop)", conversation_id[:8])
+                return
         for user_id, chat_id in subscribers:
             if text:
                 sent_text = self._send(user_id, chat_id, text)
@@ -1348,6 +1373,49 @@ def _remember_forwarded_telegram_live_assistant(conversation_id: str) -> None:
 def _telegram_assistant_msg_key(conversation_id: str, data: Dict[str, Any]) -> str:
     msg_id = str(data.get("msg_id") or data.get("message_id") or "").strip()
     return f"{conversation_id}\x1f{msg_id}" if conversation_id and msg_id else ""
+
+
+def _telegram_assistant_content_text(data: Dict[str, Any]) -> str:
+    """Normalized plain text of an assistant message, for content dedup."""
+    content = data.get("content")
+    if isinstance(content, list):
+        parts: List[str] = []
+        for block in content:
+            if isinstance(block, dict):
+                piece = block.get("text") or block.get("content")
+                if isinstance(piece, str):
+                    parts.append(piece)
+            elif isinstance(block, str):
+                parts.append(block)
+        content = " ".join(parts)
+    return re.sub(r"\s+", " ", str(content or "")).strip()
+
+
+def _telegram_assistant_content_already_sent(conversation_id: str,
+                                             data: Dict[str, Any],
+                                             now: float) -> bool:
+    """Atomically claim a (conversation, final-text) pair. Returns True when
+    the same assistant text was already forwarded within the TTL.
+
+    Race-safe: the live coordinator and the CCI tmux-capture run on separate
+    threads and can publish the same final message concurrently, so the
+    check-and-claim happens under one lock. Claims before the send (rather
+    than after, like the msg_id dedup) precisely so a concurrent duplicate
+    can't slip between check and record.
+    """
+    text = _telegram_assistant_content_text(data)
+    if not conversation_id or not text:
+        return False
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]  # nosec B303,B324 - dedup key, not security
+    key = f"{conversation_id}\x1f{digest}"
+    with _TELEGRAM_SENT_CONTENT_LOCK:
+        for stale_key, ts in list(_TELEGRAM_SENT_ASSISTANT_CONTENT.items()):
+            if now - ts > _TELEGRAM_ASSISTANT_CONTENT_TTL:
+                _TELEGRAM_SENT_ASSISTANT_CONTENT.pop(stale_key, None)
+        if key in _TELEGRAM_SENT_ASSISTANT_CONTENT:
+            return True
+        _TELEGRAM_SENT_ASSISTANT_CONTENT[key] = now
+        return False
 
 
 def _remember_sent_telegram_assistant_msg_id(conversation_id: str,

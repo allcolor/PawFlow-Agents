@@ -1245,6 +1245,48 @@ class TestTelegramAgentClientTask(unittest.TestCase):
         task._send.assert_called_once_with(
             "alice", "chat-1", "🟩 <b>assistant</b>\n<blockquote>Je cherche les occurrences exactes.</blockquote>")
 
+    def test_conversation_bridge_suppresses_duplicate_final_message(self):
+        """The CCI tmux-capture re-publishes the final assistant message with a
+        FRESH msg_id, racing the live coordinator. The msg_id dedup can't catch
+        it (ids differ); the content backstop must, so Telegram gets it once."""
+        import tasks.io.telegram_agent_client as tac
+        from tasks.io.telegram_agent_client import TelegramConversationBridgeTask
+        tac._TELEGRAM_SENT_ASSISTANT_CONTENT.clear()
+        tac._TELEGRAM_LIVE_SENT_ASSISTANT_MSG_IDS.clear()
+        task = TelegramConversationBridgeTask({"service_id": "telegram_bot"})
+        task._send = MagicMock(return_value=True)
+
+        final = "Voici l'évaluation complète du correctif."
+        with patch.object(TelegramConversationBridgeTask, "_telegram_subscribers", return_value=[("alice", "chat-1")]):
+            task._on_event("conv1", "new_message", {
+                "role": "assistant", "content": final,
+                "msg_id": "live-1", "source": {"name": "assistant"}})
+            task._on_event("conv1", "new_message", {
+                "role": "assistant", "content": final,
+                "msg_id": "tmux-2", "source": {"name": "assistant"}})
+
+        assert task._send.call_count == 1
+
+    def test_conversation_bridge_distinct_finals_both_sent(self):
+        """The backstop must not over-suppress: two genuinely different final
+        messages in the same conversation are both forwarded."""
+        import tasks.io.telegram_agent_client as tac
+        from tasks.io.telegram_agent_client import TelegramConversationBridgeTask
+        tac._TELEGRAM_SENT_ASSISTANT_CONTENT.clear()
+        tac._TELEGRAM_LIVE_SENT_ASSISTANT_MSG_IDS.clear()
+        task = TelegramConversationBridgeTask({"service_id": "telegram_bot"})
+        task._send = MagicMock(return_value=True)
+
+        with patch.object(TelegramConversationBridgeTask, "_telegram_subscribers", return_value=[("alice", "chat-1")]):
+            task._on_event("conv1", "new_message", {
+                "role": "assistant", "content": "Premier message.",
+                "msg_id": "m1", "source": {"name": "assistant"}})
+            task._on_event("conv1", "new_message", {
+                "role": "assistant", "content": "Second message, différent.",
+                "msg_id": "m2", "source": {"name": "assistant"}})
+
+        assert task._send.call_count == 2
+
     def test_conversation_bridge_renders_markdown_fences_as_telegram_code_blocks(self):
         from tasks.io.telegram_agent_client import TelegramConversationBridgeTask
         task = TelegramConversationBridgeTask({"service_id": "telegram_bot"})

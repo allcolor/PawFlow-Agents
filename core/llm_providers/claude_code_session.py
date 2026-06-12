@@ -28,10 +28,11 @@ class OAuthRejectedError(Exception):
     """
 
 
-def _maybe_transform_relay_proxy_url(url: str, user_id: str = "") -> Optional[str]:
+def _maybe_transform_relay_proxy_url(url: str, user_id: str = "",
+                                     conv_id: str = "") -> Optional[str]:
     """Backward-compatible wrapper around the central relay URL helper."""
     from core.relay_proxy_url import maybe_transform_relay_proxy_url
-    return maybe_transform_relay_proxy_url(url, user_id=user_id)
+    return maybe_transform_relay_proxy_url(url, user_id=user_id, conv_id=conv_id)
 
 
 def _find_cc_service_id(service_id: str = "", user_id: str = "",

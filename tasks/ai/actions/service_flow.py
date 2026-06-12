@@ -1894,48 +1894,25 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                         "platform": info.get("platform", "unknown"),
                         "root": info.get("root", ""),
                     })
-        # User services
-        if user_id:
-            try:
-                from core.service_registry import ServiceRegistry
-                registry = ServiceRegistry.get_instance()
-                for sid, sdef in registry.get_all("user", user_id).items():
-                    if not sdef.enabled or sdef.service_type != "relay":
-                        continue
-                    if any(r["relay_id"] == sid for r in relay_list):
-                        continue
-                    svc = registry.get_live_instance("user", user_id, sid)
-                    if svc and getattr(svc, 'is_connected', lambda: False)():
-                        info = getattr(svc, '_relay_info', {}) or {}
-                        relay_list.append({
-                            "relay_id": sid,
-                            "platform": info.get("platform", "unknown"),
-                            "root": info.get("root", sdef.description or ""),
-                        })
-            except Exception as e:
-                logger.debug("Failed to list user relays: %s", e)
-        # Conversation-scoped relay services
+        # Registry services — canonical scope chain (conv > user > global,
+        # parent conversations included), same path as the relay link dialog.
         _cc_conv_id = (body.get("conversation_id", "")
                        or flowfile.get_attribute("http.conversation_id") or "")
-        if _cc_conv_id:
-            try:
-                from core.service_registry import ServiceRegistry
-                registry = ServiceRegistry.get_instance()
-                for sid, sdef in registry.get_all("conv", _cc_conv_id).items():
-                    if not sdef.enabled or sdef.service_type != "relay":
-                        continue
-                    if any(r["relay_id"] == sid for r in relay_list):
-                        continue
-                    svc = registry.get_live_instance("conv", _cc_conv_id, sid)
-                    if svc and getattr(svc, 'is_connected', lambda: False)():
-                        info = getattr(svc, '_relay_info', {}) or {}
-                        relay_list.append({
-                            "relay_id": sid,
-                            "platform": info.get("platform", "unknown"),
-                            "root": info.get("root", sdef.description or ""),
-                        })
-            except Exception as e:
-                logger.debug("Failed to list conv relays: %s", e)
+        try:
+            from core.relay_bindings import list_available_relays
+            for r in list_available_relays(user_id=user_id, conv_id=_cc_conv_id):
+                sid = r.get("relay_id", "")
+                if not sid or not r.get("connected"):
+                    continue
+                if any(entry["relay_id"] == sid for entry in relay_list):
+                    continue
+                relay_list.append({
+                    "relay_id": sid,
+                    "platform": r.get("platform") or "unknown",
+                    "root": r.get("root", ""),
+                })
+        except Exception as e:
+            logger.debug("Failed to list relays: %s", e)
         flowfile.set_content(json.dumps({"relays": relay_list}).encode())
         return [flowfile]
 
@@ -2693,14 +2670,17 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                     or flowfile.get_attribute("http.conversation_id") or "")
             source_svc = ureg.resolve(relay_source, user_id=user_id, conv_id=_cid)
         else:
-            # Find user's first connected relay service
-            for sid, sdef in ureg.get_all("user", user_id).items():
-                if getattr(sdef, "service_type", "") == "relay":
-                    svc = ureg.get_live_instance("user", user_id, sid)
-                    if svc and hasattr(svc, '_relay_pool') and svc._relay_pool:
-                        source_svc = svc
-                        relay_source = sid
-                        break
+            # Find the first connected relay across conv > user > global
+            _cid = (body.get("conversation_id", "")
+                    or flowfile.get_attribute("http.conversation_id") or "")
+            for sdef in ureg.resolve_by_type("relay", user_id=user_id,
+                                             conv_id=_cid):
+                svc = ureg.resolve(sdef.service_id, user_id=user_id,
+                                   conv_id=_cid)
+                if svc and hasattr(svc, '_relay_pool') and svc._relay_pool:
+                    source_svc = svc
+                    relay_source = sdef.service_id
+                    break
 
         if not source_svc:
             flowfile.set_content(json.dumps({

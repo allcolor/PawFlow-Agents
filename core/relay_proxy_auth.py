@@ -29,6 +29,7 @@ class _ProxyTokenEntry:
     user_id: str
     relay_id: str
     expires_at: float
+    conv_id: str = ""
 
 
 _tokens: Dict[str, _ProxyTokenEntry] = {}
@@ -37,8 +38,13 @@ _lock = threading.Lock()
 DEFAULT_TTL = 3600.0  # 1 hour
 
 
-def issue_token(user_id: str, relay_id: str, ttl: float = DEFAULT_TTL) -> str:
-    """Mint a new proxy token bound to (user_id, relay_id)."""
+def issue_token(user_id: str, relay_id: str, ttl: float = DEFAULT_TTL,
+                conv_id: str = "") -> str:
+    """Mint a new proxy token bound to (user_id, relay_id[, conv_id]).
+
+    `conv_id` lets the proxy handler resolve conversation-scoped relays;
+    without it only user/global relays can be reached.
+    """
     if not user_id or not relay_id:
         raise ValueError("user_id and relay_id are required")
     token = secrets.token_urlsafe(32)
@@ -47,14 +53,15 @@ def issue_token(user_id: str, relay_id: str, ttl: float = DEFAULT_TTL) -> str:
             user_id=user_id,
             relay_id=relay_id,
             expires_at=time.time() + ttl,
+            conv_id=conv_id,
         )
         _gc_expired_locked()
     logger.info("Proxy token issued for user=%s relay=%s", user_id, relay_id)
     return token
 
 
-def lookup_token(token: str) -> Optional[Tuple[str, str]]:
-    """Return (user_id, relay_id) if the token is valid, else None."""
+def lookup_token(token: str) -> Optional[Tuple[str, str, str]]:
+    """Return (user_id, relay_id, conv_id) if the token is valid, else None."""
     with _lock:
         entry = _tokens.get(token)
         if entry is None:
@@ -62,7 +69,7 @@ def lookup_token(token: str) -> Optional[Tuple[str, str]]:
         if time.time() > entry.expires_at:
             _tokens.pop(token, None)
             return None
-        return entry.user_id, entry.relay_id
+        return entry.user_id, entry.relay_id, entry.conv_id
 
 
 def revoke_token(token: str) -> bool:

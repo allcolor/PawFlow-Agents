@@ -146,27 +146,28 @@ def flatten_agent_params(instance_name: str,
     return flat
 
 
-def guess_llm_service(agent_name: str, conv_id: str = "") -> str:
+def guess_llm_service(agent_name: str, conv_id: str = "",
+                      user_id: str = "") -> str:
     """Suggest a matching LLM service for an agent name (for UI prefill only).
 
     Looks for services named:
       {agent_name}_llm_service → exact match
       {agent_name}_llm → fallback match
       Otherwise → first enabled llmConnection service
+    Resolved across the canonical scope chain (conv > user > global).
     Returns "" if nothing found.
     """
     try:
-        from core.service_registry import ServiceRegistry, SCOPE_GLOBAL
+        from core.service_registry import ServiceRegistry
         reg = ServiceRegistry.get_instance()
-        candidate = f"{agent_name}_llm_service"
-        sdef = reg.get_definition(SCOPE_GLOBAL, "", candidate)
-        if sdef and sdef.enabled:
-            return candidate
-        candidate = f"{agent_name}_llm"
-        sdef = reg.get_definition(SCOPE_GLOBAL, "", candidate)
-        if sdef and sdef.enabled:
-            return candidate
-        all_llm = reg.resolve_by_type("llmConnection")
+        all_defs = reg.resolve_all(user_id=user_id, conv_id=conv_id,
+                                   enabled_only=True)
+        for candidate in (f"{agent_name}_llm_service", f"{agent_name}_llm"):
+            sdef = all_defs.get(candidate)
+            if sdef and sdef.service_type == "llmConnection":
+                return candidate
+        all_llm = reg.resolve_by_type("llmConnection", user_id=user_id,
+                                      conv_id=conv_id)
         if all_llm:
             return all_llm[0].service_id
     except Exception:
@@ -232,7 +233,8 @@ def require_agent_member(conv_id: str, agent_name: str,
                 "agent", agent_name, user_id or "")
             if _adef is not None:
                 _svc = (_adef.get("llm_service", "")
-                        or guess_llm_service(agent_name, conv_id))
+                        or guess_llm_service(agent_name, conv_id,
+                                             user_id=user_id or ""))
                 if _svc:
                     add_agent_to_conv(conv_id, agent_name,
                                       llm_service=_svc,

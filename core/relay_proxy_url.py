@@ -124,7 +124,8 @@ def _format_target_hostport(target_host: str, target_port: int) -> str:
     return f"{host}:{target_port}"
 
 
-def maybe_transform_relay_proxy_url(url: str, user_id: str = "") -> Optional[str]:
+def maybe_transform_relay_proxy_url(url: str, user_id: str = "",
+                                    conv_id: str = "") -> Optional[str]:
     """Return a PawFlow relay-proxy URL, or None when `url` is not proxy-shaped.
 
     Input format:  http(s)://<relay_id>/<host>:<port>/path
@@ -160,7 +161,7 @@ def maybe_transform_relay_proxy_url(url: str, user_id: str = "") -> Optional[str
         return None
     try:
         from core.relay_proxy_auth import issue_token
-        _token = issue_token(user_id, parts.relay_id)
+        _token = issue_token(user_id, parts.relay_id, conv_id=conv_id)
     except Exception as e:
         logger.warning("Proxy token issue failed: %s", e)
         return None
@@ -212,7 +213,8 @@ def resolve_relay_aware_url(raw_url: str, *, user_id: str = "",
     if relay_url:
         if not transform_relay:
             return resolved.rstrip("/")
-        proxy = maybe_transform_relay_proxy_url(resolved, user_id=user_id)
+        proxy = maybe_transform_relay_proxy_url(
+            resolved, user_id=user_id, conv_id=conversation_id)
         if not proxy:
             raise _service_error(
                 f"could not create relay-proxy route for {service_name}; user_id and HTTP listener are required")

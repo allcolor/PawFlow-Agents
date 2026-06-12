@@ -383,7 +383,8 @@ class AgentToolConfigMixin:
                     except Exception:
                         logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 if not fs_services:
-                    fs_services = self._list_available_services(user_id, "filesystem")
+                    fs_services = self._list_available_services(
+                        user_id, "filesystem", conversation_id)
                 if fs_services:
                     h.set_available_services(fs_services)
                 # Set default_local for tool argument injection

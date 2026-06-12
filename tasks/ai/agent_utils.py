@@ -1188,7 +1188,8 @@ class AgentUtilsMixin:
     # ── Context compaction ────────────────────────────────────────────
 
 
-    def _list_available_services(self, user_id: str, service_type: str) -> list:
+    def _list_available_services(self, user_id: str, service_type: str,
+                                 conversation_id: str = "") -> list:
         """List all available services of a type for the user."""
         _types = {
             "filesystem": ("relay", "googleDrive", "oneDrive"),
@@ -1207,7 +1208,8 @@ class AgentUtilsMixin:
             from core.service_registry import ServiceRegistry
             reg = ServiceRegistry.get_instance()
             for mtype in match_types:
-                for sdef in reg.resolve_by_type(mtype, user_id=user_id):
+                for sdef in reg.resolve_by_type(mtype, user_id=user_id,
+                                                conv_id=conversation_id):
                     if not any(s["id"] == sdef.service_id for s in result):
                         result.append({
                             "id": sdef.service_id, "type": sdef.service_type,

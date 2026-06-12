@@ -1098,6 +1098,16 @@ class ToolRelayService(BaseService):
             def _client_resolver(svc_id, uid):
                 _reg = _SR.get_instance()
                 _tried = []
+                # Canonical scope chain first (conv > user > global, parent
+                # conversations included) so conv-scoped LLM services resolve.
+                try:
+                    _live = _reg.resolve(svc_id, user_id=uid,
+                                         conv_id=conversation_id)
+                    if _live and hasattr(_live, "get_client"):
+                        return _live.get_client(), _live
+                    _tried.append("resolve:no-live-instance")
+                except Exception as _re:
+                    _tried.append(f"resolve:{type(_re).__name__}:{_re}")
                 for _scope, _sid in (("user", uid), ("global", "")):
                     try:
                         _svc_def = _reg.get_definition(_scope, _sid, svc_id)

@@ -29,7 +29,7 @@ def test_parse_standard_relay_proxy_url():
 
 def test_transform_standard_relay_proxy_url(monkeypatch):
     monkeypatch.setattr(_hl_mod, "_instances", {9090: _Listener()})
-    monkeypatch.setattr("core.relay_proxy_auth.issue_token", lambda user_id, relay_id: "tok")
+    monkeypatch.setattr("core.relay_proxy_auth.issue_token", lambda user_id, relay_id, conv_id="": "tok")
     monkeypatch.setattr("core.relay_proxy_url.get_host_ip", lambda: "10.0.0.2")
 
     url = maybe_transform_relay_proxy_url(

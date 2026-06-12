@@ -227,6 +227,7 @@ def list_available_relays(user_id: str = "", conv_id: str = "") -> List[Dict[str
                 "relay_id": sid,
                 "connected": connected,
                 "user_id": sdef.scope_id if sdef.scope == "user" else "",
+                "platform": _ri.get("platform", ""),
                 "root": _ri.get("root", ""),
                 "host_root": _ri.get("host_root", ""),
                 "allow_local": bool(_ri.get('allow_local', False)),

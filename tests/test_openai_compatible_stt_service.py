@@ -33,7 +33,7 @@ def test_openai_compatible_stt_posts_openai_transcription_multipart(monkeypatch)
     captured = {}
 
     monkeypatch.setattr(_hl_mod, "_instances", {9090: _Listener()})
-    monkeypatch.setattr("core.relay_proxy_auth.issue_token", lambda user_id, relay_id: "tok")
+    monkeypatch.setattr("core.relay_proxy_auth.issue_token", lambda user_id, relay_id, conv_id="": "tok")
     monkeypatch.setattr("core.relay_proxy_url.get_host_ip", lambda: "10.0.0.2")
 
     def fake_urlopen(req, timeout=0):

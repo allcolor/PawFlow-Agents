@@ -596,7 +596,8 @@ class LLMClient(
         # Transform to a PawFlow-exposed proxy URL with an ephemeral token.
         try:
             from core.relay_proxy_url import maybe_transform_relay_proxy_url
-            _proxy = maybe_transform_relay_proxy_url(_raw, user_id=_uid)
+            _proxy = maybe_transform_relay_proxy_url(
+                _raw, user_id=_uid, conv_id=_cid)
             if _proxy:
                 return _proxy
         except Exception:

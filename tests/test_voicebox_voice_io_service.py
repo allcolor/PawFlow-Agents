@@ -105,7 +105,7 @@ def test_voicebox_startup_error_reads_backend_log(tmp_path):
 def test_voicebox_external_relay_url_uses_proxy_route(monkeypatch):
     captured = {}
     monkeypatch.setattr(_hl_mod, "_instances", {9090: _Listener()})
-    monkeypatch.setattr("core.relay_proxy_auth.issue_token", lambda user_id, relay_id: "tok")
+    monkeypatch.setattr("core.relay_proxy_auth.issue_token", lambda user_id, relay_id, conv_id="": "tok")
     monkeypatch.setattr("core.relay_proxy_url.get_host_ip", lambda: "10.0.0.2")
     monkeypatch.setattr("core.relay_bindings.get_default", lambda cid, agent="": "relay1")
 

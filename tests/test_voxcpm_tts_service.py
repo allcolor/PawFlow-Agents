@@ -32,7 +32,7 @@ class _Listener:
 def test_voxcpm_speak_posts_to_openai_relay_url(monkeypatch):
     captured = {}
     monkeypatch.setattr(_hl_mod, "_instances", {9090: _Listener()})
-    monkeypatch.setattr("core.relay_proxy_auth.issue_token", lambda user_id, relay_id: "tok")
+    monkeypatch.setattr("core.relay_proxy_auth.issue_token", lambda user_id, relay_id, conv_id="": "tok")
     monkeypatch.setattr("core.relay_proxy_url.get_host_ip", lambda: "10.0.0.2")
     monkeypatch.setattr("core.relay_bindings.get_default", lambda cid, agent="": "relay1")
 

@@ -1189,19 +1189,25 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                                 system_prompt += _fs_prompt
                     # Inject relay list into system prompt
                     _relay_lines = []
+                    # Connection status must use each definition's own
+                    # scope/scope_id (same path as the relay link dialog and
+                    # the Relays panel) — a hand-rolled scope guess misses
+                    # parent-conversation scopes and never ensure-loads.
+                    try:
+                        _all_relay_defs = greg.resolve_all(
+                            user_id=user_id, conv_id=conversation_id)
+                    except Exception:
+                        _all_relay_defs = {}
+                        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                     for _sid in _linked:
                         _tag = " (default)" if _sid == _agent_default else ""
                         _svc = _get_svc(_sid)
                         _connected = False
-                        for _r_scope, _r_sid in (("conv", conversation_id),
-                                                 ("global", ""),
-                                                 ("user", user_id)):
-                            if _r_scope != "global" and not _r_sid:
-                                continue
+                        _sdef = _all_relay_defs.get(_sid)
+                        if _sdef is not None:
                             try:
-                                if greg.is_connected(_r_scope, _r_sid, _sid):
-                                    _connected = True
-                                    break
+                                _connected = greg.is_connected(
+                                    _sdef.scope, _sdef.scope_id, _sid)
                             except Exception:
                                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                         _status = "connected" if _connected else "disconnected"
@@ -1354,16 +1360,17 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                             "\n- The user's files are ONLY accessible through the MCP pawflow tools."
                         )
                 if not _fs_services_info:
-                    # Fallback: list all relay services for this user
+                    # Fallback: list relay/filesystem services across the
+                    # full scope chain (conv > user > global).
                     _fs_svcs = []
                     from core.service_registry import ServiceRegistry
                     _ureg = ServiceRegistry.get_instance()
-                    _uid = user_id
-                    if _uid:
-                        for _sid, _sdef in _ureg.get_all("user", _uid).items():
-                            if getattr(_sdef, "service_type", "") in (
-                                "relay", "filesystem"):
-                                _fs_svcs.append(_sid)
+                    for _stype in ("relay", "filesystem"):
+                        for _sdef in _ureg.resolve_by_type(
+                                _stype, user_id=user_id,
+                                conv_id=conversation_id):
+                            if _sdef.service_id not in _fs_svcs:
+                                _fs_svcs.append(_sdef.service_id)
                     if _fs_svcs:
                         _fs_services_info = (
                             "\n- Available filesystem services: "

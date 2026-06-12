@@ -34,17 +34,16 @@ def _get_http_listener():
     return next(iter(instances.values()), None)
 
 
-def _resolve_relay_service(user_id: str, relay_id: str):
+def _resolve_relay_service(user_id: str, relay_id: str, conv_id: str = ""):
     """Return the live RelayService instance for (user_id, relay_id)."""
     from core.service_registry import ServiceRegistry
     reg = ServiceRegistry.get_instance()
-    for scope, sid in (("user", user_id), ("global", "")):
-        try:
-            svc = reg.get_live_instance(scope, sid, relay_id)
-            if svc:
-                return svc
-        except Exception:
-            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+    try:
+        # Canonical scope walk: conv > user > global, so conversation-scoped
+        # relays are reachable when the token carries a conv_id.
+        return reg.resolve(relay_id, user_id=user_id, conv_id=conv_id)
+    except Exception:
+        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
     return None
 
 
@@ -78,7 +77,7 @@ def _relay_proxy_handler(pending_req):
         pending_req.complete(401, {"Content-Type": "application/json"},
                              b'{"error":"Invalid or expired proxy token"}')
         return
-    user_id, bound_relay_id = auth
+    user_id, bound_relay_id, conv_id = auth
     if bound_relay_id != relay_id:
         pending_req.complete(403, {"Content-Type": "application/json"},
                              b'{"error":"Token does not match relay"}')
@@ -104,7 +103,7 @@ def _relay_proxy_handler(pending_req):
     if pending_req.query_string:
         target_path = f"{target_path}?{pending_req.query_string}"
 
-    svc = _resolve_relay_service(user_id, relay_id)
+    svc = _resolve_relay_service(user_id, relay_id, conv_id)
     if svc is None or not hasattr(svc, "http_fetch_stream"):
         logger.warning("relay-proxy: relay '%s' not available for user '%s'",
                        relay_id, user_id)

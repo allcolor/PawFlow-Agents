@@ -25,6 +25,18 @@ def _neutralize_cci_realtime_waits(monkeypatch):
     monkeypatch.setenv("PAWFLOW_CCI_SUBMIT_VERIFY_SECONDS", "0")
 
 
+@pytest.fixture(autouse=True)
+def _skip_apparmor_probe(monkeypatch):
+    """Force the pool AppArmor profile so tests never run the docker probe.
+
+    The probe spawns a throwaway container and caches the result for the
+    whole process; under tests that mock subprocess.run it would capture
+    the probe command and poison the cache for every later test.
+    core.apparmor tests delete this variable to exercise the probe path.
+    """
+    monkeypatch.setenv("PAWFLOW_APPARMOR_PROFILE", "unconfined")
+
+
 @pytest.fixture(autouse=True, scope="session")
 def _isolate_data_dir(tmp_path_factory):
     """Redirect ALL data paths to a session-scoped temp directory."""

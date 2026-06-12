@@ -16,7 +16,7 @@ with a verbatim profile name (e.g. ``unconfined`` or a custom profile).
 
 import logging
 import os
-import subprocess
+import subprocess  # nosec B404
 import threading
 from typing import List, Optional
 

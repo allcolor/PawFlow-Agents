@@ -25,6 +25,15 @@
   <a href="https://github.com/allcolor/PawFlow-Agents/releases"><img src="https://img.shields.io/badge/status-alpha-orange.svg" alt="Alpha"></a>
 </p>
 
+<p align="center">
+  <a href="https://pawflow.allcolor.org/"><img src="https://img.shields.io/badge/%F0%9F%8C%90_pawflow.allcolor.org-visit_the_website-2ea44f?style=for-the-badge" alt="Visit the website"></a>
+  <a href="https://pawflow.allcolor.org/quickstart.html"><img src="https://img.shields.io/badge/%F0%9F%9A%80_Quickstart-get_running_in_minutes-blue?style=for-the-badge" alt="Quickstart"></a>
+</p>
+
+<p align="center">
+  <strong>👉 Screenshots, live feature tour, quickstart, and full documentation live on <a href="https://pawflow.allcolor.org/">pawflow.allcolor.org</a>.</strong>
+</p>
+
 ---
 
 PawFlow is the runtime layer between chat agents, local tools, and production workflows. The server keeps conversations, context, memory, files, flows, and provider sessions durable. Relays execute filesystem, shell, browser, desktop, and media tools next to the machines where the work actually happens.
@@ -53,6 +62,9 @@ PawFlow gives agents a real operating surface without handing your workspace to 
 - Portable conversations with full PawFlow archives, including optional FileStore attachments and generated files.
 
 ## Quick Start
+
+> 📖 Prefer a guided version with screenshots? Follow the
+> [quickstart on the website](https://pawflow.allcolor.org/quickstart.html).
 
 The easiest path is the Docker installer from the latest release. It starts PawFlow, opens the bootstrap wizard, creates the first admin user, configures the selected LLM services, deploys the starter flow, and opens your first agent conversation.
 
@@ -380,3 +392,9 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). In short:
 ## License
 
 [MIT](LICENSE)
+
+---
+
+<p align="center">
+  <a href="https://pawflow.allcolor.org/"><strong>🌐 pawflow.allcolor.org</strong></a> — website, feature tour, quickstart, and docs.
+</p>

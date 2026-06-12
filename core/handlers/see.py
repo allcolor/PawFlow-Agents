@@ -120,8 +120,11 @@ class SeeHandler(BaseFsHandler):
         source = arguments.get("source", "")
 
         from core.handlers._fs_base import find_fs_service
-        svc = find_fs_service(self._user_id, source) if source else (
-            self._fs_service or find_fs_service(self._user_id))
+        svc = (find_fs_service(self._user_id, source, self._conversation_id)
+               if source else
+               (self._fs_service or
+                find_fs_service(self._user_id,
+                                conversation_id=self._conversation_id)))
         if not svc:
             return "Error: no relay connected for screen capture."
         try:

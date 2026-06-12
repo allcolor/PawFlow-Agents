@@ -26,7 +26,8 @@ def _handle_tools_exec(self, action, body, store, user_id, flowfile):
         try:
             from core.handlers._fs_base import find_fs_service
             service_name = body.get("service", "")
-            svc = find_fs_service(user_id, service_name)
+            svc = find_fs_service(user_id, service_name,
+                                  body.get("conversation_id", ""))
             if not svc:
                 flowfile.set_content(json.dumps({"error": "No relay connected"}).encode())
                 return [flowfile]

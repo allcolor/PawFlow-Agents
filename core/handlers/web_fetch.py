@@ -49,6 +49,8 @@ class ExecuteScriptHandler(ToolHandler):
     _base_url: str = "http://localhost:9090"
     _vfs: Dict[str, bytes]
 
+    _conversation_id: str = ""
+
     def __init__(self):
         self._vfs = {}
         self._vfs_lock = threading.Lock()
@@ -56,6 +58,9 @@ class ExecuteScriptHandler(ToolHandler):
 
     def set_base_url(self, base_url: str):
         self._base_url = base_url.rstrip("/")
+
+    def set_conversation_id(self, conversation_id: str):
+        self._conversation_id = conversation_id or ""
 
     def set_fs_resolver(self, resolver):
         """Set filesystem service resolver: (service_id) -> service instance."""
@@ -198,7 +203,8 @@ class ExecuteScriptHandler(ToolHandler):
                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         try:
             from core.handlers._fs_base import find_fs_service
-            svc = find_fs_service(self._user_id)
+            svc = find_fs_service(self._user_id,
+                                  conversation_id=self._conversation_id)
             if svc and hasattr(svc, 'exec'):
                 return svc
         except Exception:
@@ -220,7 +226,8 @@ class ExecuteScriptHandler(ToolHandler):
             try:
                 from core.service_registry import ServiceRegistry
                 svc = ServiceRegistry.get_instance().resolve(
-                    svc_name, user_id=self._user_id)
+                    svc_name, user_id=self._user_id,
+                    conv_id=self._conversation_id)
             except Exception:
                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         if not svc:
@@ -419,7 +426,8 @@ class WebSearchHandler(ToolHandler):
                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         try:
             from core.handlers._fs_base import find_fs_service
-            svc = find_fs_service(self._user_id)
+            svc = find_fs_service(self._user_id,
+                                  conversation_id=self._conversation_id)
             if svc and hasattr(svc, "exec"):
                 return svc
         except Exception:

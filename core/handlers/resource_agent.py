@@ -1655,6 +1655,10 @@ class ShowFileHandler(ToolHandler):
     def __init__(self):
         self._base_url = "http://localhost:9090"
         self._user_id = ""
+        self._conversation_id = ""
+
+    def set_conversation_id(self, conversation_id: str):
+        self._conversation_id = conversation_id or ""
 
     @property
     def name(self) -> str:
@@ -1712,7 +1716,8 @@ class ShowFileHandler(ToolHandler):
         try:
             from core.service_registry import ServiceRegistry
             return ServiceRegistry.get_instance().resolve(
-                service_name, user_id=self._user_id)
+                service_name, user_id=self._user_id,
+                conv_id=getattr(self, "_conversation_id", "") or "")
         except Exception:
             return None
 

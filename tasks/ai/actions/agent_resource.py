@@ -1762,8 +1762,10 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             try:
                 from core.service_registry import ServiceRegistry
                 reg = ServiceRegistry.get_instance()
-                for sdef in reg.resolve_by_type(provider, user_id=user_id):
-                    svc = reg.resolve(sdef.service_id, user_id=user_id)
+                for sdef in reg.resolve_by_type(provider, user_id=user_id,
+                                                conv_id=conv_id):
+                    svc = reg.resolve(sdef.service_id, user_id=user_id,
+                                      conv_id=conv_id)
                     if svc is not None:
                         break
             except Exception as e:

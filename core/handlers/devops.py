@@ -268,6 +268,10 @@ class SecurityScanHandler(ToolHandler):
     """Run security scans on code via bandit or semgrep."""
 
     _user_id: str = ""
+    _conversation_id: str = ""
+
+    def set_conversation_id(self, conversation_id: str):
+        self._conversation_id = conversation_id or ""
 
     @property
     def name(self) -> str:
@@ -302,7 +306,8 @@ class SecurityScanHandler(ToolHandler):
         service_name = arguments.get("service", "")
 
         from core.handlers._fs_base import find_fs_service
-        svc = find_fs_service(self._user_id, service_name)
+        svc = find_fs_service(self._user_id, service_name,
+                              getattr(self, "_conversation_id", "") or "")
         if not svc:
             return "Error: no filesystem service available"
 

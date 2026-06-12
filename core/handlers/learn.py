@@ -223,7 +223,8 @@ class LearnHandler(ToolHandler):
             if not svc_id:
                 return None, 0, ""
 
-            svc = ServiceRegistry.get_instance().resolve(svc_id, user_id=user_id)
+            svc = ServiceRegistry.get_instance().resolve(
+                svc_id, user_id=user_id, conv_id=self._conversation_id)
             if svc and hasattr(svc, 'complete'):
                 return svc, 0, svc_id
         except Exception:

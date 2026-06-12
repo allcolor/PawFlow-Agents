@@ -20,18 +20,18 @@ from core.tool_registry import ToolRegistry, create_default_registry
 logger = logging.getLogger(__name__)
 
 
-_agent_md_cache = {}  # (agent_name, user_id) -> (result, timestamp)
+_agent_md_cache = {}  # (agent_name, user_id, conversation_id) -> (result, timestamp)
 _AGENT_MD_TTL = 30  # seconds
 
-def _find_agent_md(agent_name, user_id):
+def _find_agent_md(agent_name, user_id, conversation_id=""):
     """Find {agent_name}.md (case-insensitive) in the relay filesystem root."""
-    cache_key = (agent_name, user_id)
+    cache_key = (agent_name, user_id, conversation_id)
     cached = _agent_md_cache.get(cache_key)
     if cached and (time.time() - cached[1]) < _AGENT_MD_TTL:
         return cached[0]
     try:
         from core.handlers._fs_base import find_fs_service
-        svc = find_fs_service(user_id)
+        svc = find_fs_service(user_id, conversation_id=conversation_id)
         if not svc:
             _agent_md_cache[cache_key] = (None, time.time())
             return None
@@ -696,12 +696,14 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
         # Try instance name first, then definition name as fallback
         _agent_md_content = ""
         if _active_agent_name and conversation_id and not _cli_has_session:
-            _agent_md = _find_agent_md(_active_agent_name, _user_id_for_svc)
+            _agent_md = _find_agent_md(_active_agent_name, _user_id_for_svc,
+                                       conversation_id)
             if not _agent_md:
                 from core.conv_agent_config import get_definition_name as _gdn
                 _def_n = _gdn(conversation_id, _active_agent_name)
                 if _def_n != _active_agent_name:
-                    _agent_md = _find_agent_md(_def_n, _user_id_for_svc)
+                    _agent_md = _find_agent_md(_def_n, _user_id_for_svc,
+                                               conversation_id)
             if _agent_md:
                 _agent_md_content = _agent_md[1]
                 _agent_md_content = (

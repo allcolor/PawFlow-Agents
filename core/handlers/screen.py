@@ -92,11 +92,13 @@ class ScreenHandler(BaseFsHandler):
         from core.handlers._fs_base import find_fs_service
 
         if relay_name:
-            return find_fs_service(self._user_id, relay_name)
+            return find_fs_service(self._user_id, relay_name,
+                                   conversation_id=self._conversation_id)
 
         if self._fs_service:
             return self._fs_service
-        return find_fs_service(self._user_id)
+        return find_fs_service(self._user_id,
+                               conversation_id=self._conversation_id)
 
     def execute(self, arguments: Dict[str, Any]) -> str:
         action = arguments.get("action", "")

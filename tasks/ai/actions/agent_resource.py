@@ -368,7 +368,19 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             return [flowfile]
         from core.resource_store import ResourceStore
         uid = user_id
-        deleted = ResourceStore.instance().delete("agent", agent_name, uid)
+        # Route the delete to the scope the definition actually lives in
+        # (same pattern as delete_skill): conv-scoped agents need the
+        # conversation_id, global ones need admin + __global__.
+        _rs = ResourceStore.instance()
+        _adef = _rs.get_any("agent", agent_name, uid, conversation_id=conv_id)
+        _scope = (_adef or {}).get("_scope", "user")
+        if _scope == "global" and "admin" not in (flowfile.get_attribute("http.auth.roles") or ""):
+            flowfile.set_content(json.dumps({"error": "Requires admin role for global scope"}).encode())
+            flowfile.set_attribute("http.response.status", "403")
+            return [flowfile]
+        _del_kwargs = {"conversation_id": conv_id} if _scope == "conversation" and conv_id else {}
+        _del_uid = uid if _scope in ("conversation", "user") else "__global__"
+        deleted = _rs.delete("agent", agent_name, _del_uid, **_del_kwargs)
         # Fall back to "assistant" if deleted agent was active
         if conv_id:
             active = store.get_extra(conv_id, "active_resources") or {}

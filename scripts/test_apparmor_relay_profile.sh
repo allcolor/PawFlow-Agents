@@ -4,10 +4,11 @@
 # (combined-fs root /tmp/pf_combined_fs and rclone root /remote) plus the
 # escapes that must stay denied.
 #
-# Uses an rclone :memory: backend as a stand-in for any FUSE mount: same
-# fstype family (fuse.rclone) and the same mount/umount path libfuse uses
-# for the real combined-fs. Run inside the relay image which ships rclone
-# + fusermount3.
+# Uses an rclone :memory: backend as a stand-in for any FUSE mount. This is
+# the faithful path: the relay image entrypoint drops to the unprivileged
+# pawflow user, so all FUSE mounts (pyfuse3 combined-fs and rclone alike)
+# go through setuid fusermount3, which the profile makes inherit (ix) so
+# its mount(2) is mediated by the profile's rules.
 #
 # Usage (on the host, from the repo root):
 #   sudo apparmor_parser -r -W docker/apparmor/pawflow-relay
@@ -15,8 +16,7 @@
 #
 # Expected: 5 lines ending in OK, exit 0. After this passes, the decisive
 # check is still a REAL relay booting under the profile and logging
-# "[FSRelay] combined-fs mounted" — this script cannot reproduce pyfuse3's
-# direct mount() path, only the fstype/target mediation.
+# "[FSRelay] combined-fs mounted".
 set -u
 
 IMAGE="${IMAGE:-pawflow-relay-dev:latest}"
@@ -31,24 +31,29 @@ if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
     if docker image inspect "$alt" >/dev/null 2>&1; then IMAGE="$alt"; fi
 fi
 
-# Run as root so SYS_ADMIN is *effective*: this reproduces the relay's real
-# combined-fs path (pyfuse3 issues mount() directly under SYS_ADMIN), which
-# is what the pawflow-relay profile mediates. As a non-root user the mount
-# would instead go through fusermount3's own profile and skip our rules,
-# and the negative checks would pass on lack of privilege rather than on the
-# profile.
+# Probes run through the image ENTRYPOINT (tini -> init.sh), which execs
+# `sudo -u pawflow` — the SAME unprivileged context the real relay runs in.
+# FUSE mounts therefore go through setuid fusermount3, which the profile
+# forces to inherit (ix) so its mount(2) is mediated by our rules.
+# Escape attempts (bind / propagation) are made via sudo so a denial comes
+# from the profile, not from missing privilege.
 run() {
-    docker run --rm -u 0 --cap-add SYS_ADMIN --device /dev/fuse \
+    docker run --rm --cap-add SYS_ADMIN --device /dev/fuse \
         --security-opt "apparmor=$PROFILE" "$IMAGE" sh -c "$1"
 }
 
 # rclone mount helper: mount an ephemeral :memory: remote at $1, confirm it
 # is a mountpoint, unmount. Prints MOUNT-OK on success.
+# Root-owned mountpoint dirs (/remote, /mnt/...) are created via sudo +
+# chown, mirroring RemoteMountManager._ensure_mountpoint.
 rclone_at='
-  t="$1"; mkdir -p "$t" || { echo "mkdir-failed: $t"; exit 3; }
-  rclone mount :memory: "$t" --daemon --config /dev/null 2>/tmp/rc.err || { echo "rclone-mount-rc=$?"; cat /tmp/rc.err; exit 4; }
-  for i in 1 2 3 4 5 6 7 8 9 10; do mountpoint -q "$t" && break; sleep 0.3; done
-  if mountpoint -q "$t"; then echo MOUNT-OK; else cat /tmp/rc.err; exit 5; fi
+  t="$1"
+  sudo -n mkdir -p "$t" && sudo -n chown "$(id -u):$(id -g)" "$t" || { echo "mkdir-failed: $t"; exit 3; }
+  rclone mount :memory: "$t" --daemon --config /dev/null \
+      --log-file /tmp/rc.log --log-level INFO 2>/tmp/rc.err \
+      || { echo "rclone-mount-rc=$?"; cat /tmp/rc.err /tmp/rc.log 2>/dev/null; exit 4; }
+  for i in $(seq 1 20); do mountpoint -q "$t" && break; sleep 0.3; done
+  if mountpoint -q "$t"; then echo MOUNT-OK; else echo "mount-not-visible: $t"; cat /tmp/rc.err /tmp/rc.log 2>/dev/null; exit 5; fi
   fusermount3 -u "$t" 2>/dev/null || umount "$t" 2>/dev/null
 '
 
@@ -72,13 +77,16 @@ out=$(run "set -- /mnt/evil; $rclone_at" 2>&1)
 case "$out" in *MOUNT-OK*) echo "3. FUSE mount outside roots denied: FAIL -> mounted"; fail=1;;
     *) echo "3. FUSE mount outside roots denied: OK";; esac
 
-# 4. Negative: arbitrary bind mount must be denied.
-out=$(run 'mkdir -p /a /b && mount --bind /a /b 2>&1 && echo ESCAPED' 2>&1)
+# 4. Negative: arbitrary bind mount must be denied. Done as root via sudo
+# (the profile still applies across sudo) so the denial is the profile's,
+# not a missing privilege.
+out=$(run 'sudo -n sh -c "mkdir -p /a /b && mount --bind /a /b" 2>&1 && echo ESCAPED' 2>&1)
 case "$out" in *ESCAPED*) echo "4. arbitrary bind denied: FAIL -> $out"; fail=1;;
     *) echo "4. arbitrary bind denied: OK";; esac
 
-# 5. Negative: plain unshare -m (root propagation remount) must be denied.
-out=$(run 'unshare -m sh -c "echo ESCAPED" 2>&1' 2>&1)
+# 5. Negative: plain unshare -m (root propagation remount) must be denied,
+# also as root via sudo.
+out=$(run 'sudo -n unshare -m sh -c "echo ESCAPED" 2>&1' 2>&1)
 case "$out" in *ESCAPED*) echo "5. propagation change denied: FAIL -> $out"; fail=1;;
     *) echo "5. propagation change denied: OK";; esac
 
@@ -86,5 +94,6 @@ if [ "$fail" -eq 0 ]; then
     echo "pawflow-relay profile: all checks passed (now boot a real relay under it)"
 else
     echo "pawflow-relay profile: CHECKS FAILED" >&2
+    echo "for AppArmor denial details run: sudo dmesg | grep -i apparmor | tail" >&2
 fi
 exit "$fail"

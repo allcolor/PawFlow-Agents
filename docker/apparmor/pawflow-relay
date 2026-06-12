@@ -37,21 +37,27 @@ profile pawflow-relay flags=(attach_disconnected,mediate_deleted) {
   # libfuse char device.
   /dev/fuse rw,
 
-  # fusermount3 / fusermount are setuid-root and perform the mount on
-  # libfuse's behalf when the relay runs unprivileged. Let them run under
-  # their own (Ubuntu-shipped) profile, or unconfined if none is loaded.
-  # Px falls back to ix only if no attachment exists.
-  /usr/bin/fusermount3 mrPUx,
-  /usr/bin/fusermount  mrPUx,
-  /bin/fusermount3     mrPUx,
-  /bin/fusermount      mrPUx,
+  # fusermount3 / fusermount are setuid-root and perform the mount(2) on
+  # libfuse's behalf: the relay runs as the unprivileged pawflow user (the
+  # image entrypoint execs `sudo -u pawflow`), so EVERY relay FUSE mount
+  # goes through them. They must INHERIT this profile (ix) — with Px/Ux
+  # they would transition out (unconfined when no fusermount profile is
+  # loaded) and the mount rules below would never mediate anything.
+  /usr/bin/fusermount3 mrix,
+  /usr/bin/fusermount  mrix,
+  /bin/fusermount3     mrix,
+  /bin/fusermount      mrix,
 
   # The one combined server-fs FUSE mount and anything under it.
+  # Trailing-slash variants included: the kernel reports mountpoint
+  # directories with a trailing slash.
   mount fstype=(fuse, fuse.*) -> /tmp/pf_combined_fs/,
+  mount fstype=(fuse, fuse.*) -> /tmp/pf_combined_fs/**/,
   mount fstype=(fuse, fuse.*) -> /tmp/pf_combined_fs/**,
 
   # rclone conversation remote mounts.
   mount fstype=(fuse, fuse.*) -> /remote/,
+  mount fstype=(fuse, fuse.*) -> /remote/**/,
   mount fstype=(fuse, fuse.*) -> /remote/**,
 
   # docker-default hardening, kept verbatim.

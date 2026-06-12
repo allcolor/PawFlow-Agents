@@ -739,7 +739,8 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
         # Shared: max of all agent LLM services
         try:
             from core.resource_store import ResourceStore
-            all_agents = ResourceStore.instance().list_all("agent", user_id)
+            all_agents = ResourceStore.instance().list_all(
+                "agent", user_id, conversation_id=conv_id)
             max_val = 0
             for a in all_agents:
                 v = _resolve_agent_max_tokens(a["name"])

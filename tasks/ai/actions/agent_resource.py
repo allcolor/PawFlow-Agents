@@ -1278,7 +1278,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             agents_out.append(entry)
 
         # Repo agents list (all global+user agents, with in_conversation flag)
-        all_repo_agents = rs.list_all("agent", uid)
+        all_repo_agents = rs.list_all("agent", uid, conversation_id=conv_id)
         repo_agent_count = len(all_repo_agents)
         repo_agents_out = [{
             "name": a["name"],

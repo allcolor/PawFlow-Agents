@@ -115,7 +115,8 @@ def _handle_memory_prompts(self, action, body, store, user_id, flowfile):
     if action == "list_skills":
         from core.resource_store import ResourceStore
         rs = ResourceStore.instance()
-        skills = rs.list_all("skill", user_id)
+        skills = rs.list_all("skill", user_id,
+                             conversation_id=body.get("conversation_id", ""))
         items = [
             {
                 "name": s["name"],
@@ -154,7 +155,8 @@ def _handle_memory_prompts(self, action, body, store, user_id, flowfile):
     if action == "list_prompts":
         from core.resource_store import ResourceStore
         rs = ResourceStore.instance()
-        prompts = rs.list_all("prompt", user_id)
+        prompts = rs.list_all("prompt", user_id,
+                              conversation_id=body.get("conversation_id", ""))
         items = [
             {
                 "name": p["name"],

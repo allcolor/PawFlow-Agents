@@ -479,7 +479,9 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
         if body.get("include_library"):
             from core.resource_store import ResourceStore
             uid = user_id
-            all_defs = ResourceStore.instance().list_all("task_def", uid)
+            all_defs = ResourceStore.instance().list_all(
+                "task_def", uid,
+                conversation_id=body.get("conversation_id", ""))
             for d in all_defs:
                 defs_out.append({
                     "name": d.get("name", ""),

@@ -641,7 +641,8 @@ class AgentActionsMixin:
         # Resolve target agents (ALL = assistant + all ResourceStore agents)
         if agent_name.upper() == "ALL":
             from core.resource_store import ResourceStore
-            all_agents = ResourceStore.instance().list_all("agent", user_id)
+            all_agents = ResourceStore.instance().list_all(
+                "agent", user_id, conversation_id=conv_id)
             target_agents = [a["name"] for a in all_agents]
         else:
             target_agents = [agent_name]

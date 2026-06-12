@@ -350,7 +350,7 @@ def _handle_cancel_interrupt(self, action, body, store, user_id, flowfile):
         if agent_name.upper() == "ALL":
             from core.resource_store import ResourceStore
             rs = ResourceStore.instance()
-            all_agents = rs.list_all("agent", user_id)
+            all_agents = rs.list_all("agent", user_id, conversation_id=conv_id)
             targets = [a["name"] for a in all_agents]
             for t in targets:
                 thread = threading.Thread(

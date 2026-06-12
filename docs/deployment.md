@@ -167,8 +167,11 @@ Translation: /workspace/data/claude_sessions/abc/
 
 Interactive Claude Code and Antigravity containers need a private mount namespace
 for the per-user `/cc_sessions` bind. PawFlow starts those containers as root
-with `SYS_ADMIN` plus `apparmor:unconfined` and `seccomp=unconfined` so
-`unshare` and `mount --bind` are available inside the provider container. Treat
+with `SYS_ADMIN` plus `apparmor:unconfined` so `unshare` and `mount --bind` are
+available inside the provider container. The default seccomp profile stays in
+place: it already allows `unshare`/`mount` when `CAP_SYS_ADMIN` is granted (the
+blocker is AppArmor's `docker-default` profile, which denies the mount syscall
+family even with the capability). Treat
 those containers as privileged runtime surfaces: credentials are scoped per
 user/conversation/service, and workloads should remain isolated to the generated
 session directory.

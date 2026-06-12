@@ -785,7 +785,6 @@ class InteractiveClaudeCodePool:
             "--add-host", "host.docker.internal:host-gateway",
             "--cap-add", "SYS_ADMIN",
             "--security-opt", "apparmor:unconfined",
-            "--security-opt", "seccomp=unconfined",
             "--shm-size", "512m",
             "--tmpfs", "/tmp:rw,nosuid,size=512m",  # nosec B108 - Docker tmpfs mount target inside ephemeral container.
             "--user", "root",

@@ -647,7 +647,6 @@ class GeminiPool:
             "--tmpfs", "/tmp:rw,nosuid,size=512m",  # nosec B108 - Docker tmpfs mount target inside ephemeral container.
             "--cap-add", "SYS_ADMIN",  # needed for mount --bind in exec_gemini
             "--security-opt", "apparmor:unconfined",
-            "--security-opt", "seccomp=unconfined",
             # Docker's init remains PID 1 and reaps docker exec children.
             "--entrypoint", "/usr/bin/sleep",
             self.image,

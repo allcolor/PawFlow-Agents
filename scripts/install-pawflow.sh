@@ -780,12 +780,23 @@ MSG
   "$venv_python" "$REPO_DIR/cli.py" start --host "$native_host" --port "$PORT"
 }
 
+apparmor_manual_instructions() {
+  # $@: profile names that still need installing/updating.
+  local name
+  echo "AppArmor profiles not loaded ($*). PawFlow still works (containers fall back to apparmor=unconfined). To confine them, run as root:" >&2
+  for name in "$@"; do
+    echo "  install -m 644 $REPO_DIR/docker/apparmor/$name /etc/apparmor.d/$name && apparmor_parser -r -W /etc/apparmor.d/$name" >&2
+  done
+}
+
 install_apparmor_profiles() {
   # Load the PawFlow AppArmor profiles (pawflow-mount for provider pools,
   # pawflow-relay for relay containers) so the server confines those
   # containers instead of falling back to apparmor:unconfined. Best-effort:
   # a failure prints manual instructions and never blocks the install.
-  local profiles_dir="$REPO_DIR/docker/apparmor" name src dest run_root=()
+  # Never runs sudo without asking first: a user without sudo rights would
+  # otherwise burn password attempts on a prompt that cannot succeed.
+  local profiles_dir="$REPO_DIR/docker/apparmor" name src dest run_root=() pending=() answer=""
   if [[ "$SKIP_APPARMOR" == "1" || "$SKIP_APPARMOR" == "true" || "$SKIP_APPARMOR" == "yes" ]]; then
     echo "AppArmor profiles: skipped (--skip-apparmor)."
     return 0
@@ -802,25 +813,47 @@ install_apparmor_profiles() {
     echo "Warning: AppArmor profiles not found at $profiles_dir (older image?). Load them manually from a source checkout: sudo install -m 644 docker/apparmor/pawflow-mount docker/apparmor/pawflow-relay /etc/apparmor.d/ && sudo apparmor_parser -r -W /etc/apparmor.d/pawflow-mount /etc/apparmor.d/pawflow-relay" >&2
     return 0
   fi
-  if [[ "$(id -u)" != "0" ]]; then
-    if ! command -v sudo >/dev/null 2>&1; then
-      echo "Warning: cannot load AppArmor profiles (not root, no sudo). Load them manually as root:" >&2
-      echo "  install -m 644 $profiles_dir/pawflow-mount $profiles_dir/pawflow-relay /etc/apparmor.d/" >&2
-      echo "  apparmor_parser -r -W /etc/apparmor.d/pawflow-mount /etc/apparmor.d/pawflow-relay" >&2
-      return 0
-    fi
-    run_root=(sudo)
-    echo "Installing PawFlow AppArmor profiles (pawflow-mount, pawflow-relay) — sudo may prompt for your password."
-  else
-    echo "Installing PawFlow AppArmor profiles (pawflow-mount, pawflow-relay)."
-  fi
+  # Only touch profiles whose installed copy differs from the shipped one.
   for name in pawflow-mount pawflow-relay; do
     src="$profiles_dir/$name"
-    dest="/etc/apparmor.d/$name"
     if [[ ! -f "$src" ]]; then
       echo "Warning: AppArmor profile missing from artifacts: $src" >&2
       continue
     fi
+    if cmp -s "$src" "/etc/apparmor.d/$name" 2>/dev/null; then
+      echo "AppArmor profile already installed and up to date: $name"
+      continue
+    fi
+    pending+=("$name")
+  done
+  if [[ ${#pending[@]} -eq 0 ]]; then
+    return 0
+  fi
+  if [[ "$(id -u)" != "0" ]]; then
+    if ! command -v sudo >/dev/null 2>&1; then
+      apparmor_manual_instructions "${pending[@]}"
+      return 0
+    fi
+    if [[ -r /dev/tty && -w /dev/tty ]]; then
+      printf "Install/update AppArmor profiles (%s) in /etc/apparmor.d via sudo? [y/N] " "${pending[*]}" > /dev/tty
+      IFS= read -r answer < /dev/tty || answer=""
+      case "$answer" in
+        y|Y|yes|YES) run_root=(sudo) ;;
+        *)
+          apparmor_manual_instructions "${pending[@]}"
+          return 0
+          ;;
+      esac
+    else
+      # No terminal to ask on: never trigger a blind sudo password prompt.
+      apparmor_manual_instructions "${pending[@]}"
+      return 0
+    fi
+  fi
+  echo "Installing PawFlow AppArmor profiles: ${pending[*]}"
+  for name in "${pending[@]}"; do
+    src="$profiles_dir/$name"
+    dest="/etc/apparmor.d/$name"
     if "${run_root[@]}" install -m 644 "$src" "$dest" \
         && "${run_root[@]}" apparmor_parser -r -W "$dest"; then
       echo "AppArmor profile loaded and persisted: $name -> $dest"

@@ -1458,27 +1458,28 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                 try:
                     from core.service_registry import ServiceRegistry
                     _greg2 = ServiceRegistry.get_instance()
-                    _ureg2 = None
-                    try:
-                        from core.service_registry import ServiceRegistry
-                        _ureg2 = ServiceRegistry.get_instance()
-                    except Exception:
-                        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+                    # Walk conv > global > user so conv-scoped relay services
+                    # report their real connection status (red/green dot).
+                    _relay_scopes = []
+                    if conv_id:
+                        _relay_scopes.append(("conv", conv_id))
+                    _relay_scopes.append(("global", ""))
+                    if user_id:
+                        _relay_scopes.append(("user", user_id))
                     for _rid in _all_ids:
                         _rsvc = None
                         _connected = False
-                        # Same logic as service list: use registry.is_connected
-                        try:
-                            _connected = _greg2.is_connected("global", "", _rid)
-                            _rsvc = _greg2.get_live_instance_cached("global", "", _rid)
-                        except Exception:
-                            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-                        if not _rsvc and _ureg2 and user_id:
+                        for _rscope, _rsid in _relay_scopes:
                             try:
-                                _connected = _ureg2.is_connected("user", user_id, _rid)
-                                _rsvc = _ureg2.get_live_instance_cached("user", user_id, _rid)
+                                _c = _greg2.is_connected(_rscope, _rsid, _rid)
+                                _s = _greg2.get_live_instance_cached(_rscope, _rsid, _rid)
                             except Exception:
                                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+                                continue
+                            if _s is not None or _c:
+                                _connected = _c
+                                _rsvc = _s
+                                break
                         _ri2 = getattr(_rsvc, '_relay_info', {}) or {} if _rsvc else {}
                         _relay_details[_rid] = {
                             "root": _ri2.get("root", ""),

@@ -53,10 +53,11 @@ def _mode_suffix(mode: str) -> str:
     return ":ro" if mode == "ro" else ""
 
 
-def _relay_info_by_id(user_id: str = "") -> Dict[str, dict]:
+def _relay_info_by_id(user_id: str = "", conv_id: str = "") -> Dict[str, dict]:
     from core.relay_bindings import list_available_relays
 
-    return {r.get("relay_id", ""): r for r in list_available_relays(user_id=user_id)}
+    return {r.get("relay_id", ""): r
+            for r in list_available_relays(user_id=user_id, conv_id=conv_id)}
 
 
 def _docker_source_for_relay(relay_id: str, relay_info: dict) -> str:
@@ -109,7 +110,7 @@ def build_cli_workspace_mount_args(conversation_id: str, agent_name: str = "",
             "[cli-workspace-mount] no linked relay for %s/%s", conversation_id[:8], agent_name)
         return []
 
-    info_by_id = _relay_info_by_id(user_id=user_id)
+    info_by_id = _relay_info_by_id(user_id=user_id, conv_id=conversation_id)
     suffix = _mode_suffix(mount_mode)
     args: List[str] = []
     mounted: set[Tuple[str, str]] = set()

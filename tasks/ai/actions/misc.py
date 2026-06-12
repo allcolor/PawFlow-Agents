@@ -412,7 +412,7 @@ def _handle_misc(self, action, body, store, user_id, flowfile):
             lines = []
             for rid in linked:
                 tag = " ★ (default)" if rid == default else ""
-                _svc = _greg.get_live_instance("global", "", rid)
+                _svc = _greg.resolve(rid, user_id=user_id, conv_id=conv_id)
                 _ri = getattr(_svc, '_relay_info', {}) or {} if _svc else {}
                 line = f"- `{rid}`{tag}"
                 if _ri.get('root'):

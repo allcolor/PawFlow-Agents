@@ -28,7 +28,7 @@ def test_build_cli_workspace_mount_args_maps_default_and_linked_relays(tmp_path,
 
     monkeypatch.setattr(relay_bindings, "get_linked", lambda cid, agent="": ["relay.default", "relay/other"])
     monkeypatch.setattr(relay_bindings, "get_default", lambda cid, agent="": "relay.default")
-    monkeypatch.setattr(relay_bindings, "list_available_relays", lambda user_id="": [
+    monkeypatch.setattr(relay_bindings, "list_available_relays", lambda user_id="", conv_id="": [
         {"relay_id": "relay.default", "connected": True, "host_root": str(default_root)},
         {"relay_id": "relay/other", "connected": True, "host_root": str(other_root)},
     ])
@@ -42,6 +42,34 @@ def test_build_cli_workspace_mount_args_maps_default_and_linked_relays(tmp_path,
     ]
 
 
+def test_build_cli_workspace_mount_args_passes_conv_id_for_conv_scoped_relays(tmp_path, monkeypatch):
+    """Conv-scoped relay services are only visible when conv_id is forwarded."""
+    from core import relay_bindings
+
+    root = tmp_path / "convrelay"
+    root.mkdir()
+    seen = {}
+
+    def fake_list(user_id="", conv_id=""):
+        seen["user_id"] = user_id
+        seen["conv_id"] = conv_id
+        if not conv_id:
+            return []
+        return [{"relay_id": "convRelay", "connected": True, "host_root": str(root)}]
+
+    monkeypatch.setattr(relay_bindings, "get_linked", lambda cid, agent="": ["convRelay"])
+    monkeypatch.setattr(relay_bindings, "get_default", lambda cid, agent="": "convRelay")
+    monkeypatch.setattr(relay_bindings, "list_available_relays", fake_list)
+
+    args = build_cli_workspace_mount_args("conv42", "assistant", user_id="u1", mode="ro")
+
+    assert seen == {"user_id": "u1", "conv_id": "conv42"}
+    assert args == [
+        "-v", f"{root}:/workspace:ro",
+        "-v", f"{root}:/relay/convRelay:ro",
+    ]
+
+
 def test_build_cli_workspace_mount_args_rw_has_no_ro_suffix(tmp_path, monkeypatch):
     from core import relay_bindings
 
@@ -49,7 +77,7 @@ def test_build_cli_workspace_mount_args_rw_has_no_ro_suffix(tmp_path, monkeypatc
     root.mkdir()
     monkeypatch.setattr(relay_bindings, "get_linked", lambda cid, agent="": ["relay1"])
     monkeypatch.setattr(relay_bindings, "get_default", lambda cid, agent="": "relay1")
-    monkeypatch.setattr(relay_bindings, "list_available_relays", lambda user_id="": [
+    monkeypatch.setattr(relay_bindings, "list_available_relays", lambda user_id="", conv_id="": [
         {"relay_id": "relay1", "connected": True, "host_root": str(root)},
     ])
 
@@ -63,7 +91,7 @@ def test_build_cli_workspace_mount_args_skips_remote_relays_without_host_root(mo
 
     monkeypatch.setattr(relay_bindings, "get_linked", lambda cid, agent="": ["remote"])
     monkeypatch.setattr(relay_bindings, "get_default", lambda cid, agent="": "remote")
-    monkeypatch.setattr(relay_bindings, "list_available_relays", lambda user_id="": [
+    monkeypatch.setattr(relay_bindings, "list_available_relays", lambda user_id="", conv_id="": [
         {"relay_id": "remote", "connected": True, "host_root": ""},
     ])
 

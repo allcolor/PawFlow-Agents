@@ -2659,14 +2659,13 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         # Find the source relay service
         from core.service_registry import ServiceRegistry
         ureg = ServiceRegistry.get_instance()
-        greg = ServiceRegistry.get_instance()
 
         source_svc = None
         if relay_source:
-            # Explicit source
-            source_svc = ureg.get_live_instance("user", user_id, relay_source)
-            if not source_svc:
-                source_svc = greg.get_live_instance("global", "", relay_source)
+            # Explicit source — resolve across conv > user > global scopes
+            _cid = (body.get("conversation_id", "")
+                    or flowfile.get_attribute("http.conversation_id") or "")
+            source_svc = ureg.resolve(relay_source, user_id=user_id, conv_id=_cid)
         else:
             # Find user's first connected relay service
             for sid, sdef in ureg.get_all("user", user_id).items():
@@ -3476,15 +3475,12 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
     # ── Terminal / code-server on relay ──────────────────────────
 
     def _find_relay_svc(relay_id):
-        """Find relay service in global then user registry."""
+        """Find relay service across conv > user > global scopes."""
         from core.service_registry import ServiceRegistry
-        greg = ServiceRegistry.get_instance()
-        svc = greg.get_live_instance("global", "", relay_id)
-        if svc:
-            return svc
-        from core.service_registry import ServiceRegistry
-        ureg = ServiceRegistry.get_instance()
-        return ureg.get_live_instance("user", user_id, relay_id) if user_id else None
+        _cid = (body.get("conversation_id", "")
+                or flowfile.get_attribute("http.conversation_id") or "")
+        return ServiceRegistry.get_instance().resolve(
+            relay_id, user_id=user_id, conv_id=_cid)
 
 
     def _audio_lookup_token(sid: str) -> str:

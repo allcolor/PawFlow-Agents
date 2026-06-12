@@ -1523,7 +1523,8 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         svc = None
         try:
             from core.service_registry import ServiceRegistry
-            svc = ServiceRegistry.get_instance().resolve(svc_id, user_id=user_id)
+            svc = ServiceRegistry.get_instance().resolve(
+                svc_id, user_id=user_id, conv_id=conv_id)
         except Exception:
             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         if not svc:
@@ -1913,6 +1914,28 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                         })
             except Exception as e:
                 logger.debug("Failed to list user relays: %s", e)
+        # Conversation-scoped relay services
+        _cc_conv_id = (body.get("conversation_id", "")
+                       or flowfile.get_attribute("http.conversation_id") or "")
+        if _cc_conv_id:
+            try:
+                from core.service_registry import ServiceRegistry
+                registry = ServiceRegistry.get_instance()
+                for sid, sdef in registry.get_all("conv", _cc_conv_id).items():
+                    if not sdef.enabled or sdef.service_type != "relay":
+                        continue
+                    if any(r["relay_id"] == sid for r in relay_list):
+                        continue
+                    svc = registry.get_live_instance("conv", _cc_conv_id, sid)
+                    if svc and getattr(svc, 'is_connected', lambda: False)():
+                        info = getattr(svc, '_relay_info', {}) or {}
+                        relay_list.append({
+                            "relay_id": sid,
+                            "platform": info.get("platform", "unknown"),
+                            "root": info.get("root", sdef.description or ""),
+                        })
+            except Exception as e:
+                logger.debug("Failed to list conv relays: %s", e)
         flowfile.set_content(json.dumps({"relays": relay_list}).encode())
         return [flowfile]
 
@@ -1933,7 +1956,8 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         if not relay_svc and user_id:
             try:
                 from core.service_registry import ServiceRegistry
-                relay_svc = ServiceRegistry.get_instance().resolve(relay_id, user_id=user_id)
+                relay_svc = ServiceRegistry.get_instance().resolve(
+                    relay_id, user_id=user_id, conv_id=conversation_id)
             except Exception:
                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         if not relay_svc:
@@ -1999,7 +2023,8 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         if not relay_svc and user_id:
             try:
                 from core.service_registry import ServiceRegistry
-                relay_svc = ServiceRegistry.get_instance().resolve(relay_id, user_id=user_id)
+                relay_svc = ServiceRegistry.get_instance().resolve(
+                    relay_id, user_id=user_id, conv_id=conversation_id)
             except Exception:
                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         if not relay_svc:
@@ -2064,7 +2089,8 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         if not relay_svc and user_id:
             try:
                 from core.service_registry import ServiceRegistry
-                relay_svc = ServiceRegistry.get_instance().resolve(relay_id, user_id=user_id)
+                relay_svc = ServiceRegistry.get_instance().resolve(
+                    relay_id, user_id=user_id, conv_id=conversation_id)
             except Exception:
                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         if not relay_svc:
@@ -4377,7 +4403,10 @@ finally:
         if not service_id:
             return None
         from core.service_registry import ServiceRegistry
-        svc = ServiceRegistry.get_instance().resolve(service_id, user_id=user_id)
+        svc = ServiceRegistry.get_instance().resolve(
+            service_id, user_id=user_id,
+            conv_id=body.get("conversation_id", "")
+            or flowfile.get_attribute("http.conversation_id") or "")
         if not svc or getattr(svc, "TYPE", "") != "privateGateway":
             raise ValueError(f"Private gateway service '{service_id}' not found")
         return svc

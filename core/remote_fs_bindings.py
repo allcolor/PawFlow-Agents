@@ -345,7 +345,7 @@ def notify_linked_relays(cid: str, user_id: str) -> None:
         from core.service_registry import ServiceRegistry
         reg = ServiceRegistry.get_instance()
         for relay_id in get_linked(cid):
-            svc = reg.resolve(relay_id, user_id=user_id)
+            svc = reg.resolve(relay_id, user_id=user_id, conv_id=cid)
             push = getattr(svc, "push_remote_fs_manifest", None)
             if callable(push):
                 push(user_id=user_id)

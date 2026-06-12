@@ -702,12 +702,13 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
                 if svc_id:
                     try:
                         from core.service_registry import ServiceRegistry
-                        return ServiceRegistry.get_instance().get_live_instance("global", "", svc_id)
+                        return ServiceRegistry.get_instance().resolve(
+                            svc_id, user_id=user_id, conv_id=conv_id)
                     except Exception:
                         logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                 # Default: try to find any filesystem service
                 try:
-                    return self._find_filesystem_service(user_id)
+                    return self._find_filesystem_service(user_id, conv_id)
                 except Exception:
                     return None
 

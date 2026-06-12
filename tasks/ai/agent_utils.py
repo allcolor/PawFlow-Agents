@@ -155,7 +155,8 @@ class AgentUtilsMixin:
         # 2. Resolve across scopes (conv > user > global)
         try:
             from core.service_registry import ServiceRegistry
-            svc = ServiceRegistry.get_instance().resolve(service_id, user_id=user_id)
+            svc = ServiceRegistry.get_instance().resolve(
+                service_id, user_id=user_id, conv_id=conversation_id)
             if svc and hasattr(svc, 'get_client'):
                 return _get_client_with_pool(svc), svc
         except Exception as e:
@@ -1217,7 +1218,7 @@ class AgentUtilsMixin:
         return result
 
 
-    def _find_filesystem_service(self, user_id: str = ""):
+    def _find_filesystem_service(self, user_id: str = "", conversation_id: str = ""):
         """Find the first available filesystem service.
 
         Search order: flow services → registry (conv > user > global).
@@ -1232,8 +1233,10 @@ class AgentUtilsMixin:
             from core.service_registry import ServiceRegistry
             reg = ServiceRegistry.get_instance()
             for fs_type in fs_types:
-                for sdef in reg.resolve_by_type(fs_type, user_id=user_id):
-                    svc = reg.resolve(sdef.service_id, user_id=user_id)
+                for sdef in reg.resolve_by_type(
+                        fs_type, user_id=user_id, conv_id=conversation_id):
+                    svc = reg.resolve(
+                        sdef.service_id, user_id=user_id, conv_id=conversation_id)
                     if svc:
                         return svc
         except Exception:

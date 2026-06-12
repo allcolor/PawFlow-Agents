@@ -864,7 +864,8 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                                         # Try filesystem service registries
                                         try:
                                             from core.service_registry import ServiceRegistry
-                                            relay_svc = ServiceRegistry.get_instance().resolve(_rsid, user_id=_uid)
+                                            relay_svc = ServiceRegistry.get_instance().resolve(
+                                                _rsid, user_id=_uid, conv_id=conversation_id)
                                         except Exception:
                                             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                                 if not relay_svc:
@@ -1175,18 +1176,10 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 if _linked:
                     from core.service_registry import ServiceRegistry
                     greg = ServiceRegistry.get_instance()
-                    # Also check user registry for service resolution
-                    _ureg = None
-                    try:
-                        from core.service_registry import ServiceRegistry
-                        _ureg = ServiceRegistry.get_instance()
-                    except Exception:
-                        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                     def _get_svc(sid):
-                        s = greg.get_live_instance("global", "", sid)
-                        if not s and _ureg and user_id:
-                            s = _ureg.get_live_instance("user", user_id, sid)
-                        return s
+                        # conv > user > global so conv-scoped relays resolve
+                        return greg.resolve(
+                            sid, user_id=user_id, conv_id=conversation_id)
                     # Inject project prompts from linked relays
                     for _sid in _linked:
                         _svc = _get_svc(_sid)
@@ -1200,13 +1193,15 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                         _tag = " (default)" if _sid == _agent_default else ""
                         _svc = _get_svc(_sid)
                         _connected = False
-                        try:
-                            _connected = greg.is_connected("global", "", _sid)
-                        except Exception:
-                            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-                        if not _connected and _ureg and user_id:
+                        for _r_scope, _r_sid in (("conv", conversation_id),
+                                                 ("global", ""),
+                                                 ("user", user_id)):
+                            if _r_scope != "global" and not _r_sid:
+                                continue
                             try:
-                                _connected = _ureg.is_connected("user", user_id, _sid)
+                                if greg.is_connected(_r_scope, _r_sid, _sid):
+                                    _connected = True
+                                    break
                             except Exception:
                                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                         _status = "connected" if _connected else "disconnected"

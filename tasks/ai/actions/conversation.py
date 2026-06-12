@@ -744,9 +744,10 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
                 def _svc_resolver(svc_id):
                     try:
                         from core.service_registry import ServiceRegistry
-                        return ServiceRegistry.get_instance().get_live_instance("global", "", svc_id)
+                        return ServiceRegistry.get_instance().resolve(
+                            svc_id, user_id=user_id, conv_id=conv_id)
                     except Exception:
-                        return self._find_filesystem_service(user_id) if hasattr(self, '_find_filesystem_service') else None
+                        return self._find_filesystem_service(user_id, conv_id) if hasattr(self, '_find_filesystem_service') else None
                 file_result = CheckpointManager.rewind_files(
                     conv_id, target_cp["id"], service_resolver=_svc_resolver)
                 result["files"] = file_result

@@ -101,7 +101,8 @@ class AgentToolConfigMixin:
                 def _fs_resolver(svc_id):
                     try:
                         from core.service_registry import ServiceRegistry
-                        return ServiceRegistry.get_instance().resolve(svc_id, user_id=user_id)
+                        return ServiceRegistry.get_instance().resolve(
+                            svc_id, user_id=user_id, conv_id=conversation_id)
                     except Exception:
                         return None
                 h.set_fs_resolver(_fs_resolver)
@@ -109,7 +110,8 @@ class AgentToolConfigMixin:
                 def _web_search_fs_resolver(svc_id):
                     try:
                         from core.service_registry import ServiceRegistry
-                        return ServiceRegistry.get_instance().resolve(svc_id, user_id=user_id)
+                        return ServiceRegistry.get_instance().resolve(
+                            svc_id, user_id=user_id, conv_id=conversation_id)
                     except Exception:
                         return None
                 h.set_fs_resolver(_web_search_fs_resolver)
@@ -244,10 +246,12 @@ class AgentToolConfigMixin:
                         _default_relay_pg = get_default(conversation_id, agent=_agent_name_pg)
                         if _default_relay_pg:
                             from core.service_registry import ServiceRegistry
-                            _relay_svc_pg = ServiceRegistry.get_instance().resolve(_default_relay_pg, user_id=user_id)
+                            _relay_svc_pg = ServiceRegistry.get_instance().resolve(
+                                _default_relay_pg, user_id=user_id, conv_id=conversation_id)
                     except Exception:
                         logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-                fs_svc_pg = _relay_svc_pg or self._find_filesystem_service(user_id)
+                fs_svc_pg = _relay_svc_pg or self._find_filesystem_service(
+                    user_id, conversation_id)
                 if fs_svc_pg:
                     h.set_fs_service(fs_svc_pg)
             elif isinstance(h, (AssignTaskHandler, CompleteTaskHandler, VerifyTaskHandler)):

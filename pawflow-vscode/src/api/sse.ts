@@ -1,6 +1,7 @@
 import * as http from 'http';
 import * as https from 'https';
 import { URL } from 'url';
+import { randomUUID } from 'crypto';
 import { EventEmitter } from 'events';
 import { SSE_PATH } from '../constants';
 import { SSEEvent } from './types';
@@ -32,6 +33,13 @@ export class SSEClient extends EventEmitter {
   // an idle session does NOT reload every few minutes.
   private pendingCatchUp = false;
   private static readonly CATCHUP_GAP_MS = 30000;
+  // Stable per-client id sent on every (re)connect. Without it the server
+  // can't correlate a reconnect with the stream it replaces (it keys stale-
+  // subscriber replacement on conversation_id + client_id), so each watchdog/
+  // lifetime/error reconnect would leak a server-side SSE subscriber until
+  // the dead socket is lazily reaped. Generated once per SSEClient instance
+  // and reused across all reconnects, mirroring the webchat's sessionStorage id.
+  private readonly clientId = `vscode-${randomUUID()}`;
 
   constructor(serverUrl: string, sessionToken: string, gatewayCookie: string = '') {
     super();
@@ -89,7 +97,9 @@ export class SSEClient extends EventEmitter {
   }
 
   private _connect(conversationId: string): void {
-    const path = `${SSE_PATH}?conversation_id=${conversationId}&token=${this.sessionToken}`;
+    const path = `${SSE_PATH}?conversation_id=${encodeURIComponent(conversationId)}`
+      + `&token=${encodeURIComponent(this.sessionToken)}`
+      + `&client_id=${encodeURIComponent(this.clientId)}`;
     const url = new URL(this.serverUrl + path);
     const isHttps = url.protocol === 'https:';
     const mod = isHttps ? https : http;

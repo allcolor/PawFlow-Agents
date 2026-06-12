@@ -302,6 +302,20 @@ If the flag is omitted, `PAWFLOW_CLI_WORKSPACE_MOUNT` is used. The default is `r
 
 When enabled, new Claude Code, Codex, and Gemini provider containers mount the default relay workspace at `/workspace`. All linked relays with a local `host_root` are also mounted under `/relay/<relay-id>`. Read-only mode appends Docker `:ro`; read-write mode allows provider-native tools to write through the fallback mount. Changing relay bindings invalidates affected live CLI sessions so the next session receives fresh mounts.
 
+## Default Models
+
+When an LLM service has no explicit `default_model`, the per-provider default
+comes from the first source found:
+
+1. `PAWFLOW_DEFAULT_MODELS_FILE` (env var, explicit path);
+2. `<data dir>/system/default_models.json` — runtime override, survives upgrades;
+3. `config/default_models.json` — shipped with the release (seeded into the
+   `/app/config` bind mount on first Docker boot);
+4. builtin fallback in `core/llm_client.py` (kept in sync with the shipped file).
+
+The file is a flat JSON object mapping provider type to model id, e.g.
+`{"anthropic": "claude-fable-5", "claude-code": "best"}`.
+
 ## Documentation Checklist For New Providers
 
 When adding a provider, document:

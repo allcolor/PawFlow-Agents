@@ -31,11 +31,13 @@ from core.llm_providers import (
 
 logger = logging.getLogger(__name__)
 
+# Last-resort fallback — keep in sync with config/default_models.json,
+# which is the shipped source of truth (editable without a release).
 _BUILTIN_MODEL_DEFAULTS = {
     "openai": "gpt-5.5",
-    "anthropic": "claude-opus-4-7",
-    "claude-code": "claude-opus-4-7",
-    "claude-code-interactive": "claude-opus-4-7",
+    "anthropic": "claude-fable-5",
+    "claude-code": "best",
+    "claude-code-interactive": "best",
     "antigravity-interactive": "gemini-3.5-flash",
     "codex-app-server": "gpt-5.5",
     "gemini": "gemini-3.1-pro",
@@ -43,24 +45,33 @@ _BUILTIN_MODEL_DEFAULTS = {
 
 
 def _load_default_models() -> Dict[str, str]:
-    path = Path(os.getenv(
-        "PAWFLOW_DEFAULT_MODELS_FILE",
-        Path(__file__).resolve().parents[1] / "data" / "system" / "default_models.json",
-    ))
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        # Optional override file — absence is the normal state.
-        logger.debug("default models config not present at %s; using builtin defaults", path)
-        return dict(_BUILTIN_MODEL_DEFAULTS)
-    except Exception as exc:
-        logger.warning("default models config unavailable at %s: %s", path, exc)
-        return dict(_BUILTIN_MODEL_DEFAULTS)
-    if not isinstance(data, dict):
-        logger.warning("default models config must be an object: %s", path)
-        return dict(_BUILTIN_MODEL_DEFAULTS)
-    configured = {str(k): str(v) for k, v in data.items() if k and v}
-    return configured or dict(_BUILTIN_MODEL_DEFAULTS)
+    env_path = os.getenv("PAWFLOW_DEFAULT_MODELS_FILE", "")
+    if env_path:
+        candidates = [Path(env_path)]
+    else:
+        from core.paths import SYSTEM_DIR
+        candidates = [
+            # Runtime override (data dir, survives upgrades)
+            SYSTEM_DIR / "default_models.json",
+            # Shipped defaults (seeded into /app/config in Docker)
+            Path(__file__).resolve().parents[1] / "config" / "default_models.json",
+        ]
+    for path in candidates:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            continue
+        except Exception as exc:
+            logger.warning("default models config unavailable at %s: %s", path, exc)
+            continue
+        if not isinstance(data, dict):
+            logger.warning("default models config must be an object: %s", path)
+            continue
+        configured = {str(k): str(v) for k, v in data.items() if k and v}
+        if configured:
+            return configured
+    logger.debug("no default models config found; using builtin defaults")
+    return dict(_BUILTIN_MODEL_DEFAULTS)
 
 
 @dataclass

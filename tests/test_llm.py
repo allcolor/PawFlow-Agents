@@ -308,6 +308,18 @@ class TestLLMConnectionService:
         assert _load_default_models() == configured
         assert set(configured) >= {"openai", "anthropic", "claude-code", "codex-app-server", "gemini"}
 
+    def test_default_models_use_shipped_config_when_no_runtime_override(self, monkeypatch):
+        from core.llm_client import _load_default_models
+
+        monkeypatch.delenv("PAWFLOW_DEFAULT_MODELS_FILE", raising=False)
+        shipped = json.loads(
+            open("config/default_models.json", encoding="utf-8").read())
+        defaults = _load_default_models()
+        # data/system override is absent in the test env → shipped config wins
+        assert defaults == shipped
+        assert defaults["anthropic"] == "claude-fable-5"
+        assert defaults["claude-code"] == "best"
+
     def test_default_models_fall_back_when_system_config_is_missing(self, monkeypatch, tmp_path, caplog):
         from core.llm_client import _load_default_models
 

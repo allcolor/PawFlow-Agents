@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 from core.docker_utils import docker_cmd, to_host_path, get_host_ip
+from core.apparmor import apparmor_security_opts
 
 logger = logging.getLogger(__name__)
 
@@ -652,7 +653,7 @@ class CodexPool:
             "--shm-size", "512m",
             "--tmpfs", "/tmp:rw,nosuid,size=512m",  # nosec B108 - Docker tmpfs mount target inside ephemeral container.
             "--cap-add", "SYS_ADMIN",  # needed for mount --bind in exec_codex
-            "--security-opt", "apparmor:unconfined",
+            *apparmor_security_opts(self.image),
             # Docker's init remains PID 1 and reaps docker exec children.
             "--entrypoint", "/usr/bin/sleep",
             self.image,

@@ -25,6 +25,7 @@ import uuid
 import core.paths as _paths
 from core.cc_interactive_certs import ca_private_key_is_host_only, generate_leaf
 from core.docker_utils import docker_cmd, get_server_id, to_host_path, translate_path
+from core.apparmor import apparmor_security_opts
 
 if TYPE_CHECKING:
     from core.llm_client import LLMClient
@@ -1338,7 +1339,7 @@ class AntigravityObserverPool:
             "--add-host", f"{ANTIGRAVITY_BACKEND_HOST}:127.0.0.1",
             "--add-host", "host.docker.internal:host-gateway",
             "--cap-add", "SYS_ADMIN",
-            "--security-opt", "apparmor:unconfined",
+            *apparmor_security_opts(image),
             "--shm-size", "512m",
             "--tmpfs", "/tmp:rw,nosuid,size=512m",  # nosec B108 - Docker tmpfs mount target inside ephemeral container.
             "--user", "root",

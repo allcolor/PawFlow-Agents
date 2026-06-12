@@ -28,6 +28,7 @@ import logging
 
 from core.cc_interactive_certs import generate_leaf, ca_private_key_is_host_only
 from core.docker_utils import docker_cmd, get_host_ip, get_server_id, to_host_path, translate_path
+from core.apparmor import apparmor_security_opts
 import core.paths as _paths
 
 
@@ -784,7 +785,7 @@ class InteractiveClaudeCodePool:
             "--add-host", "api.anthropic.com:127.0.0.1",
             "--add-host", "host.docker.internal:host-gateway",
             "--cap-add", "SYS_ADMIN",
-            "--security-opt", "apparmor:unconfined",
+            *apparmor_security_opts(image),
             "--shm-size", "512m",
             "--tmpfs", "/tmp:rw,nosuid,size=512m",  # nosec B108 - Docker tmpfs mount target inside ephemeral container.
             "--user", "root",

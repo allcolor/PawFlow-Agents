@@ -134,7 +134,10 @@ def test_cli_provider_pool_containers_allow_mount_namespace_binds():
     ):
         src = Path(path).read_text(encoding="utf-8")
         assert '"--cap-add", "SYS_ADMIN"' in src
-        assert '"--security-opt", "apparmor:unconfined"' in src
+        # AppArmor: pawflow-mount when loaded on the host, unconfined
+        # fallback otherwise (resolved once via core.apparmor).
+        assert '*apparmor_security_opts(' in src
+        assert '"--security-opt", "apparmor:unconfined"' not in src
         # Default seccomp already allows unshare/mount with CAP_SYS_ADMIN
         # (verified on a production host); unconfined would only widen the
         # kernel attack surface.

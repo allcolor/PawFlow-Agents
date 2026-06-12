@@ -167,16 +167,21 @@ Translation: /workspace/data/claude_sessions/abc/
 
 Interactive Claude Code and Antigravity containers need a private mount namespace
 for the per-user `/cc_sessions` bind. PawFlow starts those containers as root
-with `SYS_ADMIN` plus `apparmor:unconfined` so `unshare` and `mount --bind` are
-available inside the provider container. The default seccomp profile stays in
-place: it already allows `unshare`/`mount` when `CAP_SYS_ADMIN` is granted (the
-blocker is AppArmor's `docker-default` profile, which denies the mount syscall
-family even with the capability). To tighten further, load the
-`docker/apparmor/pawflow-mount` profile on the host (`sudo apparmor_parser -r
--W docker/apparmor/pawflow-mount`) and validate it with
-`scripts/test_apparmor_profile.sh`: it allows only the per-user session-slot
-bind (`/cc_sessions_host/** -> /cc_sessions/`) and keeps every other mount —
-including root propagation changes — denied. Treat
+with `SYS_ADMIN` so `unshare` and `mount --bind` are available inside the
+provider container. The default seccomp profile stays in place: it already
+allows `unshare`/`mount` when `CAP_SYS_ADMIN` is granted (the blocker is
+AppArmor's `docker-default` profile, which denies the mount syscall family
+even with the capability). For AppArmor the pools resolve a profile once per
+server process: if the `pawflow-mount` profile is loaded on the host, pool
+containers are confined by it — it allows only the per-user session-slot bind
+(`/cc_sessions_host/** -> /cc_sessions/`) and keeps every other mount,
+including root propagation changes, denied; otherwise they fall back to
+`apparmor:unconfined` (previous behaviour). Load the profile with `sudo
+apparmor_parser -r -W docker/apparmor/pawflow-mount` (copy it to
+`/etc/apparmor.d/` to persist across reboots), validate it with
+`scripts/test_apparmor_profile.sh`, then restart PawFlow so new pool
+containers pick it up. `PAWFLOW_APPARMOR_PROFILE` overrides the detection
+with a verbatim profile name. Treat
 those containers as privileged runtime surfaces: credentials are scoped per
 user/conversation/service, and workloads should remain isolated to the generated
 session directory.

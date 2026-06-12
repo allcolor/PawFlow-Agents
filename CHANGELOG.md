@@ -4,6 +4,37 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.0-alpha.22] — 2026-06-12
+
+### Fixed
+
+- Full scope-resolution audit (11 passes) across the four scoped chains —
+  ServiceRegistry, ResourceStore/repository, the secrets/params expression
+  cascade, and relay bindings. ~80 call sites that resolved only user/global
+  now walk the canonical conv > user > global chain, so conversation-scoped
+  services, agents, skills, prompts, secrets and relays (e.g. installed by
+  packages into a conversation) are visible everywhere they are used:
+  agent system prompts and Connected Relays, relay listing/connect/disconnect,
+  relay-proxy routes (tokens now carry the conversation), LLM service and
+  cost lookups, fs-service auto-detection, tool argument expression
+  resolution, and more.
+- Relay bindings: `/relay status` and the cognitive-ui build fallback now
+  read the per-agent bindings format correctly; whitelists, scans and
+  fs-manifest notifications cover agent-specific links via the new
+  `get_linked_all`.
+- Sub-conversations (`::task::`, `::task_verify::`, `::delegate::`) inherit
+  the parent conversation's agent roster, and all SSE/event routing and
+  task/config lookups recognize every sub-conversation marker instead of
+  only `::task::` — delegate events no longer vanish onto an unwatched bus.
+- Checkpoint rewind and cleanup actually work again: checkpoint files are
+  saved with an owner, but all reads passed no user_id and were silently
+  denied, so rewind restored nothing and expired checkpoints were never
+  deleted. Sandbox `filestore://` reads and the write handler no longer
+  wrongly deny the caller's own private files; filestore deletes now enforce
+  the owner check.
+- delete_agent routes to the scope the definition actually lives in
+  (conversation/user/global with admin gate), matching delete_skill.
+
 ## [1.0.0-alpha.10] — 2026-06-10
 
 ### Fixed

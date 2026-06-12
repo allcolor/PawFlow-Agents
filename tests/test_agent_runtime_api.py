@@ -163,7 +163,9 @@ def test_telegram_agent_client_dispatches_help_command(monkeypatch):
         lambda runtime_port: RuntimeTask(),
     )
 
-    result = TelegramAgentClientTask({})._handle_command("/help", "alice", "chat1")
+    result = TelegramAgentClientTask(
+        {"agent_runtime_port": "pawflow_agent.agent_runtime_in"},
+    )._handle_command("/help", "alice", "chat1")
 
     assert result.startswith("*Available Commands*")
     assert "*Session*" in result

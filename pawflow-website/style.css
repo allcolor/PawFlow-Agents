@@ -386,6 +386,12 @@ pre { margin: 0; padding: 18px; overflow-x: auto; color: #d9f5ff; font-size: 14p
 }
 
 @media (max-width: 980px) {
+  /* Single-column grids below use bare `1fr` (= minmax(auto,1fr)); without
+     min-width:0 a wide <pre> stretches the column past the viewport and
+     body{overflow-x:hidden} clips the whole page. */
+  .split > *, .doc-layout > *, .architecture-grid > *, .recipe > *,
+  .doc-body, .section-block, .code-card, .info-grid > div,
+  .step-list article > div { min-width: 0; }
   .site-header { padding: 12px 20px; }
   .nav-toggle { display: block; }
   .site-nav {
@@ -424,6 +430,8 @@ pre { margin: 0; padding: 18px; overflow-x: auto; color: #d9f5ff; font-size: 14p
   .button { width: 100%; }
   .visual-card figcaption { font-size: 12px; }
   .recipe, .doc-group, .feature, .cta-panel { padding: 20px; }
-  pre { font-size: 12px; }
+  /* Wrap long install commands instead of forcing horizontal scroll */
+  pre { font-size: 12px; white-space: pre-wrap; word-break: break-word; }
+  code { overflow-wrap: anywhere; }
   .footer-grid { flex-direction: column; align-items: flex-start; }
 }

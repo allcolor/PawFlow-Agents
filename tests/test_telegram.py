@@ -403,6 +403,53 @@ class TestTelegramSendTask(unittest.TestCase):
             "inline_keyboard": [[{"text": "A", "callback_data": "a"}]],
         }
 
+    def test_markdown_parse_error_retries_as_plain_text(self):
+        """A Telegram 400 'can't parse entities' must not lose the message:
+        the send is retried without parse_mode."""
+        from core import FlowFile
+        from tasks.io.telegram_send import TelegramSendTask
+
+        svc = MagicMock()
+        svc.send_message.side_effect = [
+            RuntimeError(
+                'Telegram API sendMessage returned 400: {"ok":false,'
+                '"error_code":400,"description":"Bad Request: can\'t parse '
+                'entities: Can\'t find end of the entity starting at byte '
+                'offset 81"}'),
+            {"message_id": 8},
+        ]
+        task = TelegramSendTask({"service_id": "tg", "chat_id": "456"})
+        task.get_service = lambda service_id: svc
+
+        ff = FlowFile(content=b"/conv new <agent> --title <title> agent_runtime_port")
+        ff.set_attribute("telegram.chat_id", "456")
+
+        out = task.execute(ff)
+
+        assert svc.send_message.call_count == 2
+        assert svc.send_message.call_args_list[0].kwargs["parse_mode"] == "Markdown"
+        assert svc.send_message.call_args_list[1].kwargs["parse_mode"] == ""
+        assert out[0].get_attribute("telegram.send_status") == "sent"
+        assert out[0].get_attribute("telegram.sent_message_id") == "8"
+
+    def test_non_parse_send_error_is_not_retried(self):
+        from core import FlowFile
+        from tasks.io.telegram_send import TelegramSendTask
+
+        svc = MagicMock()
+        svc.send_message.side_effect = RuntimeError(
+            "Telegram API sendMessage returned 403: bot was blocked")
+        task = TelegramSendTask({"service_id": "tg", "chat_id": "456"})
+        task.get_service = lambda service_id: svc
+
+        ff = FlowFile(content=b"hello")
+        ff.set_attribute("telegram.chat_id", "456")
+
+        out = task.execute(ff)
+
+        assert svc.send_message.call_count == 1
+        assert out[0].get_attribute("telegram.send_status") == "error"
+
     def test_tts_audio_attribute_is_sent_after_text(self):
         from core import FlowFile
         from tasks.io.telegram_send import TelegramSendTask

@@ -91,18 +91,20 @@ class TelegramSendTask(BaseTask):
                 bot_pool = TelegramBotPool.instance()
                 result = {}
                 if text.strip():
-                    result = bot_pool.send_message(
-                        user_bot_token, chat_id, text, parse_mode=parse_mode,
-                        reply_markup=reply_markup,
-                    )
+                    result = _send_with_parse_fallback(
+                        lambda mode: bot_pool.send_message(
+                            user_bot_token, chat_id, text, parse_mode=mode,
+                            reply_markup=reply_markup,
+                        ), parse_mode)
                 self._send_tts_audio(bot_pool, user_bot_token, chat_id, flowfile)
             else:
                 result = {}
                 if text.strip():
-                    result = svc.send_message(
-                        chat_id, text, parse_mode=parse_mode, reply_to=reply_to,
-                        reply_markup=reply_markup,
-                    )
+                    result = _send_with_parse_fallback(
+                        lambda mode: svc.send_message(
+                            chat_id, text, parse_mode=mode, reply_to=reply_to,
+                            reply_markup=reply_markup,
+                        ), parse_mode)
                 self._send_tts_audio(svc, "", chat_id, flowfile)
             flowfile.set_attribute("telegram.sent_message_id",
                                    str(result.get("message_id", "")))
@@ -147,6 +149,20 @@ class TelegramSendTask(BaseTask):
         except Exception:
             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         return None
+
+
+def _send_with_parse_fallback(send, parse_mode: str) -> dict:
+    """Send with the configured parse_mode; on a Telegram entity-parse 400,
+    retry once as plain text so the message is delivered instead of lost."""
+    try:
+        return send(parse_mode)
+    except Exception as exc:
+        if parse_mode and "can't parse entities" in str(exc):
+            logger.warning(
+                "telegramSend: %s parsing rejected by Telegram, retrying as "
+                "plain text: %s", parse_mode, exc)
+            return send("")
+        raise
 
 
 def _parse_reply_markup(raw: str) -> Optional[Dict[str, Any]]:

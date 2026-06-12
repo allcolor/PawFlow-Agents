@@ -117,7 +117,10 @@ parameter resolves at execution time to a running flow port such as
 `agentRuntime` input port. When the parameter is empty, both regular messages
 and slash commands fall back to the live `agentLoop` instance. Command-handling
 failures are reported back to the Telegram chat as `Command failed: ...` instead
-of silently dropping the message. The Telegram client task is concurrent so a second
+of silently dropping the message. `telegramSend` retries once as plain text when
+Telegram rejects the configured `parse_mode` with a 400 entity-parse error
+(unbalanced `_`/`*` in command names or code), so the reply is delivered
+unformatted instead of lost. The Telegram client task is concurrent so a second
 Telegram message can reach the running agent and preempt or queue while an older
 Telegram request is still waiting for its final response. Runtime ACKs that are
 only preemption or queue acknowledgements do not wait for a separate `done`

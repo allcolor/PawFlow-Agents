@@ -23,16 +23,30 @@ IMAGE="${IMAGE:-pawflow-relay-dev:latest}"
 PROFILE="${PROFILE:-pawflow-relay}"
 fail=0
 
+# Accept either a short name or a registry-qualified ref. If the given ref
+# isn't present locally, retry under ghcr.io/allcolor/ (how the images are
+# tagged on the deploy hosts) before giving up.
+if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+    alt="ghcr.io/allcolor/$IMAGE"
+    if docker image inspect "$alt" >/dev/null 2>&1; then IMAGE="$alt"; fi
+fi
+
+# Run as root so SYS_ADMIN is *effective*: this reproduces the relay's real
+# combined-fs path (pyfuse3 issues mount() directly under SYS_ADMIN), which
+# is what the pawflow-relay profile mediates. As a non-root user the mount
+# would instead go through fusermount3's own profile and skip our rules,
+# and the negative checks would pass on lack of privilege rather than on the
+# profile.
 run() {
-    docker run --rm --cap-add SYS_ADMIN --device /dev/fuse \
+    docker run --rm -u 0 --cap-add SYS_ADMIN --device /dev/fuse \
         --security-opt "apparmor=$PROFILE" "$IMAGE" sh -c "$1"
 }
 
 # rclone mount helper: mount an ephemeral :memory: remote at $1, confirm it
 # is a mountpoint, unmount. Prints MOUNT-OK on success.
 rclone_at='
-  t="$1"; mkdir -p "$t" || exit 3
-  rclone mount :memory: "$t" --daemon --config /dev/null 2>/tmp/rc.err || exit 4
+  t="$1"; mkdir -p "$t" || { echo "mkdir-failed: $t"; exit 3; }
+  rclone mount :memory: "$t" --daemon --config /dev/null 2>/tmp/rc.err || { echo "rclone-mount-rc=$?"; cat /tmp/rc.err; exit 4; }
   for i in 1 2 3 4 5 6 7 8 9 10; do mountpoint -q "$t" && break; sleep 0.3; done
   if mountpoint -q "$t"; then echo MOUNT-OK; else cat /tmp/rc.err; exit 5; fi
   fusermount3 -u "$t" 2>/dev/null || umount "$t" 2>/dev/null

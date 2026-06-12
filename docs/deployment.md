@@ -186,6 +186,20 @@ those containers as privileged runtime surfaces: credentials are scoped per
 user/conversation/service, and workloads should remain isolated to the generated
 session directory.
 
+The **relay** container still runs `apparmor:unconfined` because it creates
+FUSE mounts (the combined server-fs at `/tmp/pf_combined_fs`; rclone remote
+mounts under `/remote`) that `docker-default` blocks. A candidate profile
+`docker/apparmor/pawflow-relay` keeps the docker-default `/proc`+`/sys`
+hardening and allows only `fuse`/`fuse.*` mounts under those two roots, while
+denying arbitrary binds and propagation changes (the relay runs arbitrary dev
+tooling, so `file`/`capability` stay broad — the win over unconfined is mount
+mediation plus proc/sys hardening). It is **not yet wired in**. To adopt it:
+load it (`sudo apparmor_parser -r -W docker/apparmor/pawflow-relay`), run
+`scripts/test_apparmor_relay_profile.sh` (needs `pawflow-relay-dev`), then boot
+a real relay with `--security-opt apparmor=pawflow-relay` and confirm
+`[FSRelay] combined-fs mounted` in its log before switching `thread.py` /
+`docker-compose.yml` off `unconfined`.
+
 Build:
 ```bash
 bash docker/claude-code/build.sh

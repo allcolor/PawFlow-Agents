@@ -290,6 +290,12 @@ class SSEClient:
         self._conn = None
         self.events: queue.Queue = queue.Queue()
         self.connected = False
+        # Stable per-client id sent on every SSE (re)connect. Without it the
+        # server can't correlate a reconnect with the stream it replaces (it
+        # keys stale-subscriber replacement on conversation_id + client_id), so
+        # every auto-reconnect would leak a server-side SSE subscriber. Same
+        # fix as the webchat and the VS Code extension.
+        self._client_id = f"pawcode-{uuid4().hex}"
 
     def connect(self, conversation_id: str):
         """Start SSE connection in background thread."""
@@ -335,6 +341,7 @@ class SSEClient:
             self._conn = None
 
         path = f"/api/agent/events?conversation_id={conversation_id}"
+        path += f"&client_id={self._client_id}"
         if self.session_token:
             path += f"&token={self.session_token}"
 

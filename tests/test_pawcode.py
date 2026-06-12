@@ -794,3 +794,25 @@ class TestRetryParsing:
         delay = LLMClient._parse_retry_after(
             "PLEASE TRY AGAIN IN 5.0S")
         assert 4.9 <= delay <= 5.1
+
+
+class TestPawCodeSSEClientId:
+    """PawCode must send a stable client_id on SSE so reconnects replace the
+    server-side subscriber instead of leaking one each time (the same
+    subscriber-leak bug fixed in the webchat and the VS Code extension)."""
+
+    def test_sse_client_has_stable_unique_client_id(self):
+        from pawflow_cli.api import SSEClient
+        c1 = SSEClient("http://localhost:9090", "tok")
+        c2 = SSEClient("http://localhost:9090", "tok")
+        assert c1._client_id.startswith("pawcode-")
+        # Stable across calls on the same instance (reused on every reconnect).
+        assert c1._client_id == c1._client_id
+        # Unique per instance.
+        assert c1._client_id != c2._client_id
+
+    def test_sse_path_includes_client_id(self):
+        import inspect
+        from pawflow_cli.api import SSEClient
+        src = inspect.getsource(SSEClient)
+        assert "&client_id={self._client_id}" in src

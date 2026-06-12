@@ -2514,10 +2514,16 @@ def test_cci_terminal_viewer_attaches_tmux_as_pool_uid_not_hardcoded():
     end = src.index('if action in {"open_antigravity_interactive_terminal"')
     block = src[start:end]
 
-    # The CCI viewer derives the uid from the pool and uses it for both the
-    # attach exec and the resize exec.
+    # The CCI viewer derives the uid from the pool and uses it for the attach
+    # exec. There is exactly ONE such exec now: the resize exec was removed so
+    # the viewer can never resize the agent's pinned tmux window (the resize
+    # SIGWINCH corrupted in-flight CCI captures). See the pool's window-size
+    # manual pinning.
     assert "user_spec = pool._user_spec()" in block
-    assert block.count('"--user", user_spec') == 2
+    assert block.count('"--user", user_spec') == 1
+    # The viewer must NOT resize the shared pawflow window.
+    assert 'resize-window", "-t", "pawflow"' not in block
+    assert "server_pipe_resize_command=None" in block
     # And never pins the CLI uid to a literal inside this block.
     assert "1000:1000" not in block
 
@@ -2525,3 +2531,17 @@ def test_cci_terminal_viewer_attaches_tmux_as_pool_uid_not_hardcoded():
     # it legitimately keeps the literal — guard that we did not touch it.
     agy = src[end:]
     assert agy.count('"--user", "1000:1000"') >= 1
+
+
+def test_cci_tmux_session_pins_window_size_so_viewer_cannot_resize():
+    """Opening/closing the webchat tmux viewer must NOT resize Claude Code's
+    terminal. The session is created at a fixed size and pinned to window-size
+    manual so a client attaching/detaching never SIGWINCHes the TUI mid-turn
+    (measured 20x6 detached -> 320x86 on viewer open, which corrupted the
+    in-flight capture).
+    """
+    from pathlib import Path
+
+    src = Path("core/claude_code_interactive_pool.py").read_text(encoding="utf-8")
+    assert "tmux new-session -d -s pawflow -x 220 -y 50" in src
+    assert "window-size manual" in src

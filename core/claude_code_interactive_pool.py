@@ -999,7 +999,7 @@ class InteractiveClaudeCodePool:
             f"mkdir -p tasks projects && chown -R {self.run_uid}:{self.run_gid} "
             "tasks projects && ("
             f"{drop_privs} tmux kill-session -t pawflow 2>/dev/null || true; "
-            f"{drop_privs} tmux new-session -d -s pawflow "
+            f"{drop_privs} tmux new-session -d -s pawflow -x 220 -y 50 "
             f"'env HOME={shlex.quote(ns_workdir)} USER=pawflow "
             f"CLAUDE_CONFIG_DIR={shlex.quote(ns_workdir)} "
             f"NODE_EXTRA_CA_CERTS={shlex.quote(ca_path.replace(container_workdir, ns_workdir, 1))} "
@@ -1009,7 +1009,16 @@ class InteractiveClaudeCodePool:
             f"PAWFLOW_INTERNAL_TOKEN={shlex.quote(internal_token)} "
             f"PAWFLOW_CCI_INJECTED_PROMPTS={shlex.quote(ns_workdir + '/.pawflow_cci/injected_prompts.jsonl')} "
             "CLAUDE_CODE_CERT_STORE=system TERM=xterm-256color "
-            f"{quoted}')"
+            f"{quoted}'; "
+            # Pin the window size so a webchat tmux viewer attaching/detaching
+            # never resizes Claude Code's terminal. tmux otherwise resizes the
+            # window to the attached client (measured: 20x6 detached -> 320x86
+            # when the viewer opens), and that SIGWINCH reflows the Ink TUI
+            # mid-turn, corrupting the in-flight capture (garbled/spliced text,
+            # phantom empty rows, stuck-active). With window-size manual the
+            # viewer is a passive, letterboxed view of the fixed pane.
+            f"{drop_privs} tmux set-window-option -t pawflow window-size manual 2>/dev/null || true; "
+            f"{drop_privs} tmux set-window-option -t pawflow aggressive-resize off 2>/dev/null || true)"
         )
         r = subprocess.run(  # nosec B603
             docker_cmd() + ["exec", "--user", "root", name,

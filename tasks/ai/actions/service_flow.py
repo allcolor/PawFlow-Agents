@@ -3774,11 +3774,16 @@ finally:
                 conversation_id=conversation_id,
                 login_session_id=flowfile.get_attribute("auth.session_id") or "",
                 server_pipe_command=cmd,
-                server_pipe_resize_command=(docker_cmd() + [
-                    "exec", "--user", user_spec, state.name,
-                    "tmux", "resize-window", "-t", "pawflow",
-                    "-x", "{cols}", "-y", "{rows}",
-                ]))
+                # NO resize propagation. The pawflow window is pinned to a
+                # fixed size with window-size manual (see
+                # claude_code_interactive_pool._start_claude_tmux), so the
+                # viewer must never resize the agent's terminal: a browser
+                # resize that ran `tmux resize-window -t pawflow` SIGWINCHed
+                # Claude Code's Ink TUI mid-turn and corrupted the in-flight
+                # capture (garbled/spliced text, phantom empty rows,
+                # stuck-active). Browser resize is now a no-op; the client
+                # letterboxes the fixed pane.
+                server_pipe_resize_command=None)
 
             _ensure_terminal_routes(flowfile)
 

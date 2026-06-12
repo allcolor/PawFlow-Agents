@@ -91,6 +91,22 @@ class AntigravityObserverPool:
     def __init__(self):
         self._lock = threading.Lock()
         self._sessions: dict[tuple[str, str, str, str], AntigravityObserverSession] = {}
+        # Run the in-container CLI as the host launcher's uid/gid
+        # (PAWFLOW_RUN_UID/GID) — the uid that owns the cc_sessions slot — never
+        # a hardcoded 1000, which lands in the wrong /tmp/tmux-<uid>/ and hits
+        # EACCES on deployments launched under a different uid (e.g. 1001).
+        # Same contract as every other provider pool (CCI/codex/gemini).
+        self.run_uid = self._numeric_env("PAWFLOW_RUN_UID", "1000")
+        self.run_gid = self._numeric_env("PAWFLOW_RUN_GID", "1000")
+
+    @staticmethod
+    def _numeric_env(name: str, default: str) -> str:
+        value = os.environ.get(name, default).strip()
+        return value if value.isdigit() else default
+
+    def _user_spec(self) -> str:
+        """`<uid>:<gid>` for `docker exec --user`, mapped to the host launcher."""
+        return f"{self.run_uid}:{self.run_gid}"
 
     @staticmethod
     def _safe(value: str) -> str:
@@ -1044,7 +1060,7 @@ class AntigravityObserverPool:
     def _cancel_copy_mode(self, state: AntigravityObserverSession) -> None:
         try:
             subprocess.run(  # nosec B603
-                docker_cmd() + ["exec", "--user", "1000:1000", state.name,
+                docker_cmd() + ["exec", "--user", self._user_spec(), state.name,
                                 "tmux", "send-keys", "-t", self._TMUX_TARGET, "-X", "cancel"],
                 capture_output=True, timeout=5)
         except Exception:
@@ -1067,7 +1083,7 @@ class AntigravityObserverPool:
             return ""
         start = f"-{max(1, int(lines or 80))}"
         r = subprocess.run(  # nosec B603
-            docker_cmd() + ["exec", "--user", "1000:1000", state.name,
+            docker_cmd() + ["exec", "--user", self._user_spec(), state.name,
                             "tmux", "capture-pane", "-pt", self._TMUX_TARGET,
                             "-S", start],
             capture_output=True, timeout=10)
@@ -1083,7 +1099,7 @@ class AntigravityObserverPool:
             state.last_error = f"Container {state.name} is not running"
             return False
         r = subprocess.run(  # nosec B603
-            docker_cmd() + ["exec", "--user", "1000:1000", state.name,
+            docker_cmd() + ["exec", "--user", self._user_spec(), state.name,
                             "tmux", "send-keys", "-t", self._TMUX_TARGET, *keys],
             capture_output=True, timeout=10)
         if r.returncode != 0:
@@ -1093,7 +1109,7 @@ class AntigravityObserverPool:
 
     def _load_buffer(self, state: AntigravityObserverSession, text: str) -> bool:
         r = subprocess.run(  # nosec B603
-            docker_cmd() + ["exec", "-i", "--user", "1000:1000", state.name,
+            docker_cmd() + ["exec", "-i", "--user", self._user_spec(), state.name,
                             "tmux", "load-buffer", "-"],
             input=(text or "").encode("utf-8"), capture_output=True, timeout=15)
         if r.returncode != 0:
@@ -1103,7 +1119,7 @@ class AntigravityObserverPool:
 
     def _paste_buffer(self, state: AntigravityObserverSession) -> bool:
         r = subprocess.run(  # nosec B603
-            docker_cmd() + ["exec", "--user", "1000:1000", state.name,
+            docker_cmd() + ["exec", "--user", self._user_spec(), state.name,
                             "tmux", "paste-buffer", "-p", "-t", self._TMUX_TARGET],
             capture_output=True, timeout=10)
         if r.returncode != 0:
@@ -1430,18 +1446,24 @@ class AntigravityObserverPool:
         ns_workdir = "/cc_sessions/" + "/".join(parts[2:])
         agy_bin = os.environ.get("PAWFLOW_ANTIGRAVITY_BIN", "agy")
         quoted_cmd = " ".join(shlex.quote(a) for a in [agy_bin, "--dangerously-skip-permissions"])
-        drop_privs = "setpriv --reuid=1000 --regid=1000 --clear-groups --"
+        drop_privs = f"setpriv --reuid={self.run_uid} --regid={self.run_gid} --clear-groups --"
         shell = (
             "mkdir -p /cc_sessions && "
             f"mount --bind {shlex.quote(user_slot)} /cc_sessions && "
             f"cd {shlex.quote(ns_workdir)} && ("
             f"{drop_privs} tmux kill-session -t pawflow-agy 2>/dev/null || true; "
-            f"{drop_privs} tmux new-session -d -s pawflow-agy "
+            f"{drop_privs} tmux new-session -d -s pawflow-agy -x 220 -y 50 "
             f"'env HOME={shlex.quote(ns_workdir)} "
             f"GEMINI_CLI_HOME={shlex.quote(ns_workdir)} "
             f"CASCADE_ENABLE_MCP_TOOLS=true "
             f"USER=pawflow TERM=xterm-256color "
-            f"{quoted_cmd}')"
+            f"{quoted_cmd}'; "
+            # Pin the window size so the webchat tmux viewer attaching/detaching
+            # never resizes the agent's terminal (a mid-turn SIGWINCH reflows
+            # the TUI and corrupts the in-flight capture). Same fix as the CCI
+            # pool; the viewer is a passive, letterboxed view of the fixed pane.
+            f"{drop_privs} tmux set-window-option -t pawflow-agy window-size manual 2>/dev/null || true; "
+            f"{drop_privs} tmux set-window-option -t pawflow-agy aggressive-resize off 2>/dev/null || true)"
         )
         r = subprocess.run(  # nosec B603
             docker_cmd() + ["exec", "--user", "root", name,
@@ -1452,7 +1474,7 @@ class AntigravityObserverPool:
         if r.returncode != 0:
             raise RuntimeError(f"Failed to start Antigravity tmux: {r.stderr[:500]}")
         probe = subprocess.run(  # nosec B603
-            docker_cmd() + ["exec", "--user", "1000:1000", name,
+            docker_cmd() + ["exec", "--user", self._user_spec(), name,
                             "tmux", "has-session", "-t", "pawflow-agy"],
             capture_output=True, text=True, timeout=10)
         if probe.returncode != 0:
@@ -1475,7 +1497,7 @@ class AntigravityObserverPool:
             "tmux send-keys -t pawflow-agy Escape"
         )
         r = subprocess.run(  # nosec B603
-            docker_cmd() + ["exec", "--user", "1000:1000", name, "bash", "-lc", prime],
+            docker_cmd() + ["exec", "--user", self._user_spec(), name, "bash", "-lc", prime],
             capture_output=True, text=True, timeout=8)
         if r.returncode != 0:
             logger.warning(

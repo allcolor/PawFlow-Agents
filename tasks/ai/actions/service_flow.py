@@ -3822,6 +3822,11 @@ finally:
                 except Exception:
                     service_id = ""
             pool = AntigravityObserverPool.instance()
+            # Attach/exec as the pool's run_uid (PAWFLOW_RUN_UID-derived), not a
+            # hardcoded 1000 — otherwise the viewer lands in the wrong
+            # /tmp/tmux-<uid>/ and reports 'no sessions' on deployments launched
+            # under a different uid. Same contract as the CCI viewer.
+            user_spec = pool._user_spec()
             state = pool.find_session(
                 user_id=user_id,
                 conversation_id=conversation_id,
@@ -3924,7 +3929,7 @@ finally:
         pass
 '''
             cmd = docker_cmd() + [
-                "exec", "-i", "--user", "1000:1000",
+                "exec", "-i", "--user", user_spec,
                 "-e", f"PAWFLOW_TERM_COLS={cols}",
                 "-e", f"PAWFLOW_TERM_ROWS={rows}",
                 "-e", "PAWFLOW_TMUX_SESSION=pawflow-agy",
@@ -3938,11 +3943,12 @@ finally:
                 conversation_id=conversation_id,
                 login_session_id=flowfile.get_attribute("auth.session_id") or "",
                 server_pipe_command=cmd,
-                server_pipe_resize_command=(docker_cmd() + [
-                    "exec", "--user", "1000:1000", state.name,
-                    "tmux", "resize-window", "-t", "pawflow-agy",
-                    "-x", "{cols}", "-y", "{rows}",
-                ]))
+                # NO resize propagation: the pawflow-agy window is pinned to a
+                # fixed size with window-size manual (see
+                # antigravity_observer_pool), so the viewer must never resize
+                # the agent's terminal. Browser resize is a no-op; the client
+                # letterboxes the fixed pane. Same fix as the CCI viewer.
+                server_pipe_resize_command=None)
 
             _ensure_terminal_routes(flowfile)
 

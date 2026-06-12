@@ -1202,3 +1202,38 @@ def test_observer_http1_parser_emits_json_and_sse_shapes(monkeypatch):
     )
     deltas = [event for event in events if event.get("type") == "ag_text_delta"]
     assert deltas[-1]["text"] == "ok"
+
+
+def test_agy_pool_runs_as_pawflow_run_uid_not_hardcoded_1000():
+    """Every provider CLI must run under the host launcher's PAWFLOW_RUN_UID,
+    never a hardcoded 1000:1000 (which lands in the wrong /tmp/tmux-<uid>/ and
+    EACCESes the cc_sessions slot on deployments launched under another uid).
+    The Antigravity pool was the last holdout; lock it to the shared contract.
+    """
+    import inspect
+    from core import antigravity_observer_pool as pool_mod
+
+    src = inspect.getsource(pool_mod)
+    # No hardcoded uid literals anywhere in the pool.
+    assert "1000:1000" not in src
+    assert "reuid=1000" not in src
+    assert "regid=1000" not in src
+    # Derives the uid from PAWFLOW_RUN_UID, exposes _user_spec, and execs use it.
+    assert 'self._numeric_env("PAWFLOW_RUN_UID"' in src
+    assert "def _user_spec" in src
+    assert '"--user", self._user_spec()' in src
+    assert "setpriv --reuid={self.run_uid} --regid={self.run_gid}" in src
+    # And the tmux window is pinned so a viewer attach/detach can't resize it.
+    assert "tmux new-session -d -s pawflow-agy -x 220 -y 50" in src
+    assert "window-size manual" in src
+
+
+def test_agy_pool_user_spec_follows_run_uid_env(monkeypatch):
+    """_user_spec reflects PAWFLOW_RUN_UID/GID at construction."""
+    from core.antigravity_observer_pool import AntigravityObserverPool
+    monkeypatch.setenv("PAWFLOW_RUN_UID", "1001")
+    monkeypatch.setenv("PAWFLOW_RUN_GID", "1001")
+    assert AntigravityObserverPool()._user_spec() == "1001:1001"
+    monkeypatch.delenv("PAWFLOW_RUN_UID", raising=False)
+    monkeypatch.delenv("PAWFLOW_RUN_GID", raising=False)
+    assert AntigravityObserverPool()._user_spec() == "1000:1000"

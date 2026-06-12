@@ -2527,10 +2527,14 @@ def test_cci_terminal_viewer_attaches_tmux_as_pool_uid_not_hardcoded():
     # And never pins the CLI uid to a literal inside this block.
     assert "1000:1000" not in block
 
-    # The Antigravity viewer is a separate block whose pool is still 1000, so
-    # it legitimately keeps the literal — guard that we did not touch it.
+    # The Antigravity viewer now derives the uid from its pool too: NO provider
+    # may hardcode 1000:1000 — every CLI runs under the host launcher's
+    # PAWFLOW_RUN_UID. The whole action file is free of the literal, and the
+    # AGY viewer uses user_spec and never resizes its pinned window.
+    assert "1000:1000" not in src
     agy = src[end:]
-    assert agy.count('"--user", "1000:1000"') >= 1
+    assert "user_spec = pool._user_spec()" in agy
+    assert 'resize-window", "-t", "pawflow-agy"' not in agy
 
 
 def test_cci_tmux_session_pins_window_size_so_viewer_cannot_resize():

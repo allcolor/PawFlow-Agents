@@ -87,8 +87,6 @@ class TelegramAgentClientTask(BaseTask):
             flowfile.set_content(f"Command failed: {exc}".encode("utf-8"))
             return [flowfile]
         if command_response is not None:
-            if _should_mirror_telegram_command(text):
-                self._mirror_command_to_conversation(flowfile, text, user_id)
             _apply_telegram_response(flowfile, command_response)
             return [flowfile]
 
@@ -209,46 +207,6 @@ class TelegramAgentClientTask(BaseTask):
         flowfile.set_attribute("agent.conversation_id", submission.conversation_id)
         flowfile.set_attribute("agent.turn_id", submission.turn_id)
         return [flowfile]
-
-    def _mirror_command_to_conversation(self, flowfile: FlowFile, text: str, user_id: str) -> None:
-        if not text:
-            return
-        try:
-            from core.identity_service import IdentityService
-            conversation_id = IdentityService.instance().get_active_conv(user_id, "telegram") or ""
-            if not conversation_id:
-                return
-            target_agent = self._selected_agent_for_conversation(
-                conversation_id, persist_default=False)
-            if not target_agent:
-                return
-            from core.conversation_writer import ConversationWriter
-            from core.llm_client import stamp_message
-            msg_id = f"telegram:{flowfile.get_attribute('telegram.chat_id') or ''}:{flowfile.get_attribute('telegram.message_id') or ''}"
-            message = stamp_message({
-                "role": "user",
-                "content": text,
-                "source": {"type": "user", "name": user_id, "target_agent": target_agent},
-                "msg_id": msg_id,
-                "channel": "telegram",
-            }, conversation_id)
-            ConversationWriter.for_conversation(conversation_id).enqueue_message(
-                message,
-                agent_name=target_agent,
-                user_id=user_id,
-                wait=True,
-                sse_events=[{"type": "new_message", "data": {
-                    "role": "user",
-                    "content": message.get("content", ""),
-                    "msg_id": message.get("msg_id", ""),
-                    "ts": message.get("ts"),
-                    "source": message.get("source") or {},
-                    "channel": "telegram",
-                    "attachments": [],
-                }}],
-            )
-        except Exception:
-            logger.warning("Telegram command mirror to conversation failed", exc_info=True)
 
     def _handle_command(self, text: str, user_id: str, chat_id: str) -> Optional[str]:
         command = _telegram_command_name(text)
@@ -602,13 +560,6 @@ def _normalize_telegram_command_text(text: str) -> str:
     parts = stripped.split(None, 1)
     command = _telegram_command_name(stripped)
     return command + ((" " + parts[1]) if len(parts) > 1 else "")
-
-
-def _should_mirror_telegram_command(text: str) -> bool:
-    command = _telegram_command_name(text)
-    if not command.startswith("/"):
-        return False
-    return command not in {"/conv", "/tts"}
 
 
 def _apply_telegram_response(flowfile: FlowFile, response: Any) -> None:

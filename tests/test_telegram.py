@@ -842,7 +842,9 @@ class TestTelegramAgentClientTask(unittest.TestCase):
             _p.USER_CONFIG_DIR = orig_ucd
             shutil.rmtree(tmp, ignore_errors=True)
 
-    def test_agent_client_mirrors_dispatch_command_to_webchat(self):
+    def test_agent_client_does_not_mirror_dispatch_command_to_conversation(self):
+        """Slash commands are client-internal: they must never appear in the
+        shared conversation (webchat, VS Code, PawCode)."""
         import shutil
         import tempfile
         from unittest.mock import patch
@@ -872,8 +874,7 @@ class TestTelegramAgentClientTask(unittest.TestCase):
 
             class Writer:
                 def enqueue_message(self, msg, **kwargs):
-                    recorded["msg"] = msg
-                    recorded["kwargs"] = kwargs
+                    recorded["mirrored"] = msg
 
             task = TelegramAgentClientTask({"agent_runtime_port": "pawflow_agent.agent_runtime_in"})
             ff = FlowFile(content=b"/help@SomeBot")
@@ -888,14 +889,7 @@ class TestTelegramAgentClientTask(unittest.TestCase):
 
             assert b"Available commands" in out[0].get_content()
             assert recorded["runtime_body"]["text"] == "/help"
-            assert recorded["msg"]["content"] == "/help@SomeBot"
-            assert recorded["msg"]["channel"] == "telegram"
-            assert recorded["msg"]["msg_id"] == "telegram:111111:m-help"
-            assert recorded["kwargs"]["wait"] is True
-            evt = recorded["kwargs"]["sse_events"][0]
-            assert evt["type"] == "new_message"
-            assert evt["data"]["channel"] == "telegram"
-            assert evt["data"]["content"] == "/help@SomeBot"
+            assert "mirrored" not in recorded
         finally:
             IdentityService.reset()
             _p.USER_CONFIG_DIR = orig_ucd

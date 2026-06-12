@@ -111,7 +111,9 @@ show inline buttons to resume an existing conversation. Telegram keeps `/conv`
 and `/tts` as channel-local commands; other slash commands are sent through the
 shared server-side command dispatcher. `/help` uses that shared dispatcher and
 renders the command reference for Telegram even before a conversation is
-resumed. The optional `agent_runtime_port`
+resumed. Slash commands are client-internal: they are never written to the
+shared conversation, so other clients (webchat, VS Code, PawCode) do not see
+them. The optional `agent_runtime_port`
 parameter resolves at execution time to a running flow port such as
 `pawflow_agent.agent_runtime_in`; the target flow must be running and declare an
 `agentRuntime` input port. When the parameter is empty, both regular messages

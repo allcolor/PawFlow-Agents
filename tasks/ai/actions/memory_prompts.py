@@ -136,7 +136,8 @@ def _handle_memory_prompts(self, action, body, store, user_id, flowfile):
             return [flowfile]
         from core.resource_store import ResourceStore
         rs = ResourceStore.instance()
-        skill_def = rs.get_any("skill", skill_name, user_id)
+        skill_def = rs.get_any("skill", skill_name, user_id,
+                               conversation_id=body.get("conversation_id", ""))
         if not skill_def:
             flowfile.set_content(json.dumps({"error": "Skill not found"}).encode())
             flowfile.set_attribute("http.response.status", "404")
@@ -176,7 +177,8 @@ def _handle_memory_prompts(self, action, body, store, user_id, flowfile):
             return [flowfile]
         from core.resource_store import ResourceStore
         rs = ResourceStore.instance()
-        prompt_def = rs.get_any("prompt", name, user_id)
+        prompt_def = rs.get_any("prompt", name, user_id,
+                                conversation_id=body.get("conversation_id", ""))
         if not prompt_def:
             flowfile.set_content(json.dumps({"error": "Prompt not found"}).encode())
             flowfile.set_attribute("http.response.status", "404")
@@ -200,7 +202,8 @@ def _handle_memory_prompts(self, action, body, store, user_id, flowfile):
             return [flowfile]
         from core.resource_store import ResourceStore
         rs = ResourceStore.instance()
-        prompt_def = rs.get_any("prompt", name, user_id)
+        prompt_def = rs.get_any("prompt", name, user_id,
+                                conversation_id=body.get("conversation_id", ""))
         if not prompt_def:
             flowfile.set_content(json.dumps({"error": "Prompt not found"}).encode())
             flowfile.set_attribute("http.response.status", "404")

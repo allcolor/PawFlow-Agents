@@ -78,7 +78,9 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             raise ValueError("BUG: missing http.auth.principal on flowfile — all requests require authentication")
         # Task-level llm_service is a fallback — per-agent config takes priority
         # (resolved later when active agent is known)
-        task_llm_service = self._resolve_service_param("llm_service", _user_id_for_svc)
+        task_llm_service = self._resolve_service_param(
+            "llm_service", _user_id_for_svc,
+            flowfile.get_attribute("conversation_id") or "")
         client, resolved_svc = None, None
         if task_llm_service and not task_llm_service.startswith("${"):
             # Resolved service ID — try to connect
@@ -141,7 +143,8 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 # Get description from definition
                 _acfg = _gac2(_cid_for_agents, _inst_name)
                 _def_name = _acfg["definition"]
-                _adef = _rs.get_any("agent", _def_name, _uid_for_agents)
+                _adef = _rs.get_any("agent", _def_name, _uid_for_agents,
+                                    conversation_id=_cid_for_agents)
                 if _adef:
                     _desc = (_adef.get("description", "") or "").strip()[:120]
                     if not _desc:
@@ -153,7 +156,8 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                         _info["definition"] = _def_name
                 _info["llm_service"] = resolve_value(
                     _acfg.get("llm_service", ""),
-                    owner=_uid_for_agents) or ""
+                    owner=_uid_for_agents,
+                    conversation_id=_cid_for_agents) or ""
                 if _acfg.get("tools"):
                     _info["tools"] = _acfg["tools"]
                 _agent_infos.append(_info)
@@ -1662,7 +1666,8 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             "request_msg_id": flowfile.get_attribute("agent.request_msg_id") or "",
             "active_agent_name": _active_agent_name,  # MUST be non-empty — see _ensure_active_agent
             "active_llm_service": _active_llm_service,
-            "title_llm_service": self._resolve_service_param("title_llm_service", user_id),
+            "title_llm_service": self._resolve_service_param(
+                "title_llm_service", user_id, conversation_id),
             "resolved_svc": resolved_svc,
             "max_budget_usd": _max_budget,
             "summarizer": self._get_summarizer_client(user_id, conversation_id=conversation_id),  # (client, max_ctx, svc_id)

@@ -552,7 +552,8 @@ def _orchestrate_next_step(self, conv_id, plan_id, user_id, delay: int = 10):
     # Validate agent exists
     try:
         from core.resource_store import ResourceStore
-        if not ResourceStore.instance().get_any("agent", agent, user_id):
+        if not ResourceStore.instance().get_any(
+                "agent", agent, user_id, conversation_id=conv_id):
             logger.error("Plan %s step %d: agent '%s' not found — refusing to schedule",
                          plan_id, next_step["index"], agent)
             return

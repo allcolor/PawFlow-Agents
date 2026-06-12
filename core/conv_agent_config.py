@@ -230,7 +230,8 @@ def require_agent_member(conv_id: str, agent_name: str,
         try:
             from core.resource_store import ResourceStore
             _adef = ResourceStore.instance().get_any(
-                "agent", agent_name, user_id or "")
+                "agent", agent_name, user_id or "",
+                conversation_id=conv_id)
             if _adef is not None:
                 _svc = (_adef.get("llm_service", "")
                         or guess_llm_service(agent_name, conv_id,

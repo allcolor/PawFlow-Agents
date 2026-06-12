@@ -824,7 +824,8 @@ class BaseFsHandler(ToolHandler):
     def _resolve_expressions(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """Resolve ${expressions} in all argument values."""
         from core.expression import resolve_value
-        return resolve_value(arguments, owner=self._user_id)
+        return resolve_value(arguments, owner=self._user_id,
+                             conversation_id=self._conversation_id)
 
     # ── JSON unwrapping ──
 

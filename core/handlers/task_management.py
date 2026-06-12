@@ -395,7 +395,8 @@ class AssignTaskHandler(ToolHandler):
         return total
 
     @staticmethod
-    def _resolve_task_vars(text: str, variables: dict, user_id: str = "") -> str:
+    def _resolve_task_vars(text: str, variables: dict, user_id: str = "",
+                           conversation_id: str = "") -> str:
         """Resolve variables in task prompt/criteria.
 
         Resolution order:
@@ -413,7 +414,8 @@ class AssignTaskHandler(ToolHandler):
         # Step 3: resolve remaining ${key} via unified cascade
         if "${" in text:
             from core.expression import resolve_expression
-            text = resolve_expression(text, owner=user_id)
+            text = resolve_expression(text, owner=user_id,
+                                      conversation_id=conversation_id)
         # Step 4: restore escaped expressions
         text = text.replace(_esc, "${")
         return text
@@ -457,10 +459,12 @@ class AssignTaskHandler(ToolHandler):
         # Variable substitution in prompt and criteria
         _vars = arguments.get("variables") or {}
         if _vars or "${" in task_desc:
-            task_desc = self._resolve_task_vars(task_desc, _vars, self._user_id)
+            task_desc = self._resolve_task_vars(task_desc, _vars, self._user_id,
+                                                self._conversation_id)
         criteria = arguments.get("completion_criteria", "")
         if criteria and (_vars or "${" in criteria):
-            criteria = self._resolve_task_vars(criteria, _vars, self._user_id)
+            criteria = self._resolve_task_vars(criteria, _vars, self._user_id,
+                                               self._conversation_id)
         _raw_iv = arguments.get("interval")
         interval_spec = str(_raw_iv) if _raw_iv else "6/1m"
         max_iter = int(arguments.get("max_iterations", 0))

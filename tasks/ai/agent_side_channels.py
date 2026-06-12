@@ -51,7 +51,8 @@ class AgentSideChannelsMixin:
                 active_res = store.get_extra(conversation_id, "active_resources") or {}
                 agent_name = active_res.get("agent", "")
             rs = ResourceStore.instance()
-            adef = rs.get_any("agent", agent_name, user_id)
+            adef = rs.get_any("agent", agent_name, user_id,
+                              conversation_id=conversation_id)
             if not adef:
                 bus.publish_event(conversation_id, "btw_done", {
                     "agent_name": agent_name,

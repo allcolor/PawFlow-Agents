@@ -824,7 +824,8 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
             """Background thread: call title LLM and publish result."""
             try:
                 title_client, title_svc_id = self._get_title_client(
-                    ctx.get("user_id", ""))
+                    ctx.get("user_id", ""),
+                    ctx.get("conversation_id", ""))
                 if not title_client:
                     logger.debug("[title] service '%s' could not be resolved", title_svc_name)
                     return

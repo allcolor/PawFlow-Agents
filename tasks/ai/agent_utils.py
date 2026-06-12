@@ -38,14 +38,15 @@ def _estimate_content_tokens(content: str, default_cpt: float = 3.5) -> int:
 def _resolve_extra(store, conv_id: str, key: str, user_id: str = ""):
     """Read a conv extra and resolve ${...} expressions."""
     from core.expression import resolve_value
-    return resolve_value(store.get_extra(conv_id, key), owner=user_id)
+    return resolve_value(store.get_extra(conv_id, key), owner=user_id,
+                         conversation_id=conv_id)
 
 
 def _resolve_extra_dict(store, conv_id: str, key: str, user_id: str = ""):
     """Read a conv extra dict and resolve ${...} expressions in all values."""
     from core.expression import resolve_value
     raw = store.get_extra(conv_id, key) or {}
-    return resolve_value(raw, owner=user_id)
+    return resolve_value(raw, owner=user_id, conversation_id=conv_id)
 
 
 def _service_scope_rank(scope: str) -> int:
@@ -201,7 +202,8 @@ class AgentUtilsMixin:
                 acfg = get_agent_config(conversation_id, agent_name)
                 _diag_conv_svc_raw = acfg.get("llm_service", "") or ""
                 svc_id = resolve_value(_diag_conv_svc_raw,
-                                       owner=user_id) or ""
+                                       owner=user_id,
+                                       conversation_id=conversation_id) or ""
             except Exception as _cvr_err:
                 # Don't swallow silently — a broken ${…} expression in
                 # the agent's llm_service or a malformed conv_agents
@@ -217,7 +219,7 @@ class AgentUtilsMixin:
         _diag_task_svc = ""
         if not svc_id:
             _diag_task_svc = self._resolve_service_param(
-                "llm_service", user_id)
+                "llm_service", user_id, conversation_id)
             svc_id = _diag_task_svc
             if not svc_id:
                 # Hard fail with a self-contained diagnosis so the log
@@ -243,7 +245,8 @@ class AgentUtilsMixin:
         client, svc = self._resolve_llm_service(svc_id, user_id, conversation_id)
         return client, svc_id, svc
 
-    def _resolve_service_param(self, param_name: str, user_id: str = "") -> str:
+    def _resolve_service_param(self, param_name: str, user_id: str = "",
+                               conversation_id: str = "") -> str:
         """Resolve a service parameter that may contain ${...} expressions.
 
         If not in task config, falls back to schema default (lazy eval).
@@ -259,7 +262,8 @@ class AgentUtilsMixin:
             if default:
                 svc_id = default
         from core.expression import resolve_value
-        return resolve_value(svc_id, owner=user_id) or ""
+        return resolve_value(svc_id, owner=user_id,
+                             conversation_id=conversation_id) or ""
 
     def _get_summarizer_client(self, user_id: str = "", conversation_id: str = ""):
         """Resolve the effective summarizer service and its LLM service.
@@ -287,7 +291,8 @@ class AgentUtilsMixin:
             (getattr(summarizer, "config", {}) or {}).get("llm_service", ""))
         return None, 0, ""
 
-    def _get_title_client(self, user_id: str = ""):
+    def _get_title_client(self, user_id: str = "",
+                          conversation_id: str = ""):
         """Resolve a dedicated LLM service for conversation title generation.
 
         Same pattern as _get_summarizer_client. When configured, the agent
@@ -295,7 +300,8 @@ class AgentUtilsMixin:
 
         Returns (service_or_client, service_id) or (None, "").
         """
-        svc_id = self._resolve_service_param("title_llm_service", user_id)
+        svc_id = self._resolve_service_param("title_llm_service", user_id,
+                                             conversation_id)
         if not svc_id:
             return None, ""
         logger.debug(f"[title_llm] resolved to '{svc_id}'")

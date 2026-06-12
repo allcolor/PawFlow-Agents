@@ -447,7 +447,8 @@ class AgentPollerMixin:
                     _meta_chk = store.get_metadata(cid)
                     _uid_chk = _meta_chk["user_id"] if _meta_chk else ""
                     _adef_chk = _RS_chk.instance().get_any(
-                        "agent", _thought_agent, _uid_chk)
+                        "agent", _thought_agent, _uid_chk,
+                        conversation_id=cid)
                     if not _adef_chk:
                         logger.error(
                             f"[plan] Agent '{_thought_agent}' not found in "

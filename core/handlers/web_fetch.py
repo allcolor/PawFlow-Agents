@@ -947,6 +947,11 @@ class ScraplingFetchHandler(ToolHandler):
     Returns extracted text by default, or CSS-selected content if selector given.
     """
 
+    _conversation_id: str = ""
+
+    def set_conversation_id(self, conversation_id: str):
+        self._conversation_id = conversation_id or ""
+
     @property
     def name(self) -> str:
         return "fetch"
@@ -1282,7 +1287,9 @@ class ScraplingFetchHandler(ToolHandler):
 
         # Resolve expressions in all arguments (secrets in headers, urls, etc.)
         from core.expression import resolve_value
-        arguments = resolve_value(arguments, owner=getattr(self, '_user_id', ''))
+        arguments = resolve_value(
+            arguments, owner=getattr(self, '_user_id', ''),
+            conversation_id=getattr(self, '_conversation_id', '') or '')
 
         method = arguments.get("method", "GET").upper()
         extra_headers = arguments.get("headers", {}) or {}

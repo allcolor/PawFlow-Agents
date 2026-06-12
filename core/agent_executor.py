@@ -1315,14 +1315,16 @@ def resolve_agent_task(
             f"Agent '{agent_name}' is in conversation "
             f"'{conversation_id}' but has no `definition` configured. "
             f"Every instance must explicitly reference a definition.")
-    llm_svc = resolve_value(acfg.get("llm_service", ""), owner=user_id) or ""
+    llm_svc = resolve_value(acfg.get("llm_service", ""), owner=user_id,
+                            conversation_id=conversation_id) or ""
     if not llm_svc:
         raise KeyError(
             f"Agent '{agent_name}' is in conversation "
             f"'{conversation_id}' but has no llm_service configured.")
 
     from core.resource_store import ResourceStore
-    agent_def = ResourceStore.instance().get_any("agent", _def_name, user_id)
+    agent_def = ResourceStore.instance().get_any(
+        "agent", _def_name, user_id, conversation_id=conversation_id)
     if agent_def is None:
         raise KeyError(
             f"Definition '{_def_name}' for agent '{agent_name}' not found")

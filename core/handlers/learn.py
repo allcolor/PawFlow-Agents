@@ -219,7 +219,8 @@ class LearnHandler(ToolHandler):
             from core.service_registry import ServiceRegistry
             from core.expression import resolve_value
 
-            svc_id = resolve_value("claude_code_llm_service", owner=user_id) or ""
+            svc_id = resolve_value("claude_code_llm_service", owner=user_id,
+                                   conversation_id=self._conversation_id) or ""
             if not svc_id:
                 return None, 0, ""
 

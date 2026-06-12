@@ -710,10 +710,12 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
         """Get max_tokens from an agent's LLM service config."""
         try:
             from core.resource_store import ResourceStore
-            adef = ResourceStore.instance().get_any("agent", agent_name, user_id)
+            adef = ResourceStore.instance().get_any(
+                "agent", agent_name, user_id, conversation_id=conv_id)
             if adef and adef.get("llm_service"):
                 from core.expression import resolve_value
-                svc_id = resolve_value(adef["llm_service"], owner=user_id) or ""
+                svc_id = resolve_value(adef["llm_service"], owner=user_id,
+                                       conversation_id=conv_id) or ""
                 if svc_id:
                     _, svc = self._resolve_llm_service(svc_id, user_id)
                     if svc:
@@ -744,7 +746,8 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
                 if v > max_val:
                     max_val = v
             # Also check the default LLM service
-            default_svc = self._resolve_service_param("llm_service", user_id) or "default"
+            default_svc = self._resolve_service_param(
+                "llm_service", user_id, conv_id) or "default"
             if default_svc:
                 _, svc = self._resolve_llm_service(default_svc, user_id)
                 if svc:

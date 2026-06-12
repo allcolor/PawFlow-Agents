@@ -590,11 +590,14 @@ class AgentLoopTask(
                 ) or {}
                 agent_name = ares.get("agent", "")
                 if agent_name:
-                    adef = ResourceStore.instance().get_any("agent", agent_name, user_id)
+                    adef = ResourceStore.instance().get_any(
+                        "agent", agent_name, user_id,
+                        conversation_id=conversation_id)
                     if adef:
                         from core.expression import resolve_value
                         service_id = resolve_value(
-                            adef.get("llm_service", ""), owner=user_id) or ""
+                            adef.get("llm_service", ""), owner=user_id,
+                            conversation_id=conversation_id) or ""
             except Exception:
                 logger.debug("exception suppressed", exc_info=True)
 

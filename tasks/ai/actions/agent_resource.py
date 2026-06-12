@@ -2293,7 +2293,8 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             return [flowfile]
         from core.resource_store import ResourceStore
         uid = user_id
-        agent = ResourceStore.instance().get_any("agent", definition, uid)
+        agent = ResourceStore.instance().get_any(
+            "agent", definition, uid, conversation_id=conv_id)
         if not agent:
             flowfile.set_content(json.dumps({"error": f"Definition '{definition}' not found in repository"}).encode())
             flowfile.set_attribute("http.response.status", "404")
@@ -2336,7 +2337,8 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         _def_name = _cfg.get("definition", "")
         if _def_name:
             from core.resource_store import ResourceStore as _RS
-            _adef = _RS.instance().get_any("agent", _def_name, user_id)
+            _adef = _RS.instance().get_any(
+                "agent", _def_name, user_id, conversation_id=conv_id)
             if _adef and _adef.get("parameters"):
                 _def_params_schema = _adef["parameters"]
         flowfile.set_content(json.dumps({
@@ -2379,7 +2381,8 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             from core.skill_resolver import normalize_skill_entry
             _def_name = merged.get("definition", aname)
             _skills = cfg.get("skills") or []
-            _agent_def = ResourceStore.instance().get_any("agent", _def_name, user_id)
+            _agent_def = ResourceStore.instance().get_any(
+                "agent", _def_name, user_id, conversation_id=conv_id)
             _old_skills = [normalize_skill_entry(s)[0]
                            for s in ((_agent_def or {}).get("assigned_skills") or [])]
             _new_skills = [normalize_skill_entry(s)[0] for s in _skills]
@@ -2397,7 +2400,8 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                 )
                 for _skill in [s for s in _new_skills if s and s not in _old_skills]:
                     _skill_def = ResourceStore.instance().get_any(
-                        "skill", _skill, user_id) or {}
+                        "skill", _skill, user_id,
+                        conversation_id=conv_id) or {}
                     _msg = stamp_message({
                         "role": "system",
                         "content": available_skill_context_message(_skill, _skill_def),

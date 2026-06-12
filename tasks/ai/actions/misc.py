@@ -71,7 +71,8 @@ def _handle_misc(self, action, body, store, user_id, flowfile):
             store.set_extra(conv_id, "effort_override", value, user_id=user_id)
             # Resolve for display
             from core.expression import resolve_value
-            display = resolve_value(value, owner=user_id) or value
+            display = resolve_value(value, owner=user_id,
+                                    conversation_id=conv_id) or value
             _labels = {"0": "low", "5000": "medium", "10000": "high", "20000": "max"}
             label = _labels.get(display, f"budget={display}")
             flowfile.set_content(json.dumps({
@@ -98,7 +99,8 @@ def _handle_misc(self, action, body, store, user_id, flowfile):
             fast_val = model or "${fast_model}"
             store.set_extra(conv_id, "fast_mode", fast_val, user_id=user_id)
             from core.expression import resolve_value
-            display = resolve_value(fast_val, owner=user_id) or fast_val
+            display = resolve_value(fast_val, owner=user_id,
+                                    conversation_id=conv_id) or fast_val
             if not display or display == fast_val and fast_val.startswith("$"):
                 flowfile.set_content(json.dumps({
                     "ok": True,

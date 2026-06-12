@@ -400,10 +400,9 @@ def _handle_misc(self, action, body, store, user_id, flowfile):
         if not conv_id:
             flowfile.set_content(json.dumps({"error": "No conversation"}).encode())
             return [flowfile]
-        from core.relay_bindings import get_bindings
-        b = get_bindings(conv_id)
-        linked = b.get("linked", [])
-        default = b.get("default")
+        from core.relay_bindings import get_linked_all, get_default
+        linked = get_linked_all(conv_id)
+        default = get_default(conv_id)
         if not linked:
             flowfile.set_content(json.dumps({
                 "message": "No relays linked to this conversation.\nUse `/relay link <id>` or `/relay list` to see available relays.",

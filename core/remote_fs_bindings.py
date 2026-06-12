@@ -193,11 +193,11 @@ def _conversation_ids_for_user(user_id: str) -> Iterable[str]:
 
 
 def conversation_ids_for_relay(relay_id: str, user_id: str) -> List[str]:
-    from core.relay_bindings import get_linked
+    from core.relay_bindings import get_linked_all
     result = []
     for cid in _conversation_ids_for_user(user_id):
         try:
-            if relay_id in get_linked(cid):
+            if relay_id in get_linked_all(cid):
                 result.append(cid)
         except Exception:
             logger.debug("Relay binding scan failed for %s", cid, exc_info=True)
@@ -341,10 +341,10 @@ def build_manifest_for_relay(relay_id: str, user_id: str) -> Dict[str, Any]:
 
 def notify_linked_relays(cid: str, user_id: str) -> None:
     try:
-        from core.relay_bindings import get_linked
+        from core.relay_bindings import get_linked_all
         from core.service_registry import ServiceRegistry
         reg = ServiceRegistry.get_instance()
-        for relay_id in get_linked(cid):
+        for relay_id in get_linked_all(cid):
             svc = reg.resolve(relay_id, user_id=user_id, conv_id=cid)
             push = getattr(svc, "push_remote_fs_manifest", None)
             if callable(push):

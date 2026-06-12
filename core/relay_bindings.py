@@ -89,6 +89,20 @@ def get_linked(cid: str, agent: str = "") -> List[str]:
     return result
 
 
+def get_linked_all(cid: str) -> List[str]:
+    """Get every relay ID linked to a conversation, across conv-wide and
+    all per-agent bindings (union, deduped). Use for whitelists, scans and
+    notifications that must cover agent-specific links too."""
+    result = []
+    for lookup_cid in _binding_cids(cid):
+        linked = get_bindings(lookup_cid).get("linked", {})
+        for rids in linked.values():
+            for rid in rids or []:
+                if rid not in result:
+                    result.append(rid)
+    return result
+
+
 def get_default(cid: str, agent: str = "") -> Optional[str]:
     """Get the default relay for an agent.
 

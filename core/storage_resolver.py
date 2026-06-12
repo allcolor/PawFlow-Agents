@@ -228,8 +228,8 @@ class StorageResolver:
             return None
         allowed = []
         try:
-            from core.relay_bindings import get_linked
-            allowed.extend(get_linked(self._conversation_id))
+            from core.relay_bindings import get_linked_all
+            allowed.extend(get_linked_all(self._conversation_id))
         except Exception:
             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         try:

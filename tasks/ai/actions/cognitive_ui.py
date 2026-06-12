@@ -132,11 +132,10 @@ def _handle_cognitive_ui(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
             return [flowfile]
         try:
-            from core.relay_bindings import get_default, get_bindings
+            from core.relay_bindings import get_default, get_linked_all
             relay_id = get_default(conv_id) or ""
             if not relay_id:
-                _bindings = get_bindings(conv_id) or {}
-                _linked = _bindings.get("linked", []) or []
+                _linked = get_linked_all(conv_id)
                 relay_id = _linked[0] if _linked else ""
             if not relay_id:
                 flowfile.set_content(json.dumps({

@@ -275,6 +275,14 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert 'RUNTIME_IMAGE_MODE="pull"' in install_src
     assert "Image installs cannot build relay images from source" in install_src
     assert "Native installs require a source checkout" in install_src
+    # AppArmor profiles: extracted from the image and loaded by the installer
+    # on Linux hosts (skippable), so pool/relay containers are confined out
+    # of the box instead of falling back to apparmor=unconfined.
+    assert "docker/apparmor" in install_src
+    assert "install_apparmor_profiles" in install_src
+    assert "--skip-apparmor" in install_src
+    assert "apparmor_parser -r -W" in install_src
+    assert "/sys/kernel/security/apparmor" in install_src
     assert "docker/claude-code/build.sh" in install_src
     assert "scripts/build-server-minimal-relay.sh" in install_src
     assert "docker/relay-dev/build.sh" in install_src

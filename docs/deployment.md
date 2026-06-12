@@ -176,11 +176,14 @@ server process: if the `pawflow-mount` profile is loaded on the host, pool
 containers are confined by it — it allows only the per-user session-slot bind
 (`/cc_sessions_host/** -> /cc_sessions/`) and keeps every other mount,
 including root propagation changes, denied; otherwise they fall back to
-`apparmor:unconfined` (previous behaviour). Load the profile with `sudo
-apparmor_parser -r -W docker/apparmor/pawflow-mount` (copy it to
-`/etc/apparmor.d/` to persist across reboots), validate it with
+`apparmor:unconfined` (previous behaviour). `scripts/install-pawflow.sh`
+installs and loads both PawFlow profiles automatically on Linux hosts with
+AppArmor (skip with `--skip-apparmor`); to load manually: `sudo install -m
+644 docker/apparmor/pawflow-mount /etc/apparmor.d/ && sudo apparmor_parser
+-r -W /etc/apparmor.d/pawflow-mount`, validate with
 `scripts/test_apparmor_profile.sh`, then restart PawFlow so new pool
-containers pick it up. `PAWFLOW_APPARMOR_PROFILE` overrides the detection
+containers pick it up. `scripts/doctor-pawflow.sh` reports whether the
+profiles are loaded. `PAWFLOW_APPARMOR_PROFILE` overrides the detection
 with a verbatim profile name. Treat
 those containers as privileged runtime surfaces: credentials are scoped per
 user/conversation/service, and workloads should remain isolated to the generated
@@ -199,9 +202,10 @@ mount mediation plus proc/sys hardening. Both relay launchers
 for server-spawned relays) resolve the profile once per process like the
 pools: `pawflow-relay` when loaded on the Docker host, `apparmor:unconfined`
 fallback otherwise. `PAWFLOW_RELAY_APPARMOR_PROFILE` overrides the detection
-(set it to `unconfined` to force the old behaviour). To adopt: load the
-profile (`sudo apparmor_parser -r -W docker/apparmor/pawflow-relay`, copy to
-`/etc/apparmor.d/` to persist), validate with
+(set it to `unconfined` to force the old behaviour). The installer loads
+this profile together with `pawflow-mount` (see above); after a manual load
+(`sudo install -m 644 docker/apparmor/pawflow-relay /etc/apparmor.d/ &&
+sudo apparmor_parser -r -W /etc/apparmor.d/pawflow-relay`), validate with
 `scripts/test_apparmor_relay_profile.sh`, restart the relay, and confirm
 `[FSRelay] combined-fs mounted` in its log. The compose `relay` service
 stays on `unconfined` (compose can't probe) — switch its `security_opt`

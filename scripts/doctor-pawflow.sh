@@ -172,6 +172,30 @@ else
   warn "Cannot check port $PORT because neither nc nor python is available."
 fi
 
+if [[ "$OS" == "linux" ]]; then
+  if [[ -d /sys/kernel/security/apparmor ]]; then
+    APPARMOR_PROFILES=""
+    if [[ -r /sys/kernel/security/apparmor/profiles ]]; then
+      APPARMOR_PROFILES="$(cat /sys/kernel/security/apparmor/profiles 2>/dev/null || true)"
+    fi
+    for p in pawflow-mount pawflow-relay; do
+      if [[ -n "$APPARMOR_PROFILES" ]]; then
+        if grep -q "^$p " <<<"$APPARMOR_PROFILES"; then
+          ok "AppArmor profile loaded: $p"
+        else
+          warn "AppArmor profile not loaded: $p. PawFlow containers fall back to apparmor=unconfined. The installer loads it; manually: sudo install -m 644 docker/apparmor/$p /etc/apparmor.d/ && sudo apparmor_parser -r -W /etc/apparmor.d/$p"
+        fi
+      elif [[ -f "/etc/apparmor.d/$p" ]]; then
+        info "AppArmor profile present on disk (load state not readable as this user): /etc/apparmor.d/$p"
+      else
+        warn "AppArmor profile not installed: $p. PawFlow containers fall back to apparmor=unconfined."
+      fi
+    done
+  else
+    info "AppArmor not enabled in this kernel. PawFlow containers run with apparmor=unconfined (no-op without AppArmor)."
+  fi
+fi
+
 if has_cmd docker; then
   if docker system df >/dev/null 2>&1; then
     info "Docker disk usage:"

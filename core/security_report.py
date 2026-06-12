@@ -106,8 +106,26 @@ def _auth_enabled() -> bool:
 
 
 def _listener_bind() -> str:
-    """Best-effort: read the http listener config from the global
-    service registry. Returns 'host:port' if available."""
+    """Best-effort: report the live HTTP listener bind(s).
+
+    Reads HTTPListenerService's per-port singleton registry — the
+    authoritative source for what is actually listening (the report runs
+    after the listener starts). Falls back to the global service registry
+    for configs where the listener is declared but not yet live.
+    Returns e.g. 'https://0.0.0.0:19990'.
+    """
+    try:
+        from services.http_listener_service import HTTPListenerService
+        binds = []
+        for inst in HTTPListenerService.all_instances().values():
+            host = getattr(inst, "_host", "") or "0.0.0.0"  # nosec B104 - reporting display fallback, not a bind.
+            port = getattr(inst, "_port", "")
+            scheme = "https" if getattr(inst, "is_ssl", False) else "http"
+            binds.append(f"{scheme}://{host}:{port}")
+        if binds:
+            return ", ".join(sorted(binds))
+    except Exception:
+        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
     try:
         from core.service_registry import ServiceRegistry
         sr = ServiceRegistry.get_instance()
@@ -148,7 +166,7 @@ def build_report() -> SecurityReport:
         # Production should bind to a real interface, not 0.0.0.0
         # without an explicit warning. Public deployments behind a
         # reverse proxy / private gateway need to be aware.
-        if rep.listener_bind and rep.listener_bind.startswith("0.0.0.0:"):
+        if rep.listener_bind and "0.0.0.0:" in rep.listener_bind:
             rep.warnings.append(
                 "HTTP listener bound to 0.0.0.0 — ensure the host "
                 "firewall / private gateway restrict who can reach it.")

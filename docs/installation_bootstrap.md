@@ -50,6 +50,14 @@ On Windows PowerShell with Docker Desktop Linux containers, use:
 powershell -ExecutionPolicy Bypass -File scripts/install-pawflow.ps1 -Port PORT -PullImages
 ```
 
+On Linux hosts with AppArmor, the Bash installer also installs and loads the
+PawFlow AppArmor profiles (`pawflow-mount`, `pawflow-relay`) into
+`/etc/apparmor.d/` before starting the server, so pool and relay containers
+are confined instead of running `apparmor=unconfined` (sudo may prompt once;
+skip with `--skip-apparmor`). Hosts without AppArmor — Windows/macOS Docker
+Desktop, WSL2, SELinux distros — are detected and skipped. See
+`docs/deployment.md` for what the profiles allow and the manual commands.
+
 When run from a checkout, the installer uses that checkout. When run as a
 downloaded standalone script, it clones
 `https://github.com/allcolor/PawFlow-Agents.git` into `~/pawflow-src`. Without a

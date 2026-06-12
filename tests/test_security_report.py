@@ -15,6 +15,39 @@ def test_capability_store_presence_uses_json_file(monkeypatch, tmp_path):
     assert sr._capability_store_present() is True
 
 
+def test_listener_bind_reads_live_listener_instances(monkeypatch):
+    """The bind line must come from HTTPListenerService.all_instances()
+    (what is actually listening), not show '(unknown)'."""
+    from services.http_listener_service import HTTPListenerService
+
+    class FakeListener:
+        _host = "0.0.0.0"
+        _port = 19990
+        is_ssl = True
+
+    monkeypatch.setattr(HTTPListenerService, "all_instances",
+                        classmethod(lambda cls: {19990: FakeListener()}))
+    assert sr._listener_bind() == "https://0.0.0.0:19990"
+
+
+def test_listener_bind_warns_on_wildcard_in_production(monkeypatch):
+    from services.http_listener_service import HTTPListenerService
+
+    class FakeListener:
+        _host = "0.0.0.0"
+        _port = 19990
+        is_ssl = False
+
+    monkeypatch.setattr(HTTPListenerService, "all_instances",
+                        classmethod(lambda cls: {19990: FakeListener()}))
+    monkeypatch.setenv("PAWFLOW_ENV", "production")
+    monkeypatch.setenv("PAWFLOW_SECRET_KEY_B64", "x" * 44)
+    monkeypatch.delenv("PAWFLOW_APPROVAL_FAIL_OPEN", raising=False)
+    rep = sr.build_report()
+    assert rep.listener_bind == "http://0.0.0.0:19990"
+    assert any("0.0.0.0" in w for w in rep.warnings)
+
+
 def test_dev_mode_no_fatal(monkeypatch):
     monkeypatch.delenv("PAWFLOW_ENV", raising=False)
     monkeypatch.delenv("PAWFLOW_PUBLIC_MODE", raising=False)

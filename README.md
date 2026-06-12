@@ -91,6 +91,22 @@ The update command recreates the PawFlow server container on the requested image
 while keeping persistent data under `PAWFLOW_HOME`, then removes older PawFlow
 server/relay image tags unless `--keep-old-images` is set.
 
+On Linux hosts with AppArmor (Ubuntu, Debian, ...), the installer also loads
+the PawFlow AppArmor profiles (`pawflow-mount` for provider pool containers,
+`pawflow-relay` for relay containers) into `/etc/apparmor.d/` — sudo may
+prompt once. This confines the containers' mount privileges to exactly what
+they need; without the profiles PawFlow still works but those containers run
+`apparmor=unconfined`. Skip with `--skip-apparmor`, or load them manually
+later:
+
+```bash
+sudo install -m 644 docker/apparmor/pawflow-mount docker/apparmor/pawflow-relay /etc/apparmor.d/
+sudo apparmor_parser -r -W /etc/apparmor.d/pawflow-mount /etc/apparmor.d/pawflow-relay
+```
+
+Hosts without AppArmor (Windows/macOS Docker Desktop, WSL2, SELinux distros)
+are detected and skipped automatically — nothing to do there.
+
 Open the installer at:
 
 ```text

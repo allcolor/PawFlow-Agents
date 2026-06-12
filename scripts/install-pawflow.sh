@@ -64,6 +64,7 @@ RUN_DOCTOR=1
 START_SERVER=1
 CHECK_UPDATES=0
 SELF_UPDATE=0
+SKIP_APPARMOR="$(printenv PAWFLOW_SKIP_APPARMOR || true)"
 OLD_PAWFLOW_IMAGE_IDS=""
 
 while [[ $# -gt 0 ]]; do
@@ -89,6 +90,7 @@ while [[ $# -gt 0 ]]; do
     --native) START_TARGET="native"; shift ;;
     --container) START_TARGET="container"; shift ;;
     --skip-doctor) RUN_DOCTOR=0; shift ;;
+    --skip-apparmor) SKIP_APPARMOR=1; shift ;;
     --no-start) START_SERVER=0; shift ;;
     --check-updates) CHECK_UPDATES=1; shift ;;
     --self-update) SELF_UPDATE=1; shift ;;
@@ -125,6 +127,7 @@ Options:
   --native           Start PawFlow natively in a Python venv after building runtime images.
   --container        Start PawFlow server in Docker after building runtime images (default).
   --no-start         Build images but do not start the server container.
+  --skip-apparmor    Do not install/load the PawFlow AppArmor profiles on Linux hosts.
   --check-updates    Query GitHub releases, show the installed server image tag, and print the recommended update command.
   --self-update      Replace installer scripts from the latest release zip, then exit. Rerun the installer afterward.
   --keep-old-images  Do not remove older PawFlow server/relay image tags after a successful container start.
@@ -539,7 +542,10 @@ extract_image_artifacts() (
     scripts/doctor-pawflow.sh \
     scripts/doctor-pawflow.ps1 \
     scripts/install-pawflow.ps1 \
+    scripts/test_apparmor_profile.sh \
+    scripts/test_apparmor_relay_profile.sh \
     config/relay_image_catalog.json \
+    docker/apparmor \
     docker/claude-code \
     docker/pawflow_sdk \
     tools/mcp_bridge.py \
@@ -548,10 +554,12 @@ extract_image_artifacts() (
     mkdir -p "$out_dir/$(dirname "$rel")"
     rm -rf "$out_dir/$rel"
     if ! docker cp "$cid:/app/$rel" "$out_dir/$rel"; then
-      if [[ "$rel" == "scripts/install-pawflow.ps1" ]]; then
-        echo "Warning: $image does not contain $rel; continuing without the PowerShell installer artifact." >&2
-        continue
-      fi
+      case "$rel" in
+        scripts/install-pawflow.ps1|docker/apparmor|scripts/test_apparmor_profile.sh|scripts/test_apparmor_relay_profile.sh)
+          echo "Warning: $image does not contain $rel; continuing without this artifact." >&2
+          continue
+          ;;
+      esac
       return 1
     fi
   done
@@ -560,6 +568,9 @@ extract_image_artifacts() (
     "$out_dir/scripts/run-pawflow-docker.sh" \
     "$out_dir/scripts/doctor-pawflow.sh" \
     "$out_dir/docker/claude-code/build.sh"
+  chmod +x \
+    "$out_dir/scripts/test_apparmor_profile.sh" \
+    "$out_dir/scripts/test_apparmor_relay_profile.sh" 2>/dev/null || true
 )
 
 prepare_checkout_ref() {
@@ -769,6 +780,58 @@ MSG
   "$venv_python" "$REPO_DIR/cli.py" start --host "$native_host" --port "$PORT"
 }
 
+install_apparmor_profiles() {
+  # Load the PawFlow AppArmor profiles (pawflow-mount for provider pools,
+  # pawflow-relay for relay containers) so the server confines those
+  # containers instead of falling back to apparmor:unconfined. Best-effort:
+  # a failure prints manual instructions and never blocks the install.
+  local profiles_dir="$REPO_DIR/docker/apparmor" name src dest run_root=()
+  if [[ "$SKIP_APPARMOR" == "1" || "$SKIP_APPARMOR" == "true" || "$SKIP_APPARMOR" == "yes" ]]; then
+    echo "AppArmor profiles: skipped (--skip-apparmor)."
+    return 0
+  fi
+  if [[ "$HOST_OS" != "linux" ]]; then
+    echo "AppArmor profiles: not applicable on $HOST_OS (no AppArmor in this kernel); PawFlow falls back to apparmor=unconfined, which is a no-op there."
+    return 0
+  fi
+  if [[ ! -d /sys/kernel/security/apparmor ]]; then
+    echo "AppArmor profiles: AppArmor is not enabled in this kernel (SELinux distro or AppArmor disabled); skipping. PawFlow containers fall back to apparmor=unconfined."
+    return 0
+  fi
+  if [[ ! -d "$profiles_dir" ]]; then
+    echo "Warning: AppArmor profiles not found at $profiles_dir (older image?). Load them manually from a source checkout: sudo install -m 644 docker/apparmor/pawflow-mount docker/apparmor/pawflow-relay /etc/apparmor.d/ && sudo apparmor_parser -r -W /etc/apparmor.d/pawflow-mount /etc/apparmor.d/pawflow-relay" >&2
+    return 0
+  fi
+  if [[ "$(id -u)" != "0" ]]; then
+    if ! command -v sudo >/dev/null 2>&1; then
+      echo "Warning: cannot load AppArmor profiles (not root, no sudo). Load them manually as root:" >&2
+      echo "  install -m 644 $profiles_dir/pawflow-mount $profiles_dir/pawflow-relay /etc/apparmor.d/" >&2
+      echo "  apparmor_parser -r -W /etc/apparmor.d/pawflow-mount /etc/apparmor.d/pawflow-relay" >&2
+      return 0
+    fi
+    run_root=(sudo)
+    echo "Installing PawFlow AppArmor profiles (pawflow-mount, pawflow-relay) — sudo may prompt for your password."
+  else
+    echo "Installing PawFlow AppArmor profiles (pawflow-mount, pawflow-relay)."
+  fi
+  for name in pawflow-mount pawflow-relay; do
+    src="$profiles_dir/$name"
+    dest="/etc/apparmor.d/$name"
+    if [[ ! -f "$src" ]]; then
+      echo "Warning: AppArmor profile missing from artifacts: $src" >&2
+      continue
+    fi
+    if "${run_root[@]}" install -m 644 "$src" "$dest" \
+        && "${run_root[@]}" apparmor_parser -r -W "$dest"; then
+      echo "AppArmor profile loaded and persisted: $name -> $dest"
+    else
+      echo "Warning: failed to load AppArmor profile '$name'. PawFlow still works (containers fall back to apparmor=unconfined). To confine them, run as root:" >&2
+      echo "  install -m 644 $src $dest && apparmor_parser -r -W $dest" >&2
+    fi
+  done
+  echo "Optional validation (replays the confined mounts): sh $REPO_DIR/scripts/test_apparmor_profile.sh and sh $REPO_DIR/scripts/test_apparmor_relay_profile.sh"
+}
+
 HOST_OS="$(detect_host)"
 REPO_DIR=""
 INSTALL_SOURCE=""
@@ -883,6 +946,10 @@ PAWFLOW_CLI_LLM_IMAGE="$CLI_LLM_IMAGE" bash "$REPO_DIR/docker/claude-code/build.
 ensure_runtime_image "server minimal relay" "$RELAY_MINIMAL_IMAGE" build_minimal_relay_image
 
 ensure_runtime_image "full server relay" "$RELAY_DEV_IMAGE" build_full_relay_image
+
+# Load the AppArmor profiles BEFORE the server starts: at boot the server
+# probes the host for them and confines pool/relay containers when present.
+install_apparmor_profiles
 
 if [[ "$START_SERVER" != "1" ]]; then
   cleanup_old_pawflow_images

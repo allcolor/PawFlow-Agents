@@ -694,9 +694,9 @@ class CompleteTaskHandler(ToolHandler):
         store = ConversationStore.instance()
         # Tasks are stored in the PARENT conversation's extras.
         # Sub-conv IDs have format: parent_id::task::task_id
-        _parent_cid = self._conversation_id
-        if "::task::" in _parent_cid:
-            _parent_cid = _parent_cid.split("::task::")[0]
+        from core.service_registry import _parent_conversation_id
+        _parent_cid = (_parent_conversation_id(self._conversation_id)
+                       or self._conversation_id)
         all_tasks = store.get_extra(_parent_cid, "agent_tasks") or {}
 
         # Find the task — by ID or by agent (if only one active)

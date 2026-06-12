@@ -122,11 +122,11 @@ class WriteHandler(BaseFsHandler):
         url_match = re.search(r'/files/([a-f0-9]{12})', file_id)
         if url_match:
             file_id = url_match.group(1)
-        entry = store.get(file_id)
+        entry = store.get(file_id, user_id=self._user_id)
         if not entry:
             found = store.find_by_name(file_id)
             if found:
-                entry = store.get(found)
+                entry = store.get(found, user_id=self._user_id)
         if not entry:
             return f"Error: file_id '{file_id}' not found in FileStore"
         fname, data, _ct = entry

@@ -190,14 +190,14 @@ class _FileStoreFile:
             fs = FileStore.instance()
             data = None
             # Try by file_id first
-            result = fs.get(path)
+            result = fs.get(path, user_id=self._user_id)
             if result:
                 data = result[1]
             else:
                 # Try by filename
                 for f in fs.list_files():
                     if f["filename"] == path:
-                        r = fs.get(f["file_id"])
+                        r = fs.get(f["file_id"], user_id=self._user_id)
                         if r:
                             data = r[1]
                         break
@@ -355,7 +355,7 @@ def make_sandbox_open(
             else:
                 for f in store.list_files():
                     if f["filename"] == safe_name:
-                        result = store.get(f["file_id"])
+                        result = store.get(f["file_id"], user_id=user_id)
                         if result:
                             initial = result[1]
                         break

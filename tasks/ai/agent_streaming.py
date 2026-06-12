@@ -710,7 +710,9 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                     _store = ConversationStore.instance()
                     from core.poll_scheduler import PollScheduler as _PS2
                     # agent_tasks are stored on the parent conv, not the sub-conv
-                    _parent_cid = conversation_id.split("::task::")[0] if "::task::" in conversation_id else conversation_id
+                    from core.service_registry import _parent_conversation_id
+                    _parent_cid = (_parent_conversation_id(conversation_id)
+                                   or conversation_id)
                     _all_tasks = _store.get_extra(_parent_cid, "agent_tasks") or {}
                     _ag_name = ctx.get("active_agent_name") or ""
                     _tasks_changed = False

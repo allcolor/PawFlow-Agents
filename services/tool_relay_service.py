@@ -1135,11 +1135,10 @@ class ToolRelayService(BaseService):
             # Bridge sub-agent events to the conversation SSE bus so the
             # webchat can render delegate blocks live (mirrors the wiring in
             # tasks/ai/agent_context.py for non-CC agents).
+            from core.service_registry import _parent_conversation_id
             _parent_cid_for_events = (
-                conversation_id.split("::task::")[0]
-                if conversation_id and "::task::" in conversation_id
-                else (conversation_id or "")
-            )
+                _parent_conversation_id(conversation_id or "")
+                or (conversation_id or ""))
 
             def _sub_on_event(event_type, data):
                 if not _parent_cid_for_events:
@@ -2292,9 +2291,9 @@ class ToolRelayService(BaseService):
                 from core.handlers.resource_agent import SpawnAgentsHandler
                 _src_svc = ""
                 try:
-                    _parent_cid = (conversation_id.split("::task::")[0]
-                                   if conversation_id and "::task::" in conversation_id
-                                   else conversation_id)
+                    from core.service_registry import _parent_conversation_id
+                    _parent_cid = (_parent_conversation_id(conversation_id or "")
+                                   or conversation_id)
                     if _parent_cid and agent_name:
                         from core.conv_agent_config import get_agent_config as _gac
                         _src_svc = (_gac(_parent_cid, agent_name) or {}).get("llm_service", "") or ""

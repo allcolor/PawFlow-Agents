@@ -521,7 +521,7 @@ class BaseFsHandler(ToolHandler):
         _id = file_id
         if not _id:
             _id = self._filestore_id_from_path(path)
-        store.delete(_id)
+        store.delete(_id, user_id=self._user_id)
         return f"Deleted '{_id}' from FileStore"
 
     def _filestore_exists(self, path: str) -> str:

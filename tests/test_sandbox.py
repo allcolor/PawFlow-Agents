@@ -248,7 +248,7 @@ class TestSandboxOpenFilestore(unittest.TestCase):
             storage[fid] = (filename, content)
             return fid
 
-        def mock_get(fid):
+        def mock_get(fid, user_id=""):
             if fid in storage:
                 return storage[fid]
             return None

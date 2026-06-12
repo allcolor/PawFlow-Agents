@@ -1535,7 +1535,9 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                     fscope = "conversation"
                     # Show conv-scoped flows if they belong to this conv
                     # (including flows deployed from task sub-conversations)
-                    _inst_parent = inst.conversation_id.split("::task::")[0] if "::task::" in inst.conversation_id else inst.conversation_id
+                    from core.service_registry import _parent_conversation_id
+                    _inst_parent = (_parent_conversation_id(inst.conversation_id)
+                                    or inst.conversation_id)
                     if _inst_parent != conv_id and not _is_admin:
                         continue
                 else:

@@ -732,11 +732,10 @@ class SpawnAgentsHandler(ToolHandler):
         # Result delivery back to the calling task agent uses the raw
         # sub-conv ID so the preempt/wake targets the correct context.
         _raw_conv_id = self._conversation_id
-        _parent_conv_id = _raw_conv_id
-        _source_task_id = ""
-        if "::task::" in _raw_conv_id:
-            _parent_conv_id = _raw_conv_id.split("::task::")[0]
-            _source_task_id = _raw_conv_id.split("::task::", 1)[1]
+        from core.service_registry import _parent_conversation_id
+        _parent_conv_id = _parent_conversation_id(_raw_conv_id) or _raw_conv_id
+        _source_task_id = (_raw_conv_id.split("::task::", 1)[1]
+                           if "::task::" in _raw_conv_id else "")
 
         # Thread-safe source agent (each agent loop runs in its own thread)
         _src_agent = getattr(self._local, 'source_agent', '') or ''
@@ -1304,7 +1303,8 @@ class SpawnAgentsHandler(ToolHandler):
         # display_only=True → transcript-only. When the caller is a task
         # agent, conv_id is the sub-conv (parent::task::tid) but SSE must
         # go to the parent conv.
-        _sse_cid = conv_id.split("::task::")[0] if "::task::" in conv_id else conv_id
+        from core.service_registry import _parent_conversation_id
+        _sse_cid = _parent_conversation_id(conv_id) or conv_id
         from core.conversation_writer import ConversationWriter
         from core.llm_client import stamp_message
         _nudge_msg = stamp_message({
@@ -1514,11 +1514,10 @@ class FlashAgentHandler(SpawnAgentsHandler):
 
         user_id = self._user_id
         raw_conv_id = self._conversation_id
-        parent_conv_id = raw_conv_id
-        source_task_id = ""
-        if "::task::" in raw_conv_id:
-            parent_conv_id = raw_conv_id.split("::task::")[0]
-            source_task_id = raw_conv_id.split("::task::", 1)[1]
+        from core.service_registry import _parent_conversation_id
+        parent_conv_id = _parent_conversation_id(raw_conv_id) or raw_conv_id
+        source_task_id = (raw_conv_id.split("::task::", 1)[1]
+                          if "::task::" in raw_conv_id else "")
 
         src_agent = getattr(self._local, 'source_agent', '') or ''
         src_svc = getattr(self._local, 'source_llm_service', '') or ''

@@ -261,7 +261,9 @@ class CheckpointManager:
                                           conversation_id=conversation_id)
             for entry in entries:
                 try:
-                    data = json.loads(fs.get(entry["id"])[1].decode("utf-8"))
+                    data = json.loads(fs.get(
+                        entry["id"],
+                        user_id=entry.get("user_id", ""))[1].decode("utf-8"))
                 except Exception:
                     logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                     continue
@@ -303,7 +305,9 @@ class CheckpointManager:
                                 "checkpoint_bin",
                                 conversation_id=conversation_id)
                             for be in bin_entries:
-                                _, bin_data, _ = fs.get(be["id"])
+                                _, bin_data, _ = fs.get(
+                                    be["id"],
+                                    user_id=be.get("user_id", ""))
                                 svc.write_file(path, bin_data)
                                 restored += 1
                                 break
@@ -319,7 +323,9 @@ class CheckpointManager:
             # Clean up checkpoint entries for this cp_id
             for entry in entries:
                 try:
-                    data = json.loads(fs.get(entry["id"])[1].decode("utf-8"))
+                    data = json.loads(fs.get(
+                        entry["id"],
+                        user_id=entry.get("user_id", ""))[1].decode("utf-8"))
                     if data.get("checkpoint_id") == cp_id:
                         fs.delete(entry["id"])
                 except Exception:
@@ -363,7 +369,9 @@ class CheckpointManager:
                 entries = fs.list_by_category(category)
                 for entry in entries:
                     try:
-                        data = json.loads(fs.get(entry["id"])[1].decode("utf-8"))
+                        data = json.loads(fs.get(
+                        entry["id"],
+                        user_id=entry.get("user_id", ""))[1].decode("utf-8"))
                         if data.get("timestamp", 0) < cutoff:
                             fs.delete(entry["id"])
                             count += 1

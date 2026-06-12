@@ -1274,33 +1274,45 @@ def resolve_agent_task(
             f"conv_agents link.")
 
     # 1) Resolve instance name: case-insensitive + nickname lookup
-    _all_configs = get_all_agent_configs(conversation_id)
+    # Sub-conversations (::task::/::task_verify::/::delegate::) carry no
+    # conv_agents roster of their own — fall back to the parent
+    # conversation, like every scoped chain does.
+    from core.service_registry import _parent_conversation_id
+    _cfg_cid = conversation_id
     _resolved_name = None
-    if agent_name in _all_configs:
-        _resolved_name = agent_name
-    else:
-        _needle = agent_name.lower()
-        for _k in _all_configs:
-            if isinstance(_k, str) and _k.lower() == _needle:
-                _resolved_name = _k
-                break
-    # Nickname resolution
-    if _resolved_name is None:
-        try:
-            from core.conversation_store import ConversationStore
-            nicknames = ConversationStore.instance().get_extra(
-                conversation_id, "agent_nicknames") or {}
-            for real_name, nick in nicknames.items():
-                if nick.lower() == agent_name.lower():
-                    _resolved_name = real_name
+    for _cand_cid in dict.fromkeys(
+            (conversation_id, _parent_conversation_id(conversation_id))):
+        if not _cand_cid:
+            continue
+        _all_configs = get_all_agent_configs(_cand_cid)
+        if agent_name in _all_configs:
+            _resolved_name = agent_name
+        else:
+            _needle = agent_name.lower()
+            for _k in _all_configs:
+                if isinstance(_k, str) and _k.lower() == _needle:
+                    _resolved_name = _k
                     break
-            if _resolved_name is None:
-                for real_name in nicknames:
-                    if real_name.lower() == agent_name.lower():
+        # Nickname resolution
+        if _resolved_name is None:
+            try:
+                from core.conversation_store import ConversationStore
+                nicknames = ConversationStore.instance().get_extra(
+                    _cand_cid, "agent_nicknames") or {}
+                for real_name, nick in nicknames.items():
+                    if nick.lower() == agent_name.lower():
                         _resolved_name = real_name
                         break
-        except Exception:
-            logger.debug("exception suppressed", exc_info=True)
+                if _resolved_name is None:
+                    for real_name in nicknames:
+                        if real_name.lower() == agent_name.lower():
+                            _resolved_name = real_name
+                            break
+            except Exception:
+                logger.debug("exception suppressed", exc_info=True)
+        if _resolved_name is not None:
+            _cfg_cid = _cand_cid
+            break
     if _resolved_name is None:
         raise KeyError(
             f"Agent '{agent_name}' is not in conversation "
@@ -1308,7 +1320,7 @@ def resolve_agent_task(
     agent_name = _resolved_name
 
     # 2) Get instance config and load definition from repo
-    acfg = get_agent_config(conversation_id, agent_name)
+    acfg = get_agent_config(_cfg_cid, agent_name)
     _def_name = acfg.get("definition") or ""
     if not _def_name:
         raise KeyError(

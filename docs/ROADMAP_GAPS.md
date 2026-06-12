@@ -7,6 +7,13 @@ Ordered by priority within each category. Dependencies noted.
 
 ## A. Critical Gaps (functional blockers)
 
+### A0. Remote relay workspace in pool containers — PLANNED
+**Priority:** P1 — CLI providers get no `/workspace` when the conversation's
+relay is remote (the `-v host_root` fallback only works for same-host relays).
+**Effort:** Large (≈ server-fs sized)
+**Plan:** see `docs/RELAY_WORKSPACE_FS_PLAN.md` (option B: hub-routed
+relay-to-relay FUSE, rw; decided 2026-06-12).
+
 ### A1. Hard cost cap per conversation ✅ DONE
 **Priority:** P0 — prevents bill shock
 **Effort:** Small (1-2h)

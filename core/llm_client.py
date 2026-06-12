@@ -49,6 +49,10 @@ def _load_default_models() -> Dict[str, str]:
     ))
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        # Optional override file — absence is the normal state.
+        logger.debug("default models config not present at %s; using builtin defaults", path)
+        return dict(_BUILTIN_MODEL_DEFAULTS)
     except Exception as exc:
         logger.warning("default models config unavailable at %s: %s", path, exc)
         return dict(_BUILTIN_MODEL_DEFAULTS)

@@ -308,13 +308,16 @@ class TestLLMConnectionService:
         assert _load_default_models() == configured
         assert set(configured) >= {"openai", "anthropic", "claude-code", "codex-app-server", "gemini"}
 
-    def test_default_models_fall_back_when_system_config_is_missing(self, monkeypatch, tmp_path):
+    def test_default_models_fall_back_when_system_config_is_missing(self, monkeypatch, tmp_path, caplog):
         from core.llm_client import _load_default_models
 
         monkeypatch.setenv("PAWFLOW_DEFAULT_MODELS_FILE", str(tmp_path / "missing.json"))
-        defaults = _load_default_models()
+        with caplog.at_level("WARNING", logger="core.llm_client"):
+            defaults = _load_default_models()
         assert set(defaults) >= {"openai", "anthropic", "claude-code", "codex-app-server", "gemini"}
         assert defaults["claude-code"]
+        # Missing file is the normal state — must not warn at startup.
+        assert not caplog.records
 
 
 class TestInferLLMTask:

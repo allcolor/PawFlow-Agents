@@ -1268,13 +1268,15 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             try:
                 from core.service_registry import ServiceRegistry
                 greg = ServiceRegistry.get_instance()
-                for _sid, _sdef in greg.get_all("global", "").items():
-                    if getattr(_sdef, "service_type", "") == "filesystem":
-                        _svc = greg.get_live_instance("global", "", _sid)
-                        if _svc and hasattr(_svc, "get_project_prompt"):
-                            _fs_prompt = _svc.get_project_prompt()
-                            if _fs_prompt:
-                                system_prompt += _fs_prompt
+                for _sdef in greg.resolve_by_type(
+                        "filesystem", user_id=user_id,
+                        conv_id=conversation_id):
+                    _svc = greg.get_live_instance(
+                        _sdef.scope, _sdef.scope_id, _sdef.service_id)
+                    if _svc and hasattr(_svc, "get_project_prompt"):
+                        _fs_prompt = _svc.get_project_prompt()
+                        if _fs_prompt:
+                            system_prompt += _fs_prompt
             except Exception:
                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 

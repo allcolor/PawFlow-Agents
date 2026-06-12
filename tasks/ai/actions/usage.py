@@ -28,21 +28,26 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
         from core import safe_float
 
         svc_costs = {}
-        for svc_id, svc_def in greg.get_all("global", "").items():
-            if getattr(svc_def, "service_type", "") == "llmConnection":
-                cost_in = safe_float(svc_def.config.get("cost_per_1m_input", 0))
-                cr_cfg = svc_def.config.get("cost_per_1m_cache_read")
-                cw_cfg = svc_def.config.get("cost_per_1m_cache_write")
-                svc_costs[svc_id] = {
-                    "cost_per_1m_input": cost_in,
-                    "cost_per_1m_output": safe_float(svc_def.config.get("cost_per_1m_output", 0)),
-                    "cost_per_1m_cache_read": (
-                        safe_float(cr_cfg, cost_in * 0.1)
-                        if cr_cfg not in (None, "") else cost_in * 0.1),
-                    "cost_per_1m_cache_write": (
-                        safe_float(cw_cfg, cost_in * 1.25)
-                        if cw_cfg not in (None, "") else cost_in * 1.25),
-                }
+        # Walk conv > user > global so user/conv-scoped LLM services get
+        # their cost config too; disabled services keep their history costs.
+        for svc_def in greg.resolve_by_type(
+                "llmConnection", user_id=user_id,
+                conv_id=body.get("conversation_id", ""),
+                enabled_only=False):
+            svc_id = svc_def.service_id
+            cost_in = safe_float(svc_def.config.get("cost_per_1m_input", 0))
+            cr_cfg = svc_def.config.get("cost_per_1m_cache_read")
+            cw_cfg = svc_def.config.get("cost_per_1m_cache_write")
+            svc_costs[svc_id] = {
+                "cost_per_1m_input": cost_in,
+                "cost_per_1m_output": safe_float(svc_def.config.get("cost_per_1m_output", 0)),
+                "cost_per_1m_cache_read": (
+                    safe_float(cr_cfg, cost_in * 0.1)
+                    if cr_cfg not in (None, "") else cost_in * 0.1),
+                "cost_per_1m_cache_write": (
+                    safe_float(cw_cfg, cost_in * 1.25)
+                    if cw_cfg not in (None, "") else cost_in * 1.25),
+            }
 
         stats = []
         for key, agent_stats in agents_data.items():

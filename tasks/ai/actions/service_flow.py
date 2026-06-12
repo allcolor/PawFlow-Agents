@@ -2751,24 +2751,33 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "Missing service_id"}).encode())
             return [flowfile]
 
-        # Find which relay this service is connected through
+        # Find which relay this service is connected through — walk the
+        # canonical conv > user > global chain so conv-scoped relays
+        # (spawned by packages or relay_connect) can be disconnected too.
         from core.service_registry import ServiceRegistry
         ureg = ServiceRegistry.get_instance()
-        svc = ureg.get_live_instance("user", user_id, service_id)
+        _cid = (body.get("conversation_id", "")
+                or flowfile.get_attribute("http.conversation_id") or "")
+        _sdef = ureg.resolve_definition(service_id, user_id=user_id,
+                                        conv_id=_cid)
+        svc = (ureg.get_live_instance(_sdef.scope, _sdef.scope_id, service_id)
+               if _sdef else None)
         if svc:
             try:
                 svc.disconnect()
             except Exception:
                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             try:
-                ureg.uninstall("user", user_id, service_id)
+                ureg.uninstall(_sdef.scope, _sdef.scope_id, service_id)
             except Exception:
                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
         # Also try to send stop_relay to all connected relays
         try:
-            for sid, sdef in ureg.get_all("user", user_id).items():
-                _svc = ureg.get_live_instance("user", user_id, sid)
+            for sdef in ureg.resolve_by_type("relay", user_id=user_id,
+                                             conv_id=_cid):
+                _svc = ureg.get_live_instance(
+                    sdef.scope, sdef.scope_id, sdef.service_id)
                 if _svc and hasattr(_svc, '_relay_pool') and _svc._relay_pool:
                     try:
                         import asyncio
@@ -4702,7 +4711,8 @@ finally:
             return [flowfile]
         try:
             from core.service_registry import ServiceRegistry
-            sdef = ServiceRegistry.get_instance().resolve_definition(service_id)
+            sdef = ServiceRegistry.get_instance().resolve_definition(
+                service_id, user_id=user_id, conv_id=conversation_id)
             if not sdef:
                 flowfile.set_content(json.dumps({"error": f"Service '{service_id}' not found"}).encode())
                 return [flowfile]

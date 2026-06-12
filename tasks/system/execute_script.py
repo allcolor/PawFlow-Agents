@@ -172,14 +172,20 @@ with open("/data/output.json", "w") as f:
                 fs_svc = self.get_service(fs_service_id)
             if not fs_svc:
                 # Auto-detect: prefer connected relay, then any filesystem
+                # (conv > user > global so scoped relays are found too)
                 try:
                     from core.service_registry import ServiceRegistry
-                    for _sid, _sdef in ServiceRegistry.get_instance().get_all("global", "").items():
-                        if getattr(_sdef, "service_type", "") in ("relay", "filesystem"):
-                            _s = ServiceRegistry.get_instance().get_live_instance("global", "", _sid)
+                    _reg = ServiceRegistry.get_instance()
+                    for _stype in ("relay", "filesystem"):
+                        for _sdef in _reg.resolve_by_type(
+                                _stype, user_id=_uid, conv_id=_cid):
+                            _s = _reg.get_live_instance(
+                                _sdef.scope, _sdef.scope_id, _sdef.service_id)
                             if _s:
                                 fs_svc = _s
                                 break
+                        if fs_svc:
+                            break
                 except Exception:
                     logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             if fs_svc:

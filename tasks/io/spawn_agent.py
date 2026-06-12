@@ -140,7 +140,7 @@ class SpawnAgentTask(BaseTask):
                 try:
                     from core.service_registry import ServiceRegistry
                     svc = ServiceRegistry.get_instance().resolve(
-                        llm_svc, user_id=user_id)
+                        llm_svc, user_id=user_id, conv_id=conv_id)
                     if svc:
                         client = svc.get_client()
                 except Exception:
@@ -149,7 +149,8 @@ class SpawnAgentTask(BaseTask):
                 # Fallback to default service
                 try:
                     from core.service_registry import ServiceRegistry
-                    svc = ServiceRegistry.get_instance().resolve("default")
+                    svc = ServiceRegistry.get_instance().resolve(
+                        "default", user_id=user_id, conv_id=conv_id)
                     if svc:
                         client = svc.get_client()
                 except Exception:

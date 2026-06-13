@@ -79,7 +79,7 @@ def test_status_off_by_default(conv):
     st = store.encryption_status(cid)
     assert st == {"enabled": False, "unlocked": False, "state": "off",
                   "has_pass_wrap": False, "has_relay_wrap": False,
-                  "has_escrow": False}
+                  "has_escrow": False, "relay_key_id": ""}
 
 
 def test_enable_migrates_existing_to_ciphertext_on_disk(conv):

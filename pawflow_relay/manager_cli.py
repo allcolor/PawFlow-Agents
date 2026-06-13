@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import sys
 
 from pawflow_relay.manager import (
@@ -123,7 +124,64 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("status", help="Show local relay client configuration status")
     cleanup = sub.add_parser("cleanup", help="Cleanup a configured workspace relay runtime")
     cleanup.add_argument("workspace")
+
+    # Encryption key-relay custody: the relay keypair lives only on this host.
+    key = sub.add_parser("key", help="Manage the relay encryption keypair")
+    key_sub = key.add_subparsers(dest="key_command", required=True)
+    key_sub.add_parser("init", help="Generate the relay keypair (prompts for a passphrase)")
+    key_sub.add_parser("status", help="Show key_id and whether a key exists")
+    key_sub.add_parser("export-pubkey", help="Print key_id + public key to enroll server-side")
+    key_sub.add_parser("rotate", help="Generate a new keypair (invalidates the old key_id)")
+    key_sub.add_parser("verify", help="Check a passphrase unlocks the stored private key")
     return parser
+
+
+def _handle_key(args) -> int:
+    """pawflow-relay key ... -- relay-side encryption key custody. The private
+    key never leaves this host; passphrases are read from a TTY, never argv."""
+    from core import relay_key_store as ks
+    from pawflow_relay.manager import relay_home
+    config_dir = relay_home()
+
+    if args.key_command == "status":
+        st = ks.status(config_dir)
+        if st["exists"]:
+            print("key_id=" + st["key_id"] + "  (key present)")
+        else:
+            print("no relay key -- run: pawflow-relay key init")
+        return 0
+
+    if args.key_command == "export-pubkey":
+        key_id, pub_b64 = ks.export_pubkey(config_dir)
+        print("key_id=" + key_id)
+        print("pubkey=" + pub_b64)
+        return 0
+
+    if args.key_command in ("init", "rotate"):
+        p1 = getpass.getpass("Passphrase to protect the relay private key: ")
+        p2 = getpass.getpass("Confirm passphrase: ")
+        if p1 != p2:
+            print("Error: passphrases do not match", file=sys.stderr)
+            return 1
+        if not p1:
+            print("Error: passphrase required", file=sys.stderr)
+            return 1
+        if args.key_command == "rotate":
+            key_id, pub_b64 = ks.rotate(config_dir, p1)
+        else:
+            key_id, pub_b64 = ks.init_relay_key(config_dir, p1)
+        print("Relay key ready. Enroll this with your server:")
+        print("  key_id=" + key_id)
+        print("  pubkey=" + pub_b64)
+        return 0
+
+    if args.key_command == "verify":
+        pw = getpass.getpass("Passphrase: ")
+        ok = ks.verify_passphrase(config_dir, pw)
+        print("OK" if ok else "wrong passphrase")
+        return 0 if ok else 1
+
+    return 1
 
 
 def main(argv=None) -> int:
@@ -176,6 +234,9 @@ def main(argv=None) -> int:
         if args.command == "cleanup":
             _print_result(args, stop_workspace_runtime(args.workspace))
             return 0
+
+        if args.command == "key":
+            return _handle_key(args)
 
     except Exception as exc:
         print(f"Error: {exc}", file=sys.stderr)

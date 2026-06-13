@@ -411,6 +411,13 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
                     conv_id, body.get("old_passphrase", "") or "",
                     body.get("new_passphrase", "") or "")
                 return _reply({"ok": True})
+            if action == "conv_encrypt_set_relay":
+                pub = body.get("relay_pubkey", "") or ""
+                if not pub:
+                    return _reply({"error": "relay_pubkey required"}, "400")
+                return _reply(store.set_conv_relay(conv_id, pub))
+            if action == "conv_encrypt_remove_relay":
+                return _reply(store.remove_conv_relay(conv_id))
         except KeyUnwrapError:
             # AEAD tag failure — wrong passphrase. Inline, no lockout reveal.
             return _reply({"ok": False, "error": "wrong_passphrase"})

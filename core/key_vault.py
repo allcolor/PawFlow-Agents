@@ -215,6 +215,25 @@ def unwrap_with_passphrase(container: dict, passphrase: str) -> bytes:
     return unwrap_dek_passphrase(wrap, passphrase, container["resource_id"])
 
 
+def set_relay_wrap(container: dict, dek: bytes, relay_pub_raw: bytes) -> dict:
+    """Seal ``dek`` to a relay public key and store it in the ``relay`` slot
+    (phase 5 enrollment). The server holds no key that can open this wrap.
+    Mutates and returns ``container``."""
+    from core.relay_keywrap import seal_dek
+    container["wraps"]["relay"] = seal_dek(dek, relay_pub_raw)
+    return container
+
+
+def unwrap_with_relay(container: dict, relay_priv_raw: bytes) -> bytes:
+    """Recover the DEK from a container's ``relay`` slot using the relay private
+    key (runs relay-side). Raises if there is no relay wrap."""
+    from core.relay_keywrap import unseal_dek
+    wrap = (container.get("wraps") or {}).get("relay")
+    if not wrap:
+        raise KeyUnwrapError("no relay wrap on this resource")
+    return unseal_dek(wrap, relay_priv_raw)
+
+
 # --------------------------------------------------------------------------
 # Best-effort memory locking
 # --------------------------------------------------------------------------

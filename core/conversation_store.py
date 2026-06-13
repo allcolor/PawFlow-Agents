@@ -501,6 +501,7 @@ class ConversationStore:
             "has_pass_wrap": bool(wraps.get("pass")),
             "has_relay_wrap": bool(wraps.get("relay")),
             "has_escrow": bool(wraps.get("escrow")),
+            "relay_key_id": desc.get("relay_key_id", ""),
         }
 
     def enable_encryption(self, cid: str, passphrase: str,
@@ -598,6 +599,64 @@ class ConversationStore:
         set_passphrase_wrap(desc["container"], dek, new_passphrase)
         self._set_encryption_descriptor(cid, desc)
         return True
+
+    def set_conv_relay(self, cid: str, relay_pub_b64: str) -> Dict[str, Any]:
+        """Enroll a trusted key-relay: seal the conversation DEK to the relay's
+        public key and store it in the container's ``relay`` slot (phase 5,
+        ``conv_encrypt_set_relay``). Requires the conversation to be unlocked
+        (the server must hold the DEK to seal it). The server keeps no key that
+        can open this wrap."""
+        import base64
+        desc = self._encryption_descriptor(cid)
+        if not desc.get("enabled"):
+            raise ValueError("conversation is not encrypted")
+        from core.key_vault import get_key_vault, set_relay_wrap
+        from core.relay_keywrap import key_id_for
+        dek = get_key_vault().get(f"conv:{cid}")
+        if dek is None:
+            raise ConversationLockedError("unlock the conversation before binding a relay")
+        try:
+            pub = base64.b64decode(relay_pub_b64)
+        except Exception as e:
+            raise ValueError(f"invalid relay public key: {e}")
+        set_relay_wrap(desc["container"], dek, pub)
+        desc["relay_key_id"] = key_id_for(pub)
+        self._set_encryption_descriptor(cid, desc)
+        return self.encryption_status(cid)
+
+    def remove_conv_relay(self, cid: str) -> Dict[str, Any]:
+        """Unbind the trusted key-relay: drop the ``relay`` wrap so the relay can
+        no longer supply the DEK."""
+        from core.key_vault import remove_wrap
+        desc = self._encryption_descriptor(cid)
+        if not desc.get("enabled"):
+            return self.encryption_status(cid)
+        remove_wrap(desc["container"], "relay")
+        desc.pop("relay_key_id", None)
+        self._set_encryption_descriptor(cid, desc)
+        return self.encryption_status(cid)
+
+    def unlock_encryption_with_dek(self, cid: str, dek: bytes, *,
+                                   session_id: str = "",
+                                   source: str = "") -> bool:
+        """Unlock using a DEK already recovered out-of-band (the key-relay
+        delivered it over the WS control channel). ``source`` tags the
+        delivering relay connection so KeyVault.purge_source can re-lock when it
+        drops (relay-gone = relocked)."""
+        desc = self._encryption_descriptor(cid)
+        if not desc.get("enabled"):
+            raise ValueError("conversation is not encrypted")
+        from core.key_vault import get_key_vault
+        get_key_vault().put(f"conv:{cid}", dek, session_id=session_id, source=source)
+        self._enc_enabled[cid] = True
+        self._invalidate_enc_caches(cid)
+        return True
+
+    def relay_wrap_for(self, cid: str) -> Optional[dict]:
+        """The ``wrap_relay`` blob to hand a relay for unsealing (None if unbound).
+        Used by the push-at-connect / need-DEK delivery path."""
+        desc = self._encryption_descriptor(cid)
+        return ((desc.get("container") or {}).get("wraps") or {}).get("relay")
 
     def flush_append_handles(self, cid: str) -> None:
         SegmentedJsonl.flush_append_handles(self._conv_dir(cid))

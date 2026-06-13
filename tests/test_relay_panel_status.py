@@ -85,7 +85,33 @@ def test_conv_scoped_relay_reports_connected(monkeypatch):
     data = _list_resources(monkeypatch, reg, conv)
     det = data["relay_bindings"]["details"]["convRelay"]
     assert det["connected"] is True
+    assert det["connecting"] is False
     assert det["host_root"] == "/srv/ws"
+
+
+def test_enabled_relay_not_yet_connected_reports_connecting(monkeypatch):
+    # The startup window the user hit: definition resolves and is enabled,
+    # but the relay pool has no connection yet (managed container dialing
+    # back / lazy connect in flight). Panel must show "connecting" (yellow),
+    # not "down" (red) — same tri-state as the services list.
+    conv = "convA12345678"
+    reg = _FakeRegistry("convRelay", "conv", conv)
+    monkeypatch.setattr(type(reg), "is_connected", lambda self, *a: False)
+    data = _list_resources(monkeypatch, reg, conv)
+    det = data["relay_bindings"]["details"]["convRelay"]
+    assert det["connected"] is False
+    assert det["connecting"] is True
+
+
+def test_disabled_relay_reports_down_not_connecting(monkeypatch):
+    conv = "convA12345678"
+    reg = _FakeRegistry("convRelay", "conv", conv)
+    reg._sdef.enabled = False
+    monkeypatch.setattr(type(reg), "is_connected", lambda self, *a: False)
+    data = _list_resources(monkeypatch, reg, conv)
+    det = data["relay_bindings"]["details"]["convRelay"]
+    assert det["connected"] is False
+    assert det["connecting"] is False
 
 
 def test_relay_scoped_to_parent_conversation_reports_connected(monkeypatch):
@@ -113,3 +139,53 @@ def test_unknown_relay_reports_disconnected(monkeypatch):
     data = _list_resources(monkeypatch, reg, "convC12345678")
     det = data["relay_bindings"]["details"]["convRelay"]
     assert det["connected"] is False
+
+
+# --- services-list `started` flag for a relay must equal is_connected() ---
+# so the Services panel dot and the Relays panel dot can never disagree for
+# the same relay (the bug: green "started" in Services while red in Relays
+# during the connect window, because the listing returned enabled==started
+# for every non-filesystem type).
+
+def test_relay_started_flag_tracks_is_connected():
+    from tasks.ai.actions.service_flow import _service_started_for_listing
+
+    sdef = SimpleNamespace(service_type="relay", enabled=True)
+
+    class _Reg:
+        def __init__(self, connected):
+            self._connected = connected
+
+        def is_connected(self, scope, scope_id, sid):
+            return self._connected
+
+    # enabled but pool empty (connecting / container down) -> not started
+    assert _service_started_for_listing(
+        _Reg(False), "conv", "c1", "r1", sdef) is False
+    # enabled and pool has a live connection -> started
+    assert _service_started_for_listing(
+        _Reg(True), "conv", "c1", "r1", sdef) is True
+
+
+def test_disabled_relay_is_never_started():
+    from tasks.ai.actions.service_flow import _service_started_for_listing
+    sdef = SimpleNamespace(service_type="relay", enabled=False)
+
+    class _Reg:
+        def is_connected(self, *a):
+            return True
+
+    assert _service_started_for_listing(_Reg(), "conv", "c1", "r1", sdef) is False
+
+
+def test_stateless_service_started_equals_enabled():
+    # An LLM connection has no live link: enabled == started, is_connected
+    # is never consulted.
+    from tasks.ai.actions.service_flow import _service_started_for_listing
+    sdef = SimpleNamespace(service_type="llmConnection", enabled=True)
+
+    class _Reg:
+        def is_connected(self, *a):
+            raise AssertionError("is_connected must not be called for stateless types")
+
+    assert _service_started_for_listing(_Reg(), "global", "", "llm1", sdef) is True

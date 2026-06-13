@@ -1491,11 +1491,21 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                                     _sdef.scope, _sdef.scope_id, _rid)
                             except Exception:
                                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+                        # Tri-state, identical rule to the services list
+                        # (_service_started_for_listing): an enabled relay that
+                        # is not yet connected is "connecting" (managed
+                        # container spawned, waiting for the dial-back; or lazy
+                        # connect in flight) rather than down. The services
+                        # panel already renders this window yellow, so the
+                        # relays panel must too or the two dots disagree.
+                        _enabled = getattr(_sdef, "enabled", True) if _sdef is not None else False
+                        _connecting = bool(_enabled and not _connected)
                         if not _connected:
                             logging.getLogger(__name__).info(
-                                "[relay-panel] linked relay '%s' reports not connected "
+                                "[relay-panel] linked relay '%s' reports %s "
                                 "(def=%s, live=%s, conv=%s)",
                                 _rid,
+                                "connecting" if _connecting else "not connected",
                                 f"{_sdef.scope}/{_sdef.scope_id[:8]}" if _sdef is not None else "missing",
                                 "present" if _rsvc is not None else "absent",
                                 conv_id[:8])
@@ -1507,6 +1517,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                             "containerized": _ri2.get("containerized", False),
                             "allow_local": _ri2.get("allow_local", False),
                             "connected": _connected,
+                            "connecting": _connecting,
                         }
                 except Exception:
                     logging.getLogger(__name__).debug("Ignored exception", exc_info=True)

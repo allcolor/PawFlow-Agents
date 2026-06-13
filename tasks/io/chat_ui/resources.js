@@ -880,7 +880,7 @@ function _showRelayInfoDialog(relayId, details, isDefault) {
   var dl = d._default_local || {};
   var rows = [
     [t('relayId'), relayId],
-    [t('connected'), d.connected ? '\u{1F7E2} ' + t('yes') : '\u{1F534} ' + t('no')],
+    [t('connected'), d.connected ? '\u{1F7E2} ' + t('yes') : (d.connecting ? '\u{1F7E1} ' + t('starting') : '\u{1F534} ' + t('no'))],
     [t('dockerRoot'), d.root || '\u2014'],
     [t('localRoot'), d.host_root || '\u2014'],
     [t('platform'), d.platform || '\u2014'],
@@ -1378,7 +1378,9 @@ async function _renderResourcesData(data) {
           var titleText = isConvDefault ? t('defaultRelay') : t('setDefaultRelay');
           var clickDefault = isConvDefault ? '' : ' onclick="event.stopPropagation(); fireAction(\'relay_default\',{relay_id:' + _pfpJsArg(rid) + '}); setTimeout(loadResources, 500)"';
           var det = _rbDetails[rid] || {};
-          var connDot = det.connected ? '\u{1F7E2}' : '\u{1F534}';
+          // 🟢 connected / 🟡 connecting (enabled, dialing back / lazy) / 🔴 down.
+          // Same tri-state the Services list uses for a relay's started dot.
+          var connDot = det.connected ? '\u{1F7E2}' : (det.connecting ? '\u{1F7E1}' : '\u{1F534}');
           var pathInfo = '';
           if (det.root) pathInfo += '<div style="font-size:10px;color:var(--pf-muted);margin-left:20px;">docker: <code>' + escapeHtml(det.root) + '</code></div>';
           if (det.host_root) pathInfo += '<div style="font-size:10px;color:var(--pf-muted);margin-left:20px;">local: <code>' + escapeHtml(det.host_root) + '</code></div>';

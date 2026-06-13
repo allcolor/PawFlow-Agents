@@ -449,9 +449,17 @@ def _service_started_for_listing(reg, scope: str, scope_id: str, sid: str,
                                  sdef) -> bool:
     if not getattr(sdef, "enabled", True):
         return False
-    if not _service_requires_connected_state(getattr(sdef, "service_type", "")):
-        return True
-    return reg.is_connected(scope, scope_id, sid)
+    # Relays and filesystems have a *live* link whose state is the truth the
+    # UI dot must show: the relay panel computes its dot with
+    # reg.is_connected() (relay pool has a connection), so the services list
+    # has to use the same call or the two dots disagree for the same relay
+    # (green "started" in Services, red "not connected" in Relays during the
+    # connect window). Stateless services (LLM connections, media, etc.) have
+    # no persistent link — for them enabled == started.
+    svc_type = getattr(sdef, "service_type", "")
+    if svc_type == "relay" or _service_requires_connected_state(svc_type):
+        return reg.is_connected(scope, scope_id, sid)
+    return True
 
 
 def _service_install_state_for_listing(scope: str, scope_id: str,

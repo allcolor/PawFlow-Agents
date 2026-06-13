@@ -4,6 +4,34 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.0-alpha.26] — 2026-06-13
+
+### Fixed
+
+- Claude Code interactive (MCP bridge): `use_tool` advertised its payload as a
+  free-form `arguments` object, which Anthropic's constrained tool decoding
+  intermittently collapsed to an empty `{}` input (`tool_name` and arguments
+  both dropped) — producing random "missing required parameter 'tool_name'"
+  failures. The bridge now advertises a string `arguments_json` field (mirroring
+  the in-process meta-tool); the reader still accepts `arguments_json`, a legacy
+  `arguments` object, or flat keys, so other MCP clients (Codex, Gemini) are
+  unaffected.
+- Telegram bridge: the pre-answer reasoning of a turn was dropped. Thinking was
+  buffered under the agent's `agent_name`, but the closing `new_message` event
+  carries only `source.name`, so no-tool-call turns never flushed their
+  reasoning to Telegram (webchat showed it). The buffer key is now derived from
+  `agent_name` or `source.name`, and turn end (`done`/`error_event`) flushes any
+  remaining burst.
+
+### Added
+
+- Tool name aliases `image`, `image_view`, `view_image` route to the `see`
+  (vision) tool — for `use_tool`, direct MCP calls (rerouted through use_tool,
+  no new tools exposed), and HTTP providers. `view` still maps to `read`.
+- Design RFC `docs/design/encryption-at-rest.md`: opt-in, per-conversation
+  at-rest encryption and encrypted server relay workspaces (threat model,
+  KEK/DEK with passphrase/relay/escrow wraps, RAM-only custody, UX/commands).
+
 ## [1.0.0-alpha.25] — 2026-06-13
 
 ### Fixed

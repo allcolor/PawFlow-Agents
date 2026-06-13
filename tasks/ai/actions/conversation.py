@@ -391,6 +391,20 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
             flowfile.set_attribute("http.response.status", status)
             return [flowfile]
 
+        def _respawn_if_running():
+            # Apply a workspace-encryption change to a live relay: a running
+            # relay must restart to pick up the cipher-store layout / DEK env.
+            # Best-effort, never fatal to the action result.
+            try:
+                from core.server_relay_manager import ServerRelayManager
+                mgr = ServerRelayManager.get_instance()
+                meta = mgr.get_metadata(conv_id)
+                if meta and mgr._is_container_running(meta.get("container_id", "")):
+                    mgr.destroy(conv_id)
+                    mgr.ensure(conv_id, user_id)
+            except Exception:
+                logging.getLogger(__name__).debug("workspace relay respawn skipped", exc_info=True)
+
         try:
             relay_meta = None
             try:
@@ -401,16 +415,20 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
             if action == "relay_workspace_encrypt":
                 if not passphrase:
                     return _wreply({"error": "passphrase required"}, "400")
-                return _wreply(_we.enable(store, conv_id, passphrase,
-                                          relay_meta=relay_meta, session_id=session_id))
+                _st = _we.enable(store, conv_id, passphrase, relay_meta=relay_meta, session_id=session_id)
+                _respawn_if_running()
+                return _wreply(_st)
             if action == "relay_workspace_unlock":
                 _we.unlock(store, conv_id, passphrase, session_id=session_id)
+                _respawn_if_running()
                 return _wreply(_we.status(store, conv_id))
             if action == "relay_workspace_lock":
                 _we.lock(store, conv_id)
                 return _wreply(_we.status(store, conv_id))
             if action == "relay_workspace_encrypt_off":
-                return _wreply(_we.disable(store, conv_id))
+                _st = _we.disable(store, conv_id)
+                _respawn_if_running()
+                return _wreply(_st)
         except KeyUnwrapError:
             return _wreply({"ok": False, "error": "wrong_passphrase"})
         except ConversationLockedError as e:

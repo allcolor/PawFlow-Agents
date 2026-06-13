@@ -189,6 +189,21 @@ class _CCITurnCoordinator:
                 if request_id and path.startswith("/v1/messages") and not event.get("ignore_reason"):
                     self._request_saw_model_content.setdefault(request_id, False)
                     self._request_saw_tool_use.setdefault(request_id, False)
+                    # A fresh /v1/messages request after a Stop means the turn
+                    # is still going — typically a PawFlow preempt injected a
+                    # new prompt into the live session, extending the turn past
+                    # the earlier Stop hook. The latch is now stale: leaving it
+                    # set lets a later idle gap (e.g. the model churning on a
+                    # large tool result) trip _finish_turn_if_ready and return
+                    # the coordinator mid-answer, abandoning the in-flight
+                    # response so it only ever reaches tmux. Clear it; the new
+                    # turn fires its own Stop when it truly ends.
+                    if self._stop_seen:
+                        logger.info(
+                            "[cci-provider] new request after Stop (session=%s) — "
+                            "clearing stale stop latch; turn continues",
+                            self.session_token[:8])
+                        self._stop_seen = False
                 continue
             if etype == "request_stop":
                 self._saw_proxy_event = True

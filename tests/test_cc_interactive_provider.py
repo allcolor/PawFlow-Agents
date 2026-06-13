@@ -441,6 +441,78 @@ def test_turn_coordinator_waits_for_stop_hook_after_request_stop():
     assert resp.content == "final from bytes still running"
 
 
+def test_turn_coordinator_preempt_after_stop_does_not_abandon_final_answer(monkeypatch):
+    """Regression: a preempt that extends the turn past a Stop must not be cut
+    off by a later idle gap.
+
+    Repro of the production incident: the model answers and Stops; a PawFlow
+    preempt injects a new prompt into the live session (new /v1/messages
+    request); the model churns on a large tool result (multi-second idle gap)
+    before streaming the real final answer. The stale Stop latch used to trip
+    _finish_turn_if_ready during that gap, returning the already-delivered
+    first answer and abandoning the final answer (it only reached tmux). A
+    fresh request_start after a Stop must clear the latch so the turn runs to
+    its real end.
+    """
+    import core.llm_providers.claude_code_interactive as cci
+
+    # Drain=0 means any idle gap finishes the turn the instant the latch is
+    # set — the harshest case for the stale-latch bug.
+    monkeypatch.setattr(cci, "_POST_STOP_IDLE_DRAIN_SECONDS", 0)
+    monkeypatch.setattr(cci, "_NO_PROXY_EVENT_TIMEOUT_SECONDS", 60)
+
+    class SequentialEvents:
+        def __init__(self, rows):
+            self.rows = list(rows)
+
+        def wait_event(self, session_token, timeout=None):
+            assert session_token == "sess"
+            if not self.rows:
+                return {}
+            return self.rows.pop(0)
+
+    rows = [
+        {"type": "request_start", "request_id": "r1", "path": "/v1/messages"},
+        _sse("message_start", {"type": "message_start", "message": {"model": "m"}}) | {"request_id": "r1"},
+        _sse("content_block_delta", {
+            "type": "content_block_delta", "index": 0,
+            "delta": {"type": "text_delta", "text": "first answer"},
+        }) | {"request_id": "r1"},
+        _sse("content_block_stop", {"type": "content_block_stop", "index": 0}) | {"request_id": "r1"},
+        {"type": "request_stop", "request_id": "r1"},
+        # End of the first response.
+        {"type": "hook", "hook_event_name": "Stop", "input": {"hook_event_name": "Stop"}},
+        # Preempt injects a new prompt — a fresh /v1/messages turn begins
+        # immediately. This must clear the stale Stop latch.
+        {"type": "request_start", "request_id": "r2", "path": "/v1/messages"},
+        _sse("message_start", {"type": "message_start", "message": {"model": "m"}}) | {"request_id": "r2"},
+        # Model churns on the (large) tool result: idle gaps with no SSE.
+        {},
+        {},
+        _sse("content_block_delta", {
+            "type": "content_block_delta", "index": 0,
+            "delta": {"type": "text_delta", "text": "the real final answer"},
+        }) | {"request_id": "r2"},
+        _sse("content_block_stop", {"type": "content_block_stop", "index": 0}) | {"request_id": "r2"},
+        {"type": "request_stop", "request_id": "r2"},
+        {"type": "hook", "hook_event_name": "Stop", "input": {"hook_event_name": "Stop"}},
+        {},
+    ]
+
+    flushed_text = []
+    resp = _CCITurnCoordinator(
+        SequentialEvents(rows), "sess",
+        block_callback=lambda kind, payload: (
+            flushed_text.append(payload.get("text", "")) if kind == "text" else None),
+    ).run()
+
+    # The returned content is the real final answer, not the stale first one.
+    assert resp.content == "the real final answer"
+    # And it was actually flushed through block_callback (the delivery path),
+    # so it reaches the conversation rather than only tmux.
+    assert "the real final answer" in flushed_text
+
+
 def test_turn_coordinator_request_stop_does_not_finish_tool_use_boundary():
     events = [
         {"type": "request_start", "request_id": "r1", "path": "/v1/messages"},

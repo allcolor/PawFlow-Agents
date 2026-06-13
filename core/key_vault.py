@@ -215,6 +215,26 @@ def unwrap_with_passphrase(container: dict, passphrase: str) -> bytes:
     return unwrap_dek_passphrase(wrap, passphrase, container["resource_id"])
 
 
+def set_escrow_wrap(container: dict, dek: bytes, recovery_passphrase: str) -> dict:
+    """Add an optional recovery wrap under an INDEPENDENT recovery passphrase
+    (phase 7, RFC #4 — explicit opt-in third wrap). Same scrypt+AEAD construction
+    as the primary pass wrap but a separate secret, stored in the ``escrow`` slot
+    so a lost primary passphrase is recoverable. Mutates and returns container."""
+    if not recovery_passphrase:
+        raise ValueError("recovery passphrase required")
+    container["wraps"]["escrow"] = wrap_dek_passphrase(
+        dek, recovery_passphrase, container["resource_id"])
+    return container
+
+
+def unwrap_with_escrow(container: dict, recovery_passphrase: str) -> bytes:
+    """Recover the DEK via the escrow recovery passphrase."""
+    wrap = (container.get("wraps") or {}).get("escrow")
+    if not wrap:
+        raise KeyUnwrapError("no escrow wrap on this resource")
+    return unwrap_dek_passphrase(wrap, recovery_passphrase, container["resource_id"])
+
+
 def set_relay_wrap(container: dict, dek: bytes, relay_pub_raw: bytes) -> dict:
     """Seal ``dek`` to a relay public key and store it in the ``relay`` slot
     (phase 5 enrollment). The server holds no key that can open this wrap.

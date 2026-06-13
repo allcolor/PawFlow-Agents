@@ -636,6 +636,46 @@ class ConversationStore:
         self._set_encryption_descriptor(cid, desc)
         return self.encryption_status(cid)
 
+    def set_conv_escrow(self, cid: str, recovery_passphrase: str) -> Dict[str, Any]:
+        """Add an optional recovery (escrow) wrap under a separate recovery
+        passphrase (phase 7). Requires the conversation to be unlocked."""
+        desc = self._encryption_descriptor(cid)
+        if not desc.get("enabled"):
+            raise ValueError("conversation is not encrypted")
+        if not recovery_passphrase:
+            raise ValueError("recovery passphrase required")
+        from core.key_vault import get_key_vault, set_escrow_wrap
+        dek = get_key_vault().get(f"conv:{cid}")
+        if dek is None:
+            raise ConversationLockedError("unlock the conversation before adding recovery")
+        set_escrow_wrap(desc["container"], dek, recovery_passphrase)
+        self._set_encryption_descriptor(cid, desc)
+        return self.encryption_status(cid)
+
+    def remove_conv_escrow(self, cid: str) -> Dict[str, Any]:
+        """Drop the recovery (escrow) wrap."""
+        from core.key_vault import remove_wrap
+        desc = self._encryption_descriptor(cid)
+        if not desc.get("enabled"):
+            return self.encryption_status(cid)
+        remove_wrap(desc["container"], "escrow")
+        self._set_encryption_descriptor(cid, desc)
+        return self.encryption_status(cid)
+
+    def unlock_encryption_with_recovery(self, cid: str, recovery_passphrase: str,
+                                        session_id: str = "") -> bool:
+        """Unlock via the escrow recovery passphrase (when the primary is lost).
+        Raises KeyUnwrapError on a wrong recovery passphrase."""
+        desc = self._encryption_descriptor(cid)
+        if not desc.get("enabled"):
+            raise ValueError("conversation is not encrypted")
+        from core.key_vault import get_key_vault, unwrap_with_escrow
+        dek = unwrap_with_escrow(desc["container"], recovery_passphrase)
+        get_key_vault().put(f"conv:{cid}", dek, session_id=session_id)
+        self._enc_enabled[cid] = True
+        self._invalidate_enc_caches(cid)
+        return True
+
     def unlock_encryption_with_dek(self, cid: str, dek: bytes, *,
                                    session_id: str = "",
                                    source: str = "") -> bool:

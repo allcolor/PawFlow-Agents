@@ -1299,7 +1299,10 @@
   "unlocked": "Déverrouillé 🔓",
   "confirmDisableEncryption": "Désactiver le chiffrement et déchiffrer cette conversation en clair ?",
   "unlockBeforeDisable": "Déverrouillez la conversation avant de désactiver le chiffrement.",
-  "usageEncrypt": "Utilisation : /encrypt [status|on|off|unlock|lock|passwd]",
+  "usageEncrypt": "Utilisation : /encrypt [status|on|off|unlock|lock|passwd|escrow on/off|recover]",
   "unlock": "Déverrouiller",
-  "lockedBannerText": "Cette conversation est chiffrée. Saisissez la phrase secrète pour afficher son historique."
+  "lockedBannerText": "Cette conversation est chiffrée. Saisissez la phrase secrète pour afficher son historique.",
+  "setRecoveryPrompt": "Définissez une phrase secrète de récupération (conservez-la en lieu sûr — elle peut déverrouiller cette conversation si vous perdez la principale) :",
+  "recoveryAdded": "Phrase secrète de récupération ajoutée.",
+  "enterRecovery": "Saisissez la phrase secrète de récupération"
 }

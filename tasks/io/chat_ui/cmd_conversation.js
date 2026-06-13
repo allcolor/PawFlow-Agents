@@ -111,6 +111,27 @@ function cmdEncrypt(text, parts) {
       if (reportErr(data)) return;
       addMsg('system', t('passphraseChanged'));
     });
+  } else if (sub === 'escrow') {
+    const onoff = (parts[2] || '').toLowerCase();
+    if (onoff === 'off') {
+      action$('conv_encrypt_remove_escrow', { conversation_id: cid }).subscribe(data => {
+        if (reportErr(data)) return; addMsg('system', t('ok'));
+      });
+    } else {
+      const rp = prompt(t('setRecoveryPrompt'));
+      if (!rp) return true;
+      action$('conv_encrypt_set_escrow', { conversation_id: cid, recovery_passphrase: rp }).subscribe(data => {
+        if (reportErr(data)) return; addMsg('system', t('recoveryAdded'));
+      });
+    }
+  } else if (sub === 'recover') {
+    const rp = prompt(t('enterRecovery'));
+    if (!rp) return true;
+    action$('conv_encrypt_recover', { conversation_id: cid, recovery_passphrase: rp }).subscribe(data => {
+      if (reportErr(data)) return;
+      addMsg('system', t('unlocked'));
+      if (typeof loadHistory === 'function') loadHistory(cid);
+    });
   } else {
     addMsg('error', t('usageEncrypt'));
   }

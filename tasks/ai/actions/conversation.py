@@ -418,6 +418,18 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
                 return _reply(store.set_conv_relay(conv_id, pub))
             if action == "conv_encrypt_remove_relay":
                 return _reply(store.remove_conv_relay(conv_id))
+            if action == "conv_encrypt_set_escrow":
+                rp = body.get("recovery_passphrase", "") or ""
+                if not rp:
+                    return _reply({"error": "recovery_passphrase required"}, "400")
+                return _reply(store.set_conv_escrow(conv_id, rp))
+            if action == "conv_encrypt_remove_escrow":
+                return _reply(store.remove_conv_escrow(conv_id))
+            if action == "conv_encrypt_recover":
+                store.unlock_encryption_with_recovery(
+                    conv_id, body.get("recovery_passphrase", "") or "",
+                    session_id=session_id)
+                return _reply(store.encryption_status(conv_id))
         except KeyUnwrapError:
             # AEAD tag failure — wrong passphrase. Inline, no lockout reveal.
             return _reply({"ok": False, "error": "wrong_passphrase"})

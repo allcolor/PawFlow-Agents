@@ -1299,7 +1299,10 @@
   "unlocked": "Unlocked 🔓",
   "confirmDisableEncryption": "Disable encryption and decrypt this conversation back to clear text?",
   "unlockBeforeDisable": "Unlock the conversation before disabling encryption.",
-  "usageEncrypt": "Usage: /encrypt [status|on|off|unlock|lock|passwd]",
+  "usageEncrypt": "Usage: /encrypt [status|on|off|unlock|lock|passwd|escrow on/off|recover]",
   "unlock": "Unlock",
-  "lockedBannerText": "This conversation is encrypted. Enter the passphrase to view its history."
+  "lockedBannerText": "This conversation is encrypted. Enter the passphrase to view its history.",
+  "setRecoveryPrompt": "Set a recovery passphrase (store it somewhere safe — it can unlock this conversation if you lose the primary passphrase):",
+  "recoveryAdded": "Recovery passphrase added.",
+  "enterRecovery": "Enter recovery passphrase"
 }

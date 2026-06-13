@@ -448,6 +448,15 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
         if readonly and action in _WRITE_ACTIONS:
             return {"ok": False, "error": "Operation not allowed in readonly mode"}
 
+        # Encryption ops (phase 5b/6) -- opt-in: only when the server sends one
+        # of these new actions. A relay that never receives them is unaffected.
+        try:
+            from pawflow_relay import key_ops as _key_ops
+        except Exception:
+            _key_ops = None
+        if _key_ops is not None and _key_ops.is_key_action(action):
+            return _key_ops.handle(action, msg)
+
         if msg.get("local", False):
             if not allow_local:
                 return {"ok": False, "error": "Local execution disabled. Start relay with --allow-local"}

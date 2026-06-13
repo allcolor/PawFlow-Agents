@@ -534,6 +534,11 @@ class RelayService(BaseService):
                     'type': 'registered', 'relay_id': relay_id}).encode())
             service._set_relay(reader, writer, loop, send_lock, relay_tasks)
             self._spawn_ctx_sync(reg_info, relay_id)
+            try:
+                from core.relay_key_integration import on_relay_connected
+                on_relay_connected(service, relay_id)
+            except Exception:
+                logger.debug('relay key connect hook failed', exc_info=True)
             await self._relay_main_loop(
                 reader, writer, service, send_lock, relay_tasks, conn_state)
             if conn_state.get('close_info'):
@@ -580,6 +585,11 @@ class RelayService(BaseService):
                 service._clear_relay(reader=reader)
             except Exception as e:
                 logger.debug('_clear_relay failed: %s', e, exc_info=True)
+            try:
+                from core.relay_key_integration import on_relay_disconnected
+                on_relay_disconnected(conn_state.get('relay_id') or service._service_id)
+            except Exception:
+                logger.debug('relay key disconnect hook failed', exc_info=True)
             if relay_tasks:
                 tasks = list(relay_tasks)
                 for task in tasks:

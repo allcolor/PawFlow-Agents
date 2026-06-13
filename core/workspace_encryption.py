@@ -27,6 +27,12 @@ from core.key_vault import (
 
 _EXTRA_KEY = "workspace_encryption"
 
+# Container layout for an encrypted workspace: the bind-mounted host dir holds
+# the CryFS cipher-store (encrypted at rest); the relay mounts a plaintext view
+# at the normal workspace path so tools are unchanged.
+CIPHER_DIR_IN_CONTAINER = "/workspace_cipher"
+MOUNT_DIR_IN_CONTAINER = "/workspace"
+
 
 def _resource(conv_id: str) -> str:
     return f"ws:{conv_id}"

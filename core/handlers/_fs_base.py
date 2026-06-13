@@ -486,6 +486,8 @@ class BaseFsHandler(ToolHandler):
         fname, data, ct = entry
         if ct and ct.startswith("image/"):
             import base64 as _b64
+            from core.image_resize import resize_image_for_vision
+            data, ct = resize_image_for_vision(data, ct)
             b64 = _b64.b64encode(data).decode("ascii")
             url = f"fs://filestore/{file_id}/{fname}"
             return f"Image: {url}\n__image_data__:{ct}:{b64}"
@@ -561,6 +563,8 @@ class BaseFsHandler(ToolHandler):
             import base64 as _b64
             import mimetypes as _mimetypes
             mime = _mimetypes.guess_type(fname)[0] or "image/png"
+            from core.image_resize import resize_image_for_vision
+            data, mime = resize_image_for_vision(data, mime)
             b64 = _b64.b64encode(data).decode("ascii")
             return f"Image: {fname} ({len(data):,} bytes, {mime})\n__image_data__:{mime}:{b64}"
         try:

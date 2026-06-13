@@ -17,9 +17,11 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Longest-edge ceiling (Anthropic vision API limit; also the cap Claude Code /
-# antigravity apply when the agent reads an image file).
-MAX_DIM = 2000
+# Longest-edge ceiling. The Anthropic vision API hard limit is 2000px, but we
+# downscale every vision payload further to 720p-class (1280px on the longest
+# edge) so images stay small and never trip a provider's own resize/processing
+# limit (which only emits an error instead of downscaling).
+MAX_DIM = 1280
 # Above this byte size we re-encode even when the dimensions already fit, to
 # keep vision payloads (and context tokens) bounded.
 MAX_BYTES = 1_000_000

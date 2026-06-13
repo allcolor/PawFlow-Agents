@@ -156,7 +156,9 @@ class ReadHandler(BaseFsHandler):
             import base64
             import mimetypes
             mime = mimetypes.guess_type(fname)[0] or "image/png"
-            b64 = base64.b64encode(bytes(data)).decode("ascii")
+            from core.image_resize import resize_image_for_vision
+            data, mime = resize_image_for_vision(bytes(data), mime)
+            b64 = base64.b64encode(data).decode("ascii")
             return f"Image: {fname} ({len(data):,} bytes, {mime})\n__image_data__:{mime}:{b64}"
 
         # Video/audio — hint to use see()

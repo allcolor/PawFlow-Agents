@@ -4,6 +4,40 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.0-alpha.29] — 2026-06-13
+
+### Added
+
+- Opt-in encryption at rest for conversations and conv-scoped relay workspaces.
+  Strictly opt-in and transparent: conversations without it enabled are
+  byte-for-byte unchanged on disk and through the API. Threat model is T1 (disk
+  at rest) — with the server stopped, encrypted data is ciphertext on disk and
+  no key is in memory.
+  - Conversation encryption (`/encrypt on`): a per-conversation DEK encrypts
+    content fields (message text, thinking, tool arguments and results) with
+    AES-GCM; metadata (ids, timestamps, ordering, roles) stays clear so the
+    store, restart-from, and git history keep working without the key. Content
+    is migrated to ciphertext on enable and back on disable.
+  - Key custody: the DEK is wrapped by a passphrase (scrypt + AES-GCM) in a
+    RAM-only, session-bound vault — zeroised on lock, purged on logout,
+    idle-locked after 15 minutes, and gone on server restart. Commands:
+    `/encrypt status|on|off|unlock|lock|passwd`.
+  - Optional recovery (escrow) passphrase: `/encrypt escrow on|off` +
+    `/encrypt recover` to unlock when the primary passphrase is lost.
+  - Trusted key-relay (optional, no prompts): bind a relay's X25519 public key
+    (`/encrypt relay <pubkey>`) so a connected relay auto-unlocks bound
+    conversations; the server seals the DEK to the relay pubkey and never holds
+    a key that opens that wrap, and DEKs are purged when the relay disconnects
+    (relay-gone = re-locked). Relay key provisioning via `pawflow-relay key`
+    (init/status/export-pubkey/rotate, passphrase-locked at rest) and the
+    Relay Desktop "Relay Encryption Key" panel; `pawflow-relay start --unlock-key`.
+  - Workspace encryption for conv-scoped server relays (`/relay encrypt <id>
+    on|off`, `/relay unlock <id>`): the workspace is stored as a CryFS
+    cipher-store and mounted with a DEK delivered over the relay control channel.
+  - Relay images bumped to `2026.06.13` (now include `cryfs`).
+  - Docs: Security Model "Encryption at Rest" section, design RFC, `/encrypt`
+    slash-command reference, and website (features, FAQ, how-to).
+
 ## [1.0.0-alpha.28] — 2026-06-13
 
 ### Fixed

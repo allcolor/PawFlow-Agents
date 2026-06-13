@@ -53,6 +53,13 @@ class CCLiveSession:
     workdir: str
     service_id: str
     svc_pool_idx: int
+    # Credential-pool coordinates, captured at register time so teardown
+    # (idle sweep / shutdown / evict) can copy any CLI-rotated OAuth token
+    # in <workdir>/.credentials.json back to the right pool slot before the
+    # container dies. Without this, a rotated (single-use) refresh_token is
+    # lost and the user is logged out next turn. Default "" for back-compat.
+    user_id: str = ""
+    conv_id: str = ""
     # CC-reported session_id (e.g. "41234702-dea1-…"). Pinned at spawn
     # time when CC's `init` event fires. Used to locate the session
     # jsonl file for post-result preempt-visibility checks. Source of
@@ -110,6 +117,10 @@ class LiveSessionRegistry:
         self._lock = threading.Lock()
         self._sweeper_started = False
         self._sweeper_stop = threading.Event()
+        # Optional callable(workdir, service_id, pool_index, user_id, conv_id)
+        # set via ensure_sweeper(); invoked by _teardown_session to rescue
+        # CLI-rotated OAuth tokens before a live container is killed.
+        self._recover = None
 
     # ── Lookup / register ──────────────────────────────────────
 
@@ -128,7 +139,7 @@ class LiveSessionRegistry:
                         _fmt_key(key),
                         time.monotonic() - session.spawn_at)
         if prior is not None and prior is not session:
-            _teardown_session(prior, "replaced", killer=None)
+            _teardown_session(prior, "replaced", killer=None, recover=self._recover)
 
 
     def get(self, key: LiveKey) -> Optional[CCLiveSession]:
@@ -187,7 +198,7 @@ class LiveSessionRegistry:
         session = self.evict(key, reason)
         if session is None:
             return
-        _teardown_session(session, reason, killer)
+        _teardown_session(session, reason, killer, recover=self._recover)
 
     def kill_and_evict_by_conv(self, conv_id: str, reason: str,
                                killer=None) -> int:
@@ -206,7 +217,7 @@ class LiveSessionRegistry:
         for key, session in victims:
             logger.info(
                 "[cc-live] kill_by_conv %s (%s)", _fmt_key(key), reason)
-            _teardown_session(session, reason, killer)
+            _teardown_session(session, reason, killer, recover=self._recover)
         return len(victims)
 
     def kill_and_evict_by_conv_agent(self, conv_id: str, agent_name: str,
@@ -221,19 +232,24 @@ class LiveSessionRegistry:
             logger.info(
                 "[cc-live] kill_by_conv_agent %s (%s)",
                 _fmt_key(key), reason)
-            _teardown_session(session, reason, killer)
+            _teardown_session(session, reason, killer, recover=self._recover)
         return len(victims)
 
     # ── Idle sweeper ────────────────────────────────────────
 
     def ensure_sweeper(self, tick_seconds: int = 60,
                        idle_ttl_seconds: int = 1800,
-                       killer=None) -> None:
+                       killer=None, recover=None) -> None:
         """Start the idle sweeper thread (idempotent).
 
         The sweeper kills + evicts any session idle beyond `idle_ttl_seconds`
         and any session whose proc has died silently.
         """
+        # Always refresh the recover hook even if the sweeper is
+        # already running (first provider to register wins the thread,
+        # but every provider shares the same recover entry point).
+        if recover is not None:
+            self._recover = recover
         if self._sweeper_started:
             return
         self._sweeper_started = True
@@ -272,7 +288,7 @@ class LiveSessionRegistry:
             logger.info("[cc-live] sweeper evict %s (%s, idle=%.0fs, reuse=%d)",
                         _fmt_key(key), reason,
                         now - session.last_used, session.reuse_count)
-            _teardown_session(session, reason, killer)
+            _teardown_session(session, reason, killer, recover=self._recover)
         return len(to_kill)
 
     # ── Shutdown ─────────────────────────────────────────────
@@ -287,7 +303,7 @@ class LiveSessionRegistry:
             logger.info("[cc-live] shutdown kill %s (reuse=%d, lived=%.1fs)",
                         _fmt_key(key), session.reuse_count,
                         time.monotonic() - session.spawn_at)
-            _teardown_session(session, "shutdown", killer)
+            _teardown_session(session, "shutdown", killer, recover=self._recover)
 
     # ── Diagnostics ──────────────────────────────────────────
 
@@ -322,11 +338,27 @@ def _fmt_key(key: LiveKey) -> str:
     return f"{u[:6]}/{c[:8]}/{a}@{svc}#{idx}"
 
 
-def _teardown_session(session: CCLiveSession, reason: str, killer) -> None:
+def _teardown_session(session: CCLiveSession, reason: str, killer,
+                      recover=None) -> None:
     """Best-effort kill proc + stop reader + release pool slot.
 
     Every step is isolated — one failure must not skip the next.
     """
+    # 0. Rescue any OAuth token the in-container CLI rotated during
+    #    the live session. MUST run before the kill: a single-use
+    #    refresh_token written to <workdir>/.credentials.json but not
+    #    copied back to the pool is lost when the container dies,
+    #    logging the user out on the next turn. The workdir is a
+    #    host bind-mount so the file is readable here.
+    if recover is not None and getattr(session, "workdir", ""):
+        try:
+            recover(session.workdir, session.service_id,
+                    session.svc_pool_idx, session.user_id,
+                    session.conv_id)
+        except Exception:
+            logger.debug(
+                "[cc-live] token recover failed for reason=%s",
+                reason, exc_info=True)
     # 1. Signal reader thread to stop.
     try:
         session.stop_event.set()

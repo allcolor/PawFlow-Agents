@@ -300,6 +300,46 @@ def _persist_tokens_to_service(access_token: str, refresh_token: str,  # nosec B
 
 # Base directory for per-session codex workdirs — read dynamically so a
 # test that monkey-patches paths.CODEX_SESSIONS_DIR sees the change.
+def recover_tokens_from_workdir(workdir: str, service_id: str,
+                               pool_index: int, user_id: str = "",
+                               conv_id: str = "") -> bool:
+    """Copy any codex-CLI-rotated OAuth token from
+    <workdir>/.codex/auth.json back to the exact pool slot.
+
+    Called from live-session teardown (idle sweep / shutdown / evict).
+    OpenAI does NOT invalidate the old refresh_token on rotation, so for
+    codex this is defense-in-depth rather than a logout fix (unlike CC /
+    Anthropic). Targets the slot via the SESSION's own service_id /
+    pool_index, not instance state. auth.json carries no TTL, so we stamp
+    the same +1h default as parse_auth_json; the next refresh corrects it.
+    """
+    auth_path = os.path.join(workdir, ".codex", "auth.json")
+    if not os.path.exists(auth_path):
+        return False
+    try:
+        with open(auth_path, "r", encoding="utf-8") as f:
+            blob = json.load(f)
+        tokens = blob.get("tokens", {}) or {}
+        new_access = tokens.get("access_token", "")
+        new_refresh = tokens.get("refresh_token", "")
+        new_id = tokens.get("id_token", "")
+        if not new_access:
+            return False
+        expires_at = int((time.time() + 3600) * 1000)
+        _persist_tokens_to_service(
+            new_access, new_refresh, expires_at,
+            service_id=service_id, pool_index=pool_index,
+            id_token=new_id, user_id=user_id, conv_id=conv_id)
+        logger.info(
+            "[codex] recovered teardown tokens [pool:%s] for '%s'",
+            pool_index, service_id)
+        return True
+    except Exception:
+        logger.debug(
+            "[codex] teardown token recovery failed", exc_info=True)
+        return False
+
+
 def _get_sessions_base():
     import core.paths as _p
     return str(_p.CODEX_SESSIONS_DIR.resolve())

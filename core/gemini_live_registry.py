@@ -25,6 +25,10 @@ class GeminiLiveContainer:
     workdir: str
     service_id: str
     svc_pool_idx: int = -1
+    # Credential-pool coords for teardown token recovery (defense-in-depth;
+    # Google does not rotate the refresh_token, but mirror cc/codex). See cc.
+    user_id: str = ""
+    conv_id: str = ""
     proc: object = None
     event_q: object = None
     reader_thread: object = None
@@ -90,6 +94,9 @@ class GeminiLiveRegistry:
         self._sweeper_stop = threading.Event()
         self._idle_ttl = float(self.DEFAULT_IDLE_TTL)
         self._tick_seconds = 60
+        # callable(workdir, service_id, pool_index, user_id, conv_id) set via
+        # ensure_sweeper; invoked by kill_and_evict before a container dies.
+        self._recover = None
 
     def get(self, key: GeminiLiveKey) -> Optional[GeminiLiveContainer]:
         with self._lock:
@@ -135,6 +142,8 @@ class GeminiLiveRegistry:
             entry = GeminiLiveContainer(
                 container_name=container_name, workdir=workdir,
                 service_id=service_id,
+                user_id=(key[0] if len(key) > 0 else ""),
+                conv_id=(key[1] if len(key) > 1 else ""),
                 session_id=session_id,
                 proc=proc,
                 event_q=event_q,
@@ -178,6 +187,15 @@ class GeminiLiveRegistry:
         entry = self.evict(key, reason)
         if entry is None:
             return
+        # Rescue any CLI-rotated OAuth token from the workdir before the
+        # container dies (defense-in-depth; see GeminiLiveContainer).
+        if self._recover is not None and getattr(entry, "workdir", ""):
+            try:
+                self._recover(entry.workdir, entry.service_id,
+                              entry.svc_pool_idx, entry.user_id, entry.conv_id)
+            except Exception:
+                logger.debug("[gemini-live] token recover failed (%s)",
+                             reason, exc_info=True)
         try:
             from core.gemini_pool import GeminiPool
             GeminiPool.instance().release(entry.container_name)
@@ -252,7 +270,9 @@ class GeminiLiveRegistry:
 
     def ensure_sweeper(self, tick_seconds: int = 60,
                        idle_ttl_seconds: Optional[int] = None,
-                       killer=None) -> None:
+                       killer=None, recover=None) -> None:
+        if recover is not None:
+            self._recover = recover
         if idle_ttl_seconds and idle_ttl_seconds > 0:
             self._idle_ttl = float(idle_ttl_seconds)
         if tick_seconds and tick_seconds > 0:

@@ -410,3 +410,91 @@ def test_instance_is_singleton():
     a = LiveSessionRegistry.instance()
     b = LiveSessionRegistry.instance()
     assert a is b
+
+
+# ── teardown OAuth token recovery (idle sweep / kill / shutdown) ──────
+#
+# Regression: the idle sweeper / shutdown / evict paths killed a live
+# container WITHOUT copying back any OAuth token the in-container CLI had
+# rotated into <workdir>/.credentials.json. Anthropic's refresh_token is
+# single-use, so the lost rotation logged the user out on the next turn.
+# The registry now invokes a `recover` hook (set via ensure_sweeper) in
+# _teardown_session, addressed by the SESSION's own coordinates.
+
+
+def _recorder():
+    calls = []
+
+    def recover(workdir, service_id, pool_index, user_id, conv_id):
+        calls.append((workdir, service_id, pool_index, user_id, conv_id))
+
+    return calls, recover
+
+
+def test_idle_sweep_recovers_tokens_before_kill(reg):
+    calls, recover = _recorder()
+    reg.ensure_sweeper(killer=None, recover=recover)
+    key = ("u1", "c1", "agent", "svc-a", 3)
+    s = _mk_session(svc="svc-a", idx=3, last_used_offset=10_000)
+    s.user_id, s.conv_id = "u1", "c1"
+    reg.register(key, s)
+    killed = reg.sweep_idle(idle_ttl_seconds=1)
+    assert killed == 1
+    assert calls == [("/tmp/workdir", "svc-a", 3, "u1", "c1")], calls
+
+
+def test_kill_and_evict_recovers_tokens(reg):
+    calls, recover = _recorder()
+    reg.ensure_sweeper(killer=None, recover=recover)
+    key = ("u2", "c2", "agent", "svc-b", 1)
+    s = _mk_session(svc="svc-b", idx=1)
+    s.user_id, s.conv_id = "u2", "c2"
+    reg.register(key, s)
+    reg.kill_and_evict(key, "manual")
+    assert calls == [("/tmp/workdir", "svc-b", 1, "u2", "c2")], calls
+
+
+def test_shutdown_all_recovers_tokens(reg):
+    calls, recover = _recorder()
+    reg.ensure_sweeper(killer=None, recover=recover)
+    key = ("u3", "c3", "agent", "svc-c", 2)
+    s = _mk_session(svc="svc-c", idx=2)
+    s.user_id, s.conv_id = "u3", "c3"
+    reg.register(key, s)
+    reg.shutdown_all()
+    assert calls == [("/tmp/workdir", "svc-c", 2, "u3", "c3")], calls
+
+
+def test_kill_by_conv_recovers_tokens(reg):
+    calls, recover = _recorder()
+    reg.ensure_sweeper(killer=None, recover=recover)
+    key = ("u4", "c4", "agent", "svc-d", 0)
+    s = _mk_session(svc="svc-d", idx=0)
+    s.user_id, s.conv_id = "u4", "c4"
+    reg.register(key, s)
+    n = reg.kill_and_evict_by_conv("c4", "context-edit")
+    assert n == 1
+    assert calls == [("/tmp/workdir", "svc-d", 0, "u4", "c4")], calls
+
+
+def test_recover_failure_does_not_block_kill(reg):
+    def boom(*a):
+        raise RuntimeError("recover exploded")
+
+    reg.ensure_sweeper(killer=None, recover=boom)
+    key = ("u5", "c5", "agent", "svc-e", 0)
+    s = _mk_session(svc="svc-e", idx=0)
+    reg.register(key, s)
+    # Must not raise and must still tear the session down.
+    reg.kill_and_evict(key, "manual")
+    assert reg.get(key) is None
+    assert s.proc.terminated or s.proc.killed
+
+
+def test_no_recover_hook_is_safe(reg):
+    # Registry with no recover set (hook never wired) must still kill.
+    key = ("u6", "c6", "agent", "svc-f", 0)
+    s = _mk_session(svc="svc-f", idx=0)
+    reg.register(key, s)
+    reg.kill_and_evict(key, "manual")
+    assert reg.get(key) is None

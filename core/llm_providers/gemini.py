@@ -23,7 +23,8 @@ import uuid
 from typing import Any, Dict, List, Optional
 
 from core.agent_prompt_policy import CLI_MCP_SYSTEM_PROMPT
-from core.llm_providers.gemini_session import GeminiSessionMixin, _get_sessions_base
+from core.llm_providers.gemini_session import (
+    GeminiSessionMixin, _get_sessions_base, recover_tokens_from_workdir)
 
 logger = logging.getLogger(__name__)
 
@@ -788,7 +789,8 @@ class LLMGeminiMixin(GeminiSessionMixin):
                 live_reg = GeminiLiveRegistry.instance()
                 _idle_ttl = getattr(self, "timeout", None)
                 live_reg.ensure_sweeper(
-                    idle_ttl_seconds=int(_idle_ttl) if _idle_ttl else None)
+                    idle_ttl_seconds=int(_idle_ttl) if _idle_ttl else None,
+                    recover=recover_tokens_from_workdir)
                 live_key = (user_id, conv_id, agent_name or "default", svc_id)
                 live_session = live_reg.get(live_key)
                 if live_session is not None and not live_session.is_container_alive():

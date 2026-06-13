@@ -27,7 +27,8 @@ from core.interrupt_policy import SOFT_INTERRUPT_USER_COMMAND
 # the ORIGINAL reader's EOF as a regular event.
 _CC_READER_EOF = object()
 
-from core.llm_providers.claude_code_session import ClaudeCodeSessionMixin, _get_sessions_base
+from core.llm_providers.claude_code_session import (
+    ClaudeCodeSessionMixin, _get_sessions_base, recover_tokens_from_workdir)
 
 logger = logging.getLogger(__name__)
 
@@ -2923,6 +2924,8 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                             workdir=workdir,
                             service_id=_svc_id,
                             svc_pool_idx=_svc_pool_idx,
+                            user_id=user_id,
+                            conv_id=conv_id,
                             session_id=_live_session_id,
                             mcp_internal_token=_mcp_internal_token,
                             hb_state=_hb_state,
@@ -2931,7 +2934,8 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                         # Start the idle sweeper on first register — no
                         # work until there's a session to sweep.
                         _live_reg.ensure_sweeper(
-                            killer=self._kill_cc_hard)
+                            killer=self._kill_cc_hard,
+                            recover=recover_tokens_from_workdir)
                 except Exception:
                     logger.warning(
                         "[cc-live] register/touch failed; falling back "

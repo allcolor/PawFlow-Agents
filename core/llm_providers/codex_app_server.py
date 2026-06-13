@@ -19,7 +19,8 @@ import uuid
 from urllib.parse import urlparse
 from typing import Any, Dict, List, Optional
 
-from core.llm_providers.codex_session import CodexSessionMixin, _get_sessions_base
+from core.llm_providers.codex_session import (
+    CodexSessionMixin, _get_sessions_base, recover_tokens_from_workdir)
 
 logger = logging.getLogger(__name__)
 
@@ -653,7 +654,8 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                 live_reg = CodexLiveRegistry.instance()
                 _idle_ttl = getattr(self, "timeout", None)
                 live_reg.ensure_sweeper(
-                    idle_ttl_seconds=int(_idle_ttl) if _idle_ttl else None)
+                    idle_ttl_seconds=int(_idle_ttl) if _idle_ttl else None,
+                    recover=recover_tokens_from_workdir)
                 live_key = (user_id, conv_id, agent_name or "default", svc_id,
                             int(resume_pool_idx))
                 live_session = live_reg.get(live_key)

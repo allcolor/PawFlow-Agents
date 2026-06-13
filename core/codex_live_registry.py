@@ -46,6 +46,13 @@ class CodexLiveSession:
     workdir: str
     service_id: str
     svc_pool_idx: int = -1
+    # Credential-pool coordinates captured at register time so teardown
+    # (idle sweep / shutdown / evict) can copy any CLI-rotated OAuth token
+    # from the workdir back to the right pool slot. Defense-in-depth for
+    # codex (OpenAI does not invalidate the old refresh_token); the same
+    # hole logs CC users out (Anthropic rotates single-use). See cc.
+    user_id: str = ""
+    conv_id: str = ""
     # Per-turn process state — reset on each spawn. Kept on the session
     # so the dispatch loop, watchdog, and reader daemon can share a single
     # source of truth.
@@ -118,6 +125,10 @@ class CodexLiveRegistry:
         self._sweeper_stop = threading.Event()
         self._idle_ttl = float(self.DEFAULT_IDLE_TTL)
         self._tick_seconds = 60
+        # callable(workdir, service_id, pool_index, user_id, conv_id) set via
+        # ensure_sweeper; invoked by kill_and_evict to rescue CLI-rotated
+        # OAuth tokens before a live container is destroyed.
+        self._recover = None
 
     def get(self, key: CodexLiveKey) -> Optional[CodexLiveContainer]:
         with self._lock:
@@ -198,6 +209,8 @@ class CodexLiveRegistry:
             entry = CodexLiveContainer(
                 container_name=container_name, workdir=workdir,
                 service_id=service_id, svc_pool_idx=_svc_pool_idx,
+                user_id=(key[0] if len(key) > 0 else ""),
+                conv_id=(key[1] if len(key) > 1 else ""),
                 session_id=session_id,
                 proc=proc,
                 event_q=event_q,
@@ -241,6 +254,15 @@ class CodexLiveRegistry:
         entry = self.evict(key, reason)
         if entry is None:
             return
+        # Rescue any OAuth token the CLI rotated into the workdir before the
+        # container dies (defense-in-depth; see CodexLiveSession docstring).
+        if self._recover is not None and getattr(entry, "workdir", ""):
+            try:
+                self._recover(entry.workdir, entry.service_id,
+                              entry.svc_pool_idx, entry.user_id, entry.conv_id)
+            except Exception:
+                logger.debug("[codex-live] token recover failed (%s)",
+                             reason, exc_info=True)
         try:
             from core.codex_pool import CodexPool
             CodexPool.instance().release(entry.container_name)
@@ -317,8 +339,10 @@ class CodexLiveRegistry:
 
     def ensure_sweeper(self, tick_seconds: int = 60,
                        idle_ttl_seconds: Optional[int] = None,
-                       killer=None) -> None:
+                       killer=None, recover=None) -> None:
         """Keep the sweeper running and update its configured idle TTL."""
+        if recover is not None:
+            self._recover = recover
         if idle_ttl_seconds and idle_ttl_seconds > 0:
             self._idle_ttl = float(idle_ttl_seconds)
         if tick_seconds and tick_seconds > 0:

@@ -262,6 +262,43 @@ def _persist_tokens_to_service(access_token: str, refresh_token: str,
     logger.info("[gemini] credential updated in pool for '%s'", sid)
 
 
+def recover_tokens_from_workdir(workdir: str, service_id: str,
+                               pool_index: int, user_id: str = "",
+                               conv_id: str = "") -> bool:
+    """Copy any gemini-CLI-rotated OAuth token from
+    <workdir>/.gemini/oauth_creds.json back to the exact pool slot.
+
+    Called from live-session teardown (idle sweep / shutdown / evict).
+    Google does NOT rotate the refresh_token by default, so for gemini
+    this is defense-in-depth rather than a logout fix (unlike CC /
+    Anthropic). Targets the slot via the SESSION's own service_id /
+    pool_index, not instance state. oauth_creds.json carries expiry_date.
+    """
+    creds_path = os.path.join(workdir, ".gemini", "oauth_creds.json")
+    if not os.path.exists(creds_path):
+        return False
+    try:
+        with open(creds_path, "r", encoding="utf-8") as f:
+            blob = json.load(f)
+        new_access = blob.get("access_token", "")
+        new_refresh = blob.get("refresh_token", "")
+        new_expiry = int(blob.get("expiry_date", 0) or 0)
+        if not new_access:
+            return False
+        _persist_tokens_to_service(
+            new_access, new_refresh, new_expiry,
+            service_id=service_id, pool_index=pool_index,
+            user_id=user_id, conv_id=conv_id)
+        logger.info(
+            "[gemini] recovered teardown tokens [pool:%s] for '%s'",
+            pool_index, service_id)
+        return True
+    except Exception:
+        logger.debug(
+            "[gemini] teardown token recovery failed", exc_info=True)
+        return False
+
+
 def _get_sessions_base():
     import core.paths as _p
     return str(_p.GEMINI_SESSIONS_DIR.resolve())

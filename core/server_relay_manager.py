@@ -352,12 +352,21 @@ class ServerRelayManager:
 
         # Mount relay runtime code staged from the PawFlow server image so relay
         # images stay clean dependency/runtime images instead of embedding code.
+        # Encrypted workspace (phase 6): when enabled+unlocked, bind the host
+        # dir as the CryFS cipher-store and hand the relay the DEK (RAM-only) to
+        # mount a plaintext view at the workspace path. Plaintext workspaces are
+        # byte-for-byte unchanged. See workspace_encryption.spawn_env.
+        from core import workspace_encryption as _we
+        _ws_mount_target, _ws_extra_env = _we.spawn_env(
+            store, conv_id, is_workspace_kind=(kind == _KIND_WORKSPACE),
+            relay_workspace=relay_workspace)
+
         docker_run_args = [
             "--rm",
             "--detach",
             "--name", container_name,
             "--init",
-            "--volume", f"{runtime_host_dir}:{relay_workspace}",
+            "--volume", f"{runtime_host_dir}:{_ws_mount_target}",
             "--volume", f"pawflow_home_{relay_id}:/home/pawflow",
             "--volume", f"{code_host_dir}:{_TOOLS_IN_CONTAINER}:ro",
             "--add-host", "host.docker.internal:host-gateway",
@@ -416,6 +425,9 @@ class ServerRelayManager:
         # relay features are meaningless here. Exposing docker.sock would
         # grant root-on-host via `docker run -v /:/host --privileged` for no
         # functional gain.
+
+        if _ws_extra_env:
+            docker_run_args.extend(_ws_extra_env)
 
         docker_run_args.extend([
             relay_image,

@@ -147,3 +147,41 @@ def test_action_encrypt_requires_passphrase(store):
     s, cid = store
     payload, ff = _call(s, "relay_workspace_encrypt", {"conversation_id": cid})
     assert ff.get_attribute("http.response.status") == "400"
+
+
+# -- spawn_env gating (phase 6 container layout) ----------------------
+
+def test_spawn_env_plaintext_is_unchanged(store):
+    s, cid = store
+    target, env = we.spawn_env(s, cid, is_workspace_kind=True, relay_workspace="/workspace")
+    assert target == "/workspace" and env == []
+
+
+def test_spawn_env_non_workspace_kind_unchanged(store):
+    s, cid = store
+    we.enable(s, cid, PW, relay_meta={"scope": "conv"})
+    target, env = we.spawn_env(s, cid, is_workspace_kind=False, relay_workspace="/workspace")
+    assert target == "/workspace" and env == []
+
+
+def test_spawn_env_encrypted_unlocked_binds_cipher_and_passes_dek(store):
+    s, cid = store
+    we.enable(s, cid, PW, relay_meta={"scope": "conv"})
+    target, env = we.spawn_env(s, cid, is_workspace_kind=True, relay_workspace="/workspace")
+    assert target == "/workspace_cipher"
+    joined = " ".join(env)
+    assert "PAWFLOW_WS_CIPHER_DIR=/workspace_cipher" in joined
+    assert "PAWFLOW_WS_MOUNT=/workspace" in joined
+    assert "PAWFLOW_WS_DEK_B64=" in joined
+    # the DEK in env matches the unlocked vault DEK
+    dek_b64 = we.workspace_dek_b64(cid)
+    assert f"PAWFLOW_WS_DEK_B64={dek_b64}" in env
+
+
+def test_spawn_env_encrypted_locked_raises(store):
+    from core.conversation_store import ConversationLockedError
+    s, cid = store
+    we.enable(s, cid, PW, relay_meta={"scope": "conv"})
+    we.lock(s, cid)
+    with pytest.raises(ConversationLockedError):
+        we.spawn_env(s, cid, is_workspace_kind=True, relay_workspace="/workspace")

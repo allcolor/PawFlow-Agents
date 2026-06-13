@@ -38,6 +38,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libncurses-dev libgdbm-dev liblzma-dev tk-dev uuid-dev \
     libfontconfig1-dev libxkbcommon-dev libgtk-3-dev libayatana-appindicator3-dev \
     fuse3 libfuse3-dev \
+    cryfs \
     && rm -rf /var/lib/apt/lists/*
 
 # Ubuntu's rclone package can lag behind upstream and has produced noisy FUSE

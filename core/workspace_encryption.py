@@ -143,5 +143,29 @@ def build_cryfs_mount_command(cipher_dir: str, mount_dir: str,
     return argv, env, password
 
 
+def spawn_env(store, conv_id: str, *, is_workspace_kind: bool,
+               relay_workspace: str):
+    """Compute the relay container's workspace bind target + extra env for an
+    encrypted workspace. Returns ``(mount_target, extra_env_list)``.
+
+    Plaintext / non-workspace relays: ``(relay_workspace, [])`` -- identical to
+    the existing spawn. Encrypted + unlocked: the host dir binds to the cipher
+    path and the DEK is handed to the relay (RAM-only) to mount CryFS at start.
+    Raises ConversationLockedError if encryption is enabled but locked.
+    """
+    if not is_workspace_kind or not _descriptor(store, conv_id).get("enabled"):
+        return relay_workspace, []
+    dek_b64 = workspace_dek_b64(conv_id)
+    if not dek_b64:
+        raise ConversationLockedError(
+            "workspace encryption is enabled but locked -- unlock it "
+            "(/relay unlock) before starting the relay")
+    return CIPHER_DIR_IN_CONTAINER, [
+        "--env", f"PAWFLOW_WS_CIPHER_DIR={CIPHER_DIR_IN_CONTAINER}",
+        "--env", f"PAWFLOW_WS_MOUNT={relay_workspace}",
+        "--env", f"PAWFLOW_WS_DEK_B64={dek_b64}",
+    ]
+
+
 def build_cryfs_unmount_command(mount_dir: str) -> List[str]:
     return ["cryfs-unmount", mount_dir]

@@ -551,6 +551,12 @@ class RelayThread:
                     _ef.write(
                         f"PAWFLOW_GATEWAY_COOKIE="
                         f"{self.gateway_cookie if not self.gateway_key else ''}\n")
+                    # Relay key for conversation auto-unlock (set by
+                    # `start --unlock-key`). Empty unless unlocked; lives only
+                    # in the container's RAM, gone when the container stops.
+                    _ef.write(
+                        f"PAWFLOW_RELAY_PRIVKEY_B64="
+                        f"{os.environ.get('PAWFLOW_RELAY_PRIVKEY_B64', '')}\n")
                 try:
                     os.chmod(_env_file_path, 0o600)
                 except Exception:

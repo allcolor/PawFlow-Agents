@@ -1601,6 +1601,23 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
     # the kernel-side mount and inode allocations stay stable, so
     # bind-mounts of /cc_sessions and /filestore in downstream
     # containers (notably CC) keep working across relay reconnects.
+    # Encrypted conversation workspace: before serving any FS op, mount the
+    # CryFS cipher-store as the plaintext view at the workspace root. Gated on
+    # env the server sets ONLY for an unlocked encrypted workspace; plaintext
+    # relays never set these, so this is a no-op for them. The DEK lives in the
+    # container's RAM only -- the relay (and its key) vanish when it stops.
+    _ws_dek = os.environ.get("PAWFLOW_WS_DEK_B64", "")
+    _ws_cipher = os.environ.get("PAWFLOW_WS_CIPHER_DIR", "")
+    _ws_mount = os.environ.get("PAWFLOW_WS_MOUNT", "") or root_dir
+    if _ws_dek and _ws_cipher:
+        try:
+            from pawflow_relay import key_ops as _kops
+            _wr = _kops.mount_encrypted_workspace(
+                {"cipher_dir": _ws_cipher, "mount_dir": _ws_mount, "dek": _ws_dek})
+            sys.stderr.write(f"[FSRelay] workspace cryfs mount: {_wr}\n")
+        except Exception as _we:
+            sys.stderr.write(f"[FSRelay] workspace cryfs mount failed: {_we}\n")
+
     _server_fs_swap = None
     _server_fs_mount = None
     _filestore_fs_swap = None

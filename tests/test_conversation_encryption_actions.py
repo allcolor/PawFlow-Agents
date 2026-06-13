@@ -1,8 +1,8 @@
-"""Phase 4b: conv_encrypt_* fireAction handlers + /encrypt wiring.
+"""Phase 4b/4c: conv_encrypt_* handlers + /encrypt + locked-history gate + indicators.
 
 Drives the action layer (tasks/ai/actions/conversation.py) against a real store
 and asserts the JSON contract the chat UI relies on, plus structural checks
-that the slash command and i18n keys are wired.
+that the slash command, badge/banner and i18n keys are wired.
 """
 
 import json
@@ -116,7 +116,21 @@ def test_passphrase_change_via_action(store):
     assert good["state"] == "unlocked"
 
 
-# ── structural: slash command + i18n wiring ──────────────────────────
+def test_load_history_locked_returns_banner_flag(store):
+    cid = _conv(store)
+    store.append_message(
+        cid, {"role": "user", "content": "SECRET", "msg_id": "m1",
+              "source": {"type": "user", "target_agent": "bot"}},
+        agent_name="bot", user_id=UID)
+    _call(store, "conv_encrypt_enable", {"conversation_id": cid, "passphrase": PASS})
+    _call(store, "conv_encrypt_lock", {"conversation_id": cid})
+    payload, _ = _call(store, "load_history", {"conversation_id": cid})
+    assert payload["encrypted_locked"] is True
+    assert payload["messages"] == []
+    assert "SECRET" not in json.dumps(payload)  # ciphertext never returned
+
+
+# -- structural: slash command + badge/banner + i18n wiring -----------
 
 _UI = Path("tasks/io/chat_ui")
 
@@ -132,10 +146,19 @@ def test_slash_command_registered():
         assert act in cmd_conv, f"{act} not wired in cmd_conversation.js"
 
 
+def test_conv_list_badge_and_banner_wired():
+    conv_js = (_UI / "conversations.js").read_text(encoding="utf-8")
+    cmd_conv = (_UI / "cmd_conversation.js").read_text(encoding="utf-8")
+    assert "conv-encrypt" in conv_js           # lock badge on conv rows
+    assert "encrypted_locked" in conv_js        # locked history banner
+    assert "function encryptUnlockCurrent(" in cmd_conv
+
+
 def test_i18n_keys_present_in_all_locales():
     keys = ["encryption", "setPassphrasePrompt", "confirmPassphrase",
             "wrongPassphrase", "enterPassphrase", "locked", "unlocked",
-            "noRecoveryWarning", "encryptionMigrating", "usageEncrypt"]
+            "noRecoveryWarning", "encryptionMigrating", "usageEncrypt",
+            "unlock", "lockedBannerText"]
     for loc in ("en", "fr", "es"):
         d = json.loads((_UI / "i18n" / f"{loc}.json").read_text(encoding="utf-8"))
         missing = [k for k in keys if k not in d]

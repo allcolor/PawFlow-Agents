@@ -1299,5 +1299,7 @@
   "unlocked": "Desbloqueado 🔓",
   "confirmDisableEncryption": "¿Desactivar el cifrado y descifrar esta conversación a texto claro?",
   "unlockBeforeDisable": "Desbloquea la conversación antes de desactivar el cifrado.",
-  "usageEncrypt": "Uso: /encrypt [status|on|off|unlock|lock|passwd]"
+  "usageEncrypt": "Uso: /encrypt [status|on|off|unlock|lock|passwd]",
+  "unlock": "Desbloquear",
+  "lockedBannerText": "Esta conversación está cifrada. Introduce la frase de contraseña para ver su historial."
 }

@@ -286,6 +286,7 @@ class KeyVault:
                 self._by_session.setdefault(session_id, set()).add(resource_id)
             if source:
                 self._by_source.setdefault(source, set()).add(resource_id)
+        ensure_idle_lock_sweeper()
 
     def put_all(self, items: Iterable[Tuple[str, bytes]], *,
                 session_id: Optional[str] = None,
@@ -380,6 +381,14 @@ class KeyVault:
 _instance: Optional[KeyVault] = None
 _instance_lock = threading.Lock()
 
+# Idle-lock sweeper (RFC open-decision #2): purge DEKs untouched for longer than
+# IDLE_LOCK_SECONDS, every IDLE_LOCK_SWEEP_SECONDS. Lazily started on the first
+# DEK put so it only runs once encryption is actually in use.
+IDLE_LOCK_SECONDS = float(os.getenv("PAWFLOW_ENC_IDLE_LOCK_SECONDS", "900") or "900")
+_SWEEP_SECONDS = float(os.getenv("PAWFLOW_ENC_IDLE_SWEEP_SECONDS", "60") or "60")
+_sweeper_started = False
+_sweeper_lock = threading.Lock()
+
 
 def get_key_vault() -> KeyVault:
     global _instance
@@ -387,6 +396,30 @@ def get_key_vault() -> KeyVault:
         if _instance is None:
             _instance = KeyVault()
     return _instance
+
+
+def ensure_idle_lock_sweeper() -> None:
+    """Start the background idle-lock sweep once. No-op under pytest (tests drive
+    purge_idle directly) and when the idle budget is disabled (<= 0)."""
+    global _sweeper_started
+    if IDLE_LOCK_SECONDS <= 0 or "PYTEST_CURRENT_TEST" in os.environ:
+        return
+    with _sweeper_lock:
+        if _sweeper_started:
+            return
+        _sweeper_started = True
+
+    def _loop() -> None:
+        while True:
+            time.sleep(_SWEEP_SECONDS)
+            try:
+                n = get_key_vault().purge_idle(IDLE_LOCK_SECONDS)
+                if n:
+                    logger.info("[key_vault] idle-lock purged %d DEK(s)", n)
+            except Exception:
+                logger.debug("[key_vault] idle sweep failed", exc_info=True)
+
+    threading.Thread(target=_loop, daemon=True, name="enc-idle-lock").start()
 
 
 def _reset_for_tests() -> None:

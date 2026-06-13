@@ -1299,5 +1299,7 @@
   "unlocked": "Déverrouillé 🔓",
   "confirmDisableEncryption": "Désactiver le chiffrement et déchiffrer cette conversation en clair ?",
   "unlockBeforeDisable": "Déverrouillez la conversation avant de désactiver le chiffrement.",
-  "usageEncrypt": "Utilisation : /encrypt [status|on|off|unlock|lock|passwd]"
+  "usageEncrypt": "Utilisation : /encrypt [status|on|off|unlock|lock|passwd]",
+  "unlock": "Déverrouiller",
+  "lockedBannerText": "Cette conversation est chiffrée. Saisissez la phrase secrète pour afficher son historique."
 }

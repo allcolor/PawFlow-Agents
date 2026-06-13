@@ -285,6 +285,10 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
         for c in convs:
             branch = store.git_current_branch(c["conversation_id"])
             c["branch"] = branch or ""
+            try:
+                c["encryption"] = store.encryption_status(c["conversation_id"])["state"]
+            except Exception:
+                c["encryption"] = "off"
         result = json.dumps({"conversations": convs}, ensure_ascii=False)
         flowfile.set_content(result.encode("utf-8"))
         return [flowfile]
@@ -296,6 +300,19 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
         if not conv_id:
             flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
             flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+
+        # Encrypted-and-locked: do not return ciphertext rows. Tell the client
+        # to show the unlock banner instead of rendering enc: blobs.
+        try:
+            enc = store.encryption_status(conv_id)
+        except Exception:
+            enc = {"state": "off"}
+        if enc.get("state") == "locked":
+            flowfile.set_content(json.dumps({
+                "conversation_id": conv_id, "messages": [], "message_count": 0,
+                "encrypted_locked": True, "encryption": "locked",
+            }, ensure_ascii=False).encode("utf-8"))
             return [flowfile]
 
         page = store.load_page(conv_id, limit=limit, offset=offset, user_id=user_id)

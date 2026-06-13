@@ -1299,5 +1299,7 @@
   "unlocked": "Unlocked 🔓",
   "confirmDisableEncryption": "Disable encryption and decrypt this conversation back to clear text?",
   "unlockBeforeDisable": "Unlock the conversation before disabling encryption.",
-  "usageEncrypt": "Usage: /encrypt [status|on|off|unlock|lock|passwd]"
+  "usageEncrypt": "Usage: /encrypt [status|on|off|unlock|lock|passwd]",
+  "unlock": "Unlock",
+  "lockedBannerText": "This conversation is encrypted. Enter the passphrase to view its history."
 }

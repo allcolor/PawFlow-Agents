@@ -61,8 +61,12 @@ function renderConvList(convs) {
     const statusDot = runtimeStatus === 'active' ? '<span class="conv-status active" title="' + escapeHtml(t('working')) + '"></span>'
       : runtimeStatus === 'blocked' ? '<span class="conv-status blocked" title="' + escapeHtml(t('blocked')) + '"></span>' : '';
     const branchBadge = c.branch ? '<span class="conv-branch" title="' + escapeHtml(t('branchTitle', { branch: c.branch })) + '">\u{1F33F} ' + escapeHtml(c.branch) + '</span>' : '';
+    const encBadge = (c.encryption === 'locked' || c.encryption === 'unlocked')
+      ? '<span class="conv-encrypt" title="' + escapeHtml(t(c.encryption)) + '">'
+        + (c.encryption === 'locked' ? '\u{1F512}' : '\u{1F513}') + '</span>'
+      : '';
     el.innerHTML = '<div class="conv-preview" ondblclick="renameConvInline(event,\'' + c.conversation_id + '\')">' 
-      + statusDot + '<span class="conv-title">' + escapeHtml(title) + '</span>' + branchBadge + '</div>'
+      + statusDot + '<span class="conv-title">' + escapeHtml(title) + '</span>' + branchBadge + encBadge + '</div>'
       + '<div class="conv-meta">' + escapeHtml(t('contextMessages', { n: c.message_count })) + ' \u00b7 ' + timeStr + '</div>'
       + '<button class="conv-delete" title="' + escapeHtml(t('delete')) + '" onclick="deleteConv(event,\'' + c.conversation_id + '\')">\u00d7</button>';
     el.onclick = () => resumeConv(c.conversation_id);
@@ -392,6 +396,21 @@ function _renderHistory(data) {
   // click leaves the slow load_history(A) response rendering A's
   // messages into B's view.
   if (data.conversation_id && data.conversation_id !== conversationId) {
+    return;
+  }
+  // Encrypted-and-locked: the server withholds ciphertext rows and flags this.
+  // Show an unlock banner instead of history; compose stays usable but writes
+  // are refused server-side until unlocked.
+  if (data.encrypted_locked) {
+    const box = document.getElementById('messages');
+    if (box) {
+      box.innerHTML = '<div class="enc-locked-banner" style="margin:24px;padding:16px;'
+        + 'border:1px solid #6c5ce7;border-radius:8px;text-align:center;color:#c8c8e0;">'
+        + '\u{1F512} ' + escapeHtml(t('lockedBannerText'))
+        + '<br><button onclick="encryptUnlockCurrent()" style="margin-top:12px;padding:6px 16px;'
+        + 'background:#6c5ce7;color:#fff;border:none;border-radius:6px;cursor:pointer;">'
+        + escapeHtml(t('unlock')) + '</button></div>';
+    }
     return;
   }
   const groupTechnicalMessages = !!data.group_technical_messages;

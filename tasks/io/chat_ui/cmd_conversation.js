@@ -50,6 +50,11 @@ function cmdRename(text, parts, cmd) {
   return true;
 }
 
+// Invoked from the locked-history banner's Unlock button.
+function encryptUnlockCurrent() {
+  cmdEncrypt('/encrypt unlock', ['/encrypt', 'unlock']);
+}
+
 function cmdEncrypt(text, parts) {
   if (!conversationId) { addMsg('system', t('noConv')); return true; }
   const cid = conversationId;

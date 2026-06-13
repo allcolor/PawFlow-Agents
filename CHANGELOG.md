@@ -4,6 +4,26 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.0-alpha.24] — 2026-06-13
+
+### Fixed
+
+- Sub-conversation runtime scope (HIGH): the tool relay only rooted `::task::`
+  sub-conversations to their parent, so `::task_verify::` and `::delegate::`
+  sub-conversations resolved hooks, tool permissions and secret injection
+  against their own (empty) conversation id. A `bash`/`execute_script` run from
+  a verify or delegate step did not enforce the parent's tool permissions or
+  receive its secrets. `_root_conversation_id` now strips all three markers.
+- Vision: a pre-uploaded oversized image (e.g. a full-resolution JPEG whose
+  mime type is unchanged by the resize) was downscaled in memory but the
+  oversized original was kept in storage, so downstream reads still hit the
+  provider pixel limit. The attachment is now re-stored whenever the resize
+  actually changed the bytes.
+- Catch-up context: the Claude Code provider stripped `::delegate::` and
+  `::task::` but not `::task_verify::`, so a verify sub-agent received no
+  catch-up from the parent conversation. Aligned on the canonical marker
+  triple.
+
 ## [1.0.0-alpha.23] — 2026-06-13
 
 ### Fixed

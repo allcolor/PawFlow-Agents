@@ -107,6 +107,59 @@ def test_antigravity_turn_coordinator_flushes_text_at_tool_boundaries(monkeypatc
     assert turns == []
 
 
+def test_antigravity_preempt_after_done_does_not_abandon_final_answer(monkeypatch, tmp_path):
+    """Regression (mirror of the claude-code-interactive fix): a preempt that
+    extends the turn past a Stop/done must not be cut off by a later idle gap.
+
+    The model answers and signals done; a PawFlow preempt injects a new prompt
+    (fresh request_start); the model churns on a large tool result (idle gap)
+    before streaming the real final answer. The stale done latch used to trip
+    the post-done drain during that gap, returning the already-delivered first
+    answer and abandoning the final answer (tmux-only). A fresh request_start
+    after done must clear the latch.
+    """
+    import core.llm_providers.antigravity_interactive as agi
+
+    # Drain=0: any idle gap finishes the turn the instant the latch is set.
+    monkeypatch.setattr(agi, "_POST_DONE_IDLE_DRAIN_SECONDS", 0)
+
+    class SequentialTail:
+        def __init__(self, rows):
+            self.rows = list(rows)
+
+        def wait_event(self, timeout=0.25):
+            if not self.rows:
+                return {}
+            return self.rows.pop(0)
+
+    rows = [
+        {"type": "ag_text_delta", "text": "first answer"},
+        {"type": "ag_text_delta", "done": True},
+        # Preempt injects a new prompt — a fresh request begins immediately.
+        # This must clear the stale done latch.
+        {"type": "request_start"},
+        # Model churns on the (large) tool result: idle gaps with no events.
+        {},
+        {},
+        {"type": "ag_text_delta", "text": "the real final answer"},
+        {"type": "ag_text_delta", "done": True},
+        {},
+    ]
+
+    (tmp_path / "observer.jsonl").write_text("", encoding="utf-8")
+    flushed_text = []
+    coord = _AntigravityTurnCoordinator(
+        str(tmp_path / "observer.jsonl"), offset=0,
+        block_callback=lambda kind, payload: (
+            flushed_text.append(payload.get("text", "")) if kind == "text" else None),
+    )
+    coord.tail = SequentialTail(rows)
+    response = coord.run()
+
+    assert response.content == "the real final answer"
+    assert "the real final answer" in flushed_text
+
+
 def test_antigravity_turn_coordinator_matches_idless_function_response_by_name(monkeypatch, tmp_path):
     import core.llm_providers.antigravity_interactive as agi
 

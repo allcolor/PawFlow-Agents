@@ -200,6 +200,19 @@ class _AntigravityTurnCoordinator:
         if etype == "request_start":
             self._saw_proxy_event = True
             self._last_event_at = time.time()
+            # A fresh request after a Stop means the turn is still going —
+            # typically a PawFlow preempt injected a new prompt into the live
+            # session, extending the turn past the earlier Stop hook. Leaving
+            # the latch set lets a later idle gap (model churning on a large
+            # tool result) trip the post-done drain and return the coordinator
+            # mid-answer, abandoning the in-flight response so it only ever
+            # reaches tmux. Clear it; the new turn fires its own Stop at its
+            # real end. (Mirror of the same fix in claude_code_interactive.)
+            if self._done_seen:
+                logger.info(
+                    "[agi-provider] new request after Stop — clearing stale "
+                    "done latch; turn continues")
+                self._done_seen = False
             return True
         if etype == "tool_use":
             self._saw_proxy_event = True

@@ -690,6 +690,34 @@ function cmdRelay(text, parts) {
       if (data.error) addMsg('error', data.error);
       else addMsg('system', data.message || t('ok'));
     });
+  } else if (sub === 'encrypt') {
+    var onoff = (parts[2] || '').toLowerCase();
+    if (onoff === 'off') {
+      if (!confirm(t('confirmDisableEncryption'))) return true;
+      action$('relay_workspace_encrypt_off', { conversation_id: conversationId }).subscribe(function(data){
+        if (data.error === 'locked') { addMsg('error', t('unlockBeforeDisable')); return; }
+        if (data.error) { addMsg('error', data.error); return; }
+        addMsg('system', t('encryptionDisabled'));
+      });
+    } else {
+      var p1 = prompt(t('setPassphrasePrompt'));
+      if (!p1) return true;
+      var p2 = prompt(t('confirmPassphrase'));
+      if (p1 !== p2) { addMsg('error', t('passphraseMismatch')); return true; }
+      action$('relay_workspace_encrypt', { conversation_id: conversationId, passphrase: p1 }).subscribe(function(data){
+        if (data.error === 'wrong_passphrase') { addMsg('error', t('wrongPassphrase')); return; }
+        if (data.error) { addMsg('error', data.error); return; }
+        addMsg('system', t('encryptionEnabled'));
+      });
+    }
+  } else if (sub === 'unlock') {
+    var pw = prompt(t('enterPassphrase'));
+    if (!pw) return true;
+    action$('relay_workspace_unlock', { conversation_id: conversationId, passphrase: pw }).subscribe(function(data){
+      if (data.error === 'wrong_passphrase') { addMsg('error', t('wrongPassphrase')); return; }
+      if (data.error) { addMsg('error', data.error); return; }
+      addMsg('system', t('unlocked'));
+    });
   } else {
     addMsg('error', t('unknownRelaySubcommand', { sub: sub }));
   }

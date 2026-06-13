@@ -373,6 +373,52 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
         flowfile.set_content(json.dumps({"ok": True, "title": title}).encode())
         return [flowfile]
 
+    # -- Server-relay workspace encryption (relay_workspace_*) --------
+    if action.startswith("relay_workspace_"):
+        import core.workspace_encryption as _we
+        from core.key_vault import KeyUnwrapError
+        from core.conversation_store import ConversationLockedError
+        conv_id = body.get("conversation_id", "")
+        if not conv_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        session_id = flowfile.get_attribute("auth.session_id") or ""
+        passphrase = body.get("passphrase", "") or ""
+
+        def _wreply(obj, status="200"):
+            flowfile.set_content(json.dumps(obj, ensure_ascii=False).encode("utf-8"))
+            flowfile.set_attribute("http.response.status", status)
+            return [flowfile]
+
+        try:
+            relay_meta = None
+            try:
+                from core.server_relay_manager import ServerRelayManager
+                relay_meta = ServerRelayManager.get_instance().get_metadata(conv_id)
+            except Exception:
+                relay_meta = None
+            if action == "relay_workspace_encrypt":
+                if not passphrase:
+                    return _wreply({"error": "passphrase required"}, "400")
+                return _wreply(_we.enable(store, conv_id, passphrase,
+                                          relay_meta=relay_meta, session_id=session_id))
+            if action == "relay_workspace_unlock":
+                _we.unlock(store, conv_id, passphrase, session_id=session_id)
+                return _wreply(_we.status(store, conv_id))
+            if action == "relay_workspace_lock":
+                _we.lock(store, conv_id)
+                return _wreply(_we.status(store, conv_id))
+            if action == "relay_workspace_encrypt_off":
+                return _wreply(_we.disable(store, conv_id))
+        except KeyUnwrapError:
+            return _wreply({"ok": False, "error": "wrong_passphrase"})
+        except ConversationLockedError as e:
+            return _wreply({"ok": False, "error": "locked", "detail": str(e)})
+        except ValueError as e:
+            return _wreply({"ok": False, "error": str(e)}, "400")
+        return _wreply({"error": f"unknown workspace action: {action}"}, "400")
+
     # ── Encryption at rest (conv_encrypt_*) ───────────────────────────
     if action.startswith("conv_encrypt_"):
         from core.key_vault import KeyUnwrapError

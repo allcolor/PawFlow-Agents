@@ -262,6 +262,38 @@ class TestMetaToolAliases(unittest.TestCase):
         })
         assert result == "read-ok"
 
+    def test_image_aliases_resolve_to_see(self):
+        # `image` / `image_view` / `view_image` are aliases for the vision
+        # tool `see` (a model invents these names). `view` is intentionally
+        # NOT aliased here (it means text read elsewhere).
+        from core.handlers.meta_tools import (
+            GetToolSchemaHandler, UseToolHandler, _canonical_tool_name)
+
+        assert _canonical_tool_name("image") == "see"
+        assert _canonical_tool_name("image_view") == "see"
+        assert _canonical_tool_name("view_image") == "see"
+        assert _canonical_tool_name("view") == "view"  # not remapped
+
+        reg = ToolRegistry()
+        reg.register(MockHandler(
+            name="see",
+            schema={
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "required": ["path"],
+            },
+            result="see-ok",
+        ))
+
+        schema = json.loads(GetToolSchemaHandler(reg).execute({"tool_name": "image"}))
+        assert schema["name"] == "see"
+
+        result = UseToolHandler(reg).execute({
+            "tool_name": "image",
+            "arguments": {"path": "/tmp/pic.png"},
+        })
+        assert result == "see-ok"
+
     def test_nested_use_tool_read_is_unwrapped(self):
         from core.handlers.meta_tools import UseToolHandler
 

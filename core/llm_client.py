@@ -113,6 +113,8 @@ _TOOL_ALIASES = {
     "create_file": "write", "save": "write",
     "replace": "edit", "patch": "edit", "modify": "edit",
     "web_fetch": "fetch", "http": "fetch",
+    # Image/vision aliases route to `see`; `view` stays -> read (text).
+    "image": "see", "image_view": "see", "view_image": "see",
     # CC official legacy aliases
     "Task": "Agent", "Brief": "SendUserMessage",
     "KillShell": "TaskStop",

@@ -35,6 +35,27 @@ import uuid
 TOOL_RELAY_RETRY_ATTEMPTS = 5
 TOOL_RELAY_RETRY_DELAY_SECONDS = 5.0
 
+# Aliases for tool names a model may invent. Applied both to use_tool's
+# `tool_name` and to direct (non-wrapper) MCP calls, which are rerouted through
+# use_tool. We expose ONLY use_tool + get_tool_schema as MCP tools — these are
+# name aliases, NOT additional exposed tools.
+_BRIDGE_TOOL_ALIASES = {
+    "run_command": "bash", "shell": "bash", "execute": "bash",
+    "run": "bash", "terminal": "bash", "exec": "bash",
+    "find_files": "glob", "list_files": "glob",
+    "list_directory": "list_dir", "ls": "list_dir",
+    "read_file": "read", "cat": "read", "view": "read", "open": "read",
+    "create_file": "write", "save": "write",
+    "replace": "edit", "patch": "edit", "modify": "edit",
+    "web_fetch": "fetch", "http": "fetch",
+    # Image/vision: route to `see` (view/analyze). `view` stays -> read
+    # (text), so only the unambiguous image-* names map here.
+    "image": "see", "image_view": "see", "view_image": "see",
+    "Task": "Agent", "Brief": "SendUserMessage",
+    "KillShell": "TaskStop",
+    "AgentOutputTool": "TaskOutput", "BashOutputTool": "TaskOutput",
+}
+
 
 # ── WebSocket client to PawFlow server ──────────────────────────
 
@@ -556,6 +577,20 @@ def main():
                     break
             else:
                 break
+        # Direct (non-wrapper) MCP call to an aliased name: we expose only
+        # use_tool + get_tool_schema, so a model that calls e.g. `image` as a
+        # top-level MCP tool would otherwise hit "unknown tool". Reroute it
+        # through use_tool with the canonical name — purely an alias, no extra
+        # tool is exposed in tools/list.
+        if name not in ("use_tool", "get_tool_schema"):
+            _canon = (_BRIDGE_TOOL_ALIASES.get(name)
+                      or _BRIDGE_TOOL_ALIASES.get(str(name).lower()))
+            if _canon:
+                _log(f"DIRECT alias: {name}(...) -> use_tool(tool_name={_canon})")
+                args = {"tool_name": _canon,
+                        "arguments": args if isinstance(args, dict) else {}}
+                name = "use_tool"
+
         _log(f"CALL {name}({json.dumps(args)[:300]})")
 
         relay_client = _ensure_relay_client()
@@ -588,19 +623,7 @@ def main():
                     tool_name = args.get("tool_name", "")
                     _unwrap_budget -= 1
                 # Map hallucinated/legacy tool names to real PawFlow names.
-                _TOOL_ALIASES = {
-                    "run_command": "bash", "shell": "bash", "execute": "bash",
-                    "run": "bash", "terminal": "bash", "exec": "bash",
-                    "find_files": "glob", "list_files": "glob",
-                    "list_directory": "list_dir", "ls": "list_dir",
-                    "read_file": "read", "cat": "read", "view": "read", "open": "read",
-                    "create_file": "write", "save": "write",
-                    "replace": "edit", "patch": "edit", "modify": "edit",
-                    "web_fetch": "fetch", "http": "fetch",
-                    "Task": "Agent", "Brief": "SendUserMessage",
-                    "KillShell": "TaskStop",
-                    "AgentOutputTool": "TaskOutput", "BashOutputTool": "TaskOutput",
-                }
+                _TOOL_ALIASES = _BRIDGE_TOOL_ALIASES
                 # Case-insensitive alias lookup for provider/native-style names.
                 _alias_match = _TOOL_ALIASES.get(tool_name) or _TOOL_ALIASES.get(str(tool_name).lower())
                 if _alias_match:

@@ -22,6 +22,11 @@ logger = logging.getLogger(__name__)
 _TOOL_ALIASES = {
     "read_file": "read",
     "loadskill": "load_skill",
+    # Image/vision aliases route to `see` (view/analyze). `view` is left
+    # alone (it means text read elsewhere), so only image-* names map here.
+    "image": "see",
+    "image_view": "see",
+    "view_image": "see",
 }
 
 _WRAPPER_TOOL_NAMES = {

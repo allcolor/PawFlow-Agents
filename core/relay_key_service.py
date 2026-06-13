@@ -83,8 +83,8 @@ class RelayKeyService:
                 continue
             try:
                 dek = unseal_dek(wrap, priv)
-            except Exception:
-                continue  # not ours / tampered — skip silently
+            except Exception:  # nosec B112 - skip wraps this key cannot open (foreign/tampered)
+                continue
             deks[cid] = base64.b64encode(dek).decode("ascii")
         return {"ok": True, "deks": deks}
 

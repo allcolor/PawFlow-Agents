@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import base64
 import os
-import subprocess
+import subprocess  # nosec B404 - cryfs mount/unmount + fusermount, fixed argv
 import sys
 from typing import Any, Dict, List, Optional
 
@@ -129,7 +129,7 @@ def unseal(msg: Dict[str, Any]) -> Dict[str, Any]:
             continue
         try:
             dek = unseal_dek(wrap, priv)
-        except Exception:
+        except Exception:  # nosec B112 - skip wraps this key cannot open (foreign/tampered)
             continue
         deks[cid] = base64.b64encode(dek).decode("ascii")
     return {"ok": True, "deks": deks}

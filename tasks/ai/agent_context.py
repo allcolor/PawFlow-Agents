@@ -1798,16 +1798,32 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
 
             if mime in _IMAGE_TYPES:
                 import time as _time
-                _img_fname = f"image_{int(_time.time())}_{len(parts)}.{filename.rsplit('.', 1)[-1] if '.' in filename else 'png'}"
-                # Re-store under attachment category (or reuse existing fid)
-                _img_fid = att_fid or _fs.store(
-                    _img_fname, raw, mime,
-                    user_id=user_id,
-                    conversation_id=conversation_id or "",
-                    ttl=_attach_ttl,
-                    category="attachment")
-                logger.info("Attachment image: %s (%d bytes) -> %s",
-                            filename, len(raw), _img_fid)
+                # Downscale proactively to the vision ceiling so the stored
+                # copy every downstream path uses (image_ref -> provider
+                # materialisation -> the agent's own read/see) is already
+                # within limits. Without this, a full-res phone screenshot is
+                # rejected at read time ("exceeds 2000x2000") and the agent has
+                # to resize it by hand. A pre-uploaded file_id is resized too,
+                # but only when oversized (the helper is a no-op when it fits).
+                from core.image_resize import resize_image_for_vision
+                raw, mime = resize_image_for_vision(raw, mime)
+                _ext = "jpg" if mime == "image/jpeg" else (
+                    filename.rsplit('.', 1)[-1] if '.' in filename else 'png')
+                _img_fname = f"image_{int(_time.time())}_{len(parts)}.{_ext}"
+                # Re-store under attachment category. A reused file_id is
+                # re-stored only when the resize actually changed the bytes;
+                # an unchanged image keeps its original file_id.
+                if att_fid and mime == att.get("mime_type", mime):
+                    _img_fid = att_fid
+                else:
+                    _img_fid = _fs.store(
+                        _img_fname, raw, mime,
+                        user_id=user_id,
+                        conversation_id=conversation_id or "",
+                        ttl=_attach_ttl,
+                        category="attachment")
+                logger.info("Attachment image: %s (%d bytes, %s) -> %s",
+                            filename, len(raw), mime, _img_fid)
                 parts.append({
                     "type": "image_ref",
                     "file_id": _img_fid,

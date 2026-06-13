@@ -198,6 +198,11 @@ class AgentCoreMixin:
                 return {"type": "text", "text": "[image omitted: missing FileStore context]"}
             try:
                 raw = _b64.b64decode(data_b64, validate=False)
+                # Downscale to the shared vision ceiling before storing, so
+                # tool-produced images (screenshots, renders) reach providers
+                # within the pixel limit just like user attachments do.
+                from core.image_resize import resize_image_for_vision
+                raw, mime = resize_image_for_vision(raw, mime)
                 ext = {
                     "image/png": "png",
                     "image/jpeg": "jpg",

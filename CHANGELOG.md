@@ -4,6 +4,30 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.0-alpha.30] — 2026-06-13
+
+### Fixed
+
+- OAuth credential loss on live-session idle teardown. The idle sweeper,
+  shutdown, and evict paths killed a warm CLI container without copying back
+  the OAuth token the in-container CLI had rotated into its workdir. Anthropic
+  rotates the refresh_token (single-use), so the dropped rotation left a dead
+  token in the pool and logged Claude Code users out (the next refresh failed
+  with invalid_grant). Teardown now recovers the rotated token to the correct
+  pool slot first. codex/gemini wired identically as defense-in-depth (OpenAI/
+  Google do not invalidate the old refresh_token, so the same hole was benign
+  there).
+- Oversized images failed to render in vision instead of being downscaled.
+  The read/filestore/workdir image paths emitted raw base64 without the shared
+  downscaler, so images above the provider pixel limit errored. All image
+  emitters now route through resize_image_for_vision, and the vision ceiling
+  is lowered to 720p (1280px longest edge) so every payload stays small.
+- MCP tool-argument decoding is now tolerant of near-valid JSON. A last-resort
+  repair fixes invalid backslash escapes and raw control characters inside
+  string literals — but only after strict parsing has already failed, and it
+  never alters an already-valid payload. Decode-error messages no longer
+  misreport invalid JSON as a wrapping problem.
+
 ## [1.0.0-alpha.29] — 2026-06-13
 
 ### Added

@@ -131,61 +131,68 @@ def build_parser() -> argparse.ArgumentParser:
     # Encryption key-relay custody: the relay keypair lives only on this host.
     key = sub.add_parser("key", help="Manage the relay encryption keypair")
     key_sub = key.add_subparsers(dest="key_command", required=True)
-    key_sub.add_parser("init", help="Generate the relay keypair (prompts for a passphrase)")
+    # --passphrase-stdin: read the passphrase from stdin (one line) instead of a
+    # TTY prompt, so the desktop app can drive these non-interactively. The
+    # passphrase never appears on argv.
+    _kp_init = key_sub.add_parser("init", help="Generate the relay keypair (prompts for a passphrase)")
+    _kp_init.add_argument("--passphrase-stdin", action="store_true")
     key_sub.add_parser("status", help="Show key_id and whether a key exists")
     key_sub.add_parser("export-pubkey", help="Print key_id + public key to enroll server-side")
-    key_sub.add_parser("rotate", help="Generate a new keypair (invalidates the old key_id)")
-    key_sub.add_parser("verify", help="Check a passphrase unlocks the stored private key")
+    _kp_rot = key_sub.add_parser("rotate", help="Generate a new keypair (invalidates the old key_id)")
+    _kp_rot.add_argument("--passphrase-stdin", action="store_true")
+    _kp_ver = key_sub.add_parser("verify", help="Check a passphrase unlocks the stored private key")
+    _kp_ver.add_argument("--passphrase-stdin", action="store_true")
     return parser
 
 
 def _handle_key(args) -> int:
     """pawflow-relay key ... -- relay-side encryption key custody. The private
-    key never leaves this host; passphrases are read from a TTY, never argv."""
+    key never leaves this host; passphrases are read from a TTY (or stdin with
+    --passphrase-stdin for the desktop app), never argv. --json emits machine
+    output for the desktop."""
     from core import relay_key_store as ks
     from pawflow_relay.manager import relay_home
     config_dir = relay_home()
 
+    def _passphrase(prompt):
+        if getattr(args, "passphrase_stdin", False):
+            line = sys.stdin.readline()
+            return line.rstrip("\n").rstrip("\r")
+        return getpass.getpass(prompt)
+
     if args.key_command == "status":
-        st = ks.status(config_dir)
-        if st["exists"]:
-            print("key_id=" + st["key_id"] + "  (key present)")
-        else:
-            print("no relay key -- run: pawflow-relay key init")
+        _print_result(args, ks.status(config_dir))
         return 0
 
     if args.key_command == "export-pubkey":
         key_id, pub_b64 = ks.export_pubkey(config_dir)
-        print("key_id=" + key_id)
-        print("pubkey=" + pub_b64)
+        _print_result(args, {"key_id": key_id, "pubkey": pub_b64})
         return 0
 
     if args.key_command in ("init", "rotate"):
-        p1 = getpass.getpass("Passphrase to protect the relay private key: ")
-        p2 = getpass.getpass("Confirm passphrase: ")
-        if p1 != p2:
-            print("Error: passphrases do not match", file=sys.stderr)
-            return 1
+        p1 = _passphrase("Passphrase to protect the relay private key: ")
+        if not getattr(args, "passphrase_stdin", False):
+            p2 = getpass.getpass("Confirm passphrase: ")
+            if p1 != p2:
+                _print_result(args, {"ok": False, "error": "passphrases do not match"})
+                return 1
         if not p1:
-            print("Error: passphrase required", file=sys.stderr)
+            _print_result(args, {"ok": False, "error": "passphrase required"})
             return 1
         if args.key_command == "rotate":
             key_id, pub_b64 = ks.rotate(config_dir, p1)
         else:
             key_id, pub_b64 = ks.init_relay_key(config_dir, p1)
-        print("Relay key ready. Enroll this with your server:")
-        print("  key_id=" + key_id)
-        print("  pubkey=" + pub_b64)
+        _print_result(args, {"ok": True, "key_id": key_id, "pubkey": pub_b64})
         return 0
 
     if args.key_command == "verify":
-        pw = getpass.getpass("Passphrase: ")
+        pw = _passphrase("Passphrase: ")
         ok = ks.verify_passphrase(config_dir, pw)
-        print("OK" if ok else "wrong passphrase")
+        _print_result(args, {"ok": bool(ok)})
         return 0 if ok else 1
 
     return 1
-
 
 def main(argv=None) -> int:
     parser = build_parser()

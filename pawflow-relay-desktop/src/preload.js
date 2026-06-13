@@ -15,5 +15,9 @@ contextBridge.exposeInMainWorld('pawflowRelay', {
   relayImageCatalog: () => ipcRenderer.invoke('relay:image-catalog'),
   buildRelayImage: input => ipcRenderer.invoke('relay:build-image', input),
   downloadRelayImage: input => ipcRenderer.invoke('relay:download-image', input),
+  keyStatus: () => ipcRenderer.invoke('relay:key-status'),
+  keyExportPubkey: () => ipcRenderer.invoke('relay:key-export-pubkey'),
+  keyInit: passphrase => ipcRenderer.invoke('relay:key-init', passphrase),
+  keyRotate: passphrase => ipcRenderer.invoke('relay:key-rotate', passphrase),
   onLog: callback => ipcRenderer.on('relay-log', (_event, payload) => callback(payload)),
 });

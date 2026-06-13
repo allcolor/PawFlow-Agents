@@ -83,14 +83,19 @@ function pythonEnv() {
   return env;
 }
 
-function runRelayClientJson(args = []) {
+function runRelayClientJson(args = [], stdinInput = null) {
   return new Promise((resolve, reject) => {
     const relay = relayClientCommand(['--json', ...args]);
     const proc = spawn(relay.command, relay.args, {
       cwd: relay.cwd,
       env: relay.env,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      // When a passphrase is supplied it is piped via stdin (never argv).
+      stdio: [stdinInput != null ? 'pipe' : 'ignore', 'pipe', 'pipe'],
     });
+    if (stdinInput != null) {
+      proc.stdin.write(String(stdinInput).replace(/\r?\n/g, '') + '\n');
+      proc.stdin.end();
+    }
     let stdout = '';
     let stderr = '';
     proc.stdout.on('data', chunk => { stdout += chunk.toString(); });
@@ -699,6 +704,15 @@ ipcMain.handle('relay:image-catalog', async () => loadRelayImageCatalog());
 ipcMain.handle('relay:build-image', async (_event, input) => buildRelayImage(input || {}));
 
 ipcMain.handle('relay:download-image', async (_event, input) => downloadRelayImage(input || {}));
+
+// Relay encryption keypair (phase 5). Provisioning surface mirroring the
+// `pawflow-relay key ...` CLI; passphrases are piped via stdin, never argv.
+ipcMain.handle('relay:key-status', async () => runRelayClientJson(['key', 'status']));
+ipcMain.handle('relay:key-export-pubkey', async () => runRelayClientJson(['key', 'export-pubkey']));
+ipcMain.handle('relay:key-init', async (_event, passphrase) =>
+  runRelayClientJson(['key', 'init', '--passphrase-stdin'], passphrase));
+ipcMain.handle('relay:key-rotate', async (_event, passphrase) =>
+  runRelayClientJson(['key', 'rotate', '--passphrase-stdin'], passphrase));
 
 app.whenReady().then(() => {
   createWindow();

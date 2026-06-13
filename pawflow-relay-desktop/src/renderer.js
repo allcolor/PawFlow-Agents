@@ -136,6 +136,7 @@ function renderPanel() {
   if (state.selected.type === 'new-server') return renderServerPanel(null);
   if (state.selected.type === 'new-workspace') return renderWorkspacePanel(null);
   if (state.selected.type === 'image-builder') return renderImageBuilderPanel();
+  if (state.selected.type === 'relay-key') return renderRelayKeyPanel();
   renderHomePanel();
 }
 
@@ -159,12 +160,14 @@ function renderHomePanel() {
         <button id="homeAddServer">Add Server</button>
         <button id="homeAddWorkspace" class="secondary">Add Relay</button>
         <button id="homeBuildImage" class="secondary">Build Relay Image</button>
+        <button id="homeRelayKey" class="secondary">Relay Encryption Key</button>
       </div>
     </div>
   `;
   $('#homeAddServer').addEventListener('click', () => setSelected('new-server'));
   $('#homeAddWorkspace').addEventListener('click', () => setSelected('new-workspace'));
   $('#homeBuildImage').addEventListener('click', () => setSelected('image-builder'));
+  $('#homeRelayKey').addEventListener('click', () => setSelected('relay-key'));
 }
 
 function renderServerPanel(server) {
@@ -333,6 +336,90 @@ function dockerImageOptions(current) {
     rows.push(`<option value="${escapeAttr(image.name)}">${escapeHtml(label)}</option>`);
   }
   return rows.join('');
+}
+
+async function renderRelayKeyPanel() {
+  $('#panelTitle').textContent = 'Relay Encryption Key';
+  $('#panelSubtitle').textContent = 'The key that lets this relay auto-unlock encrypted conversations. It never leaves this machine.';
+  $('#detailPanel').innerHTML = '<div class="card"><p>Loading key status...</p></div>';
+  let status = { exists: false, key_id: '', pub_b64: '' };
+  try {
+    status = await window.pawflowRelay.keyStatus();
+  } catch (err) {
+    appendLog('relay-key', 'key status failed: ' + err.message + '\n');
+  }
+  const exists = status && status.exists;
+  const kid = (status && status.key_id) || '';
+  const pub = (status && status.pub_b64) || '';
+  $('#detailPanel').innerHTML = `
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <h2>Relay encryption key</h2>
+          <p>Generate once, then register the public key with your PawFlow server (it cannot read your private key). Optional — only used by conversations you choose to bind to this relay.</p>
+        </div>
+      </div>
+      <div class="info-list">
+        <div class="info-row"><span>Status</span><strong>${exists ? 'Key present \uD83D\uDD11' : 'No key yet'}</strong></div>
+        ${exists ? `<div class="info-row"><span>key_id</span><strong>${escapeHtml(kid)}</strong></div>` : ''}
+      </div>
+      ${exists ? `
+        <label>Public key (register this with your server)</label>
+        <textarea id="relayKeyPub" readonly rows="2">${escapeHtml(pub)}</textarea>
+        <div class="actions">
+          <button id="relayKeyCopy">Copy public key</button>
+          <button id="relayKeyRotate" class="secondary">Rotate key</button>
+        </div>
+      ` : `
+        <form id="relayKeyForm">
+          <label>Passphrase (protects the private key at rest)</label>
+          <input type="password" id="relayKeyPass" autocomplete="new-password" required>
+          <label>Confirm passphrase</label>
+          <input type="password" id="relayKeyPass2" autocomplete="new-password" required>
+          <p class="warn">No recovery: if you lose this passphrase the key is unrecoverable and bound conversations must be re-bound.</p>
+          <div class="actions">
+            <button type="submit">Generate key</button>
+          </div>
+        </form>
+      `}
+    </div>
+  `;
+  if (exists) {
+    $('#relayKeyCopy')?.addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText(pub); appendLog('relay-key', 'public key copied\n'); }
+      catch (err) { appendLog('relay-key', 'copy failed: ' + err.message + '\n'); }
+    });
+    $('#relayKeyRotate')?.addEventListener('click', () => rotateRelayKey());
+  } else {
+    $('#relayKeyForm')?.addEventListener('submit', generateRelayKey);
+  }
+}
+
+async function generateRelayKey(event) {
+  event.preventDefault();
+  const p1 = $('#relayKeyPass').value;
+  const p2 = $('#relayKeyPass2').value;
+  if (!p1) { appendLog('relay-key', 'passphrase required\n'); return; }
+  if (p1 !== p2) { appendLog('relay-key', 'passphrases do not match\n'); return; }
+  try {
+    const res = await window.pawflowRelay.keyInit(p1);
+    appendLog('relay-key', 'key generated: key_id=' + (res && res.key_id) + '\n');
+    renderRelayKeyPanel();
+  } catch (err) {
+    appendLog('relay-key', 'key init failed: ' + err.message + '\n');
+  }
+}
+
+async function rotateRelayKey() {
+  const p1 = window.prompt('New passphrase for the rotated key (invalidates the old key_id):');
+  if (!p1) return;
+  try {
+    const res = await window.pawflowRelay.keyRotate(p1);
+    appendLog('relay-key', 'key rotated: key_id=' + (res && res.key_id) + '\n');
+    renderRelayKeyPanel();
+  } catch (err) {
+    appendLog('relay-key', 'key rotate failed: ' + err.message + '\n');
+  }
 }
 
 function renderImageBuilderPanel() {

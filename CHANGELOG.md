@@ -4,6 +4,29 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.0-alpha.28] — 2026-06-13
+
+### Fixed
+
+- Web chat (SSE): the agent event stream checked its lifetime cap at the top of
+  the loop, after `writer.iterate()` had already dequeued an event, and broke
+  without yielding that chunk. When a message landed on the same iteration the
+  cap expired it was dropped — and since `send()` had returned True the bus
+  never buffered it for replay, so the reconnecting client could not recover it
+  (the message reached side channels like Telegram via the flow sink but never
+  the web chat transcript, intermittently). The stream now yields the dequeued
+  chunk before the lifetime check and drains any already-queued events before
+  closing; adds `SSEWriter.drain_nowait()`.
+- Claude Code interactive (tool badges): CCI never set `tool_origin` on tool
+  calls, so they rendered with no native/mcp badge (unlike Codex). Tool calls
+  are now tagged — PawFlow MCP-bridge tools (`use_tool`/`get_tool_schema`) get
+  the MCP badge, the allowed native Claude Code tools get the Native badge —
+  threaded through the MITM observer and both provider emit paths.
+- Web chat (tool-call display): the client-side `use_tool` unwrap read only the
+  legacy `arguments`/`parameters` object, never the advertised `arguments_json`
+  string, so a raw wrapper reaching the client rendered as empty parens. The
+  client now decodes `arguments_json` first, mirroring the alpha.27 server fix.
+
 ## [1.0.0-alpha.27] — 2026-06-13
 
 ### Fixed

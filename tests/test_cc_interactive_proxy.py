@@ -187,6 +187,46 @@ def test_request_observer_unwraps_observed_pawflow_use_tool(monkeypatch):
     }
 
 
+def test_request_observer_unwraps_use_tool_arguments_json_string(monkeypatch):
+    # CCI advertises the payload as a string `arguments_json` (not a free-form
+    # object). The observer must decode it so args render, not empty parens.
+    monkeypatch.setenv("PAWFLOW_CCI_SESSION_TOKEN", "sess")
+    proxy = importlib.import_module("tools.cc_interactive_proxy")
+    events = []
+    monkeypatch.setattr(proxy.EVENTS, "emit", events.append)
+    body = json.dumps({
+        "messages": [{
+            "role": "assistant",
+            "content": [{
+                "type": "tool_use",
+                "id": "toolu_2",
+                "name": "mcp__pawflow__use_tool",
+                "input": {
+                    "tool_name": "bash",
+                    "arguments_json": "{\"command\": \"git status\"}",
+                },
+            }],
+        }],
+    }).encode()
+    chunk = (
+        b"POST /v1/messages?beta=true HTTP/1.1\r\n"
+        b"Host: api.anthropic.com\r\n"
+        + f"Content-Length: {len(body)}\r\n\r\n".encode()
+        + body
+    )
+
+    proxy.HTTPRequestObserver(proxy.HTTPExchangeTracker("r2")).feed(chunk)
+
+    assert events[1] == {
+        "type": "tool_use",
+        "request_id": "r2",
+        "path": "/v1/messages?beta=true",
+        "tool_use_id": "toolu_2",
+        "name": "bash",
+        "arguments": {"command": "git status"},
+    }
+
+
 def test_request_observer_hides_bootstrap_native_tools(monkeypatch):
     monkeypatch.setenv("PAWFLOW_CCI_SESSION_TOKEN", "sess")
     proxy = importlib.import_module("tools.cc_interactive_proxy")

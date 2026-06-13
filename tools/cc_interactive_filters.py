@@ -37,7 +37,14 @@ def normalize_observed_tool(name: str, args) -> tuple[str, dict]:
         if "tool_name" not in tool_args and isinstance(tool_args.get("parameters"), dict):
             tool_args = tool_args["parameters"]
         inner_name = str(tool_args.get("tool_name") or raw_name)
-        inner_args = _json_dict(tool_args.get("arguments", tool_args.get("parameters", {})))
+        # Source order mirrors the MCP bridge reader: the advertised string
+        # `arguments_json` first (CCI sends it; _json_dict decodes the string),
+        # then a legacy `arguments`/`parameters` object. Without this, CCI args
+        # (now carried in arguments_json) render as empty parens.
+        inner_raw = tool_args.get("arguments_json")
+        if inner_raw is None or inner_raw == "":
+            inner_raw = tool_args.get("arguments", tool_args.get("parameters", {}))
+        inner_args = _json_dict(inner_raw)
         return inner_name, inner_args
     if raw_name in _SCHEMA_WRAPPERS:
         return "get_tool_schema", tool_args

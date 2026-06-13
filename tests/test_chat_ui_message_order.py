@@ -20,6 +20,21 @@ SECRETS_JS = Path("tasks/io/chat_ui/secrets.js").read_text(encoding="utf-8")
 HTTP_LISTENER = Path("services/http_listener_service.py").read_text(encoding="utf-8")
 
 
+def test_client_unwrap_reads_arguments_json_like_server():
+    # Mirror of the server-side normalize_observed_tool (a27): the client unwrap
+    # must decode the advertised `arguments_json` string first, not only the
+    # legacy arguments/parameters object — otherwise a raw use_tool wrapper that
+    # carries arguments_json renders as empty parens (Update()).
+    unwrap = MESSAGES_JS[
+        MESSAGES_JS.index("function _unwrapDisplayedToolCall"):
+        MESSAGES_JS.index("function _argText")]
+    assert "payload.arguments_json" in unwrap
+    assert "payload.arguments || payload.parameters" in unwrap
+    # arguments_json is consulted before the legacy arguments/parameters object.
+    assert (unwrap.index("payload.arguments_json")
+            < unwrap.index("payload.arguments || payload.parameters"))
+
+
 def test_add_msg_inserts_by_message_timestamp():
     """Late SSE tool events must not render after newer assistant text."""
     assert "function _messageSortTs(extra)" in MESSAGES_JS

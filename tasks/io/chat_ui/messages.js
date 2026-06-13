@@ -74,7 +74,15 @@ function _unwrapDisplayedToolCall(name, args) {
       : toolArgs;
     if (!payload.tool_name) return { toolName, toolArgs };
     toolName = payload.tool_name;
-    toolArgs = payload.arguments || payload.parameters || {};
+    // Mirror the server's normalize_observed_tool source order: the advertised
+    // string `arguments_json` first (CCI sends args this way), then a legacy
+    // `arguments`/`parameters` object. Without this the client renders empty
+    // parens for raw use_tool wrappers carrying arguments_json.
+    let inner = payload.arguments_json;
+    if (inner === undefined || inner === null || inner === '') {
+      inner = payload.arguments || payload.parameters || {};
+    }
+    toolArgs = inner;
     if (typeof toolArgs === 'string') {
       try { toolArgs = JSON.parse(toolArgs); } catch(e) {}
     }

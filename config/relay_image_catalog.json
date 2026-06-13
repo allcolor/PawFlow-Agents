@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "relay_image_version": "2026.06.06",
+  "relay_image_version": "2026.06.13",
   "required_features": ["relay.base"],
   "server_profile": "server-full",
   "server_minimal_profile": "server-minimal",
@@ -15,7 +15,7 @@
         "sudo", "python3", "python3-pip", "python3-venv", "python3-dev", "ca-certificates",
         "git", "curl", "wget", "gnupg2", "software-properties-common", "jq", "sqlite3", "openssh-client", "unzip", "zip",
         "vim-tiny", "nano", "procps", "psmisc", "lsof", "iproute2", "iputils-ping", "dnsutils", "netcat-openbsd",
-        "file", "less", "fuse3", "libfuse3-dev", "build-essential", "pkg-config", "chrony"
+        "file", "less", "fuse3", "libfuse3-dev", "cryfs", "build-essential", "pkg-config", "chrony"
       ],
       "pip": ["pyfuse3", "trio", "websockets", "requests", "certifi"],
       "env": {

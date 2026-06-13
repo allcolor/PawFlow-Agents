@@ -834,6 +834,22 @@ class ToolRelayService(BaseService):
                                    _tool, getattr(_je, "pos", "?"), _je,
                                    len(_original), _original)
                     _decode_ok = False
+                    # Last resort: repair near-valid JSON (invalid \escape
+                    # like \', raw control chars). Runs only because strict
+                    # parsing already failed; a genuinely-valid payload is
+                    # returned unchanged, so correct calls are never rewritten.
+                    try:
+                        from core.tool_json import repair_invalid_json_escapes
+                        _rep = repair_invalid_json_escapes(_original)
+                        if _rep != _original:
+                            _raw_args = json.loads(_rep)
+                            _decode_ok = True
+                            _decode_err = None
+                            logger.info(
+                                "[tool-relay] escape-repair OK for %s", _tool)
+                    except Exception:
+                        logger.debug("[tool-relay] escape-repair failed",
+                                     exc_info=True)
             # Decode failed on non-empty input → error with position + window
             if not _decode_ok and _original and _original != "{}":
                 _detail = str(_decode_err) if _decode_err else "unknown JSON error"
@@ -850,8 +866,9 @@ class ToolRelayService(BaseService):
                 return {"type": "response", "request_id": request_id,
                         "result": (
                             f"Error: failed to decode arguments for {_tool}. "
-                            f"Arguments must be a JSON object (dict), not a "
-                            f"JSON-encoded string. Parse error: {_detail}.{_window} "
+                            f"The arguments_json value is not valid JSON, and "
+                            f"last-resort repair could not fix it. "
+                            f"Parse error: {_detail}.{_window} "
                             f"Fix: resend with arguments as a literal dict; "
                             f"escape embedded newlines/quotes once (\\\\n, \\\\\\\") "
                             f"but do NOT wrap the whole value in a string."

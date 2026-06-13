@@ -398,6 +398,82 @@ except Exception:
     _shared_autoclose_truncated_json = _autoclose_truncated_json
 
 
+# Characters that form a valid JSON escape when they follow a backslash.
+_JSON_VALID_ESCAPES_LOCAL = frozenset('"' + chr(92) + "/bfnrtu")
+
+
+def _repair_invalid_json_escapes(s: str) -> str:
+    """Last-resort repair for JSON an LLM nearly got right.
+
+    Call ONLY after a strict json.loads has already failed: this is a
+    fallback, never a pre-processor. It returns the input unchanged when
+    there is nothing to fix, so a valid payload is never altered. Two
+    narrow, common mistakes are repaired, both only inside string
+    literals: an invalid backslash escape (a backslash before a single
+    quote becomes a bare single quote; any other invalid backslash is
+    treated as a literal backslash; a lone trailing backslash is dropped),
+    and a raw control character (newline/tab/etc.) is replaced by its JSON
+    escape. Anything outside string literals is left untouched.
+    """
+    bs = chr(92)
+    ctrl = {chr(10): bs + "n", chr(9): bs + "t", chr(13): bs + "r",
+            chr(8): bs + "b", chr(12): bs + "f"}
+    out = []
+    in_string = False
+    changed = False
+    i = 0
+    n = len(s)
+    while i < n:
+        c = s[i]
+        if not in_string:
+            out.append(c)
+            if c == '"':
+                in_string = True
+            i += 1
+            continue
+        if c == '"':
+            out.append(c)
+            in_string = False
+            i += 1
+            continue
+        if c == bs:
+            nxt = s[i + 1] if i + 1 < n else ""
+            if nxt in _JSON_VALID_ESCAPES_LOCAL:
+                out.append(c)
+                out.append(nxt)
+                i += 2
+                continue
+            if nxt == "'":
+                out.append("'")
+                changed = True
+                i += 2
+                continue
+            if nxt == "":
+                changed = True
+                i += 1
+                continue
+            out.append(bs + bs)
+            changed = True
+            i += 1
+            continue
+        if ord(c) < 0x20:
+            out.append(ctrl.get(c, bs + "u%04x" % ord(c)))
+            changed = True
+            i += 1
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out) if changed else s
+
+
+try:
+    from core.tool_json import repair_invalid_json_escapes as _shared_repair_invalid_json_escapes
+except Exception:
+    _shared_repair_invalid_json_escapes = _repair_invalid_json_escapes
+
+
+
+
 def _log(msg):
     global _log_file
     sys.stderr.write(f"[mcp-bridge] {msg}\n")
@@ -705,6 +781,22 @@ def main():
                                     except (json.JSONDecodeError, TypeError) as _je3:
                                         _decode_err = _je3
                                         _log(f"USE_TOOL {tool_name} truncation-repair FAILED: {_je3}")
+                            # Last resort: repair near-valid JSON (invalid
+                            # \escape like \', raw control chars). Only runs
+                            # because strict parsing already failed; a
+                            # genuinely-valid payload is returned unchanged,
+                            # so correct calls are never rewritten.
+                            _repaired = _shared_repair_invalid_json_escapes(tool_args)
+                            if _repaired != tool_args:
+                                try:
+                                    tool_args = json.loads(_repaired)
+                                    _unwrap_passes += 1
+                                    _decode_err = None
+                                    _log(f"USE_TOOL {tool_name} escape-repair OK")
+                                    continue
+                                except (json.JSONDecodeError, TypeError) as _je4:
+                                    _decode_err = _je4
+                                    _log(f"USE_TOOL {tool_name} escape-repair FAILED: {_je4}")
                             _log(f"USE_TOOL {tool_name} JSON decode FAILED: {_je} value={str(tool_args)[:200]}")
                             _decode_failed = True
                             break
@@ -729,11 +821,15 @@ def main():
                             window = f" Window around char {pos}: {prefix}{raw_str[lo:hi]!r}{suffix}"
                         result = (
                             f"Error: failed to decode arguments for {tool_name}. "
-                            f"Arguments must be a JSON object (dict), not a JSON-encoded string. "
-                            f"Parse error: {detail}.{window} Fix: resend with `arguments` "
+                            f"The arguments_json value is not valid JSON, and "
+                            f"last-resort repair could not fix it. "
+                            f"Parse error: {detail}.{window} Fix: send "
+                            f"arguments_json as ONE valid JSON string -- escape "
+                            f"newlines as the two chars backslash-n and quotes "
+                            f"as backslash-quote; do NOT escape single quotes "
+                            f"(they need no escaping in JSON). Or send `arguments` "
                             f"as a literal dict, e.g. {{\"tool_name\": \"edit\", "
-                            f"\"arguments\": {{\"path\": ..., \"old_string\": ...}}}} -- "
-                            f"NOT a quoted string of JSON."
+                            f"\"arguments\": {{\"path\": ..., \"old_string\": ...}}}}."
                         )
                     elif isinstance(tool_args, str):
                         _log(f"USE_TOOL {tool_name} args still string after unwrap: {tool_args[:200]}")

@@ -43,6 +43,74 @@ def autoclose_truncated_json(s: str, max_appends: int = 4) -> str:
     return s + suffix if suffix else s
 
 
+# Characters that form a valid JSON escape when they follow a backslash.
+_JSON_VALID_ESCAPES = frozenset('"' + chr(92) + "/bfnrtu")
+
+
+def repair_invalid_json_escapes(s: str) -> str:
+    """Last-resort repair for JSON an LLM nearly got right.
+
+    Call ONLY after a strict json.loads has already failed: this is a
+    fallback, never a pre-processor. It returns the input unchanged when
+    there is nothing to fix, so a valid payload is never altered. Two
+    narrow, common mistakes are repaired, both only inside string
+    literals: an invalid backslash escape (a backslash before a single
+    quote becomes a bare single quote; any other invalid backslash is
+    treated as a literal backslash; a lone trailing backslash is dropped),
+    and a raw control character (newline/tab/etc.) is replaced by its JSON
+    escape. Anything outside string literals is left untouched.
+    """
+    bs = chr(92)
+    ctrl = {chr(10): bs + "n", chr(9): bs + "t", chr(13): bs + "r",
+            chr(8): bs + "b", chr(12): bs + "f"}
+    out = []
+    in_string = False
+    changed = False
+    i = 0
+    n = len(s)
+    while i < n:
+        c = s[i]
+        if not in_string:
+            out.append(c)
+            if c == '"':
+                in_string = True
+            i += 1
+            continue
+        if c == '"':
+            out.append(c)
+            in_string = False
+            i += 1
+            continue
+        if c == bs:
+            nxt = s[i + 1] if i + 1 < n else ""
+            if nxt in _JSON_VALID_ESCAPES:
+                out.append(c)
+                out.append(nxt)
+                i += 2
+                continue
+            if nxt == "'":
+                out.append("'")
+                changed = True
+                i += 2
+                continue
+            if nxt == "":
+                changed = True
+                i += 1
+                continue
+            out.append(bs + bs)
+            changed = True
+            i += 1
+            continue
+        if ord(c) < 0x20:
+            out.append(ctrl.get(c, bs + "u%04x" % ord(c)))
+            changed = True
+            i += 1
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out) if changed else s
+
+
 def _error_payload(raw: Any, detail: str) -> Dict[str, Any]:
     raw_text = raw if isinstance(raw, str) else repr(raw)
     return {
@@ -113,6 +181,22 @@ def parse_tool_arguments(raw: Any, *, tool_name: str = "", provider: str = "",
                         continue
                     except (json.JSONDecodeError, TypeError) as exc3:
                         last_error = exc3
+            # Last resort: repair near-valid JSON (invalid \escape, raw
+            # control chars). Only runs because strict parsing already
+            # failed; returns the input unchanged for genuinely-valid JSON,
+            # so a correct call is never rewritten.
+            repaired = repair_invalid_json_escapes(value)
+            if repaired != value:
+                try:
+                    value = json.loads(repaired)
+                    _log.warning(
+                        "[%s] repaired near-valid tool JSON for %s "
+                        "(invalid escapes / control chars)",
+                        provider or "llm", tool_name or "<unknown>",
+                    )
+                    continue
+                except (json.JSONDecodeError, TypeError) as exc4:
+                    last_error = exc4
             detail = f"{last_error or exc}.{_json_error_window(value, last_error or exc)}"
             _log.error(
                 "[%s] failed to decode tool arguments for %s: %s raw=%r",

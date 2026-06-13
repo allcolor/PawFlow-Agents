@@ -89,3 +89,38 @@ def test_attachment_ingestion_downscales_before_storing():
     w, h = Image.open(io.BytesIO(raw)).size
     assert max(w, h) == MAX_DIM
     assert ref["size"] == len(raw)
+
+
+def test_preuploaded_oversized_jpeg_is_restored_after_downscale():
+    from core.file_store import FileStore
+    from tasks.ai.agent_context import AgentContextMixin
+
+    buf = io.BytesIO()
+    Image.new("RGB", (4000, 4000), (10, 120, 200)).save(buf, format="JPEG")
+    oversized = buf.getvalue()
+    store = FileStore.instance()
+    original_fid = store.store(
+        "phone.jpg", oversized, "image/jpeg",
+        user_id="u_resize_fid", conversation_id="c_resize_fid",
+        category="attachment")
+    attachments = [{
+        "filename": "phone.jpg",
+        "mime_type": "image/jpeg",
+        "file_id": original_fid,
+    }]
+
+    content = AgentContextMixin._build_user_content(
+        object.__new__(AgentContextMixin),
+        "look at this", attachments,
+        conversation_id="c_resize_fid", user_id="u_resize_fid")
+
+    refs = [p for p in content if isinstance(p, dict) and p.get("type") == "image_ref"]
+    assert len(refs) == 1
+    ref = refs[0]
+    assert ref["file_id"] != original_fid
+    assert ref["mime_type"] == "image/jpeg"
+
+    _, raw, _ = store.get(ref["file_id"], user_id="u_resize_fid")
+    w, h = Image.open(io.BytesIO(raw)).size
+    assert max(w, h) == MAX_DIM
+    assert len(raw) == ref["size"]

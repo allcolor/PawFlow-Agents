@@ -257,6 +257,47 @@ def test_bash_still_receives_secret_environment(monkeypatch):
     assert len(fingerprint_calls) == 2
 
 
+def test_subconversation_tool_execution_uses_parent_runtime_scope(monkeypatch):
+    import services.tool_relay_service as relay_mod
+
+    ToolRelayService.clear_runtime_caches()
+    registry = _Registry("ok")
+    svc = ToolRelayService({})
+    monkeypatch.setattr(svc, "_get_registry", lambda *args: registry)
+    hook_cids = []
+    extra_cids = []
+    env_cids = []
+    secret_cids = []
+    monkeypatch.setattr(
+        ToolRelayService, "_conversation_has_hooks",
+        classmethod(lambda cls, cid, uid: hook_cids.append(cid) or False))
+
+    def _extra(cid, key, default=None):
+        extra_cids.append((cid, key))
+        return _fast_auto_permissions(key, default)
+
+    monkeypatch.setattr(
+        ToolRelayService, "_conversation_extra_fast", staticmethod(_extra))
+    monkeypatch.setattr(
+        ToolRelayService, "_secret_config_fingerprint",
+        classmethod(lambda cls, uid, conv: ("fp", conv)))
+    monkeypatch.setattr(
+        relay_mod, "resolve_secrets_env",
+        lambda uid, conv: env_cids.append(conv) or {"TOKEN": "secret"})
+    monkeypatch.setattr(
+        relay_mod, "resolve_secret_values",
+        lambda uid, conv: secret_cids.append(conv) or (set(), {}))
+
+    for cid in ("conv1::task_verify::t_1", "conv1::delegate::assistant"):
+        assert svc._do_execute("rid", "bash", {"command": "echo $TOKEN"},
+                               "alice", cid, "assistant")["data"] == "ok"
+
+    assert hook_cids == ["conv1", "conv1"]
+    assert {cid for cid, key in extra_cids if key == "permission_mode"} == {"conv1"}
+    assert env_cids == ["conv1"]
+    assert secret_cids == ["conv1"]
+
+
 def test_handle_execute_retries_relay_transport_errors(monkeypatch):
     import services.tool_relay_service as relay_mod
 

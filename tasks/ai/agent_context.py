@@ -1806,6 +1806,8 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 # to resize it by hand. A pre-uploaded file_id is resized too,
                 # but only when oversized (the helper is a no-op when it fits).
                 from core.image_resize import resize_image_for_vision
+                original_raw = raw
+                original_mime = mime
                 raw, mime = resize_image_for_vision(raw, mime)
                 _ext = "jpg" if mime == "image/jpeg" else (
                     filename.rsplit('.', 1)[-1] if '.' in filename else 'png')
@@ -1813,7 +1815,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 # Re-store under attachment category. A reused file_id is
                 # re-stored only when the resize actually changed the bytes;
                 # an unchanged image keeps its original file_id.
-                if att_fid and mime == att.get("mime_type", mime):
+                if att_fid and raw is original_raw and mime == original_mime:
                     _img_fid = att_fid
                 else:
                     _img_fid = _fs.store(

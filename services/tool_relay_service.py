@@ -154,9 +154,11 @@ class ToolRelayService(BaseService):
 
     @staticmethod
     def _root_conversation_id(conversation_id: str) -> str:
-        if conversation_id and '::task::' in conversation_id:
-            return conversation_id.split('::task::')[0]
-        return conversation_id or ""
+        conversation_id = str(conversation_id or "")
+        for marker in ("::task::", "::task_verify::", "::delegate::"):
+            if marker in conversation_id:
+                return conversation_id.split(marker, 1)[0]
+        return conversation_id
 
     @staticmethod
     def _args_reference_env(arguments: Any) -> bool:

@@ -51,6 +51,21 @@ def normalize_observed_tool(name: str, args) -> tuple[str, dict]:
     return raw_name, tool_args
 
 
+def observed_tool_origin(name: str) -> str:
+    """Classify an observed CCI tool by origin for the UI badge.
+
+    PawFlow tools reach Claude Code through the MCP bridge (the use_tool /
+    get_tool_schema wrappers) -> "mcp". Everything else is one of Claude Code's
+    own built-in tools -> "native". Mirrors Codex's native/mcp tagging so both
+    providers render the same badges. Pass the RAW observed name (before
+    normalize_observed_tool unwraps it).
+    """
+    raw_name = name or ""
+    if raw_name in _USE_TOOL_WRAPPERS or raw_name in _SCHEMA_WRAPPERS:
+        return "mcp"
+    return "native"
+
+
 def is_hidden_native_tool(name: str, args: dict) -> bool:
     """Hide Claude Code bootstrap/discovery tools from PawFlow transcripts."""
     tool = (name or "").lower().replace("_", "")

@@ -27,9 +27,11 @@ import zlib
 from urllib.parse import urlparse
 
 try:
-    from cc_interactive_filters import is_hidden_native_tool, normalize_observed_tool
+    from cc_interactive_filters import (
+        is_hidden_native_tool, normalize_observed_tool, observed_tool_origin)
 except ImportError:  # Unit tests import this file as tools.cc_interactive_proxy.
-    from tools.cc_interactive_filters import is_hidden_native_tool, normalize_observed_tool
+    from tools.cc_interactive_filters import (
+        is_hidden_native_tool, normalize_observed_tool, observed_tool_origin)
 
 
 UPSTREAM_HOST = "api.anthropic.com"
@@ -532,6 +534,7 @@ def _emit_observed_tool_blocks(request_id: str, path: str, body: bytes,
                     "tool_use_id": tool_use_id,
                     "name": display_name,
                     "arguments": display_args,
+                    "tool_origin": observed_tool_origin(tool_name),
                 })
             elif role == "user" and btype == "tool_result":
                 tool_use_id = block.get("tool_use_id") or block.get("id") or ""

@@ -110,6 +110,7 @@ def test_turn_coordinator_assembles_text_thinking_and_native_tool_use():
             "id": "toolu_1",
             "name": "read",
             "arguments": {"path": "a.png"},
+            "tool_origin": "native",
         }),
     ]
     assert turns == []
@@ -628,11 +629,13 @@ def test_turn_coordinator_publishes_native_tool_result_live():
             "id": "toolu_1",
             "name": "read",
             "arguments": {"path": "README.md"},
+            "tool_origin": "native",
         }),
         ("tool_result", {
             "tc_id": "toolu_1",
             "tool": "read",
             "result": "file body",
+            "tool_origin": "native",
         }),
     ]
 
@@ -667,6 +670,7 @@ def test_turn_coordinator_publishes_proxy_tool_use_before_stop_hook():
         "id": "toolu_1",
         "name": "read",
         "arguments": {"path": "README.md"},
+        "tool_origin": "native",
     })]
 
 
@@ -688,6 +692,7 @@ def test_turn_coordinator_accepts_observed_tool_input_alias():
         "id": "toolu_1",
         "name": "Bash",
         "arguments": {"command": "git status --short"},
+        "tool_origin": "native",
     })]
 
 
@@ -729,11 +734,13 @@ def test_turn_coordinator_unwraps_pawflow_tool_wrapper_for_live_blocks():
             "id": "toolu_1",
             "name": "bash",
             "arguments": {"command": "git status"},
+            "tool_origin": "mcp",
         }),
         ("tool_result", {
             "tc_id": "toolu_1",
             "tool": "bash",
             "result": "clean",
+            "tool_origin": "mcp",
         }),
     ]
 
@@ -789,11 +796,13 @@ def test_turn_coordinator_buffers_tool_result_until_tool_use_is_emitted():
             "id": "toolu_1",
             "name": "read",
             "arguments": {"path": "README.md"},
+            "tool_origin": "native",
         }),
         ("tool_result", {
             "tc_id": "toolu_1",
             "tool": "read",
             "result": "file body",
+            "tool_origin": "native",
         }),
     ]
 
@@ -827,11 +836,13 @@ def test_turn_coordinator_observed_tool_use_unblocks_result_before_sse_stop():
             "id": "toolu_1",
             "name": "Bash",
             "arguments": {"command": "git status"},
+            "tool_origin": "native",
         }),
         ("tool_result", {
             "tc_id": "toolu_1",
             "tool": "Bash",
             "result": "clean",
+            "tool_origin": "native",
         }),
     ]
 

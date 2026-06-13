@@ -144,6 +144,7 @@ def test_request_observer_emits_observed_tool_use_before_result(monkeypatch):
         "tool_use_id": "toolu_1",
         "name": "Bash",
         "arguments": {"command": "git status"},
+        "tool_origin": "native",
     }
     assert events[2]["tool_use_id"] == "toolu_1"
     assert events[2]["content"] == "clean"
@@ -184,6 +185,7 @@ def test_request_observer_unwraps_observed_pawflow_use_tool(monkeypatch):
         "tool_use_id": "toolu_1",
         "name": "bash",
         "arguments": {"command": "git status"},
+        "tool_origin": "mcp",
     }
 
 
@@ -224,6 +226,7 @@ def test_request_observer_unwraps_use_tool_arguments_json_string(monkeypatch):
         "tool_use_id": "toolu_2",
         "name": "bash",
         "arguments": {"command": "git status"},
+        "tool_origin": "mcp",
     }
 
 
@@ -275,6 +278,21 @@ def test_hidden_native_tool_filter_matches_only_bootstrap_read():
     assert is_hidden_native_tool(
         "Read", {"file_path": "/cc_sessions/c/a/.pawflow_cci/initial_context.md.bak"}) is False
     assert is_hidden_native_tool("Bash", {"command": "git status"}) is False
+
+
+def test_observed_tool_origin_classifies_mcp_wrappers_vs_native():
+    from tools.cc_interactive_filters import observed_tool_origin
+
+    # PawFlow MCP bridge wrappers -> mcp badge.
+    assert observed_tool_origin("mcp__pawflow__use_tool") == "mcp"
+    assert observed_tool_origin("use_tool") == "mcp"
+    assert observed_tool_origin("mcp__pawflow__get_tool_schema") == "mcp"
+    assert observed_tool_origin("get_tool_schema") == "mcp"
+    # Claude Code's own built-in tools -> native badge.
+    assert observed_tool_origin("Bash") == "native"
+    assert observed_tool_origin("Edit") == "native"
+    assert observed_tool_origin("TaskCreate") == "native"
+    assert observed_tool_origin("") == "native"
 
 
 def test_proxy_observer_errors_do_not_affect_forwarding(monkeypatch):

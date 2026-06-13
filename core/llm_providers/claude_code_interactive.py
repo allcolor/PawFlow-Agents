@@ -19,7 +19,8 @@ import uuid
 from core.agent_prompt_policy import append_cli_mcp_system_prompt
 from core.claude_code_interactive_pool import InteractiveClaudeCodePool
 from core.llm_providers.claude_code_session import ClaudeCodeSessionMixin
-from tools.cc_interactive_filters import is_hidden_native_tool, normalize_observed_tool
+from tools.cc_interactive_filters import (
+    is_hidden_native_tool, normalize_observed_tool, observed_tool_origin)
 
 
 logger = logging.getLogger(__name__)
@@ -487,11 +488,13 @@ class _CCITurnCoordinator:
         self.emitted_tool_use_ids.add(tool_id)
         if not block.get("hidden"):
             self._remember_turn_tool_call(tool_id, display_name, display_args)
+        block["tool_origin"] = observed_tool_origin(block.get("name", ""))
         if self.block_callback and not block.get("hidden"):
             self.block_callback("tool_use", {
                 "id": tool_id,
                 "name": display_name,
                 "arguments": display_args,
+                "tool_origin": block["tool_origin"],
             })
         self._emit_pending_tool_results(tool_id)
 
@@ -545,11 +548,19 @@ class _CCITurnCoordinator:
             is_hidden_native_tool(block.get("name", ""), args)
             or is_hidden_native_tool(display_name, display_args)
         )
+        # Prefer the MITM's tool_origin field (computed from the RAW name before
+        # unwrapping). Fall back to classifying the observed name: native tools
+        # keep their own name (-> native); MCP wrappers are unwrapped to a
+        # display name, but the updated MITM always sends tool_origin for those.
+        block["tool_origin"] = (
+            event.get("tool_origin", "")
+            or observed_tool_origin(block.get("name", "")))
         if self.block_callback and not block.get("hidden"):
             self.block_callback("tool_use", {
                 "id": tc_id,
                 "name": display_name,
                 "arguments": display_args,
+                "tool_origin": block["tool_origin"],
             })
         if not block.get("hidden"):
             self._remember_turn_tool_call(tc_id, display_name, display_args)
@@ -595,6 +606,7 @@ class _CCITurnCoordinator:
                 "tc_id": tc_id,
                 "tool": display_name,
                 "result": result,
+                "tool_origin": block.get("tool_origin", ""),
             })
 
 

@@ -46,12 +46,18 @@ class SegmentedJsonl:
     """Read/write one logical JSONL stream stored in bounded segment files."""
 
     def __init__(self, flat_path: Path, max_rows: int = DEFAULT_MAX_ROWS,
-                 max_bytes: int = DEFAULT_MAX_BYTES):
+                 max_bytes: int = DEFAULT_MAX_BYTES, codec: Any = None):
         self.flat_path = Path(flat_path)
         self.segment_dir = self.flat_path.with_suffix("")
         self.index_path = self.segment_dir / _INDEX_NAME
         self.max_rows = max(1, int(max_rows or DEFAULT_MAX_ROWS))
         self.max_bytes = max(1, int(max_bytes or DEFAULT_MAX_BYTES))
+        # Optional row codec (e.g. core.conversation_cipher.RowCodec): when
+        # set, content fields are encrypted on write and decrypted on read so
+        # every path through this class is consistent. Metadata stays clear,
+        # so msg_id-keyed operations (truncate/patch/delete) still work without
+        # the key. None == passthrough (identical to the unencrypted path).
+        self.codec = codec
 
     def is_segmented(self) -> bool:
         return self.index_path.exists() or self.segment_dir.is_dir()
@@ -64,16 +70,22 @@ class SegmentedJsonl:
         return self._segment_paths()
 
     def iter_rows(self) -> Iterator[Dict[str, Any]]:
+        codec = self.codec
         for path in self.iter_paths():
-            yield from self._iter_file(path)
+            for row in self._iter_file(path):
+                yield codec.decode(row) if codec is not None else row
 
     def iter_rows_reverse(self) -> Iterator[Dict[str, Any]]:
         self._flush_own_append_handles()
+        codec = self.codec
         paths = self._segment_paths()
         for path in reversed(paths):
-            yield from self._iter_file_reverse(path)
+            for row in self._iter_file_reverse(path):
+                yield codec.decode(row) if codec is not None else row
 
     def append_dicts(self, rows: Iterable[Dict[str, Any]]) -> None:
+        if self.codec is not None:
+            rows = [self.codec.encode(row) for row in rows]
         lines = [json.dumps(row, ensure_ascii=False) + "\n" for row in rows]
         if not lines:
             return
@@ -188,6 +200,8 @@ class SegmentedJsonl:
         )
 
     def replace_dicts(self, rows: Iterable[Dict[str, Any]]) -> None:
+        if self.codec is not None:
+            rows = (self.codec.encode(row) for row in rows)
         self.replace_lines(json.dumps(row, ensure_ascii=False) + "\n" for row in rows)
 
     def truncate_after_msg_id(self, msg_id: str) -> Dict[str, Any]:
@@ -371,14 +385,20 @@ class SegmentedJsonl:
             rows = list(self._iter_file(path))
             patched: Optional[Dict[str, Any]] = None
             changed = False
+            codec = self.codec
             for idx, row in enumerate(rows):
                 if row.get("msg_id") != msg_id:
                     continue
-                updated = dict(row)
+                # Work in decoded (plaintext) space so caller-supplied fields
+                # merge correctly and change-detection is logical, then
+                # re-encode for storage. msg_id is clear, so the match above
+                # needs no key.
+                decoded = codec.decode(row) if codec is not None else row
+                updated = dict(decoded)
                 updated.update(fields)
-                rows[idx] = updated
+                changed = updated != decoded
+                rows[idx] = codec.encode(updated) if codec is not None else updated
                 patched = updated
-                changed = updated != row
                 break
             if patched is None:
                 continue

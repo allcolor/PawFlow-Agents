@@ -134,6 +134,23 @@ class TestSSEWriter(unittest.TestCase):
         chunks = list(writer.iterate(timeout=0.1))
         assert len(chunks) == 5
 
+    def test_drain_nowait_returns_queued_events_and_stops_at_sentinel(self):
+        writer = SSEWriter()
+        writer.send(SSEEvent(event="new_message", data="a"))
+        writer.send(SSEEvent(event="new_message", data="b"))
+        drained = writer.drain_nowait()
+        assert len(drained) == 2
+        assert b"data: a" in drained[0]
+        assert b"data: b" in drained[1]
+        # Empty queue → empty list, no block.
+        assert writer.drain_nowait() == []
+        # Sentinel (close) terminates the drain instead of leaking it.
+        writer.send(SSEEvent(event="new_message", data="c"))
+        writer.close()
+        drained = writer.drain_nowait()
+        assert len(drained) == 1
+        assert b"data: c" in drained[0]
+
     def test_threaded_send(self):
         writer = SSEWriter()
         def producer():
@@ -1167,6 +1184,43 @@ class TestAgentSSEStreamTask(unittest.TestCase):
         with bus._lock:
             for writer in bus._subscribers.get("conv-client", set()).copy():
                 writer.close()
+
+    def test_lifetime_cap_does_not_drop_event_on_the_boundary(self):
+        # Regression: a new_message dequeued on the same iteration the lifetime
+        # cap expired was dropped (yielded nothing) — and because send() had
+        # returned True the event was never buffered for replay, so the
+        # reconnecting client lost it. The chunk must be delivered before the
+        # sse_reconnect teardown.
+        from unittest import mock
+        from tasks.io.agent_sse_stream import AgentSSEStreamTask
+        bus = ConversationEventBus.instance()
+        task = AgentSSEStreamTask({"timeout": 10})
+        ff = FlowFile(content=b"")
+        ff.set_attribute("http.query.conversation_id", "conv-life")
+        result = task.execute(ff)[0]
+
+        # Event lands while the stream is a live subscriber (subs=1), so it is
+        # delivered to the writer queue — NOT buffered for replay.
+        bus.publish_event("conv-life", "new_message",
+                          {"role": "assistant", "content": "final answer"})
+
+        # Fake clock: first call (started) = 0, every later call is past the
+        # 10s cap, so the lifetime branch fires on the iteration that dequeues
+        # the event.
+        calls = {"n": 0}
+        def fake_monotonic():
+            calls["n"] += 1
+            return 0.0 if calls["n"] == 1 else 1000.0
+        with mock.patch("tasks.io.agent_sse_stream.time.monotonic",
+                        fake_monotonic):
+            chunks = list(result._sse_stream)
+
+        blob = b"".join(chunks)
+        assert b"event: new_message" in blob
+        assert b"final answer" in blob
+        assert b"event: sse_reconnect" in blob
+        # The message must precede the teardown signal, not be dropped.
+        assert blob.index(b"event: new_message") < blob.index(b"event: sse_reconnect")
 
     def test_registration(self):
         assert "agentSSEStream" in TaskFactory.list_types()

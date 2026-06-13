@@ -82,14 +82,24 @@ class AgentSSEStreamTask(BaseTask):
             started = time.monotonic()
             try:
                 for chunk in writer.iterate(timeout=15.0):
+                    # Deliver the freshly-dequeued chunk BEFORE checking the
+                    # lifetime cap. Checking first dropped this chunk on the
+                    # floor when an event landed on the same iteration the cap
+                    # expired — and because send() already returned True, the
+                    # event was never buffered for replay, so the reconnecting
+                    # client could not recover it (lost message).
+                    yield chunk
                     if timeout > 0 and time.monotonic() - started >= timeout:
                         logger.info("SSE stream lifetime reached for conv=%s client=%s",
                                     conversation_id[:8], client_id[:12])
+                        # Flush anything else already queued (a burst at the
+                        # lifetime boundary) — same reason: not in replay buffer.
+                        for pending in writer.drain_nowait():
+                            yield pending
                         yield ("event: sse_reconnect\n"
                                f"data: {json.dumps({'reason': 'lifetime', 'ts': time.time()})}\n\n").encode("utf-8")
                         writer.close()
                         break
-                    yield chunk
             finally:
                 bus.unsubscribe(conversation_id, writer)
 

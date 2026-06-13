@@ -125,6 +125,27 @@ class SSEWriter:
     def queued_count(self) -> int:
         return self._queue.qsize()
 
+    def drain_nowait(self) -> list:
+        """Pop and encode every already-queued event without blocking.
+
+        Used at graceful teardown (e.g. SSE lifetime cap) to flush events that
+        were accepted by send() but not yet yielded to the socket. Such events
+        are NOT in the bus replay buffer (send() returned True, so publish()
+        considered them delivered), so dropping them on close loses them for
+        good. Returns a list of encoded chunks in FIFO order; stops at the
+        close sentinel.
+        """
+        out = []
+        while True:
+            try:
+                item = self._queue.get_nowait()
+            except queue.Empty:
+                break
+            if item is _SENTINEL:
+                break
+            out.append(item.encode())
+        return out
+
     def iterate(self, timeout: float = 15.0, ping_interval: Optional[float] = None):
         """Yield encoded SSE bytes. Blocks until events or close.
 

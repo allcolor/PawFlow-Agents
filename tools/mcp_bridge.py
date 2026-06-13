@@ -477,17 +477,16 @@ def main():
                 "Execute a tool by name with the given arguments. "
                 "Call get_tool_schema first to know the parameters.\n"
                 "\n"
-                "STRICT rules for the 'arguments' field:\n"
-                "  * Pass it as a JSON OBJECT (dict). NEVER as a string, "
-                "even when the value is long or contains code, quotes, or "
-                "newlines. Example correct: arguments={\"path\":\"a.py\","
-                "\"content\":\"x = 1\\n\"}. "
-                "Example WRONG: arguments=\"{\\\"path\\\":\\\"a.py\\\"}\".\n"
-                "  * The payload itself is the dict — do NOT wrap it "
-                "again. Example WRONG: tool_name=\"use_tool\", "
-                "arguments={tool_name:\"edit\", arguments:{...}} — that "
-                "nests use_tool inside itself.\n"
-                "  * Embedded newlines/quotes go ONCE-ESCAPED (\\n, \\\"), "
+                "STRICT rules:\n"
+                "  * `arguments_json` is a STRING containing a JSON object "
+                "with the target tool's arguments, e.g. "
+                "arguments_json='{\"path\":\"a.py\",\"content\":\"x = 1\\n\"}'. "
+                "Use '{}' for a tool that takes no arguments. "
+                "(A string field is used — not a free-form object — because "
+                "some models otherwise emit an empty input.)\n"
+                "  * Do NOT set tool_name to 'use_tool' and nest the call "
+                "inside itself.\n"
+                "  * Escape embedded newlines/quotes once (\\n, \\\"), "
                 "not doubly."
             ),
             "inputSchema": {
@@ -502,15 +501,16 @@ def main():
                             "it inside itself is rejected."
                         ),
                     },
-                    "arguments": {
-                        "type": "object",
+                    "arguments_json": {
+                        "type": "string",
                         "description": (
-                            "Arguments to pass to the target tool, as a "
-                            "JSON object (dict). NOT a JSON-encoded string."
+                            "JSON object string with the target tool's "
+                            "arguments, e.g. '{\"path\": \"/workspace\"}'. "
+                            "Use '{}' for tools with no arguments."
                         ),
                     },
                 },
-                "required": ["tool_name", "arguments"],
+                "required": ["tool_name", "arguments_json"],
             },
         },
     ]
@@ -646,11 +646,19 @@ def main():
                     )
                     _log(f"USE_TOOL REJECTED: empty tool_name, args_keys={sorted(args.keys())}")
                 else:
-                    tool_args_raw = args.get("arguments")
+                    # Payload source order: arguments_json (the advertised
+                    # field — a STRING, so models don't collapse a free-form
+                    # object to {}), then a literal `arguments` object
+                    # (back-compat for clients that still send it), then flat
+                    # sibling keys.
+                    tool_args_raw = args.get("arguments_json")
+                    if tool_args_raw is None or tool_args_raw == "":
+                        tool_args_raw = args.get("arguments")
                     if tool_args_raw is None:
-                        harvested = {k: v for k, v in args.items() if k != "tool_name"}
+                        harvested = {k: v for k, v in args.items()
+                                     if k not in ("tool_name", "arguments_json")}
                         if harvested:
-                            _log(f"USE_TOOL {tool_name} harvested flat args (missing 'arguments' wrapper): keys={list(harvested.keys())}")
+                            _log(f"USE_TOOL {tool_name} harvested flat args (missing 'arguments'/'arguments_json' wrapper): keys={list(harvested.keys())}")
                         tool_args_raw = harvested
                     _log(f"USE_TOOL {tool_name} raw_type={type(tool_args_raw).__name__} raw={json.dumps(tool_args_raw, default=str)[:300]}")
                     tool_args = tool_args_raw

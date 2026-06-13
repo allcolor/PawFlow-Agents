@@ -501,6 +501,70 @@ class TestTelegramAgentClientTask(unittest.TestCase):
         assert task_class is not None
         assert task_class.TYPE == "telegramConversationBridge"
 
+    def _make_bridge(self):
+        from tasks.io.telegram_agent_client import TelegramConversationBridgeTask
+        bridge = TelegramConversationBridgeTask({"service_id": "telegram_bot"})
+        sent = []
+        bridge._send = lambda user_id, chat_id, text: (sent.append(text) or True)
+        # One subscriber for any conversation; stub media side-channels.
+        bridge._telegram_subscribers = staticmethod(
+            lambda conversation_id, data=None: iter([("u1", "c1")]))
+        bridge._send_tts_audio = lambda *a, **k: None
+        bridge._send_message_attachments = lambda *a, **k: None
+        bridge._send_tool_media = lambda *a, **k: None
+        return bridge, sent
+
+    def test_bridge_flushes_thinking_when_closed_by_final_message(self):
+        # The actual bug: thinking_content carries `agent_name`, but the final
+        # `new_message` carries only `source.name`. Keying the flush on
+        # agent_name alone stranded the pre-answer thinking of no-tool-call
+        # turns. The burst must flush (before the message) when the closer is a
+        # new_message identified only by source.name.
+        bridge, sent = self._make_bridge()
+        cid = "convX"
+        bridge._on_event(cid, "thinking_content",
+                         {"text": "pre-answer reasoning", "agent_name": "claude"})
+        bridge._on_event(cid, "new_message", {
+            "role": "assistant", "content": "the answer",
+            "msg_id": "m1", "source": {"name": "claude"}})
+        joined = "\n".join(sent)
+        assert "pre-answer reasoning" in joined, sent
+        # Thinking is delivered before the answer message.
+        think_idx = next(i for i, t in enumerate(sent) if "pre-answer reasoning" in t)
+        ans_idx = next(i for i, t in enumerate(sent) if "the answer" in t)
+        assert think_idx < ans_idx, sent
+
+    def test_bridge_flushes_last_thinking_burst_on_done(self):
+        # The final reasoning of a turn (... -> thinking_content -> done) has no
+        # tool/message after it to close the burst; `done` must flush it or it
+        # never reaches Telegram (webchat showed it, Telegram did not).
+        bridge, sent = self._make_bridge()
+        cid = "convX"
+        bridge._on_event(cid, "thinking_content",
+                         {"text": "final reasoning block", "agent_name": "claude"})
+        assert sent == []  # buffered, not yet flushed
+        bridge._on_event(cid, "done", {"agent_name": "claude"})
+        assert any("final reasoning block" in t for t in sent), sent
+
+    def test_bridge_flushes_thinking_on_error_event(self):
+        bridge, sent = self._make_bridge()
+        cid = "convX"
+        bridge._on_event(cid, "thinking_content",
+                         {"text": "reasoning before error", "agent_name": "claude"})
+        bridge._on_event(cid, "error_event", {"agent_name": "claude"})
+        assert any("reasoning before error" in t for t in sent), sent
+
+    def test_bridge_done_flushes_all_agents(self):
+        bridge, sent = self._make_bridge()
+        cid = "convX"
+        bridge._on_event(cid, "thinking_content",
+                         {"text": "alpha reasoning", "agent_name": "a"})
+        bridge._on_event(cid, "thinking_content",
+                         {"text": "beta reasoning", "agent_name": "b"})
+        bridge._on_event(cid, "done", {})
+        joined = "\n".join(sent)
+        assert "alpha reasoning" in joined and "beta reasoning" in joined, sent
+
     def test_agent_client_forwards_telegram_image_as_attachment(self):
         src = Path("tasks/io/telegram_agent_client.py").read_text(encoding="utf-8")
         assert 'flowfile.get_attribute("telegram.image_base64")' in src

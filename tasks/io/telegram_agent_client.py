@@ -933,6 +933,15 @@ class TelegramConversationBridgeTask(BaseTask):
         return [flowfile]
 
     def _on_event(self, conversation_id: str, event_type: str, data: Any) -> None:
+        # Turn end closes any open thinking burst. A burst is normally flushed
+        # by the next tool_call/tool_result/new_message; the LAST burst of a
+        # turn (… -> thinking_content -> done) has no such closer, so without
+        # this it stays stranded in _thinking_buf and never reaches Telegram —
+        # which is why the final reasoning of each turn was missing while
+        # webchat (which renders thinking_content directly) showed everything.
+        if event_type in {"done", "error_event"}:
+            self._flush_all_pending_thinking(conversation_id)
+            return
         if event_type not in {
                 "new_message", "thinking",
                 "thinking_delta", "thinking_content", "tool_call",
@@ -941,9 +950,6 @@ class TelegramConversationBridgeTask(BaseTask):
         if not isinstance(data, dict):
             return
         source = data.get("source") if isinstance(data.get("source"), dict) else {}
-        if ((data.get("channel") == "telegram" or source.get("channel") == "telegram")
-                and event_type in {"done", "error_event"}):
-            return
         if ((data.get("channel") == "telegram" or source.get("channel") == "telegram")
                 and event_type in {"new_message", "thinking", "thinking_delta", "thinking_content", "tool_call", "tool_result"}
                 and data.get("role") != "user"):
@@ -956,15 +962,19 @@ class TelegramConversationBridgeTask(BaseTask):
         if event_type in {"thinking", "thinking_delta", "thinking_content"}:
             raw = _extract_thinking_text(event_type, data)
             if raw:
-                agent_key = data.get("agent_name") or ""
-                key = f"{conversation_id}:thinking:{agent_key}"
+                key = f"{conversation_id}:thinking:{self._agent_key(data)}"
                 self._thinking_buf[key] = _merge_thinking(
                     self._thinking_buf.get(key, ""), raw)
                 self._thinking_meta[key] = data
             return
         # A non-thinking event closes the current thinking burst for this agent:
-        # flush the consolidated block before handling it.
-        self._flush_pending_thinking(conversation_id, data.get("agent_name") or "")
+        # flush the consolidated block before handling it. The agent key must be
+        # derived the SAME way as when buffering — thinking_content/tool_call
+        # carry `agent_name`, but the final `new_message` carries only `source`,
+        # so keying on agent_name alone stranded the pre-answer thinking of
+        # no-tool-call turns (buffered under :thinking:<agent>, flush looked up
+        # :thinking:'').
+        self._flush_pending_thinking(conversation_id, self._agent_key(data))
 
         if (event_type == "new_message" and data.get("role") == "assistant"
                 and _telegram_assistant_msg_id_was_sent(conversation_id, data)):
@@ -1005,6 +1015,30 @@ class TelegramConversationBridgeTask(BaseTask):
                 self._send_message_attachments(user_id, chat_id, data)
             if event_type == "tool_result":
                 self._send_tool_media(user_id, chat_id, data)
+
+    @staticmethod
+    def _agent_key(data: Dict[str, Any]) -> str:
+        """Agent identity used to key the thinking buffer.
+
+        Consistent across event types: thinking_content/tool_call set
+        `agent_name`, new_message sets only `source.name` — both must map to
+        the same key or a burst buffered under one is never flushed by the
+        other."""
+        if data.get("agent_name"):
+            return str(data["agent_name"])
+        source = data.get("source") if isinstance(data.get("source"), dict) else {}
+        return str(source.get("name") or "")
+
+    def _flush_all_pending_thinking(self, conversation_id: str) -> None:
+        """Flush every agent's pending thinking for this conversation (turn end).
+
+        Multiple agents may have open bursts; flush each so no final reasoning
+        is stranded when the turn closes with `done`/`error_event`."""
+        prefix = f"{conversation_id}:thinking:"
+        agent_keys = [k[len(prefix):] for k in list(self._thinking_buf.keys())
+                      if k.startswith(prefix)]
+        for agent_key in agent_keys:
+            self._flush_pending_thinking(conversation_id, agent_key)
 
     def _flush_pending_thinking(self, conversation_id: str, agent_key: str) -> None:
         """Emit the accumulated thinking for one agent as a single consolidated

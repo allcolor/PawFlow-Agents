@@ -18,6 +18,7 @@ All commands are typed in the chat input, prefixed with `/`. Commands are proces
 | `/pfp` | Build, inspect, install, export, and uninstall PawFlow packages |
 | `/memory` | Manage agent memories |
 | `/relay` | Manage relay bindings |
+| `/encrypt` | Encrypt this conversation at rest (opt-in) |
 | `/flow` | Manage data flows |
 | `/run` | Execute shell command via relay |
 | `/cost` | Show token usage and cost |
@@ -556,6 +557,8 @@ Shortcut for `/skill add`.
 | `unlink` | `/relay unlink <id>` | Unlink a relay |
 | `default` | `/relay default <id>` | Set default relay for this conversation |
 | `local` | `/relay local <id> true\|false [@agent]` | Set execution mode (true=host, false=docker) |
+| `encrypt` | `/relay encrypt <id> on\|off` | Encrypt this conv-scoped relay workspace (CryFS) |
+| `unlock` | `/relay unlock <id>` | Provide the passphrase to mount an encrypted workspace |
 
 ```
 /relay
@@ -566,6 +569,39 @@ Shortcut for `/skill add`.
 /relay local my_relay true
 /relay local my_relay false @grok
 ```
+
+---
+
+### /encrypt
+
+Opt-in, per-conversation encryption at rest. When enabled, all conversation
+content (messages, thinking, tool arguments and results) is stored as
+ciphertext on disk; metadata (ids, timestamps, ordering) stays clear so the
+store keeps working. The key lives in server RAM only while unlocked: a server
+restart, logout, or 15-minute idle re-locks the conversation. **No recovery** —
+lose the passphrase (with no recovery/relay wrap) and the data is unrecoverable.
+
+```
+/encrypt [status|on|off|unlock|lock|passwd|escrow on/off|recover|relay <pubkey>/off]
+```
+
+| Subcommand | Description |
+|------------|-------------|
+| (none) or `status` | Show the encryption state of this conversation |
+| `on` | Enable encryption (prompts to set a passphrase) |
+| `off` | Disable and decrypt back to clear text (requires unlock) |
+| `unlock` | Provide the passphrase to read/write this conversation |
+| `lock` | Drop the key from RAM now |
+| `passwd` | Change the passphrase (re-wraps the key) |
+| `escrow on\|off` | Add/remove an optional recovery passphrase |
+| `recover` | Unlock using the recovery passphrase |
+| `relay <pubkey>` | Bind a trusted key-relay (paste `pawflow-relay key export-pubkey`) for unattended unlock |
+| `relay off` | Unbind the trusted key-relay |
+
+Encryption is strictly opt-in and only affects conversations where it is turned
+on; everything else is unchanged. See
+[Security Model](security_model.md#encryption-at-rest) and the
+[design RFC](design/encryption-at-rest.md).
 
 ---
 

@@ -46,6 +46,38 @@ Use PawFlow secret storage or environment variables for API keys. Never hard-cod
 
 The master key encrypts stored secrets with AEAD (AES-GCM). Resolution order: `PAWFLOW_SECRET_KEY_B64` (raw 32-byte key, preferred), `PAWFLOW_SECRET_KEY` (password, derived via scrypt), then the dev-only generated on-disk key file. When a password is used, the scrypt salt is per-install: a fresh install writes a random salt to `data/system/secret.salt` before the first secret is encrypted, so two installs sharing a password never share a key. Existing installs (no salt file) keep the legacy salt so secrets stay decryptable across upgrades. To pin a salt explicitly (e.g. password-based deployments that predate the salt file), set `PAWFLOW_SECRET_SALT_B64` to a base64 value of at least 16 bytes.
 
+## Encryption at Rest
+
+Opt-in, per-conversation encryption at rest, independent of the master key above
+(which protects config secrets). Threat model: **T1 — disk at rest**. The
+guarantee: with the server stopped, every encrypted conversation/workspace is
+ciphertext on disk and no key is in memory.
+
+- **What is encrypted**: conversation content fields (message text, thinking,
+  tool arguments and results). Metadata (ids, timestamps, ordering, roles) stays
+  clear so the store, restart-from, and git history keep working without the key.
+- **Keys**: a random per-conversation DEK encrypts the content; the DEK is
+  wrapped by a passphrase (scrypt + AES-GCM), and optionally by a recovery
+  (escrow) passphrase and/or a trusted key-relay public key (X25519 sealed-box).
+  DEKs live in a RAM-only, session-bound vault — zeroised on lock, purged on
+  logout, idle-locked after 15 minutes, and gone on server restart.
+- **No recovery**: losing the passphrase with no escrow/relay wrap means the
+  data is permanently unrecoverable — surfaced loudly when enabling.
+- **Trusted key-relay** (optional): a relay holding an X25519 keypair can
+  auto-unlock bound conversations while connected; the server seals the DEK to
+  the relay public key and never holds a key that opens that wrap. When the
+  relay disconnects, the delivered DEKs are purged (relay-gone = re-locked).
+- **Workspace encryption**: a conv-scoped server relay workspace can be stored
+  as a CryFS cipher-store, mounted with a DEK delivered over the relay control
+  channel. Restricted to conv-scoped relays.
+- **Not E2EE / not T2**: the server processes plaintext in RAM to drive the
+  models, so it does not defend a live-root attacker on a running server.
+
+Strictly opt-in: conversations without encryption enabled are byte-for-byte
+unchanged. Commands: `/encrypt` (conversation) and `/relay encrypt|unlock`
+(workspace); relay key provisioning via `pawflow-relay key ...`. See the
+[design RFC](design/encryption-at-rest.md).
+
 ## Packages (PFP)
 
 A `.pfp` is signed with an ed25519 key whose public half is embedded in the manifest, so the signature proves the package is internally consistent but not who authored it. PawFlow pins the developer key on first install (trust-on-first-use): an update to an already-installed package name signed by a different key is refused unless installed with `force=True`. This blocks a compromised or hijacked registry from shipping a malicious update under an existing package's name.
@@ -65,3 +97,4 @@ The private gateway is configured as a `privateGateway` service and enabled for 
 - Configure per-agent tool restrictions.
 - Set LLM budget caps.
 - Review OAuth redirect URLs and provider scopes.
+- For sensitive conversations, enable opt-in encryption at rest (`/encrypt on`) and store the passphrase safely (no recovery without an escrow/relay wrap).

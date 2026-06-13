@@ -46,6 +46,7 @@ PawFlow gives agents a real operating surface without handing your workspace to 
 
 - **Relay-backed tools**: read, edit, grep, run commands, browse, control desktops, generate media, and inspect projects through explicit relay routes.
 - **Durable context**: conversations, shared context, per-agent context, memory, knowledge graphs, diaries, project graphs, files, and buckets survive restarts.
+- **Encryption at rest (opt-in)**: per-conversation passphrase encryption of message content, thinking, and tool I/O (and conv-scoped relay workspaces via CryFS); keys live in RAM only, so a stopped server leaves only ciphertext on disk. Off by default and transparent to conversations that don't use it.
 - **Multi-provider agents**: mix Codex app-server, Claude Code, Antigravity/Agy, Gemini CLI, Anthropic, OpenAI, and OpenAI-compatible services per agent or conversation.
 - **Shared clients**: continue the same conversation from the web UI, PawCode CLI, VS Code, API clients, or channel integrations.
 - **Deterministic flows**: turn repeated work into NiFi-style DAGs with scheduling, backpressure, checkpoints, approvals, and explicit LLM steps.
@@ -359,7 +360,8 @@ pytest tests/ -v    # 2500+ tests across 100+ test files
 | [PFP Developer Guide](docs/PFP_DEVELOPER_GUIDE.md) | Local package development with `dev-load`, service providers, flow tasks, media artifacts, and SDK patterns |
 | [PFP Publisher Guide](docs/PFP_PUBLISHER_GUIDE.md) | Registry publishing, versioning, SHA pinning, and key rotation |
 | [Marketplace](docs/marketplace.md) | PFP registries, skill marketplace import, review model, and UI/CLI entry points |
-| [Security Model](docs/security_model.md) | Trust boundaries and production checklist |
+| [Security Model](docs/security_model.md) | Trust boundaries, encryption at rest, and production checklist |
+| [Encryption at Rest (RFC)](docs/design/encryption-at-rest.md) | Opt-in conversation/workspace encryption: keys, wraps, key-relay, threat model |
 | [Deployment](docs/deployment.md) | Local, Docker, production |
 | [Docker](docs/docker.md) | Docker setup, relay mode |
 | [Filesystem](docs/filesystem.md) | Relay, backends, permissions |

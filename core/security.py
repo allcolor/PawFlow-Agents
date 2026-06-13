@@ -318,6 +318,13 @@ class SecurityManager:
             revoke_session_capabilities(session_id)
         except Exception:
             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+        # Re-lock every conversation/workspace this session unlocked: purge the
+        # DEKs it put in the KeyVault so logout relocks encrypted data at rest.
+        try:
+            from core.key_vault import get_key_vault
+            get_key_vault().purge_session(session_id)
+        except Exception:
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     def check_permission(self, session: Session, permission: str) -> bool:
         """Check if a session has a specific permission."""

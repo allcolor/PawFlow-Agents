@@ -62,6 +62,13 @@ _GIT_RETENTION_RUNNING_LOCK = threading.Lock()
 import core.paths as _paths
 
 
+class ConversationLockedError(RuntimeError):
+    """Raised when a write is attempted against an encrypted conversation whose
+    DEK is not currently unlocked in the KeyVault. Refusing here is what keeps
+    the hot append path from ever persisting plaintext into an encrypted
+    conversation (the cache-cold / locked case)."""
+
+
 class _ConversationTimedRLock:
     """RLock wrapper that logs slow holders with the acquiring call-site."""
 
@@ -160,6 +167,7 @@ class ConversationStore:
         self._hot_metadata_flush: Dict[str, Dict[str, Any]] = {}
         self._context_usage_repair_mtime: Dict[str, float] = {}
         self._cid_user: Dict[str, str] = {}  # cid -> user_id (fast lookup, no scan)
+        self._enc_enabled: Dict[str, bool] = {}  # cid -> encryption-enabled (cached)
         self._loaded = False
         try:
             _HOT_METADATA_EXECUTOR.submit(lambda: None)
@@ -395,20 +403,201 @@ class ConversationStore:
         return self._conv_dir(cid) / "transcript.jsonl"
 
     def _transcript_log(self, cid: str) -> SegmentedJsonl:
-        return SegmentedJsonl(self._transcript_path(cid))
+        return SegmentedJsonl(self._transcript_path(cid), codec=self._codec_for(cid))
 
     def _shared_ctx_path(self, cid: str) -> Path:
         return self._conv_dir(cid) / "shared.jsonl"
 
     def _shared_ctx_log(self, cid: str) -> SegmentedJsonl:
-        return SegmentedJsonl(self._shared_ctx_path(cid))
+        return SegmentedJsonl(self._shared_ctx_path(cid), codec=self._codec_for(cid))
 
     def _agent_ctx_path(self, cid: str, agent: str) -> Path:
         safe_agent = self._safe_name(self._canon_agent(agent)) if agent else "_shared"
         return self._conv_dir(cid) / safe_agent / "context.jsonl"
 
     def _agent_ctx_log(self, cid: str, agent: str) -> SegmentedJsonl:
-        return SegmentedJsonl(self._agent_ctx_path(cid, agent))
+        return SegmentedJsonl(self._agent_ctx_path(cid, agent), codec=self._codec_for(cid))
+
+    def _content_seg(self, cid: str, path: Path) -> SegmentedJsonl:
+        """A SegmentedJsonl over a content-bearing log under conversation ``cid``,
+        wired to the conversation's encryption codec when it is enabled and
+        unlocked (else plaintext passthrough). Use this — not a bare
+        ``SegmentedJsonl(path)`` — anywhere row *content* is read or written, so
+        encrypted conversations never round-trip plaintext to disk. Metadata-only
+        ops (exists / delete_by_msg_ids / truncate_after_msg_id) work on a bare
+        handle since they only touch the clear fields."""
+        return SegmentedJsonl(path, codec=self._codec_for(cid))
+
+    # ── Encryption at rest (phase 4 — conversation DEK lifecycle) ─────
+
+    def _is_encryption_enabled(self, cid: str) -> bool:
+        """Authoritative (disk-backed) 'is this conversation encrypted?', cached
+        per process. Must never guess False for an encrypted conv, or the hot
+        write path would persist plaintext — so the first lookup reads the
+        descriptor from extras and the result is cached; enable/disable update
+        the cache in lock-step."""
+        val = self._enc_enabled.get(cid)
+        if val is None:
+            val = bool((self._encryption_descriptor(cid) or {}).get("enabled"))
+            self._enc_enabled[cid] = val
+        return val
+
+    def _codec_for(self, cid: str):
+        """Return a RowCodec when ``cid`` is encrypted AND its DEK is unlocked in
+        the KeyVault; else None (plaintext passthrough). When enabled but locked
+        this is None by design: reads yield ciphertext (no plaintext leak) and
+        the write gate in append_message refuses to persist."""
+        if not self._is_encryption_enabled(cid):
+            return None
+        from core.key_vault import get_key_vault
+        from core.conversation_cipher import RowCodec
+        dek = get_key_vault().get(f"conv:{cid}")
+        return RowCodec(dek) if dek is not None else None
+
+    def _encryption_descriptor(self, cid: str) -> dict:
+        try:
+            return self.get_extra(cid, "encryption", {}) or {}
+        except Exception:
+            return {}
+
+    def _set_encryption_descriptor(self, cid: str, desc: dict) -> None:
+        self.set_extra(cid, "encryption", desc)
+        self._enc_enabled[cid] = bool(desc.get("enabled"))
+
+    def _content_log_paths(self, cid: str) -> List[Path]:
+        """Every content-bearing log under a conversation: transcript, shared
+        context, and each agent's context — the set the migration job rewrites."""
+        paths = [self._transcript_path(cid), self._shared_ctx_path(cid)]
+        conv_dir = self._conv_dir(cid)
+        if conv_dir.is_dir():
+            for entry in sorted(conv_dir.iterdir()):
+                if entry.is_dir() and self._jsonl_exists(entry / "context.jsonl"):
+                    paths.append(entry / "context.jsonl")
+        return paths
+
+    def _invalidate_enc_caches(self, cid: str) -> None:
+        """Drop cached rows after a lock/unlock/enable/disable so the next read
+        re-resolves the codec instead of serving stale plain/cipher rows."""
+        with self._cache_lock:
+            self._cache.pop(cid, None)
+        try:
+            self._invalidate_ctx_cache(cid)
+        except Exception:
+            logger.debug("ctx cache invalidation failed", exc_info=True)
+
+    def encryption_status(self, cid: str) -> Dict[str, Any]:
+        """Report encryption state for the UI (conv_encrypt_status)."""
+        desc = self._encryption_descriptor(cid)
+        enabled = bool(desc.get("enabled"))
+        wraps = ((desc.get("container") or {}).get("wraps")) or {}
+        unlocked = False
+        if enabled:
+            from core.key_vault import get_key_vault
+            unlocked = get_key_vault().is_unlocked(f"conv:{cid}")
+        return {
+            "enabled": enabled,
+            "unlocked": unlocked,
+            "state": "off" if not enabled else ("unlocked" if unlocked else "locked"),
+            "has_pass_wrap": bool(wraps.get("pass")),
+            "has_relay_wrap": bool(wraps.get("relay")),
+            "has_escrow": bool(wraps.get("escrow")),
+        }
+
+    def enable_encryption(self, cid: str, passphrase: str,
+                          session_id: str = "") -> Dict[str, Any]:
+        """Turn on encryption: mint a DEK, store its passphrase wrap, unlock it
+        in the vault, and migrate every content log to ciphertext. Idempotent —
+        a no-op if already enabled."""
+        if not self.exists(cid):
+            raise ValueError(f"conversation {cid[:16]} not found")
+        if not passphrase:
+            raise ValueError("passphrase required")
+        from core.key_vault import create_passphrase_protected, get_key_vault
+        from core.conversation_cipher import encrypt_log
+        lock = self._get_conv_lock(cid)
+        with lock:
+            if self._encryption_descriptor(cid).get("enabled"):
+                return self.encryption_status(cid)
+            dek, container = create_passphrase_protected(f"conv:{cid}", passphrase)
+            # Descriptor + vault FIRST, then migrate. A crash mid-migration
+            # leaves enabled+locked with a mix of cipher/plaintext rows, which
+            # decode tolerates (plaintext passes through) and encrypt_log can
+            # resume idempotently — never a corrupt, unreadable conversation.
+            get_key_vault().put(f"conv:{cid}", dek, session_id=session_id)
+            self._set_encryption_descriptor(
+                cid, {"enabled": True, "v": 1, "container": container,
+                      "migrated": False})
+            for path in self._content_log_paths(cid):
+                encrypt_log(path, dek)
+            desc = self._encryption_descriptor(cid)
+            desc["migrated"] = True
+            self._set_encryption_descriptor(cid, desc)
+            self._invalidate_enc_caches(cid)
+        return self.encryption_status(cid)
+
+    def unlock_encryption(self, cid: str, passphrase: str,
+                          session_id: str = "") -> bool:
+        """Unwrap the DEK with ``passphrase`` into the vault. Raises KeyUnwrapError
+        on a wrong passphrase. Finishes any migration left pending by a crash."""
+        desc = self._encryption_descriptor(cid)
+        if not desc.get("enabled"):
+            raise ValueError("conversation is not encrypted")
+        from core.key_vault import get_key_vault, unwrap_with_passphrase
+        from core.conversation_cipher import encrypt_log
+        dek = unwrap_with_passphrase(desc["container"], passphrase)
+        get_key_vault().put(f"conv:{cid}", dek, session_id=session_id)
+        self._enc_enabled[cid] = True
+        if not desc.get("migrated", True):
+            with self._get_conv_lock(cid):
+                for path in self._content_log_paths(cid):
+                    encrypt_log(path, dek)
+                desc = self._encryption_descriptor(cid)
+                desc["migrated"] = True
+                self._set_encryption_descriptor(cid, desc)
+        self._invalidate_enc_caches(cid)
+        return True
+
+    def lock_encryption(self, cid: str) -> None:
+        """Drop the DEK from RAM now (idle-lock / explicit lock / re-lock)."""
+        from core.key_vault import get_key_vault
+        get_key_vault().drop(f"conv:{cid}")
+        self._invalidate_enc_caches(cid)
+
+    def disable_encryption(self, cid: str, session_id: str = "") -> Dict[str, Any]:
+        """Decrypt every content log back to clear and remove the wraps. Requires
+        the conversation to be unlocked."""
+        desc = self._encryption_descriptor(cid)
+        if not desc.get("enabled"):
+            return self.encryption_status(cid)
+        from core.key_vault import get_key_vault
+        from core.conversation_cipher import decrypt_log
+        kv = get_key_vault()
+        dek = kv.get(f"conv:{cid}")
+        if dek is None:
+            raise ConversationLockedError("unlock the conversation before disabling encryption")
+        lock = self._get_conv_lock(cid)
+        with lock:
+            for path in self._content_log_paths(cid):
+                decrypt_log(path, dek)
+            self._set_encryption_descriptor(cid, {"enabled": False})
+            kv.drop(f"conv:{cid}")
+            self._invalidate_enc_caches(cid)
+        return self.encryption_status(cid)
+
+    def change_encryption_passphrase(self, cid: str, old_passphrase: str,
+                                     new_passphrase: str) -> bool:
+        """Re-wrap the DEK under a new passphrase. The DEK and content are
+        unchanged — only the passphrase wrap is replaced."""
+        desc = self._encryption_descriptor(cid)
+        if not desc.get("enabled"):
+            raise ValueError("conversation is not encrypted")
+        if not new_passphrase:
+            raise ValueError("new passphrase required")
+        from core.key_vault import set_passphrase_wrap, unwrap_with_passphrase
+        dek = unwrap_with_passphrase(desc["container"], old_passphrase)
+        set_passphrase_wrap(desc["container"], dek, new_passphrase)
+        self._set_encryption_descriptor(cid, desc)
+        return True
 
     def flush_append_handles(self, cid: str) -> None:
         SegmentedJsonl.flush_append_handles(self._conv_dir(cid))
@@ -1211,7 +1400,7 @@ class ConversationStore:
         seed = self.load_shared_for_agent(cid, agent) or []
         if not seed:
             return 0
-        self._write_ctx_file(self._agent_ctx_path(cid, agent), seed)
+        self._write_ctx_file(self._agent_ctx_path(cid, agent), seed, cid=cid)
         with self._cache_lock:
             self._agent_ctx_exists_cache.add(key)
         logger.info(
@@ -1428,7 +1617,7 @@ class ConversationStore:
             logger.debug("bg bucket trigger schedule failed", exc_info=True)
         _add_timing("shared_bg_trigger", _t0)
 
-    def _read_ctx_file(self, path: Path) -> List[Dict]:
+    def _read_ctx_file(self, path: Path, cid: str = "") -> List[Dict]:
         """Read all messages from a context JSONL file, sorted by (ts, seq).
 
         File order is producer-FIFO but multi-producer races (different
@@ -1438,7 +1627,7 @@ class ConversationStore:
         message was MINTED, not when the writer happened to flush it —
         matching what the user saw in the live SSE stream.
         """
-        log = SegmentedJsonl(path)
+        log = self._content_seg(cid, path) if cid else SegmentedJsonl(path)
         if not log.exists():
             return []
         result = list(log.iter_rows())
@@ -1448,11 +1637,12 @@ class ConversationStore:
         ))
         return result
 
-    def _write_ctx_file(self, path: Path, messages: List[Dict]):
+    def _write_ctx_file(self, path: Path, messages: List[Dict], cid: str = ""):
         """Overwrite a context file with messages (atomic: tmp + rename)."""
         for m in messages:
             self._validate_message(m)
-        SegmentedJsonl(path).replace_dicts(messages)
+        log = self._content_seg(cid, path) if cid else SegmentedJsonl(path)
+        log.replace_dicts(messages)
 
     def _read_extras(self, cid: str) -> dict:
         """Read extras from the atomic JSON file."""
@@ -2191,6 +2381,12 @@ class ConversationStore:
         _t0 = time.monotonic()
         with lock:
             _mark_timing("lock_wait", _t0)
+            # Encryption gate: never persist plaintext into an encrypted but
+            # locked conversation. _codec_for is None both when unencrypted
+            # (fine) and when encrypted-but-locked (must refuse) — disambiguate.
+            if self._is_encryption_enabled(cid) and self._codec_for(cid) is None:
+                raise ConversationLockedError(
+                    f"conversation {cid[:16]} is encrypted and locked — unlock to write")
             # Create conv if missing
             _t0 = time.monotonic()
             if user_id and (cid in self._cid_user or cid in self._cache):
@@ -2640,7 +2836,7 @@ class ConversationStore:
         # during normal turns, and full rewrites are rare/manual. A concurrent
         # rewrite may return the old or new complete file, which is acceptable
         # for prompt construction and avoids blocking append_message batches.
-        result = self._read_ctx_file(path) or None
+        result = self._read_ctx_file(path, cid=cid) or None
         with self._ctx_cache_lock:
             if self._should_cache_context(result):
                 self._ctx_cache.setdefault(cid, {})[agent_name] = result
@@ -2661,7 +2857,7 @@ class ConversationStore:
         """
         agent_name = self._canon_agent(agent_name) if agent_name else ""
         path = self._agent_ctx_path(cid, agent_name) if agent_name else self._shared_ctx_path(cid)
-        log = SegmentedJsonl(path)
+        log = self._content_seg(cid, path)
         if not log.exists():
             return None
         try:
@@ -2889,7 +3085,7 @@ class ConversationStore:
         agent_name = self._canon_agent(agent_name) if agent_name else ""
         lock = self._get_conv_lock(cid)
         with lock:
-            raw = self._read_ctx_file(self._shared_ctx_path(cid))
+            raw = self._read_ctx_file(self._shared_ctx_path(cid), cid=cid)
         if not raw:
             return None
         return [self._personalize_from_shared(m, agent_name) for m in raw]
@@ -2923,7 +3119,7 @@ class ConversationStore:
         lock = self._get_conv_lock(cid)
         with lock:
             if agent_name:
-                self._write_ctx_file(self._agent_ctx_path(cid, agent_name), clean)
+                self._write_ctx_file(self._agent_ctx_path(cid, agent_name), clean, cid=cid)
             else:
                 # Shared context full-rewrite: user-driven edit / delete
                 # via the context editor (agent="shared"). Compare the
@@ -2934,8 +3130,8 @@ class ConversationStore:
                 # bucket with last_seq >= min_changed_seq goes); the
                 # bg worker will rebuild from the new shared state on
                 # the next maybe_trigger.
-                _old_shared = self._read_ctx_file(self._shared_ctx_path(cid))
-                self._write_ctx_file(self._shared_ctx_path(cid), clean)
+                _old_shared = self._read_ctx_file(self._shared_ctx_path(cid), cid=cid)
+                self._write_ctx_file(self._shared_ctx_path(cid), clean, cid=cid)
                 try:
                     _min_changed = self._compute_min_changed_seq(
                         _old_shared, clean)
@@ -2977,7 +3173,7 @@ class ConversationStore:
             return False
         agent_name = self._canon_agent(agent_name) if agent_name else ""
         path = self._agent_ctx_path(cid, agent_name) if agent_name else self._shared_ctx_path(cid)
-        log = SegmentedJsonl(path)
+        log = self._content_seg(cid, path)
         if not log.exists():
             return False
         allowed = {"role", "content"}
@@ -3045,7 +3241,7 @@ class ConversationStore:
         path = self._agent_ctx_path(cid, agent_name) if agent_name else self._shared_ctx_path(cid)
         lock = self._get_conv_lock(cid)
         with lock:
-            SegmentedJsonl(path).append_dicts(clean)
+            self._content_seg(cid, path).append_dicts(clean)
         self._invalidate_ctx_cache(cid, agent_name)
         return True
 
@@ -3348,7 +3544,7 @@ class ConversationStore:
 
         def _patch_stream(path: Path) -> int:
             nonlocal patched_line
-            log = SegmentedJsonl(path)
+            log = self._content_seg(cid, path)
             if not log.exists():
                 return 0
             patched = log.patch_first_by_msg_id(msg_id, fields)
@@ -4089,7 +4285,7 @@ class ConversationStore:
         updated = 0
 
         def _rewrite_jsonl(path: Path) -> int:
-            log = SegmentedJsonl(path)
+            log = self._content_seg(cid, path)
             if not log.exists():
                 return 0
             changed = 0

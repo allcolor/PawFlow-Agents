@@ -4,6 +4,23 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.0-alpha.25] — 2026-06-13
+
+### Fixed
+
+- Relay/services connection dot: the Services list reported a relay as
+  "started" as soon as it was enabled, while the Relays panel reported it via
+  the live connection state — so the same relay could show green in one panel
+  and red in the other during the connect window. Both panels now compute a
+  relay's state from the same `is_connected()` call.
+
+### Changed
+
+- Relays panel connection dot is now tri-state, matching the Services list: 🟢
+  connected, 🟡 connecting (enabled but the relay pool has no connection yet —
+  managed container dialing back or lazy connect in flight), 🔴 down/disabled.
+  The relay info dialog shows the same "starting" state.
+
 ## [1.0.0-alpha.24] — 2026-06-13
 
 ### Fixed

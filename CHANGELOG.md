@@ -4,6 +4,25 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.0-alpha.23] — 2026-06-13
+
+### Fixed
+
+- Claude Code interactive and Antigravity interactive: a live preempt that
+  extended a turn past a Stop hook left the stop/done latch set, so a later
+  idle gap (the model churning on a large tool result) ended the turn
+  coordinator mid-answer. The coordinator returned the already-delivered
+  previous answer while the real final answer was generated with no listener —
+  reaching only the tmux session, never the webchat/Telegram channels. A fresh
+  `/v1/messages` request after a Stop now clears the stale latch so the turn
+  runs to its real end and the final answer is delivered.
+- Vision: oversized images are now downscaled to the 2000px ceiling
+  proactively at ingestion, provider-agnostically. User attachments,
+  tool-result images and `see`/`screen` captures share one resize helper
+  (`core/image_resize.py`), so a full-resolution screenshot no longer exceeds
+  the provider pixel limit and gets rejected at read time — the stored copy
+  every downstream path uses is already within limits.
+
 ## [1.0.0-alpha.22] — 2026-06-12
 
 ### Fixed

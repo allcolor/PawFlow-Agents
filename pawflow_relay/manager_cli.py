@@ -120,6 +120,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     start = sub.add_parser("start", help="Start a configured workspace relay")
     start.add_argument("workspace")
+    start.add_argument("--unlock-key", action="store_true",
+                       help="Prompt for the relay key passphrase and serve it for "
+                            "conversation auto-unlock while this relay is connected")
 
     sub.add_parser("status", help="Show local relay client configuration status")
     cleanup = sub.add_parser("cleanup", help="Cleanup a configured workspace relay runtime")
@@ -224,6 +227,17 @@ def main(argv=None) -> int:
                 return 0
 
         if args.command == "start":
+            if getattr(args, "unlock_key", False):
+                import base64 as _b64, os as _os
+                from core import relay_key_store as _ks
+                from pawflow_relay.manager import relay_home as _rh
+                _pw = getpass.getpass("Relay key passphrase: ")
+                _priv = _ks.load_private(_rh(), _pw)
+                # In-process relays: the worker inherits this env and serves
+                # key_unseal. (Containerized relays must deliver the key over a
+                # secure channel, not --env; see docs.)
+                _os.environ["PAWFLOW_RELAY_PRIVKEY_B64"] = _b64.b64encode(_priv).decode()
+                print("Relay key unlocked; serving conversation auto-unlock.")
             start_workspace(args.workspace)
             return 0
 

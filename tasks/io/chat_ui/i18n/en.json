@@ -1299,10 +1299,12 @@
   "unlocked": "Unlocked 🔓",
   "confirmDisableEncryption": "Disable encryption and decrypt this conversation back to clear text?",
   "unlockBeforeDisable": "Unlock the conversation before disabling encryption.",
-  "usageEncrypt": "Usage: /encrypt [status|on|off|unlock|lock|passwd|escrow on/off|recover]",
+  "usageEncrypt": "Usage: /encrypt [status|on|off|unlock|lock|passwd|escrow on/off|recover|relay <pubkey>/off]",
   "unlock": "Unlock",
   "lockedBannerText": "This conversation is encrypted. Enter the passphrase to view its history.",
   "setRecoveryPrompt": "Set a recovery passphrase (store it somewhere safe — it can unlock this conversation if you lose the primary passphrase):",
   "recoveryAdded": "Recovery passphrase added.",
-  "enterRecovery": "Enter recovery passphrase"
+  "enterRecovery": "Enter recovery passphrase",
+  "relayBound": "Trusted key-relay bound (key_id {key_id}).",
+  "relayUsage": "Usage: /encrypt relay <relay-pubkey-base64 | off>  (get the key via: pawflow-relay key export-pubkey)"
 }

@@ -124,6 +124,21 @@ function cmdEncrypt(text, parts) {
         if (reportErr(data)) return; addMsg('system', t('recoveryAdded'));
       });
     }
+  } else if (sub === 'relay') {
+    const arg = (parts[2] || '').trim();
+    if (arg === 'off') {
+      action$('conv_encrypt_remove_relay', { conversation_id: cid }).subscribe(data => {
+        if (reportErr(data)) return; addMsg('system', t('ok'));
+      });
+    } else if (arg) {
+      // arg is the relay public key (base64) from: pawflow-relay key export-pubkey
+      action$('conv_encrypt_set_relay', { conversation_id: cid, relay_pubkey: arg }).subscribe(data => {
+        if (reportErr(data)) return;
+        addMsg('system', t('relayBound', { key_id: data.relay_key_id || '' }));
+      });
+    } else {
+      addMsg('system', t('relayUsage'));
+    }
   } else if (sub === 'recover') {
     const rp = prompt(t('enterRecovery'));
     if (!rp) return true;

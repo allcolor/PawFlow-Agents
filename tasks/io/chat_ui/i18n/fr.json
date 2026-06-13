@@ -1299,10 +1299,12 @@
   "unlocked": "Déverrouillé 🔓",
   "confirmDisableEncryption": "Désactiver le chiffrement et déchiffrer cette conversation en clair ?",
   "unlockBeforeDisable": "Déverrouillez la conversation avant de désactiver le chiffrement.",
-  "usageEncrypt": "Utilisation : /encrypt [status|on|off|unlock|lock|passwd|escrow on/off|recover]",
+  "usageEncrypt": "Utilisation : /encrypt [status|on|off|unlock|lock|passwd|escrow on/off|recover|relay <pubkey>/off]",
   "unlock": "Déverrouiller",
   "lockedBannerText": "Cette conversation est chiffrée. Saisissez la phrase secrète pour afficher son historique.",
   "setRecoveryPrompt": "Définissez une phrase secrète de récupération (conservez-la en lieu sûr — elle peut déverrouiller cette conversation si vous perdez la principale) :",
   "recoveryAdded": "Phrase secrète de récupération ajoutée.",
-  "enterRecovery": "Saisissez la phrase secrète de récupération"
+  "enterRecovery": "Saisissez la phrase secrète de récupération",
+  "relayBound": "Relais de clé de confiance lié (key_id {key_id}).",
+  "relayUsage": "Utilisation : /encrypt relay <clé-publique-base64 | off>  (obtenez la clé via : pawflow-relay key export-pubkey)"
 }

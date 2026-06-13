@@ -4,6 +4,19 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.0-alpha.27] — 2026-06-13
+
+### Fixed
+
+- Claude Code interactive (transcript display): after alpha.26 switched the
+  `use_tool` payload to a string `arguments_json`, the CCI transcript observer
+  still read the inner arguments from the legacy `arguments` object, so tool
+  calls rendered with empty parentheses (`Bash()`, `Read()`) in the technical
+  details panel. The observer now decodes `arguments_json` first (falling back
+  to a legacy `arguments`/`parameters` object), so arguments render again.
+  Display-only — tool execution was unaffected. Codex/other providers use a
+  separate path and were never impacted.
+
 ## [1.0.0-alpha.26] — 2026-06-13
 
 ### Fixed

@@ -205,6 +205,25 @@ def test_vault_drop_cleans_session_and_source_indexes():
     assert v.purge_source("relay-7") == 0
 
 
+def test_vault_purge_idle():
+    v = KeyVault()
+    v.put("conv:1", new_dek())
+    v.put("conv:2", new_dek())
+    # nothing is older than an hour -> no purge
+    assert v.purge_idle(3600) == 0
+    assert v.is_unlocked("conv:1")
+    # a negative budget makes the cutoff the future -> everything is stale
+    assert v.purge_idle(-1) == 2
+    assert v.unlocked_ids() == set()
+
+
+def test_vault_get_refreshes_idle_stamp():
+    v = KeyVault()
+    v.put("conv:1", new_dek())
+    assert v.get("conv:1") is not None      # activity
+    assert v.purge_idle(3600) == 0          # still fresh
+
+
 def test_vault_clear():
     v = KeyVault()
     v.put("conv:1", new_dek(), session_id="s")

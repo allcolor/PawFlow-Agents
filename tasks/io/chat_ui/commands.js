@@ -710,6 +710,7 @@ const _CMD_HANDLERS = {
   '/export':      (text, parts, cmd) => cmdExport(text, parts, cmd),
   '/rename':      (text, parts, cmd) => cmdRename(text, parts, cmd),
   '/delete':      (text, parts, cmd) => cmdDelete(text, parts),
+  '/encrypt':     (text, parts, cmd) => cmdEncrypt(text, parts),
   '/delete-msg':  (text, parts, cmd) => cmdDeleteMsg(text, parts),
   '/search':      (text, parts, cmd) => cmdSearch(text, parts, cmd),
   '/clear':       (text, parts, cmd) => cmdClear(),

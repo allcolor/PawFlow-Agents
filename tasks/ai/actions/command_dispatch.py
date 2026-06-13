@@ -1954,7 +1954,7 @@ def _handle_help(topic: str, flowfile: FlowFile) -> list:
         # List all commands grouped by category
         categories = {
             "Conversation": ["/new", "/conv", "/delete", "/rename", "/export",
-                             "/history", "/search", "/fork"],
+                             "/history", "/search", "/fork", "/encrypt"],
             "Agent": ["/agent", "/msg", "/btw", "/stop", "/resume", "/setname"],
             "Context": ["/compact", "/git-prune", "/context", "/model", "/llm", "/effort",
                         "/fast", "/rebuild", "/restart", "/rewind", "/summary",

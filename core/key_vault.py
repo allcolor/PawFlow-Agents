@@ -39,6 +39,7 @@ import base64
 import logging
 import os
 import threading
+import time
 from typing import Dict, Iterable, Optional, Set, Tuple
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM, ChaCha20Poly1305
@@ -266,6 +267,7 @@ class KeyVault:
         self._deks: Dict[str, bytearray] = {}
         self._by_session: Dict[str, Set[str]] = {}
         self._by_source: Dict[str, Set[str]] = {}
+        self._touched: Dict[str, float] = {}  # resource_id -> last access (monotonic)
 
     def put(self, resource_id: str, dek: bytes, *,
             session_id: Optional[str] = None,
@@ -279,6 +281,7 @@ class KeyVault:
         with self._lock:
             self._zeroise_locked(resource_id)
             self._deks[resource_id] = bytearray(dek)
+            self._touched[resource_id] = time.monotonic()
             if session_id:
                 self._by_session.setdefault(session_id, set()).add(resource_id)
             if source:
@@ -293,10 +296,14 @@ class KeyVault:
             self.put(resource_id, dek, session_id=session_id, source=source)
 
     def get(self, resource_id: str) -> Optional[bytes]:
-        """Return a *copy* of the DEK, or None if the resource is locked."""
+        """Return a *copy* of the DEK, or None if the resource is locked.
+        Counts as activity for idle-lock (refreshes the last-access stamp)."""
         with self._lock:
             buf = self._deks.get(resource_id)
-            return bytes(buf) if buf is not None else None
+            if buf is None:
+                return None
+            self._touched[resource_id] = time.monotonic()
+            return bytes(buf)
 
     def is_unlocked(self, resource_id: str) -> bool:
         with self._lock:
@@ -345,8 +352,21 @@ class KeyVault:
         with self._lock:
             return set(self._deks.keys())
 
+    def purge_idle(self, max_idle_seconds: float) -> int:
+        """Drop every DEK not accessed within ``max_idle_seconds`` (the idle-lock
+        sweep — RFC open-decision #2, default 15 min). Returns count purged.
+        A periodic caller invokes this; the eviction itself is here so the
+        zeroise + index cleanup stays in one place."""
+        cutoff = time.monotonic() - max(0.0, max_idle_seconds)
+        with self._lock:
+            stale = [rid for rid, t in self._touched.items() if t < cutoff]
+            for rid in stale:
+                self.drop(rid)
+            return len(stale)
+
     def _zeroise_locked(self, resource_id: str) -> None:
         """Overwrite and drop one DEK buffer. Caller holds the lock."""
+        self._touched.pop(resource_id, None)
         buf = self._deks.pop(resource_id, None)
         if buf is not None:
             for i in range(len(buf)):

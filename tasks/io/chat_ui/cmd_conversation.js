@@ -50,6 +50,68 @@ function cmdRename(text, parts, cmd) {
   return true;
 }
 
+function cmdEncrypt(text, parts) {
+  if (!conversationId) { addMsg('system', t('noConv')); return true; }
+  const cid = conversationId;
+  const sub = (parts[1] || 'status').toLowerCase();
+  const refreshList = () => { if (typeof loadConversations === 'function') loadConversations(); };
+  const reportErr = (data) => {
+    if (data.error === 'wrong_passphrase') { addMsg('error', t('wrongPassphrase')); return true; }
+    if (data.error === 'locked') { addMsg('error', t('unlockBeforeDisable')); return true; }
+    if (data.error) { addMsg('error', data.error); return true; }
+    return false;
+  };
+  if (sub === 'status') {
+    action$('conv_encrypt_status', { conversation_id: cid }).subscribe(data => {
+      if (reportErr(data)) return;
+      addMsg('system', t('encryptionStatusLine', { state: data.state }));
+    });
+  } else if (sub === 'on' || sub === 'enable') {
+    const p1 = prompt(t('setPassphrasePrompt'));
+    if (!p1) return true;
+    const p2 = prompt(t('confirmPassphrase'));
+    if (p1 !== p2) { addMsg('error', t('passphraseMismatch')); return true; }
+    addMsg('system', t('encryptionMigrating'));
+    action$('conv_encrypt_enable', { conversation_id: cid, passphrase: p1 }).subscribe(data => {
+      if (reportErr(data)) return;
+      addMsg('system', t('encryptionEnabled'));
+      refreshList();
+    });
+  } else if (sub === 'unlock') {
+    const pw = prompt(t('enterPassphrase'));
+    if (!pw) return true;
+    action$('conv_encrypt_unlock', { conversation_id: cid, passphrase: pw }).subscribe(data => {
+      if (reportErr(data)) return;
+      addMsg('system', t('unlocked'));
+      if (typeof loadHistory === 'function') loadHistory(cid);
+    });
+  } else if (sub === 'lock') {
+    action$('conv_encrypt_lock', { conversation_id: cid }).subscribe(data => {
+      if (reportErr(data)) return;
+      addMsg('system', t('locked'));
+    });
+  } else if (sub === 'off' || sub === 'disable') {
+    if (!confirm(t('confirmDisableEncryption'))) return true;
+    action$('conv_encrypt_disable', { conversation_id: cid }).subscribe(data => {
+      if (reportErr(data)) return;
+      addMsg('system', t('encryptionDisabled'));
+      refreshList();
+    });
+  } else if (sub === 'passwd' || sub === 'password') {
+    const oldp = prompt(t('enterPassphrase'));
+    if (!oldp) return true;
+    const newp = prompt(t('setPassphrasePrompt'));
+    if (!newp) return true;
+    action$('conv_encrypt_passwd', { conversation_id: cid, old_passphrase: oldp, new_passphrase: newp }).subscribe(data => {
+      if (reportErr(data)) return;
+      addMsg('system', t('passphraseChanged'));
+    });
+  } else {
+    addMsg('error', t('usageEncrypt'));
+  }
+  return true;
+}
+
 function cmdDelete(text, parts) {
   const target = parts[1] || '';
   if (!target) { addMsg('system', t('usageDeleteConversation')); return true; }

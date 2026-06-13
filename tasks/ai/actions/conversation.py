@@ -356,6 +356,53 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
         flowfile.set_content(json.dumps({"ok": True, "title": title}).encode())
         return [flowfile]
 
+    # ── Encryption at rest (conv_encrypt_*) ───────────────────────────
+    if action.startswith("conv_encrypt_"):
+        from core.key_vault import KeyUnwrapError
+        from core.conversation_store import ConversationLockedError
+        conv_id = body.get("conversation_id", "")
+        if not conv_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        session_id = flowfile.get_attribute("auth.session_id") or ""
+        passphrase = body.get("passphrase", "") or ""
+
+        def _reply(obj, status="200"):
+            flowfile.set_content(json.dumps(obj, ensure_ascii=False).encode("utf-8"))
+            flowfile.set_attribute("http.response.status", status)
+            return [flowfile]
+
+        try:
+            if action == "conv_encrypt_status":
+                return _reply(store.encryption_status(conv_id))
+            if action == "conv_encrypt_enable":
+                if not passphrase:
+                    return _reply({"error": "passphrase required"}, "400")
+                return _reply(store.enable_encryption(
+                    conv_id, passphrase, session_id=session_id))
+            if action == "conv_encrypt_unlock":
+                store.unlock_encryption(conv_id, passphrase, session_id=session_id)
+                return _reply(store.encryption_status(conv_id))
+            if action == "conv_encrypt_lock":
+                store.lock_encryption(conv_id)
+                return _reply(store.encryption_status(conv_id))
+            if action == "conv_encrypt_disable":
+                return _reply(store.disable_encryption(conv_id, session_id=session_id))
+            if action == "conv_encrypt_passwd":
+                store.change_encryption_passphrase(
+                    conv_id, body.get("old_passphrase", "") or "",
+                    body.get("new_passphrase", "") or "")
+                return _reply({"ok": True})
+        except KeyUnwrapError:
+            # AEAD tag failure — wrong passphrase. Inline, no lockout reveal.
+            return _reply({"ok": False, "error": "wrong_passphrase"})
+        except ConversationLockedError as e:
+            return _reply({"ok": False, "error": "locked", "detail": str(e)})
+        except ValueError as e:
+            return _reply({"ok": False, "error": str(e)}, "400")
+        return _reply({"error": f"unknown encryption action: {action}"}, "400")
+
     if action == "delete_conversation":
         conv_id = body.get("conversation_id", "")
         if not conv_id:

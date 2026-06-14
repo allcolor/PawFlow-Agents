@@ -68,7 +68,18 @@ function _unwrapDisplayedToolCall(name, args) {
   if (_MCP_SCHEMA_WRAPPERS.has(toolName)) {
     toolName = 'get_tool_schema';
   }
-  if (_MCP_USE_TOOL_WRAPPERS.has(toolName) && toolArgs && typeof toolArgs === 'object') {
+  // Unwrap when EITHER the name is a use_tool wrapper, OR the args themselves
+  // are a use_tool wrapper (`{tool_name, arguments_json|arguments|parameters}`)
+  // even though the name has already been unwrapped upstream. The server emits
+  // and persists tool calls in this half-wrapped shape (name `read`, args still
+  // `{tool_name, arguments_json}`); without the args-shape check the client
+  // renders the raw wrapper, e.g. `Read(tool_name=read, arguments_json={...})`.
+  // Mirrors the server-side unwrap_mcp_tool `args.tool_name == name` branch.
+  const _argsIsWrapper = toolArgs && typeof toolArgs === 'object' && toolArgs.tool_name
+    && (toolArgs.arguments_json !== undefined
+        || toolArgs.arguments !== undefined
+        || toolArgs.parameters !== undefined);
+  if ((_MCP_USE_TOOL_WRAPPERS.has(toolName) || _argsIsWrapper) && toolArgs && typeof toolArgs === 'object') {
     const payload = (!toolArgs.tool_name && toolArgs.parameters && typeof toolArgs.parameters === 'object')
       ? toolArgs.parameters
       : toolArgs;

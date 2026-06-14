@@ -4,6 +4,22 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.0-alpha.32] — 2026-06-14
+
+### Fixed
+
+- Large `edit` tool calls rendered as a bare `Update()` with no arguments in
+  the chat UI, while smaller edits rendered correctly as `Edit(<path>)`. The
+  Claude Code interactive provider rebuilds a tool call's display arguments
+  from the streamed `input_json_delta` chunks; when a large input was
+  truncated at EOF the strict `json.loads` failed and the arguments were
+  dropped to `{}`, so the client fell back to the bare tool-name summary. The
+  provider now closes EOF-truncated tool JSON via `autoclose_truncated_json`
+  before giving up — valid and genuinely-unrecoverable inputs behave exactly
+  as before — and the chat UI recovers the file path from the edit result
+  line as a fallback so the header reads `Update(<path>)`. Display-only: the
+  edit itself always executed correctly.
+
 ## [1.0.0-alpha.31] — 2026-06-14
 
 ### Fixed

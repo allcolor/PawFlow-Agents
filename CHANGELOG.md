@@ -4,6 +4,19 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Changed
+
+- Vision downscale ceiling is now configurable and defaults to 1568px on the
+  longest edge (up from 720p/1280px). 1568px is the largest size the Anthropic
+  API actually uses — it internally downscales anything larger for
+  tokenisation — so this recovers detail for screenshots and fine text without
+  spending tokens on pixels the model discards. Override with the
+  PAWFLOW_VISION_MAX_DIM env var (clamped just below the 2000px provider
+  reject); the re-encode byte budget is likewise overridable with
+  PAWFLOW_VISION_MAX_BYTES.
+
 ## [1.0.0-alpha.30] — 2026-06-13
 
 ### Fixed

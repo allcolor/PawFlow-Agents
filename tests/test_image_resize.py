@@ -23,8 +23,11 @@ def test_oversized_image_is_downscaled_to_ceiling_and_jpeg():
     assert mime == "image/jpeg"
     w, h = Image.open(io.BytesIO(out)).size
     assert max(w, h) == MAX_DIM
-    # Aspect ratio preserved (4000:2250 == 16:9 -> 1280x720, the 720p cap).
-    assert (w, h) == (1280, 720)
+    # Aspect ratio preserved (4000:2250 == 16:9). At the default 1568px
+    # ceiling that is 1568x882; recomputed from MAX_DIM so an env override
+    # of PAWFLOW_VISION_MAX_DIM does not break the assertion.
+    scale = MAX_DIM / 4000.0
+    assert (w, h) == (MAX_DIM, round(2250 * scale))
 
 
 def test_within_limits_is_returned_unchanged():

@@ -450,7 +450,9 @@ class MCPToolHandler(ConfigurableToolHandler):
                  transport: str = "http",
                  server_id: str = "",
                  relay_service=None,
-                 local: bool = False):
+                 local: bool = False,
+                 raw_url: str = "",
+                 user_id: str = ""):
         super().__init__(tool_name, tool_description, tool_parameters)
         self._server_url = server_url
         self._mcp_tool_name = mcp_tool_name or tool_name
@@ -460,6 +462,11 @@ class MCPToolHandler(ConfigurableToolHandler):
         self._server_id = server_id
         self._relay_service = relay_service  # RelayService for relay calls
         self._local = bool(local)
+        # raw_url + user_id let the HTTP transport re-mint a relay-proxy URL
+        # (with a fresh ephemeral token) at call-time, instead of reusing the
+        # token baked in at discovery — which can expire on long conversations.
+        self._raw_url = raw_url
+        self._user_id = user_id
 
     def execute(self, arguments: Dict[str, Any]) -> str:
         if self._transport == "stdio":
@@ -485,68 +492,34 @@ class MCPToolHandler(ConfigurableToolHandler):
         except Exception as e:
             return f"Error calling MCP tool '{self._mcp_tool_name}' via relay: {e}"
 
+    def _resolve_http_url(self) -> str:
+        """Return the URL to call. When a raw relay-proxy template + user_id are
+        known, re-mint a fresh ephemeral token at call-time; otherwise fall
+        back to the URL captured at discovery."""
+        if self._raw_url and self._user_id:
+            try:
+                from core.relay_proxy_url import maybe_transform_relay_proxy_url
+                fresh = maybe_transform_relay_proxy_url(
+                    self._raw_url, user_id=self._user_id)
+                if fresh:
+                    return fresh
+            except Exception:
+                logger.debug("relay-proxy URL re-mint failed", exc_info=True)
+        return self._server_url
+
     def _execute_http(self, arguments: Dict[str, Any]) -> str:
-        import uuid as _uuid
-        parsed = urlparse(self._server_url)
-        host = parsed.hostname
-        port = parsed.port
-        scheme = parsed.scheme or "https"
-
-        rpc_body = json.dumps({
-            "jsonrpc": "2.0",
-            "method": "tools/call",
-            "params": {
-                "name": self._mcp_tool_name,
-                "arguments": arguments,
-            },
-            "id": str(_uuid.uuid4()),
-        }).encode("utf-8")
-
+        url = self._resolve_http_url()
         try:
-            if scheme == "https":
-                ctx = ssl.create_default_context()
-                conn = http.client.HTTPSConnection(
-                    host, port, timeout=self._timeout, context=ctx)
-            else:
-                conn = http.client.HTTPConnection(
-                    host, port, timeout=self._timeout)
-
-            headers = {
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-                "Content-Length": str(len(rpc_body)),
-            }
-            headers.update(self._headers)
-
-            path = parsed.path or "/"
-            conn.request("POST", path, body=rpc_body, headers=headers)
-            response = conn.getresponse()
-            body = response.read().decode("utf-8", errors="replace")
-            conn.close()
-
-            if response.status != 200:
-                return f"MCP error (HTTP {response.status}): {body}"
-
-            rpc_response = json.loads(body)
-            if "error" in rpc_response:
-                err = rpc_response["error"]
-                return f"MCP error: {err.get('message', err)}"
-
-            result = rpc_response.get("result", {})
-            # MCP tools/call result has "content" array
-            content_parts = result.get("content", [])
-            texts = []
-            for part in content_parts:
-                if isinstance(part, dict):
-                    texts.append(part.get("text", json.dumps(part)))
-                else:
-                    texts.append(str(part))
-            return "\n".join(texts) if texts else json.dumps(result)
-
-        except json.JSONDecodeError:
-            return f"MCP error: invalid JSON response from {self._server_url}"
+            from core.mcp_http_client import (
+                MCPHttpClient, flatten_tool_content)
+            client = MCPHttpClient(
+                url, headers=self._headers, timeout=self._timeout)
+            result = client.call_tool(self._mcp_tool_name, arguments)
+            if result.get("isError"):
+                return f"MCP error: {flatten_tool_content(result)}"
+            return flatten_tool_content(result)
         except Exception as e:
-            return f"Error calling MCP server {self._server_url}: {e}"
+            return f"Error calling MCP server {url}: {e}"
 
 
 # ── MCP server discovery ─────────────────────────────────────────────

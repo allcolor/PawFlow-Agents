@@ -528,54 +528,17 @@ def discover_mcp_tools(server_url: str,
                        timeout: int = 10) -> List[Dict[str, Any]]:
     """Discover available tools from an MCP server via tools/list.
 
+    Uses the spec-conformant Streamable HTTP transport (initialize handshake +
+    Mcp-Session-Id + SSE/JSON response negotiation) via core.mcp_http_client,
+    so it interoperates with real MCP servers (FastMCP, official SDK), including
+    through a PawFlow relay-proxy URL.
+
     Returns a list of dicts: [{"name": ..., "description": ..., "inputSchema": ...}]
     """
-    import uuid as _uuid
-    parsed = urlparse(server_url)
-    host = parsed.hostname
-    port = parsed.port
-    scheme = parsed.scheme or "https"
-
-    rpc_body = json.dumps({
-        "jsonrpc": "2.0",
-        "method": "tools/list",
-        "id": str(_uuid.uuid4()),
-    }).encode("utf-8")
-
     try:
-        if scheme == "https":
-            ctx = ssl.create_default_context()
-            conn = http.client.HTTPSConnection(
-                host, port, timeout=timeout, context=ctx)
-        else:
-            conn = http.client.HTTPConnection(
-                host, port, timeout=timeout)
-
-        req_headers = {
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-            "Content-Length": str(len(rpc_body)),
-        }
-        if headers:
-            req_headers.update(headers)
-
-        path = parsed.path or "/"
-        conn.request("POST", path, body=rpc_body, headers=req_headers)
-        response = conn.getresponse()
-        body = response.read().decode("utf-8", errors="replace")
-        conn.close()
-
-        if response.status != 200:
-            logger.error(f"MCP tools/list failed (HTTP {response.status}): {body}")
-            return []
-
-        rpc_response = json.loads(body)
-        if "error" in rpc_response:
-            logger.error(f"MCP tools/list error: {rpc_response['error']}")
-            return []
-
-        return rpc_response.get("result", {}).get("tools", [])
-
+        from core.mcp_http_client import MCPHttpClient
+        client = MCPHttpClient(server_url, headers=headers, timeout=timeout)
+        return client.list_tools()
     except Exception as e:
         logger.error(f"MCP discovery failed for {server_url}: {e}")
         return []

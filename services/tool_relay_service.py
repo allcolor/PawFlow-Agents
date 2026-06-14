@@ -1595,6 +1595,8 @@ class ToolRelayService(BaseService):
                             server_id=mcp_name,
                             relay_service=relay_svc,
                             local=bool(mcp_def.get("local")),
+                            raw_url=mcp_def.get("url", ""),
+                            user_id=user_id,
                         )
                         registry.register(h)
                     if disc_tools:

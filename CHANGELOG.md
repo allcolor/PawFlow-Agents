@@ -4,6 +4,32 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.0-alpha.33] — 2026-06-14
+
+### Fixed
+
+- HTTP MCP servers were effectively unusable: the client spoke a non-standard
+  "sessionless JSON-RPC over a single POST" dialect (one `POST`, `Accept:
+  application/json` only, no `initialize` handshake, no `Mcp-Session-Id`, no
+  SSE), which virtually no real MCP server (FastMCP, the official SDK servers)
+  accepts — they answer 400/406 or reply over `text/event-stream`. Only stdio
+  MCP servers (proxied through the relay) actually worked. The HTTP client now
+  implements the conformant **Streamable HTTP** transport: lazy `initialize` +
+  `notifications/initialized` handshake, `Mcp-Session-Id` capture and replay,
+  `Accept: application/json, text/event-stream` negotiation, incremental SSE
+  response parsing, and one transparent re-initialize-and-retry on an expired
+  session (HTTP 404). Both tool discovery (`tools/list`) and invocation
+  (`tools/call`) go through the new `core.mcp_http_client` module.
+
+### Changed
+
+- HTTP MCP tools routed through a relay-proxy URL now re-mint the ephemeral
+  proxy token at call-time (from the stored URL template + user id) instead of
+  reusing the token captured at discovery, which could expire on long-lived
+  conversations. The relay HTTP proxy already streams SSE end-to-end and
+  forwards the `Mcp-Session-Id` header in both directions, so no relay change
+  was required.
+
 ## [1.0.0-alpha.32] — 2026-06-14
 
 ### Fixed

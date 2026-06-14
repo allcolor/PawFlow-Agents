@@ -1102,7 +1102,9 @@ class TestMCPToolHandler(unittest.TestCase):
             server_url="http://localhost:3001/mcp",
         )
         result = h.execute({})
-        assert "MCP error (HTTP 500)" in result
+        # New Streamable HTTP client surfaces the status as "HTTP 500: <body>",
+        # wrapped by the handler's "Error calling MCP server ..." prefix.
+        assert "HTTP 500" in result
 
     def test_execute_connection_error(self):
         h = MCPToolHandler(

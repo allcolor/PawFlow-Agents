@@ -101,6 +101,7 @@ while [[ $# -gt 0 ]]; do
 
 Options:
   --version VERSION  Install this PawFlow server version. Relay image tags come from the selected release catalog.
+                     Defaults to the latest published release when omitted (resolved from GitHub for image installs).
   --from-source      Build the server from source. With --version, checkout that exact git tag; without it, checkout main.
   --pull-server      Require pulling the server image. Fails if the image is not available.
   --pull-images      Require pulling server + redistributable relay images.
@@ -421,6 +422,16 @@ if [[ "$SERVER_MODE" == "auto" && -n "$VERSION" ]]; then
 fi
 if [[ "$RUNTIME_IMAGE_MODE" == "auto" && -n "$VERSION" ]]; then
   RUNTIME_IMAGE_MODE="pull"
+fi
+
+# Default to the latest published release when no explicit version or image is
+# requested, so `--pull-images` (and other image installs) pin a concrete tag
+# instead of relying on a floating `:latest`. Source builds keep their `main`
+# default and are left untouched.
+if [[ -z "$VERSION" && -z "$IMAGE" && "$SERVER_MODE" != "source" ]]; then
+  echo "No --version specified; resolving the latest PawFlow release from GitHub." >&2
+  VERSION="$(github_latest_version)"
+  echo "Using latest PawFlow version: $VERSION" >&2
 fi
 
 need_cmd() {

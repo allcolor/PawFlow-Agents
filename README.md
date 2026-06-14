@@ -166,9 +166,14 @@ echo '{"type":"user","message":{"role":"user","content":"hello"}}' | \
   pawcode --input-format stream-json --output-format stream-json
 ```
 
-### VS Code and Relays
+### VS Code
 
-Use the relay CLI or Relay Desktop to connect workspaces, desktops, browsers, and terminals. The VS Code extension can attach to the same conversation and resource panel.
+The VS Code extension attaches to the same PawFlow conversation and resource panel from inside your editor.
+
+### Telegram
+
+Telegram bridges chats into the same conversations: message a BotFather bot and agents reply inline (web login uses the Telegram Login Widget).
+
 ## Architecture
 
 ```
@@ -198,7 +203,7 @@ Use the relay CLI or Relay Desktop to connect workspaces, desktops, browsers, an
                     └───────────────────┘
 ```
 
-The **server** hosts the API, agent orchestration, pipeline engine, and web UI. A **relay** runs on the user's machine (or in a Docker container) and executes tools — filesystem access, bash commands, code edits — over a WebSocket connection. This means agents can manipulate your local codebase without the server needing direct access to your files.
+The **server** hosts the API, agent orchestration, pipeline engine, and web UI. A **relay** runs on the user's machine (or in a Docker container) and executes tools — filesystem access, bash commands, code edits — over a WebSocket connection. This means agents can manipulate your local codebase without the server needing direct access to your files. Connect a relay with the relay CLI or Relay Desktop to attach workspaces, desktops, browsers, and terminals.
 
 ## LLM Providers
 

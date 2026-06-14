@@ -19,6 +19,7 @@ import uuid
 from core.agent_prompt_policy import append_cli_mcp_system_prompt
 from core.claude_code_interactive_pool import InteractiveClaudeCodePool
 from core.llm_providers.claude_code_session import ClaudeCodeSessionMixin
+from core.tool_json import autoclose_truncated_json
 from tools.cc_interactive_filters import (
     is_hidden_native_tool, normalize_observed_tool, observed_tool_origin)
 
@@ -84,6 +85,31 @@ def _event_tool_args(event: dict) -> dict:
             if isinstance(parsed, dict):
                 return parsed
     return {}
+
+
+def _loads_tolerant(raw: str) -> dict:
+    """Parse observed tool-input JSON for DISPLAY, tolerating EOF truncation.
+
+    Large tool inputs (e.g. an `edit` with a big new_string) stream as many
+    input_json_delta chunks; when the observed JSON is truncated at EOF strict
+    parsing fails and the display args are lost, so the call renders as a bare
+    "Update()". Best-effort close the truncated JSON before giving up.
+    autoclose returns the input unchanged when there is nothing to fix, so a
+    valid payload and the genuinely-unrecoverable case both behave exactly as
+    the previous `try/except -> {}`. Always returns a dict. Display-only: the
+    real Claude Code process executes from its own complete stream regardless.
+    """
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        parsed = None
+        try:
+            repaired = autoclose_truncated_json(raw)
+            if repaired != raw:
+                parsed = json.loads(repaired)
+        except Exception:
+            parsed = None
+    return parsed if isinstance(parsed, dict) else {}
 
 
 class _CCITurnCoordinator:
@@ -468,12 +494,7 @@ class _CCITurnCoordinator:
             return
         tool_id = block.get("id") or f"cci_{uuid.uuid4().hex[:12]}"
         raw = block.get("json", "") or "{}"
-        try:
-            args = json.loads(raw)
-        except Exception:
-            args = {}
-        if not isinstance(args, dict):
-            args = {}
+        args = _loads_tolerant(raw)
         display_name, display_args = normalize_observed_tool(block.get("name", ""), args)
         block["display_name"] = display_name
         block["display_args"] = display_args
@@ -535,12 +556,7 @@ class _CCITurnCoordinator:
             return
         block["emitted"] = True
         self.emitted_tool_use_ids.add(tc_id)
-        try:
-            args = json.loads(block.get("json", "") or "{}")
-        except Exception:
-            args = {}
-        if not isinstance(args, dict):
-            args = {}
+        args = _loads_tolerant(block.get("json", "") or "{}")
         display_name, display_args = normalize_observed_tool(block.get("name", ""), args)
         block["display_name"] = display_name
         block["display_args"] = display_args

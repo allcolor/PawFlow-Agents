@@ -755,7 +755,7 @@ function addMsg(role, text, extra) {
       } else if (toolName === 'apply_patch' && args && args.path) {
         _inner.innerHTML = timeHtml + '<span class="tc-bullet ' + bulletClass + '">\u25cf</span> ' + originBadge + _renderToolCallPatch('', args) + bgBtn + klBtn;
       } else {
-        _inner.innerHTML = timeHtml + '<span class="tc-bullet ' + bulletClass + '">\u25cf</span> ' + originBadge + escapeHtml(_toolCallSummary(toolName, args || {})) + bgBtn + klBtn;
+        _inner.innerHTML = timeHtml + '<span class="tc-bullet ' + bulletClass + '">\u25cf</span> ' + originBadge + '<span class="tc-summary">' + escapeHtml(_toolCallSummary(toolName, args || {})) + '</span>' + bgBtn + klBtn;
       }
     } else if (role === 'tool_result') {
       const tcId = (extra && extra.tc_id) || '';
@@ -827,7 +827,7 @@ function addMsg(role, text, extra) {
     } else if (toolName === 'apply_patch' && args && args.path) {
       el.innerHTML = timeHtml + '<span class="tc-bullet ' + bulletClass + '">\u25cf</span> ' + originBadge + _renderToolCallPatch('', args) + bgBtn + klBtn;
     } else {
-      el.innerHTML = timeHtml + '<span class="tc-bullet ' + bulletClass + '">\u25cf</span> ' + originBadge + escapeHtml(_toolCallSummary(toolName, args || {})) + bgBtn + klBtn;
+      el.innerHTML = timeHtml + '<span class="tc-bullet ' + bulletClass + '">\u25cf</span> ' + originBadge + '<span class="tc-summary">' + escapeHtml(_toolCallSummary(toolName, args || {})) + '</span>' + bgBtn + klBtn;
     }
   } else if (role === 'tool_result') {
     const tcId = (extra && extra.tc_id) || '';
@@ -1131,7 +1131,24 @@ function _attachToolResult(tcEl, resultText) {
   const klBtn = tcEl.querySelector('.tc-kl-btn');
   if (klBtn) klBtn.remove();
   const toolHint = tcEl.dataset.tool || '';
-  const pathHint = tcEl.dataset.path || '';
+  let pathHint = tcEl.dataset.path || '';
+  // Render filet: when an edit/apply_patch call's streamed args arrived empty
+  // (large input the CCI observer could not reconstruct), the header rendered
+  // as a bare "Update()". Recover the file path from the result line
+  // ("Edited <path> (line N), ...") and patch it into the .tc-summary span so
+  // it reads "Update(<path>)" instead of empty, useless parens.
+  if (!pathHint && (toolHint === 'edit' || toolHint === 'apply_patch')) {
+    const _m = resultText.match(/^Edited\s+(.+?)(?:\s+\(line\b|:\s)/);
+    const _recovered = _m && _m[1];
+    if (_recovered) {
+      pathHint = _recovered;
+      tcEl.dataset.path = _recovered;
+      const _sum = tcEl.querySelector('.tc-summary');
+      if (_sum && /\(\s*\)\s*$/.test(_sum.textContent)) {
+        _sum.textContent = _sum.textContent.replace(/\(\s*\)\s*$/, '(' + _recovered + ')');
+      }
+    }
+  }
   const resultDiv = document.createElement('div');
   resultDiv.className = 'tc-result';
   const firstLine = resultText.split('\n')[0].substring(0, 120);

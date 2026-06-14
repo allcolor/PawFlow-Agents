@@ -8,6 +8,7 @@ import pytest
 
 from core.llm_client import LLMClient
 from core.llm_providers.claude_code_interactive import _CCITurnCoordinator
+from core.llm_providers.claude_code_interactive import _loads_tolerant
 
 
 class _Events:
@@ -2632,3 +2633,55 @@ def test_cci_tmux_session_pins_window_size_so_viewer_cannot_resize():
     src = Path("core/claude_code_interactive_pool.py").read_text(encoding="utf-8")
     assert "tmux new-session -d -s pawflow -x 220 -y 50" in src
     assert "window-size manual" in src
+
+
+def test_loads_tolerant_valid_recover_truncated_and_drop_garbage():
+    # Valid JSON object passes through unchanged.
+    assert _loads_tolerant('{"path": "a.py", "old_string": "x"}') == {
+        "path": "a.py", "old_string": "x"}
+    # EOF-truncated JSON (a large edit whose input_json_delta stream was cut)
+    # is closed and recovered instead of being dropped to {} -- this is what
+    # used to render the call as a bare "Update()".
+    assert _loads_tolerant('{"path": "a.py", "new_string": "hello') == {
+        "path": "a.py", "new_string": "hello"}
+    assert _loads_tolerant('{"path": "a.py", "items": [1, 2') == {
+        "path": "a.py", "items": [1, 2]}
+    # Unrecoverable / non-object input degrades to {} exactly as before.
+    assert _loads_tolerant("not json at all") == {}
+    assert _loads_tolerant('"just a string"') == {}
+    assert _loads_tolerant("{}") == {}
+
+
+def test_turn_coordinator_recovers_truncated_tool_input_for_display():
+    # A large tool input streams as many input_json_delta chunks; if the
+    # observed JSON is truncated at EOF (last chunk lost) the display args must
+    # still be recovered, so the call does not render with empty arguments.
+    # Execution is unaffected -- the real CC process has the full stream.
+    events = [
+        _sse("content_block_start", {
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {"type": "tool_use", "id": "toolu_x", "name": "read"},
+        }),
+        _sse("content_block_delta", {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "input_json_delta", "partial_json": '{"path":"'},
+        }),
+        _sse("content_block_delta", {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "input_json_delta", "partial_json": 'big/file.txt'},
+        }),
+        _sse("content_block_stop", {"type": "content_block_stop", "index": 0}),
+        _sse("message_stop", {"type": "message_stop"}),
+        {"type": "hook", "hook_event_name": "Stop", "input": {"hook_event_name": "Stop"}},
+    ]
+    blocks = []
+    _CCITurnCoordinator(
+        _Events(events), "sess",
+        block_callback=lambda kind, payload: blocks.append((kind, payload)),
+    ).run()
+    tool_uses = [p for k, p in blocks if k == "tool_use"]
+    assert len(tool_uses) == 1
+    assert tool_uses[0]["arguments"] == {"path": "big/file.txt"}

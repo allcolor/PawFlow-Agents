@@ -307,12 +307,17 @@ class _AntigravityTurnCoordinator:
         if tc_id in self.emitted_tool_use_ids:
             return
         self.emitted_tool_use_ids.add(tc_id)
-        name = str(tc.get("name") or tc.get("tool") or "")
-        args = tc.get("arguments") or tc.get("args") or {}
+        raw_name = str(tc.get("name") or tc.get("tool") or "")
+        raw_args = tc.get("arguments") or tc.get("args") or {}
+        try:
+            from core.llm_client import unwrap_mcp_tool
+            name, args = unwrap_mcp_tool(raw_name, raw_args)
+        except Exception:
+            name, args = raw_name, raw_args
         if not isinstance(args, dict):
             args = {}
         origin = str(tc.get("tool_origin") or "")
-        if not origin and "/" in name:
+        if not origin and "/" in raw_name:
             origin = "mcp"
         if not origin and name:
             origin = "native"

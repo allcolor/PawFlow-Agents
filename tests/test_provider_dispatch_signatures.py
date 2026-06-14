@@ -509,6 +509,18 @@ def test_gemini_acp_displays_inner_pawflow_tool_args():
     assert args == {"path": "/workspace"}
 
 
+def test_gemini_acp_displays_inner_arguments_json_tool_args():
+    from core.llm_providers.gemini import LLMGeminiMixin
+
+    name, args = LLMGeminiMixin._gemini_acp_display_tool_call(
+        "use_tool", {
+            "tool_name": "bash",
+            "arguments_json": '{"path": "/workspace", "command": "git status --short"}',
+        })
+    assert name == "bash"
+    assert args == {"path": "/workspace", "command": "git status --short"}
+
+
 def test_gemini_acp_strips_pawflow_wrapper_from_tool_result_text():
     from core.llm_providers.gemini import LLMGeminiMixin
 

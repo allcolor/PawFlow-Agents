@@ -347,6 +347,37 @@ def test_antigravity_turn_coordinator_waits_for_tool_result_after_step_stop(monk
     assert response.content == "done"
 
 
+def test_antigravity_turn_coordinator_unwraps_mcp_tool_call_for_display(monkeypatch, tmp_path):
+    import core.llm_providers.antigravity_interactive as agi
+
+    monkeypatch.setattr(agi, "_POST_DONE_IDLE_DRAIN_SECONDS", 0)
+    log_path = tmp_path / "observer.jsonl"
+    log_path.write_text("".join(json.dumps(e) + "\n" for e in [
+        {"type": "ag_text_delta", "tool_calls": [{
+            "id": "tc1", "name": "bash",
+            "arguments": {
+                "tool_name": "bash",
+                "arguments_json": '{"path": "/workspace", "command": "git status --short"}',
+            },
+            "tool_origin": "mcp",
+        }]},
+        {"type": "ag_text_delta", "done": True},
+    ]), encoding="utf-8")
+
+    blocks = []
+    _AntigravityTurnCoordinator(
+        str(log_path), offset=0,
+        block_callback=lambda kind, payload: blocks.append((kind, payload)),
+    ).run()
+
+    assert ("tool_use", {
+        "id": "tc1",
+        "name": "bash",
+        "arguments": {"path": "/workspace", "command": "git status --short"},
+        "tool_origin": "mcp",
+    }) in blocks
+
+
 def test_antigravity_turn_coordinator_reads_mcp_result_from_mitm_tool_result(monkeypatch, tmp_path):
     import core.llm_providers.antigravity_interactive as agi
 

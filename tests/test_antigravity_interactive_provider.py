@@ -340,8 +340,11 @@ def test_antigravity_turn_coordinator_waits_for_tool_result_after_step_stop(monk
         block_callback=lambda kind, payload: blocks.append((kind, payload)),
     ).run()
 
+    # The tool name is unwrapped for display (use_tool -> list_dir), so the
+    # tool_result carries the same unwrapped name as its matching tool_use,
+    # not the raw `pawflow/use_tool` wrapper.
     assert ("tool_result", {
-        "tc_id": "tc1", "tool": "pawflow/use_tool", "result": "a.py",
+        "tc_id": "tc1", "tool": "list_dir", "result": "a.py",
         "tool_origin": "mcp",
     }) in blocks
     assert response.content == "done"
@@ -404,9 +407,10 @@ def test_antigravity_turn_coordinator_reads_mcp_result_from_mitm_tool_result(mon
         block_callback=lambda kind, payload: blocks.append((kind, payload)),
     ).run()
 
+    # Name unwrapped for display (use_tool -> bash), tool_origin preserved.
     assert ("tool_result", {
         "tc_id": "tc1",
-        "tool": "pawflow/use_tool",
+        "tool": "bash",
         "result": "Created At: now\nCompleted At: now\nOn branch main\n",
         "tool_origin": "mcp",
     }) in blocks
@@ -715,12 +719,14 @@ def test_antigravity_turn_coordinator_preserves_tool_origin(monkeypatch, tmp_pat
         block_callback=lambda kind, payload: blocks.append((kind, payload)),
     ).run()
 
+    # Name unwrapped for display (pawflow/read -> read), tool_origin preserved
+    # (the actual subject of this test).
     assert ("tool_use", {
-        "id": "tc-mcp", "name": "pawflow/read",
+        "id": "tc-mcp", "name": "read",
         "arguments": {"path": "a.py"}, "tool_origin": "mcp",
     }) in blocks
     assert ("tool_result", {
-        "tc_id": "tc-mcp", "tool": "pawflow/read",
+        "tc_id": "tc-mcp", "tool": "read",
         "result": "ok", "tool_origin": "mcp",
     }) in blocks
 

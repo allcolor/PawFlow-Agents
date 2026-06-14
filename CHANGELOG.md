@@ -4,7 +4,18 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [1.0.0-alpha.31] — 2026-06-14
+
+### Fixed
+
+- Tool calls rendered as the raw `use_tool` wrapper in the chat UI
+  (`Read(tool_name=read, arguments_json={...})`) instead of the real tool and
+  its arguments. The client unwrap only peeled the wrapper when the tool *name*
+  was still a `use_tool` wrapper; when a call arrived half-wrapped — name
+  already unwrapped but the arguments still `{tool_name, arguments_json}`, the
+  shape the server emits and persists — it passed the wrapper straight through.
+  The client now also unwraps when the *arguments* are a `use_tool` wrapper,
+  mirroring the server-side `unwrap_mcp_tool` behaviour.
 
 ### Changed
 

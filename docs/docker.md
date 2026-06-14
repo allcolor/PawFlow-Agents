@@ -25,8 +25,10 @@ bash scripts/install-pawflow.sh --port PORT
 This is the recommended Linux, macOS, Windows-native Docker Desktop, and WSL2
 install path. It first tries the prebuilt server and redistributable relay
 images (`ghcr.io/allcolor/pawflow`, `ghcr.io/allcolor/pawflow-relay-minimal`,
-and `ghcr.io/allcolor/pawflow-relay-dev`). The server image is tagged `latest`
-or `VERSION`; relay images are tagged independently by the extracted
+and `ghcr.io/allcolor/pawflow-relay-dev`). Without `--version`, the installer
+resolves the latest published release from GitHub and pulls the server image for
+that exact tag; pass `--version VERSION` to pin a specific release. Relay images
+are tagged independently by the extracted
 `config/relay_image_catalog.json` `relay_image_version` (`YYYY.mm.dd`). If the
 server image is available, it extracts the run scripts, relay image catalog, CLI
 image Docker context, MCP bridge, PawFlow SDK, and relay Python package from
@@ -160,7 +162,8 @@ bash scripts/install-pawflow.sh --self-update
 ```
 
 `--version VERSION` first tries the prebuilt `ghcr.io/allcolor/pawflow:VERSION`
-server image. After the server image is extracted, the installer reads
+server image; without it, the installer resolves the latest published release
+from GitHub and uses that tag. After the server image is extracted, the installer reads
 `config/relay_image_catalog.json` and pulls
 `ghcr.io/allcolor/pawflow-relay-minimal:<relay_image_version>` and
 `ghcr.io/allcolor/pawflow-relay-dev:<relay_image_version>`. `--from-source

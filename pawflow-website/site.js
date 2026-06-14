@@ -81,12 +81,12 @@ curl -L -o "${installer}" \\
   "${releaseDownloadUrl(installer)}"
 unzip "${installer}"
 cd "pawflow-install-${version}"
-bash scripts/install-pawflow.sh --port 19990 --pull-images --version "$PAWFLOW_VERSION"</code>`;
+bash scripts/install-pawflow.sh --port 19990 --pull-images</code>`;
   });
   document.querySelectorAll('[data-install-command-compact]').forEach((node) => {
     const installer = release.assets.installer;
     const dir = installer.replace(/\.zip$/, '');
-    node.innerHTML = `<code>curl -L -O "${releaseDownloadUrl(installer)}" && unzip "${installer}" && cd "${dir}" && bash scripts/install-pawflow.sh --port 19990 --pull-images --version "${release.version}"</code>`;
+    node.innerHTML = `<code>curl -L -O "${releaseDownloadUrl(installer)}" && unzip "${installer}" && cd "${dir}" && bash scripts/install-pawflow.sh --port 19990 --pull-images</code>`;
   });
 }
 

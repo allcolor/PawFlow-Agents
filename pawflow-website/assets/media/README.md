@@ -52,7 +52,7 @@ All website media should live under `pawflow-website/assets/media/`. Keep origin
 | P2 | `product/theme-selector.webp` | 1600x1000 | Themes | Theme selector plus theme resource editor/import dialog, showing global and conversation theme modes. |
 | P2 | `product/compact-summarizer.webp` | 1600x1000 | Compact and summarizer | LLM/summarizer settings showing max_context_size, compact_threshold_pct, summarizer service, and compact summary review. |
 | P2 | `product/private-gateway-setup.webp` | 1600x1000 | Private Gateway | Gateway setup with key rotation, failure cooldown, ban policy, skin selection, and no exposed secrets. |
-| P0 | `howtos/install-script-terminal.webp` | 1600x1000 | How-to: install wizard | Terminal showing release zip download, unzip, and `scripts/install-pawflow.sh --port 19990 --pull-images --version ...`. |
+| P0 | `howtos/install-script-terminal.webp` | 1600x1000 | How-to: install wizard | Terminal showing release zip download, unzip, and `scripts/install-pawflow.sh --port 19990 --pull-images`. |
 | P0 | `howtos/wizard-gateway.webp` | 1600x1000 | How-to: install wizard | First-run gateway/bootstrap screen, showing local certificate/private install context and gateway key replacement without real secrets. |
 | P0 | `howtos/wizard-admin.webp` | 1600x1000 | How-to: install wizard | Admin account creation screen with no real credentials. |
 | P0 | `howtos/wizard-llm-provider.webp` | 1600x1000 | How-to: install wizard | LLM provider selection screen showing Codex, Claude Code, Antigravity/Agy, Gemini CLI, Anthropic, OpenAI, and compatible endpoint options. |

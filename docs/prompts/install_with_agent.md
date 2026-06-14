@@ -38,7 +38,7 @@ Install path: complete from-scratch bootstrap
 2. Run the installer with the selected port:
    bash scripts/install-pawflow.sh --port PORT
 3. Confirm the installer first tries the prebuilt PawFlow server and redistributable relay images, then builds from source only if needed. It still builds the CLI LLM image locally before starting the server:
-   - ghcr.io/allcolor/pawflow:latest, or ghcr.io/allcolor/pawflow:VERSION when a version is requested
+   - ghcr.io/allcolor/pawflow:VERSION; without --version the installer resolves the latest published release from GitHub and uses that tag
    - ghcr.io/allcolor/pawflow-relay-minimal:<relay_image_version> from config/relay_image_catalog.json
    - ghcr.io/allcolor/pawflow-relay-dev:<relay_image_version> from config/relay_image_catalog.json
    - pawflow-claude-code:latest

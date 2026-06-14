@@ -82,15 +82,21 @@ curl -L -o "pawflow-install-$PAWFLOW_VERSION.zip" \
 unzip "pawflow-install-$PAWFLOW_VERSION.zip"
 cd "pawflow-install-$PAWFLOW_VERSION"
 
-bash scripts/install-pawflow.sh --port PORT --pull-images --version "$PAWFLOW_VERSION"
+bash scripts/install-pawflow.sh --port PORT --pull-images
 ```
+
+`--version` is optional: when omitted the installer resolves the latest published
+release from GitHub. Pass `--version "$PAWFLOW_VERSION"` to pin a specific release.
 
 On Windows PowerShell with Docker Desktop Linux containers, use the bundled
 PowerShell installer instead:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/install-pawflow.ps1 -Port PORT -PullImages -Version $env:PAWFLOW_VERSION
+powershell -ExecutionPolicy Bypass -File scripts/install-pawflow.ps1 -Port PORT -PullImages
 ```
+
+`-Version` is likewise optional and defaults to the latest published release; pass
+`-Version $env:PAWFLOW_VERSION` to pin a specific release.
 
 Check and apply release updates with:
 

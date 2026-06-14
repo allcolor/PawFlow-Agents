@@ -284,6 +284,14 @@ if ($LASTEXITCODE -ne 0) { Fail "Docker is installed but the daemon is not reach
 
 Maybe-LoginGhcr
 
+# Default to the latest published release when no explicit version or image is
+# requested, so installs pin a concrete tag instead of a floating ':latest'.
+if (-not $Version -and -not $Image) {
+    Info "No -Version specified; resolving the latest PawFlow release from GitHub."
+    $Version = Resolve-LatestVersion
+    Info "Using latest PawFlow version: $Version"
+}
+
 $tag = if ($Version) { $Version } else { "latest" }
 if (-not $Image) { $Image = "${ImageRepo}:${tag}" }
 

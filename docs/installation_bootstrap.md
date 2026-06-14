@@ -61,11 +61,12 @@ Desktop, WSL2, SELinux distros — are detected and skipped. See
 When run from a checkout, the installer uses that checkout. When run as a
 downloaded standalone script, it clones
 `https://github.com/allcolor/PawFlow-Agents.git` into `~/pawflow-src`. Without a
-version, it first tries the prebuilt `ghcr.io/allcolor/pawflow:latest`, then
-uses the extracted `config/relay_image_catalog.json` to select the relay image
-tags. With `--version VERSION`, it first tries
-`ghcr.io/allcolor/pawflow:VERSION`; relay images still use the catalog's
-independent `relay_image_version` tag (`YYYY.mm.dd`). Use `--from-source` or
+version (and without `--from-source`), the installer resolves the latest
+published release from GitHub and pulls `ghcr.io/allcolor/pawflow:VERSION` for
+that tag, then uses the extracted `config/relay_image_catalog.json` to select
+the relay image tags. Pass `--version VERSION` to pin a specific release;
+relay images still use the catalog's independent `relay_image_version` tag
+(`YYYY.mm.dd`). Use `--from-source` or
 `--build-images` when you want local source builds instead of requiring the
 published images. It always builds the local CLI LLM
 image required before the first web installer opens:

@@ -64,7 +64,7 @@ Build the release zip with:
 bash scripts/build-pawflow-install-zip.sh --version VERSION
 ```
 
-The resulting `dist/pawflow-installers/pawflow-install-VERSION.zip` contains only `scripts/install-pawflow.sh`, `scripts/install-pawflow.ps1`, `README.md`, and `LICENSE`. After unzip, users can run `bash scripts/install-pawflow.sh --version VERSION --port PORT` or `powershell -ExecutionPolicy Bypass -File scripts/install-pawflow.ps1 -Version VERSION -Port PORT`; the remaining installer scripts and runtime bridge files are copied from the pulled server image.
+The resulting `dist/pawflow-installers/pawflow-install-VERSION.zip` contains only `scripts/install-pawflow.sh`, `scripts/install-pawflow.ps1`, `README.md`, and `LICENSE`. After unzip, users can run `bash scripts/install-pawflow.sh --port PORT` or `powershell -ExecutionPolicy Bypass -File scripts/install-pawflow.ps1 -Port PORT` (both default to the latest published release; add `--version VERSION` / `-Version VERSION` to pin one); the remaining installer scripts and runtime bridge files are copied from the pulled server image.
 
 ## GitHub Release Assets
 

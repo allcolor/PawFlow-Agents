@@ -1174,16 +1174,19 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                             conv_id[:8] or "?", agent_name or "")
                         try:
                             from core.llm_client import unwrap_mcp_tool
-                            from core.background_tool import enqueue_cc_tc, _args_hash
                             tc_name, tc_args = unwrap_mcp_tool(raw_name, raw_args)
+                        except Exception:
+                            tc_name, tc_args = raw_name, raw_args
+                        try:
+                            from core.background_tool import enqueue_cc_tc, _args_hash
                             enqueue_cc_tc(conv_id, agent_name, tc_id, tc_name, _args_hash(tc_args))
                         except Exception:
                             logger.debug("[codex-app] enqueue background tc skipped", exc_info=True)
                         if block_callback:
                             block_callback("tool_use", {
                                 "id": tc_id,
-                                "name": raw_name,
-                                "arguments": raw_args,
+                                "name": tc_name,
+                                "arguments": tc_args,
                                 "thinking": "".join(thinking_parts).strip(),
                                 "tool_origin": "mcp",
                             })

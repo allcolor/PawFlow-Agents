@@ -395,6 +395,32 @@ def test_mcp_use_tool_unwraps_slash_provider_wrapper():
     assert args == {"command": "git status --short"}
 
 
+def test_mcp_use_tool_unwraps_arguments_json_payload():
+    name, args = unwrap_mcp_tool(
+        "mcp__pawflow__use_tool",
+        {
+            "tool_name": "bash",
+            "arguments_json": '{"path": "/workspace", "command": "git status --short"}',
+        },
+    )
+
+    assert name == "bash"
+    assert args == {"path": "/workspace", "command": "git status --short"}
+
+
+def test_codex_app_unwraps_already_named_mcp_arguments_json_payload():
+    name, args = unwrap_mcp_tool(
+        "bash",
+        {
+            "tool_name": "bash",
+            "arguments_json": '{"path": "/workspace", "command": "git status --short"}',
+        },
+    )
+
+    assert name == "bash"
+    assert args == {"path": "/workspace", "command": "git status --short"}
+
+
 def test_mcp_call_name_detection_covers_antigravity_wrappers():
     assert is_mcp_tool_call_name("call_mcp_tool")
     assert is_mcp_tool_call_name("pawflow/read")

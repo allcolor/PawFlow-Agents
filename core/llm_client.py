@@ -224,13 +224,25 @@ def unwrap_mcp_tool(name: str, arguments: dict) -> tuple:
                 payload = payload["parameters"]
             tool_name = payload.get("tool_name", name)
             tool_name = _TOOL_ALIASES.get(tool_name, tool_name)
-            inner = payload.get("arguments", payload.get("parameters", payload))
+            inner = payload.get(
+                "arguments_json",
+                payload.get("arguments", payload.get("parameters", payload)),
+            )
             if isinstance(inner, str):
                 try:
                     inner = json.loads(inner)
                 except (ValueError, TypeError):
                     pass
             return tool_name, inner
+    if isinstance(arguments, dict) and arguments.get("tool_name") == name:
+        inner = arguments.get("arguments_json")
+        if inner is not None:
+            if isinstance(inner, str):
+                try:
+                    inner = json.loads(inner)
+                except (ValueError, TypeError):
+                    pass
+            return _TOOL_ALIASES.get(name, name), inner
     if name in _MCP_SCHEMA_WRAPPERS:
         return "get_tool_schema", arguments
     return name, arguments

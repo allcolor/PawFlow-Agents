@@ -50,14 +50,17 @@ if [[ -z "$PUBLISH_HOST" ]]; then PUBLISH_HOST="$HOST"; fi
 # Network mode. "host" shares the host network namespace so EVERY port the
 # container opens — including the dynamic ports of deployed httpListener flows,
 # which are not known in advance — is reachable on the host without explicit
-# -p publishing. To keep those ports private, the in-container bind defaults to
-# loopback under host networking, so a front proxy (Caddy) on 127.0.0.1 is the
-# only public ingress. "bridge" (default) keeps the previous behaviour and
-# publishes just the main port via -p.
-if [[ -z "$NETWORK_MODE" ]]; then NETWORK_MODE="bridge"; fi
-if [[ -z "$CONTAINER_HOST" ]]; then
-  if [[ "$NETWORK_MODE" == "host" ]]; then CONTAINER_HOST="127.0.0.1"; else CONTAINER_HOST="0.0.0.0"; fi
-fi
+# -p publishing. The in-container bind stays 0.0.0.0 so those ports are also
+# reachable from sibling bridge containers (the managed relay containers connect
+# back to the main listener via the host-gateway IP, which only resolves to a
+# 0.0.0.0 bind). Keeping ports off the public internet is the host firewall's
+# job in this mode. Host networking is the default (the installer resolves it
+# per-OS — host on Linux, bridge on macOS/Windows where host networking only
+# binds the Docker VM). "bridge" publishes just the main port via -p. Override
+# the bind with PAWFLOW_CONTAINER_HOST (e.g. 127.0.0.1) if a front proxy is the
+# only ingress.
+if [[ -z "$NETWORK_MODE" ]]; then NETWORK_MODE="host"; fi
+if [[ -z "$CONTAINER_HOST" ]]; then CONTAINER_HOST="0.0.0.0"; fi
 if [[ -z "$BOOTSTRAP_GATEWAY_KEY" ]]; then
   BOOTSTRAP_GATEWAY_KEY="RoyBetty"
   BOOTSTRAP_GATEWAY_LABEL="RoyBetty"
@@ -74,7 +77,8 @@ DOCKER_ARGS=()
 if [[ "$NETWORK_MODE" == "host" ]]; then
   # Host networking: no -p (the app binds host interfaces directly). Every
   # listener the container opens is reachable on the host; CONTAINER_HOST
-  # (default 127.0.0.1 in this mode) keeps them loopback-only.
+  # (default 0.0.0.0) so sibling bridge containers (managed relays) reach the
+  # listener via the host-gateway IP. The host firewall gates public exposure.
   DOCKER_ARGS+=("--network" "host")
 else
   DOCKER_ARGS+=("-p" "$PUBLISH_HOST:$PORT:$PORT")

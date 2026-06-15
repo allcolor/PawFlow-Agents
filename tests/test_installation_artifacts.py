@@ -169,11 +169,15 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert "--entrypoint sh" in run_src
     assert "cannot reach the mounted host Docker daemon" in run_src
     assert '"-p" "$PUBLISH_HOST:$PORT:$PORT"' in run_src
-    # Host networking option: every container port (incl. dynamic httpListener
-    # flow ports) reachable on the host without -p; loopback bind keeps private.
+    # Host networking (the default): every container port (incl. dynamic
+    # httpListener flow ports) reachable on the host without -p. The in-container
+    # bind defaults to 0.0.0.0 so sibling bridge containers (managed relays) can
+    # reach the listener via the host-gateway IP; the host firewall gates public
+    # exposure.
     assert "PAWFLOW_NETWORK_MODE" in run_src
     assert '"--network" "host"' in run_src
-    assert 'CONTAINER_HOST="127.0.0.1"' in run_src
+    assert 'NETWORK_MODE="host"' in run_src
+    assert 'CONTAINER_HOST="0.0.0.0"' in run_src
     assert "$PAWFLOW_HOME/data:/app/data" in run_src
     assert "PAWFLOW_DATA_DIR" in run_src
     assert "PAWFLOW_HOST_DATA_DIR" in run_src
@@ -511,6 +515,7 @@ def test_run_docker_publish_host_follows_bind_host(tmp_path):
         "PAWFLOW_HOST": "0.0.0.0",
         "PAWFLOW_IMAGE": "test-image",
         "PAWFLOW_PORT": "12345",
+        "PAWFLOW_NETWORK_MODE": "bridge",
     }
     result = subprocess.run(
         ["bash", "scripts/run-pawflow-docker.sh"],
@@ -558,6 +563,7 @@ def test_run_docker_keeps_container_bind_reachable_when_publish_host_is_loopback
         "PAWFLOW_HOST": "127.0.0.1",
         "PAWFLOW_IMAGE": "test-image",
         "PAWFLOW_PORT": "12345",
+        "PAWFLOW_NETWORK_MODE": "bridge",
     }
     result = subprocess.run(
         ["bash", "scripts/run-pawflow-docker.sh"],
@@ -574,10 +580,11 @@ def test_run_docker_keeps_container_bind_reachable_when_publish_host_is_loopback
     assert 'python cli.py start --host 0.0.0.0 --port 12345' in log
 
 
-def test_run_docker_host_network_exposes_all_ports_on_loopback(tmp_path):
+def test_run_docker_host_network_exposes_all_ports(tmp_path):
     # Host networking: no -p (dynamic httpListener ports are unknown in
-    # advance), --network host, and the in-container bind defaults to loopback
-    # so every port stays private and reachable by a host-side reverse proxy.
+    # advance), --network host, and the in-container bind defaults to 0.0.0.0 so
+    # sibling bridge containers (managed relays) reach the listener via the
+    # host-gateway IP. The host firewall gates public exposure.
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     docker_log = tmp_path / "docker.log"
@@ -623,7 +630,7 @@ def test_run_docker_host_network_exposes_all_ports_on_loopback(tmp_path):
     assert result.returncode == 0, result.stderr
     assert "--network host" in log
     assert "-p " not in log  # no port publishing under host networking
-    assert 'python cli.py start --host 127.0.0.1 --port 12345' in log
+    assert 'python cli.py start --host 0.0.0.0 --port 12345' in log
 
 
 def test_run_docker_recreates_existing_container_for_updates(tmp_path):

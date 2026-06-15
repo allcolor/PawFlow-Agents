@@ -119,7 +119,8 @@
           {
             "method": "POST",
             "pattern": "/api/help",
-            "relationship": "POST:/api/help"
+            "relationship": "POST:/api/help",
+            "public": true
           }
         ]
       }

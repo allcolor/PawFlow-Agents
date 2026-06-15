@@ -128,10 +128,15 @@ Options:
   --host HOST        Server bind host. Container default is 0.0.0.0; native default is 127.0.0.1.
   --network-host     Run the container with host networking so every port it
                      opens (incl. dynamic httpListener flow ports, unknown in
-                     advance) is reachable on the host. The in-container bind
-                     defaults to 127.0.0.1, keeping those ports loopback-only
-                     (private) — front them with a reverse proxy (e.g. Caddy).
-  --network MODE     Container network mode: 'host' or 'bridge' (default).
+                     advance) is reachable on the host. This is the DEFAULT on
+                     Linux; the in-container bind defaults to 0.0.0.0 so sibling
+                     bridge containers (managed relays) can reach the listener
+                     via the host-gateway IP. Keep ports off the public internet
+                     with the host firewall, and/or front them with a reverse
+                     proxy (e.g. Caddy).
+  --network MODE     Container network mode: 'host' or 'bridge'. Default: host on
+                     Linux, bridge on macOS/Windows (host networking only binds
+                     the Docker VM there, not the host).
   --home PATH        Persistent PawFlow home (default: ~/pawflow).
   --platform VALUE   Docker build platform, for example linux/amd64.
   --native           Start PawFlow natively in a Python venv after building runtime images.
@@ -890,6 +895,17 @@ install_apparmor_profiles() {
 HOST_OS="$(detect_host)"
 REPO_DIR=""
 INSTALL_SOURCE=""
+
+# Default container network mode. Host networking exposes EVERY port the
+# container opens (including the dynamic ports of deployed httpListener flows,
+# unknown in advance) directly on the host, so it is the default. It is only
+# effective on Linux: Docker Desktop on macOS/Windows runs containers inside a
+# VM where --network host binds the VM, not the host, leaving ports unreachable
+# — so default those to bridge (-p publishing). Override with --network host
+# or PAWFLOW_NETWORK_MODE=host on those platforms if you know what you want.
+if [[ -z "$NETWORK_MODE" ]]; then
+  if [[ "$HOST_OS" == "linux" ]]; then NETWORK_MODE="host"; else NETWORK_MODE="bridge"; fi
+fi
 
 need_cmd docker
 PYTHON_BIN="$(find_optional_python)"

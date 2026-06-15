@@ -4,6 +4,30 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Changed
+
+- Host networking is now the **default** container network mode on Linux
+  (`--network-host` no longer needed; `--network bridge` opts back to `-p`
+  publishing). macOS/Windows keep `bridge` by default because Docker Desktop's
+  host networking binds the Docker VM, not the host, leaving ports unreachable.
+- The in-container bind defaults to `0.0.0.0` (env `PAWFLOW_CONTAINER_HOST`)
+  instead of `127.0.0.1` under host networking. A loopback-only bind made the
+  main listener unreachable from sibling **bridge** containers — the managed
+  server relays connect back via the host-gateway IP, which only resolves to a
+  `0.0.0.0` bind, so a relay-less server could not start workspaces. Keeping
+  those ports off the public internet is the host firewall's job in this mode;
+  pass `PAWFLOW_CONTAINER_HOST=127.0.0.1` when a front proxy is the only ingress.
+
+### Fixed
+
+- `web_help_bot`: the `POST /api/help` route is now registered `public`, so
+  unauthenticated visitors reach the help agent instead of getting a `401
+  Unauthorized` from the session-auth gate. The endpoint's security boundary is
+  its Origin allowlist, shared LLM budget, and per-session TTL — not login auth
+  (mirrors `telegram_help_bot`). Redeploy the flow to pick up the fix.
+
 ## [1.0.0-alpha.37] — 2026-06-15
 
 ### Added

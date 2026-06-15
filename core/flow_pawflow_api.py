@@ -229,18 +229,21 @@ class FlowPawflowApi:
         }
 
     def run_agent(self, conversation_id: str, agent: str, message: str,
-                  timeout: float = 600.0, channel: str = "flow",
+                  timeout: Optional[float] = None, channel: str = "flow",
                   runtime_port: str = "", msg_id: str = "",
                   attachments: Optional[list] = None,
                   source_attributes: Optional[Dict[str, str]] = None
                   ) -> Dict[str, Any]:
-        """Submit a message and wait up to ``timeout`` seconds for the reply.
+        """Submit a message and wait for the reply.
 
-        Hard timeout for unattended flows (e.g. a public bot with nobody to
-        cancel a stuck turn): if the agent does not finish within ``timeout``,
-        the turn is force-cancelled and the result is returned with
-        ``timed_out=True``. Returns a dict with ``response``, ``error``,
-        ``timed_out``, ``status``, ``conversation_id`` and ``turn_id``.
+        NO implicit timeout — project rule. With ``timeout=None`` (default) the
+        wait is unbounded: it blocks until the turn's `done` arrives, however
+        long it takes. Pass an EXPLICIT ``timeout`` (seconds) only for an
+        unattended flow that must bound a stuck turn — e.g. a public bot with
+        nobody to cancel; in that case, and only then, an elapsed timeout
+        force-cancels the turn and returns ``timed_out=True``. Returns a dict
+        with ``response``, ``error``, ``timed_out``, ``status``,
+        ``conversation_id`` and ``turn_id``.
         """
         cid = self._auth_conv(conversation_id)
         from core.agent_runtime_api import AgentRequest, AgentRuntimeAPI
@@ -271,17 +274,22 @@ class FlowPawflowApi:
         # registered per turn_id and fires when this message is finally
         # processed. This preserves strict message->response ordering per
         # conversation without needing a live event bridge.
+        _wait = None if timeout is None else max(0.0, float(timeout))
         result = AgentRuntimeAPI.wait_for_done(
-            submission.conversation_id, submission.turn_id,
-            timeout=max(0.0, float(timeout)))
+            submission.conversation_id, submission.turn_id, timeout=_wait)
         if result is None:
-            # Hard timeout: nobody will cancel this for us — do it now so a
-            # blocked turn does not run forever.
-            self.cancel_agent(submission.conversation_id, agent=agent,
-                              runtime_port=port, reason="response_timeout")
-            AgentRuntimeAPI.wait_for_done(
-                submission.conversation_id, submission.turn_id, timeout=0.1)
-            base["timed_out"] = True
+            if _wait is not None:
+                # An EXPLICIT timeout elapsed: nobody will cancel this stuck
+                # turn for us (unattended flow) — do it now so it does not run
+                # forever, and report it.
+                self.cancel_agent(submission.conversation_id, agent=agent,
+                                  runtime_port=port, reason="response_timeout")
+                AgentRuntimeAPI.wait_for_done(
+                    submission.conversation_id, submission.turn_id, timeout=0.1)
+                base["timed_out"] = True
+                return base
+            # Unbounded wait returned without a result only when no correlated
+            # waiter was registered — not a timeout. The live bridge delivers.
             return base
         base["response"] = str(result.response or "")
         base["error"] = str(result.error or "")

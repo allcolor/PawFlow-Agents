@@ -25,7 +25,6 @@ from core.agent_runtime_api import AgentRequest, AgentRuntimeAPI
 logger = logging.getLogger(__name__)
 
 _WIZARD_TTL_SECONDS = 900
-_AGENT_RESPONSE_TIMEOUT_SECONDS = 600
 _WIZARDS: Dict[str, Dict[str, Any]] = {}
 _WIZARD_LOCK = threading.Lock()
 _TELEGRAM_LIVE_ASSISTANT_SENT_TURNS: set[str] = set()
@@ -193,9 +192,11 @@ class TelegramAgentClientTask(BaseTask):
                     flowfile.set_attribute("agent.turn_id", submission.turn_id)
                     return [flowfile]
                 return []
+            # NO implicit timeout — project rule. Block until the turn's
+            # final answer arrives, however long it takes; the live bridge
+            # streams progress meanwhile.
             result = AgentRuntimeAPI.wait_for_done(
-                submission.conversation_id, submission.turn_id,
-                timeout=_AGENT_RESPONSE_TIMEOUT_SECONDS)
+                submission.conversation_id, submission.turn_id)
         except Exception as exc:
             logger.warning("Telegram agent submit failed: %s", exc, exc_info=True)
             runtime_port = str(self.config.get("agent_runtime_port") or "").strip()
@@ -204,10 +205,12 @@ class TelegramAgentClientTask(BaseTask):
             return [flowfile]
 
         if result is None:
+            # No correlated waiter was registered (e.g. submission carried no
+            # conversation/turn id); the final reply arrives through the live
+            # bridge. This is not a timeout — the wait above is unbounded.
             logger.info(
-                "Telegram agent request still running after %.0fs; final reply will arrive through live callback",
-                _AGENT_RESPONSE_TIMEOUT_SECONDS,
-            )
+                "Telegram agent request has no correlated waiter; final reply "
+                "will arrive through the live bridge")
             return []
         if result.error:
             flowfile.set_content(f"Agent error: {result.error}".encode("utf-8"))

@@ -153,6 +153,43 @@ def test_run_agent_hard_timeout_cancels(store, monkeypatch):
     assert cancelled["reason"] == "response_timeout"
 
 
+def test_no_implicit_response_timeout_defaults(store):
+    # Project rule: NO implicit timeout. Both the facade and the runtime wait
+    # must default to unbounded (timeout=None).
+    import inspect
+    import core.flow_pawflow_api as mod
+    import core.agent_runtime_api as ara
+    assert inspect.signature(
+        mod.FlowPawflowApi.run_agent).parameters["timeout"].default is None
+    assert inspect.signature(
+        ara.AgentRuntimeAPI.wait_for_done).parameters["timeout"].default is None
+
+
+def test_run_agent_unbounded_never_cancels(store, monkeypatch):
+    # With the default (timeout=None) the wait is unbounded and the turn is
+    # never force-cancelled, even if the waiter yields no result.
+    cid = _new_conv(store)
+    api = _api()
+    import core.agent_runtime_api as ara
+
+    class _Sub:
+        status = "accepted"
+        conversation_id = cid
+        turn_id = "turn-nb"
+        wait_for_done = True
+
+    monkeypatch.setattr(ara.AgentRuntimeAPI, "submit_message",
+                        staticmethod(lambda req: _Sub()))
+    monkeypatch.setattr(ara.AgentRuntimeAPI, "wait_for_done",
+                        staticmethod(lambda c, t, timeout=None: None))
+    cancelled = {"called": False}
+    monkeypatch.setattr(api, "cancel_agent",
+                        lambda *a, **k: cancelled.__setitem__("called", True))
+    res = api.run_agent(cid, "helper", "hi")  # default timeout=None
+    assert res["timed_out"] is False
+    assert cancelled["called"] is False
+
+
 def test_run_agent_returns_response(store, monkeypatch):
     cid = _new_conv(store)
     api = _api()

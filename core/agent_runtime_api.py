@@ -96,13 +96,17 @@ class AgentResultWaiter:
             }
 
     def wait(self, conversation_id: str, turn_id: str,
-             timeout: float = 600.0) -> Optional[AgentFinalResult]:
+             timeout: Optional[float] = None) -> Optional[AgentFinalResult]:
+        # NO implicit timeout — project rule. Default (timeout=None) blocks
+        # until the turn's `done` arrives, however long it takes. Only an
+        # explicitly-passed timeout bounds the wait.
         key = self._key(conversation_id, turn_id)
         with self._pending_lock:
             item = self._pending.get(key)
         if not item:
             return None
-        signaled = item["event"].wait(timeout=max(0.0, float(timeout)))
+        _wait_for = None if timeout is None else max(0.0, float(timeout))
+        signaled = item["event"].wait(timeout=_wait_for)
         if not signaled:
             return None
         with self._pending_lock:
@@ -227,6 +231,8 @@ class AgentRuntimeAPI:
 
     @staticmethod
     def wait_for_done(conversation_id: str, turn_id: str,
-                      timeout: float = 600.0) -> Optional[AgentFinalResult]:
+                      timeout: Optional[float] = None) -> Optional[AgentFinalResult]:
+        # NO implicit timeout — project rule. Pass an explicit timeout only
+        # when the caller genuinely needs a bounded wait.
         return AgentResultWaiter.instance().wait(conversation_id, turn_id, timeout)
 

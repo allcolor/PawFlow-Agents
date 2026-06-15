@@ -44,6 +44,7 @@ GHCR_USER="$(printenv PAWFLOW_GHCR_USER || printenv GHCR_USER || true)"
 GHCR_TOKEN="$(printenv PAWFLOW_GHCR_TOKEN || printenv GHCR_TOKEN || true)"
 CONTAINER="$(printenv PAWFLOW_CONTAINER || true)"
 CLEAN_OLD_IMAGES="$(printenv PAWFLOW_CLEAN_OLD_IMAGES || true)"
+NETWORK_MODE="$(printenv PAWFLOW_NETWORK_MODE || true)"
 
 if [[ -z "$IMAGE_REPO" ]]; then IMAGE_REPO="ghcr.io/allcolor/pawflow"; fi
 if [[ -z "$RELAY_MINIMAL_IMAGE_REPO" ]]; then RELAY_MINIMAL_IMAGE_REPO="ghcr.io/allcolor/pawflow-relay-minimal"; fi
@@ -85,6 +86,8 @@ while [[ $# -gt 0 ]]; do
     --runtime-dir) RUNTIME_DIR="$2"; shift 2 ;;
     --port) PORT="$2"; shift 2 ;;
     --host) HOST="$2"; HOST_SET=1; shift 2 ;;
+    --network-host) NETWORK_MODE="host"; shift ;;
+    --network) NETWORK_MODE="$2"; shift 2 ;;
     --home) PAWFLOW_HOME="$2"; shift 2 ;;
     --platform) DOCKER_PLATFORM="$2"; shift 2 ;;
     --native) START_TARGET="native"; shift ;;
@@ -123,6 +126,12 @@ Options:
                      Optional GHCR credentials for private image pulls. Token needs read:packages.
   --port PORT        Host/server port selected for this install.
   --host HOST        Server bind host. Container default is 0.0.0.0; native default is 127.0.0.1.
+  --network-host     Run the container with host networking so every port it
+                     opens (incl. dynamic httpListener flow ports, unknown in
+                     advance) is reachable on the host. The in-container bind
+                     defaults to 127.0.0.1, keeping those ports loopback-only
+                     (private) — front them with a reverse proxy (e.g. Caddy).
+  --network MODE     Container network mode: 'host' or 'bridge' (default).
   --home PATH        Persistent PawFlow home (default: ~/pawflow).
   --platform VALUE   Docker build platform, for example linux/amd64.
   --native           Start PawFlow natively in a Python venv after building runtime images.
@@ -1009,7 +1018,7 @@ if [[ "$START_TARGET" == "native" ]]; then
   cleanup_retagged_pawflow_images
   run_native_server
 elif [[ "$START_TARGET" == "container" ]]; then
-  PAWFLOW_IMAGE="$IMAGE" PAWFLOW_CONTAINER="$CONTAINER" PAWFLOW_PORT="$PORT" PAWFLOW_HOST="$HOST" PAWFLOW_HOME="$PAWFLOW_HOME" PAWFLOW_SERVER_RELAY_IMAGE="$RELAY_DEV_IMAGE" PAWFLOW_SERVER_RELAY_MINIMAL_IMAGE="$RELAY_MINIMAL_IMAGE" bash "$REPO_DIR/scripts/run-pawflow-docker.sh"
+  PAWFLOW_IMAGE="$IMAGE" PAWFLOW_CONTAINER="$CONTAINER" PAWFLOW_PORT="$PORT" PAWFLOW_HOST="$HOST" PAWFLOW_NETWORK_MODE="$NETWORK_MODE" PAWFLOW_HOME="$PAWFLOW_HOME" PAWFLOW_SERVER_RELAY_IMAGE="$RELAY_DEV_IMAGE" PAWFLOW_SERVER_RELAY_MINIMAL_IMAGE="$RELAY_MINIMAL_IMAGE" bash "$REPO_DIR/scripts/run-pawflow-docker.sh"
   cleanup_old_pawflow_images
   cleanup_retagged_pawflow_images
 else

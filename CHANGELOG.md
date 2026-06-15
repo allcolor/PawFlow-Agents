@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Installer `--network-host` (`--network host|bridge`, env `PAWFLOW_NETWORK_MODE`):
+  run the server container with host networking so every port it opens —
+  including the dynamically-chosen ports of deployed `httpListener` flows, which
+  are not known in advance — is reachable on the host without explicit `-p`
+  publishing. The in-container bind defaults to `127.0.0.1` in this mode, so
+  those ports stay loopback-only (private) and are meant to be fronted by a
+  host-side reverse proxy (e.g. Caddy). The `web_help_bot` flow's `http_host`
+  now defaults to `127.0.0.1` to match.
+
 ### Security
 
 - Resource panel (`list_resources`) no longer leaks other users' deployed

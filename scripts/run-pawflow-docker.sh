@@ -32,6 +32,7 @@ PORT="$(printenv PAWFLOW_PORT || true)"
 HOST="$(printenv PAWFLOW_HOST || true)"
 PUBLISH_HOST="$(printenv PAWFLOW_PUBLISH_HOST || true)"
 CONTAINER_HOST="$(printenv PAWFLOW_CONTAINER_HOST || true)"
+NETWORK_MODE="$(printenv PAWFLOW_NETWORK_MODE || true)"
 EXTRA_ARGS="$(printenv PAWFLOW_EXTRA_ARGS || true)"
 BOOTSTRAP_GATEWAY_KEY="$(printenv PAWFLOW_BOOTSTRAP_GATEWAY_KEY || true)"
 BOOTSTRAP_RESET="$(printenv PAWFLOW_BOOTSTRAP_RESET || true)"
@@ -46,7 +47,17 @@ if [[ -z "$PAWFLOW_HOME" ]]; then PAWFLOW_HOME="$HOME/pawflow"; fi
 if [[ -z "$CONTAINER" ]]; then CONTAINER="pawflow-server"; fi
 if [[ -z "$HOST" ]]; then HOST="0.0.0.0"; fi
 if [[ -z "$PUBLISH_HOST" ]]; then PUBLISH_HOST="$HOST"; fi
-if [[ -z "$CONTAINER_HOST" ]]; then CONTAINER_HOST="0.0.0.0"; fi
+# Network mode. "host" shares the host network namespace so EVERY port the
+# container opens — including the dynamic ports of deployed httpListener flows,
+# which are not known in advance — is reachable on the host without explicit
+# -p publishing. To keep those ports private, the in-container bind defaults to
+# loopback under host networking, so a front proxy (Caddy) on 127.0.0.1 is the
+# only public ingress. "bridge" (default) keeps the previous behaviour and
+# publishes just the main port via -p.
+if [[ -z "$NETWORK_MODE" ]]; then NETWORK_MODE="bridge"; fi
+if [[ -z "$CONTAINER_HOST" ]]; then
+  if [[ "$NETWORK_MODE" == "host" ]]; then CONTAINER_HOST="127.0.0.1"; else CONTAINER_HOST="0.0.0.0"; fi
+fi
 if [[ -z "$BOOTSTRAP_GATEWAY_KEY" ]]; then
   BOOTSTRAP_GATEWAY_KEY="RoyBetty"
   BOOTSTRAP_GATEWAY_LABEL="RoyBetty"
@@ -60,6 +71,14 @@ if [[ -z "$SERVER_RELAY_IMAGE" ]]; then SERVER_RELAY_IMAGE="pawflow-relay-dev:la
 if [[ -z "$SERVER_RELAY_MINIMAL_IMAGE" ]]; then SERVER_RELAY_MINIMAL_IMAGE="pawflow-relay-minimal:latest"; fi
 if [[ -z "$RECREATE_CONTAINER" ]]; then RECREATE_CONTAINER="1"; fi
 DOCKER_ARGS=()
+if [[ "$NETWORK_MODE" == "host" ]]; then
+  # Host networking: no -p (the app binds host interfaces directly). Every
+  # listener the container opens is reachable on the host; CONTAINER_HOST
+  # (default 127.0.0.1 in this mode) keeps them loopback-only.
+  DOCKER_ARGS+=("--network" "host")
+else
+  DOCKER_ARGS+=("-p" "$PUBLISH_HOST:$PORT:$PORT")
+fi
 
 remove_managed_relay_containers() {
   local names=()
@@ -159,7 +178,6 @@ echo "Starting $CONTAINER from $IMAGE"
 docker run -d \
   --name "$CONTAINER" \
   --restart unless-stopped \
-  -p "$PUBLISH_HOST:$PORT:$PORT" \
   "${DOCKER_ARGS[@]}" \
   -v "$PAWFLOW_HOME/data:/app/data" \
   -v "$PAWFLOW_HOME/config:/app/config" \

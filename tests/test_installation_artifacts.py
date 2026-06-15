@@ -168,7 +168,12 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert "does not contain the Docker CLI" in run_src
     assert "--entrypoint sh" in run_src
     assert "cannot reach the mounted host Docker daemon" in run_src
-    assert '-p "$PUBLISH_HOST:$PORT:$PORT"' in run_src
+    assert '"-p" "$PUBLISH_HOST:$PORT:$PORT"' in run_src
+    # Host networking option: every container port (incl. dynamic httpListener
+    # flow ports) reachable on the host without -p; loopback bind keeps private.
+    assert "PAWFLOW_NETWORK_MODE" in run_src
+    assert '"--network" "host"' in run_src
+    assert 'CONTAINER_HOST="127.0.0.1"' in run_src
     assert "$PAWFLOW_HOME/data:/app/data" in run_src
     assert "PAWFLOW_DATA_DIR" in run_src
     assert "PAWFLOW_HOST_DATA_DIR" in run_src
@@ -567,6 +572,58 @@ def test_run_docker_keeps_container_bind_reachable_when_publish_host_is_loopback
     assert result.returncode == 0, result.stderr
     assert "-p 127.0.0.1:12345:12345" in log
     assert 'python cli.py start --host 0.0.0.0 --port 12345' in log
+
+
+def test_run_docker_host_network_exposes_all_ports_on_loopback(tmp_path):
+    # Host networking: no -p (dynamic httpListener ports are unknown in
+    # advance), --network host, and the in-container bind defaults to loopback
+    # so every port stays private and reachable by a host-side reverse proxy.
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    docker_log = tmp_path / "docker.log"
+    fake_docker = bin_dir / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf '%s\\n' \"$*\" >> \"$DOCKER_LOG\"\n"
+        "if [[ \"$1\" == \"ps\" ]]; then exit 0; fi\n"
+        "if [[ \"$1\" == \"run\" ]]; then\n"
+        "  args=\"$*\"\n"
+        "  if [[ \"$args\" == *\"command -v docker && docker --version\"* ]]; then\n"
+        "    printf '/usr/bin/docker\\nDocker version 27.0.0\\n'\n"
+        "    exit 0\n"
+        "  fi\n"
+        "  if [[ \"$args\" == *\"docker version >/dev/null\"* ]]; then exit 0; fi\n"
+        "  printf 'container-id\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+
+    env = {
+        "DOCKER_LOG": str(docker_log),
+        "HOME": str(tmp_path),
+        "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+        "PAWFLOW_HOME": str(tmp_path / "pawflow-home"),
+        "PAWFLOW_IMAGE": "test-image",
+        "PAWFLOW_PORT": "12345",
+        "PAWFLOW_NETWORK_MODE": "host",
+    }
+    result = subprocess.run(
+        ["bash", "scripts/run-pawflow-docker.sh"],
+        cwd=Path.cwd(),
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=10,
+    )
+
+    log = docker_log.read_text(encoding="utf-8")
+    assert result.returncode == 0, result.stderr
+    assert "--network host" in log
+    assert "-p " not in log  # no port publishing under host networking
+    assert 'python cli.py start --host 127.0.0.1 --port 12345' in log
 
 
 def test_run_docker_recreates_existing_container_for_updates(tmp_path):

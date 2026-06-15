@@ -6,9 +6,9 @@
   "parameters": {
     "http_host": {
       "type": "string",
-      "default": "0.0.0.0",
+      "default": "127.0.0.1",
       "required": false,
-      "description": "Bind host for the internal HTTP listener (reached only by Caddy)."
+      "description": "Bind host for the internal HTTP listener. Keep 127.0.0.1 (loopback) so it is never publicly exposed; requires the server container to run with host networking (installer --network-host) so the host's Caddy can reach it."
     },
     "http_port": {
       "type": "integer",

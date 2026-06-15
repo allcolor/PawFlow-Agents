@@ -4,6 +4,29 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.0-alpha.34] — 2026-06-15
+
+### Added
+
+- Generic, scope-bounded **`pawflow` API facade** injected into `executeScript`
+  (alongside `content`/`attributes`/`flowfile`/`fs`). It lets a flow script
+  drive PawFlow — `create_conversation`, `run_agent`/`submit_agent`,
+  `cancel_agent`, `set_tool_filters`, conversation extras/TTL,
+  `list`/`find`/`delete_conversation` — with every operation authorized against
+  the flow's deployment scope via `core.flow_runtime_access` (the same boundary
+  `createConversation`/`publishMessage`/`spawnAgent` use). `run_agent` enforces a
+  hard message→response timeout and force-cancels a stuck turn, for unattended
+  flows where no human can cancel.
+- **Public Telegram help bot** flow (`default.telegram_help_bot`) built entirely
+  from generic tasks (`telegramReceiver` + `executeScript` + `telegramSend` +
+  `cronTrigger` sweep): one conversation per origin user, optional
+  `allowed_chat_ids` source gate (restrict to a specific group, exclude DMs),
+  no relay, web-only tool allowlist (`web_search,fetch,read`), sliding
+  conversation TTL with proactive purge, and a configurable response timeout.
+- PawFlow help-agent system prompt (`docs/prompts/pawflow_help_agent.md`) and
+  documentation (`docs/telegram_help_bot.md`, plus the `pawflow` facade in
+  `docs/multi_client_conversations.md`).
+
 ## [1.0.0-alpha.33] — 2026-06-14
 
 ### Fixed

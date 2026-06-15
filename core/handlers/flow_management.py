@@ -272,7 +272,7 @@ class FlowManagerHandler(ToolHandler):
         return f"Available templates ({len(templates)}):\n" + "\n".join(lines)
 
     def _deploy_template(self, template_id: str, params: dict = None) -> str:
-        """Deploy a flow from the repository. template_id is a FQN like default.hello_world:1.0.0."""
+        """Deploy a flow from the repository. template_id is a FQN like http_bots.web_help_bot:1.0.0."""
         if not template_id:
             return "Error: template_id is required (use FQN like default.flow_name:1.0.0)"
 

@@ -174,6 +174,15 @@ and delete expired conversations (lazily on access and/or proactively from a
 `cronTrigger`-driven sweep). See `docs/telegram_help_bot.md` for a complete
 example.
 
+A conversation that carries a non-zero TTL is treated as **temporary**
+(`ConversationStore.is_temporary`): these are the throwaway per-session
+conversations bots create. Temporary conversations are deliberately excluded
+from durable side effects — they are **never git-historized** (`git_snapshot`
+is a no-op for them) and **never feed auto-memory** (`auto_extract_memories`
+returns early). They are still compacted normally when they outgrow the
+context window. Giving a conversation a TTL is therefore the single switch
+that opts it out of long-term persistence.
+
 Conversation and FileStore access is bounded by the deployed flow runtime scope:
 
 - Conversation-scoped flows can only target their own runtime conversation.

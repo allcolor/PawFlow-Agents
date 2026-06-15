@@ -1123,6 +1123,26 @@ def test_cc_interactive_interrupt_turn_sends_only_stop_transport():
     assert "role=\"user\"" not in cci_branch
 
 
+def test_cci_interrupt_no_session_is_noop_not_error():
+    # Interrupt landing on a compact boundary: the provider compact already
+    # killed the CCI session, so _cci_session_state returns None. The interrupt
+    # must be a clean no-op (force stop is never an error), not raise and crash
+    # the agent loop.
+    client = LLMClient("claude-code-interactive")
+    resp = client.interrupt_claude_code_interactive(
+        "STOP", user_id="", conversation_id="", agent_name="")
+    assert resp.content == ""
+    assert resp.tool_calls == []
+
+
+def test_antigravity_interrupt_no_session_is_noop_not_error():
+    client = LLMClient("antigravity-interactive")
+    resp = client.interrupt_antigravity_interactive(
+        "STOP", user_id="", conversation_id="", agent_name="")
+    assert resp.content == ""
+    assert resp.tool_calls == []
+
+
 def test_interactive_pool_writes_lifecycle_hooks(tmp_path):
     from core.claude_code_interactive_pool import InteractiveClaudeCodePool
     from core.llm_providers.claude_code_session import ClaudeCodeSessionMixin

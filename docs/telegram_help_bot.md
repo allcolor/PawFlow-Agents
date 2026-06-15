@@ -6,7 +6,7 @@ their own conversation with a pre-existing help agent. The agent has **no relay*
 Conversations have a sliding TTL and are purged proactively, and every
 message→response is bounded by a hard timeout.
 
-The flow is `default.telegram_help_bot:1.0.0`. It is built entirely from generic
+The flow is `telegram.telegram_help_bot:1.0.0`. It is built entirely from generic
 tasks — `telegramReceiver`, `executeScript` (using the scope-bounded `pawflow`
 facade, see [Multi-Client Conversations](multi_client_conversations.md#the-pawflow-facade-in-executescript)),
 `telegramSend`, and `cronTrigger` — with no Telegram-specific task type.

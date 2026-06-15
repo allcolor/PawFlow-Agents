@@ -618,13 +618,23 @@ class LLMAntigravityInteractiveMixin(ClaudeCodeSessionMixin):
         turn_callback=None, block_callback=None, user_id: str = "",
         conversation_id: str = "", agent_name: str = "", model: str = "",
     ):
-        from core.llm_client import LLMClientError
+        from core.llm_client import LLMClientError, LLMResponse
 
         state = self._agi_session_state(
             user_id=user_id, conversation_id=conversation_id,
             agent_name=agent_name)
         if not state:
-            raise LLMClientError("No active Antigravity interactive session for interrupt")
+            # No live session to interrupt. This happens when the interrupt
+            # lands on a compact boundary: the provider compact already
+            # invalidated (killed) the session before the interrupt ran. The
+            # session being gone is exactly what the interrupt wants, so treat
+            # it as a completed no-op (force stop is never an error) and let
+            # the agent loop drain any queued message.
+            logger.info(
+                "[agi-interrupt] no active session for %s/%s \u2014 already "
+                "stopped (compact boundary), treating interrupt as no-op",
+                conversation_id[:8], agent_name)
+            return LLMResponse(content="", model=model or self.default_model)
         pool = AntigravityObserverPool.instance()
         pool.touch(state)
         offset = self._agi_log_offset(state.log_path)

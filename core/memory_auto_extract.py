@@ -81,6 +81,15 @@ def auto_extract_memories(
     if not llm_client:
         return 0
 
+    # Temporary (TTL-bearing) conversations never feed long-term memory.
+    if conversation_id:
+        try:
+            from core.conversation_store import ConversationStore
+            if ConversationStore.instance().is_temporary(conversation_id):
+                return 0
+        except Exception:
+            pass
+
     facts = _extract_with_llm(
         llm_client, summary, user_id=user_id,
         conversation_id=conversation_id)

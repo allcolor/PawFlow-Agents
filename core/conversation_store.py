@@ -1018,6 +1018,20 @@ class ConversationStore:
         SegmentedJsonl.close_append_handles(conv_dir)
         SegmentedJsonl.invalidate_index_cache(conv_dir)
 
+    def is_temporary(self, cid: str) -> bool:
+        """A conversation is temporary iff it carries a non-zero TTL.
+
+        Temporary conversations — e.g. the per-session conversations bots
+        create with a sliding TTL — are deliberately excluded from durable
+        side effects: they are never git-historized (see ``git_snapshot``)
+        and never feed auto-memory (see ``auto_extract_memories``).
+        """
+        try:
+            expires = self.get_extra(cid, "_meta_expires_at", default=0) or 0
+            return float(expires) > 0
+        except (TypeError, ValueError):
+            return False
+
     def git_snapshot(self, cid: str, message: str = "",
                      command_timeout: Optional[float] = None):
         """Commit current state as a snapshot (called after agent turn end).
@@ -1031,6 +1045,9 @@ class ConversationStore:
         """
         conv_dir = self._conv_dir(cid)
         if not (conv_dir / ".git").exists():
+            return
+        # Temporary (TTL-bearing) conversations are never historized.
+        if self.is_temporary(cid):
             return
         try:
             self.flush_append_handles(cid)

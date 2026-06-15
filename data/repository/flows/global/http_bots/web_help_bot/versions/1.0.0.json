@@ -1,0 +1,182 @@
+{
+  "id": "web-help-bot",
+  "name": "web_help_bot",
+  "version": "1.0.0",
+  "description": "Public web help bot: an HTTP endpoint (POST /api/help) that anyone on the site can chat with, built from generic tasks (httpListener + httpReceiver + executeScript with the scope-bounded `pawflow` API + handleHTTPResponse). Mirrors telegram_help_bot but with HTTP ingress/egress. Each browser session (cookie) gets its own conversation with a pre-existing help agent (no relay, web tools only), a sliding TTL, a hard message->response timeout, an Origin allowlist, and a shared daily-resettable LLM budget across all conversations. Front it with Caddy (same-origin /api/help + per-IP rate limit); keep the listener port private. Deploy in USER scope: the deploying user owns every conversation and the budget variable.",
+  "parameters": {
+    "http_host": {
+      "type": "string",
+      "default": "0.0.0.0",
+      "required": false,
+      "description": "Bind host for the internal HTTP listener (reached only by Caddy)."
+    },
+    "http_port": {
+      "type": "integer",
+      "default": 9091,
+      "required": false,
+      "description": "Bind port for the internal HTTP listener. Do NOT expose publicly; Caddy reverse-proxies /api/help to it."
+    },
+    "allowed_origin": {
+      "type": "string",
+      "default": "https://pawflow.allcolor.org",
+      "required": false,
+      "description": "Required Origin header; requests with a different Origin are rejected (403). Empty = accept any origin (not recommended for a public endpoint)."
+    },
+    "max_cost": {
+      "type": "string",
+      "default": "5.0",
+      "required": false,
+      "description": "Global LLM spend ceiling (USD) across ALL conversations of this bot. When the running total reaches it, the endpoint returns 503 until reset. 0 = unlimited."
+    },
+    "budget_var": {
+      "type": "string",
+      "default": "web_help_budget_used",
+      "required": false,
+      "description": "Name of the USER-scope variable holding the running spend (USD). Visible in the Variables panel; set it to 0 there to reset the budget."
+    },
+    "cookie_name": {
+      "type": "string",
+      "default": "pf_help_sid",
+      "required": false,
+      "description": "Session cookie name (HttpOnly, set by the flow) used to key each visitor's conversation."
+    },
+    "agent_definition": {
+      "type": "string",
+      "default": "",
+      "required": true,
+      "description": "Name of an EXISTING agent definition in the store (the PawFlow help agent)."
+    },
+    "instance_name": {
+      "type": "string",
+      "default": "",
+      "required": false,
+      "description": "Agent instance name in each conversation (default = agent_definition)."
+    },
+    "llm_service": {
+      "type": "string",
+      "default": "",
+      "required": true,
+      "description": "LLM service id used by the help agent."
+    },
+    "skills": {
+      "type": "string",
+      "default": "",
+      "required": false,
+      "description": "Comma-separated existing skill names to associate (PawFlow knowledge)."
+    },
+    "tools": {
+      "type": "string",
+      "default": "web_search,fetch,read",
+      "required": false,
+      "description": "Comma-separated tool allowlist for the help agent."
+    },
+    "model": {
+      "type": "string",
+      "default": "",
+      "required": false,
+      "description": "Optional model override."
+    },
+    "max_depth": {
+      "type": "integer",
+      "default": 1,
+      "required": false,
+      "description": "Sub-agent depth (1 = none)."
+    },
+    "conv_ttl_seconds": {
+      "type": "integer",
+      "default": 3600,
+      "required": false,
+      "description": "Sliding per-session conversation TTL (re-armed on each message)."
+    },
+    "response_timeout_seconds": {
+      "type": "integer",
+      "default": 120,
+      "required": false,
+      "description": "Hard max for message->response. On timeout the turn is force-cancelled."
+    },
+    "sweep_schedule": {
+      "type": "string",
+      "default": "*/5 * * * *",
+      "required": false,
+      "description": "CRON schedule for proactively purging expired conversations."
+    }
+  },
+  "services": {
+    "http_listener": {
+      "type": "httpListener",
+      "parameters": {
+        "host": "${http_host}",
+        "port": "${http_port}"
+      }
+    }
+  },
+  "tasks": {
+    "receive": {
+      "type": "httpReceiver",
+      "parameters": {
+        "service_id": "http_listener",
+        "routes": [
+          {
+            "method": "POST",
+            "pattern": "/api/help",
+            "relationship": "POST:/api/help"
+          }
+        ]
+      }
+    },
+    "route": {
+      "type": "executeScript",
+      "max_instances": 20,
+      "parameters": {
+        "agent_runtime_port": "pawflow_agent.agent_runtime_in",
+        "script": "import json, uuid\n\nAGENT_DEF = \"\"\"${agent_definition}\"\"\".strip()\nINSTANCE = \"\"\"${instance_name}\"\"\".strip() or AGENT_DEF\nLLM_SERVICE = \"\"\"${llm_service}\"\"\".strip()\nMODEL = \"\"\"${model}\"\"\".strip()\nMAX_DEPTH = int(\"\"\"${max_depth}\"\"\".strip() or \"1\")\nTTL = int(\"\"\"${conv_ttl_seconds}\"\"\".strip() or \"3600\")\nTIMEOUT = float(\"\"\"${response_timeout_seconds}\"\"\".strip() or \"120\")\nSKILLS = [s.strip() for s in \"\"\"${skills}\"\"\".split(\",\") if s.strip()]\nTOOLS = [t.strip() for t in \"\"\"${tools}\"\"\".split(\",\") if t.strip()] or [\"web_search\", \"fetch\", \"read\"]\nALLOWED_ORIGIN = \"\"\"${allowed_origin}\"\"\".strip()\nMAX_COST = float(\"\"\"${max_cost}\"\"\".strip() or \"0\")\nBUDGET_VAR = \"\"\"${budget_var}\"\"\".strip() or \"web_help_budget_used\"\nCOOKIE_NAME = \"\"\"${cookie_name}\"\"\".strip() or \"pf_help_sid\"\n\n\ndef _respond(status, payload, set_cookie=\"\"):\n    flowfile.set_attribute(\"http.response.status\", str(status))\n    flowfile.set_attribute(\"http.response.header.Content-Type\", \"application/json\")\n    if ALLOWED_ORIGIN:\n        flowfile.set_attribute(\"http.response.header.Access-Control-Allow-Origin\", ALLOWED_ORIGIN)\n        flowfile.set_attribute(\"http.response.header.Vary\", \"Origin\")\n    if set_cookie:\n        flowfile.set_attribute(\"http.response.header.Set-Cookie\", set_cookie)\n    return json.dumps(payload)\n\n\norigin = attributes.get(\"http.header.origin\", \"\")\nif ALLOWED_ORIGIN and origin != ALLOWED_ORIGIN:\n    result = _respond(403, {\"error\": \"forbidden\"})\nelse:\n    try:\n        body = json.loads(content or \"{}\")\n    except Exception:\n        body = {}\n    text = str(body.get(\"message\", \"\")).strip()\n\n    cookie_hdr = attributes.get(\"http.header.cookie\", \"\")\n    sid = \"\"\n    for part in cookie_hdr.split(\";\"):\n        part = part.strip()\n        if part.startswith(COOKIE_NAME + \"=\"):\n            sid = part[len(COOKIE_NAME) + 1:]\n            break\n    new_cookie = \"\"\n    if not sid:\n        sid = uuid.uuid4().hex\n        new_cookie = (COOKIE_NAME + \"=\" + sid +\n                      \"; Path=/api/help; HttpOnly; SameSite=Strict; Secure; Max-Age=\" + str(TTL))\n\n    if not text:\n        result = _respond(400, {\"error\": \"empty message\"}, new_cookie)\n    else:\n        try:\n            used = float(pawflow.get_variable(BUDGET_VAR, \"0\") or 0)\n        except Exception:\n            used = 0.0\n        if MAX_COST > 0 and used >= MAX_COST:\n            result = _respond(503, {\"error\": \"The help bot is temporarily unavailable. Please try again later.\"}, new_cookie)\n        else:\n            key = INSTANCE + \":\" + sid\n            cid = \"\"\n            for c in pawflow.find_conversations(\"help_bot_web_key\", key):\n                if pawflow.is_conversation_expired(c):\n                    pawflow.delete_conversation(c)\n                else:\n                    cid = c\n                    break\n            if not cid:\n                cid = pawflow.create_conversation(\n                    agents=[{\n                        \"instance_name\": INSTANCE,\n                        \"definition\": AGENT_DEF,\n                        \"llm_service\": LLM_SERVICE,\n                        \"params\": {\"name\": INSTANCE},\n                        \"model\": MODEL,\n                        \"tools\": TOOLS,\n                        \"max_depth\": MAX_DEPTH,\n                        \"skills\": SKILLS,\n                    }],\n                    title=\"Web help - \" + sid[:8],\n                    relays=[],\n                    ttl=TTL,\n                )\n                pawflow.set_extra(cid, \"help_bot_web_key\", key)\n                pawflow.set_tool_filters(cid, INSTANCE, TOOLS)\n            else:\n                pawflow.set_conversation_ttl(cid, TTL)\n\n            res = pawflow.run_agent(\n                cid, INSTANCE, text,\n                timeout=TIMEOUT,\n                channel=\"web\",\n                source_attributes={\"web.session\": sid},\n            )\n            try:\n                pawflow.increment_variable(BUDGET_VAR, float(res.get(\"cost_usd\") or 0.0))\n            except Exception:\n                pass\n            if res.get(\"timed_out\"):\n                result = _respond(504, {\"error\": \"Sorry, this took too long. Please try again.\"}, new_cookie)\n            elif res.get(\"error\"):\n                result = _respond(500, {\"error\": res[\"error\"]}, new_cookie)\n            else:\n                result = _respond(200, {\"response\": res.get(\"response\", \"\") or \"\"}, new_cookie)\n"
+      }
+    },
+    "respond": {
+      "type": "handleHTTPResponse",
+      "parameters": {
+        "service_id": "http_listener",
+        "content_type": "application/json"
+      }
+    },
+    "sweep_trigger": {
+      "type": "cronTrigger",
+      "parameters": {
+        "schedule": "${sweep_schedule}"
+      }
+    },
+    "sweep": {
+      "type": "executeScript",
+      "parameters": {
+        "script": "deleted = 0\nfor conv in pawflow.list_conversations():\n    cid = conv.get(\"conversation_id\") or \"\"\n    if not cid:\n        continue\n    if not pawflow.get_extra(cid, \"help_bot_web_key\"):\n        continue\n    if pawflow.is_conversation_expired(cid):\n        pawflow.delete_conversation(cid)\n        deleted += 1\nresult = \"swept \" + str(deleted)\n"
+      }
+    }
+  },
+  "runtime_links": [
+    {
+      "from": "route",
+      "to": "pawflow_agent.agent_runtime_in",
+      "type": "agentRuntime",
+      "description": "Submit public web messages to the shared PawFlow agent runtime"
+    }
+  ],
+  "relations": [
+    {
+      "from": "receive",
+      "to": "route",
+      "type": "POST:/api/help"
+    },
+    {
+      "from": "route",
+      "to": "respond",
+      "type": "success"
+    },
+    {
+      "from": "sweep_trigger",
+      "to": "sweep",
+      "type": "success"
+    }
+  ],
+  "fqn": "http_bots.web_help_bot:1.0.0",
+  "package": "http_bots"
+}

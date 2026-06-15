@@ -396,6 +396,27 @@ class TestCreateConversation:
         with cs_mod._GIT_RETENTION_RUNNING_LOCK:
             cs_mod._GIT_RETENTION_RUNNING.discard(cid)
 
+    def test_is_temporary_reflects_ttl(self, conv):
+        store, cid, _uid = conv
+        assert store.is_temporary(cid) is False
+        store.set_extra(cid, "_meta_expires_at", time.time() + 3600)
+        assert store.is_temporary(cid) is True
+
+    def test_git_snapshot_skips_temporary_conversation(self, store):
+        try:
+            subprocess.run(["git", "--version"], check=True,
+                           capture_output=True, text=True, timeout=5)
+        except Exception:
+            pytest.skip("git unavailable")
+        cid = store.generate_id()
+        store.save(cid, [], user_id="alice")  # git init + empty commit
+        store.set_extra(cid, "_meta_expires_at", time.time() + 3600)
+        before = store._git(cid, "rev-list", "--count", "live").stdout.strip()
+        store.set_extra(cid, "title", "should not be committed")
+        store.git_snapshot(cid, "turn complete")
+        after = store._git(cid, "rev-list", "--count", "live").stdout.strip()
+        assert before == after  # temporary conv is never historized
+
     def test_generate_id_is_string(self, store):
         cid = store.generate_id()
         assert isinstance(cid, str)

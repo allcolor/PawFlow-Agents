@@ -28,12 +28,18 @@ src = Path(sys.argv[1])
 dest = Path(sys.argv[2])
 manifest = Path(sys.argv[3])
 
-# Only image-owned default scopes are mirrored. User/conversation scopes and
-# third-party/global flow packages are intentionally outside this list.
+# Only image-owned (builtin) scopes are mirrored, including every builtin flow
+# package (default, telegram, github, cryptos, http_bots). User/conversation
+# scopes and third-party flow packages installed at runtime are intentionally
+# outside this list so they are never clobbered by the image defaults.
 managed_roots = [
     "agents/global",
     "configs",
     "flows/global/default",
+    "flows/global/telegram",
+    "flows/global/github",
+    "flows/global/cryptos",
+    "flows/global/http_bots",
     "private_gateway_skin/global",
     "prompts/global",
     "skills/global",

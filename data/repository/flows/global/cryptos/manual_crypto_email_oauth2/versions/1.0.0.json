@@ -1,0 +1,127 @@
+{
+  "id": "manual-crypto-email-oauth2",
+  "name": "manual_crypto_email_oauth2",
+  "version": "1.0.0",
+  "parameters": {},
+  "tasks": {
+    "trigger": {
+      "type": "generateFlowFile",
+      "parameters": {
+        "content": "run"
+      }
+    },
+    "fetch_crypto": {
+      "type": "executeScript",
+      "parameters": {
+        "script": "import json, time, urllib.request, urllib.parse\n\nids = ['bitcoin','ethereum','binancecoin','palm-ai','spectre-ai']\nvs = 'eur'\nurl = 'https://api.coingecko.com/api/v3/simple/price?' + urllib.parse.urlencode({\n    'ids': ','.join(ids),\n    'vs_currencies': vs,\n    'include_24hr_change': 'true'\n})\n\nattempt_delays = [0, 5, 15]\nlast_error = None\nraw = None\nfor delay in attempt_delays:\n    if delay:\n        time.sleep(delay)\n    try:\n        req = urllib.request.Request(url, headers={'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0'})\n        with urllib.request.urlopen(req, timeout=30) as resp:\n            raw = resp.read().decode('utf-8', errors='replace')\n        data = json.loads(raw)\n        if isinstance(data, dict) and 'status' in data and isinstance(data['status'], dict) and data['status'].get('error_code') == 429:\n            last_error = 'CoinGecko rate limit: ' + raw\n            continue\n        break\n    except Exception as e:\n        last_error = str(e)\nelse:\n    raise Exception('Impossible de récupérer CoinGecko après retries: ' + str(last_error))\n\nif raw is None:\n    raise Exception('Réponse CoinGecko vide.')\n\nobj = json.loads(raw)\nname_map = {\n    'bitcoin': 'BTC',\n    'ethereum': 'ETH',\n    'binancecoin': 'BNB',\n    'palm-ai': 'PALM AI',\n    'spectre-ai': 'SPECTRE AI'\n}\nout = {}\nfor cid, symbol in name_map.items():\n    item = obj.get(cid, {})\n    out[symbol] = {\n        'price_eur': item.get('eur'),\n        'change_24h_pct': item.get('eur_24h_change')\n    }\n\nflow_file.content = json.dumps(out, ensure_ascii=False, indent=2).encode('utf-8')"
+      }
+    },
+    "prepare_llm_input": {
+      "type": "executeScript",
+      "parameters": {
+        "script": "import json\ncrypto = json.loads(flow_file.content.decode('utf-8'))\nprompt = (\n    'Tu es un analyste crypto concis. À partir des données JSON suivantes, rédige un résumé quotidien en français en 5 à 8 phrases maximum. '\n    'Mentionne les mouvements marquants, compare brièvement les actifs, et termine par une note de prudence. '\n    'N\\'invente aucune donnée. JSON:\\n' + json.dumps(crypto, ensure_ascii=False)\n)\nflow_file.content = prompt.encode('utf-8')"
+      }
+    },
+    "generate_llm_summary": {
+      "type": "inferLLM",
+      "parameters": {
+        "service": "llm_local",
+        "system_prompt": "Tu es un analyste financier prudent, clair et concis.",
+        "temperature": 0.3
+      }
+    },
+    "merge_email_parts": {
+      "type": "mergeContent",
+      "parameters": {
+        "separator": "\n\n===SUMMARY===\n\n",
+        "min_entries": 2
+      }
+    },
+    "compose_email_body": {
+      "type": "executeScript",
+      "parameters": {
+        "script": "import json\ntext = flow_file.content.decode('utf-8', errors='replace')\nsep = '\\n\\n===SUMMARY===\\n\\n'\nif sep not in text:\n    raise Exception('Séparateur summary absent du contenu fusionné.')\nleft, right = text.split(sep, 1)\nleft = left.strip()\nright = right.strip()\n\ncrypto = None\nsummary = None\nfor a, b in ((left, right), (right, left)):\n    try:\n        crypto = json.loads(a)\n        summary = b\n        break\n    except Exception:\n        pass\n\nif crypto is None or summary is None:\n    raise Exception('Impossible d\\'identifier la partie JSON crypto et la partie résumé.')\n\nlines = []\nlines.append('Bonjour,')\nlines.append('')\nlines.append('Voici votre résumé quotidien du marché crypto :')\nlines.append('')\nfor symbol, info in crypto.items():\n    price = info.get('price_eur')\n    change = info.get('change_24h_pct')\n    price_txt = 'N/A' if price is None else f\"{price:.6f}\".rstrip('0').rstrip('.')\n    change_txt = 'N/A' if change is None else f\"{change:+.2f}%\"\n    lines.append(f'- {symbol}: {price_txt} EUR ({change_txt} sur 24h)')\nlines.append('')\nlines.append('Résumé IA :')\nlines.append(summary)\nlines.append('')\nlines.append('Cordialement,')\nlines.append('Votre robot crypto')\n\nflow_file.content = '\\n'.join(lines).encode('utf-8')"
+      }
+    },
+    "send_email": {
+      "type": "sendEmail",
+      "parameters": {
+        "smtp_host": "smtp.gmail.com",
+        "smtp_port": 587,
+        "use_tls": true,
+        "auth_type": "oauth2",
+        "oauth2_client_id": "${anonymous.gmail_client_id_crypto_daily}",
+        "oauth2_client_secret": "${anonymous.gmail_client_secret_crypto_daily}",
+        "oauth2_refresh_token": "${anonymous.gmail_refresh_token_crypto_daily}",
+        "from": "quentin.anciaux@allcolor.org",
+        "to": "quentin.anciaux@allcolor.org",
+        "subject": "Résumé quotidien crypto (test manuel)"
+      }
+    },
+    "in_port": {
+      "type": "inputPort",
+      "parameters": {
+        "port_name": "manual_input"
+      }
+    }
+  },
+  "relations": [
+    {
+      "from": "trigger",
+      "to": "fetch_crypto",
+      "type": "success"
+    },
+    {
+      "from": "in_port",
+      "to": "fetch_crypto",
+      "type": "success"
+    },
+    {
+      "from": "fetch_crypto",
+      "to": "prepare_llm_input",
+      "type": "success"
+    },
+    {
+      "from": "fetch_crypto",
+      "to": "merge_email_parts",
+      "type": "success"
+    },
+    {
+      "from": "prepare_llm_input",
+      "to": "generate_llm_summary",
+      "type": "success"
+    },
+    {
+      "from": "generate_llm_summary",
+      "to": "merge_email_parts",
+      "type": "success"
+    },
+    {
+      "from": "merge_email_parts",
+      "to": "compose_email_body",
+      "type": "success"
+    },
+    {
+      "from": "compose_email_body",
+      "to": "send_email",
+      "type": "success"
+    }
+  ],
+  "services": {
+    "llm_local": {
+      "type": "llmConnection",
+      "parameters": {
+        "provider": "openai",
+        "base_url": "http://127.0.0.1:8080",
+        "api_key": "${anonymous.openai_api_key_crypto_daily}",
+        "model": "qwen"
+      }
+    }
+  },
+  "fqn": "cryptos.manual_crypto_email_oauth2:1.0.0",
+  "package": "cryptos",
+  "created_at": 1780763709.7670918,
+  "entries": [
+    "in_port"
+  ]
+}

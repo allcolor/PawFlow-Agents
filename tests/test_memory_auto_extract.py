@@ -35,6 +35,26 @@ class TestMemoryAutoExtract:
         MemoryStore.reset()
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
+    def test_skips_temporary_conversation(self, monkeypatch):
+        fake_store = MagicMock()
+        fake_store.is_temporary.return_value = True
+        monkeypatch.setattr(
+            "core.conversation_store.ConversationStore.instance",
+            staticmethod(lambda: fake_store))
+        client = _FakeClient([{
+            "text": "Durable preference that must NOT be stored.",
+            "category": "facts",
+            "importance": "high",
+            "durability": "durable",
+            "scope": "global",
+        }])
+        count = auto_extract_memories(
+            "u1", "summary", llm_client=client,
+            conversation_id="temp1")
+        assert count == 0
+        assert client.calls == []  # LLM never invoked for temporary convs
+        assert self.store.list_all("u1") == []
+
     def test_skips_ephemeral_and_stores_conversation_ttl(self):
         facts = [
             {

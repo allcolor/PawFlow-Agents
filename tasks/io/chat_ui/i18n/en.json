@@ -752,6 +752,8 @@
   "noServiceTypesAvailable": "No service types available.",
   "noServicesInstalled": "No services installed",
   "noServicesInstalledUsage": "No services installed. Use /service install <type> <name> [key=val,...] to add one.",
+  "noVariables": "No variables",
+  "noSecrets": "No secrets",
   "noSkills": "No skills.",
   "noSkillsAvailableCreateHint": "No skills available. Create skills via /skill or manage_resource.",
   "noSkillsCreateFirst": "No skills defined. Create one first with /add-skill.",

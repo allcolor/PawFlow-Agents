@@ -8,6 +8,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Resource panel: the **Variables** and **Secrets** sections disappeared
+  entirely when empty — the section header (and its `+` create button) was
+  gated on a non-empty list, unlike every other section. A user with no
+  variables yet could never see the section or add a first one. Both headers
+  now render unconditionally with a "no variables"/"no secrets" placeholder,
+  matching Services/Flows/etc.
+- Resource panel with no conversation selected (e.g. a freshly-created user
+  before any conv exists) now shows only the scope-independent sections the
+  user can act on: Flows, Services, Packages, Variables, Secrets, Agent
+  Repository, Flows Repository. The conversation-scoped sections (Agents,
+  Tasks, Relays, Filesystem, Summarizer, Linked Accounts) and the
+  conv-irrelevant repos (Skills/Prompts/Themes/Voices/Tasks/MCP/AgentHooks/
+  Tools) are hidden until a conversation is selected, instead of rendering a
+  confusing mixed set.
 - The `default.telegram_help_bot` flow (public Telegram help bot) was invisible
   in the Flow repository browser: it shipped without a `latest.json`, and the
   repo enumeration globs `**/latest.json`, so a flow lacking that file is never

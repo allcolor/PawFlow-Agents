@@ -1161,12 +1161,22 @@ async function _renderResourcesData(data) {
   try {
     const el = document.getElementById('resourcesContent');
 
+    // With no conversation selected (e.g. a freshly-created user before any
+    // conv exists) the panel shows ONLY the scope-independent sections the
+    // user can act on without a conv: Flows, Services, Packages, Variables,
+    // Secrets, Agent Repository, Flows Repository. The conversation-scoped
+    // sections (Agents, Tasks, Relays, Filesystem, Summarizer, Linked
+    // Accounts) and the conv-irrelevant repos (Skills/Prompts/Themes/Voices/
+    // Tasks/MCP/AgentHooks/Tools) are hidden until a conv is selected.
+    const noConv = !(typeof conversationId !== 'undefined' && conversationId);
+
     // ─────────────────────────────────────────────────────────────
     // LIVE sections (conversation state): Agents, Tasks, Flows,
     // Services, Relays. Built synchronously into `liveHtml`.
     // ─────────────────────────────────────────────────────────────
     let liveHtml = '';
 
+    if (!noConv) {
     // Agents (conversation members)
     liveHtml += _sectionHeader(t('agents'), 'agent');
     if (data.agents && data.agents.length) {
@@ -1253,6 +1263,7 @@ async function _renderResourcesData(data) {
       }
     }
     liveHtml += _sectionFooter();
+    }
 
     // ── Flows (running deployed instances; deploy a new one with '+',
     //    rebuild registry with ↻ since the deploy list is live state).
@@ -1334,6 +1345,7 @@ async function _renderResourcesData(data) {
     }
     liveHtml += _sectionFooter();
 
+    if (!noConv) {
     // Relay bindings for this conversation (always show section)
     {
       var rbCollapsed = _isSectionCollapsed('_relay');
@@ -1469,6 +1481,7 @@ async function _renderResourcesData(data) {
       }
       liveHtml += _sectionFooter();
     }
+    }
 
     // ─────────────────────────────────────────────────────────────
     // REPO sections (catalog on disk): Agent Repo, Skills Repo,
@@ -1503,6 +1516,7 @@ async function _renderResourcesData(data) {
     }
     repoHtml += _sectionFooter();
 
+    if (!noConv) {
     // ── Skills Repository ──
     repoHtml += _repoSectionHeader(t('skillsRepository'), 'skill', {
       createOnclick: "showSkillAddDialog()",
@@ -1688,6 +1702,7 @@ async function _renderResourcesData(data) {
       if (!tools.length) repoHtml += '<div style="margin-left:8px;font-size:11px;color:var(--pf-muted)">' + escapeHtml(t('loading')) + '</div>';
     }
     repoHtml += _sectionFooter();
+    }
 
     // ── Flows Repository (flow templates on disk under
     //    data/repository/flows/*.json) ──
@@ -1729,25 +1744,33 @@ async function _renderResourcesData(data) {
       action$('list_linked_accounts', { conversation_id: conversationId }).pipe(rxjs.catchError(() => rxjs.of({}))),
     ]).subscribe(([ps, linksData]) => {
       let varSecHtml = '';
+      // Variables and Secrets headers render unconditionally — like every
+      // other section (Services, Flows, …). Gating the header on a non-empty
+      // list hid the whole section when empty, taking the '+' create button
+      // with it, so a fresh user could never add a first variable/secret.
+      varSecHtml += _sectionHeader(t('variables'), '_param');
       if (ps.parameters && ps.parameters.length) {
-        varSecHtml += _sectionHeader(t('variables'), '_param');
         ps.parameters.forEach(p => {
           const truncVal = p.value.length > 30 ? p.value.substring(0, 30) + '...' : p.value;
           varSecHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showParamMenu(event,'${p.key}','${p.scope}');return false;">
             ${_scopeBadge(p.scope)}<span style="color:var(--pf-muted);font-size:11px;"><b>${escapeHtml(p.key)}</b> = ${escapeHtml(truncVal)}</span>
           </div>`;
         });
-        varSecHtml += _sectionFooter();
+      } else {
+        varSecHtml += '<div style="color:var(--pf-muted);font-size:10px;margin-left:8px;">' + escapeHtml(t('noVariables')) + '</div>';
       }
+      varSecHtml += _sectionFooter();
+      varSecHtml += _sectionHeader(t('secrets'), '_secret');
       if (ps.secrets && ps.secrets.length) {
-        varSecHtml += _sectionHeader(t('secrets'), '_secret');
         ps.secrets.forEach(s => {
           varSecHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showParamMenu(event,'${s.key}','${s.scope}',true);return false;">
             ${_scopeBadge(s.scope)}<span style="color:var(--pf-muted);font-size:11px;"><b>${escapeHtml(s.key)}</b> = ********</span>
           </div>`;
         });
-        varSecHtml += _sectionFooter();
+      } else {
+        varSecHtml += '<div style="color:var(--pf-muted);font-size:10px;margin-left:8px;">' + escapeHtml(t('noSecrets')) + '</div>';
       }
+      varSecHtml += _sectionFooter();
       const links = (linksData && linksData.links) || {};
       const linkKeys = Object.keys(links);
       let linksHtml = '<div style="margin-top:6px;padding:4px 6px;font-size:11px;color:var(--pf-muted);border-top:1px solid var(--pf-border);">';
@@ -1765,7 +1788,7 @@ async function _renderResourcesData(data) {
       }
       linksHtml += '</div>';
       // Final assembly: live → variables/secrets → repos → linked accounts
-      const fullHtml = liveHtml + varSecHtml + repoHtml + linksHtml;
+      const fullHtml = liveHtml + varSecHtml + repoHtml + (noConv ? '' : linksHtml);
       // Only update DOM if content actually changed (prevents flash/blink)
       if (el.innerHTML !== fullHtml) el.innerHTML = fullHtml;
     });

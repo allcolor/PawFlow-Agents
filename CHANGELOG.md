@@ -4,6 +4,25 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.0-alpha.35] — 2026-06-15
+
+### Fixed
+
+- Agent response waits no longer carry an illegal implicit timeout: the shared
+  agent runtime wait (`AgentRuntimeAPI.wait_for_done` / `AgentResultWaiter`),
+  the Telegram agent client, and the `pawflow` flow facade `run_agent` now wait
+  unbounded by default (project rule: no timeout unless explicitly configured).
+  A long turn that exceeded the old 600s cap could detach its coordinator and
+  drop the final `done`, so the answer only surfaced on the next message.
+
+### Added
+
+- Diagnostic logging (`[cci-args-debug]`) at the two CCI tool-call emit points:
+  warns, only when an MCP tool is about to be emitted with empty arguments,
+  with the raw observed input and emit path (stream vs observed). Temporary
+  instrumentation to pin a non-deterministic case where a `bash` tool call
+  renders with empty arguments in the chat.
+
 ## [1.0.0-alpha.34] — 2026-06-15
 
 ### Added

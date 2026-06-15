@@ -498,6 +498,10 @@ class _CCITurnCoordinator:
         display_name, display_args = normalize_observed_tool(block.get("name", ""), args)
         block["display_name"] = display_name
         block["display_args"] = display_args
+        if not display_args and str(block.get("name") or "").strip():
+            logger.warning(
+                "[cci-args-debug] STREAM empty args: raw_name=%r raw_json=%r display_name=%r",
+                block.get("name", ""), (raw or "")[:400], display_name)
         block["hidden"] = (
             is_hidden_native_tool(block.get("name", ""), args)
             or is_hidden_native_tool(display_name, display_args)
@@ -560,6 +564,12 @@ class _CCITurnCoordinator:
         display_name, display_args = normalize_observed_tool(block.get("name", ""), args)
         block["display_name"] = display_name
         block["display_args"] = display_args
+        if not display_args and str(block.get("name") or "").strip():
+            logger.warning(
+                "[cci-args-debug] OBSERVED empty args: raw_name=%r event=%r block_json=%r display_name=%r",
+                block.get("name", ""),
+                {k: event.get(k) for k in ("name", "arguments", "input", "tool_input")},
+                (block.get("json") or "")[:400], display_name)
         block["hidden"] = (
             is_hidden_native_tool(block.get("name", ""), args)
             or is_hidden_native_tool(display_name, display_args)

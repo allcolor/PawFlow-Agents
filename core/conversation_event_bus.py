@@ -11,8 +11,11 @@ Thread-safe singleton.
 """
 
 import logging
+import os
 import threading
 import time
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from typing import Callable, Dict, List, Optional, Set, Tuple
 
 from core.sse_writer import SSEEvent, SSEWriter
@@ -23,6 +26,104 @@ logger = logging.getLogger(__name__)
 _MAX_BUFFER = 200
 # How long to keep buffered events (seconds)
 _BUFFER_TTL = 60
+# Max pending listener events buffered per conversation before the oldest are
+# dropped. Guards memory when a sink (e.g. the Telegram bridge) hangs and its
+# lane backs up faster than it drains.
+_MAX_LISTENER_LANE = 2000
+
+
+def _default_listener_threads() -> int:
+    """Worker count for the listener fan-out pool.
+
+    Listeners (the Telegram bridge, etc.) block on network I/O, not CPU, so the
+    pool is sized above the core count. It stays bounded so a stuck sink cannot
+    spawn unbounded threads. Override with PAWFLOW_EVENT_LISTENER_THREADS.
+    """
+    try:
+        override = int(os.getenv("PAWFLOW_EVENT_LISTENER_THREADS") or 0)
+        if override > 0:
+            return override
+    except (TypeError, ValueError):
+        pass
+    cpu = os.cpu_count() or 4
+    return max(8, min(64, cpu * 4))
+
+
+class _ListenerDispatcher:
+    """Runs bus listeners off the publishing thread.
+
+    Listeners may do blocking network I/O (the Telegram bridge POSTs to the
+    Telegram API with a 60s socket timeout). Running them inline on the
+    conversation-writer thread stalls SSE delivery to EVERY client whenever one
+    sink is slow. This dispatcher hands listener work to a bounded thread pool
+    while preserving per-conversation ordering: events for a single
+    conversation drain serially (at most one in-flight drain per conv), but
+    different conversations run concurrently. A slow push for one chat can never
+    delay another conversation, the SSE stream, or the server.
+    """
+
+    def __init__(self, max_workers: int):
+        self._pool = ThreadPoolExecutor(
+            max_workers=max_workers, thread_name_prefix="evt-listener")
+        self._lanes: Dict[str, deque] = {}
+        self._active: Set[str] = set()
+        self._lock = threading.Lock()
+        self._dropped = 0
+
+    def dispatch(self, conversation_id: str, event_type: str, payload,
+                 listeners) -> None:
+        if not listeners:
+            return
+        with self._lock:
+            lane = self._lanes.get(conversation_id)
+            if lane is None:
+                lane = deque()
+                self._lanes[conversation_id] = lane
+            lane.append((event_type, payload, listeners))
+            if len(lane) > _MAX_LISTENER_LANE:
+                overflow = len(lane) - _MAX_LISTENER_LANE
+                for _ in range(overflow):
+                    lane.popleft()
+                self._dropped += overflow
+                if self._dropped == overflow or self._dropped % 100 == 0:
+                    logger.warning(
+                        "Listener lane for conv=%s backed up; dropped %d "
+                        "event(s) (total=%d) — a sink is slow",
+                        conversation_id[:8], overflow, self._dropped)
+            if conversation_id in self._active:
+                return
+            self._active.add(conversation_id)
+        try:
+            self._pool.submit(self._drain, conversation_id)
+        except RuntimeError:
+            # Pool already shut down (process/test teardown) — drop quietly.
+            with self._lock:
+                self._active.discard(conversation_id)
+
+    def _drain(self, conversation_id: str) -> None:
+        while True:
+            with self._lock:
+                lane = self._lanes.get(conversation_id)
+                if not lane:
+                    self._active.discard(conversation_id)
+                    self._lanes.pop(conversation_id, None)
+                    return
+                event_type, payload, listeners = lane.popleft()
+            for listener in listeners:
+                try:
+                    listener(conversation_id, event_type, payload)
+                except Exception:
+                    logger.debug(
+                        "ConversationEventBus listener failed", exc_info=True)
+
+    def shutdown(self) -> None:
+        with self._lock:
+            self._lanes.clear()
+            self._active.clear()
+        try:
+            self._pool.shutdown(wait=False, cancel_futures=True)
+        except TypeError:  # Python < 3.9 has no cancel_futures
+            self._pool.shutdown(wait=False)
 
 
 class ConversationEventBus:
@@ -58,6 +159,10 @@ class ConversationEventBus:
         self._buffer: Dict[str, List[Tuple[float, SSEEvent]]] = {}
         self._listeners: Set[Callable[[str, str, object], None]] = set()
         self._lock = threading.Lock()
+        # Listeners run off the publishing thread so a slow sink (Telegram)
+        # can't stall SSE delivery. See _ListenerDispatcher.
+        self._listener_dispatcher = _ListenerDispatcher(
+            _default_listener_threads())
 
     def add_listener(self, listener: Callable[[str, str, object], None]) -> None:
         """Register an in-process event listener.
@@ -252,12 +357,13 @@ class ConversationEventBus:
         payload = data or ""
         self.publish(conversation_id, SSEEvent(event=event_type, data=payload))
         with self._lock:
-            listeners = list(self._listeners)
-        for listener in listeners:
-            try:
-                listener(conversation_id, event_type, payload)
-            except Exception:
-                logger.debug("ConversationEventBus listener failed", exc_info=True)
+            listeners = tuple(self._listeners)
+        # Listeners (Telegram bridge, etc.) may block on network I/O. Never run
+        # them on this (conversation-writer) thread: dispatch off-thread so a
+        # slow sink can't stall SSE delivery to this or any other client.
+        # Ordering per conversation is preserved by the dispatcher.
+        self._listener_dispatcher.dispatch(
+            conversation_id, event_type, payload, listeners)
 
     def subscriber_count(self, conversation_id: str) -> int:
         """Number of active subscribers for a conversation."""
@@ -311,3 +417,4 @@ class ConversationEventBus:
             self._clients.clear()
             self._listeners.clear()
             self._buffer.clear()
+        self._listener_dispatcher.shutdown()

@@ -4,6 +4,26 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- SSE event delivery no longer stalls when a downstream sink is slow. The
+  conversation event bus ran in-process listeners — notably the Telegram
+  bridge, which POSTs to the Telegram API with a 60s socket timeout — inline on
+  the conversation-writer thread, so a single slow push froze live SSE updates
+  for every webchat client: the activity panel went blank and messages arrived
+  up to ~40s late in bursts. Listeners now run on a bounded, dynamically sized
+  thread pool with per-conversation ordering, so one slow sink can no longer
+  delay the SSE stream, the server, or any other conversation. Pool size is
+  tunable via `PAWFLOW_EVENT_LISTENER_THREADS`.
+- Telegram bridge: long HTML messages (e.g. consolidated thinking blocks) that
+  exceed Telegram's 4096-char limit no longer break markup. The message
+  splitter is now tag-aware — it never cuts inside a tag and closes/reopens any
+  open tags at chunk boundaries — fixing the `400 ... Can't find end tag
+  corresponding to start tag "blockquote"` rejections that dropped every long
+  mirrored message.
+
 ## [1.0.0-alpha.38] — 2026-06-15
 
 ### Changed

@@ -155,6 +155,44 @@ class TestTelegramBotService(unittest.TestCase):
             assert len(params["text"]) <= 4096
             assert params["parse_mode"] == "Markdown"
 
+    def test_html_split_keeps_tags_balanced(self):
+        """Long HTML must split without dangling tags (the blockquote 400 bug)."""
+        from html.parser import HTMLParser
+        from services.telegram_bot_service import _split_telegram_text
+
+        class _Balance(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.stack = []
+                self.ok = True
+
+            def handle_starttag(self, tag, attrs):
+                self.stack.append(tag)
+
+            def handle_endtag(self, tag):
+                if not self.stack or self.stack[-1] != tag:
+                    self.ok = False
+                else:
+                    self.stack.pop()
+
+        def balanced(s):
+            p = _Balance()
+            p.feed(s)
+            return p.ok and not p.stack
+
+        text = "\U0001f4ad <i>agent thinking</i>\n<blockquote>" + (
+            "alpha beta " * 2000) + "</blockquote>"
+        chunks = _split_telegram_text(text, parse_mode="HTML")
+        assert len(chunks) > 1
+        for chunk in chunks:
+            assert len(chunk) <= 4096
+            assert balanced(chunk), f"unbalanced chunk tail: {chunk[-60:]!r}"
+
+    def test_html_split_short_message_untouched(self):
+        from services.telegram_bot_service import _split_telegram_text
+        msg = "<blockquote>short reasoning</blockquote>"
+        assert _split_telegram_text(msg, parse_mode="HTML") == [msg]
+
 
 # ── TelegramReceiverTask ────────────────────────────────────────────
 

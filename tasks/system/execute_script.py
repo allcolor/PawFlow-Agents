@@ -217,10 +217,21 @@ with open("/data/output.json", "w") as f:
             if fs_svc:
                 local_ns['fs'] = fs_svc
 
-            exec(self.script, globals_dict, local_ns)  # nosec B102 - executeScript task is an explicit scripting primitive.
+            # Execute with a SINGLE namespace (globals is also locals).
+            # Passing two separate dicts breaks name resolution inside any
+            # function or comprehension the script defines at top level: such
+            # callables capture `globals_dict` as their __globals__, so the
+            # injected names assigned at the script's top level (flowfile,
+            # content, attributes, pawflow, fs, ...) — which would live in the
+            # locals dict — are invisible to them and raise NameError
+            # (e.g. "name 'flowfile' is not defined" from a helper like
+            # _respond()). Merging into globals_dict keeps them visible both
+            # at top level and inside script-defined callables.
+            globals_dict.update(local_ns)
+            exec(self.script, globals_dict)  # nosec B102 - executeScript task is an explicit scripting primitive.
 
-            if 'result' in local_ns:
-                flowfile.set_content(str(local_ns['result']).encode('utf-8'))
+            if 'result' in globals_dict:
+                flowfile.set_content(str(globals_dict['result']).encode('utf-8'))
             elif print_buf:
                 flowfile.set_content(
                     "".join(print_buf).rstrip().encode('utf-8'))

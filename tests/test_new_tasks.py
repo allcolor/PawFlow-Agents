@@ -304,6 +304,25 @@ class TestExecuteScriptTask(unittest.TestCase):
         with self.assertRaises(TaskError):
             task.execute(ff)
 
+    def test_helper_function_sees_injected_names(self):
+        # Regression: a function defined at the script's top level must be able
+        # to resolve the injected names (flowfile, content, attributes). With a
+        # two-dict exec they live only in locals and the function's __globals__
+        # can't see them -> "name 'flowfile' is not defined" (the web_help_bot
+        # _respond() 500). A single shared namespace keeps them visible.
+        from tasks.system.execute_script import ExecuteScriptTask
+        script = (
+            "def _respond():\n"
+            "    flowfile.set_attribute('done', attributes.get('author', '?'))\n"
+            "    return content.upper()\n"
+            "result = _respond()\n"
+        )
+        task = ExecuteScriptTask({'script': script})
+        ff = FlowFile(content=b"hello", attributes={"author": "Alice"})
+        results = task.execute(ff)
+        self.assertEqual(results[0].get_content(), b"HELLO")
+        self.assertEqual(results[0].get_attribute('done'), "Alice")
+
 
 class TestFilterContentTask(unittest.TestCase):
 

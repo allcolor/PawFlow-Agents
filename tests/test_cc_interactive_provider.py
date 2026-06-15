@@ -2685,3 +2685,53 @@ def test_turn_coordinator_recovers_truncated_tool_input_for_display():
     tool_uses = [p for k, p in blocks if k == "tool_use"]
     assert len(tool_uses) == 1
     assert tool_uses[0]["arguments"] == {"path": "big/file.txt"}
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "Known race: the STREAM emitter (_emit_tool_use) and the OBSERVED "
+        "emitter (_emit_observed_tool_use) reconcile through a single "
+        "first-emitter-wins guard (emitted_tool_use_ids). When the STREAM "
+        "reaches content_block_stop with no accumulated input_json_delta it "
+        "emits {} AND claims the tc_id; the later OBSERVED event carrying the "
+        "complete request-body input is then dropped by the guard, so the "
+        "call is persisted with empty arguments (the intermittent empty "
+        "'Bash()'). Remove this xfail when the single-source fix lands."
+    ),
+)
+def test_turn_coordinator_observed_full_args_supersede_empty_stream_emit():
+    # Deterministic, timing-free repro of the two-emitter race. We do NOT
+    # depend on event scheduling: we drive an empty STREAM emit (content
+    # block stops before any input_json_delta arrives) followed by a full
+    # OBSERVED emit for the SAME tool_use id (the request body replays the
+    # complete input). A non-empty observation must never be discarded in
+    # favour of an empty one -- the complete args MUST be what is persisted.
+    full_args = {"command": "echo hi && grep -c def core/tool_json.py"}
+    events = [
+        _sse("content_block_start", {
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {
+                "type": "tool_use", "id": "toolu_race", "name": "bash"},
+        }),
+        # No input_json_delta: the accumulated json is still "" when the
+        # block stops -> STREAM emits {} and claims toolu_race.
+        _sse("content_block_stop", {"type": "content_block_stop", "index": 0}),
+        # Request-body replay observes the SAME tool_use with full input.
+        {
+            "type": "tool_use",
+            "tool_use_id": "toolu_race",
+            "name": "bash",
+            "input": dict(full_args),
+        },
+        _sse("message_stop", {"type": "message_stop"}),
+        {"type": "hook", "hook_event_name": "Stop",
+         "input": {"hook_event_name": "Stop"}},
+    ]
+    coord = _CCITurnCoordinator(_Events(events), "sess")
+    coord.run()
+    persisted = [tc for tc in coord.turn_tool_calls
+                 if tc.get("id") == "toolu_race"]
+    assert len(persisted) == 1
+    assert persisted[0]["arguments"] == full_args

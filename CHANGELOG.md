@@ -4,6 +4,27 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- The `default.telegram_help_bot` flow (public Telegram help bot) was invisible
+  in the Flow repository browser: it shipped without a `latest.json`, and the
+  repo enumeration globs `**/latest.json`, so a flow lacking that file is never
+  listed even though its `versions/1.0.0.json` is seeded to disk on restart.
+  Added the missing `latest.json` (`{"version": "1.0.0"}`), matching every other
+  default flow.
+
+### Added
+
+- Deterministic, timing-free regression test for the empty `Bash()` tool-call
+  race (`test_turn_coordinator_observed_full_args_supersede_empty_stream_emit`),
+  marked `xfail(strict=True)`: it drives an empty STREAM emit that claims the
+  `tc_id` followed by a full OBSERVED emit for the same id, asserting the
+  complete args must win. Documents the two-emitter race at the code level and
+  becomes the executable spec for the single-source fix (remove the xfail when
+  the fix lands).
+
 ## [1.0.0-alpha.35] — 2026-06-15
 
 ### Fixed

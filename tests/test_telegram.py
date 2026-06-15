@@ -1963,28 +1963,28 @@ class TestTelegramSendHandler(unittest.TestCase):
 class TestTelegramFlow(unittest.TestCase):
 
     def test_flow_file_valid(self):
-        path = _paths.REPOSITORY_DIR / "flows" / "global" / "default" / "telegram_agent" / "versions" / "1.0.0.json"
+        path = _paths.REPOSITORY_DIR / "flows" / "global" / "telegram" / "telegram_agent" / "versions" / "1.0.0.json"
         assert path.exists()
         flow = json.loads(path.read_text(encoding="utf-8"))
         assert flow["id"] == "telegram-agent"
         assert flow["version"] == "1.0.0"
 
     def test_flow_has_required_services(self):
-        path = _paths.REPOSITORY_DIR / "flows" / "global" / "default" / "telegram_agent" / "versions" / "1.0.0.json"
+        path = _paths.REPOSITORY_DIR / "flows" / "global" / "telegram" / "telegram_agent" / "versions" / "1.0.0.json"
         flow = json.loads(path.read_text(encoding="utf-8"))
         assert "telegram_bot" in flow["services"]
         svc = flow["services"]["telegram_bot"]
         assert svc["type"] == "telegramBot"
 
     def test_flow_bot_token_is_sensitive(self):
-        path = _paths.REPOSITORY_DIR / "flows" / "global" / "default" / "telegram_agent" / "versions" / "1.0.0.json"
+        path = _paths.REPOSITORY_DIR / "flows" / "global" / "telegram" / "telegram_agent" / "versions" / "1.0.0.json"
         flow = json.loads(path.read_text(encoding="utf-8"))
         bot_token = flow["parameters"]["bot_token"]
         assert bot_token["sensitive"] is True
         assert bot_token["required"] is True
 
     def test_flow_has_required_tasks(self):
-        path = _paths.REPOSITORY_DIR / "flows" / "global" / "default" / "telegram_agent" / "versions" / "1.0.0.json"
+        path = _paths.REPOSITORY_DIR / "flows" / "global" / "telegram" / "telegram_agent" / "versions" / "1.0.0.json"
         flow = json.loads(path.read_text(encoding="utf-8"))
         tasks = flow["tasks"]
         assert "receive" in tasks
@@ -1998,7 +1998,7 @@ class TestTelegramFlow(unittest.TestCase):
         assert tasks["conversation_bridge"]["type"] == "telegramConversationBridge"
 
     def test_flow_relations(self):
-        path = _paths.REPOSITORY_DIR / "flows" / "global" / "default" / "telegram_agent" / "versions" / "1.0.0.json"
+        path = _paths.REPOSITORY_DIR / "flows" / "global" / "telegram" / "telegram_agent" / "versions" / "1.0.0.json"
         flow = json.loads(path.read_text(encoding="utf-8"))
         rels = flow["relations"]
         sources = [c["source"] for c in rels]
@@ -2013,7 +2013,7 @@ class TestTelegramFlow(unittest.TestCase):
         from tasks import register_all_tasks
 
         register_all_tasks()
-        path = _paths.REPOSITORY_DIR / "flows" / "global" / "default" / "telegram_agent" / "versions" / "1.0.0.json"
+        path = _paths.REPOSITORY_DIR / "flows" / "global" / "telegram" / "telegram_agent" / "versions" / "1.0.0.json"
         raw = json.loads(path.read_text(encoding="utf-8"))
         flow = FlowParser.parse(raw)
 
@@ -2023,7 +2023,7 @@ class TestTelegramFlow(unittest.TestCase):
         assert flow.tasks["agent_client"]._max_instances == 20
 
     def test_flow_declares_agent_runtime_link(self):
-        path = _paths.REPOSITORY_DIR / "flows" / "global" / "default" / "telegram_agent" / "versions" / "1.0.0.json"
+        path = _paths.REPOSITORY_DIR / "flows" / "global" / "telegram" / "telegram_agent" / "versions" / "1.0.0.json"
         flow = json.loads(path.read_text(encoding="utf-8"))
         assert flow["parameters"]["agent_runtime_port"] == "pawflow_agent.agent_runtime_in"
         assert flow["tasks"]["agent_client"]["parameters"]["agent_runtime_port"] == "${agent_runtime_port}"

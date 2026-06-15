@@ -4,7 +4,7 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [1.0.0-alpha.36] — 2026-06-15
 
 ### Fixed
 
@@ -28,6 +28,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   listed even though its `versions/1.0.0.json` is seeded to disk on restart.
   Added the missing `latest.json` (`{"version": "1.0.0"}`), matching every other
   default flow.
+- Interactive-provider interrupt landing on a compact boundary no longer crashes
+  the agent loop. When the provider compact already invalidated (killed) the
+  Claude Code / Antigravity interactive session before a queued interrupt ran,
+  `interrupt_claude_code_interactive` / `interrupt_antigravity_interactive` now
+  treat the missing session as a completed no-op (force stop is never an error)
+  instead of raising `No active … session for interrupt`.
 
 ### Added
 
@@ -47,6 +53,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   complete args must win. Documents the two-emitter race at the code level and
   becomes the executable spec for the single-source fix (remove the xfail when
   the fix lands).
+- `http_bots.web_help_bot` flow: a public web help bot exposed as an HTTP
+  endpoint (`POST /api/help`), mirroring `telegram_help_bot` with HTTP
+  ingress/egress — per-session conversation (cookie-keyed), sliding TTL,
+  response timeout, Origin allowlist, and a shared daily LLM budget.
+
+### Changed
+
+- Conversations carrying a non-zero TTL are now treated as **temporary**
+  (`ConversationStore.is_temporary`): the throwaway per-session conversations
+  bots create are deliberately excluded from durable side effects — never
+  git-historized (`git_snapshot` is a no-op) and never fed to auto-memory
+  (`auto_extract_memories` returns early). Normal compaction still applies. The
+  `.git` is left in place, so toggling a conversation unlimited↔temporary just
+  stops/resumes committing.
+- Builtin flow repository reorganized into groups: `cryptos/`, `github/`,
+  `http_bots/`, and `telegram/` (out of the flat `default/` group, which now
+  holds only `pawflow_agent` and `pawflow_installer`). The new groups are
+  registered as image-managed roots so runtime-installed packages are never
+  clobbered by image defaults.
+- Crypto report flows (`daily_crypto_email_oauth2`, `manual_crypto_email_oauth2`)
+  downgraded from v2.0.0 to v1.0.0 (old v1.0.0 dropped, v2.0.0 renumbered;
+  fqn/subflow references updated).
+
+### Removed
+
+- Builtin `discord_agent`, `slack_agent`, and `whatsapp_agent` flow definitions,
+  plus the demo/example flows (`demo_pipeline`, `example_pipeline`,
+  `exemple_flux`, `http_hello_world`, `http-hello-world`, `sub_upper`). The
+  Discord/Slack/WhatsApp task and service code is unchanged — only the shipped
+  flow templates were removed.
 
 ## [1.0.0-alpha.35] — 2026-06-15
 

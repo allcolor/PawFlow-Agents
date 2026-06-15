@@ -356,6 +356,9 @@ function renderEmptyState() {
   updateTechnicalGroupingToggle(false);
   highlightConv(null);
   _setInputEnabled(false);
+  // Re-render the resource panel for the no-conversation state (scope-
+  // independent sections only) instead of leaving the deleted conv's content.
+  if (typeof loadResources === 'function') loadResources();
   var inp = document.getElementById('input'); if (inp) inp.focus();
 }
 

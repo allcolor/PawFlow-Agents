@@ -303,3 +303,33 @@ def test_scoped_resource_menus_send_explicit_source_scope():
     assert "Promote to global" in resources_js
     assert "target_scope: targetScope" in services_js
     assert "skipConversationId: !(normScope === 'conversation' || targetScope === 'conversation')" in services_js
+
+
+def test_resource_panel_renders_with_no_conversation_selected():
+    # Regression: a user with no conversation (e.g. a freshly-created/technical
+    # user) saw no resource panel at all. _loadResourcesNow used to hide the
+    # panel and return early when !conversationId, so _renderResourcesData
+    # (which already adapts to the no-conv case) was never reached.
+    resources_js = Path("tasks/io/chat_ui/resources.js").read_text(encoding="utf-8")
+    file_explorer_js = Path("tasks/io/chat_ui/file_explorer.js").read_text(encoding="utf-8")
+    conversations_js = Path("tasks/io/chat_ui/conversations.js").read_text(encoding="utf-8")
+
+    # The early hide-and-return on no conversation must be gone.
+    assert "style.display = 'none'; return; }" not in resources_js
+    # The panel is shown and the conversation-scoped pfp fetch is guarded.
+    assert "var _noConv = !conversationId;" in resources_js
+    assert "if (_panel) _panel.style.display = 'block';" in resources_js
+    assert "{ scope: 'user', conversation_id: conversationId || '' }" in resources_js
+    assert "if (_noConv) {" in resources_js
+    # _renderResourcesData still detects the no-conv case to drop conv-scoped sections.
+    assert "const noConv = !(typeof conversationId !== 'undefined' && conversationId);" in resources_js
+
+    # Boot: with no conversation to resume, loadResources() must still fire so
+    # the panel hydrates instead of staying hidden.
+    boot = file_explorer_js[file_explorer_js.index("} else if (!convs.length) {"):]
+    assert "if (typeof loadResources === 'function') loadResources();" in boot
+
+    # Deleting the last conversation re-renders the panel for the no-conv state.
+    empty_state = conversations_js[conversations_js.index("function renderEmptyState()"):]
+    empty_state = empty_state[:empty_state.index("\n}")]
+    assert "if (typeof loadResources === 'function') loadResources();" in empty_state

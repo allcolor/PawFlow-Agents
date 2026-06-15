@@ -1116,8 +1116,15 @@ async function loadResources() {
 }
 function _loadResourcesNow() {
   _loadResourcesTimer = null;
-  if (!conversationId) { document.getElementById('resourcesPanel').style.display = 'none'; return; }
-  document.getElementById('resourcesPanel').style.display = 'block';
+  // The panel is shown even with no conversation selected: _renderResourcesData
+  // renders only the scope-independent sections (Flows, Services, Packages,
+  // Variables, Secrets, Agent/Flows repositories) in that case. Only the
+  // conversation-scoped data fetch is skipped below. (Previously this returned
+  // early and hid the whole panel, so a user with no conversation — e.g. a
+  // freshly-created/technical user — could never see it.)
+  var _panel = document.getElementById('resourcesPanel');
+  if (_panel) _panel.style.display = 'block';
+  var _noConv = !conversationId;
   // Fetch resources and services in parallel — merge then render.
   var _resData = null, _svcData = null, _pfpUserData = null, _pfpConvData = null;
   function _tryRender() {
@@ -1143,8 +1150,13 @@ function _loadResourcesNow() {
   }
   action$('list_resources', {}).subscribe(d => { _resData = d || {}; _tryRender(); });
   listServices$().subscribe(d => { _svcData = d || { services: [] }; _tryRender(); });
-  action$('pfp_list_installed', { scope: 'user', conversation_id: conversationId }).subscribe(d => { _pfpUserData = d || { packages: [] }; _tryRender(); });
-  action$('pfp_list_installed', { scope: 'conversation', conversation_id: conversationId }).subscribe(d => { _pfpConvData = d || { packages: [] }; _tryRender(); });
+  action$('pfp_list_installed', { scope: 'user', conversation_id: conversationId || '' }).subscribe(d => { _pfpUserData = d || { packages: [] }; _tryRender(); });
+  if (_noConv) {
+    // No conversation → no conversation-scoped packages to fetch.
+    _pfpConvData = { packages: [] };
+  } else {
+    action$('pfp_list_installed', { scope: 'conversation', conversation_id: conversationId }).subscribe(d => { _pfpConvData = d || { packages: [] }; _tryRender(); });
+  }
   if (!window._cachedTools) {
     action$('get_tool_schemas', {}).subscribe(data => _renderResourcesFromSSE(data));
   }

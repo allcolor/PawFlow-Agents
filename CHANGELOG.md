@@ -4,6 +4,32 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Security
+
+- Resource panel (`list_resources`) no longer leaks other users' deployed
+  flows to an admin. The Flows section gated its owner/conversation check on
+  `not _is_admin`, so any admin saw every user- and conversation-scoped
+  deployment of every account (e.g. a technical user's user-scope bot).
+  Ownership is now strict and owner-only — the admin role grants no cross-user
+  visibility in this per-user panel; cross-user management stays on the
+  dedicated admin endpoints. Other resource listings (agents, skills, MCP,
+  tasks, prompts, hooks, services, variables, secrets, packages, voices) were
+  audited and already scope strictly to the viewing user + global + current
+  conversation.
+
+### Fixed
+
+- Resource panel stayed entirely invisible for a user with no conversation
+  (e.g. a freshly-created/technical user). `_loadResourcesNow` hid the panel
+  and returned early when no conversation was selected, so the no-conversation
+  rendering path (added previously) was never reached, and the boot path with
+  no conversations never called `loadResources()`. The panel now renders the
+  scope-independent sections (Flows, Services, Packages, Variables, Secrets,
+  Agent/Flows repositories) immediately on login, and refreshes into that view
+  after the last conversation is deleted.
+
 ## [1.0.0-alpha.36] — 2026-06-15
 
 ### Fixed

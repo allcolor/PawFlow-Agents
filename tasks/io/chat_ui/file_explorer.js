@@ -391,5 +391,10 @@ action$('list_conversations', {}).subscribe(data => {
     resumeConv(convs[0].conversation_id);
   } else if (!convs.length) {
     _setInputEnabled(false);
+    // No conversation to resume: resumeConv() (which loads resources) never
+    // runs, so trigger the resource panel directly. With no conv it renders
+    // the scope-independent sections (Flows, Services, Packages, Variables,
+    // Secrets, repos) instead of staying hidden.
+    if (typeof loadResources === 'function') loadResources();
   }
 });

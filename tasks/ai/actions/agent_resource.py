@@ -1529,7 +1529,13 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                 }
             except Exception:
                 result["relay_bindings"] = {"linked": {}, "default": {}}
-        # Deployed flows (global=readonly, user+conv visible)
+        # Deployed flows (global=readonly, user+conv visible).
+        # Ownership is STRICT: user/conversation-scoped deployments are visible
+        # only to their owner / within their own conversation. The admin role
+        # grants NO cross-user visibility here — the resource panel is a
+        # per-user view, and another account's user-scoped deployment must
+        # never leak into an admin's panel. Cross-user management lives in the
+        # dedicated admin endpoints, not in list_resources.
         try:
             from core.deployment_registry import DeploymentRegistry
             flows = []
@@ -1537,24 +1543,23 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             # sync_with_executors removed from request path — too expensive.
             # DeploymentRegistry syncs on its own schedule.
             uid = user_id
-            _is_admin = (flowfile.get_attribute("http.auth.roles") or "") == "admin"
             for iid, inst in dr.get_all().items():
                 # Determine scope
                 if not inst.owner or inst.owner == "__global__":
                     fscope = "global"
                 elif inst.conversation_id:
                     fscope = "conversation"
-                    # Show conv-scoped flows if they belong to this conv
+                    # Show conv-scoped flows only if they belong to this conv
                     # (including flows deployed from task sub-conversations)
                     from core.service_registry import _parent_conversation_id
                     _inst_parent = (_parent_conversation_id(inst.conversation_id)
                                     or inst.conversation_id)
-                    if _inst_parent != conv_id and not _is_admin:
+                    if _inst_parent != conv_id:
                         continue
                 else:
                     fscope = "user"
-                # Skip other users' flows (admins see all)
-                if fscope != "global" and inst.owner != uid and not _is_admin:
+                # Skip other users' flows — owner-only, no admin override.
+                if fscope != "global" and inst.owner != uid:
                     continue
                 flows.append({
                     "instance_id": iid,

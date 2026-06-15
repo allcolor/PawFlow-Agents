@@ -171,3 +171,179 @@ document.querySelectorAll('[data-copy]').forEach((button) => {
     }
   });
 });
+
+// ── Help widget (talks to the web_help_bot flow: POST /api/help) ──────
+// Same-origin endpoint, fronted by Caddy (keep the listener port private).
+// Disable on a page with <body data-no-help>; override the path with
+// <body data-help-endpoint="/api/help">.
+(function initHelpWidget() {
+  if (document.body.dataset.noHelp !== undefined) return;
+  const ENDPOINT = document.body.dataset.helpEndpoint || '/api/help';
+  const STATUS = {
+    400: 'Please type a message first.',
+    429: 'You are sending messages too fast. Please wait a moment.',
+    503: 'The help bot is temporarily unavailable. Please try again later.',
+    504: 'Sorry, this took too long. Please try again.',
+  };
+
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+  function icon(paths, size) {
+    const svg = document.createElementNS(SVG_NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', 'currentColor');
+    svg.setAttribute('stroke-width', '2');
+    svg.setAttribute('stroke-linecap', 'round');
+    svg.setAttribute('stroke-linejoin', 'round');
+    if (size) { svg.setAttribute('width', size); svg.setAttribute('height', size); }
+    paths.forEach((d) => {
+      const p = document.createElementNS(SVG_NS, 'path');
+      p.setAttribute('d', d);
+      svg.appendChild(p);
+    });
+    return svg;
+  }
+
+  const launcher = document.createElement('button');
+  launcher.type = 'button';
+  launcher.className = 'pf-help-launcher';
+  launcher.setAttribute('aria-label', 'Open the PawFlow help chat');
+  launcher.appendChild(icon(['M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z'], 18));
+  launcher.appendChild(document.createTextNode('Ask PawFlow'));
+
+  const panel = document.createElement('div');
+  panel.className = 'pf-help-panel';
+  panel.setAttribute('role', 'dialog');
+  panel.setAttribute('aria-label', 'PawFlow help chat');
+  panel.setAttribute('aria-modal', 'false');
+
+  const head = document.createElement('div');
+  head.className = 'pf-help-head';
+  const dot = document.createElement('span');
+  dot.className = 'pf-help-dot';
+  const titles = document.createElement('div');
+  titles.className = 'pf-help-titles';
+  const h3 = document.createElement('h3');
+  h3.textContent = 'PawFlow help';
+  const sub = document.createElement('p');
+  sub.textContent = 'Ask about install, flows, agents, tools.';
+  titles.append(h3, sub);
+  const closeBtn = document.createElement('button');
+  closeBtn.type = 'button';
+  closeBtn.className = 'pf-help-close';
+  closeBtn.setAttribute('aria-label', 'Close help chat');
+  closeBtn.appendChild(icon(['M18 6 6 18', 'M6 6l12 12'], 18));
+  head.append(dot, titles, closeBtn);
+
+  const log = document.createElement('div');
+  log.className = 'pf-help-log';
+  const intro = document.createElement('div');
+  intro.className = 'pf-help-msg intro';
+  intro.textContent = 'Hi! I am the PawFlow help bot. Ask me anything about running PawFlow.';
+  log.appendChild(intro);
+
+  const form = document.createElement('form');
+  form.className = 'pf-help-form';
+  const input = document.createElement('textarea');
+  input.rows = 1;
+  input.placeholder = 'Type your question...';
+  input.setAttribute('aria-label', 'Your message');
+  const send = document.createElement('button');
+  send.type = 'submit';
+  send.className = 'pf-help-send';
+  send.textContent = 'Send';
+  form.append(input, send);
+
+  const foot = document.createElement('div');
+  foot.className = 'pf-help-foot';
+  foot.textContent = 'Public demo bot. Do not share secrets.';
+
+  panel.append(head, log, form, foot);
+  document.body.append(launcher, panel);
+
+  let busy = false;
+  function scrollDown() { log.scrollTop = log.scrollHeight; }
+  function addMsg(role, text) {
+    const el = document.createElement('div');
+    el.className = 'pf-help-msg ' + role;
+    el.textContent = text;
+    log.appendChild(el);
+    scrollDown();
+    return el;
+  }
+  function showTyping() {
+    const t = document.createElement('div');
+    t.className = 'pf-help-typing';
+    t.append(document.createElement('span'), document.createElement('span'), document.createElement('span'));
+    log.appendChild(t);
+    scrollDown();
+    return t;
+  }
+
+  function open() {
+    panel.classList.add('is-open');
+    launcher.classList.add('is-hidden');
+    setTimeout(() => input.focus(), 50);
+  }
+  function close() {
+    panel.classList.remove('is-open');
+    launcher.classList.remove('is-hidden');
+    launcher.focus();
+  }
+  launcher.addEventListener('click', open);
+  closeBtn.addEventListener('click', close);
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && panel.classList.contains('is-open')) close();
+  });
+
+  input.addEventListener('input', () => {
+    input.style.height = 'auto';
+    input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+  });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      form.requestSubmit();
+    }
+  });
+
+  async function ask(text) {
+    busy = true;
+    send.disabled = true;
+    const typing = showTyping();
+    try {
+      const resp = await fetch(ENDPOINT, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ message: text }),
+      });
+      let data = {};
+      try { data = await resp.json(); } catch (err) { data = {}; }
+      typing.remove();
+      if (resp.ok) {
+        addMsg('bot', (data.response || '').trim() || 'No response.');
+      } else {
+        addMsg('error', data.error || STATUS[resp.status] || ('Something went wrong (' + resp.status + ').'));
+      }
+    } catch (err) {
+      typing.remove();
+      addMsg('error', 'Network error. Please check your connection and try again.');
+    } finally {
+      busy = false;
+      send.disabled = false;
+      input.focus();
+    }
+  }
+
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    if (busy) return;
+    const text = input.value.trim();
+    if (!text) return;
+    addMsg('user', text);
+    input.value = '';
+    input.style.height = 'auto';
+    ask(text);
+  });
+})();

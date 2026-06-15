@@ -141,6 +141,39 @@ Flows can participate in conversations through tasks:
 
 This lets a deterministic workflow create a conversation, ask an agent to handle part of the work, read the answer, and continue the pipeline.
 
+### The `pawflow` facade in `executeScript`
+
+For logic that does not map cleanly onto one-op-per-node DAGs (resolve-or-create,
+conditional routing, loops), an `executeScript` task receives a scope-bounded
+`pawflow` API object in its sandbox namespace — alongside `content`,
+`attributes`, `flowfile` and `fs`. It is a host-built object (not an import), so
+it bypasses the sandbox module whitelist while every operation is authorized
+against the flow's deployment scope through `core.flow_runtime_access` (the same
+boundary `createConversation`/`publishMessage`/`spawnAgent` use). A user-scoped
+flow can only touch its own user's conversations; a conversation-scoped flow only
+its own conversation.
+
+Methods (all scope-checked; raise `FlowRuntimeAccessError` on out-of-scope
+targets):
+
+- `create_conversation(agents, title="", relays=[], default_relay="", ttl=0, user_id="")` → conversation id
+- `run_agent(conversation_id, agent, message, timeout=600, channel="flow", runtime_port="", source_attributes={})` → `{response, error, timed_out, status, conversation_id, turn_id}`. Submits through the shared runtime (queued behind any running turn, preserving message→response order) and waits on the correlated `done`. On timeout it force-cancels the turn and returns `timed_out=True` — important for unattended flows where no human can cancel a stuck turn.
+- `submit_agent(...)` — non-blocking variant.
+- `cancel_agent(conversation_id, agent="", runtime_port="", reason="")`
+- `set_tool_filters(conversation_id, agent, allow=[...])` — restrict an agent to exactly `allow` (allowlist, `tool_mcp_filters` custom mode).
+- `get_extra` / `set_extra` / `set_conversation_ttl` / `is_conversation_expired`
+- `list_conversations()` / `find_conversations(extra_key, value)` (scoped to the flow's user)
+- `delete_conversation(conversation_id)`
+
+Set the task's `agent_runtime_port` parameter to supply the default runtime port
+for `run_agent`/`submit_agent` (e.g. `pawflow_agent.agent_runtime_in`).
+
+PawFlow has no global conversation-TTL sweeper: `set_conversation_ttl` stamps
+`_meta_expires_at`, but purging is the flow's job — re-arm the TTL on each turn
+and delete expired conversations (lazily on access and/or proactively from a
+`cronTrigger`-driven sweep). See `docs/telegram_help_bot.md` for a complete
+example.
+
 Conversation and FileStore access is bounded by the deployed flow runtime scope:
 
 - Conversation-scoped flows can only target their own runtime conversation.

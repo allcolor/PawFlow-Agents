@@ -31,6 +31,15 @@ class ExecuteScriptTask(BaseTask):
         self.script = self.config.get('script', '')
         self.script_engine = self.config.get('script_engine', 'python')
 
+    def set_runtime_context(self, *, user_id: str = "", conversation_id: str = "",
+                            scope: str = "", agent_name: str = ""):
+        # Deployment scope is the authorization boundary for the injected
+        # `pawflow` API facade (see _execute_local).
+        from core.flow_runtime_access import set_runtime_context
+        set_runtime_context(
+            self, user_id=user_id, conversation_id=conversation_id,
+            scope=scope, agent_name=agent_name)
+
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
         """Execute the script on the FlowFile content."""
         if self.config.get('containerize'):
@@ -165,6 +174,23 @@ with open("/data/output.json", "w") as f:
                 'flow_file': flowfile,  # alias for compat
             }
 
+            # Inject the scope-bounded PawFlow API facade, the same way `fs`
+            # and `tools` are injected. It is a host-built object (not an
+            # import), so it legitimately bypasses the module whitelist; every
+            # operation is authorized against this flow's deployment scope.
+            try:
+                from core.flow_runtime_access import (
+                    runtime_context_from_task, trusted_requester_user_id)
+                from core.flow_pawflow_api import FlowPawflowApi
+                local_ns['pawflow'] = FlowPawflowApi(
+                    runtime_context_from_task(self),
+                    requester_user_id=trusted_requester_user_id(flowfile),
+                    default_runtime_port=str(self.config.get('agent_runtime_port') or ''),
+                )
+            except Exception:
+                logging.getLogger(__name__).debug(
+                    "pawflow facade injection failed", exc_info=True)
+
             # Inject filesystem service — explicit config or auto-detect first relay
             fs_service_id = self.config.get('filesystem_service_id')
             fs_svc = None
@@ -220,7 +246,11 @@ with open("/data/output.json", "w") as f:
                 'required': True,
                 'description': (
                     "Python script to execute. Available variables: "
-                    "content (str), attributes (dict), flowfile (FlowFile). "
+                    "content (str), attributes (dict), flowfile (FlowFile), "
+                    "fs (filesystem service), pawflow (scope-bounded PawFlow "
+                    "API: create_conversation/run_agent/submit_agent/"
+                    "set_tool_filters/get_extra/set_extra/list_conversations/"
+                    "find_conversations/delete_conversation/cancel_agent). "
                     "Set 'result' to modify the FlowFile content. "
                     "open() writes inside a FileStore sandbox. "
                     "Allowed modules: json, re, csv, datetime, math, io, "
@@ -250,6 +280,10 @@ with open("/data/output.json", "w") as f:
             'docker_timeout': {
                 'type': 'integer', 'required': False, 'default': 120,
                 'description': 'Timeout in seconds for containerized execution',
+            },
+            'agent_runtime_port': {
+                'type': 'string', 'required': False, 'default': '',
+                'description': 'Default runtime port for pawflow.run_agent()/submit_agent() (e.g. pawflow_agent.agent_runtime_in)',
             },
         }
 

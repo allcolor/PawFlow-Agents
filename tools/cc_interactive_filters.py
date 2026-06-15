@@ -20,12 +20,39 @@ _SCHEMA_WRAPPERS = {
 }
 
 
+def _loads_tolerant_str(raw: str) -> dict:
+    """Best-effort parse of an EOF-truncated tool-input JSON string.
+
+    A use_tool wrapper carries the real tool input doubly-encoded in the
+    `arguments_json` STRING. When the observed CCI stream is cut at EOF, the
+    provider recovers the OUTER wrapper, but this inner string can still be
+    truncated — strict json.loads then drops the args to {} and the call
+    renders with empty parens (worst for large inputs like a multi-line bash
+    `command`). Mirror the provider's outer recovery here so the inner input
+    is recovered too. Lazy import keeps the dependency-light runtime/proxy
+    copies degrading gracefully to {} when core is not importable.
+    """
+    try:
+        from core.tool_json import autoclose_truncated_json
+    except Exception:
+        return {}
+    try:
+        repaired = autoclose_truncated_json(raw)
+        if repaired != raw:
+            parsed = json.loads(repaired)
+            if isinstance(parsed, dict):
+                return parsed
+    except Exception:
+        return {}
+    return {}
+
+
 def _json_dict(value):
     if isinstance(value, str):
         try:
             value = json.loads(value)
         except (TypeError, ValueError):
-            return {}
+            return _loads_tolerant_str(value)
     return value if isinstance(value, dict) else {}
 
 

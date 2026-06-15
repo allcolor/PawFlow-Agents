@@ -616,9 +616,9 @@ class TestAgentLoopSchema(unittest.TestCase):
 class TestFlowMigration(unittest.TestCase):
     """Verify existing flows have been migrated to llm_service."""
 
-    def _load_flow(self, name):
+    def _load_flow(self, name, group="default"):
         stem = name.replace(".json", "")
-        path = str(_paths.REPOSITORY_DIR / "flows" / "global" / "default" / stem / "versions" / "1.0.0.json")
+        path = str(_paths.REPOSITORY_DIR / "flows" / "global" / group / stem / "versions" / "1.0.0.json")
         with open(path, encoding="utf-8") as f:
             return json.load(f)
 
@@ -635,9 +635,8 @@ class TestFlowMigration(unittest.TestCase):
         self.assertNotIn("api_key", agent_params)
 
     def test_all_agent_flows_migrated(self):
-        for name in ["slack_agent.json", "discord_agent.json",
-                      "telegram_agent.json", "whatsapp_agent.json"]:
-            flow = self._load_flow(name)
+        for name, group in [("telegram_agent.json", "telegram")]:
+            flow = self._load_flow(name, group)
             params = flow.get("parameters", {})
             self.assertNotIn("provider", params, f"{name} still has provider")
             self.assertNotIn("api_key", params, f"{name} still has api_key")

@@ -136,13 +136,13 @@ def test_execute_flow_suppresses_unmapped_one_shot_roots(tmp_path):
     assert [ff.get_content() for ff in results] == [b"parent"]
 
 
-def test_crypto_email_v2_daily_uses_manual_subflow():
+def test_crypto_email_daily_uses_manual_subflow():
     manual_path = Path(
-        "data/repository/flows/global/default/"
-        "manual_crypto_email_oauth2/versions/2.0.0.json")
+        "data/repository/flows/global/cryptos/"
+        "manual_crypto_email_oauth2/versions/1.0.0.json")
     daily_path = Path(
-        "data/repository/flows/global/default/"
-        "daily_crypto_email_oauth2/versions/2.0.0.json")
+        "data/repository/flows/global/cryptos/"
+        "daily_crypto_email_oauth2/versions/1.0.0.json")
 
     manual = json.loads(manual_path.read_text(encoding="utf-8"))
     daily = json.loads(daily_path.read_text(encoding="utf-8"))
@@ -151,8 +151,8 @@ def test_crypto_email_v2_daily_uses_manual_subflow():
     daily_latest = json.loads(
         daily_path.parent.parent.joinpath("latest.json").read_text(encoding="utf-8"))
 
-    assert manual_latest == {"version": "2.0.0"}
-    assert manual["version"] == "2.0.0"
+    assert manual_latest == {"version": "1.0.0"}
+    assert manual["version"] == "1.0.0"
     assert manual["entries"] == ["in_port"]
     assert manual["tasks"]["in_port"]["type"] == "inputPort"
     assert {
@@ -161,12 +161,12 @@ def test_crypto_email_v2_daily_uses_manual_subflow():
         "type": "success",
     } in manual["relations"]
 
-    assert daily_latest == {"version": "2.0.0"}
-    assert daily["version"] == "2.0.0"
+    assert daily_latest == {"version": "1.0.0"}
+    assert daily["version"] == "1.0.0"
     assert set(daily["tasks"]) == {"trigger"}
     assert daily["groups"]["manual_crypto_email"]["flow_ref"] == {
         "path": str(manual_path),
-        "version": "2.0.0",
+        "version": "1.0.0",
     }
     assert daily["groups"]["manual_crypto_email"]["port_mapping"] == {
         "input": {"port_task_id": "in_port"},

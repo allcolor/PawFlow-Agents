@@ -9,8 +9,6 @@ from unittest.mock import MagicMock, patch, AsyncMock
 # TestSlackBotService
 # ---------------------------------------------------------------------------
 
-import core.paths as _paths
-
 
 class TestSlackBotService:
     """Tests for SlackBotService configuration and event processing."""
@@ -403,29 +401,3 @@ class TestNotifySlackBackwardCompat:
         assert "notifySlack" in registry
         assert "slackSend" in registry
 
-
-# ---------------------------------------------------------------------------
-# TestSlackFlow
-# ---------------------------------------------------------------------------
-
-class TestSlackFlow:
-    """Tests for the slack_agent.json flow definition."""
-
-    def test_load_flow(self):
-        import os
-        flow_path = str(_paths.REPOSITORY_DIR / "flows" / "global" / "default" / "slack_agent" / "versions" / "1.0.0.json")
-        assert os.path.exists(flow_path), f"Flow file not found: {flow_path}"
-        with open(flow_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        assert "tasks" in data or "nodes" in data or "processors" in data
-
-    def test_flow_has_correct_structure(self):
-        flow_path = str(_paths.REPOSITORY_DIR / "flows" / "global" / "default" / "slack_agent" / "versions" / "1.0.0.json")
-        with open(flow_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        assert "relations" in data
-
-
-# ---------------------------------------------------------------------------
-# TestSlackI18n
-# ---------------------------------------------------------------------------

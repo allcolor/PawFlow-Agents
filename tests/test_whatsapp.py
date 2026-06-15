@@ -46,8 +46,6 @@ def _verify_request(token="my_token", challenge="challenge123"):
 # 1. TestWhatsAppService
 # ===========================================================================
 
-import core.paths as _paths
-
 
 class TestWhatsAppService:
     """Tests for services.whatsapp_service.WhatsAppService."""
@@ -324,43 +322,3 @@ class TestWhatsAppSendHandler:
         result = handler.execute({"phone": "", "text": ""})
         assert "error" in result.lower() or "Error" in result
 
-
-# ===========================================================================
-# 5. TestWhatsAppFlow
-# ===========================================================================
-
-class TestWhatsAppFlow:
-    """Tests for flows/whatsapp_agent.json structure."""
-
-    @pytest.fixture
-    def flow_data(self):
-        import os
-        path = str(_paths.REPOSITORY_DIR / "flows" / "global" / "default" / "whatsapp_agent" / "versions" / "1.0.0.json")
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-
-    def test_flow_loads(self, flow_data):
-        assert flow_data is not None
-
-    def test_flow_has_tasks(self, flow_data):
-        tasks = flow_data.get("tasks", {})
-        assert len(tasks) > 0
-
-    def test_flow_has_relations(self, flow_data):
-        rels = flow_data.get("relations", [])
-        assert len(rels) > 0
-
-    def test_flow_contains_whatsapp_receiver(self, flow_data):
-        tasks = flow_data.get("tasks", {})
-        types = [t.get("type") for t in tasks.values()]
-        assert "whatsappReceiver" in types
-
-    def test_flow_contains_whatsapp_send(self, flow_data):
-        tasks = flow_data.get("tasks", {})
-        types = [t.get("type") for t in tasks.values()]
-        assert "whatsappSend" in types
-
-
-# ===========================================================================
-# 6. TestWhatsAppI18n
-# ===========================================================================

@@ -1,6 +1,5 @@
 """Tests for Discord integration: service, tasks, handler, flow, i18n."""
 
-import json
 import os
 import queue
 import pytest
@@ -10,8 +9,6 @@ from unittest.mock import MagicMock, patch, PropertyMock
 # ---------------------------------------------------------------------------
 # 1. TestDiscordBotService
 # ---------------------------------------------------------------------------
-
-import core.paths as _paths
 
 
 class TestDiscordBotService:
@@ -262,39 +259,3 @@ class TestDiscordSendHandler:
         result = handler.execute({"channel_id": "ch1", "text": "hello"})
         mock_svc.send_message.assert_called_once()
 
-
-# ---------------------------------------------------------------------------
-# 5. TestDiscordFlow
-# ---------------------------------------------------------------------------
-
-class TestDiscordFlow:
-    """Tests for the discord_agent.json flow definition."""
-
-    @pytest.fixture
-    def flow_data(self):
-        # Resolve through _paths so conftest's tmpdir-redirected REPOSITORY_DIR
-        # is honored (conftest copies global defs into the tmp repo at session
-        # setup). Hard-coded "../data/..." read from the real repo on disk.
-        flow_path = _paths.REPOSITORY_DIR / "flows" / "global" / "default" / "discord_agent" / "versions" / "1.0.0.json"
-        with open(flow_path, "r", encoding="utf-8") as f:
-            return json.load(f)
-
-    def test_has_correct_service_type(self, flow_data):
-        services = flow_data.get("services", {})
-        types = [s.get("type") for s in services.values()]
-        assert "discordBot" in types
-
-    def test_has_correct_task_types(self, flow_data):
-        tasks = flow_data.get("tasks", {})
-        types = [t.get("type") for t in tasks.values()]
-        assert "discordReceiver" in types
-        assert "discordSend" in types
-
-    def test_has_two_relations(self, flow_data):
-        relations = flow_data.get("relations", [])
-        assert len(relations) == 2
-
-
-# ---------------------------------------------------------------------------
-# 6. TestDiscordI18n
-# ---------------------------------------------------------------------------

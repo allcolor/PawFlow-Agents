@@ -87,8 +87,10 @@ def auto_extract_memories(
             from core.conversation_store import ConversationStore
             if ConversationStore.instance().is_temporary(conversation_id):
                 return 0
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug(
+                "[auto-extract] is_temporary check failed for %s: %s",
+                conversation_id, exc)
 
     facts = _extract_with_llm(
         llm_client, summary, user_id=user_id,

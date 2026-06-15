@@ -214,6 +214,68 @@ def test_run_agent_returns_response(store, monkeypatch):
     assert res["response"] == "hello back"
 
 
+# Distinct variable names per test: user-scope params persist in a
+# session-scoped data dir (conftest), so reusing one key would leak state
+# across tests.
+def test_user_variables_get_set_and_default(store):
+    api = _api()
+    assert api.get_variable("v_getset") is None
+    assert api.get_variable("v_getset", "0") == "0"
+    api.set_variable("v_getset", "1.5")
+    assert api.get_variable("v_getset") == "1.5"
+    api.set_variable("v_getset", 2)
+    assert api.get_variable("v_getset") == "2"
+
+
+def test_increment_variable_returns_running_total(store):
+    api = _api()
+    assert api.increment_variable("v_total", 0.5) == 0.5
+    assert api.increment_variable("v_total", 0.25) == 0.75
+    assert api.get_variable("v_total") == "0.75"
+
+
+def test_increment_variable_is_atomic_under_concurrency(store):
+    import threading
+    api = _api()
+    threads = [
+        threading.Thread(target=lambda: [
+            api.increment_variable("v_atomic", 1.0) for _ in range(50)])
+        for _ in range(20)
+    ]
+    for th in threads:
+        th.start()
+    for th in threads:
+        th.join()
+    # 20 threads x 50 increments of 1.0 -> exactly 1000, no lost updates.
+    assert float(api.get_variable("v_atomic")) == 1000.0
+
+
+def test_run_agent_surfaces_cost_and_tokens(store, monkeypatch):
+    cid = _new_conv(store)
+    api = _api()
+    import core.agent_runtime_api as ara
+
+    class _Sub:
+        status = "accepted"
+        conversation_id = cid
+        turn_id = "turn-cost"
+        wait_for_done = True
+
+    class _Res:
+        response = "answer"
+        error = ""
+        data = {"cost_usd": 0.0123, "tokens_in": 100, "tokens_out": 42}
+
+    monkeypatch.setattr(ara.AgentRuntimeAPI, "submit_message",
+                        staticmethod(lambda req: _Sub()))
+    monkeypatch.setattr(ara.AgentRuntimeAPI, "wait_for_done",
+                        staticmethod(lambda c, t, timeout=600.0: _Res()))
+    res = api.run_agent(cid, "helper", "hi", timeout=5)
+    assert res["cost_usd"] == 0.0123
+    assert res["tokens_in"] == 100
+    assert res["tokens_out"] == 42
+
+
 def test_executescript_injects_scoped_pawflow(store):
     from tasks.system.execute_script import ExecuteScriptTask
     task = ExecuteScriptTask({

@@ -171,6 +171,46 @@ class FlowPawflowApi:
         filters["agent_overrides"] = overrides
         set_filters(cid, filters)
 
+    # ── user-scope variables (params) ─────────────────────────────────
+    # A deployed flow has no per-visitor PawFlow user (public channels like
+    # Telegram/web are owned by the single deploying user), so durable
+    # counters — e.g. a shared LLM budget across all the bot's conversations
+    # — live as user-scope variables. They are visible and resettable in the
+    # Variables panel, authorized against the flow's owner.
+
+    def _user_params_path(self):
+        from core.paths import user_params_path
+        return user_params_path(self._auth_user(""))
+
+    def get_variable(self, name: str, default: Any = None) -> Any:
+        """Read a user-scope variable; return ``default`` if unset."""
+        from core.config_store import ConfigStore
+        data = ConfigStore.load_params(self._user_params_path())
+        if name not in data:
+            return default
+        return str(data[name])
+
+    def set_variable(self, name: str, value: Any) -> None:
+        """Create/overwrite a user-scope variable."""
+        from core.config_store import ConfigStore
+        from core.config_value import ConfigValue
+        path = self._user_params_path()
+        data = ConfigStore.load_params(path)
+        data[name] = ConfigValue(value=str(value))
+        ConfigStore.save_params(path, data)
+
+    def increment_variable(self, name: str, delta: float,
+                           default: float = 0.0) -> float:
+        """Atomically add ``delta`` to a numeric user-scope variable.
+
+        Concurrency-safe across parallel script instances (file-locked
+        read-modify-write). Returns the new value. Use for a shared budget
+        counter that several in-flight requests update at once.
+        """
+        from core.config_store import ConfigStore
+        return ConfigStore.atomic_increment_param(
+            self._user_params_path(), name, float(delta), default=float(default))
+
     # ── agent execution (queued, with hard timeout + cancel) ──────────
 
     def _runtime_instance(self, runtime_port: str):
@@ -243,7 +283,9 @@ class FlowPawflowApi:
         nobody to cancel; in that case, and only then, an elapsed timeout
         force-cancels the turn and returns ``timed_out=True``. Returns a dict
         with ``response``, ``error``, ``timed_out``, ``status``,
-        ``conversation_id`` and ``turn_id``.
+        ``conversation_id``, ``turn_id`` and — on a completed turn — the turn's
+        ``cost_usd``, ``tokens_in`` and ``tokens_out`` (the same figures the
+        ``/cost`` view reports), for budget accounting in the flow.
         """
         cid = self._auth_conv(conversation_id)
         from core.agent_runtime_api import AgentRequest, AgentRuntimeAPI
@@ -293,4 +335,16 @@ class FlowPawflowApi:
             return base
         base["response"] = str(result.response or "")
         base["error"] = str(result.error or "")
+        # Surface the turn's cost/usage (already computed and carried on the
+        # `done` event via result.data) so the flow can charge a budget.
+        _rdata = getattr(result, "data", None) or {}
+        try:
+            base["cost_usd"] = float(_rdata.get("cost_usd") or 0.0)
+        except (TypeError, ValueError):
+            base["cost_usd"] = 0.0
+        try:
+            base["tokens_in"] = int(_rdata.get("tokens_in") or 0)
+            base["tokens_out"] = int(_rdata.get("tokens_out") or 0)
+        except (TypeError, ValueError):
+            base["tokens_in"] = base["tokens_out"] = 0
         return base

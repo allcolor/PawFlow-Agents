@@ -31,6 +31,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `pawflow` flow facade: user-scope variable access for deployed flows —
+  `get_variable`/`set_variable` and an atomic `increment_variable` (file-locked
+  read-modify-write via `ConfigStore.atomic_increment_param`, safe under
+  parallel `executeScript` instances). Lets a public bot keep a durable,
+  panel-visible/resettable counter (e.g. a shared LLM budget across all its
+  conversations), since public-channel visitors have no per-user store.
+- `pawflow.run_agent` now returns the completed turn's `cost_usd`, `tokens_in`
+  and `tokens_out` (surfaced from the existing `done` event — the same figures
+  `/cost` reports) so a flow can charge a budget per turn.
 - Deterministic, timing-free regression test for the empty `Bash()` tool-call
   race (`test_turn_coordinator_observed_full_args_supersede_empty_stream_emit`),
   marked `xfail(strict=True)`: it drives an empty STREAM emit that claims the

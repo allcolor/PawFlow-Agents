@@ -12,6 +12,11 @@ import re
 from pathlib import Path
 from typing import Dict, Set
 
+try:
+    import fcntl  # POSIX advisory file locking (Linux/macOS)
+except ImportError:  # pragma: no cover - non-POSIX fallback
+    fcntl = None
+
 from core.config_value import ConfigValue
 from core.stream import SPILL_THRESHOLD
 
@@ -85,6 +90,36 @@ class ConfigStore:
             json.dumps(json_data, ensure_ascii=False, indent=2), encoding="utf-8"
         )
         ConfigStore._cleanup_sidecars(path, valid_sidecars)
+
+    @staticmethod
+    def atomic_increment_param(path: Path, key: str, delta: float,
+                               default: float = 0.0) -> float:
+        """Atomically read-add-write a numeric param; return the new value.
+
+        The whole read-modify-write runs under an exclusive advisory lock on a
+        sidecar ``.lock`` file, so concurrent writers (e.g. an executeScript
+        task with ``max_instances`` > 1 incrementing a shared budget counter)
+        cannot lose updates. The lock is process- and thread-safe on POSIX;
+        without ``fcntl`` it degrades to a plain read-modify-write.
+        """
+        path.parent.mkdir(parents=True, exist_ok=True)
+        lock_path = path.with_name(path.name + ".lock")
+        with open(lock_path, "w") as lock_f:
+            if fcntl is not None:
+                fcntl.flock(lock_f, fcntl.LOCK_EX)
+            try:
+                data = ConfigStore.load_params(path)
+                try:
+                    current = float(str(data[key])) if key in data else float(default)
+                except (TypeError, ValueError):
+                    current = float(default)
+                new_value = current + float(delta)
+                data[key] = ConfigValue(value=str(new_value))
+                ConfigStore.save_params(path, data)
+                return new_value
+            finally:
+                if fcntl is not None:
+                    fcntl.flock(lock_f, fcntl.LOCK_UN)
 
     @staticmethod
     def load_secrets(path: Path) -> Dict[str, ConfigValue]:

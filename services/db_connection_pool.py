@@ -74,7 +74,7 @@ class DBConnectionPoolService(BaseService):
     def _discard(self, conn: Any) -> None:
         try:
             conn.close()
-        except Exception:
+        except Exception:  # nosec B110 - best-effort close of a broken connection
             pass
         with self._pool_lock:
             self._pool_created = max(0, self._pool_created - 1)
@@ -105,7 +105,7 @@ class DBConnectionPoolService(BaseService):
         if getattr(self, "_connection", None):
             try:
                 self._connection.close()
-            except Exception:
+            except Exception:  # nosec B110 - best-effort close on shutdown
                 pass
         while True:
             try:
@@ -114,7 +114,7 @@ class DBConnectionPoolService(BaseService):
                 break
             try:
                 conn.close()
-            except Exception:
+            except Exception:  # nosec B110 - best-effort close on shutdown
                 pass
         with self._pool_lock:
             self._pool_created = 0

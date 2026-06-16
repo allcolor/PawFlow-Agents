@@ -90,9 +90,12 @@ def _bind(cursor: Any, sql: str, params: Optional[Dict[str, Any]],
 
 
 def _safe_rollback(conn: Any) -> None:
+    # Best-effort: a failing rollback means the connection is already broken,
+    # and there is nothing actionable to do beyond letting the original error
+    # surface to the caller.
     try:
         conn.rollback()
-    except Exception:
+    except Exception:  # nosec B110 - intentional best-effort cleanup
         pass
 
 

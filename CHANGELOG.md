@@ -4,6 +4,25 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.0-alpha.46] — 2026-06-16
+
+### Fixed
+
+- The display/persistence side of tool-call decoding is now unified on
+  `core.tool_json.parse_tool_arguments`, matching the execution path. The
+  unwrap family (`unwrap_mcp_tool`, the Claude Code `_pub` event relay, the
+  interactive `_loads_tolerant`/`cc_interactive_filters` helpers, and the
+  nested-unwrap loop in `agent_tool_exec`) each carried its own inline
+  `json.loads`/autoclose mini-decoder; they now route through a shared
+  `_decode_str_arg` helper, so a truncated or escape-mangled arguments
+  envelope recovers identically on every provider and in the UI.
+- Mid-string truncations are now recovered everywhere. The canonical
+  truncation guard treats an "Unterminated string" decode error as an EOF
+  truncation (CPython reports its position at the string's opening quote,
+  which can be far from EOF), so autoclose repair fires on the execution path
+  too — not just on the display helpers that previously autoclosed
+  unconditionally.
+
 ## [1.0.0-alpha.45] — 2026-06-16
 
 ### Added

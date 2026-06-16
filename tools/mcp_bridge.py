@@ -347,129 +347,15 @@ def _wait_for_active_tool_calls() -> None:
 
 _log_file = None
 
-def _autoclose_truncated_json(s: str, max_appends: int = 4) -> str:
-    """Append closing } / ] (and a closing " if needed) when a JSON
-    string is EOF-truncated by a few chars.
 
-    Narrow on purpose: only runs when json.loads raised at a position
-    within a couple chars of len(s), i.e. the LLM forgot the final
-    one-or-two closers. Counts balanced braces/brackets while tracking
-    string literals + escapes; never rewrites content, only appends.
-    Returns the original string if nothing looks fixable.
-
-    Why targeted and not a json_repair wildcard: json_repair re-writes
-    the whole stream and silently mangles valid patterns (the JS
-    ternary incident). This helper ONLY adds trailing closers, so it
-    can't corrupt valid content — the worst case is "already balanced,
-    nothing appended" = caller retries, parser raises the same error.
-    """
-    stack = []
-    in_string = False
-    escape_next = False
-    for c in s:
-        if in_string:
-            if escape_next:
-                escape_next = False
-            elif c == "\\":
-                escape_next = True
-            elif c == '"':
-                in_string = False
-        else:
-            if c == '"':
-                in_string = True
-            elif c == "{":
-                stack.append("}")
-            elif c == "[":
-                stack.append("]")
-            elif c == "}" or c == "]":
-                if stack and stack[-1] == c:
-                    stack.pop()
-    suffix = ""
-    if in_string:
-        suffix += '"'
-    while stack and len(suffix) < max_appends:
-        suffix += stack.pop()
-    return s + suffix if suffix else s
-
-
+# Single source of truth for argument decoding. In-process the canonical module
+# imports directly; in the standalone container the bridge bind-mounts a flat
+# copy of core/tool_json.py at /opt/pawflow/tool_json.py (see the provider pools)
+# so `from tool_json import ...` resolves. No more inline decode copy here.
 try:
-    from core.tool_json import autoclose_truncated_json as _shared_autoclose_truncated_json
+    from core.tool_json import parse_tool_arguments, tool_argument_parse_error
 except Exception:
-    _shared_autoclose_truncated_json = _autoclose_truncated_json
-
-
-# Characters that form a valid JSON escape when they follow a backslash.
-_JSON_VALID_ESCAPES_LOCAL = frozenset('"' + chr(92) + "/bfnrtu")
-
-
-def _repair_invalid_json_escapes(s: str) -> str:
-    """Last-resort repair for JSON an LLM nearly got right.
-
-    Call ONLY after a strict json.loads has already failed: this is a
-    fallback, never a pre-processor. It returns the input unchanged when
-    there is nothing to fix, so a valid payload is never altered. Two
-    narrow, common mistakes are repaired, both only inside string
-    literals: an invalid backslash escape (a backslash before a single
-    quote becomes a bare single quote; any other invalid backslash is
-    treated as a literal backslash; a lone trailing backslash is dropped),
-    and a raw control character (newline/tab/etc.) is replaced by its JSON
-    escape. Anything outside string literals is left untouched.
-    """
-    bs = chr(92)
-    ctrl = {chr(10): bs + "n", chr(9): bs + "t", chr(13): bs + "r",
-            chr(8): bs + "b", chr(12): bs + "f"}
-    out = []
-    in_string = False
-    changed = False
-    i = 0
-    n = len(s)
-    while i < n:
-        c = s[i]
-        if not in_string:
-            out.append(c)
-            if c == '"':
-                in_string = True
-            i += 1
-            continue
-        if c == '"':
-            out.append(c)
-            in_string = False
-            i += 1
-            continue
-        if c == bs:
-            nxt = s[i + 1] if i + 1 < n else ""
-            if nxt in _JSON_VALID_ESCAPES_LOCAL:
-                out.append(c)
-                out.append(nxt)
-                i += 2
-                continue
-            if nxt == "'":
-                out.append("'")
-                changed = True
-                i += 2
-                continue
-            if nxt == "":
-                changed = True
-                i += 1
-                continue
-            out.append(bs + bs)
-            changed = True
-            i += 1
-            continue
-        if ord(c) < 0x20:
-            out.append(ctrl.get(c, bs + "u%04x" % ord(c)))
-            changed = True
-            i += 1
-            continue
-        out.append(c)
-        i += 1
-    return "".join(out) if changed else s
-
-
-try:
-    from core.tool_json import repair_invalid_json_escapes as _shared_repair_invalid_json_escapes
-except Exception:
-    _shared_repair_invalid_json_escapes = _repair_invalid_json_escapes
+    from tool_json import parse_tool_arguments, tool_argument_parse_error
 
 
 
@@ -737,105 +623,23 @@ def main():
                             _log(f"USE_TOOL {tool_name} harvested flat args (missing 'arguments'/'arguments_json' wrapper): keys={list(harvested.keys())}")
                         tool_args_raw = harvested
                     _log(f"USE_TOOL {tool_name} raw_type={type(tool_args_raw).__name__} raw={json.dumps(tool_args_raw, default=str)[:300]}")
-                    tool_args = tool_args_raw
-                    _decode_failed = False
-                    _decode_err = None
-                    _unwrap_passes = 0
-                    for _ in range(3):
-                        if not isinstance(tool_args, str):
-                            break
-                        try:
-                            tool_args = json.loads(tool_args)
-                            _unwrap_passes += 1
-                        except json.JSONDecodeError as _je:
-                            _decode_err = _je
-                            if "Extra data" in str(_je):
-                                try:
-                                    tool_args, _ = json.JSONDecoder().raw_decode(tool_args)
-                                    _unwrap_passes += 1
-                                    _decode_err = None
-                                    _log(f"USE_TOOL {tool_name} raw_decode OK (stripped trailing junk)")
-                                    continue
-                                except (json.JSONDecodeError, TypeError) as _je2:
-                                    _decode_err = _je2
-                                    _log(f"USE_TOOL {tool_name} raw_decode also FAILED: {_je2}")
-                                    _decode_failed = True
-                                    break
-                            msg = str(_je)
-                            trunc_like = (
-                                "Expecting ',' delimiter" in msg
-                                or "Expecting property name" in msg
-                                or "Expecting value" in msg
-                                or "Unterminated string" in msg
-                            )
-                            at_end = getattr(_je, "pos", -1) >= len(tool_args) - 4
-                            if trunc_like and at_end:
-                                patched = _shared_autoclose_truncated_json(tool_args)
-                                if patched != tool_args:
-                                    try:
-                                        tool_args = json.loads(patched)
-                                        _unwrap_passes += 1
-                                        _decode_err = None
-                                        _log(f"USE_TOOL {tool_name} truncation-repair OK")
-                                        continue
-                                    except (json.JSONDecodeError, TypeError) as _je3:
-                                        _decode_err = _je3
-                                        _log(f"USE_TOOL {tool_name} truncation-repair FAILED: {_je3}")
-                            # Last resort: repair near-valid JSON (invalid
-                            # \escape like \', raw control chars). Only runs
-                            # because strict parsing already failed; a
-                            # genuinely-valid payload is returned unchanged,
-                            # so correct calls are never rewritten.
-                            _repaired = _shared_repair_invalid_json_escapes(tool_args)
-                            if _repaired != tool_args:
-                                try:
-                                    tool_args = json.loads(_repaired)
-                                    _unwrap_passes += 1
-                                    _decode_err = None
-                                    _log(f"USE_TOOL {tool_name} escape-repair OK")
-                                    continue
-                                except (json.JSONDecodeError, TypeError) as _je4:
-                                    _decode_err = _je4
-                                    _log(f"USE_TOOL {tool_name} escape-repair FAILED: {_je4}")
-                            _log(f"USE_TOOL {tool_name} JSON decode FAILED: {_je} value={str(tool_args)[:200]}")
-                            _decode_failed = True
-                            break
-                        except TypeError as _je:
-                            _decode_err = _je
-                            _log(f"USE_TOOL {tool_name} JSON decode TypeError: {_je}")
-                            _decode_failed = True
-                            break
-                    if _unwrap_passes > 0:
-                        _log(f"USE_TOOL {tool_name} unwrapped {_unwrap_passes} pass(es): {type(tool_args_raw).__name__} -> {type(tool_args).__name__}")
-                    if _decode_failed and tool_args_raw and tool_args_raw != {} and tool_args_raw != "{}":
-                        raw_str = tool_args_raw if isinstance(tool_args_raw, str) else str(tool_args_raw)
-                        _log(f"USE_TOOL {tool_name} DECODE FAIL (forensic): raw_len={len(raw_str)} raw={raw_str!r}")
-                        detail = str(_decode_err) if _decode_err else "unknown JSON error"
-                        window = ""
-                        pos = getattr(_decode_err, "pos", None)
-                        if isinstance(pos, int) and 0 <= pos <= len(raw_str):
-                            lo = max(0, pos - 120)
-                            hi = min(len(raw_str), pos + 120)
-                            prefix = "..." if lo > 0 else ""
-                            suffix = "..." if hi < len(raw_str) else ""
-                            window = f" Window around char {pos}: {prefix}{raw_str[lo:hi]!r}{suffix}"
-                        result = (
-                            f"Error: failed to decode arguments for {tool_name}. "
-                            f"The arguments_json value is not valid JSON, and "
-                            f"last-resort repair could not fix it. "
-                            f"Parse error: {detail}.{window} Fix: send "
-                            f"arguments_json as ONE valid JSON string -- escape "
-                            f"newlines as the two chars backslash-n and quotes "
-                            f"as backslash-quote; do NOT escape single quotes "
-                            f"(they need no escaping in JSON). Or send `arguments` "
-                            f"as a literal dict, e.g. {{\"tool_name\": \"edit\", "
-                            f"\"arguments\": {{\"path\": ..., \"old_string\": ...}}}}."
-                        )
-                    elif isinstance(tool_args, str):
-                        _log(f"USE_TOOL {tool_name} args still string after unwrap: {tool_args[:200]}")
-                        result = f"Error: arguments for {tool_name} must be a JSON object, got string: {tool_args[:200]}"
+                    # Decode via the SINGLE canonical parser (core.tool_json).
+                    # Handles double-encoding, trailing junk, truncation and
+                    # invalid-escape repair, and returns an error sentinel on
+                    # genuine failure -- identical behavior to the in-process
+                    # meta_tools path, so a call never succeeds on one route and
+                    # fails on another.
+                    tool_args = parse_tool_arguments(
+                        tool_args_raw, tool_name=tool_name, provider="use_tool")
+                    _perr = tool_argument_parse_error(tool_args)
+                    if _perr:
+                        _log(f"USE_TOOL {tool_name} DECODE FAIL: {_perr[:200]}")
+                        result = _perr
+                    elif not isinstance(tool_args, dict):
+                        result = (f"Error: arguments for {tool_name} must be a JSON "
+                                  f"object, got {type(tool_args).__name__}")
                     else:
-                        _log(f"USE_TOOL {tool_name} final_type={type(tool_args).__name__} final={json.dumps(tool_args, default=str)[:300]}")
+                        _log(f"USE_TOOL {tool_name} final={json.dumps(tool_args, default=str)[:300]}")
                         result = relay_client.request("execute_tool", tool_name=tool_name, arguments=tool_args)
                         if result is None or result == "":
                             result = "(no output)"

@@ -574,6 +574,7 @@ extract_image_artifacts() (
     docker/claude-code \
     docker/pawflow_sdk \
     tools/mcp_bridge.py \
+    core/tool_json.py \
     pawflow_relay
   do
     mkdir -p "$out_dir/$(dirname "$rel")"

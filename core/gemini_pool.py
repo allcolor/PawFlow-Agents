@@ -552,6 +552,7 @@ class GeminiPool:
             os.path.dirname(os.path.abspath(__file__)))
         _bridge_src_files = [
             (os.path.join(_project_root, "tools"), "mcp_bridge.py"),
+            (os.path.join(_project_root, "core"), "tool_json.py"),
             (os.path.join(_project_root, "docker", "pawflow_sdk"),
              "pawflow.py"),
         ]

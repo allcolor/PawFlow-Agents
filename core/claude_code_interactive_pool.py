@@ -769,6 +769,7 @@ class InteractiveClaudeCodePool:
         mounts = ["-v", f"{sessions_host}:/cc_sessions_host"]
         runtime_files = [
             (project_root / "tools" / "mcp_bridge.py", "/opt/pawflow/mcp_bridge.py"),
+            (project_root / "core" / "tool_json.py", "/opt/pawflow/tool_json.py"),
             (project_root / "tools" / "cc_interactive_filters.py", "/opt/pawflow/cc_interactive_filters.py"),
             (project_root / "tools" / "cc_interactive_proxy.py", "/opt/pawflow/cc_interactive_proxy.py"),
             (project_root / "tools" / "cc_interactive_hook.py", "/opt/pawflow/cc_interactive_hook.py"),

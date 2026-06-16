@@ -817,62 +817,18 @@ class ToolRelayService(BaseService):
         elif method == "execute_tool":
             _raw_args = msg.get("arguments", {})
             _tool = msg.get("tool_name", "")
-            # Defensive: double-encoded JSON string
-            _decode_ok = True
-            _original = _raw_args
-            _decode_err = None
-            if isinstance(_raw_args, str):
-                try:
-                    _raw_args = json.loads(_raw_args)
-                except (json.JSONDecodeError, TypeError) as _je:
-                    _decode_err = _je
-                    # Forensic dump (no truncation): so we can see the
-                    # raw bytes we received from the MCP bridge when this
-                    # fires. Pair with mcp_bridge.py's matching dump.
-                    logger.warning("[tool-relay] JSON decode FAIL for %s "
-                                   "at pos=%s: %s; raw_len=%d raw=%r",
-                                   _tool, getattr(_je, "pos", "?"), _je,
-                                   len(_original), _original)
-                    _decode_ok = False
-                    # Last resort: repair near-valid JSON (invalid \escape
-                    # like \', raw control chars). Runs only because strict
-                    # parsing already failed; a genuinely-valid payload is
-                    # returned unchanged, so correct calls are never rewritten.
-                    try:
-                        from core.tool_json import repair_invalid_json_escapes
-                        _rep = repair_invalid_json_escapes(_original)
-                        if _rep != _original:
-                            _raw_args = json.loads(_rep)
-                            _decode_ok = True
-                            _decode_err = None
-                            logger.info(
-                                "[tool-relay] escape-repair OK for %s", _tool)
-                    except Exception:
-                        logger.debug("[tool-relay] escape-repair failed",
-                                     exc_info=True)
-            # Decode failed on non-empty input → error with position + window
-            if not _decode_ok and _original and _original != "{}":
-                _detail = str(_decode_err) if _decode_err else "unknown JSON error"
-                _raw_str = _original if isinstance(_original, str) else str(_original)
-                _window = ""
-                _pos = getattr(_decode_err, "pos", None)
-                if isinstance(_pos, int) and 0 <= _pos <= len(_raw_str):
-                    _lo = max(0, _pos - 120)
-                    _hi = min(len(_raw_str), _pos + 120)
-                    _prefix = "…" if _lo > 0 else ""
-                    _suffix = "…" if _hi < len(_raw_str) else ""
-                    _window = (f" Window around char {_pos}: "
-                               f"{_prefix}{_raw_str[_lo:_hi]!r}{_suffix}")
+            # Single canonical parser (same as mcp_bridge + meta_tools) so a
+            # call decodes identically on every route. Idempotent on dicts:
+            # a bridge-decoded dict passes straight through (no double decode).
+            from core.tool_json import (
+                parse_tool_arguments, tool_argument_parse_error)
+            _raw_args = parse_tool_arguments(
+                _raw_args, tool_name=_tool, provider="tool-relay", log=logger)
+            _perr = tool_argument_parse_error(_raw_args)
+            if _perr:
+                logger.warning("[tool-relay] %s", _perr)
                 return {"type": "response", "request_id": request_id,
-                        "result": (
-                            f"Error: failed to decode arguments for {_tool}. "
-                            f"The arguments_json value is not valid JSON, and "
-                            f"last-resort repair could not fix it. "
-                            f"Parse error: {_detail}.{_window} "
-                            f"Fix: resend with arguments as a literal dict; "
-                            f"escape embedded newlines/quotes once (\\\\n, \\\\\\\") "
-                            f"but do NOT wrap the whole value in a string."
-                        )}
+                        "result": _perr}
             return self._handle_execute(
                 request_id, _tool, _raw_args,
                 user_id, conversation_id, agent_name,

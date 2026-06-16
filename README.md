@@ -34,6 +34,10 @@
   <strong>👉 Screenshots, live feature tour, quickstart, and full documentation live on <a href="https://pawflow.allcolor.org/">pawflow.allcolor.org</a>.</strong>
 </p>
 
+<p align="center">
+  <em>The <strong>Ask PawFlow</strong> help bot on the website is powered by a PawFlow agent flow (<code>web_help_bot</code>, behind <code>/api/help</code>).</em>
+</p>
+
 ---
 
 PawFlow is the runtime layer between chat agents, local tools, and production workflows. The server keeps conversations, context, memory, files, flows, and provider sessions durable. Relays execute filesystem, shell, browser, desktop, and media tools next to the machines where the work actually happens.
@@ -60,6 +64,7 @@ PawFlow gives agents a real operating surface without handing your workspace to 
 - Media pipelines that create images, video, audio, 3D assets, voice, and FileStore outputs.
 - Scheduled operational flows: daily digests, inbox triage, data transforms, reports, monitoring, and webhook-driven automation.
 - Reusable packages and registries for sharing internal or community agents, skills, tools, services, flow tasks, flows, and UI extensions.
+- Live help bots: the **Ask PawFlow** assistant on [pawflow.allcolor.org](https://pawflow.allcolor.org/) is powered by a PawFlow agent flow (`web_help_bot`) answering questions in real time, with a Telegram counterpart (`telegram_help_bot`).
 - Portable conversations with full PawFlow archives, including optional FileStore attachments and generated files.
 
 ## Quick Start

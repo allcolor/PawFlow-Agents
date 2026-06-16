@@ -129,6 +129,34 @@ button { font: inherit; }
   text-transform: uppercase;
   letter-spacing: 0;
 }
+.hero-help-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 auto 18px;
+  padding: 7px 14px 7px 7px;
+  border: 1px solid var(--line-soft);
+  background: rgba(15,19,26,.64);
+  border-radius: 999px;
+  color: var(--text);
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+  transition: transform .16s ease, border-color .16s ease;
+}
+.hero-help-note:hover { transform: translateY(-1px); border-color: var(--cyan); }
+.hero-help-badge {
+  background: var(--green);
+  color: #031217;
+  border-radius: 999px;
+  padding: 3px 9px;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+.hero-help-arrow { color: var(--cyan); font-weight: 800; }
+
 .hero-actions, .cta-actions { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
 .hero-actions { justify-content: center; margin-top: 34px; }
 .button {

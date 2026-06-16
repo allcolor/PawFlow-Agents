@@ -104,6 +104,11 @@
           <button type="button" class="hero-logo-sound" aria-label="Toggle logo sound" aria-pressed="false"
                   onclick="var v=document.getElementById('logo-intro');v.muted=!v.muted;if(!v.muted){v.play();}this.setAttribute('aria-pressed',String(!v.muted));this.textContent=v.muted?'🔇':'🔊';">🔇</button>
         </div>
+        <button type="button" class="hero-help-note" onclick="var l=document.querySelector('.pf-help-launcher');if(l){l.click();}">
+          <span class="hero-help-badge">Live</span>
+          Ask the help bot &mdash; powered by a PawFlow agent flow.
+          <span class="hero-help-arrow" aria-hidden="true">&rarr;</span>
+        </button>
         <p class="eyebrow">Open source. Self-hosted. Built for real work.</p>
         <h1>Self-hosted agent runtime for real infrastructure.</h1>
         <p class="hero-copy">Run durable AI agents against your own files, tools, browsers, desktops, services, and workflows without moving the runtime into a vendor-controlled agent cloud.</p>

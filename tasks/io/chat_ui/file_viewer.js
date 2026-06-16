@@ -16,9 +16,9 @@ function showParamMenu(e, key, scope, isSecret) {
     d.onclick = () => { menu.remove(); fn(); };
     menu.appendChild(d);
   };
-  item('\\u{1F441} ' + t('view'), () => _showParamEditor(key, scope, isSecret, false, true));
+  item('\u{1F441} ' + t('view'), () => _showParamEditor(key, scope, isSecret, false, true));
   if (_canEditScope(scope)) {
-    item('\\u270F ' + t('editWithEllipsis'), () => _showParamEditor(key, scope, isSecret, false));
+    item('✏ ' + t('editWithEllipsis'), () => _showParamEditor(key, scope, isSecret, false));
     const sep = () => { const s = document.createElement('div'); s.style.cssText = 'height:1px;background:#333;margin:4px 0;'; menu.appendChild(s); };
     sep();
     const move = (toScope) => {
@@ -36,7 +36,7 @@ function showParamMenu(e, key, scope, isSecret) {
     if (scope !== 'conversation' && typeof conversationId !== 'undefined' && conversationId) move('conversation');
     if (scope !== 'global' && _isAdmin()) move('global');
     sep();
-    item('\\u{1F5D1} ' + t('delete'), () => {
+    item('\u{1F5D1} ' + t('delete'), () => {
       if (!confirm('Delete ' + (isSecret ? 'secret' : 'variable') + " '" + key + "' (" + scope + ')?')) return;
       const payload = { key, scope };
       if (scope === 'conversation' && typeof conversationId !== 'undefined' && conversationId) payload.conversation_id = conversationId;

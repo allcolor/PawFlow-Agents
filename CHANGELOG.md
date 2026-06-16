@@ -4,6 +4,25 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.0-alpha.44] — 2026-06-16
+
+### Added
+
+- Generic multi-tenant infrastructure for Telegram moderation bots (core), and
+  the `telegram/pink_skin` 1.0.0 moderation bot flow built on top of it.
+
+### Fixed
+
+- Bandit B110 finding on the best-effort SQL rollback in
+  `tasks/data/execute_sql.py`. The intentional `try/except/pass` cleanup is now
+  annotated with `# nosec B110` and a rationale comment, so the security scan
+  passes (exit 0) again.
+
+### Changed
+
+- Relay test suite: retry-sleep capture is now scoped to the test thread to
+  avoid cross-test interference.
+
 ## [1.0.0-alpha.43] — 2026-06-16
 
 ### Fixed

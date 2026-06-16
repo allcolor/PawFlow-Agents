@@ -125,6 +125,28 @@ class AgentToolExecMixin:
             if "::task::" in conversation_id:
                 _task_suffix = conversation_id.split("::task::", 1)[1]
                 _agent_key = f"{agent_name}::task::{_task_suffix}"
+            # ── Permission gate ──────────────────────────────────────────
+            # ToolSearch plumbing is transparent. `get_tool_schema` is pure
+            # introspection -> always allowed. `use_tool` is a dispatch wrapper:
+            # the decision must apply to the INNER tool it runs (fetch, bash,
+            # ...), never to the literal "use_tool" name. Otherwise a lazy
+            # provider's every call is gated on the wrapper and gets denied with
+            # no human to approve, AND content-aware checks (dangerous bash,
+            # protected paths, read-only writes) look at the wrapper's empty
+            # args and miss the real command. Unwrap so the real tool — with its
+            # real arguments — is what we authorize.
+            from core.llm_client import (
+                unwrap_mcp_tool as _unwrap_perm,
+                _MCP_SCHEMA_WRAPPERS as _SCHEMA_WRAPPERS,
+            )
+            _always_allow_plumbing = tc.name in _SCHEMA_WRAPPERS
+            if _always_allow_plumbing:
+                _eff_name, _eff_args = tc.name, tc.arguments
+            else:
+                _eff_name, _eff_args = _unwrap_perm(tc.name, tc.arguments)
+                if not isinstance(_eff_args, dict):
+                    _eff_args = tc.arguments if isinstance(tc.arguments, dict) else {}
+
             # Fine-grained tool permissions (override global mode)
             _tool_perm = ""
             _perm_mode = ""
@@ -135,11 +157,13 @@ class AgentToolExecMixin:
                 _perm_mode = _cs.get_extra(conversation_id, "permission_mode") or "default"
                 from core.tool_approval import ToolApprovalGate as _TAG
                 _tperms = _TAG._get_permissions(_perm_cid, _agent_key)
-                _tool_perm = _tperms.get(tc.name, "")
+                _tool_perm = _tperms.get(_eff_name, "")
             except Exception:
                 logger.debug("exception suppressed", exc_info=True)
+            if _always_allow_plumbing:
+                _tool_perm = "allow"  # get_tool_schema: introspection only
             if _tool_perm == "deny":
-                return tc, f"Error: Tool '{tc.name}' is denied by permission settings."
+                return tc, f"Error: Tool '{_eff_name}' is denied by permission settings."
             elif _tool_perm == "allow":
                 pass  # explicitly allowed — skip all further permission checks
             elif _tool_perm == "confirm":
@@ -147,22 +171,22 @@ class AgentToolExecMixin:
                 from core.tool_approval import ToolApprovalGate
                 _approval_cid = event_cid or conversation_id
                 approval = ToolApprovalGate.check(
-                    tc.name, f"{tc.name}({json.dumps(tc.arguments)[:200]})",
+                    _eff_name, f"{_eff_name}({json.dumps(_eff_args)[:200]})",
                     _approval_cid, user_id,
-                    arguments=tc.arguments,
+                    arguments=_eff_args,
                     agent_name=_agent_key,
                 )
                 if approval != "approved":
-                    return tc, f"Error: Tool '{tc.name}' was {approval} by the user."
+                    return tc, f"Error: Tool '{_eff_name}' was {approval} by the user."
             else:
                 # No per-tool override — use global permission_mode
                 if _perm_mode == "read_only":
                     _write_tools = {"write", "edit", "batch_edit", "apply_patch", "find_replace",
                                     "delete", "mkdir", "bash", "notebook_edit"}
-                    if tc.name in _write_tools:
+                    if _eff_name in _write_tools:
                         return tc, "Error: write operations blocked (read-only mode). Change permission mode to allow writes."
                     # Also block filesystem write actions
-                    if tc.name == "filesystem" and tc.arguments.get("action", "") not in (
+                    if _eff_name == "filesystem" and _eff_args.get("action", "") not in (
                             "list_dir", "read_file", "stat", "exists", "search", "grep",
                             "git_status", "git_log", "git_diff", ""):
                         return tc, "Error: write operations blocked (read-only mode). Change permission mode to allow writes."
@@ -173,13 +197,13 @@ class AgentToolExecMixin:
                     from core.tool_approval import ToolApprovalGate
                     _approval_cid = event_cid or conversation_id
                     approval = ToolApprovalGate.check(
-                        tc.name, f"{tc.name}({json.dumps(tc.arguments)[:200]})",
+                        _eff_name, f"{_eff_name}({json.dumps(_eff_args)[:200]})",
                         _approval_cid, user_id,
-                        arguments=tc.arguments,
+                        arguments=_eff_args,
                         agent_name=_agent_key,
                     )
                     if approval != "approved":
-                        return tc, f"Error: Tool '{tc.name}' was {approval} by the user."
+                        return tc, f"Error: Tool '{_eff_name}' was {approval} by the user."
             # Re-inject thread-local source agent + delegate tc_id (needed in pool threads)
             from core.tool_registry import SpawnAgentsHandler
             for h in registry.list_tools():

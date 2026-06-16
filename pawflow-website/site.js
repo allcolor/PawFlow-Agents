@@ -254,11 +254,7 @@ document.querySelectorAll('[data-copy]').forEach((button) => {
   send.textContent = 'Send';
   form.append(input, send);
 
-  const foot = document.createElement('div');
-  foot.className = 'pf-help-foot';
-  foot.textContent = 'Public demo bot. Do not share secrets.';
-
-  panel.append(head, log, form, foot);
+  panel.append(head, log, form);
   document.body.append(launcher, panel);
 
   let busy = false;
@@ -283,6 +279,7 @@ document.querySelectorAll('[data-copy]').forEach((button) => {
   function open() {
     panel.classList.add('is-open');
     launcher.classList.add('is-hidden');
+    pinFloating();
     setTimeout(() => input.focus(), 50);
   }
   function close() {
@@ -295,6 +292,46 @@ document.querySelectorAll('[data-copy]').forEach((button) => {
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && panel.classList.contains('is-open')) close();
   });
+
+  // ── Floating-window behaviour: drag by the header; resize via the CSS
+  // grip (bottom-right). Only on wider viewports — on phones the panel stays
+  // full-screen (see the max-width: 520px media query).
+  const FLOAT_MIN_VW = 520;
+  function floatable() { return window.innerWidth > FLOAT_MIN_VW; }
+  function pinFloating() {
+    // Switch from the default right/bottom anchoring to left/top so dragging
+    // and the resize grip both behave like a normal window. Done once.
+    if (!floatable() || panel.dataset.pinned) return;
+    const r = panel.getBoundingClientRect();
+    panel.style.left = r.left + 'px';
+    panel.style.top = r.top + 'px';
+    panel.style.right = 'auto';
+    panel.style.bottom = 'auto';
+    panel.dataset.pinned = '1';
+  }
+  let drag = null;
+  head.addEventListener('pointerdown', (e) => {
+    if (!floatable() || e.target.closest('.pf-help-close')) return;
+    pinFloating();
+    const r = panel.getBoundingClientRect();
+    drag = { dx: e.clientX - r.left, dy: e.clientY - r.top };
+    head.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  });
+  head.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    const maxL = window.innerWidth - panel.offsetWidth;
+    const maxT = window.innerHeight - panel.offsetHeight;
+    panel.style.left = Math.max(0, Math.min(maxL, e.clientX - drag.dx)) + 'px';
+    panel.style.top = Math.max(0, Math.min(maxT, e.clientY - drag.dy)) + 'px';
+  });
+  function endDrag(e) {
+    if (!drag) return;
+    drag = null;
+    try { head.releasePointerCapture(e.pointerId); } catch (_) {}
+  }
+  head.addEventListener('pointerup', endDrag);
+  head.addEventListener('pointercancel', endDrag);
 
   input.addEventListener('input', () => {
     input.style.height = 'auto';

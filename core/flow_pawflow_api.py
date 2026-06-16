@@ -171,6 +171,41 @@ class FlowPawflowApi:
         filters["agent_overrides"] = overrides
         set_filters(cid, filters)
 
+    # ── per-conversation encryption ───────────────────────────────────
+    # Lets an unattended flow encrypt the conversations it creates with a
+    # passphrase the flow alone supplies (e.g. a visitor's session secret that
+    # lives only in their browser cookie). At rest only ciphertext + the
+    # passphrase-wrapped DEK remain, so the flow owner — who never has the
+    # passphrase — cannot read the conversation in the admin UI. The flow must
+    # unlock before each turn so the agent runtime can read/write plaintext;
+    # the key vault idle-locks the DEK back out of RAM afterwards.
+
+    def enable_conv_encryption(self, conversation_id: str, passphrase: str,
+                               session_id: str = "") -> Dict[str, Any]:
+        """Turn on encryption for ``conversation_id`` and unlock it for this
+        turn. Idempotent. The server keeps no copy of ``passphrase``."""
+        cid = self._auth_conv(conversation_id)
+        from core.conversation_store import ConversationStore
+        return ConversationStore.instance().enable_encryption(
+            cid, passphrase, session_id=session_id)
+
+    def unlock_conv_encryption(self, conversation_id: str, passphrase: str,
+                               session_id: str = "") -> bool:
+        """Unwrap the DEK with ``passphrase`` into the vault so the agent runtime
+        can read/write this turn. Raises on a wrong passphrase."""
+        cid = self._auth_conv(conversation_id)
+        from core.conversation_store import ConversationStore
+        return ConversationStore.instance().unlock_encryption(
+            cid, passphrase, session_id=session_id)
+
+    def lock_conv_encryption(self, conversation_id: str) -> None:
+        """Drop the DEK from RAM now (re-lock at rest). Optional — the vault's
+        idle-lock sweeper does this automatically when the conversation goes
+        idle."""
+        cid = self._auth_conv(conversation_id)
+        from core.conversation_store import ConversationStore
+        ConversationStore.instance().lock_encryption(cid)
+
     # ── user-scope variables (params) ─────────────────────────────────
     # A deployed flow has no per-visitor PawFlow user (public channels like
     # Telegram/web are owned by the single deploying user), so durable

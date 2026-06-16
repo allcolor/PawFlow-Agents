@@ -4,6 +4,45 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- Opt-in per-conversation encryption for the public web and Telegram help bots.
+  A new `encrypt_conversations` flow parameter (default `false`) makes each
+  visitor conversation encrypted at rest with a key derived from the visitor's
+  own secret (the web session cookie / Telegram `user_id`); the lookup key is
+  `sha256(session)` so the raw session is never stored, and the instance owner
+  reading the conversation files on disk sees only ciphertext. Backed by new
+  scope-bounded `enable_conv_encryption` / `unlock_conv_encryption` /
+  `lock_conv_encryption` flow API methods that wrap the existing DEK/passphrase
+  vault. A regression test proves the owner cannot read a conversation without
+  the visitor's secret.
+- Floating help-chat window on the website: on wider viewports the help panel
+  can be dragged by its header and resized via a bottom-right grip; on phones
+  it stays full-screen.
+
+### Fixed
+
+- ToolSearch agents no longer have every tool call denied. The permission gate
+  ran against the literal `use_tool` dispatch wrapper instead of the inner tool
+  it invokes, so a non-interactive conversation got an un-approvable denial and
+  content-aware checks (dangerous `bash`, protected paths, read-only writes)
+  inspected the wrapper's empty arguments and missed the real command. The gate
+  now unwraps `use_tool` → the real tool (with its real arguments) and decides
+  on that; `get_tool_schema` / `use_tool` schema plumbing is treated as
+  transparent and always allowed. This also closes a latent hole where a
+  dangerous `bash` invoked via `use_tool` bypassed the content checks.
+
+### Security
+
+- Flow-level prompt-injection defense for both help bots: every visitor message
+  is wrapped before `run_agent` in a `_guard()` envelope delimited by a
+  per-message random nonce, instructing the agent to treat the contents as
+  untrusted data and ignore any embedded role/prompt/secret/tool-redirect
+  attempts. This treats the visitor themselves as a potential attacker,
+  independent of the agent's own system prompt.
+
 ## [1.0.0-alpha.40] — 2026-06-16
 
 ### Fixed

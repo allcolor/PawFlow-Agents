@@ -475,6 +475,11 @@ pre { margin: 0; padding: 18px; overflow-x: auto; color: #d9f5ff; font-size: 14p
   border-radius: 14px;
   box-shadow: var(--shadow);
   overflow: hidden;
+  resize: both;
+  min-width: 300px;
+  min-height: 360px;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
 }
 .pf-help-panel.is-open { display: flex; }
 
@@ -485,6 +490,9 @@ pre { margin: 0; padding: 18px; overflow-x: auto; color: #d9f5ff; font-size: 14p
   padding: 14px 16px;
   border-bottom: 1px solid var(--line);
   background: var(--surface-2);
+  cursor: move;
+  user-select: none;
+  touch-action: none;
 }
 .pf-help-head .pf-help-dot {
   width: 9px; height: 9px; border-radius: 50%;
@@ -583,10 +591,15 @@ pre { margin: 0; padding: 18px; overflow-x: auto; color: #d9f5ff; font-size: 14p
 }
 .pf-help-send:hover:not(:disabled) { transform: translateY(-1px); }
 .pf-help-send:disabled { opacity: .45; cursor: not-allowed; }
-.pf-help-foot { padding: 0 12px 10px; font-size: 11px; color: var(--quiet); background: var(--surface-2); text-align: center; }
 
 @media (max-width: 520px) {
-  .pf-help-panel { right: 8px; bottom: 8px; width: calc(100vw - 16px); height: calc(100vh - 16px); }
+  /* Full-screen on phones: no floating window, no drag/resize. */
+  .pf-help-panel {
+    right: 8px; bottom: 8px; left: 8px; top: 8px;
+    width: auto; height: auto; max-width: none; max-height: none;
+    resize: none;
+  }
+  .pf-help-head { cursor: default; }
   .pf-help-launcher { right: 14px; bottom: 14px; }
 }
 @media (prefers-reduced-motion: reduce) {

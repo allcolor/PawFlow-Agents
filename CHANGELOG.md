@@ -4,6 +4,26 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.0-alpha.42] — 2026-06-16
+
+### Fixed
+
+- Claude Code interactive provider: live preempts — and the `POST /api/agent`
+  request that triggers them — no longer block ~8.5s on tmux submit
+  verification. `send_interrupt` ran the best-effort `_verify_submitted` pane
+  poll (up to `PAWFLOW_CCI_SUBMIT_VERIFY_SECONDS`, default 6s, plus ~20
+  docker-exec round-trips) inline on the request thread. It now runs in a
+  daemon thread, so the ack returns immediately and queued Telegram/webchat
+  messages no longer back up behind slow injections.
+- Secret/variable right-click menu in the chat file viewer rendered literal
+  `\u{1F5D1}` escape text instead of the 👁 / ✏ / 🗑 glyphs (doubled backslash
+  in `tasks/io/chat_ui/file_viewer.js`).
+
+### Added
+
+- Website hero and README now note that the **Ask PawFlow** help bot is itself
+  powered by a PawFlow agent flow.
+
 ## [1.0.0-alpha.41] — 2026-06-16
 
 ### Added

@@ -217,6 +217,23 @@ with open("/data/output.json", "w") as f:
             if fs_svc:
                 local_ns['fs'] = fs_svc
 
+            # Inject get_service(sid), bounded to THIS flow's declared services
+            # (self._services), mirroring how `fs` is injected. Scripts can then
+            # reach declared controller services (e.g. a telegramBot or
+            # dbConnectionPool) without importing anything. Anything not wired
+            # into the flow raises a clear error instead of leaking the registry.
+            _declared_services = self._services
+
+            def _sandbox_get_service(service_id):
+                svc = _declared_services.get(service_id)
+                if svc is None:
+                    raise KeyError(
+                        "Service '%s' is not declared in this flow's services"
+                        % service_id)
+                return svc
+
+            local_ns['get_service'] = _sandbox_get_service
+
             # Execute with a SINGLE namespace (globals is also locals).
             # Passing two separate dicts breaks name resolution inside any
             # function or comprehension the script defines at top level: such

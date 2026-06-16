@@ -42,6 +42,15 @@ class TelegramReceiverTask(BaseTask):
             "description": "ID of the TelegramBotService",
             "required": True,
         },
+        "allowed_updates": {
+            "type": "string",
+            "description": (
+                "Comma-separated Telegram update types to subscribe to "
+                "(e.g. message,callback_query,my_chat_member,chat_member). "
+                "Unioned into the bot service filter. Empty = service default."
+            ),
+            "required": False,
+        },
     }
 
     def __init__(self, config: Dict[str, Any]):
@@ -71,6 +80,9 @@ class TelegramReceiverTask(BaseTask):
             raise RuntimeError(f"TelegramBotService '{service_id}' not found")
 
         svc.ensure_connected()
+        allowed = self.config.get("allowed_updates", "")
+        if allowed and hasattr(svc, "add_allowed_updates"):
+            svc.add_allowed_updates(allowed)
         self._owner_id = f"telegramReceiver_{id(self)}"
         svc.register_handler(self._owner_id, self._on_update)
         self._registered = True
@@ -87,6 +99,9 @@ class TelegramReceiverTask(BaseTask):
             ids = IdentityService.instance()
             all_links = ids.list_all()
             pool = TelegramBotPool.instance()
+            allowed = self.config.get("allowed_updates", "")
+            if allowed:
+                pool.add_allowed_updates(allowed)
             if not self._pool_registered:
                 pool.register_callback(self._on_update)
                 self._pool_registered = True
@@ -104,6 +119,14 @@ class TelegramReceiverTask(BaseTask):
 
     def _on_update(self, update: dict):
         """Called by TelegramBotService when a message arrives."""
+        # Chat-membership updates (bot added/removed/promoted, or a member's
+        # status change) carry no `message`; surface them as their own type.
+        for member_kind in ("my_chat_member", "chat_member"):
+            member = update.get(member_kind)
+            if member:
+                self._emit_member_update(update, member_kind, member)
+                return
+
         callback = update.get("callback_query") or {}
         msg = update.get("message") or callback.get("message")
         if not msg:
@@ -181,6 +204,8 @@ class TelegramReceiverTask(BaseTask):
         ff.set_attribute("telegram.first_name", first_name)
         ff.set_attribute("telegram.message_id", str(msg.get("message_id", "")))
         ff.set_attribute("telegram.message_type", msg_type)
+        ff.set_attribute("telegram.update_type",
+                         "callback_query" if callback else "message")
         if callback:
             ff.set_attribute("telegram.callback_query_id", str(callback.get("id", "")))
             ff.set_attribute("telegram.callback_data", str(callback.get("data", "")))
@@ -190,10 +215,94 @@ class TelegramReceiverTask(BaseTask):
             ff.set_attribute("telegram.image_base64", file_data)
             ff.set_attribute("telegram.image_file_id", file_id)
 
+        self._enrich_message_attributes(ff, update, msg)
+
         try:
             self._queue.put_nowait(ff)
         except queue.Full:
             logger.warning("telegramReceiver queue full, dropping message")
+
+    def _enrich_message_attributes(self, ff: FlowFile, update: dict,
+                                   msg: dict) -> None:
+        """Surface group/reply/membership context needed by moderation flows."""
+        chat = msg.get("chat", {})
+        ff.set_attribute("telegram.chat_type", str(chat.get("type", "")))
+        ff.set_attribute("telegram.chat_title", str(chat.get("title", "")))
+
+        reply = msg.get("reply_to_message")
+        if reply:
+            ff.set_attribute("telegram.reply_to_message_id",
+                             str(reply.get("message_id", "")))
+            ff.set_attribute("telegram.reply_to_user_id",
+                             str(reply.get("from", {}).get("id", "")))
+            ff.set_attribute("telegram.reply_to_username",
+                             str(reply.get("from", {}).get("username", "")))
+            ff.set_attribute("telegram.reply_to_text",
+                             str(reply.get("text", reply.get("caption", ""))))
+
+        new_members = msg.get("new_chat_members")
+        if new_members:
+            ff.set_attribute("telegram.new_chat_members",
+                             json.dumps(new_members, ensure_ascii=False))
+            ff.set_attribute(
+                "telegram.new_chat_member_ids",
+                ",".join(str(m.get("id", "")) for m in new_members))
+        left = msg.get("left_chat_member")
+        if left:
+            ff.set_attribute("telegram.left_chat_member",
+                             json.dumps(left, ensure_ascii=False))
+            ff.set_attribute("telegram.left_chat_member_id",
+                             str(left.get("id", "")))
+
+        if "migrate_to_chat_id" in msg:
+            ff.set_attribute("telegram.migrate_to_chat_id",
+                             str(msg.get("migrate_to_chat_id", "")))
+        if "migrate_from_chat_id" in msg:
+            ff.set_attribute("telegram.migrate_from_chat_id",
+                             str(msg.get("migrate_from_chat_id", "")))
+
+        entities = msg.get("entities") or msg.get("caption_entities")
+        if entities:
+            ff.set_attribute("telegram.entities",
+                             json.dumps(entities, ensure_ascii=False))
+
+        ff.set_attribute("telegram.raw", json.dumps(update, ensure_ascii=False))
+        bot_token = str(update.get("_bot_token") or "")
+        if bot_token:
+            ff.set_attribute("telegram.bot_token", bot_token)
+
+    def _emit_member_update(self, update: dict, kind: str, member: dict) -> None:
+        """Convert a my_chat_member/chat_member update into a FlowFile."""
+        chat = member.get("chat", {})
+        actor = member.get("from", {})
+        old = member.get("old_chat_member", {})
+        new = member.get("new_chat_member", {})
+        target = new.get("user", {})
+
+        ff = FlowFile(content=json.dumps(member, ensure_ascii=False).encode("utf-8"))
+        ff.set_attribute("telegram.chat_id", str(chat.get("id", "")))
+        ff.set_attribute("telegram.chat_type", str(chat.get("type", "")))
+        ff.set_attribute("telegram.chat_title", str(chat.get("title", "")))
+        ff.set_attribute("telegram.message_type", kind)
+        ff.set_attribute("telegram.update_type", kind)
+        # `from` is who performed the action; the affected member is the target.
+        ff.set_attribute("telegram.user_id", str(actor.get("id", "")))
+        ff.set_attribute("telegram.username", str(actor.get("username", "")))
+        ff.set_attribute("telegram.first_name", str(actor.get("first_name", "")))
+        ff.set_attribute("telegram.target_user_id", str(target.get("id", "")))
+        ff.set_attribute("telegram.target_username", str(target.get("username", "")))
+        ff.set_attribute("telegram.target_is_bot", str(target.get("is_bot", False)))
+        ff.set_attribute("telegram.old_status", str(old.get("status", "")))
+        ff.set_attribute("telegram.new_status", str(new.get("status", "")))
+        ff.set_attribute("telegram.raw", json.dumps(update, ensure_ascii=False))
+        bot_token = str(update.get("_bot_token") or "")
+        if bot_token:
+            ff.set_attribute("telegram.bot_token", bot_token)
+
+        try:
+            self._queue.put_nowait(ff)
+        except queue.Full:
+            logger.warning("telegramReceiver queue full, dropping member update")
 
     def _try_download(self, file_id: str, bot_token: Optional[str] = None) -> str:
         """Try to download a file from Telegram and return base64 data."""

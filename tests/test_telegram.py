@@ -393,6 +393,176 @@ class TestTelegramReceiverTask(unittest.TestCase):
         results = task.execute()
         assert results == []
 
+    def test_message_enrichment_attributes(self):
+        from tasks.io.telegram_receiver import TelegramReceiverTask
+        task = TelegramReceiverTask({"service_id": "tg"})
+        task._registered = True
+        task._on_update({
+            "update_id": 10,
+            "message": {
+                "message_id": 50,
+                "from": {"id": 123, "username": "u", "first_name": "T"},
+                "chat": {"id": -100456, "type": "supergroup", "title": "Grp"},
+                "text": "spam @someone",
+                "entities": [{"type": "mention", "offset": 5, "length": 8}],
+                "reply_to_message": {
+                    "message_id": 49,
+                    "from": {"id": 999, "username": "victim"},
+                    "text": "original",
+                },
+            },
+        })
+        ff = task.execute()[0]
+        assert ff.get_attribute("telegram.update_type") == "message"
+        assert ff.get_attribute("telegram.chat_type") == "supergroup"
+        assert ff.get_attribute("telegram.chat_title") == "Grp"
+        assert ff.get_attribute("telegram.reply_to_message_id") == "49"
+        assert ff.get_attribute("telegram.reply_to_user_id") == "999"
+        assert ff.get_attribute("telegram.reply_to_text") == "original"
+        assert json.loads(ff.get_attribute("telegram.entities"))[0]["type"] == "mention"
+        assert json.loads(ff.get_attribute("telegram.raw"))["update_id"] == 10
+
+    def test_new_chat_members_surfaced(self):
+        from tasks.io.telegram_receiver import TelegramReceiverTask
+        task = TelegramReceiverTask({"service_id": "tg"})
+        task._registered = True
+        task._on_update({
+            "update_id": 11,
+            "message": {
+                "message_id": 51,
+                "from": {"id": 1, "username": "adder"},
+                "chat": {"id": -100456, "type": "supergroup"},
+                "new_chat_members": [{"id": 777, "username": "newbie"}],
+            },
+        })
+        ff = task.execute()[0]
+        assert ff.get_attribute("telegram.new_chat_member_ids") == "777"
+        assert json.loads(ff.get_attribute("telegram.new_chat_members"))[0]["id"] == 777
+
+    def test_my_chat_member_update_emitted(self):
+        from tasks.io.telegram_receiver import TelegramReceiverTask
+        task = TelegramReceiverTask({"service_id": "tg"})
+        task._registered = True
+        task._on_update({
+            "update_id": 12,
+            "my_chat_member": {
+                "chat": {"id": -100456, "type": "supergroup", "title": "Grp"},
+                "from": {"id": 1, "username": "owner", "first_name": "O"},
+                "old_chat_member": {"user": {"id": 5}, "status": "left"},
+                "new_chat_member": {
+                    "user": {"id": 5, "username": "thebot", "is_bot": True},
+                    "status": "administrator",
+                },
+            },
+        })
+        assert task.has_pending_input() is True
+        ff = task.execute()[0]
+        assert ff.get_attribute("telegram.update_type") == "my_chat_member"
+        assert ff.get_attribute("telegram.message_type") == "my_chat_member"
+        assert ff.get_attribute("telegram.chat_id") == "-100456"
+        assert ff.get_attribute("telegram.old_status") == "left"
+        assert ff.get_attribute("telegram.new_status") == "administrator"
+        assert ff.get_attribute("telegram.target_user_id") == "5"
+        assert ff.get_attribute("telegram.user_id") == "1"
+
+    def test_allowed_updates_config_parsed(self):
+        from services.telegram_bot_service import (
+            TelegramBotService, _DEFAULT_ALLOWED_UPDATES)
+        svc = TelegramBotService({
+            "bot_token": "t",
+            "allowed_updates": "message, my_chat_member , chat_member",
+        })
+        assert svc._allowed_updates == [
+            "message", "my_chat_member", "chat_member"]
+        # Empty config falls back to the default set.
+        svc2 = TelegramBotService({"bot_token": "t"})
+        assert svc2._allowed_updates == list(_DEFAULT_ALLOWED_UPDATES)
+        # Union is idempotent and additive.
+        svc2.add_allowed_updates("message,chat_member")
+        assert svc2._allowed_updates == [
+            "message", "callback_query", "chat_member"]
+
+    def test_receiver_pushes_allowed_updates_to_service(self):
+        from tasks.io.telegram_receiver import TelegramReceiverTask
+        task = TelegramReceiverTask({
+            "service_id": "tg",
+            "allowed_updates": "my_chat_member,chat_member",
+        })
+        svc = MagicMock()
+        with patch.object(task, "get_service", return_value=svc), \
+                patch.object(task, "_register_pool_bots"):
+            task._ensure_registered()
+        svc.add_allowed_updates.assert_called_once_with(
+            "my_chat_member,chat_member")
+
+
+# ── TelegramApiTask ─────────────────────────────────────────────────
+
+
+class TestTelegramApiTask(unittest.TestCase):
+
+    def _task(self, config):
+        from tasks.io.telegram_api import TelegramApiTask
+        return TelegramApiTask(config)
+
+    def test_task_registered(self):
+        from tasks import register_all_tasks
+        register_all_tasks()
+        assert TaskFactory.get("telegramApi") is not None
+
+    def test_calls_method_with_resolved_params(self):
+        from core import FlowFile
+        task = self._task({
+            "service_id": "tg",
+            "method": "banChatMember",
+            "params": '{"chat_id": "${telegram.chat_id}", '
+                      '"user_id": "${telegram.target_user_id}", "revoke": true}',
+        })
+        svc = MagicMock()
+        svc.call_api.return_value = True
+        ff = FlowFile(content=b"")
+        ff.set_attribute("telegram.chat_id", "-100456")
+        ff.set_attribute("telegram.target_user_id", "777")
+        with patch.object(task, "get_service", return_value=svc):
+            out = task.execute(ff)[0]
+        svc.call_api.assert_called_once_with(
+            "banChatMember",
+            {"chat_id": "-100456", "user_id": "777", "revoke": True})
+        assert out.get_attribute("telegram.api_ok") == "true"
+        assert out.get_attribute("telegram.api_method") == "banChatMember"
+
+    def test_api_error_is_non_fatal_by_default(self):
+        from core import FlowFile
+        task = self._task({
+            "service_id": "tg", "method": "banChatMember",
+            "params": '{"chat_id": "1", "user_id": "2"}',
+        })
+        svc = MagicMock()
+        svc.call_api.side_effect = RuntimeError("not enough rights")
+        with patch.object(task, "get_service", return_value=svc):
+            out = task.execute(FlowFile(content=b""))[0]
+        assert out.get_attribute("telegram.api_ok") == "false"
+        assert "not enough rights" in out.get_attribute("telegram.api_error")
+
+    def test_api_error_raises_when_configured(self):
+        from core import FlowFile, TaskError
+        task = self._task({
+            "service_id": "tg", "method": "banChatMember",
+            "raise_on_error": True,
+        })
+        svc = MagicMock()
+        svc.call_api.side_effect = RuntimeError("boom")
+        with patch.object(task, "get_service", return_value=svc):
+            with self.assertRaises(TaskError):
+                task.execute(FlowFile(content=b""))
+
+    def test_missing_method_raises(self):
+        from core import FlowFile, TaskError
+        task = self._task({"service_id": "tg", "method": ""})
+        with patch.object(task, "get_service", return_value=MagicMock()):
+            with self.assertRaises(TaskError):
+                task.execute(FlowFile(content=b""))
+
 
 # ── TelegramSendTask ────────────────────────────────────────────────
 

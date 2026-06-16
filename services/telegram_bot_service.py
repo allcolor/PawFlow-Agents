@@ -31,6 +31,28 @@ logger = logging.getLogger(__name__)
 _API_HOST = "api.telegram.org"
 _TELEGRAM_TEXT_LIMIT = 4096
 _TELEGRAM_SPLIT_LIMIT = 4000
+_DEFAULT_ALLOWED_UPDATES = ["message", "callback_query"]
+
+
+def _normalize_allowed_updates(value, default):
+    """Coerce an allowed_updates config value (csv string or list) to a list.
+
+    Empty/invalid values fall back to ``default``. Order is preserved and
+    duplicates are dropped so callers can union sets safely.
+    """
+    if value is None or value == "":
+        return list(default)
+    if isinstance(value, str):
+        items = [v.strip() for v in value.split(",")]
+    elif isinstance(value, (list, tuple, set)):
+        items = [str(v).strip() for v in value]
+    else:
+        return list(default)
+    out = []
+    for it in items:
+        if it and it not in out:
+            out.append(it)
+    return out or list(default)
 
 
 class TelegramBotService(BaseService):
@@ -54,6 +76,15 @@ class TelegramBotService(BaseService):
                 "default": 30,
                 "description": "Long-poll timeout in seconds",
             },
+            "allowed_updates": {
+                "type": "string",
+                "required": False,
+                "description": (
+                    "Comma-separated Telegram update types to receive "
+                    "(e.g. message,callback_query,my_chat_member,chat_member). "
+                    "Empty = message,callback_query."
+                ),
+            },
         }
 
     def __init__(self, config: Dict[str, Any]):
@@ -66,11 +97,24 @@ class TelegramBotService(BaseService):
             self._allowed_users = {
                 uid.strip() for uid in allowed.split(",") if uid.strip()
             }
+        self._allowed_updates = _normalize_allowed_updates(
+            self.config.get("allowed_updates"), _DEFAULT_ALLOWED_UPDATES)
         self._callbacks: Dict[str, Callable] = {}  # owner_id -> callback
         self._poll_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
         self._last_update_id = 0
         self._lock = threading.Lock()
+
+    def add_allowed_updates(self, updates) -> None:
+        """Union extra update types into the receive filter (e.g. from a task).
+
+        Lets a flow declare the update types it needs on the receiver task
+        without separately reconfiguring the shared service.
+        """
+        with self._lock:
+            for u in _normalize_allowed_updates(updates, []):
+                if u not in self._allowed_updates:
+                    self._allowed_updates.append(u)
 
     def _create_connection(self):
         if not self._bot_token:
@@ -121,10 +165,12 @@ class TelegramBotService(BaseService):
         logger.info("Telegram polling started")
         while not self._stop_event.is_set():
             try:
+                with self._lock:
+                    allowed = list(self._allowed_updates)
                 updates = self._api_call("getUpdates", {
                     "offset": self._last_update_id + 1,
                     "timeout": self._poll_timeout,
-                    "allowed_updates": json.dumps(["message", "callback_query"]),
+                    "allowed_updates": json.dumps(allowed),
                 })
                 if not updates:
                     continue
@@ -250,6 +296,16 @@ class TelegramBotService(BaseService):
 
     # ── API ────────────────────────────────────────────────────────
 
+    def call_api(self, method: str, params: Optional[Dict] = None) -> Any:
+        """Public passthrough to any Telegram Bot API method.
+
+        Generic by design: the core exposes the raw API (no ban/mute/kick
+        verbs baked in) so flows can call e.g. banChatMember, restrictChatMember,
+        deleteMessage, getChatMember, leaveChat with their own params.
+        """
+        self.ensure_connected()
+        return self._api_call(method, params)
+
     def _api_call(self, method: str, params: Optional[Dict] = None) -> Any:
         """Call Telegram Bot API."""
         ctx = ssl.create_default_context()
@@ -320,6 +376,18 @@ class TelegramBotPool:
         self._stop_event = threading.Event()
         self._store_lock = threading.Lock()
         self._poll_interval = 2  # seconds between full cycles
+        self._allowed_updates = list(_DEFAULT_ALLOWED_UPDATES)
+
+    def add_allowed_updates(self, updates) -> None:
+        """Union extra update types into the pool's receive filter.
+
+        The pool polls many bots in one loop, so the filter is the union of
+        what every registered receiver asks for.
+        """
+        with self._store_lock:
+            for u in _normalize_allowed_updates(updates, []):
+                if u not in self._allowed_updates:
+                    self._allowed_updates.append(u)
 
     @classmethod
     def instance(cls) -> "TelegramBotPool":
@@ -449,6 +517,11 @@ class TelegramBotPool:
         finally:
             conn.close()
 
+    def call_api(self, token: str, method: str,
+                 params: Optional[Dict] = None) -> Any:
+        """Public passthrough to any Telegram Bot API method for one bot token."""
+        return _api_call_static(token, method, params)
+
     def get_bot_token_for_user(self, user_id: str) -> Optional[str]:
         """Find the bot token owned by a specific user."""
         with self._store_lock:
@@ -488,10 +561,12 @@ class TelegramBotPool:
                         self._stop_event.set()
                         break
                 try:
+                    with self._store_lock:
+                        allowed = list(self._allowed_updates)
                     updates = _api_call_static(state.token, "getUpdates", {
                         "offset": state.offset + 1,
                         "timeout": 0,  # non-blocking
-                        "allowed_updates": json.dumps(["message", "callback_query"]),
+                        "allowed_updates": json.dumps(allowed),
                     })
                     if not updates:
                         continue

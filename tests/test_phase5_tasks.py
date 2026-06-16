@@ -205,8 +205,41 @@ class TestExecuteSQLTask:
             ExecuteSQLTask({"db_path": temp_db})
 
     def test_execute_sql_missing_db(self):
-        with pytest.raises(ValueError, match="db_path"):
-            ExecuteSQLTask({"sql_query": "SELECT 1"})
+        # No service_id and no db_path -> connection cannot be resolved at run.
+        from core import TaskError
+        task = ExecuteSQLTask({"sql_query": "SELECT 1"})
+        with pytest.raises(TaskError, match="service_id"):
+            task.execute(FlowFile(content=b""))
+
+    def test_execute_sql_via_pool_service(self, temp_db):
+        from services.db_connection_pool import DBConnectionPoolService
+        svc = DBConnectionPoolService({
+            "_service_id": "db", "db_type": "sqlite", "database": temp_db})
+        task = ExecuteSQLTask({
+            "sql_query": "SELECT name FROM users WHERE age > 25 ORDER BY name",
+            "service_id": "db"})
+        task.set_services({"db": svc})
+        out = task.execute(FlowFile(content=b""))[0]
+        rows = json.loads(out.get_content().decode())
+        assert [r["name"] for r in rows] == ["Alice", "Charlie"]
+        assert out.get_attribute("sql.row_count") == "2"
+
+    def test_execute_sql_insert_via_pool_commits(self, temp_db):
+        from services.db_connection_pool import DBConnectionPoolService
+        svc = DBConnectionPoolService({
+            "_service_id": "db", "db_type": "sqlite", "database": temp_db})
+        task = ExecuteSQLTask({
+            "sql_query": "INSERT INTO users (name, age, city) "
+                         "VALUES ('Eve', 40, 'Nice')",
+            "service_id": "db"})
+        task.set_services({"db": svc})
+        out = task.execute(FlowFile(content=b""))[0]
+        assert out.get_attribute("sql.rows_affected") == "1"
+        # Re-read through a fresh connection: the routed write was committed.
+        conn = sqlite3.connect(temp_db)
+        n = conn.execute("SELECT COUNT(*) FROM users WHERE name='Eve'").fetchone()[0]
+        conn.close()
+        assert n == 1
 
 
 class TestPutSQLTask:
@@ -275,6 +308,45 @@ class TestPutSQLTask:
     def test_put_sql_missing_statement(self, temp_db_with_table):
         with pytest.raises(ValueError, match="sql_statement"):
             PutSQLTask({"db_path": temp_db_with_table})
+
+    def test_put_sql_named_params_sqlite(self, temp_db_with_table):
+        task = PutSQLTask({
+            "sql_statement": "INSERT INTO products (name, price) "
+                             "VALUES (:name, :price)",
+            "params": '{"name": "${tg.name}", "price": 4.5}',
+            "db_path": temp_db_with_table,
+        })
+        ff = FlowFile(content=b"", attributes={"tg.name": "Gadget"})
+        out = task.execute(ff)[0]
+        assert out.get_attribute("sql.rows_affected") == "1"
+        conn = sqlite3.connect(temp_db_with_table)
+        row = conn.execute(
+            "SELECT name, price FROM products WHERE name='Gadget'").fetchone()
+        conn.close()
+        assert row == ("Gadget", 4.5)
+
+    def test_put_sql_named_params_are_injection_safe(self, temp_db_with_table):
+        # A value that looks like SQL must be bound, not interpreted.
+        evil = "x'); DROP TABLE products; --"
+        task = PutSQLTask({
+            "sql_statement": "INSERT INTO products (name, price) "
+                             "VALUES (:name, 1.0)",
+            "params": '{"name": "${tg.name}"}',
+            "db_path": temp_db_with_table,
+        })
+        task.execute(FlowFile(content=b"", attributes={"tg.name": evil}))
+        conn = sqlite3.connect(temp_db_with_table)
+        # Table still exists and stored the literal string.
+        row = conn.execute(
+            "SELECT name FROM products WHERE price=1.0").fetchone()
+        conn.close()
+        assert row[0] == evil
+
+    def test_named_param_pyformat_translation(self):
+        from tasks.data.execute_sql import _to_pyformat
+        assert _to_pyformat(
+            "UPDATE t SET a=:a WHERE id::text = :id"
+        ) == "UPDATE t SET a=%(a)s WHERE id::text = %(id)s"
 
 
 class TestInputPortTask:

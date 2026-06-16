@@ -190,6 +190,7 @@ def register_all_tasks():
 
     # Additional system tasks
     from tasks.system.generate_flowfile import GenerateFlowFileTask
+    from tasks.system.startup_trigger import StartupTriggerTask
     from tasks.system.install_bootstrap import InstallBootstrapTask
     from tasks.system.hash_content import HashContentTask
     from tasks.system.list_files import ListFilesTask
@@ -229,6 +230,7 @@ def register_all_tasks():
     # Telegram
     from tasks.io.telegram_receiver import TelegramReceiverTask
     from tasks.io.telegram_send import TelegramSendTask
+    from tasks.io.telegram_api import TelegramApiTask
     from tasks.io.telegram_agent_client import (
         TelegramAgentClientTask, TelegramConversationBridgeTask)
 

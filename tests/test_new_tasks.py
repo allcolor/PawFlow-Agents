@@ -22,6 +22,37 @@ from tasks.data.validate_json import ValidateJSONTask
 from tasks.data.convert_charset import ConvertCharsetTask
 
 
+class TestStartupTriggerTask(unittest.TestCase):
+
+    def _task(self, config=None):
+        from tasks.system.startup_trigger import StartupTriggerTask
+        return StartupTriggerTask(config or {})
+
+    def test_registered(self):
+        from tasks import register_all_tasks
+        register_all_tasks()
+        from core import TaskFactory
+        self.assertIsNotNone(TaskFactory.get("startupTrigger"))
+
+    def test_fires_once_then_quiet(self):
+        task = self._task({'content': 'init'})
+        self.assertTrue(task.has_pending_input())
+        results = task.execute(None)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].get_content(), b"init")
+        self.assertEqual(results[0].get_attribute('startup.trigger'), 'true')
+        self.assertTrue(results[0].get_attribute('startup.fired_at'))
+        # One-shot: no longer pending, and re-executing yields nothing.
+        self.assertFalse(task.has_pending_input())
+        self.assertEqual(task.execute(None), [])
+
+    def test_reset_does_not_rearm(self):
+        task = self._task()
+        task.execute(None)
+        task.reset()
+        self.assertFalse(task.has_pending_input())
+
+
 class TestGenerateFlowFileTask(unittest.TestCase):
 
     def test_generate_single(self):
@@ -322,6 +353,30 @@ class TestExecuteScriptTask(unittest.TestCase):
         results = task.execute(ff)
         self.assertEqual(results[0].get_content(), b"HELLO")
         self.assertEqual(results[0].get_attribute('done'), "Alice")
+
+    def test_get_service_returns_declared_service(self):
+        from tasks.system.execute_script import ExecuteScriptTask
+
+        class _FakeSvc:
+            def call_api(self, method, params=None):
+                return {"method": method, "params": params}
+
+        task = ExecuteScriptTask({
+            'script': "result = get_service('tg').call_api('getMe')['method']",
+        })
+        task.set_services({'tg': _FakeSvc()})
+        results = task.execute(FlowFile(content=b""))
+        self.assertEqual(results[0].get_content(), b"getMe")
+
+    def test_get_service_undeclared_raises(self):
+        from tasks.system.execute_script import ExecuteScriptTask
+        from core import TaskError
+        task = ExecuteScriptTask({
+            'script': "result = get_service('nope')",
+        })
+        task.set_services({'tg': object()})
+        with self.assertRaises(TaskError):
+            task.execute(FlowFile(content=b""))
 
 
 class TestFilterContentTask(unittest.TestCase):

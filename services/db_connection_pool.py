@@ -6,6 +6,7 @@ Supporte SQLite et PostgreSQL.
 """
 
 import sqlite3
+import threading
 from typing import Dict, Any, List, Optional, Tuple
 from core.base_service import BaseService
 from core import ServiceFactory, ServiceError
@@ -29,13 +30,19 @@ class DBConnectionPoolService(BaseService):
         self.db_type = self.config.get("db_type", "sqlite")
         self.database = self.config.get("database", "")
         self.max_connections = self.config.get("max_connections", 5)
+        # The base service holds a SINGLE shared connection; serialize access so
+        # concurrent flow tasks (e.g. a moderation dispatcher + cron sweeps) do
+        # not corrupt one psycopg2/sqlite connection used across threads.
+        self._db_lock = threading.RLock()
 
     def _create_connection(self) -> Any:
         if not self.database:
             raise ServiceError("Le paramètre 'database' est requis.")
 
         if self.db_type == "sqlite":
-            return sqlite3.connect(self.database)
+            # Access is serialized by self._db_lock, so sharing the single
+            # connection across worker threads is safe.
+            return sqlite3.connect(self.database, check_same_thread=False)
         elif self.db_type == "postgresql":
             if psycopg2 is None:
                 raise ServiceError("psycopg2 non installé. pip install psycopg2-binary")
@@ -56,25 +63,41 @@ class DBConnectionPoolService(BaseService):
     def get_connection(self) -> Any:
         return self._get_connection()
 
-    def execute_query(self, query: str, params: Optional[tuple] = None) -> List[Dict[str, Any]]:
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        try:
-            cursor.execute(query, params or ())
-            columns = [desc[0] for desc in cursor.description] if cursor.description else []
-            return [dict(zip(columns, row)) for row in cursor.fetchall()]
-        finally:
-            cursor.close()
+    def execute_query(self, query: str, params: Optional[Any] = None) -> List[Dict[str, Any]]:
+        with self._db_lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            try:
+                cursor.execute(query, params if params is not None else ())
+                columns = [desc[0] for desc in cursor.description] if cursor.description else []
+                return [dict(zip(columns, row)) for row in cursor.fetchall()]
+            except Exception:
+                # Leave the shared connection usable: a failed statement on
+                # Postgres aborts the transaction, breaking every later query.
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                raise
+            finally:
+                cursor.close()
 
-    def execute_update(self, query: str, params: Optional[tuple] = None) -> int:
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        try:
-            cursor.execute(query, params or ())
-            conn.commit()
-            return cursor.rowcount
-        finally:
-            cursor.close()
+    def execute_update(self, query: str, params: Optional[Any] = None) -> int:
+        with self._db_lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            try:
+                cursor.execute(query, params if params is not None else ())
+                conn.commit()
+                return cursor.rowcount
+            except Exception:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                raise
+            finally:
+                cursor.close()
 
     def get_parameter_schema(self) -> Dict[str, Any]:
         return {

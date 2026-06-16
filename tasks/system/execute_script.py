@@ -384,6 +384,17 @@ class ExecuteScriptTask(BaseTask):
             if _pawflow_api is not None:
                 local_ns['pawflow'] = _pawflow_api
 
+            # Inject the embedding helper as a host-built callable (bypasses the
+            # module whitelist like pawflow/fs). In-process only: a containerized
+            # script can't import core.embeddings, so embeddings would need a
+            # host-call facade there — out of scope here.
+            try:
+                from core.embeddings import build_memory_embed_fn as _bmef
+                local_ns['build_memory_embed_fn'] = _bmef
+            except Exception:
+                logging.getLogger(__name__).debug(
+                    "embed helper injection failed", exc_info=True)
+
             # Inject filesystem service — explicit config or auto-detect first relay
             fs_service_id = self.config.get('filesystem_service_id')
             fs_svc = None
@@ -473,7 +484,8 @@ class ExecuteScriptTask(BaseTask):
                     "pawflow (scope-bounded PawFlow API: create_conversation/"
                     "run_agent/submit_agent/set_tool_filters/get_extra/set_extra/"
                     "list_conversations/find_conversations/delete_conversation/"
-                    "cancel_agent). These work identically in-process and when "
+                    "cancel_agent), build_memory_embed_fn() (in-process embedding helper). "
+                    "These work identically in-process and when "
                     "containerize=true (then they proxy to the host; only "
                     "JSON-serializable args/results cross, and get_service is "
                     "bounded to services declared in this flow). "

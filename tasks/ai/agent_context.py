@@ -353,16 +353,14 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 registry, _user_id_for_svc, _parent_cid)
         _context_agent = _early_agent
 
-        # Per-agent override from conv_agents (max_depth = max iterations)
-        if conversation_id and _early_agent:
-            try:
-                from core.conv_agent_config import get_agent_config
-                _ac = get_agent_config(conversation_id, _early_agent)
-                _md = int(_ac.get("max_depth") or 0)
-                if _md > 0:
-                    max_iterations = _md
-            except Exception:
-                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+        # NOTE: conv_agents `max_depth` is the SUB-AGENT recursion depth only
+        # (enforced in agent_executor via min(max_depth, MAX_GLOBAL_DEPTH)). It
+        # must NOT touch `max_iterations` (the tool-use loop cap), which is the
+        # LLM service's prerogative, resolved via _cfg("max_iterations", 1000)
+        # above. Conflating the two silently throttled tool-using agents whose
+        # max_depth was lowered to forbid delegation (e.g. help bots with
+        # max_depth=1): the loop got 1 iteration and died after a single tool
+        # call. Keep them separate.
 
         # ── Resolve active agent + LLM service EARLY ──
         # Needed before message loading to know if we should skip compact

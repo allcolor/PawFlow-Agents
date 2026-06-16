@@ -471,3 +471,20 @@ class TestDelegateExcluded:
         assert "echo" in tool_names
         assert "delegate" not in tool_names
         executor.shutdown()
+
+
+def test_conv_agent_max_depth_does_not_clobber_max_iterations():
+    """Regression: conv_agents `max_depth` is sub-agent recursion depth only.
+
+    It must NOT be assigned into the tool-use loop cap `max_iterations` (a
+    per-LLM-service setting). Conflating them silently throttled tool-using
+    agents whose max_depth was lowered to forbid delegation (e.g. a help bot
+    with max_depth=1 died after one tool call). See agent_context.py.
+    """
+    from pathlib import Path
+
+    src = Path("tasks/ai/agent_context.py").read_text(encoding="utf-8")
+    # The old conflation explicitly assigned the loop cap from max_depth.
+    assert "max_iterations = _md" not in src
+    # max_iterations stays resolved from service/config, never from max_depth.
+    assert 'max_iterations = int(_cfg("max_iterations", 1000))' in src

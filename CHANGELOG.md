@@ -4,6 +4,23 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- Agent `max_depth` no longer throttles the tool-use loop. The per-conversation
+  `max_depth` setting is the **sub-agent (delegation) recursion depth** only —
+  enforced in the executor via `min(max_depth, MAX_GLOBAL_DEPTH)`. A stray
+  override in agent context resolution also assigned it to `max_iterations` (the
+  tool-use loop cap, a per-LLM-service setting), so any agent whose `max_depth`
+  was lowered to forbid delegation was silently capped to that many tool
+  iterations. With `max_depth=1` (e.g. the web/Telegram help bots: "no
+  sub-agents") the agent got a single iteration, spent it on the first
+  `get_tool_schema` call, then hit forced synthesis with no gathered data and
+  hallucinated an answer instead of fetching the docs. The two notions are now
+  fully decoupled: `max_iterations` is resolved from the LLM service/config
+  (default 1000) and is never derived from `max_depth`.
+
 ## [1.0.0-alpha.39] — 2026-06-15
 
 ### Fixed

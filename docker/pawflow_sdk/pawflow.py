@@ -278,12 +278,18 @@ class _PfpRuntime:
 
     def __init__(self):
         self._request = None
+        # Bind the protocol streams ONCE, at import time, before any wrapper
+        # redirects sys.stdout to capture user print() output. The host-call
+        # protocol (and the final result envelope) must always travel on the
+        # real stdout/stdin even while the user script's stdout is buffered.
+        self._out = sys.stdout
+        self._in = sys.stdin
 
     def input(self) -> dict:
         """Read and cache the invocation envelope from stdin."""
         if self._request is not None:
             return self._request
-        line = sys.stdin.readline()
+        line = self._in.readline()
         if not line:
             raise RuntimeError("missing PFP invocation envelope")
         request = json.loads(line)
@@ -355,17 +361,19 @@ class _PfpRuntime:
         return {"artifact": data}
 
     def _host_call(self, kind: str, target: str, *, operation: str = "",
-                   arguments=None):
+                   args=None, arguments=None):
         request = {
             "format": _PFP_HOST_CALL_FORMAT,
             "kind": kind,
             "target": target,
             "arguments": arguments or {},
         }
+        if args:
+            request["args"] = list(args)
         if operation:
             request["operation"] = operation
         self._emit(request)
-        line = sys.stdin.readline()
+        line = self._in.readline()
         if not line:
             raise RuntimeError("missing PFP host-call response")
         response = json.loads(line)
@@ -376,10 +384,99 @@ class _PfpRuntime:
         return response.get("result")
 
     def _emit(self, envelope: dict) -> None:
-        print(json.dumps(envelope, ensure_ascii=False), flush=True)
+        self._out.write(json.dumps(envelope, ensure_ascii=False) + "\n")
+        self._out.flush()
+
+
+# ── executeScript parity proxies ─────────────────────────────────────
+# These give a containerized executeScript script the SAME names and call
+# style as the in-process path: get_service(id), pawflow, flowfile. Each call
+# is forwarded to the host over the pfp host-call protocol (stdin/stdout) and
+# resolved there against THIS flow's declared services / scope-bounded API /
+# live FlowFile. Only JSON-serializable arguments and results cross.
+
+# Bytes cross the JSON boundary base64-encoded under this marker so binary
+# FlowFile content round-trips losslessly (drop-in with the in-process path).
+_BYTES_KEY = "__bytes_b64__"
+
+
+class _ServiceProxy:
+    """Proxy for a host-side flow service reached via get_service(id)."""
+
+    def __init__(self, service_id: str):
+        self.__dict__["_service_id"] = service_id
+
+    def __getattr__(self, operation: str):
+        # Refuse only dunders: they are never real service operations and would
+        # otherwise let copy/pickle/repr machinery trigger host-calls. Single
+        # underscore stays allowed for true parity with the raw object.
+        if operation.startswith("__"):
+            raise AttributeError(operation)
+
+        def _call(*args, **arguments):
+            return pfp._host_call(
+                "service", self._service_id,
+                operation=operation, args=args, arguments=arguments)
+        return _call
+
+
+def get_service(service_id: str) -> _ServiceProxy:
+    """Return a proxy for a service declared in this flow (host-resolved)."""
+    return _ServiceProxy(str(service_id))
+
+
+class _PawflowProxy:
+    """Proxy for the scope-bounded host ``pawflow`` API facade."""
+
+    def __getattr__(self, operation: str):
+        if operation.startswith("__"):
+            raise AttributeError(operation)
+
+        def _call(*args, **arguments):
+            return pfp._host_call(
+                "pawflow_api", "",
+                operation=operation, args=args, arguments=arguments)
+        return _call
+
+
+class _FlowFileProxy:
+    """Proxy for the live host FlowFile; mutations apply on the host.
+
+    Mirrors core.FlowFile: get_content() returns bytes, set_content() preserves
+    bytes vs str, get_attribute(key, default=None) returns Optional[str].
+    """
+
+    def get_content(self) -> bytes:
+        data = pfp._host_call("flowfile", "", operation="get_content")
+        if isinstance(data, dict) and _BYTES_KEY in data:
+            return base64.b64decode(data[_BYTES_KEY])
+        if isinstance(data, str):
+            return data.encode("utf-8")
+        return b"" if data is None else bytes(data)
+
+    def set_content(self, content) -> None:
+        if isinstance(content, (bytes, bytearray)):
+            payload = {_BYTES_KEY: base64.b64encode(bytes(content)).decode("ascii")}
+        else:
+            payload = content
+        pfp._host_call("flowfile", "", operation="set_content",
+                       arguments={"content": payload})
+
+    def get_attribute(self, key, default=None):
+        return pfp._host_call("flowfile", "", operation="get_attribute",
+                              arguments={"key": str(key), "default": default})
+
+    def set_attribute(self, key, value) -> None:
+        pfp._host_call("flowfile", "", operation="set_attribute",
+                       arguments={"key": str(key), "value": value})
+
+    def get_attributes(self) -> dict:
+        return pfp._host_call("flowfile", "", operation="get_attributes") or {}
 
 
 # Module-level singletons
 tools = _Tools()
 fs = _Filesystem()
 pfp = _PfpRuntime()
+script_pawflow = _PawflowProxy()
+script_flowfile = _FlowFileProxy()

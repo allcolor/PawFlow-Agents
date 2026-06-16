@@ -547,7 +547,18 @@ class InteractiveClaudeCodePool:
             # Let the interrupted turn's running marker leave the pane so
             # the verifier doesn't mistake the OLD turn for the new one.
             time.sleep(settle)
-        self._verify_submitted(state, text)
+        # _verify_submitted polls the tmux pane for up to
+        # PAWFLOW_CCI_SUBMIT_VERIFY_SECONDS (default 6s) and only re-presses
+        # Enter if the paste was swallowed. It is best-effort and its result
+        # is unused, yet send_interrupt runs on the HTTP request thread
+        # (POST /api/agent -> send_user_message -> send_interrupt), so running
+        # it inline made every preempt block ~6-8s before the ack returned.
+        # The Escape+Enter above already submitted in the normal case; run the
+        # verification/retry in the background so the request returns at once.
+        threading.Thread(
+            target=self._verify_submitted, args=(state, text),
+            name="cci-verify-submit", daemon=True,
+        ).start()
         return True
 
     def force_stop(self, state: InteractiveContainer) -> bool:

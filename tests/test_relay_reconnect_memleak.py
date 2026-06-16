@@ -85,7 +85,13 @@ def test_request_retries_transient_relay_disconnect(monkeypatch):
         return "ok"
 
     monkeypatch.setattr(svc, "_request_once", _request_once)
-    monkeypatch.setattr(fs_mod.time, "sleep", lambda delay: sleeps.append(delay))
+    # fs_mod.time is the shared global time module, so the patch is process-wide;
+    # only record sleeps from this test's thread to avoid capturing stray
+    # background-thread sleeps (e.g. bg bucket builder) that flake the assert.
+    _tid = threading.get_ident()
+    monkeypatch.setattr(
+        fs_mod.time, "sleep",
+        lambda delay: sleeps.append(delay) if threading.get_ident() == _tid else None)
 
     assert svc._request("read_file", "README.md") == "ok"
     assert calls["count"] == 2
@@ -125,7 +131,12 @@ def test_request_marks_relay_disconnect_after_retry_exhaustion(monkeypatch):
         raise Exception("Relay disconnected")
 
     monkeypatch.setattr(svc, "_request_once", _request_once)
-    monkeypatch.setattr(fs_mod.time, "sleep", lambda delay: sleeps.append(delay))
+    # Process-wide patch (shared time module): record only this thread's sleeps
+    # so a concurrent background-thread time.sleep can't pollute the assert.
+    _tid = threading.get_ident()
+    monkeypatch.setattr(
+        fs_mod.time, "sleep",
+        lambda delay: sleeps.append(delay) if threading.get_ident() == _tid else None)
 
     with pytest.raises(Exception, match="Relay transport retry attempts exhausted"):
         svc._request("read_file", "README.md")

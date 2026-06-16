@@ -4,6 +4,14 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.0-alpha.43] — 2026-06-16
+
+### Fixed
+
+- `pyproject.toml` version now tracks the release tag again. It had drifted to
+  `1.0.0a33` while tags advanced; release commits now bump it alongside the
+  CHANGELOG.
+
 ## [1.0.0-alpha.42] — 2026-06-16
 
 ### Fixed

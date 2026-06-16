@@ -4,6 +4,33 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.0-alpha.45] — 2026-06-16
+
+### Added
+
+- Containerized `executeScript` now has full parity with the in-process path:
+  `get_service(id)`, `pawflow`, and `flowfile` work identically, proxied to the
+  host over the pfp host-call protocol (the service stays on the host; the
+  container holds no secrets). Bytes round-trip losslessly; an explicit
+  `docker_timeout` cancels a blocking `pawflow.run_agent`.
+- `dbConnectionPool` is now a real connection pool: up to `max_connections`
+  live connections, one per concurrent caller, with rollback-on-error and
+  eviction of broken connections (SQLite `:memory:` pinned to one connection).
+
+### Fixed
+
+- Tool-call argument decoding is unified on
+  `core.tool_json.parse_tool_arguments`. `tools/mcp_bridge.py` and
+  `services/tool_relay_service.py` no longer carry divergent inline copies, so
+  an arguments envelope decodes identically on every route — fixing intermittent
+  "failed to decode arguments" and leaked `arguments_json` errors. The canonical
+  module is vendored next to the bridge (`/opt/pawflow/tool_json.py`) in every
+  provider container.
+- The `telegram/pink_skin` moderation flow could not start: the script sandbox
+  blocked `from core.embeddings import ...`. The embedding helper
+  (`build_memory_embed_fn`) is now injected into `executeScript` in-process, and
+  the blacklist regex is bounded to mitigate owner-supplied ReDoS.
+
 ## [1.0.0-alpha.44] — 2026-06-16
 
 ### Added

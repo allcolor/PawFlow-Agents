@@ -12,8 +12,11 @@ import pytest
 from services.db_connection_pool import DBConnectionPoolService
 
 
-def _svc():
-    s = DBConnectionPoolService({"db_type": "sqlite", "database": ":memory:"})
+def _svc(database=":memory:", max_connections=5):
+    s = DBConnectionPoolService({
+        "db_type": "sqlite", "database": database,
+        "max_connections": max_connections,
+    })
     s.connect()
     return s
 
@@ -37,8 +40,10 @@ def test_named_params_sqlite():
     assert rows == [{"v": "x"}]
 
 
-def test_concurrent_access_serialized():
-    s = _svc()
+def test_concurrent_pool_access(tmp_path):
+    # Real multi-connection pool needs a SHARED database -> file-backed SQLite
+    # (':memory:' would give each pooled connection a separate empty DB).
+    s = _svc(str(tmp_path / "pool.db"), max_connections=5)
     s.execute_update("CREATE TABLE t (id INTEGER PRIMARY KEY, v INTEGER)")
     errors = []
 

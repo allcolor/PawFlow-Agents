@@ -19,7 +19,7 @@ import uuid
 from core.agent_prompt_policy import append_cli_mcp_system_prompt
 from core.claude_code_interactive_pool import InteractiveClaudeCodePool
 from core.llm_providers.claude_code_session import ClaudeCodeSessionMixin
-from core.tool_json import autoclose_truncated_json
+from core.tool_json import parse_tool_arguments, tool_argument_parse_error
 from tools.cc_interactive_filters import (
     is_hidden_native_tool, normalize_observed_tool, observed_tool_origin)
 
@@ -99,17 +99,9 @@ def _loads_tolerant(raw: str) -> dict:
     the previous `try/except -> {}`. Always returns a dict. Display-only: the
     real Claude Code process executes from its own complete stream regardless.
     """
-    try:
-        parsed = json.loads(raw)
-    except Exception:
-        parsed = None
-        try:
-            repaired = autoclose_truncated_json(raw)
-            if repaired != raw:
-                parsed = json.loads(repaired)
-        except Exception:
-            parsed = None
-    return parsed if isinstance(parsed, dict) else {}
+    parsed = parse_tool_arguments(raw, tool_name="cci-display", provider="cci")
+    return parsed if (isinstance(parsed, dict)
+                      and not tool_argument_parse_error(parsed)) else {}
 
 
 class _CCITurnCoordinator:

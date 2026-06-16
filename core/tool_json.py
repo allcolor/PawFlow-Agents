@@ -167,7 +167,11 @@ def parse_tool_arguments(raw: Any, *, tool_name: str = "", provider: str = "",
                 or "Expecting value" in msg
                 or "Unterminated string" in msg
             )
-            at_end = getattr(exc, "pos", -1) >= len(value) - 4
+            # A truncated value: the error is near EOF, OR it is an unterminated
+            # string (Python reports its position at the string's opening quote,
+            # which can be far from EOF, yet it is still an EOF truncation).
+            at_end = (getattr(exc, "pos", -1) >= len(value) - 4
+                      or "Unterminated string" in msg)
             if trunc_like and at_end:
                 patched = autoclose_truncated_json(value)
                 if patched != value:

@@ -83,15 +83,13 @@ class AgentToolExecMixin:
                     nested_args = tool_args.get("input")
                 if nested_args is None:
                     nested_args = {}
-                for _ in range(3):
-                    if isinstance(nested_args, str):
-                        try:
-                            nested_args = json.loads(nested_args)
-                        except (json.JSONDecodeError, TypeError):
-                            nested_args = {}
-                            break
-                    else:
-                        break
+                if isinstance(nested_args, str):
+                    from core.tool_json import (
+                        parse_tool_arguments, tool_argument_parse_error)
+                    nested_args = parse_tool_arguments(
+                        nested_args, tool_name=nested_name, provider="use_tool")
+                    if tool_argument_parse_error(nested_args):
+                        nested_args = {}
                 if not nested_name:
                     break
                 tool_name = nested_name

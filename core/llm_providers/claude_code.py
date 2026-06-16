@@ -1277,33 +1277,18 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                 _t = data.get("tool", "")
                 if _t in ("mcp__pawflow__use_tool", "use_tool"):
                     try:
-                        from core.llm_client import unwrap_mcp_tool
+                        from core.llm_client import unwrap_mcp_tool, _decode_str_arg
                         _raw_args = data.get("arguments", {}) or {}
-                        # Defensive parse: CC can forward arguments as a JSON
-                        # string. unwrap_mcp_tool handles that, but only if the
-                        # outer value is a dict-shaped str. Try once more here.
-                        if isinstance(_raw_args, str):
-                            try:
-                                _raw_args = json.loads(_raw_args)
-                            except Exception as _parse_err:
-                                logger.debug(
-                                    "[claude-code] _pub outer args not JSON, "
-                                    "keeping as string: %s", _parse_err)
+                        # Canonical decode (autoclose + repair), identical to the
+                        # execution path; keeps the original on genuine failure.
+                        _raw_args = _decode_str_arg(_raw_args)
                         _u_name, _u_args = unwrap_mcp_tool(_t, _raw_args)
                         # If unwrap didn't resolve (still the wrapper name),
                         # fall back to reading tool_name from the raw args
                         # so the UI never shows `use_tool(...)`.
                         if _u_name in ("mcp__pawflow__use_tool", "use_tool") and isinstance(_raw_args, dict):
                             _u_name = _raw_args.get("tool_name", _t) or _t
-                            _inner = _raw_args.get("arguments", _raw_args)
-                            if isinstance(_inner, str):
-                                try:
-                                    _inner = json.loads(_inner)
-                                except Exception as _inner_err:
-                                    logger.debug(
-                                        "[claude-code] _pub inner args not "
-                                        "JSON, keeping as string: %s",
-                                        _inner_err)
+                            _inner = _decode_str_arg(_raw_args.get("arguments", _raw_args))
                             _u_args = _inner if isinstance(_inner, dict) else _raw_args
                         data["tool"] = _u_name
                         if event_type == "tool_call":

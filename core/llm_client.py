@@ -172,6 +172,24 @@ def has_complete_mcp_tool_call(name: str, arguments: dict) -> bool:
     return True
 
 
+def _decode_str_arg(value):
+    """Decode a possibly-JSON-string tool argument via the canonical parser.
+
+    Uses core.tool_json.parse_tool_arguments (autoclose + escape repair) so the
+    display/persistence unwrap recovers arguments with the SAME logic as the
+    execution path -- identical across every provider. Non-strings pass through;
+    on a genuine decode failure the original value is kept (graceful degradation,
+    exactly like the previous json.loads/except behavior).
+    """
+    if not isinstance(value, str):
+        return value
+    from core.tool_json import parse_tool_arguments, tool_argument_parse_error
+    decoded = parse_tool_arguments(value, tool_name="use_tool", provider="unwrap")
+    if isinstance(decoded, dict) and not tool_argument_parse_error(decoded):
+        return decoded
+    return value
+
+
 def unwrap_mcp_tool(name: str, arguments: dict) -> tuple:
     """Unwrap wrapper tool names to the inner tool name + arguments.
 
@@ -186,11 +204,7 @@ def unwrap_mcp_tool(name: str, arguments: dict) -> tuple:
     Also resolves tool aliases (shell → bash, etc.) so display is correct.
     """
     if name == "call_mcp_tool":
-        if isinstance(arguments, str):
-            try:
-                arguments = json.loads(arguments)
-            except (ValueError, TypeError):
-                pass
+        arguments = _decode_str_arg(arguments)
         if isinstance(arguments, dict):
             payload = arguments
             tool_name = str(
@@ -201,23 +215,14 @@ def unwrap_mcp_tool(name: str, arguments: dict) -> tuple:
                 payload.get("Arguments") if "Arguments" in payload
                 else payload.get("arguments", payload.get("Parameters", payload.get("parameters", {})))
             )
-            if isinstance(inner, str):
-                try:
-                    inner = json.loads(inner)
-                except (ValueError, TypeError):
-                    pass
-            return tool_name, inner
+            return tool_name, _decode_str_arg(inner)
     if isinstance(name, str) and name.startswith("pawflow/"):
         name = name.split("/", 1)[1]
         if name not in _MCP_USE_TOOL_WRAPPERS and name not in _MCP_SCHEMA_WRAPPERS:
             return _TOOL_ALIASES.get(name, name), arguments
     if name in _MCP_USE_TOOL_WRAPPERS:
         # Arguments may arrive as a JSON string (some LLMs serialize it).
-        if isinstance(arguments, str):
-            try:
-                arguments = json.loads(arguments)
-            except (ValueError, TypeError):
-                pass
+        arguments = _decode_str_arg(arguments)
         if isinstance(arguments, dict):
             payload = arguments
             if ("tool_name" not in payload and isinstance(payload.get("parameters"), dict)):
@@ -228,21 +233,11 @@ def unwrap_mcp_tool(name: str, arguments: dict) -> tuple:
                 "arguments_json",
                 payload.get("arguments", payload.get("parameters", payload)),
             )
-            if isinstance(inner, str):
-                try:
-                    inner = json.loads(inner)
-                except (ValueError, TypeError):
-                    pass
-            return tool_name, inner
+            return tool_name, _decode_str_arg(inner)
     if isinstance(arguments, dict) and arguments.get("tool_name") == name:
         inner = arguments.get("arguments_json")
         if inner is not None:
-            if isinstance(inner, str):
-                try:
-                    inner = json.loads(inner)
-                except (ValueError, TypeError):
-                    pass
-            return _TOOL_ALIASES.get(name, name), inner
+            return _TOOL_ALIASES.get(name, name), _decode_str_arg(inner)
     if name in _MCP_SCHEMA_WRAPPERS:
         return "get_tool_schema", arguments
     return name, arguments

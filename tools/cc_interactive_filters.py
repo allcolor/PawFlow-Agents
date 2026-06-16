@@ -33,17 +33,12 @@ def _loads_tolerant_str(raw: str) -> dict:
     copies degrading gracefully to {} when core is not importable.
     """
     try:
-        from core.tool_json import autoclose_truncated_json
+        from core.tool_json import parse_tool_arguments, tool_argument_parse_error
     except Exception:
         return {}
-    try:
-        repaired = autoclose_truncated_json(raw)
-        if repaired != raw:
-            parsed = json.loads(repaired)
-            if isinstance(parsed, dict):
-                return parsed
-    except Exception:
-        return {}
+    parsed = parse_tool_arguments(raw, tool_name="cci-display", provider="cci")
+    if isinstance(parsed, dict) and not tool_argument_parse_error(parsed):
+        return parsed
     return {}
 
 

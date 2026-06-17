@@ -14,7 +14,41 @@ from datetime import datetime
 import uuid
 import io
 
-__version__ = "1.0.0a10"
+def _resolve_version() -> str:
+    """Single source of truth for the version: pyproject.toml.
+
+    Installed (wheel/docker): read the package metadata. Source checkout (CI,
+    relay /workspace): parse pyproject.toml at the repo root. Never hardcode the
+    version here -- it only ever needs bumping in pyproject.toml.
+    """
+    # Source checkout (CI, relay /workspace): pyproject.toml is authoritative
+    # and matches what you just edited. Prefer it when present.
+    try:
+        import re as _re
+        from pathlib import Path as _Path
+        _pp = _Path(__file__).resolve().parents[1] / "pyproject.toml"
+        if _pp.is_file():
+            _m = _re.search(
+                r'^version\s*=\s*"([^"]+)"',
+                _pp.read_text(encoding="utf-8"), _re.M)
+            if _m:
+                return _m.group(1)
+    except Exception:
+        pass
+    # Installed wheel/docker: no pyproject alongside the package -> use the
+    # metadata baked at build time (which came from that same pyproject).
+    try:
+        from importlib.metadata import version as _v, PackageNotFoundError
+        try:
+            return _v("pawflow")
+        except PackageNotFoundError:
+            pass
+    except Exception:
+        pass
+    return "0.0.0"
+
+
+__version__ = _resolve_version()
 __author__ = "PawFlow Team"
 
 

@@ -96,25 +96,23 @@ class TestTelegramBotService(unittest.TestCase):
         svc.unregister_handler("owner1")
         assert "owner1" not in svc._callbacks
 
-    def test_send_message_splits_long(self):
+    @patch("services.telegram_bot_service._send_api_call")
+    def test_send_message_splits_long(self, send_api):
         """Messages > 4096 chars should be split."""
         from services.telegram_bot_service import TelegramBotService
         svc = TelegramBotService({"bot_token": "test"})
-        call_count = 0
         calls = []
 
-        def mock_api_call(method, params=None):
-            nonlocal call_count
-            call_count += 1
+        def mock_api_call(token, method, params=None):
             calls.append(dict(params or {}))
-            return {"message_id": call_count}
+            return {"message_id": len(calls)}
 
-        svc._api_call = mock_api_call
+        send_api.side_effect = mock_api_call
         result = svc.send_message(
             "123", "x" * 8200, parse_mode="Markdown", reply_to=42,
             reply_markup={"inline_keyboard": [[{"text": "OK", "callback_data": "ok"}]]})
 
-        assert call_count == 3
+        assert len(calls) == 3
         assert result == {"message_id": 3}
         assert all(len(call["text"]) <= 4096 for call in calls)
         assert all(call["parse_mode"] == "Markdown" for call in calls)
@@ -123,23 +121,24 @@ class TestTelegramBotService(unittest.TestCase):
         assert "reply_markup" not in calls[0]
         assert "reply_markup" in calls[-1]
 
-    def test_send_message_keeps_parse_mode_for_short_text(self):
+    @patch("services.telegram_bot_service._send_api_call")
+    def test_send_message_keeps_parse_mode_for_short_text(self, send_api):
         from services.telegram_bot_service import TelegramBotService
         svc = TelegramBotService({"bot_token": "test"})
         calls = []
 
-        def mock_api_call(method, params=None):
+        def mock_api_call(token, method, params=None):
             calls.append(dict(params or {}))
             return {"message_id": 1}
 
-        svc._api_call = mock_api_call
+        send_api.side_effect = mock_api_call
         svc.send_message("123", "**hello**", parse_mode="Markdown")
 
         assert calls == [{
             "chat_id": "123", "text": "**hello**", "parse_mode": "Markdown",
         }]
 
-    @patch("services.telegram_bot_service._api_call_static")
+    @patch("services.telegram_bot_service._send_api_call")
     def test_bot_pool_send_message_splits_long(self, api_call):
         from services.telegram_bot_service import TelegramBotPool
         api_call.side_effect = [{"message_id": 1}, {"message_id": 2}]
@@ -2354,4 +2353,90 @@ def test_telegram_bridge_thinking_merge_dedups_cumulative_snapshots():
     block = [s for s in sends if "thinking" in s][0]
     assert block.count("Step one") == 1
     assert "Step two" in block
+
+
+# ── Persistent send transport (regression: Telegram lag/burst) ─────
+
+class _FakeResp:
+    def __init__(self, status, body):
+        self.status = status
+        self._b = body.encode("utf-8")
+
+    def read(self):
+        return self._b
+
+
+def _patch_send_conn(script):
+    """Return (state, FakeConn). script items: ('resp', status, body) or
+    ('raise', exc). FakeConn pops one item per request()."""
+    from collections import deque
+    q = deque(script)
+    state = {"created": 0, "closed": 0}
+
+    class FakeConn:
+        def __init__(self, *a, **k):
+            state["created"] += 1
+            self._pending = None
+
+        def request(self, *a, **k):
+            item = q.popleft()
+            if item[0] == "raise":
+                raise item[1]
+            self._pending = item
+
+        def getresponse(self):
+            return _FakeResp(self._pending[1], self._pending[2])
+
+        def close(self):
+            state["closed"] += 1
+
+    return state, FakeConn
+
+
+class TestTelegramPersistentSend(unittest.TestCase):
+    def setUp(self):
+        import services.telegram_bot_service as tg
+        self.tg = tg
+        tg._reset_send_channels()
+
+    def tearDown(self):
+        self.tg._reset_send_channels()
+
+    def test_keep_alive_reuses_one_connection(self):
+        ok = '{"ok": true, "result": {"message_id": 1}}'
+        state, FakeConn = _patch_send_conn(
+            [("resp", 200, ok), ("resp", 200, ok), ("resp", 200, ok)])
+        with patch.object(self.tg.http.client, "HTTPSConnection", FakeConn):
+            for _ in range(3):
+                self.tg._send_api_call("tok", "sendMessage", {"chat_id": "1"})
+        # One TLS connection reused for all three sends.
+        self.assertEqual(state["created"], 1)
+
+    def test_429_retry_after_then_success(self):
+        state, FakeConn = _patch_send_conn([
+            ("resp", 429, '{"ok": false, "parameters": {"retry_after": 2}}'),
+            ("resp", 200, '{"ok": true, "result": {"message_id": 5}}'),
+        ])
+        slept = []
+        with patch.object(self.tg.http.client, "HTTPSConnection", FakeConn), \
+                patch.object(self.tg.time, "sleep", slept.append):
+            result = self.tg._send_api_call("tok", "sendMessage", {"chat_id": "1"})
+        self.assertEqual(result, {"message_id": 5})
+        # retry_after honoured. Membership (not equality): the patched global
+        # time.sleep can also catch unrelated background-thread sleeps when the
+        # whole suite runs.
+        self.assertIn(2.0, slept)
+        # 429 keeps the connection (response fully read) — no reconnect.
+        self.assertEqual(state["created"], 1)
+
+    def test_broken_socket_reconnects(self):
+        state, FakeConn = _patch_send_conn([
+            ("raise", OSError("broken pipe")),
+            ("resp", 200, '{"ok": true, "result": {"message_id": 7}}'),
+        ])
+        with patch.object(self.tg.http.client, "HTTPSConnection", FakeConn):
+            result = self.tg._send_api_call("tok", "sendMessage", {"chat_id": "1"})
+        self.assertEqual(result, {"message_id": 7})
+        # Reconnected after the broken socket was dropped.
+        self.assertEqual(state["created"], 2)
 

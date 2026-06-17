@@ -19,9 +19,7 @@ import re
 import ssl
 import threading
 import time
-import queue
 from typing import Any, Callable, Dict, List, Optional
-from urllib.parse import urlencode
 
 from core import ServiceFactory
 from core.base_service import BaseService
@@ -222,7 +220,7 @@ class TelegramBotService(BaseService):
                 params["reply_to_message_id"] = reply_to
             if reply_markup and idx == len(chunks) - 1:
                 params["reply_markup"] = json.dumps(reply_markup)
-            result = self._api_call("sendMessage", params)
+            result = _send_api_call(self._bot_token, "sendMessage", params)
         return result or {}
 
     def send_document(self, chat_id: str, file_bytes: bytes,
@@ -288,7 +286,7 @@ class TelegramBotService(BaseService):
     def send_typing(self, chat_id: str):
         """Send typing indicator."""
         try:
-            self._api_call("sendChatAction", {
+            _send_api_call(self._bot_token, "sendChatAction", {
                 "chat_id": chat_id, "action": "typing",
             })
         except Exception:
@@ -463,7 +461,7 @@ class TelegramBotPool:
                 params["parse_mode"] = parse_mode
             if reply_markup and idx == len(chunks) - 1:
                 params["reply_markup"] = json.dumps(reply_markup)
-            result = _api_call_static(token, "sendMessage", params)
+            result = _send_api_call(token, "sendMessage", params)
         return result or {}
 
     def send_document(self, token: str, chat_id: str, file_bytes: bytes,
@@ -630,6 +628,123 @@ def _api_call_static(token: str, method: str,
         return data.get("result")
     finally:
         conn.close()
+
+
+# ── Persistent send transport ─────────────────────────────────────
+#
+# Message sends run on the ConversationEventBus per-conversation listener lane
+# (one in-flight drain per conversation). Opening a fresh TLS connection per
+# message added a full handshake (~200-400ms) to every send; under a burst the
+# lane could not drain fast enough and Telegram fell minutes behind the webchat
+# (which is delivered directly via SSE). A persistent keep-alive connection per
+# bot token removes the per-message handshake. It is kept SEPARATE from the
+# long-poll getUpdates connection so a 30s long-poll never blocks a send. Each
+# token serializes its own sends under a lock (Telegram rate-limits per bot
+# anyway) and 429 responses are honoured with retry_after backoff.
+
+_SEND_MAX_RETRIES = 3
+_SEND_MAX_BACKOFF = 30.0
+
+
+class _SendChannel:
+    __slots__ = ("lock", "conn")
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.conn = None
+
+
+_SEND_CHANNELS: Dict[str, _SendChannel] = {}
+_SEND_CHANNELS_LOCK = threading.Lock()
+
+
+def _send_channel(token: str) -> _SendChannel:
+    with _SEND_CHANNELS_LOCK:
+        ch = _SEND_CHANNELS.get(token)
+        if ch is None:
+            ch = _SendChannel()
+            _SEND_CHANNELS[token] = ch
+        return ch
+
+
+def _close_send_conn(ch: _SendChannel) -> None:
+    try:
+        if ch.conn is not None:
+            ch.conn.close()
+    except Exception:
+        pass
+    ch.conn = None
+
+
+def _parse_retry_after(raw: str) -> float:
+    try:
+        data = json.loads(raw)
+        ra = (data.get("parameters") or {}).get("retry_after")
+        if ra is not None:
+            return float(ra)
+    except Exception:
+        pass
+    return 1.0
+
+
+def _send_api_call(token: str, method: str,
+                   params: Optional[Dict] = None, timeout: int = 40) -> Any:
+    """Telegram API call over a persistent per-token keep-alive connection.
+
+    Reconnects on a stale/broken connection and honours 429 retry_after. Used
+    for message sends (NOT long-poll getUpdates, which keeps its own short-lived
+    connection so it never blocks a send).
+    """
+    ch = _send_channel(token)
+    body = json.dumps(params).encode("utf-8") if params else None
+    headers = {"Content-Type": "application/json"} if params else {}
+    path = f"/bot{token}/{method}"
+    verb = "POST" if params else "GET"
+    with ch.lock:
+        attempt = 0
+        while True:
+            attempt += 1
+            try:
+                if ch.conn is None:
+                    ch.conn = http.client.HTTPSConnection(
+                        _API_HOST, timeout=timeout,
+                        context=ssl.create_default_context())
+                ch.conn.request(verb, path, body=body, headers=headers)
+                resp = ch.conn.getresponse()
+                raw = resp.read().decode("utf-8")
+                status = resp.status
+            except (http.client.HTTPException, OSError) as e:
+                # Broken/stale keep-alive socket: drop it and reconnect.
+                _close_send_conn(ch)
+                if attempt <= _SEND_MAX_RETRIES:
+                    continue
+                raise RuntimeError(
+                    f"Telegram API {method} connection failed: {e}")
+            if status == 429:
+                retry_after = _parse_retry_after(raw)
+                if attempt <= _SEND_MAX_RETRIES:
+                    time.sleep(min(retry_after, _SEND_MAX_BACKOFF))
+                    continue
+                raise RuntimeError(
+                    f"Telegram API {method} rate-limited (429)")
+            if status != 200:
+                raise RuntimeError(
+                    f"Telegram API {method} returned {status}: {raw[:200]}")
+            data = json.loads(raw)
+            if not data.get("ok"):
+                raise RuntimeError(
+                    f"Telegram API error: {data.get('description', 'unknown')}")
+            return data.get("result")
+
+
+def _reset_send_channels() -> None:
+    """Close all persistent send connections (test teardown / shutdown)."""
+    with _SEND_CHANNELS_LOCK:
+        channels = list(_SEND_CHANNELS.values())
+        _SEND_CHANNELS.clear()
+    for ch in channels:
+        with ch.lock:
+            _close_send_conn(ch)
 
 
 def _split_telegram_text(text: str, parse_mode: Optional[str] = None) -> List[str]:

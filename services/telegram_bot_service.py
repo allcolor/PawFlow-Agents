@@ -672,7 +672,7 @@ def _close_send_conn(ch: _SendChannel) -> None:
         if ch.conn is not None:
             ch.conn.close()
     except Exception:
-        pass
+        logger.debug("telegram: error closing send connection", exc_info=True)
     ch.conn = None
 
 
@@ -683,7 +683,7 @@ def _parse_retry_after(raw: str) -> float:
         if ra is not None:
             return float(ra)
     except Exception:
-        pass
+        logger.debug("telegram: could not parse retry_after", exc_info=True)
     return 1.0
 
 

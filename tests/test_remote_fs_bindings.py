@@ -123,7 +123,7 @@ def test_remote_mount_manager_serializes_reconcile():
 
 
 def test_resource_sidebar_renders_rclone_filesystem_bindings():
-    src = Path("tasks/io/chat_ui/resources.js").read_text(encoding="utf-8")
+    src = "".join(p.read_text(encoding="utf-8") for p in sorted(Path("tasks/io/chat_ui").glob("resources*.js")))
 
     assert "_remote_fs" in src
     assert "remote_filesystems" in src
@@ -227,7 +227,7 @@ def test_rclone_oauth_credentials_expose_login_action_and_sensitive_config():
 
 
 def test_chat_ui_routes_rclone_oauth_through_vnc_dialog():
-    src = Path("tasks/io/chat_ui/resources.js").read_text(encoding="utf-8")
+    src = "".join(p.read_text(encoding="utf-8") for p in sorted(Path("tasks/io/chat_ui").glob("resources*.js")))
     sse = Path("tasks/io/chat_ui/sse.js").read_text(encoding="utf-8")
 
     assert "svc-install-login-btn" in src

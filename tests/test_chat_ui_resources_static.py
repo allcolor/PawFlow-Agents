@@ -25,7 +25,7 @@ def test_modal_overlays_do_not_close_from_background_clicks():
 
 
 def test_service_parameter_fill_helper_is_wired_in_chat_ui():
-    src = Path("tasks/io/chat_ui/resources.js").read_text(encoding="utf-8")
+    src = "".join(p.read_text(encoding="utf-8") for p in sorted(Path("tasks/io/chat_ui").glob("resources*.js")))
     html = Path("tasks/io/chat_ui/template.html").read_text(encoding="utf-8")
 
     assert "get_service_parameter_helper" in src
@@ -71,7 +71,7 @@ def test_chat_ui_exposes_oauth_link_account_button():
 
 
 def test_relay_install_hides_token_parameter():
-    src = Path("tasks/io/chat_ui/resources.js").read_text(encoding="utf-8")
+    src = "".join(p.read_text(encoding="utf-8") for p in sorted(Path("tasks/io/chat_ui").glob("resources*.js")))
     relay_src = Path("services/filesystem_service.py").read_text(encoding="utf-8")
 
     assert "function _installSchemaForServiceType" in src
@@ -82,7 +82,7 @@ def test_relay_install_hides_token_parameter():
 
 
 def test_agent_attach_dialog_has_only_explicit_close_handlers():
-    js = Path("tasks/io/chat_ui/resources.js").read_text(encoding="utf-8")
+    js = "".join(p.read_text(encoding="utf-8") for p in sorted(Path("tasks/io/chat_ui").glob("resources*.js")))
     start = js.index("async function showAddAgentToConvDialog")
     block = js[start:js.index("\n// ── Assign task dialog", start)]
 
@@ -101,7 +101,7 @@ def test_cmd_resource_action_returns_promise_for_then_callers():
 
 
 def test_resource_editor_sends_conversation_id_for_conversation_scope():
-    js = Path("tasks/io/chat_ui/resources.js").read_text(encoding="utf-8")
+    js = "".join(p.read_text(encoding="utf-8") for p in sorted(Path("tasks/io/chat_ui").glob("resources*.js")))
     rxbus = Path("tasks/io/chat_ui/rxbus.js").read_text(encoding="utf-8")
 
     assert "if (scope === 'conversation'" in js
@@ -116,7 +116,7 @@ def test_resource_editor_sends_conversation_id_for_conversation_scope():
 
 def test_resource_scope_options_include_global_only_for_admin():
     state_js = Path("tasks/io/chat_ui/state.js").read_text(encoding="utf-8")
-    resources_js = Path("tasks/io/chat_ui/resources.js").read_text(encoding="utf-8")
+    resources_js = "".join(p.read_text(encoding="utf-8") for p in sorted(Path("tasks/io/chat_ui").glob("resources*.js")))
 
     assert "function _resourceWritableScopes()" in state_js
     assert "_isAdmin() ? ['global', 'user', 'conversation'] : ['user', 'conversation']" in state_js
@@ -127,14 +127,14 @@ def test_resource_scope_options_include_global_only_for_admin():
 
 
 def test_agent_skills_dialog_surfaces_assign_errors():
-    js = Path("tasks/io/chat_ui/resources.js").read_text(encoding="utf-8")
+    js = "".join(p.read_text(encoding="utf-8") for p in sorted(Path("tasks/io/chat_ui").glob("resources*.js")))
 
     assert "results.filter(r => r && r.error).map(r => r.error)" in js
     assert "addMsg('error', errors.join('\\n'))" in js
 
 
 def test_skill_list_uses_real_newlines_and_symbols():
-    js = Path("tasks/io/chat_ui/resources.js").read_text(encoding="utf-8")
+    js = "".join(p.read_text(encoding="utf-8") for p in sorted(Path("tasks/io/chat_ui").glob("resources*.js")))
 
     assert "lines.join('\\\\n')" not in js
     assert "\\\\u2705" not in js
@@ -144,7 +144,7 @@ def test_skill_list_uses_real_newlines_and_symbols():
 
 
 def test_skill_creator_can_assign_after_create():
-    js = Path("tasks/io/chat_ui/resources.js").read_text(encoding="utf-8")
+    js = "".join(p.read_text(encoding="utf-8") for p in sorted(Path("tasks/io/chat_ui").glob("resources*.js")))
 
     assert "(rtype === 'task_def' || rtype === 'skill')" in js
     assert "assignAfterCreate && rtype === 'skill'" in js
@@ -251,7 +251,7 @@ def test_context_editor_escapes_agent_names_sources_and_message_ids():
 
 
 def test_resource_panel_uses_safe_js_args_for_user_resource_names():
-    js = Path("tasks/io/chat_ui/resources.js").read_text(encoding="utf-8")
+    js = "".join(p.read_text(encoding="utf-8") for p in sorted(Path("tasks/io/chat_ui").glob("resources*.js")))
 
     assert "function _pfpJsArg" in js
     assert "showAgentMenu(event,' + _pfpJsArg(aName)" in js
@@ -292,7 +292,7 @@ def test_param_secret_scope_actions_do_not_force_conversation_scope():
 
 
 def test_scoped_resource_menus_send_explicit_source_scope():
-    resources_js = Path("tasks/io/chat_ui/resources.js").read_text(encoding="utf-8")
+    resources_js = "".join(p.read_text(encoding="utf-8") for p in sorted(Path("tasks/io/chat_ui").glob("resources*.js")))
     services_js = Path("tasks/io/chat_ui/services.js").read_text(encoding="utf-8")
 
     assert "function _moveResource" in resources_js
@@ -310,7 +310,7 @@ def test_resource_panel_renders_with_no_conversation_selected():
     # user) saw no resource panel at all. _loadResourcesNow used to hide the
     # panel and return early when !conversationId, so _renderResourcesData
     # (which already adapts to the no-conv case) was never reached.
-    resources_js = Path("tasks/io/chat_ui/resources.js").read_text(encoding="utf-8")
+    resources_js = "".join(p.read_text(encoding="utf-8") for p in sorted(Path("tasks/io/chat_ui").glob("resources*.js")))
     file_explorer_js = Path("tasks/io/chat_ui/file_explorer.js").read_text(encoding="utf-8")
     conversations_js = Path("tasks/io/chat_ui/conversations.js").read_text(encoding="utf-8")
 

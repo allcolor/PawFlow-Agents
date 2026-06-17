@@ -5,7 +5,7 @@ from pathlib import Path
 
 MESSAGES_JS = Path("tasks/io/chat_ui/messages.js").read_text(encoding="utf-8")
 CONVERSATIONS_JS = Path("tasks/io/chat_ui/conversations.js").read_text(encoding="utf-8")
-RESOURCES_JS = Path("tasks/io/chat_ui/resources.js").read_text(encoding="utf-8")
+RESOURCES_JS = "".join(p.read_text(encoding="utf-8") for p in sorted(Path("tasks/io/chat_ui").glob("resources*.js")))
 SSE_JS = Path("tasks/io/chat_ui/sse.js").read_text(encoding="utf-8")
 CONVERSATION_TTS_JS = Path("tasks/io/chat_ui/conversation_tts.js").read_text(encoding="utf-8")
 STATE_JS = Path("tasks/io/chat_ui/state.js").read_text(encoding="utf-8")

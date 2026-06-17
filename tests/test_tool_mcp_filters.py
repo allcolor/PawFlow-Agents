@@ -212,7 +212,7 @@ def test_mcp_loader_uses_conversation_scope_local_and_proxy_hooks():
 
 
 def test_mcp_resource_form_exposes_http_and_stdio_configuration():
-    src = Path("tasks/io/chat_ui/resources.js").read_text(encoding="utf-8")
+    src = "".join(p.read_text(encoding="utf-8") for p in sorted(Path("tasks/io/chat_ui").glob("resources*.js")))
 
     assert "['transport','mcp_transport']" in src
     assert "['via','mcp_via']" in src

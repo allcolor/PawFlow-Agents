@@ -125,7 +125,7 @@ def test_codex_image_schema_requires_codex_llm_service_combo():
 
 
 def test_codex_image_service_ref_ui_filters_fixed_provider():
-    src = Path("tasks/io/chat_ui/resources.js").read_text(encoding="utf-8")
+    src = "".join(p.read_text(encoding="utf-8") for p in sorted(Path("tasks/io/chat_ui").glob("resources*.js")))
 
     assert "pdef.provider || ''" in src
     assert "data-provider=\"' + fp + '\"" in src

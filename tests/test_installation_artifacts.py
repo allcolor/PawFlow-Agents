@@ -1044,7 +1044,9 @@ def test_pawflow_installer_flow_template_exists():
 
 
 def test_service_view_mode_keeps_service_actions_visible():
-    ui_content = Path("tasks/io/chat_ui/resources.js").read_text(encoding="utf-8")
+    ui_content = "".join(
+        p.read_text(encoding="utf-8")
+        for p in sorted(Path("tasks/io/chat_ui").glob("resources*.js")))
 
     assert "+ _renderSchemaFields(schema, config, ro)\n        + _renderServiceActions(actions, serviceId, scope)" in ui_content
     assert "(ro ? '' : _renderServiceActions(actions, serviceId, scope))" not in ui_content

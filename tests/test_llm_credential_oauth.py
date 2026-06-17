@@ -238,14 +238,18 @@ def test_service_registry_does_not_rewrite_credential_services_on_load():
 
 
 def test_credential_dialog_filters_provider_actions_without_parameter_rules():
-    src = Path("tasks/io/chat_ui/resources.js").read_text(encoding="utf-8")
+    src = "".join(
+        p.read_text(encoding="utf-8")
+        for p in sorted(Path("tasks/io/chat_ui").glob("resources*.js")))
     assert "rules = rules || [];" in src
     assert "actions = actions || [];" in src
     assert "if (!rules || !rules.length) return;" not in src
 
 
 def test_service_ref_ui_supports_provider_aliases():
-    src = Path("tasks/io/chat_ui/resources.js").read_text(encoding="utf-8")
+    src = "".join(
+        p.read_text(encoding="utf-8")
+        for p in sorted(Path("tasks/io/chat_ui").glob("resources*.js")))
     assert "data-provider-aliases" in src
     assert "function _serviceRefProviderMatches" in src
     assert "s.provider === wantedProvider" not in src

@@ -20,7 +20,9 @@ import pytest
 _ACTIVE_AGENTS_JS = Path(
     "tasks/io/chat_ui/active_agents.js").read_text(encoding="utf-8")
 _SSE_JS = Path("tasks/io/chat_ui/sse.js").read_text(encoding="utf-8")
-_RESOURCES_JS = Path("tasks/io/chat_ui/resources.js").read_text(encoding="utf-8")
+_RESOURCES_JS = "".join(
+    p.read_text(encoding="utf-8")
+    for p in sorted(Path("tasks/io/chat_ui").glob("resources*.js")))
 _SERVICES_JS = Path("tasks/io/chat_ui/services.js").read_text(encoding="utf-8")
 _DIALOGS_JS = Path("tasks/io/chat_ui/dialogs.js").read_text(encoding="utf-8")
 _TERMINAL_JS = Path("tasks/io/chat_ui/terminal.js").read_text(encoding="utf-8")

@@ -191,7 +191,9 @@ def test_apply_global_theme_without_conversation():
 def test_theme_ui_selector_and_repository_entries_exist():
     template = open("tasks/io/chat_ui/template.html", encoding="utf-8").read()
     serve = open("tasks/io/serve_chat_ui.py", encoding="utf-8").read()
-    resources = open("tasks/io/chat_ui/resources.js", encoding="utf-8").read()
+    resources = "".join(
+        p.read_text(encoding="utf-8")
+        for p in sorted(Path("tasks/io/chat_ui").glob("resources*.js")))
     themes_js = open("tasks/io/chat_ui/themes.js", encoding="utf-8").read()
 
     assert template.index('id="themeSelect"') < template.index('id="permissionMode"')

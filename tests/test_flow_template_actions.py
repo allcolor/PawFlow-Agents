@@ -85,7 +85,11 @@ def test_delete_flow_template_invalidates_resource_cache(tmp_path, monkeypatch):
 
 def test_flow_template_mutations_refresh_resource_panel_immediately():
     service_flow = Path("tasks/ai/actions/service_flow.py").read_text(encoding="utf-8")
-    resources_js = Path("tasks/io/chat_ui/resources.js").read_text(encoding="utf-8")
+    # resources.js was split into resources*.js modules; concatenate them so the
+    # presence checks below are independent of which module a helper landed in.
+    resources_js = "".join(
+        p.read_text(encoding="utf-8")
+        for p in sorted(Path("tasks/io/chat_ui").glob("resources*.js")))
 
     # Count the cache-invalidation call regardless of its argument: admin
     # owner-override paths pass the resolved owner (_res_user) rather than the

@@ -2266,6 +2266,27 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "Missing conversation_id for conversation scope"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
+        # The user/conv side belongs to an owner; an admin may target another
+        # user (e.g. demote a global resource down to user X / promote user X's
+        # resource to global). Default = caller. Used for BOTH the source read
+        # and the destination write so the resource lands on the right user.
+        from core import admin_scope
+        _owner_scope = ("conv" if (target_scope == "conversation"
+                                   or from_scope == "conversation") else "user")
+        try:
+            _owner_user, _owner_conv = admin_scope.effective_owner(
+                body, user_id, conv_id, flowfile, _owner_scope)
+        except PermissionError as _pe:
+            flowfile.set_content(json.dumps({"error": str(_pe)}).encode())
+            flowfile.set_attribute("http.response.status", "403")
+            return [flowfile]
+        except ValueError as _ve:
+            flowfile.set_content(json.dumps({"error": str(_ve)}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        uid = _owner_user or user_id
+        if target_scope == "conversation" or from_scope == "conversation":
+            conv_id = _owner_conv or conv_id
         if from_scope == "global":
             item = rs.get(rtype, rname, "__global__")
             if item is not None:

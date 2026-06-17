@@ -59,6 +59,9 @@ Cost caps and usage tracking exist; the remaining work is an operator dashboard 
 ### More LLM providers
 Ollama, Mistral, vLLM, LM Studio, Together.ai — most work via the OpenAI-compatible endpoint with a `base_url` override. Auto-discovery for local Ollama instances.
 
+### Full AWS-native deployment (remote execution mode)
+Add a new, additive `remote` execution mode so PawFlow runs on AWS managed compute (ECS Fargate, EKS) — and, by generalization, plain EC2 and ECS-on-EC2 — without a local Docker socket, shared host filesystem, or host-gateway networking. Today PawFlow spawns sibling containers on the host Docker daemon via `docker.sock`; the new mode introduces an `ExecBackend` abstraction (Docker backend preserves current behavior bit-for-bit; a remote backend dispatches execution to a WS-reachable worker fleet over the existing relay protocol, with ECS RunTask / K8s Job orchestration for elasticity), a `RemoteProcess` Popen-compatible shim for stream/kill parity, network-shared session storage (EFS or the server-fs FUSE relay), RDS/Aurora Postgres, ECR images, and Secrets Manager/SSM. The remote backend is strictly more general, so supporting Fargate/EKS transitively covers EC2 and ECS-on-EC2. The existing Docker mode stays the default and unchanged. See [docs/AWS_REMOTE_EXEC_PLAN.md](docs/AWS_REMOTE_EXEC_PLAN.md).
+
 ### Mobile client (PWA)
 Progressive Web App installable on iOS and Android. Offline caching, push notifications when agents respond, mobile-optimized layout.
 

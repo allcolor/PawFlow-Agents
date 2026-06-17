@@ -5,11 +5,8 @@ import logging
 import re
 import time
 import threading
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 
-from core import FlowFile
-from core.llm_client import LLMMessage, LLMClient
-from core.tool_registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -216,15 +213,31 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             agent_data["description"] = body["description"]
         from core.resource_store import ResourceStore
         rs = ResourceStore.instance()
+        # Admin may create on behalf of another owner. Default = caller.
+        from core import admin_scope
+        try:
+            _owner_user, _owner_conv = admin_scope.effective_owner(
+                body, user_id, conv_id, flowfile, scope)
+        except PermissionError as _pe:
+            flowfile.set_content(json.dumps({"error": str(_pe)}).encode())
+            flowfile.set_attribute("http.response.status", "403")
+            return [flowfile]
+        except ValueError as _ve:
+            flowfile.set_content(json.dumps({"error": str(_ve)}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        owner_uid = _owner_user or user_id
+        if scope == "conversation":
+            conv_id = _owner_conv or conv_id
         if scope == "conversation" and conv_id:
-            rs.create("agent", agent, user_id, agent_data,
+            rs.create("agent", agent, owner_uid, agent_data,
                       conversation_id=conv_id)
             from core.conv_agent_config import add_agent_to_conv
             add_agent_to_conv(conv_id, agent,
                              llm_service=llm_service, definition=agent)
         else:
             from core.resource_store import GLOBAL_USER_ID
-            target_uid = GLOBAL_USER_ID if scope == "global" else user_id
+            target_uid = GLOBAL_USER_ID if scope == "global" else owner_uid
             rs.create("agent", agent, target_uid, agent_data)
             if conv_id:
                 from core.conv_agent_config import add_agent_to_conv
@@ -287,7 +300,27 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             return [flowfile]
         from core.resource_store import ResourceStore, GLOBAL_USER_ID
         rs = ResourceStore.instance()
-        item = rs.get_any("agent", agent, user_id, conversation_id=conv_id)
+        # The user/conv side of a promote/demote belongs to an owner. When an
+        # admin acts from the global view, that owner is given via
+        # target_user_id / target_conversation_id ("which user to demote to").
+        # Default = caller. Used both to LOCATE the source and to WRITE the
+        # destination so the resource lands on the right user.
+        from core import admin_scope
+        _owner_scope = "conv" if target_scope == "conversation" else "user"
+        try:
+            owner_user, owner_conv = admin_scope.effective_owner(
+                body, user_id, conv_id, flowfile, _owner_scope)
+        except PermissionError as _pe:
+            flowfile.set_content(json.dumps({"error": str(_pe)}).encode())
+            flowfile.set_attribute("http.response.status", "403")
+            return [flowfile]
+        except ValueError as _ve:
+            flowfile.set_content(json.dumps({"error": str(_ve)}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        owner_user = owner_user or user_id
+        _read_conv = owner_conv if target_scope == "conversation" else conv_id
+        item = rs.get_any("agent", agent, owner_user, conversation_id=_read_conv)
         if not item:
             flowfile.set_content(json.dumps({"error": f"Agent '{agent}' not found"}).encode())
             return [flowfile]
@@ -298,13 +331,13 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             return [flowfile]
         promote_data = {k: v for k, v in item.items() if not k.startswith("_") and k != "name"}
         if target_scope == "user":
-            rs.create("agent", agent, user_id, promote_data)
+            rs.create("agent", agent, owner_user, promote_data)
         elif target_scope == "global":
             rs.create("agent", agent, GLOBAL_USER_ID, promote_data)
-        elif target_scope == "conversation" and conv_id:
-            conv_agents = store.get_extra(conv_id, "conversation_agents") or {}
+        elif target_scope == "conversation" and owner_conv:
+            conv_agents = store.get_extra(owner_conv, "conversation_agents") or {}
             conv_agents[agent] = promote_data
-            store.set_extra(conv_id, "conversation_agents", conv_agents)
+            store.set_extra(owner_conv, "conversation_agents", conv_agents)
         flowfile.set_content(json.dumps({
             "result": f"Agent '{agent}' promoted from {current_scope} to {target_scope}."
         }).encode())
@@ -421,7 +454,22 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             return [flowfile]
         from core.resource_store import GLOBAL_USER_ID, ResourceStore
         rs = ResourceStore.instance()
-        uid = user_id
+        # Admin may create/edit on behalf of another owner. Default = caller.
+        from core import admin_scope
+        try:
+            _owner_user, _owner_conv = admin_scope.effective_owner(
+                body, user_id, conv_id, flowfile, scope)
+        except PermissionError as _pe:
+            flowfile.set_content(json.dumps({"error": str(_pe)}).encode())
+            flowfile.set_attribute("http.response.status", "403")
+            return [flowfile]
+        except ValueError as _ve:
+            flowfile.set_content(json.dumps({"error": str(_ve)}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        uid = _owner_user or user_id
+        if scope == "conversation":
+            conv_id = _owner_conv or conv_id
         target_uid = GLOBAL_USER_ID if scope == "global" else uid
         try:
             data = {}
@@ -1238,6 +1286,80 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         conv_id = body.get("conversation_id", "")
         from core.resource_store import ResourceStore
         rs = ResourceStore.instance()
+        from core import admin_scope
+        if admin_scope.wants_view_all(body, flowfile):
+            # Admin cross-user catalog: repo-backed resources across every
+            # owner, owner-labelled. Conversation-specific flags (active /
+            # in_conversation / bindings) are omitted -- they are meaningless
+            # in a global catalog. Themes/voices are not enumerated
+            # cross-user in v1 (their helpers are per-user); they stay empty.
+            cidx = admin_scope.conv_index()
+            conv_pairs = [(v.get("owner", ""), cid)
+                          for cid, v in cidx.items() if v.get("owner")]
+
+            def _rows(rtype, mapper):
+                out = []
+                for e in rs.list_all_global(rtype, conv_pairs=conv_pairs):
+                    row = mapper(e)
+                    oid = e.get("_owner_id", "") or ""
+                    _cid = e.get("_conv_id", "") or ""
+                    row["scope"] = e.get("_scope", "")
+                    row["owner_id"] = oid
+                    row["owner_display"] = (
+                        admin_scope.display_name_for(oid) if oid else "")
+                    row["conv_id"] = _cid
+                    row["conv_title"] = cidx.get(_cid, {}).get("title", "")
+                    out.append(row)
+                return out
+
+            repo_agents_all = _rows("agent", lambda a: {
+                "name": a.get("name", ""),
+                "description": a.get("description", ""),
+            })
+            result = {
+                "view": "all",
+                "agents": [],
+                "repo_agent_count": len(repo_agents_all),
+                "repo_agents": repo_agents_all,
+                "skills": _rows("skill", lambda s: {
+                    "name": s.get("name", ""),
+                    "description": s.get("description", ""),
+                    "invalid": s.get("_invalid", ""),
+                    "assigned_to": [],
+                }),
+                "mcp_servers": _rows("mcp", lambda m: {
+                    "name": m.get("name", ""),
+                    "url": m.get("url", ""),
+                    "transport": m.get("transport", "http"),
+                    "enabled": False,
+                }),
+                "task_defs": _rows("task_def", lambda t: {
+                    "name": t.get("name", ""),
+                    "description": (t.get("description", "")
+                                    or t.get("prompt", "")[:60]),
+                    "default_interval": t.get("default_interval", "6/1m"),
+                }),
+                "prompts": _rows("prompt", lambda p: {
+                    "name": p.get("name", ""),
+                    "title": p.get("title", ""),
+                    "category": p.get("category", ""),
+                    "description": p.get("description", ""),
+                    "has_parameters": bool(p.get("parameters")),
+                }),
+                "agent_hooks": _rows("agent_hook", lambda h: {
+                    "name": h.get("name", ""),
+                    "description": h.get("description", ""),
+                    "events": h.get("events") or [],
+                    "tools": h.get("tools") or [],
+                    "fail_policy": h.get("fail_policy", "open"),
+                    "active": False,
+                }),
+                "themes": [],
+                "voices": [],
+            }
+            flowfile.set_content(
+                json.dumps(result, ensure_ascii=False).encode())
+            return [flowfile]
         uid = user_id
         if conv_id and hasattr(store, "get_extras_snapshot"):
             extras_snapshot = store.get_extras_snapshot(conv_id)
@@ -1947,7 +2069,22 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             data = {k: v for k, v in data.items() if k in ("prompt", "description")}
         from core.resource_store import ResourceStore
         rs = ResourceStore.instance()
-        uid = user_id
+        # Admin may create on behalf of another owner. Default = caller.
+        from core import admin_scope
+        try:
+            _owner_user, _owner_conv = admin_scope.effective_owner(
+                body, user_id, conv_id, flowfile, scope)
+        except PermissionError as _pe:
+            flowfile.set_content(json.dumps({"error": str(_pe)}).encode())
+            flowfile.set_attribute("http.response.status", "403")
+            return [flowfile]
+        except ValueError as _ve:
+            flowfile.set_content(json.dumps({"error": str(_ve)}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        uid = _owner_user or user_id
+        if scope == "conversation":
+            conv_id = _owner_conv or conv_id
         target_uid = "__global__" if scope == "global" else uid
         if rtype == "task_def":
             data.setdefault("created_by", uid)
@@ -2179,7 +2316,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                     source_kwargs = {"conversation_id": conv_id} if source_scope == "conversation" and conv_id else {}
                     rs.delete(rtype, rname, source_uid, **source_kwargs)
             flowfile.set_content(json.dumps({"ok": True, "copied_to": target_scope, "from_scope": source_scope}).encode())
-        except Exception as e:
+        except Exception:
             # If exists, update instead
             try:
                 scope_kwargs = {"conversation_id": conv_id} if target_scope == "conversation" and conv_id else {}

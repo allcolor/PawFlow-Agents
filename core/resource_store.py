@@ -314,6 +314,56 @@ class ResourceStore:
 
         return result
 
+    def list_all_global(self, resource_type: str,
+                        conv_pairs=None) -> List[Dict[str, Any]]:
+        """Admin cross-user catalog of a resource type across every owner.
+
+        Read-only. Each entry is tagged ``_scope`` (global/user/conversation),
+        ``_owner_id`` (owning user, "" for global) and ``_conv_id``. No dedup:
+        distinct owners can legitimately share a name. ``conv_pairs`` is the
+        real conversation index ``[(owner_user_id, conv_id), ...]``.
+        """
+        if resource_type not in VALID_TYPES:
+            return []
+        rtype = _repo_type(resource_type)
+        from core.repository import ScopedRepository
+        repo = ScopedRepository.instance()
+
+        results: List[Dict[str, Any]] = []
+        for e in repo.list_all_owners(rtype, conv_pairs=conv_pairs):
+            owner = e.get("_owner_id", "") or ""
+            cid = e.get("_conv_id", "") or ""
+            e["_scope"] = (
+                "global" if not owner
+                else "conversation" if cid else "user")
+            results.append(e)
+
+        # Conversation task defs still live in conversation extras.
+        if resource_type == "task_def" and conv_pairs:
+            try:
+                from core.conversation_store import ConversationStore
+                store = ConversationStore.instance()
+                for pair in conv_pairs:
+                    try:
+                        uid, cid = pair
+                    except (TypeError, ValueError):
+                        continue
+                    if not cid:
+                        continue
+                    conv_defs = store.get_extra(
+                        cid, "conversation_task_defs") or {}
+                    for td_name, td_data in conv_defs.items():
+                        entry = dict(td_data)
+                        entry["name"] = td_name
+                        entry["_scope"] = "conversation"
+                        entry["_owner_id"] = uid
+                        entry["_conv_id"] = cid
+                        results.append(entry)
+            except Exception:
+                logging.getLogger(__name__).debug(
+                    "Ignored exception", exc_info=True)
+        return results
+
     def get_any(self, resource_type: str, name: str,
                 user_id: str,
                 conversation_id: str = "") -> Optional[Dict[str, Any]]:

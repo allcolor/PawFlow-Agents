@@ -8,8 +8,6 @@ import threading
 from typing import Dict, Any, List, Optional
 
 from core import FlowFile
-from core.llm_client import LLMMessage, LLMClient
-from core.tool_registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -1034,6 +1032,48 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             filter_type = body.get("service_type", "") or ""
             conv_id = body.get("conversation_id", "") or flowfile.get_attribute("http.conversation_id") or ""
             services = []
+            from core import admin_scope
+            if admin_scope.wants_view_all(body, flowfile):
+                # Admin cross-user view: every populated scope, owner-labelled.
+                # Definitions only -- live 'started' probing is per-scope and
+                # too costly across the whole fleet, so it is skipped here.
+                cidx = admin_scope.conv_index()
+                conv_pairs = [(v.get("owner", ""), cid)
+                              for cid, v in cidx.items() if v.get("owner")]
+                for _scope, _sid_scope, _owner, _cid in reg.iter_all_scopes(
+                        conv_pairs=conv_pairs):
+                    if _scope == "global":
+                        _ref_prefix = "global:"
+                    elif _scope == "user":
+                        _ref_prefix = f"user:{_sid_scope}:"
+                    else:
+                        _ref_prefix = f"conv:{_sid_scope}:"
+                    for sid, sdef in sorted(
+                            reg.get_all(_scope, _sid_scope).items()):
+                        if filter_type and sdef.service_type != filter_type:
+                            continue
+                        services.append({
+                            "service_id": sid,
+                            "ref": f"{_ref_prefix}{sid}",
+                            "service_type": sdef.service_type,
+                            "enabled": getattr(sdef, "enabled", True),
+                            "started": False,
+                            "description": sdef.description,
+                            "scope": _scope,
+                            "provider": (sdef.config or {}).get("provider", ""),
+                            "install_state": _service_install_state_for_listing(
+                                _scope, _sid_scope, sid),
+                            "owner_id": _owner,
+                            "owner_display": (
+                                admin_scope.display_name_for(_owner)
+                                if _owner else ""),
+                            "conv_id": _cid,
+                            "conv_title": cidx.get(_cid, {}).get("title", ""),
+                        })
+                flowfile.set_content(json.dumps({
+                    "services": services, "view": "all",
+                }, ensure_ascii=False).encode())
+                return [flowfile]
             for sid, sdef in sorted(reg.get_all("global", "").items()):
                 if filter_type and sdef.service_type != filter_type:
                     continue
@@ -1300,16 +1340,31 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 config.setdefault("server_kind", "workspace")
                 managed_server_relay = True
             description = body.get("description", "")
-            from core.service_registry import ServiceRegistry, SCOPE_GLOBAL, SCOPE_USER, SCOPE_CONV
+            from core.service_registry import ServiceRegistry
             reg = ServiceRegistry.get_instance()
+            # Admin may create on behalf of another owner (target_user_id /
+            # target_conversation_id). Default = caller, unchanged.
+            from core import admin_scope
+            try:
+                _owner_user, _owner_conv = admin_scope.effective_owner(
+                    body, user_id, conv_id, flowfile, scope)
+            except PermissionError as _pe:
+                flowfile.set_content(json.dumps({"error": str(_pe)}).encode())
+                flowfile.set_attribute("http.response.status", "403")
+                return [flowfile]
+            except ValueError as _ve:
+                flowfile.set_content(json.dumps({"error": str(_ve)}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
             if scope == "global":
                 scope_id = ""
             elif scope == "conversation" or scope == "conv":
-                scope_id = conv_id or ""
+                scope_id = _owner_conv or ""
                 scope = "conv"
             else:
-                scope_id = user_id
+                scope_id = _owner_user
                 scope = "user"
+            owner_user_id = _owner_user or user_id
             server_relay_manager = None
             if managed_server_relay:
                 from core.server_relay_manager import ServerRelayManager
@@ -1318,7 +1373,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                     svc_name,
                     scope=scope,
                     scope_id=scope_id,
-                    user_id=user_id,
+                    user_id=owner_user_id,
                     kind=str(config.get("server_kind") or "workspace"),
                 ))
             from core import ServiceFactory
@@ -1820,8 +1875,24 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         try:
             from core.service_registry import ServiceRegistry
             registry = ServiceRegistry.get_instance()
-            from_scope_id = _service_scope_id(from_scope, user_id, conv_id)
-            to_scope_id = _service_scope_id(to_scope, user_id, conv_id)
+            # The user/conv side belongs to an owner; an admin may target
+            # another user (e.g. demote a global service down to user X).
+            from core import admin_scope
+            _owner_scope = "conv" if "conv" in (from_scope, to_scope) else "user"
+            try:
+                _owner_user, _owner_conv = admin_scope.effective_owner(
+                    body, user_id, conv_id, flowfile, _owner_scope)
+            except PermissionError as _pe:
+                flowfile.set_content(json.dumps({"error": str(_pe)}).encode())
+                flowfile.set_attribute("http.response.status", "403")
+                return [flowfile]
+            except ValueError as _ve:
+                flowfile.set_content(json.dumps({"error": str(_ve)}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            _owner_user = _owner_user or user_id
+            from_scope_id = _service_scope_id(from_scope, _owner_user, _owner_conv)
+            to_scope_id = _service_scope_id(to_scope, _owner_user, _owner_conv)
             sdef = registry.get_definition(from_scope, from_scope_id, sid)
             if not sdef:
                 flowfile.set_content(json.dumps({"error": f"Service '{sid}' not found."}).encode())
@@ -2159,7 +2230,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             logger.info("[vnc-login] Creating session %s (port %d)", session_id, free_port)
 
             # Pre-register session so status endpoint works immediately
-            from services.vnc_proxy import register_session, vnc_ws_proxy, vnc_http_proxy
+            from services.vnc_proxy import register_session
             _vnc_token = register_session(
                 session_id, free_port,
                 owner_user_id=user_id,
@@ -2919,6 +2990,96 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             from core.paths import REPOSITORY_DIR
             conv_id = body.get("conversation_id", "") or flowfile.get_attribute("http.conversation_id") or ""
             templates = []
+            from core import admin_scope
+            if admin_scope.wants_view_all(body, flowfile):
+                # Admin cross-user view. Single walk of global + the whole
+                # users/ tree; owner/conv are derived from each match's path,
+                # and the first path component under users/<uid>/ that is a
+                # known conversation id marks a conv-scoped template (avoids
+                # the user/conv directory ambiguity + double counting).
+                cidx = admin_scope.conv_index()
+                _flows = REPOSITORY_DIR / "flows"
+
+                def _emit(vfile, flow_dir, scope_label, owner_id, cid):
+                    try:
+                        raw = json.loads(vfile.read_text(encoding="utf-8"))
+                    except Exception as e:
+                        logger.debug("list_available_flows(all): skip %s: %s",
+                                     vfile, e)
+                        return
+                    templates.append({
+                        "id": raw.get("id") or flow_dir.name,
+                        "name": raw.get("name") or flow_dir.name,
+                        "version": vfile.stem,
+                        "description": raw.get("description") or "",
+                        "scope": raw.get("scope") or scope_label,
+                        "tasks_count": len(raw.get("tasks", {}) or {}),
+                        "services_count": len(raw.get("services", {}) or {}),
+                        "file_path": str(vfile),
+                        "owner_id": owner_id,
+                        "owner_display": (admin_scope.display_name_for(owner_id)
+                                          if owner_id else ""),
+                        "conv_id": cid,
+                        "conv_title": cidx.get(cid, {}).get("title", ""),
+                    })
+
+                def _walk(root, scope_label, owner_id, cid):
+                    if not root.is_dir():
+                        return
+                    for latest in root.rglob("latest.json"):
+                        flow_dir = latest.parent
+                        try:
+                            ptr = json.loads(latest.read_text(encoding="utf-8"))
+                            version = (ptr.get("version") or "").strip()
+                            if not version:
+                                continue
+                            vfile = flow_dir / "versions" / f"{version}.json"
+                            if not vfile.is_file():
+                                continue
+                            _emit(vfile, flow_dir, scope_label, owner_id, cid)
+                        except Exception as e:
+                            logger.debug(
+                                "list_available_flows(all): skip %s: %s",
+                                latest, e)
+
+                _walk(_flows / "global", "global", "", "")
+                users_root = _flows / "users"
+                if users_root.is_dir():
+                    for udir in sorted(
+                            x for x in users_root.iterdir() if x.is_dir()):
+                        uid = udir.name
+                        for latest in udir.rglob("latest.json"):
+                            flow_dir = latest.parent
+                            try:
+                                rel = flow_dir.relative_to(udir).parts
+                            except ValueError:
+                                continue
+                            first = rel[0] if rel else ""
+                            is_conv = first in cidx
+                            try:
+                                ptr = json.loads(
+                                    latest.read_text(encoding="utf-8"))
+                                version = (ptr.get("version") or "").strip()
+                                if not version:
+                                    continue
+                                vfile = (flow_dir / "versions"
+                                         / f"{version}.json")
+                                if not vfile.is_file():
+                                    continue
+                                _emit(
+                                    vfile, flow_dir,
+                                    "conversation" if is_conv else "user",
+                                    uid, first if is_conv else "")
+                            except Exception as e:
+                                logger.debug(
+                                    "list_available_flows(all): skip %s: %s",
+                                    latest, e)
+                templates.sort(
+                    key=lambda t: (t["scope"], t.get("owner_id", ""), t["name"]))
+                flowfile.set_content(json.dumps(
+                    {"templates": templates, "view": "all"},
+                    ensure_ascii=False).encode())
+                return [flowfile]
             roots = []
             if user_id:
                 if conv_id:
@@ -3144,11 +3305,29 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         try:
             from core.repository import ScopedRepository
 
-            tpath = _resolve_flow_template_path(template_id, user_id, conv_id)
+            # The user/conv side belongs to an owner; an admin may target
+            # another user (e.g. demote a global template down to user X).
+            from core import admin_scope
+            _owner_scope = "conv" if target_scope == "conversation" else "user"
+            try:
+                _owner_user, _owner_conv = admin_scope.effective_owner(
+                    body, user_id, conv_id, flowfile, _owner_scope)
+            except PermissionError as _pe:
+                flowfile.set_content(json.dumps({"error": str(_pe)}).encode())
+                flowfile.set_attribute("http.response.status", "403")
+                return [flowfile]
+            except ValueError as _ve:
+                flowfile.set_content(json.dumps({"error": str(_ve)}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            _res_user = _owner_user or user_id
+            _res_conv = _owner_conv if target_scope == "conversation" else conv_id
+
+            tpath = _resolve_flow_template_path(template_id, _res_user, _res_conv)
             if not tpath:
                 flowfile.set_content(json.dumps({"error": f"Template '{template_id}' not found"}).encode())
                 return [flowfile]
-            info = _flow_template_storage_info(tpath, user_id, conv_id)
+            info = _flow_template_storage_info(tpath, _res_user, _res_conv)
             denied = _ensure_template_scope_edit_allowed(flowfile, info["scope"])
             if denied:
                 flowfile.set_content(json.dumps(denied).encode())
@@ -3162,13 +3341,13 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             if {"conversation": 0, "user": 1, "global": 2}[target_scope] > {"conversation": 0, "user": 1, "global": 2}[info["scope"]]:
                 ScopedRepository().promote(
                     "flows", fqn, from_repo_scope, to_repo_scope,
-                    user_id=user_id, conv_id=conv_id, move=True)
+                    user_id=_res_user, conv_id=_res_conv, move=True)
             else:
                 ScopedRepository().demote(
                     "flows", fqn, from_repo_scope, to_repo_scope,
-                    user_id=user_id, conv_id=conv_id, move=True)
+                    user_id=_res_user, conv_id=_res_conv, move=True)
             from tasks.ai.actions.agent_resource import invalidate_flow_templates_cache
-            invalidate_flow_templates_cache(user_id)
+            invalidate_flow_templates_cache(_res_user)
             flowfile.set_content(json.dumps({
                 "ok": True,
                 "template_id": template_id,
@@ -3240,9 +3419,28 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 flowfile.set_content(json.dumps({"error": "Requires admin role for global scope"}).encode())
                 flowfile.set_attribute("http.response.status", "403")
                 return [flowfile]
-            if user_id and inst.owner and inst.owner != user_id:
+            # An admin may operate on another user's instance; a non-admin is
+            # restricted to their own.
+            if (user_id and inst.owner and inst.owner != user_id
+                    and not _is_admin(flowfile)):
                 flowfile.set_content(json.dumps({"error": "Permission denied"}).encode())
                 return [flowfile]
+            # The user/conv side belongs to an owner; an admin may target
+            # another user ("which user to demote to"). Default = caller.
+            from core import admin_scope
+            _owner_scope = "conv" if target_scope == "conversation" else "user"
+            try:
+                _owner_user, _owner_conv = admin_scope.effective_owner(
+                    body, user_id, conv_id, flowfile, _owner_scope)
+            except PermissionError as _pe:
+                flowfile.set_content(json.dumps({"error": str(_pe)}).encode())
+                flowfile.set_attribute("http.response.status", "403")
+                return [flowfile]
+            except ValueError as _ve:
+                flowfile.set_content(json.dumps({"error": str(_ve)}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            _owner_user = _owner_user or user_id
             if target_scope == "global":
                 dr.set_owner(iid, None)
                 inst = dr.get(iid)
@@ -3250,16 +3448,14 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                     inst.conversation_id = None
                     dr._save_instance(inst)
             elif target_scope == "conversation":
-                if inst.owner is None:
-                    dr.set_owner(iid, user_id)
-                    inst = dr.get(iid)
+                dr.set_owner(iid, _owner_user)
+                inst = dr.get(iid)
                 if inst:
-                    inst.conversation_id = conv_id
+                    inst.conversation_id = _owner_conv or conv_id
                     dr._save_instance(inst)
             else:
-                if inst.owner is None:
-                    dr.set_owner(iid, user_id)
-                    inst = dr.get(iid)
+                dr.set_owner(iid, _owner_user)
+                inst = dr.get(iid)
                 if inst:
                     inst.conversation_id = None
                     dr._save_instance(inst)
@@ -3821,7 +4017,6 @@ finally:
         agent_name = body.get("agent_name", "") or body.get("agent", "")
         conversation_id = body.get("conversation_id", "") or flowfile.get_attribute("http.conversation_id") or ""
         service_id = body.get("service_id", "") or ""
-        model = body.get("model", "") or ""
         if not agent_name:
             flowfile.set_content(json.dumps({"error": "Missing agent_name"}).encode())
             return [flowfile]
@@ -4523,7 +4718,7 @@ finally:
             volume_name = f"pawflow_ws_{conversation_id}" if conversation_id else f"pawflow_login_{session_id}"
             image = "pawflow-claude-code:latest"
             logger.info("[codex-login] Creating session %s (port %d)", session_id, free_port)
-            from services.vnc_proxy import register_session, vnc_ws_proxy, vnc_http_proxy
+            from services.vnc_proxy import register_session
             _vnc_token = register_session(
                 session_id, free_port,
                 owner_user_id=user_id,
@@ -4741,7 +4936,7 @@ finally:
             volume_name = f"pawflow_ws_{conversation_id}" if conversation_id else f"pawflow_login_{session_id}"
             image = "pawflow-claude-code:latest"
             logger.info("[%s-login] Creating session %s (port %d)", login_cli, session_id, free_port)
-            from services.vnc_proxy import register_session, vnc_ws_proxy, vnc_http_proxy
+            from services.vnc_proxy import register_session
             _vnc_token = register_session(
                 session_id, free_port,
                 owner_user_id=user_id,
@@ -4989,7 +5184,7 @@ finally:
             container_name = f"pawflow-rclone-login-{session_id}"
             image = "pawflow-claude-code:latest"
             logger.info("[rclone-login] Creating session %s (port %d)", session_id, free_port)
-            from services.vnc_proxy import register_session, vnc_ws_proxy, vnc_http_proxy
+            from services.vnc_proxy import register_session
             _vnc_token = register_session(
                 session_id, free_port,
                 owner_user_id=user_id,

@@ -544,6 +544,44 @@ class ServiceRegistry:
         with self._data_lock:
             return dict(self._definitions.get(sid, {}))
 
+    def iter_all_scopes(self, conv_pairs=None):
+        """Admin enumeration of every populated service scope (read-only).
+
+        Returns ``[(scope, scope_id, owner_id, conv_id), ...]``. Global is
+        always present; user scopes come from the on-disk service dirs; conv
+        scopes are drawn from ``conv_pairs`` (the real conversation index,
+        ``[(owner_user_id, conv_id), ...]``) and included only when the
+        conversation actually carries service definitions.
+        """
+        scopes = [
+            (SCOPE_GLOBAL, self._resolve_scope_id(SCOPE_GLOBAL, ""), "", "")]
+        users_dir = _user_services_dir()
+        try:
+            if users_dir.is_dir():
+                for udir in sorted(
+                        x for x in users_dir.iterdir() if x.is_dir()):
+                    uid = udir.name
+                    scopes.append((SCOPE_USER, uid, uid, ""))
+        except OSError:
+            logger.debug("iter_all_scopes: user dir scan failed", exc_info=True)
+        if conv_pairs:
+            from core.conversation_store import ConversationStore
+            store = ConversationStore.instance()
+            for pair in conv_pairs:
+                try:
+                    uid, cid = pair
+                except (TypeError, ValueError):
+                    continue
+                if not cid:
+                    continue
+                try:
+                    raw = store.get_extra(cid, CONV_EXTRAS_KEY) or {}
+                except Exception:
+                    raw = {}
+                if raw:
+                    scopes.append((SCOPE_CONV, cid, uid, cid))
+        return scopes
+
     def get_live_instance(self, scope: str, scope_id: str,
                           service_id: str) -> Optional[Service]:
         """Get a live (connected) service instance. Lazy-connects if enabled."""

@@ -2,14 +2,10 @@
 
 import json
 import logging
-import time
 import threading
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, Optional
 
-from core import FlowFile
-from core.llm_client import LLMMessage, LLMClient
 from core.task_lifecycle import cleanup_agent_task_context
-from core.tool_registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -371,15 +367,30 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
                 {"error": "Requires admin role for global scope"}).encode())
             flowfile.set_attribute("http.response.status", "403")
             return [flowfile]
-        uid = user_id
+        # The conv source belongs to an owner; an admin may target another
+        # user (promote conv task def up to user X / global). Default = caller.
+        from core import admin_scope
+        try:
+            _owner_user, _owner_conv = admin_scope.effective_owner(
+                body, user_id, conv_id, flowfile, "conv")
+        except PermissionError as _pe:
+            flowfile.set_content(json.dumps({"error": str(_pe)}).encode())
+            flowfile.set_attribute("http.response.status", "403")
+            return [flowfile]
+        except ValueError as _ve:
+            flowfile.set_content(json.dumps({"error": str(_ve)}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        uid = _owner_user or user_id
+        src_conv = _owner_conv or conv_id
         # Read from conversation scope
-        if not conv_id:
+        if not src_conv:
             flowfile.set_content(json.dumps(
                 {"error": "No conversation context"}).encode())
             return [flowfile]
         from core.conversation_store import ConversationStore
         cs = ConversationStore.instance()
-        conv_defs = cs.get_extra(conv_id, "conversation_task_defs") or {}
+        conv_defs = cs.get_extra(src_conv, "conversation_task_defs") or {}
         if name not in conv_defs:
             flowfile.set_content(json.dumps(
                 {"error": f"Task def '{name}' not found in conversation scope"}).encode())
@@ -392,7 +403,7 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
             rs.create("task_def", name, target_uid, data)
             # Remove from conversation scope
             del conv_defs[name]
-            cs.set_extra(conv_id, "conversation_task_defs", conv_defs)
+            cs.set_extra(src_conv, "conversation_task_defs", conv_defs)
             flowfile.set_content(json.dumps(
                 {"ok": True, "name": name, "scope": target_scope}).encode())
         except Exception as e:

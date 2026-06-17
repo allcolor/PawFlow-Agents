@@ -87,6 +87,9 @@ def test_flow_template_mutations_refresh_resource_panel_immediately():
     service_flow = Path("tasks/ai/actions/service_flow.py").read_text(encoding="utf-8")
     resources_js = Path("tasks/io/chat_ui/resources.js").read_text(encoding="utf-8")
 
-    assert service_flow.count("invalidate_flow_templates_cache(user_id)") >= 3
+    # Count the cache-invalidation call regardless of its argument: admin
+    # owner-override paths pass the resolved owner (_res_user) rather than the
+    # caller's user_id, but still refresh the panel on every mutation.
+    assert service_flow.count("invalidate_flow_templates_cache(") >= 3
     assert "function _refreshResourcesNow()" in resources_js
     assert "_refreshResourcesNow();" in resources_js

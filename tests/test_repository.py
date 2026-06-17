@@ -162,6 +162,37 @@ class TestScopedRepository(unittest.TestCase):
         self.assertIn("user:alice", scopes)
         self.assertIn("conv:alice/conv1", scopes)
 
+    def test_list_all_owners(self):
+        # global + two users + one conv (supplied via conv_pairs)
+        self.repo.create("agents", "g1", "global", {"prompt": "x"})
+        self.repo.create("agents", "a_alice", "user",
+                         {"prompt": "y"}, user_id="alice")
+        self.repo.create("agents", "a_bob", "user",
+                         {"prompt": "z"}, user_id="bob")
+        self.repo.create("agents", "c_alice", "conv",
+                         {"prompt": "w"}, user_id="alice", conv_id="conv1")
+
+        result = self.repo.list_all_owners(
+            "agents", conv_pairs=[("alice", "conv1")])
+        by_name = {r["name"]: r for r in result}
+        self.assertIn("g1", by_name)
+        self.assertIn("a_alice", by_name)
+        self.assertIn("a_bob", by_name)
+        self.assertIn("c_alice", by_name)
+        # owner tagging
+        self.assertEqual(by_name["g1"]["_owner_id"], "")
+        self.assertEqual(by_name["a_alice"]["_owner_id"], "alice")
+        self.assertEqual(by_name["a_bob"]["_owner_id"], "bob")
+        self.assertEqual(by_name["c_alice"]["_owner_id"], "alice")
+        self.assertEqual(by_name["c_alice"]["_conv_id"], "conv1")
+
+    def test_list_all_owners_skips_unknown_conv(self):
+        self.repo.create("agents", "c_alice", "conv",
+                         {"prompt": "w"}, user_id="alice", conv_id="conv1")
+        # No conv_pairs -> conv-scope entries are not enumerated.
+        result = self.repo.list_all_owners("agents")
+        self.assertNotIn("c_alice", [r["name"] for r in result])
+
     # ── Promote / Demote ─────────────────────────────────
 
     def test_promote_conv_to_user(self):

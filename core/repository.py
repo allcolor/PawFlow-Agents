@@ -247,6 +247,46 @@ class ScopedRepository:
             results.extend(self.list(rtype, SCOPE_CONV, user_id, conv_id))
         return results
 
+    def list_all_owners(self, rtype: str,
+                        conv_pairs=None) -> List[Dict[str, Any]]:
+        """Admin cross-user listing: every owner's definitions of one type.
+
+        Read-only. Each entry is tagged (in addition to the usual ``_scope``)
+        with ``_owner_id`` (the owning user, "" for global) and ``_conv_id``
+        (set for conversation scope).
+
+        User scope is enumerated from the filesystem. Conversation scope is
+        enumerated only from ``conv_pairs`` -- an iterable of
+        ``(owner_user_id, conv_id)`` supplied by the caller (the real
+        conversation index). This avoids the directory-type ambiguity where a
+        user-scope resource directory could be mistaken for a conversation id.
+        """
+        def _tag(entry, owner_id, conv_id):
+            entry["_owner_id"] = owner_id
+            entry["_conv_id"] = conv_id
+            return entry
+
+        results: List[Dict[str, Any]] = [
+            _tag(e, "", "") for e in self.list(rtype, SCOPE_GLOBAL)]
+
+        users_root = _paths.REPOSITORY_DIR / rtype / "users"
+        if users_root.is_dir():
+            for udir in sorted(x for x in users_root.iterdir() if x.is_dir()):
+                uid = udir.name
+                for e in self.list(rtype, SCOPE_USER, user_id=uid):
+                    results.append(_tag(e, uid, ""))
+
+        for pair in (conv_pairs or []):
+            try:
+                uid, cid = pair
+            except (TypeError, ValueError):
+                continue
+            if not uid or not cid:
+                continue
+            for e in self.list(rtype, SCOPE_CONV, user_id=uid, conv_id=cid):
+                results.append(_tag(e, uid, cid))
+        return results
+
     # ── Promote / Demote ─────────────────────────────────────────
 
     def promote(self, rtype: str, name: str,

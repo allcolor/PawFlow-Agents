@@ -21,9 +21,9 @@ def _resolve_version() -> str:
     relay /workspace): parse pyproject.toml at the repo root. Never hardcode the
     version here -- it only ever needs bumping in pyproject.toml.
     """
-    # Source checkout (CI, relay /workspace): pyproject.toml is authoritative
-    # and matches what you just edited. Prefer it when present.
-    try:
+    def _from_pyproject():
+        # Source checkout (CI, relay /workspace): pyproject.toml is
+        # authoritative and matches what you just edited.
         import re as _re
         from pathlib import Path as _Path
         _pp = _Path(__file__).resolve().parents[1] / "pyproject.toml"
@@ -33,18 +33,21 @@ def _resolve_version() -> str:
                 _pp.read_text(encoding="utf-8"), _re.M)
             if _m:
                 return _m.group(1)
-    except Exception:
-        pass
-    # Installed wheel/docker: no pyproject alongside the package -> use the
-    # metadata baked at build time (which came from that same pyproject).
-    try:
-        from importlib.metadata import version as _v, PackageNotFoundError
+        return None
+
+    def _from_metadata():
+        # Installed wheel/docker: no pyproject alongside the package -> use the
+        # metadata baked at build time (which came from that same pyproject).
+        from importlib.metadata import version as _v
+        return _v("pawflow")
+
+    for _getter in (_from_pyproject, _from_metadata):
         try:
-            return _v("pawflow")
-        except PackageNotFoundError:
-            pass
-    except Exception:
-        pass
+            _val = _getter()
+        except Exception:
+            _val = None
+        if _val:
+            return _val
     return "0.0.0"
 
 

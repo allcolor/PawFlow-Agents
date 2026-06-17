@@ -4,6 +4,28 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.0-alpha.49] — 2026-06-17
+
+### Added
+
+- Admin cross-user UI for the resource sidebar. Admins get a "view all" toggle
+  on the Services / Flows / Dépôt listings (sends `view=all`) with an owner
+  badge on every row, target-owner pickers in the install-service and
+  create-resource dialogs, and a "which user?" prompt when demoting a global
+  resource down to a user. Non-admins see none of this and behave as before.
+- Admin owner override for the resource scope-move path
+  (`copy_resource_scope`): demote a global resource to a specific user, or
+  promote another user's resource to global, via
+  `target_user_id` / `target_conversation_id`. Default = caller.
+
+### Changed
+
+- `tasks/io/chat_ui/resources.js` (5092 lines) was split into 10 semantic
+  modules of <=800 lines each (core, pfp, flow_templates, render, menus,
+  flow_dialogs, resource_dialogs, create_dialogs, service_dialogs,
+  service_login). Cuts fall only on whole-function boundaries; load order is
+  preserved in `_JS_MODULES` (core first). No behaviour change.
+
 ## [1.0.0-alpha.48] — 2026-06-17
 
 ### Added

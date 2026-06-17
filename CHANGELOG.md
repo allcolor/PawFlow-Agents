@@ -4,6 +4,35 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.0-alpha.47] — 2026-06-17
+
+### Added
+
+- Admin cross-user scopes. An admin can switch the Services, Flow repository,
+  and resource depot listings to a view-all mode (`view="all"`) that returns
+  every user's and conversation's definitions, each labelled with its owner
+  (user id / display name, and conversation when conv-scoped). The same admin
+  may create, and promote/demote, on behalf of another owner via
+  `target_user_id` / `target_conversation_id` — including "demote a global
+  definition down to user X". All of this is strictly additive: a non-admin, or
+  any request without the new fields, behaves exactly as before. New
+  `core/admin_scope.py` centralises the admin gate, owner resolution (validates
+  the target user exists and that a target conversation belongs to it), and
+  owner display lookup. Enumeration primitives: `ScopedRepository`
+  `list_all_owners`, `ResourceStore.list_all_global`,
+  `ServiceRegistry.iter_all_scopes`.
+
+### Fixed
+
+- Telegram messages no longer arrive minutes late in bursts. Since the
+  off-thread listener dispatch landed, the Telegram bridge ran on a serial
+  per-conversation lane with no backpressure while each send opened a fresh TLS
+  connection, so under load it fell behind the (SSE-delivered) webchat. Sends
+  now reuse a persistent per-bot keep-alive connection — kept separate from the
+  long-poll `getUpdates` connection so a 30s poll never blocks a send —
+  reconnect on a broken socket, and honour Telegram `429 retry_after` with
+  bounded backoff.
+
 ## [1.0.0-alpha.46] — 2026-06-16
 
 ### Fixed

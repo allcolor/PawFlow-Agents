@@ -4,7 +4,7 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [1.0.0-alpha.47] — 2026-06-17
+## [1.0.0-alpha.48] — 2026-06-17
 
 ### Added
 
@@ -32,6 +32,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   long-poll `getUpdates` connection so a 30s poll never blocks a send —
   reconnect on a broken socket, and honour Telegram `429 retry_after` with
   bounded backoff.
+- The package version now lives in exactly one place. `core.__version__` had
+  drifted to a hardcoded `1.0.0a10`; it is now derived from `pyproject.toml`
+  (source checkouts) or the installed package metadata (wheels/docker), so it
+  can never go stale again — only `pyproject.toml` needs bumping per release.
 
 ## [1.0.0-alpha.46] — 2026-06-16
 

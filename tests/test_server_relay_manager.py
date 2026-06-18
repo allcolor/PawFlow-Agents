@@ -1,6 +1,7 @@
 import json
 
 from core import server_relay_manager as srm
+from core import _relay_naming as _rn
 
 
 def test_server_minimal_relay_has_distinct_stable_identity():
@@ -120,7 +121,7 @@ def test_prepare_relay_code_dir_stages_runtime_from_server_image(monkeypatch, tm
     (tools / "pawflow_relay_launcher.py").write_text("launcher", encoding="utf-8")
     (relay_pkg / "__init__.py").write_text("pkg", encoding="utf-8")
     (sdk / "pawflow.py").write_text("sdk", encoding="utf-8")
-    monkeypatch.setattr(srm, "__file__", str(core / "server_relay_manager.py"))
+    monkeypatch.setattr(_rn, "__file__", str(core / "server_relay_manager.py"))
 
     code_dir = srm._prepare_relay_code_dir(tmp_path / "runtime")
 
@@ -141,7 +142,7 @@ def test_prepare_relay_code_dir_ignores_persistent_synced_runtime(monkeypatch, t
     (root / "pawflow_relay" / "__init__.py").write_text("image-pkg", encoding="utf-8")
     (root / "docker" / "pawflow_sdk" / "pawflow.py").write_text("image-sdk", encoding="utf-8")
     (root / "core").mkdir()
-    monkeypatch.setattr(srm, "__file__", str(root / "core" / "server_relay_manager.py"))
+    monkeypatch.setattr(_rn, "__file__", str(root / "core" / "server_relay_manager.py"))
 
     data_dir = tmp_path / "data"
     persistent = data_dir / "runtime" / "relay_runtime" / "current"
@@ -167,7 +168,7 @@ def test_prepare_relay_code_dir_replaces_stale_staging(monkeypatch, tmp_path):
     (root / "pawflow_relay" / "__init__.py").write_text("image-pkg", encoding="utf-8")
     (root / "docker" / "pawflow_sdk" / "pawflow.py").write_text("image-sdk", encoding="utf-8")
     (root / "core").mkdir()
-    monkeypatch.setattr(srm, "__file__", str(root / "core" / "server_relay_manager.py"))
+    monkeypatch.setattr(_rn, "__file__", str(root / "core" / "server_relay_manager.py"))
 
     stale = tmp_path / "runtime" / ".pawflow-runtime"
     (stale / "pawflow_relay").mkdir(parents=True)

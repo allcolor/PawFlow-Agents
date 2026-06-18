@@ -86,7 +86,7 @@ def test_server_dockerfile_supports_bootstrap_docker_builds():
     assert "dotnet-install.sh" not in relay_dev
     assert "kotlin-compiler" not in relay_dev
 
-    server_relay = Path("core/server_relay_manager.py").read_text(encoding="utf-8")
+    server_relay = (Path("core/server_relay_manager.py").read_text(encoding="utf-8") + Path("core/_relay_naming.py").read_text(encoding="utf-8"))
     relay_thread = Path("pawflow_relay/thread.py").read_text(encoding="utf-8")
     for src in (server_relay, relay_thread):
         assert "CARGO_HOME=/opt/local/rust/cargo" in src
@@ -1168,7 +1168,7 @@ def test_pawflow_agent_auth_routes_cover_login_forms():
 
 
 def test_server_relay_always_injects_runtime_code_from_server_image():
-    src = Path("core/server_relay_manager.py").read_text(encoding="utf-8")
+    src = (Path("core/server_relay_manager.py").read_text(encoding="utf-8") + Path("core/_relay_naming.py").read_text(encoding="utf-8"))
 
     assert "server_relay_mount_code" not in src
     assert "server_relay_tools_dir" not in src

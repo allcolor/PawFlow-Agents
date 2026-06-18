@@ -8,6 +8,7 @@ import pytest
 from core.deployment_registry import DeploymentRegistry
 from core.service_registry import ServiceRegistry, SCOPE_GLOBAL
 from core import FlowFile, install_bootstrap as ib
+from core import _install_base as ib_base
 import core.paths as _paths
 from tasks.system import install_bootstrap as ib_task
 
@@ -62,10 +63,10 @@ def _stub_cert_generation(tmp_path, monkeypatch):
         out.write_text("CERT", encoding="utf-8")
         keyout.write_text("KEY", encoding="utf-8")
 
-    monkeypatch.setattr(ib, "BOOTSTRAP_CERT_FILE", cert)
-    monkeypatch.setattr(ib, "BOOTSTRAP_KEY_FILE", key)
-    monkeypatch.setattr(ib, "FINAL_CERT_FILE", final_cert)
-    monkeypatch.setattr(ib, "FINAL_KEY_FILE", final_key)
+    monkeypatch.setattr(ib_base, "BOOTSTRAP_CERT_FILE", cert)
+    monkeypatch.setattr(ib_base, "BOOTSTRAP_KEY_FILE", key)
+    monkeypatch.setattr(ib_base, "FINAL_CERT_FILE", final_cert)
+    monkeypatch.setattr(ib_base, "FINAL_KEY_FILE", final_key)
     monkeypatch.setattr(ib.subprocess, "run", fake_run)
     return cert, key
 
@@ -85,8 +86,8 @@ def test_fresh_install_deploys_installer_flow(tmp_path, monkeypatch):
     monkeypatch.setattr(_paths, "SYSTEM_DIR", system_dir)
     monkeypatch.setattr(_paths, "GLOBAL_SECRETS_FILE", system_dir / "global_secrets.json")
     monkeypatch.setattr(_paths, "SECRET_KEY_FILE", system_dir / "secret.key")
-    monkeypatch.setattr(ib, "INSTALL_STATE_FILE", state_file)
-    monkeypatch.setattr(ib, "INSTALLER_TEMPLATE", template)
+    monkeypatch.setattr(ib_base, "INSTALL_STATE_FILE", state_file)
+    monkeypatch.setattr(ib_base, "INSTALLER_TEMPLATE", template)
     cert, key = _stub_cert_generation(tmp_path, monkeypatch)
     monkeypatch.delenv("PAWFLOW_BOOTSTRAP_DISABLED", raising=False)
     monkeypatch.setenv("PAWFLOW_BOOTSTRAP_GATEWAY_KEY", "RoyBetty")
@@ -141,8 +142,8 @@ def test_bootstrap_reset_redeploys_installer_with_current_port(tmp_path, monkeyp
     monkeypatch.setattr(_paths, "SYSTEM_DIR", system_dir)
     monkeypatch.setattr(_paths, "GLOBAL_SECRETS_FILE", system_dir / "global_secrets.json")
     monkeypatch.setattr(_paths, "SECRET_KEY_FILE", system_dir / "secret.key")
-    monkeypatch.setattr(ib, "INSTALL_STATE_FILE", state_file)
-    monkeypatch.setattr(ib, "INSTALLER_TEMPLATE", template)
+    monkeypatch.setattr(ib_base, "INSTALL_STATE_FILE", state_file)
+    monkeypatch.setattr(ib_base, "INSTALLER_TEMPLATE", template)
     _stub_cert_generation(tmp_path, monkeypatch)
     monkeypatch.delenv("PAWFLOW_BOOTSTRAP_DISABLED", raising=False)
 
@@ -177,8 +178,8 @@ def test_existing_deployments_skip_bootstrap_without_state(tmp_path, monkeypatch
     }), encoding="utf-8")
 
     monkeypatch.setattr(_paths, "DEPLOYMENTS_DIR", dep_dir)
-    monkeypatch.setattr(ib, "INSTALL_STATE_FILE", tmp_path / "install_state.json")
-    monkeypatch.setattr(ib, "INSTALLER_TEMPLATE", tmp_path / "missing.json")
+    monkeypatch.setattr(ib_base, "INSTALL_STATE_FILE", tmp_path / "install_state.json")
+    monkeypatch.setattr(ib_base, "INSTALLER_TEMPLATE", tmp_path / "missing.json")
     _stub_cert_generation(tmp_path, monkeypatch)
     monkeypatch.delenv("PAWFLOW_BOOTSTRAP_DISABLED", raising=False)
 
@@ -205,8 +206,8 @@ def test_completed_install_syncs_main_flow_listener_port(tmp_path, monkeypatch):
 
     monkeypatch.setattr(_paths, "DEPLOYMENTS_DIR", dep_dir)
     monkeypatch.setattr(_paths, "RUNTIME_DIR", runtime_dir)
-    monkeypatch.setattr(ib, "INSTALL_STATE_FILE", state_file)
-    monkeypatch.setattr(ib, "INSTALLER_TEMPLATE", tmp_path / "missing.json")
+    monkeypatch.setattr(ib_base, "INSTALL_STATE_FILE", state_file)
+    monkeypatch.setattr(ib_base, "INSTALLER_TEMPLATE", tmp_path / "missing.json")
     _stub_cert_generation(tmp_path, monkeypatch)
     monkeypatch.delenv("PAWFLOW_BOOTSTRAP_DISABLED", raising=False)
 
@@ -258,8 +259,8 @@ def test_bootstrap_reset_removes_state_and_redeploys_installer(tmp_path, monkeyp
     monkeypatch.setattr(_paths, "SYSTEM_DIR", system_dir)
     monkeypatch.setattr(_paths, "GLOBAL_SECRETS_FILE", system_dir / "global_secrets.json")
     monkeypatch.setattr(_paths, "SECRET_KEY_FILE", system_dir / "secret.key")
-    monkeypatch.setattr(ib, "INSTALL_STATE_FILE", state_file)
-    monkeypatch.setattr(ib, "INSTALLER_TEMPLATE", template)
+    monkeypatch.setattr(ib_base, "INSTALL_STATE_FILE", state_file)
+    monkeypatch.setattr(ib_base, "INSTALLER_TEMPLATE", template)
     _stub_cert_generation(tmp_path, monkeypatch)
     monkeypatch.delenv("PAWFLOW_BOOTSTRAP_DISABLED", raising=False)
     monkeypatch.setenv("PAWFLOW_BOOTSTRAP_RESET", "1")
@@ -294,8 +295,8 @@ def test_bootstrap_reset_removes_previous_main_deployment(tmp_path, monkeypatch)
     monkeypatch.setattr(_paths, "SYSTEM_DIR", system_dir)
     monkeypatch.setattr(_paths, "GLOBAL_SECRETS_FILE", system_dir / "global_secrets.json")
     monkeypatch.setattr(_paths, "SECRET_KEY_FILE", system_dir / "secret.key")
-    monkeypatch.setattr(ib, "INSTALL_STATE_FILE", state_file)
-    monkeypatch.setattr(ib, "INSTALLER_TEMPLATE", installer_template)
+    monkeypatch.setattr(ib_base, "INSTALL_STATE_FILE", state_file)
+    monkeypatch.setattr(ib_base, "INSTALLER_TEMPLATE", installer_template)
     _stub_cert_generation(tmp_path, monkeypatch)
     monkeypatch.delenv("PAWFLOW_BOOTSTRAP_DISABLED", raising=False)
     monkeypatch.setenv("PAWFLOW_BOOTSTRAP_RESET", "1")
@@ -347,9 +348,9 @@ def test_bootstrap_refreshes_installer_template_from_default_data(tmp_path, monk
     monkeypatch.setattr(_paths, "SYSTEM_DIR", system_dir)
     monkeypatch.setattr(_paths, "GLOBAL_SECRETS_FILE", system_dir / "global_secrets.json")
     monkeypatch.setattr(_paths, "SECRET_KEY_FILE", system_dir / "secret.key")
-    monkeypatch.setattr(ib, "INSTALL_STATE_FILE", state_file)
-    monkeypatch.setattr(ib, "INSTALLER_TEMPLATE", persistent_template)
-    monkeypatch.setattr(ib, "DEFAULT_INSTALLER_FLOW_DIR", default_flow_dir)
+    monkeypatch.setattr(ib_base, "INSTALL_STATE_FILE", state_file)
+    monkeypatch.setattr(ib_base, "INSTALLER_TEMPLATE", persistent_template)
+    monkeypatch.setattr(ib_base, "DEFAULT_INSTALLER_FLOW_DIR", default_flow_dir)
     _stub_cert_generation(tmp_path, monkeypatch)
     monkeypatch.delenv("PAWFLOW_BOOTSTRAP_DISABLED", raising=False)
     monkeypatch.setenv("PAWFLOW_BOOTSTRAP_RESET", "1")
@@ -382,9 +383,9 @@ def test_refreshed_installer_template_redeploys_existing_installer(tmp_path, mon
     monkeypatch.setattr(_paths, "SYSTEM_DIR", system_dir)
     monkeypatch.setattr(_paths, "GLOBAL_SECRETS_FILE", system_dir / "global_secrets.json")
     monkeypatch.setattr(_paths, "SECRET_KEY_FILE", system_dir / "secret.key")
-    monkeypatch.setattr(ib, "INSTALL_STATE_FILE", state_file)
-    monkeypatch.setattr(ib, "INSTALLER_TEMPLATE", persistent_template)
-    monkeypatch.setattr(ib, "DEFAULT_INSTALLER_FLOW_DIR", default_flow_dir)
+    monkeypatch.setattr(ib_base, "INSTALL_STATE_FILE", state_file)
+    monkeypatch.setattr(ib_base, "INSTALLER_TEMPLATE", persistent_template)
+    monkeypatch.setattr(ib_base, "DEFAULT_INSTALLER_FLOW_DIR", default_flow_dir)
     _stub_cert_generation(tmp_path, monkeypatch)
     monkeypatch.delenv("PAWFLOW_BOOTSTRAP_DISABLED", raising=False)
     monkeypatch.delenv("PAWFLOW_BOOTSTRAP_RESET", raising=False)
@@ -419,7 +420,7 @@ def test_refreshed_installer_template_redeploys_existing_installer(tmp_path, mon
 
 def test_install_status_only_exposes_public_draft_sections(tmp_path, monkeypatch):
     state_file = tmp_path / "install_state.json"
-    monkeypatch.setattr(ib, "INSTALL_STATE_FILE", state_file)
+    monkeypatch.setattr(ib_base, "INSTALL_STATE_FILE", state_file)
     state_file.write_text(json.dumps({
         "draft": {
             "server": {"ssl_mode": "self_signed"},
@@ -461,7 +462,7 @@ def test_bootstrap_secret_write_preserves_other_raw_secrets(tmp_path, monkeypatc
 
 def test_finalize_install_requires_replaced_gateway_key(tmp_path, monkeypatch):
     state_file = tmp_path / "install_state.json"
-    monkeypatch.setattr(ib, "INSTALL_STATE_FILE", state_file)
+    monkeypatch.setattr(ib_base, "INSTALL_STATE_FILE", state_file)
     monkeypatch.setenv("PAWFLOW_BOOTSTRAP_GATEWAY_KEY", "RoyBetty")
     state_file.write_text(json.dumps({
         "install_complete": False,
@@ -481,7 +482,7 @@ def test_finalize_install_requires_replaced_gateway_key(tmp_path, monkeypatch):
 
 def test_finalize_install_rejects_mismatched_admin_password_confirmation(tmp_path, monkeypatch):
     state_file = tmp_path / "install_state.json"
-    monkeypatch.setattr(ib, "INSTALL_STATE_FILE", state_file)
+    monkeypatch.setattr(ib_base, "INSTALL_STATE_FILE", state_file)
     monkeypatch.setenv("PAWFLOW_BOOTSTRAP_GATEWAY_KEY", "RoyBetty")
     state_file.write_text(json.dumps({
         "install_complete": False,
@@ -504,7 +505,7 @@ def test_finalize_install_rejects_mismatched_admin_password_confirmation(tmp_pat
 
 def test_finalize_install_rejects_weak_admin_password(tmp_path, monkeypatch):
     state_file = tmp_path / "install_state.json"
-    monkeypatch.setattr(ib, "INSTALL_STATE_FILE", state_file)
+    monkeypatch.setattr(ib_base, "INSTALL_STATE_FILE", state_file)
     monkeypatch.setenv("PAWFLOW_BOOTSTRAP_GATEWAY_KEY", "RoyBetty")
     state_file.write_text(json.dumps({
         "install_complete": False,
@@ -529,8 +530,8 @@ def test_finalize_install_validates_main_template_before_persistent_writes(tmp_p
     ServiceRegistry.reset()
     state_file = tmp_path / "install_state.json"
     system_dir = tmp_path / "system"
-    monkeypatch.setattr(ib, "INSTALL_STATE_FILE", state_file)
-    monkeypatch.setattr(ib, "MAIN_TEMPLATE", tmp_path / "missing-main.json")
+    monkeypatch.setattr(ib_base, "INSTALL_STATE_FILE", state_file)
+    monkeypatch.setattr(ib_base, "MAIN_TEMPLATE", tmp_path / "missing-main.json")
     monkeypatch.setattr(_paths, "GLOBAL_SECRETS_FILE", system_dir / "global_secrets.json")
     monkeypatch.setattr(_paths, "SECRET_KEY_FILE", system_dir / "secret.key")
     monkeypatch.setenv("PAWFLOW_BOOTSTRAP_GATEWAY_KEY", "RoyBetty")
@@ -569,8 +570,8 @@ def test_finalize_install_requires_valid_cli_oauth_before_persistent_writes(tmp_
     system_dir = tmp_path / "system"
     main_template = tmp_path / "main.json"
     _write_main_template(main_template)
-    monkeypatch.setattr(ib, "INSTALL_STATE_FILE", state_file)
-    monkeypatch.setattr(ib, "MAIN_TEMPLATE", main_template)
+    monkeypatch.setattr(ib_base, "INSTALL_STATE_FILE", state_file)
+    monkeypatch.setattr(ib_base, "MAIN_TEMPLATE", main_template)
     monkeypatch.setattr(_paths, "GLOBAL_SECRETS_FILE", system_dir / "global_secrets.json")
     monkeypatch.setattr(_paths, "SECRET_KEY_FILE", system_dir / "secret.key")
     monkeypatch.setenv("PAWFLOW_BOOTSTRAP_GATEWAY_KEY", "RoyBetty")
@@ -627,8 +628,8 @@ def test_finalize_install_persists_complete_state_without_cleartext_key(tmp_path
     monkeypatch.setattr(_paths, "USERS_FILE", system_dir / "users.json")
     monkeypatch.setattr(_paths, "SESSIONS_FILE", system_dir / "sessions.json")
     monkeypatch.setattr(_paths, "SECURITY_FILE", system_dir / "security.json")
-    monkeypatch.setattr(ib, "INSTALL_STATE_FILE", state_file)
-    monkeypatch.setattr(ib, "MAIN_TEMPLATE", main_template)
+    monkeypatch.setattr(ib_base, "INSTALL_STATE_FILE", state_file)
+    monkeypatch.setattr(ib_base, "MAIN_TEMPLATE", main_template)
     monkeypatch.setenv("PAWFLOW_BOOTSTRAP_GATEWAY_KEY", "RoyBetty")
 
     try:
@@ -848,8 +849,8 @@ def test_finalize_install_with_api_key_does_not_create_llm_credential_pool(tmp_p
     monkeypatch.setattr(_paths, "USERS_FILE", system_dir / "users.json")
     monkeypatch.setattr(_paths, "SESSIONS_FILE", system_dir / "sessions.json")
     monkeypatch.setattr(_paths, "SECURITY_FILE", system_dir / "security.json")
-    monkeypatch.setattr(ib, "INSTALL_STATE_FILE", state_file)
-    monkeypatch.setattr(ib, "MAIN_TEMPLATE", main_template)
+    monkeypatch.setattr(ib_base, "INSTALL_STATE_FILE", state_file)
+    monkeypatch.setattr(ib_base, "MAIN_TEMPLATE", main_template)
     monkeypatch.setenv("PAWFLOW_BOOTSTRAP_GATEWAY_KEY", "RoyBetty")
 
     try:
@@ -938,8 +939,8 @@ def test_finalize_install_rolls_back_runtime_artifacts_when_smoke_checks_fail(tm
     monkeypatch.setattr(_paths, "USERS_FILE", system_dir / "users.json")
     monkeypatch.setattr(_paths, "SESSIONS_FILE", system_dir / "sessions.json")
     monkeypatch.setattr(_paths, "SECURITY_FILE", system_dir / "security.json")
-    monkeypatch.setattr(ib, "INSTALL_STATE_FILE", state_file)
-    monkeypatch.setattr(ib, "MAIN_TEMPLATE", main_template)
+    monkeypatch.setattr(ib_base, "INSTALL_STATE_FILE", state_file)
+    monkeypatch.setattr(ib_base, "MAIN_TEMPLATE", main_template)
     monkeypatch.setenv("PAWFLOW_BOOTSTRAP_GATEWAY_KEY", "RoyBetty")
 
     try:
@@ -1348,14 +1349,14 @@ def test_final_tls_config_rejects_missing_provided_cert_files(tmp_path):
 def test_final_tls_config_infers_self_signed_when_paths_are_empty(tmp_path, monkeypatch):
     cert = tmp_path / "server.crt"
     key = tmp_path / "server.key"
-    monkeypatch.setattr(ib, "FINAL_CERT_FILE", cert)
-    monkeypatch.setattr(ib, "FINAL_KEY_FILE", key)
+    monkeypatch.setattr(ib_base, "FINAL_CERT_FILE", cert)
+    monkeypatch.setattr(ib_base, "FINAL_KEY_FILE", key)
 
     def fake_generate(cert_file, key_file, **_kwargs):
         cert_file.write_text("CERT", encoding="utf-8")
         key_file.write_text("KEY", encoding="utf-8")
 
-    monkeypatch.setattr(ib, "_generate_self_signed_cert", fake_generate)
+    monkeypatch.setattr(ib_base, "_generate_self_signed_cert", fake_generate)
 
     params = ib._final_tls_config({"ssl_mode": "provided"})
 
@@ -1519,8 +1520,8 @@ def test_bootstrap_cert_generation_reuses_existing_files(tmp_path, monkeypatch):
     cert.write_text("CERT", encoding="utf-8")
     key.write_text("KEY", encoding="utf-8")
 
-    monkeypatch.setattr(ib, "BOOTSTRAP_CERT_FILE", cert)
-    monkeypatch.setattr(ib, "BOOTSTRAP_KEY_FILE", key)
+    monkeypatch.setattr(ib_base, "BOOTSTRAP_CERT_FILE", cert)
+    monkeypatch.setattr(ib_base, "BOOTSTRAP_KEY_FILE", key)
 
     called = {"run": False}
 

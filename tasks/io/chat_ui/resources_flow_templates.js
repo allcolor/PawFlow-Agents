@@ -107,7 +107,7 @@ function _renderFlowPackageGroup(packageName, flows) {
     const desc = t.description ? ` title="${_pfpAttr(t.description)}"` : '';
     html += `<div style="display:flex;align-items:center;gap:4px;margin-left:14px;margin-bottom:2px;cursor:pointer;"${desc} onclick="showDeployFlowDialog(${_pfpJsArg(t.id)})" oncontextmenu="showFlowTemplateMenu(event,${_pfpJsArg(t.id)});return false;">
       ${_scopeBadge(t.scope)}<span style="color:var(--pf-text);font-size:12px;flex:1;">${escapeHtml(t.name)}${ver}</span>
-      <span style="color:var(--pf-muted);font-size:10px;">[${escapeHtml(t.tasks_count)} tasks]</span>
+      <span style="color:var(--pf-muted);font-size:10px;">[${escapeHtml(t.tasks_count)} tasks]</span>${_ownerBadge(t)}
     </div>`;
   });
   html += '</div></div>';

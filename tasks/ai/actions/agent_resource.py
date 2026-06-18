@@ -93,32 +93,151 @@ def _scan_flow_templates(user_id: str) -> List[Dict[str, Any]]:
         if not root.is_dir():
             continue
         for latest in root.rglob("latest.json"):
-            flow_dir = latest.parent
             try:
-                rel_parts = flow_dir.relative_to(root).parts
-                package = ".".join(rel_parts[:-1]) if len(rel_parts) > 1 else "default"
-                ptr = json.loads(latest.read_text(encoding="utf-8"))
-                version = (ptr.get("version") or "").strip()
-                if not version:
-                    continue
-                vfile = flow_dir / "versions" / f"{version}.json"
-                if not vfile.is_file():
-                    continue
-                raw = json.loads(vfile.read_text(encoding="utf-8"))
-                templates.append({
-                    "id": raw.get("id") or flow_dir.name,
-                    "name": raw.get("name") or flow_dir.name,
-                    "package": raw.get("package") or package,
-                    "version": version,
-                    "description": raw.get("description") or "",
-                    "scope": raw.get("scope") or scope_label,
-                    "tasks_count": len(raw.get("tasks", {}) or {}),
-                    "services_count": len(raw.get("services", {}) or {}),
-                })
+                tpl = _flow_template_from_latest(latest, root, scope_label)
             except Exception as exc:
                 logger.debug("list_resources flow_templates: skip %s: %s", latest, exc)
+                continue
+            if tpl:
+                templates.append(tpl)
     templates.sort(key=lambda t: (t["package"], t["name"], t["version"], t["scope"]))
     return templates
+
+
+def _flow_template_from_latest(latest, root, scope_label) -> Dict[str, Any]:
+    """Parse one repo flow-template pointer (latest.json) into a row, or None.
+
+    Shared by the per-user scan (_scan_flow_templates) and the admin
+    cross-user scan (_scan_all_flow_templates) so both stay in lock-step.
+    """
+    flow_dir = latest.parent
+    rel_parts = flow_dir.relative_to(root).parts
+    package = ".".join(rel_parts[:-1]) if len(rel_parts) > 1 else "default"
+    ptr = json.loads(latest.read_text(encoding="utf-8"))
+    version = (ptr.get("version") or "").strip()
+    if not version:
+        return None
+    vfile = flow_dir / "versions" / f"{version}.json"
+    if not vfile.is_file():
+        return None
+    raw = json.loads(vfile.read_text(encoding="utf-8"))
+    return {
+        "id": raw.get("id") or flow_dir.name,
+        "name": raw.get("name") or flow_dir.name,
+        "package": raw.get("package") or package,
+        "version": version,
+        "description": raw.get("description") or "",
+        "scope": raw.get("scope") or scope_label,
+        "tasks_count": len(raw.get("tasks", {}) or {}),
+        "services_count": len(raw.get("services", {}) or {}),
+    }
+
+
+def _scan_all_flow_templates() -> List[Dict[str, Any]]:
+    """Admin cross-user flow-template catalog: global + every user's repo,
+    each row owner-labelled. Read-only filesystem walk; mirrors
+    _scan_flow_templates but across all owners (no per-user cache — the
+    admin view-all path is rare and not on the hot render loop)."""
+    from core.paths import REPOSITORY_DIR
+    from core import admin_scope
+    out: List[Dict[str, Any]] = []
+    roots = []
+    _g = REPOSITORY_DIR / "flows" / "global"
+    if _g.is_dir():
+        roots.append(("", "global", _g))
+    _users = REPOSITORY_DIR / "flows" / "users"
+    if _users.is_dir():
+        for ud in sorted(_users.iterdir()):
+            if ud.is_dir():
+                roots.append((ud.name, "user", ud))
+    for owner, scope_label, root in roots:
+        for latest in root.rglob("latest.json"):
+            try:
+                tpl = _flow_template_from_latest(latest, root, scope_label)
+            except Exception as exc:
+                logger.debug(
+                    "list_resources flow_templates(all): skip %s: %s", latest, exc)
+                continue
+            if not tpl:
+                continue
+            tpl["owner_id"] = owner
+            tpl["owner_display"] = (
+                admin_scope.display_name_for(owner) if owner else "")
+            tpl["conv_id"] = ""
+            tpl["conv_title"] = ""
+            out.append(tpl)
+    out.sort(key=lambda t: (t["package"], t["name"], t["version"], t["scope"]))
+    return out
+
+
+def _overlay_admin_view_all(result: Dict[str, Any], rs) -> None:
+    """Replace the repo-backed catalog sections of a self-view list_resources
+    `result` with admin cross-user rows (every owner, owner-labelled), in
+    place. Leaves all other sections (deployed flows, relays, remote FS,
+    summarizer, tasks, secrets, variables, live agents) untouched so the
+    panel keeps the admin's own values instead of blanking. Secrets and
+    variables are intentionally never enumerated cross-user.
+    """
+    from core import admin_scope
+    cidx = admin_scope.conv_index()
+    conv_pairs = [(v.get("owner", ""), cid)
+                  for cid, v in cidx.items() if v.get("owner")]
+
+    def _rows(rtype, mapper):
+        out = []
+        for e in rs.list_all_global(rtype, conv_pairs=conv_pairs):
+            row = mapper(e)
+            oid = e.get("_owner_id", "") or ""
+            _cid = e.get("_conv_id", "") or ""
+            row["scope"] = e.get("_scope", "")
+            row["owner_id"] = oid
+            row["owner_display"] = (
+                admin_scope.display_name_for(oid) if oid else "")
+            row["conv_id"] = _cid
+            row["conv_title"] = cidx.get(_cid, {}).get("title", "")
+            out.append(row)
+        return out
+
+    repo_agents_all = _rows("agent", lambda a: {
+        "name": a.get("name", ""),
+        "description": a.get("description", ""),
+    })
+    result["repo_agents"] = repo_agents_all
+    result["repo_agent_count"] = len(repo_agents_all)
+    result["skills"] = _rows("skill", lambda s: {
+        "name": s.get("name", ""),
+        "description": s.get("description", ""),
+        "invalid": s.get("_invalid", ""),
+        "assigned_to": [],
+    })
+    result["mcp_servers"] = _rows("mcp", lambda m: {
+        "name": m.get("name", ""),
+        "url": m.get("url", ""),
+        "transport": m.get("transport", "http"),
+        "enabled": False,
+    })
+    result["task_defs"] = _rows("task_def", lambda t: {
+        "name": t.get("name", ""),
+        "description": (t.get("description", "")
+                        or t.get("prompt", "")[:60]),
+        "default_interval": t.get("default_interval", "6/1m"),
+    })
+    result["prompts"] = _rows("prompt", lambda p: {
+        "name": p.get("name", ""),
+        "title": p.get("title", ""),
+        "category": p.get("category", ""),
+        "description": p.get("description", ""),
+        "has_parameters": bool(p.get("parameters")),
+    })
+    result["agent_hooks"] = _rows("agent_hook", lambda h: {
+        "name": h.get("name", ""),
+        "description": h.get("description", ""),
+        "events": h.get("events") or [],
+        "tools": h.get("tools") or [],
+        "fail_policy": h.get("fail_policy", "open"),
+        "active": False,
+    })
+    result["flow_templates"] = _scan_all_flow_templates()
 
 
 def _get_flow_templates_cached(user_id: str) -> List[Dict[str, Any]]:
@@ -1287,79 +1406,14 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         from core.resource_store import ResourceStore
         rs = ResourceStore.instance()
         from core import admin_scope
-        if admin_scope.wants_view_all(body, flowfile):
-            # Admin cross-user catalog: repo-backed resources across every
-            # owner, owner-labelled. Conversation-specific flags (active /
-            # in_conversation / bindings) are omitted -- they are meaningless
-            # in a global catalog. Themes/voices are not enumerated
-            # cross-user in v1 (their helpers are per-user); they stay empty.
-            cidx = admin_scope.conv_index()
-            conv_pairs = [(v.get("owner", ""), cid)
-                          for cid, v in cidx.items() if v.get("owner")]
-
-            def _rows(rtype, mapper):
-                out = []
-                for e in rs.list_all_global(rtype, conv_pairs=conv_pairs):
-                    row = mapper(e)
-                    oid = e.get("_owner_id", "") or ""
-                    _cid = e.get("_conv_id", "") or ""
-                    row["scope"] = e.get("_scope", "")
-                    row["owner_id"] = oid
-                    row["owner_display"] = (
-                        admin_scope.display_name_for(oid) if oid else "")
-                    row["conv_id"] = _cid
-                    row["conv_title"] = cidx.get(_cid, {}).get("title", "")
-                    out.append(row)
-                return out
-
-            repo_agents_all = _rows("agent", lambda a: {
-                "name": a.get("name", ""),
-                "description": a.get("description", ""),
-            })
-            result = {
-                "view": "all",
-                "agents": [],
-                "repo_agent_count": len(repo_agents_all),
-                "repo_agents": repo_agents_all,
-                "skills": _rows("skill", lambda s: {
-                    "name": s.get("name", ""),
-                    "description": s.get("description", ""),
-                    "invalid": s.get("_invalid", ""),
-                    "assigned_to": [],
-                }),
-                "mcp_servers": _rows("mcp", lambda m: {
-                    "name": m.get("name", ""),
-                    "url": m.get("url", ""),
-                    "transport": m.get("transport", "http"),
-                    "enabled": False,
-                }),
-                "task_defs": _rows("task_def", lambda t: {
-                    "name": t.get("name", ""),
-                    "description": (t.get("description", "")
-                                    or t.get("prompt", "")[:60]),
-                    "default_interval": t.get("default_interval", "6/1m"),
-                }),
-                "prompts": _rows("prompt", lambda p: {
-                    "name": p.get("name", ""),
-                    "title": p.get("title", ""),
-                    "category": p.get("category", ""),
-                    "description": p.get("description", ""),
-                    "has_parameters": bool(p.get("parameters")),
-                }),
-                "agent_hooks": _rows("agent_hook", lambda h: {
-                    "name": h.get("name", ""),
-                    "description": h.get("description", ""),
-                    "events": h.get("events") or [],
-                    "tools": h.get("tools") or [],
-                    "fail_policy": h.get("fail_policy", "open"),
-                    "active": False,
-                }),
-                "themes": [],
-                "voices": [],
-            }
-            flowfile.set_content(
-                json.dumps(result, ensure_ascii=False).encode())
-            return [flowfile]
+        # Admin cross-user view-all. Rather than early-returning a sparse
+        # catalog (which blanked every non-catalog section — deployed flows,
+        # relays, remote FS, summarizer, tasks, flow templates), build the
+        # full self-view below and overlay the repo-backed catalogs with
+        # cross-user rows at the end. The admin's own runtime/personal
+        # sections stay populated; sensitive ones (secrets/variables) are
+        # never enumerated cross-user.
+        _view_all = admin_scope.wants_view_all(body, flowfile)
         uid = user_id
         if conv_id and hasattr(store, "get_extras_snapshot"):
             extras_snapshot = store.get_extras_snapshot(conv_id)
@@ -1697,6 +1751,13 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         # Flow template discovery can walk many files. Keep /api/ui fast by
         # returning cache immediately and refreshing it off the request path.
         result["flow_templates"] = _get_flow_templates_cached(user_id)
+        # Admin cross-user view: overlay the repo-backed catalogs (agents,
+        # skills, mcp, task defs, prompts, hooks, flow templates) with rows
+        # from every owner, owner-labelled. All other sections keep the
+        # admin's self-view (built above) so nothing blanks out.
+        if _view_all:
+            _overlay_admin_view_all(result, rs)
+            result["view"] = "all"
         # Include user role so frontend can enable admin features
         _user_role = flowfile.get_attribute("http.auth.roles") or "user"
         result["user_role"] = _user_role

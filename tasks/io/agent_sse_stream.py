@@ -69,6 +69,12 @@ class AgentSSEStreamTask(BaseTask):
         if isinstance(replay_param, str) and replay_param.lower() in ("0", "false", "no"):
             replay = False
 
+        # [phaseB-diag] Mark when the events SSE handler runs and when it
+        # first streams — to see if the post-login blank is the SSE never
+        # opening vs opening but starving for events.
+        logger.info("[sse-events] handler conv=%s client=%s replay=%s",
+                    conversation_id[:8], client_id[:12], replay)
+
         # Subscribe to events
         bus = ConversationEventBus.instance()
         writer = bus.subscribe(conversation_id, replay=replay, client_id=client_id)
@@ -80,8 +86,13 @@ class AgentSSEStreamTask(BaseTask):
         def sse_iterator():
             """Yield SSE bytes from the writer."""
             started = time.monotonic()
+            _diag_first = True
             try:
                 for chunk in writer.iterate(timeout=15.0):
+                    if _diag_first:
+                        _diag_first = False
+                        logger.info("[sse-events] first chunk conv=%s client=%s",
+                                    conversation_id[:8], client_id[:12])
                     # Deliver the freshly-dequeued chunk BEFORE checking the
                     # lifetime cap. Checking first dropped this chunk on the
                     # floor when an event landed on the same iteration the cap

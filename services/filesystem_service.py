@@ -499,6 +499,13 @@ class RelayService(BaseService):
         # Windows) can have __slots__ and refuse new attributes.
         send_lock = asyncio.Lock()
         relay_tasks = set()
+        # [relay-diag] Per-connection id so the cold-start flap cycles can be
+        # correlated and overlaps (two live conns at once) spotted.
+        try:
+            service._relay_conn_seq = getattr(service, '_relay_conn_seq', 0) + 1
+            conn_id = service._relay_conn_seq
+        except Exception:
+            conn_id = 0
         conn_state = {
             'relay_id': '',
             'connected_at': time.time(),
@@ -506,6 +513,7 @@ class RelayService(BaseService):
             'last_request_id': '',
             'last_action': '',
             'close_info': '',
+            'conn_id': conn_id,
         }
         try:
             opcode, payload = await _ws_recv_frame(reader)
@@ -523,7 +531,10 @@ class RelayService(BaseService):
             relay_id = reg.get('relay_id', '')
             reg_info = reg.get('info', {})
             conn_state['relay_id'] = relay_id
-            logger.info('Relay connected: %s (addr=%s)', relay_id, remote)
+            with self._relay_pool_lock:
+                _alive = len(self._relay_pool)
+            logger.info('Relay connected: %s (addr=%s) conn#%d alive_before=%d',
+                        relay_id, remote, conn_id, _alive)
             if reg_info.get('shells'):
                 service._relay_shells = reg_info['shells']
             if reg_info:
@@ -562,11 +573,14 @@ class RelayService(BaseService):
                 or '10054' in _err_str
                 or 'reset by peer' in _err_str.lower()
                 or isinstance(e, (ConnectionResetError, asyncio.IncompleteReadError)))
+            _lived = time.time() - conn_state.get('connected_at', time.time())
             if _peer_close:
                 logger.info(
-                    'Relay disconnected: relay=%s addr=%s closed_by_peer err=%s '
+                    'Relay disconnected: relay=%s addr=%s conn#%s lived=%.1fs '
+                    'closed_by_peer err_type=%s err=%s '
                     'inflight=%d last_type=%s last_rid=%s last_action=%s',
-                    conn_state.get('relay_id') or service._service_id, remote, e,
+                    conn_state.get('relay_id') or service._service_id, remote,
+                    conn_state.get('conn_id', '?'), _lived, type(e).__name__, e,
                     len(relay_tasks),
                     conn_state.get('last_msg_type', ''),
                     conn_state.get('last_request_id', ''),

@@ -848,6 +848,19 @@ class ServiceRegistry:
 
     def _load(self, scope: str, scope_id: str) -> None:
         """Load service definitions from the appropriate backend."""
+        # [phaseB-diag] Pin WHEN the (lazy) user-scope load is triggered and
+        # by WHOM. The 50s post-login gap sits before "Loaded N services";
+        # this caller breadcrumb tells us which code path triggers it.
+        _diag_t0 = None
+        if scope == SCOPE_USER:
+            import time as _t
+            import traceback as _tb
+            _diag_t0 = _t.monotonic()
+            _frames = _tb.extract_stack(limit=8)[:-1]
+            _caller = " < ".join(
+                "%s:%s" % (f.name, f.lineno) for f in reversed(_frames[-5:]))
+            logger.info("[svc-load] START user scope id=%s caller=%s",
+                        scope_id[:8] if len(scope_id) > 8 else scope_id, _caller)
         try:
             if scope == SCOPE_GLOBAL:
                 self._load_dir(scope_id, _global_services_dir(), scope)
@@ -862,6 +875,11 @@ class ServiceRegistry:
                 "CRITICAL: Failed to load %s services (id=%s): %s — "
                 "registry is READ-ONLY for this scope until restart",
                 scope, scope_id[:8] if len(scope_id) > 8 else scope_id, e)
+        if _diag_t0 is not None:
+            import time as _t
+            logger.info("[svc-load] END user scope id=%s took=%.0fms",
+                        scope_id[:8] if len(scope_id) > 8 else scope_id,
+                        (_t.monotonic() - _diag_t0) * 1000.0)
 
     def _load_dir(self, scope_id: str, svc_dir: Path, scope: str) -> None:
         """Load definitions from a directory (1 JSON file per service)."""

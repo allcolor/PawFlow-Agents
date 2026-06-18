@@ -1337,8 +1337,8 @@ class TestTelegramAgentClientTask(unittest.TestCase):
             ff.set_attribute("telegram.message_id", "m1")
 
             with patch.object(TelegramAgentClientTask, "_selected_agent_for_conversation", return_value="assistant"), \
-                    patch("tasks.io.telegram_agent_client._telegram_tts_enabled", return_value=True), \
-                    patch("tasks.io.telegram_agent_client._attach_telegram_tts_audio") as attach_audio, \
+                    patch("tasks.io._telegram_voice._telegram_tts_enabled", return_value=True), \
+                    patch("tasks.io._telegram_bridge._attach_telegram_tts_audio") as attach_audio, \
                     patch("core.agent_runtime_api.AgentRuntimeAPI.submit_message", return_value=type("Submission", (), {
                         "conversation_id": "conv1",
                         "turn_id": "telegram:111111:m1",
@@ -1582,7 +1582,7 @@ class TestTelegramAgentClientTask(unittest.TestCase):
         task._send_media = MagicMock()
 
         with patch.object(TelegramConversationBridgeTask, "_telegram_subscribers", return_value=[("alice", "chat-1")]), \
-                patch("tasks.io.telegram_agent_client._load_filestore_media", return_value=("image.png", b"png", "image/png")) as load:
+                patch("tasks.io._telegram_bridge._load_filestore_media", return_value=("image.png", b"png", "image/png")) as load:
             task._on_event("conv1", "new_message", {
                 "role": "user",
                 "content": "look",
@@ -1600,7 +1600,7 @@ class TestTelegramAgentClientTask(unittest.TestCase):
         task._send_media = MagicMock()
 
         with patch.object(TelegramConversationBridgeTask, "_telegram_subscribers", return_value=[("telegram-user", "telegram:1725865697")]), \
-                patch("tasks.io.telegram_agent_client._load_filestore_media", return_value=("image.png", b"png", "image/png")) as load:
+                patch("tasks.io._telegram_bridge._load_filestore_media", return_value=("image.png", b"png", "image/png")) as load:
             task._on_event("conv1", "new_message", {
                 "role": "user",
                 "content": "look",
@@ -1632,7 +1632,7 @@ class TestTelegramAgentClientTask(unittest.TestCase):
         task._send_media = MagicMock()
 
         with patch.object(TelegramConversationBridgeTask, "_telegram_subscribers", return_value=[("alice", "telegram:1725865697")]), \
-                patch("tasks.io.telegram_agent_client._load_filestore_media", return_value=("image.png", b"png", "image/png")) as load:
+                patch("tasks.io._telegram_bridge._load_filestore_media", return_value=("image.png", b"png", "image/png")) as load:
             task._on_event("conv1", "new_message", {
                 "role": "user",
                 "content": [
@@ -1991,7 +1991,7 @@ class TestTelegramAgentClientTask(unittest.TestCase):
         task._send = MagicMock()
 
         with patch.object(TelegramConversationBridgeTask, "_telegram_subscribers", return_value=[("alice", "chat-1")]), \
-                patch("tasks.io.telegram_agent_client.time.time", side_effect=[100.0, 105.0, 107.0]):
+                patch("tasks.io._telegram_bridge.time.time", side_effect=[100.0, 105.0, 107.0]):
             task._on_event("conv1", "thinking", {"agent_name": "assistant", "waiting_seconds": 4})
             task._on_event("conv1", "thinking", {"agent_name": "assistant", "waiting_seconds": 10})
             task._on_event("conv1", "thinking", {"agent_name": "assistant", "waiting_seconds": 22})

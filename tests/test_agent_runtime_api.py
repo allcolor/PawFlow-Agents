@@ -407,14 +407,14 @@ def test_telegram_new_conversation_wizard_builds_payload(monkeypatch):
 
     created = {}
 
-    monkeypatch.setattr(mod, "_available_agents", lambda user_id: [
+    monkeypatch.setattr("tasks.io._telegram_client_helpers._available_agents", lambda user_id: [
         {"name": "assistant", "model": "", "tools": [], "max_depth": 1000, "skills": []},
     ])
-    monkeypatch.setattr(mod, "_agent_definition", lambda user_id, name: {
+    monkeypatch.setattr("tasks.io._telegram_client_helpers._agent_definition", lambda user_id, name: {
         "name": name, "model": "", "tools": [], "max_depth": 1000, "skills": [],
     })
-    monkeypatch.setattr(mod, "_available_llm_services", lambda user_id: [ServiceDef()])
-    monkeypatch.setattr(mod, "_available_relays", lambda user_id: [
+    monkeypatch.setattr("tasks.io._telegram_client_helpers._available_llm_services", lambda user_id: [ServiceDef()])
+    monkeypatch.setattr("tasks.io._telegram_client_helpers._available_relays", lambda user_id: [
         {"relay_id": "relay1", "connected": True},
     ])
 

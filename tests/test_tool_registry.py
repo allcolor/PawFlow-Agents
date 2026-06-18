@@ -749,7 +749,7 @@ class TestMetaToolAliases(unittest.TestCase):
 
         with patch("core.remote_fs_bindings.build_manifest_for_relay",
                    lambda relay_id, user_id: {"relay_id": relay_id, "mounts": []}), \
-                patch("services.filesystem_service.asyncio.run_coroutine_threadsafe",
+                patch("services._relay_conn.asyncio.run_coroutine_threadsafe",
                       fake_run):
             svc.push_remote_fs_manifest()
 

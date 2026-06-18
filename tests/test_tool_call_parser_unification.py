@@ -67,7 +67,7 @@ def test_bridge_uses_canonical_no_inline_copy():
 
 
 def test_relay_uses_canonical_no_inline_copy():
-    src = (ROOT / "services" / "tool_relay_service.py").read_text()
+    src = "".join(f.read_text() for f in sorted((ROOT / "services").glob("*tool_relay*.py")))  # split across _tool_relay_*.py
     assert "parse_tool_arguments(" in src
     assert "Defensive: double-encoded JSON string" not in src
 

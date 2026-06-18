@@ -4,6 +4,7 @@ import pytest
 
 from services.filesystem_service import RelayService
 from services.tool_relay_service import ToolRelayService
+import services._tool_relay_base as _trb_mod
 
 
 class _Registry:
@@ -189,7 +190,7 @@ def test_read_only_search_does_not_resolve_full_env_for_plain_args(monkeypatch):
         ToolRelayService, "_conversation_extra_fast",
         staticmethod(lambda _cid, key, default=None: _fast_auto_permissions(key, default)))
     monkeypatch.setattr(
-        relay_mod, "resolve_secrets_env",
+        _trb_mod, "resolve_secrets_env",
         lambda *_args: (_ for _ in ()).throw(AssertionError("env should stay lazy")))
     secret_calls = []
     fingerprint_calls = []
@@ -202,7 +203,7 @@ def test_read_only_search_does_not_resolve_full_env_for_plain_args(monkeypatch):
         secret_calls.append(1)
         return {"TOPSECRET"}, {"TOPSECRET": "TOKEN"}
 
-    monkeypatch.setattr(relay_mod, "resolve_secret_values", _secret_values)
+    monkeypatch.setattr(_trb_mod, "resolve_secret_values", _secret_values)
 
     first = svc._do_execute("r1", "search", {"path": "tests", "pattern": "needle"},
                             "alice", "conv1", "assistant")
@@ -241,8 +242,8 @@ def test_bash_still_receives_secret_environment(monkeypatch):
         env_calls.append(1)
         return {"TOKEN": "TOPSECRET"}
 
-    monkeypatch.setattr(relay_mod, "resolve_secrets_env", _env)
-    monkeypatch.setattr(relay_mod, "resolve_secret_values", lambda *_args: (set(), {}))
+    monkeypatch.setattr(_trb_mod, "resolve_secrets_env", _env)
+    monkeypatch.setattr(_trb_mod, "resolve_secret_values", lambda *_args: (set(), {}))
 
     result = svc._do_execute("r1", "bash", {"command": "echo $TOKEN"},
                              "alice", "conv1", "assistant")
@@ -282,10 +283,10 @@ def test_subconversation_tool_execution_uses_parent_runtime_scope(monkeypatch):
         ToolRelayService, "_secret_config_fingerprint",
         classmethod(lambda cls, uid, conv: ("fp", conv)))
     monkeypatch.setattr(
-        relay_mod, "resolve_secrets_env",
+        _trb_mod, "resolve_secrets_env",
         lambda uid, conv: env_cids.append(conv) or {"TOKEN": "secret"})
     monkeypatch.setattr(
-        relay_mod, "resolve_secret_values",
+        _trb_mod, "resolve_secret_values",
         lambda uid, conv: secret_cids.append(conv) or (set(), {}))
 
     for cid in ("conv1::task_verify::t_1", "conv1::delegate::assistant"):

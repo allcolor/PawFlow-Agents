@@ -61,7 +61,7 @@ def test_read_only_blocks_write_tool_even_with_allow_override(tmp_path, monkeypa
     # rule lives in tool_relay_service._do_execute. Inspect the source
     # to make sure the ordering is right; this matches the structural
     # checks we already use for the gauge invariants in JS.
-    src = open("services/tool_relay_service.py", encoding="utf-8").read()
+    src = open("services/_tool_relay_execute.py", encoding="utf-8").read()  # _do_execute moved here in the <=800 split
     # The read_only block must appear before the `_tool_perm == "allow"`
     # branch (otherwise a stale `allow` wins).
     ro_idx = src.index('if _perm_mode == "read_only":')

@@ -355,7 +355,7 @@ def test_tool_relay_info_refreshes_registered_ws_route():
 
 def test_mcp_bridge_and_tool_relay_emit_timing_breakdown():
     bridge_src = Path("tools/mcp_bridge.py").read_text(encoding="utf-8")
-    relay_src = Path("services/tool_relay_service.py").read_text(encoding="utf-8")
+    relay_src = "".join(f.read_text(encoding="utf-8") for f in sorted(Path("services").glob("*tool_relay*.py")))  # split across _tool_relay_*.py
     codex_src = Path("core/llm_providers/codex_app_server.py").read_text(encoding="utf-8")
 
     assert "TIMING tools/call" in bridge_src

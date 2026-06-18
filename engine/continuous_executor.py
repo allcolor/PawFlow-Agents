@@ -675,7 +675,7 @@ class ContinuousFlowExecutor:
                 _svc_id = dequeued_ff.get_attribute("http.listener.service_id") or ""
                 _still_valid = False
                 try:
-                    from services.http_listener_service import HTTPListenerService, _instances
+                    from services.http_listener_service import _instances
                     for _port, _svc in _instances.items():
                         if _svc._server and _req_id in _svc._server._pending_requests:
                             _still_valid = True
@@ -1133,7 +1133,6 @@ class ContinuousFlowExecutor:
                         saved_queues.setdefault(key, []).append(ff)
 
             # Rebuild with new flow (reused services are already connected)
-            old_tasks = dict(self._tasks)
             self._tasks.clear()
             self._task_states.clear()
             self._task_retry_counts.clear()

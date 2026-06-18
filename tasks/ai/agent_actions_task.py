@@ -83,5 +83,5 @@ class AgentActionsTask(AgentLoopTask):
         return result
 
 
-from core import TaskFactory
+from core import TaskFactory  # noqa: E402
 TaskFactory.register(AgentActionsTask)

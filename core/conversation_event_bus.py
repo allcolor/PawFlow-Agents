@@ -16,7 +16,7 @@ import threading
 import time
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
-from typing import Callable, Dict, List, Optional, Set, Tuple
+from typing import Callable, Dict, List, Set, Tuple
 
 from core.sse_writer import SSEEvent, SSEWriter
 

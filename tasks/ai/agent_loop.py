@@ -37,10 +37,6 @@ from typing import Dict, Any, List, Optional
 
 from core.base_task import BaseTask
 from core import FlowFile, TaskFactory
-from core.llm_client import (
-    LLMClient, LLMMessage, LLMResponse, LLMToolDefinition,
-    LLMToolCall, LLMToolResult, LLMClientError,
-)
 from core.tool_registry import ToolRegistry, create_default_registry
 from core.interrupt_policy import SOFT_INTERRUPT_USER_COMMAND
 
@@ -48,20 +44,20 @@ logger = logging.getLogger(__name__)
 
 
 # Exceptions shared across agent loop mixins
-from tasks.ai.agent_exceptions import AgentCancelled, _InterruptComplete  # noqa: F401
+from tasks.ai.agent_exceptions import AgentCancelled, _InterruptComplete  # noqa: F401,E402
 
 
 
 # Mixins — methods extracted into separate files
-from tasks.ai.agent_actions import AgentActionsMixin
-from tasks.ai.agent_streaming import AgentStreamingMixin
-from tasks.ai.agent_compaction import AgentCompactionMixin
-from tasks.ai.agent_context import AgentContextMixin
-from tasks.ai.agent_poller import AgentPollerMixin
-from tasks.ai.agent_identity import AgentIdentityMixin
-from tasks.ai.agent_serialization import AgentSerializationMixin
-from tasks.ai.agent_utils import AgentUtilsMixin
-from tasks.ai.agent_core import AgentCoreMixin
+from tasks.ai.agent_actions import AgentActionsMixin  # noqa: E402
+from tasks.ai.agent_streaming import AgentStreamingMixin  # noqa: E402
+from tasks.ai.agent_compaction import AgentCompactionMixin  # noqa: E402
+from tasks.ai.agent_context import AgentContextMixin  # noqa: E402
+from tasks.ai.agent_poller import AgentPollerMixin  # noqa: E402
+from tasks.ai.agent_identity import AgentIdentityMixin  # noqa: E402
+from tasks.ai.agent_serialization import AgentSerializationMixin  # noqa: E402
+from tasks.ai.agent_utils import AgentUtilsMixin  # noqa: E402
+from tasks.ai.agent_core import AgentCoreMixin  # noqa: E402
 
 
 class AgentLoopTask(
@@ -406,10 +402,6 @@ class AgentLoopTask(
             "llm_service": {
                 "type": "string", "required": False, "default": "",
                 "description": "LLM service ID — leave empty when agents have their own (conv_agents config).",
-            },
-            "resilience_style": {
-                "type": "string", "required": False, "default": "balanced",
-                "description": "Agent resilience style: 'cautious' (stop on doubt, always ask), 'balanced' (default), 'aggressive' (retry hard, continue on errors)",
             },
         }
 
@@ -787,7 +779,6 @@ class AgentLoopTask(
             self._user_active_conversations.discard(conversation_id)
 
         # Reset status
-        from core.conversation_store import ConversationStore
         # _active_contexts cleanup happens in _run_agent_loop finally
         import traceback as _tb
         _caller = ""
@@ -855,7 +846,6 @@ class AgentLoopTask(
             if _cc_client and hasattr(_cc_client, 'abort'):
                 _cc_client.abort()
             # Force cleanup
-            from core.conversation_store import ConversationStore as _CS_int
             from core.conversation_event_bus import ConversationEventBus as _CEB_int
             _CEB_int.instance().publish_event(
                 conversation_id, "done", {

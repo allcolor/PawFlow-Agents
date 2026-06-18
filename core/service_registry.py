@@ -22,7 +22,7 @@ from core import ServiceFactory, Service
 
 logger = logging.getLogger(__name__)
 
-import core.paths as _paths
+import core.paths as _paths  # noqa: E402
 
 
 # Resolve paths dynamically — capturing at module import time freezes them

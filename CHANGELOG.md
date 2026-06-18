@@ -4,6 +4,34 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.0-alpha.50] — 2026-06-18
+
+### Fixed
+
+- Telegram inbound delivery latency/loss. Media callbacks download via
+  `getFile` synchronously; running them on the single poll loop stalled
+  `getUpdates` for every bot and message (text included) for minutes, then
+  flushed in a burst, and could drop messages. Inbound updates now dispatch
+  on a bounded thread pool so downloads run concurrently and the poll loop
+  never blocks — messages (and images) arrive immediately again.
+- Expired session now surfaces instead of a silent blank chat. An expired
+  session makes `/api/agent/events` answer 401, but `EventSource` only exposes
+  an opaque error; the stream is now probed on error and a confirmed 401/403
+  shows a "session expired" message and redirects to login.
+- Admin `view=all` no longer returns a sparse `list_resources`. The alpha.49
+  branch dropped every non-catalog section (deployed flows, relays, remote FS,
+  summarizer, tasks, flow templates), blanking the panel — notably "Dépôt
+  Flows". The full self-view is now built first, then the repo-backed catalogs
+  (incl. cross-user flow templates) are overlaid owner-labelled. Secrets and
+  variables are never enumerated cross-user.
+
+### Added
+
+- Loading spinner in the chat while a conversation history loads (was a silent
+  blank between clearing the view and the history arriving).
+- Startup/post-login + relay-close diagnostics (`[ui-action]`, `[svc-load]`,
+  `[sse-events]`, per-connection relay ids) to pin remaining startup latency.
+
 ## [1.0.0-alpha.49] — 2026-06-17
 
 ### Added

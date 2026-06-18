@@ -102,6 +102,9 @@ class TelegramBotService(BaseService):
         self._stop_event = threading.Event()
         self._last_update_id = 0
         self._lock = threading.Lock()
+        # See TelegramBotPool: callbacks download media synchronously, so they
+        # must NOT run on the poll thread. Lazily-created dispatch pool.
+        self._dispatch_pool = None
 
     def add_allowed_updates(self, updates) -> None:
         """Union extra update types into the receive filter (e.g. from a task).
@@ -197,11 +200,30 @@ class TelegramBotService(BaseService):
 
         with self._lock:
             callbacks = list(self._callbacks.values())
-        for cb in callbacks:
+        if not callbacks:
+            return
+        pool = self._dispatch_pool
+        if pool is None:
+            with self._lock:
+                if self._dispatch_pool is None:
+                    from concurrent.futures import ThreadPoolExecutor
+                    self._dispatch_pool = ThreadPoolExecutor(
+                        max_workers=6, thread_name_prefix="tg-dispatch")
+                pool = self._dispatch_pool
+
+        def _run(cb=None, upd=update):
             try:
-                cb(update)
+                cb(upd)
             except Exception as e:
                 logger.error(f"Telegram callback error: {e}")
+
+        for cb in callbacks:
+            try:
+                pool.submit(_run, cb)
+            except Exception as e:
+                logger.warning("Telegram dispatch submit failed (%s); "
+                               "running inline", e)
+                _run(cb)
 
     # ── Sending ────────────────────────────────────────────────────
 
@@ -375,6 +397,11 @@ class TelegramBotPool:
         self._store_lock = threading.Lock()
         self._poll_interval = 2  # seconds between full cycles
         self._allowed_updates = list(_DEFAULT_ALLOWED_UPDATES)
+        # Callbacks (which synchronously download media via getFile) run on
+        # this pool, NOT on the poll thread — otherwise one slow/hung media
+        # download stalls getUpdates for EVERY bot and message (text too),
+        # producing minutes of latency then a burst. Lazily created.
+        self._dispatch_pool = None
 
     def add_allowed_updates(self, updates) -> None:
         """Union extra update types into the pool's receive filter.
@@ -533,6 +560,13 @@ class TelegramBotPool:
         if self._poll_thread and self._poll_thread.is_alive():
             self._poll_thread.join(timeout=5)
         self._poll_thread = None
+        pool = self._dispatch_pool
+        self._dispatch_pool = None
+        if pool is not None:
+            try:
+                pool.shutdown(wait=False, cancel_futures=True)
+            except TypeError:
+                pool.shutdown(wait=False)
 
     def _ensure_polling(self):
         if self._poll_thread and self._poll_thread.is_alive():
@@ -585,15 +619,41 @@ class TelegramBotPool:
 
         logger.info("TelegramBotPool: polling stopped")
 
+    def _get_dispatch_pool(self):
+        pool = self._dispatch_pool
+        if pool is None:
+            with self._store_lock:
+                if self._dispatch_pool is None:
+                    from concurrent.futures import ThreadPoolExecutor
+                    self._dispatch_pool = ThreadPoolExecutor(
+                        max_workers=6, thread_name_prefix="tg-dispatch")
+                pool = self._dispatch_pool
+        return pool
+
+    @staticmethod
+    def _run_callback(cb, update):
+        try:
+            cb(update)
+        except Exception as e:
+            logger.error(f"TelegramBotPool callback error: {e}")
+
     def _dispatch(self, update: dict):
-        """Dispatch update to all registered callbacks."""
+        """Hand each callback off to the dispatch pool so a slow media
+        download in a callback never blocks the single poll loop."""
         with self._store_lock:
             callbacks = list(self._callbacks)
+        if not callbacks:
+            return
+        pool = self._get_dispatch_pool()
         for cb in callbacks:
             try:
-                cb(update)
+                pool.submit(self._run_callback, cb, update)
             except Exception as e:
-                logger.error(f"TelegramBotPool callback error: {e}")
+                # Pool exhausted/shutdown — fall back to inline so the
+                # message is not silently dropped.
+                logger.warning("TelegramBotPool dispatch submit failed (%s); "
+                               "running inline", e)
+                self._run_callback(cb, update)
 
 
 def _api_call_static(token: str, method: str,

@@ -277,7 +277,9 @@ def worker_main():
         _runtime_root = _relay_runtime_root()
         _pkg_src = str(_runtime_root / "pawflow_relay")
         _tools_src = str(_runtime_root / "tools")
-        for _relay_file in ["pawflow_relay_launcher.py", "fs_actions.py", "fs_exec.py",
+        for _relay_file in ["pawflow_relay_launcher.py", "fs_actions.py",
+                            "_fs_paths.py", "_fs_read.py", "_fs_grep.py",
+                            "_fs_edit.py", "fs_exec.py",
                             "fs_screen.py", "fs_mcp.py", "fs_common.py"]:
             _src = os.path.join(_tools_src, _relay_file)
             if os.path.exists(_src):

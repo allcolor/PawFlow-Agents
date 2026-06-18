@@ -24,8 +24,6 @@ import hashlib
 import hmac
 import json
 import os
-import re
-import shutil
 import socket
 import struct
 import subprocess  # nosec B404
@@ -33,19 +31,15 @@ import sys
 import tempfile
 import threading
 import time
-from datetime import datetime, timezone
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
 from fs_common import (
-    _docker_cmd, _get_host_ip, _translate_path, _to_host_path,
+    _docker_cmd, _translate_path, _to_host_path,
 )
 from pawflow_relay.auth import (
-    find_claude_binary as _find_claude_binary,
     claude_auth_login as _claude_auth_login,
-    find_codex_binary as _find_codex_binary,
     codex_auth_login as _codex_auth_login,
-    find_gemini_binary as _find_gemini_binary,
     gemini_auth_login as _gemini_auth_login,
     forward_to_host_helper as _forward_to_host_helper,
 )
@@ -94,9 +88,7 @@ _TMP_ALLOWLIST = _tmp_allowlist()
 # Lives in `pawflow_relay.proc_registry` to avoid a circular import
 # with the action handlers (fs_actions/fs_exec/...). Re-exported here
 # so call sites that already import from `worker` don't have to change.
-from pawflow_relay.proc_registry import (
-    register_inflight_proc,
-    unregister_inflight_proc,
+from pawflow_relay.proc_registry import (  # noqa: E402
     kill_inflight_proc,
 )
 
@@ -758,7 +750,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                     })
                     with _send_lock:
                         _ws_frame_send(ws_sock_ref[0], _fwd.encode("utf-8"))
-                    sys.stderr.write(f"[FSRelay] cs_ws_data sent ok\n")
+                    sys.stderr.write("[FSRelay] cs_ws_data sent ok\n")
 
                 def _cs_ws_reader(_sock, _sid):
                     sys.stderr.write(f"[FSRelay] cs_ws_reader started for {_sid}\n")
@@ -782,7 +774,8 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                                 _lb = b""
                                 while len(_lb) < 2:
                                     _c = _sock.recv(2 - len(_lb))
-                                    if not _c: break
+                                    if not _c:
+                                        break
                                     _lb += _c
                                 _frame_parts.append(_lb)
                                 _plen = struct.unpack("!H", _lb)[0]
@@ -790,7 +783,8 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                                 _lb = b""
                                 while len(_lb) < 8:
                                     _c = _sock.recv(8 - len(_lb))
-                                    if not _c: break
+                                    if not _c:
+                                        break
                                     _lb += _c
                                 _frame_parts.append(_lb)
                                 _plen = struct.unpack("!Q", _lb)[0]
@@ -798,13 +792,15 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                                 _mask = b""
                                 while len(_mask) < 4:
                                     _c = _sock.recv(4 - len(_mask))
-                                    if not _c: break
+                                    if not _c:
+                                        break
                                     _mask += _c
                                 _frame_parts.append(_mask)
                             _payload = b""
                             while len(_payload) < _plen:
                                 _c = _sock.recv(min(65536, _plen - len(_payload)))
-                                if not _c: break
+                                if not _c:
+                                    break
                                 _payload += _c
                             _frame_parts.append(_payload)
                             if _masked:
@@ -935,10 +931,12 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             _novnc_port = int(os.environ.get("PAWFLOW_DESKTOP_NOVNC_PORT", 0)) or msg.get("novnc_port", 0)
             if not _vnc_port:
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as _s:
-                    _s.bind(("", 0)); _vnc_port = _s.getsockname()[1]
+                    _s.bind(("", 0))
+                    _vnc_port = _s.getsockname()[1]
             if not _novnc_port:
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as _s:
-                    _s.bind(("", 0)); _novnc_port = _s.getsockname()[1]
+                    _s.bind(("", 0))
+                    _novnc_port = _s.getsockname()[1]
             try:
                 import time as _time_mod
                 _log_d = open("/tmp/desktop.log", "w")  # nosec B108 - relay-local desktop log.
@@ -953,7 +951,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                     "DISPLAY": _display,
                     "HOME": _desktop_home,
                     "USER": _desktop_user,
-                    "DBUS_SESSION_BUS_ADDRESS": f"unix:path=/tmp/dbus-desktop",  # nosec B108 - relay-local desktop bus path.
+                    "DBUS_SESSION_BUS_ADDRESS": "unix:path=/tmp/dbus-desktop",  # nosec B108 - relay-local desktop bus path.
                     "XDG_RUNTIME_DIR": f"/tmp/xdg-{_desktop_user}",  # nosec B108 - relay-local desktop runtime dir.
                 }
                 os.makedirs(_user_env["XDG_RUNTIME_DIR"], mode=0o700, exist_ok=True)
@@ -970,7 +968,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 # 2. D-Bus session (needed by XFCE)
                 _p_dbus = subprocess.Popen(  # nosec B603, B607
                     ["dbus-daemon", "--session", "--nofork",
-                     f"--address=unix:path=/tmp/dbus-desktop"],
+                     "--address=unix:path=/tmp/dbus-desktop"],
                     env=_user_env,
                     stdout=_log_d, stderr=_log_d)
                 _procs.append(_p_dbus)
@@ -1122,8 +1120,9 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                     }}
                 else:
                     for p in _execute_command._local_desktop_procs:
-                        try: p.kill()
-                        except:
+                        try:
+                            p.kill()
+                        except Exception:
                             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                     _execute_command._local_desktop_procs = None
 
@@ -1132,11 +1131,13 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             _platform = sys.platform
             _vnc_port = 0
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as _s:
-                _s.bind(("", 0)); _vnc_port = _s.getsockname()[1]
+                _s.bind(("", 0))
+                _vnc_port = _s.getsockname()[1]
             _novnc_port = int(msg.get("novnc_port", 0))
             if not _novnc_port:
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as _s:
-                    _s.bind(("", 0)); _novnc_port = _s.getsockname()[1]
+                    _s.bind(("", 0))
+                    _novnc_port = _s.getsockname()[1]
 
             try:
                 import shutil
@@ -1241,8 +1242,10 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                     if p.poll() is None:
                         p.terminate()
                 for p in _execute_command._local_desktop_procs:
-                    try: p.wait(timeout=5)
-                    except subprocess.TimeoutExpired: p.kill()
+                    try:
+                        p.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        p.kill()
                 _execute_command._local_desktop_procs = None
                 _execute_command._local_desktop_vnc_port = None
                 _execute_command._local_desktop_novnc_port = None
@@ -1268,7 +1271,8 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                            r"C:\Program Files\uvnc bvba\UltraVNC\winvnc.exe",
                            r"C:\Program Files (x86)\TightVNC\tvnserver.exe"]:
                     if os.path.exists(_c):
-                        _has_vnc = True; break
+                        _has_vnc = True
+                        break
                 _has_vnc = _has_vnc or bool(shutil.which("tvnserver")) or bool(shutil.which("winvnc"))
                 _checks["vnc_server"] = _has_vnc
                 _checks["websockify"] = bool(shutil.which("websockify"))
@@ -1339,9 +1343,11 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                             _hdr2 = b""
                             while len(_hdr2) < 2:
                                 _c = _sock.recv(2 - len(_hdr2))
-                                if not _c: break
+                                if not _c:
+                                    break
                                 _hdr2 += _c
-                            if len(_hdr2) < 2: break
+                            if len(_hdr2) < 2:
+                                break
                             _op = _hdr2[0] & 0x0F
                             _masked = bool(_hdr2[1] & 0x80)
                             _plen = _hdr2[1] & 0x7F
@@ -1349,37 +1355,44 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                                 _lb = b""
                                 while len(_lb) < 2:
                                     _c = _sock.recv(2 - len(_lb))
-                                    if not _c: break
+                                    if not _c:
+                                        break
                                     _lb += _c
                                 _plen = struct.unpack("!H", _lb)[0]
                             elif _plen == 127:
                                 _lb = b""
                                 while len(_lb) < 8:
                                     _c = _sock.recv(8 - len(_lb))
-                                    if not _c: break
+                                    if not _c:
+                                        break
                                     _lb += _c
                                 _plen = struct.unpack("!Q", _lb)[0]
                             if _masked:
                                 _mask = b""
                                 while len(_mask) < 4:
                                     _c = _sock.recv(4 - len(_mask))
-                                    if not _c: break
+                                    if not _c:
+                                        break
                                     _mask += _c
                             _payload = b""
                             while len(_payload) < _plen:
                                 _c = _sock.recv(min(65536, _plen - len(_payload)))
-                                if not _c: break
+                                if not _c:
+                                    break
                                 _payload += _c
                             if _masked:
                                 _payload = bytes(b ^ _mask[i % 4] for i, b in enumerate(_payload))
-                            if _op == 0x08: break
+                            if _op == 0x08:
+                                break
                             if _op == 0x09:
                                 _pong = bytes([0x80 | 0x0A])
                                 if len(_payload) < 126:
                                     _pong += bytes([len(_payload)])
                                 _pong += _payload
-                                try: _sock.sendall(_pong)
-                                except: break
+                                try:
+                                    _sock.sendall(_pong)
+                                except Exception:
+                                    break
                                 continue
                             _fwd = json.dumps({
                                 "type": "desktop_ws_data",
@@ -1392,15 +1405,16 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                     except Exception:
                         logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                     finally:
-                        try: _sock.close()
-                        except:
+                        try:
+                            _sock.close()
+                        except Exception:
                             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                         if hasattr(_execute_command, '_desktop_ws_sessions'):
                             _execute_command._desktop_ws_sessions.pop(_sid, None)
                         try:
                             with _send_lock:
                                 _ws_frame_send(ws_sock_ref[0], json.dumps({"type": "desktop_ws_close", "session_id": _sid}).encode("utf-8"))
-                        except:
+                        except Exception:
                             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
                 _t = _threading.Thread(target=_desktop_ws_reader, args=(_vnc_sock, _ws_sid), daemon=True)
@@ -1439,8 +1453,9 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             if hasattr(_execute_command, '_desktop_ws_sessions'):
                 _ws_sess = _execute_command._desktop_ws_sessions.pop(_ws_sid, None)
                 if _ws_sess and _ws_sess.get("sock"):
-                    try: _ws_sess["sock"].close()
-                    except:
+                    try:
+                        _ws_sess["sock"].close()
+                    except Exception:
                         logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             return {"ok": True}
 
@@ -1456,7 +1471,9 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             _script_dir = os.path.dirname(os.path.dirname(
                 os.path.abspath(__file__)))
             _h = hashlib.sha256()
-            for _sf in ["pawflow_relay_launcher.py", "fs_actions.py", "fs_exec.py",
+            for _sf in ["pawflow_relay_launcher.py", "fs_actions.py",
+                        "_fs_paths.py", "_fs_read.py", "_fs_grep.py",
+                        "_fs_edit.py", "fs_exec.py",
                         "fs_screen.py", "fs_mcp.py", "fs_common.py"]:
                 _sp = os.path.join(_script_dir, _sf)
                 if os.path.exists(_sp):
@@ -1477,7 +1494,9 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             _updated = []
             _readonly_skipped = []
             for _fname, _content_b64 in _scripts.items():
-                if _fname not in ("pawflow_relay_launcher.py", "fs_actions.py", "fs_exec.py",
+                if _fname not in ("pawflow_relay_launcher.py", "fs_actions.py",
+                                  "_fs_paths.py", "_fs_read.py", "_fs_grep.py",
+                                  "_fs_edit.py", "fs_exec.py",
                                   "fs_screen.py", "fs_mcp.py", "fs_common.py"):
                     continue  # Only accept known relay files
                 _dst = os.path.join(_script_dir, _fname)

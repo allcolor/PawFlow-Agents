@@ -11,6 +11,10 @@ const runtimeRoot = path.join(desktopRoot, 'runtime');
 const toolFiles = [
   'pawflow_relay_launcher.py',
   'fs_actions.py',
+  '_fs_paths.py',
+  '_fs_read.py',
+  '_fs_grep.py',
+  '_fs_edit.py',
   'fs_exec.py',
   'fs_screen.py',
   'fs_mcp.py',

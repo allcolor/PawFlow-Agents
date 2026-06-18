@@ -500,6 +500,10 @@ class RelayThread:
             _src_files = [
                 (_tools_dir, "pawflow_relay_launcher.py"),
                 (_tools_dir, "fs_actions.py"),
+                (_tools_dir, "_fs_paths.py"),
+                (_tools_dir, "_fs_read.py"),
+                (_tools_dir, "_fs_grep.py"),
+                (_tools_dir, "_fs_edit.py"),
                 (_tools_dir, "fs_exec.py"),
                 (_tools_dir, "fs_screen.py"),
                 (_tools_dir, "fs_mcp.py"),
@@ -1005,7 +1009,8 @@ class RelayThread:
             if alive:
                 return {"novnc_port": self._local_desktop_novnc_port, "already_running": True}
             for p in self._local_desktop_procs:
-                try: p.kill()
+                try:
+                    p.kill()
                 except Exception:
                     logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             self._local_desktop_procs = None
@@ -1015,10 +1020,12 @@ class RelayThread:
         novnc_port = int(req.get("novnc_port", 0))
 
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind(("", 0)); vnc_port = s.getsockname()[1]
+            s.bind(("", 0))
+            vnc_port = s.getsockname()[1]
         if not novnc_port:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.bind(("", 0)); novnc_port = s.getsockname()[1]
+                s.bind(("", 0))
+                novnc_port = s.getsockname()[1]
 
         procs = []
 
@@ -1100,8 +1107,10 @@ class RelayThread:
                 if p.poll() is None:
                     p.terminate()
             for p in self._local_desktop_procs:
-                try: p.wait(timeout=5)
-                except Exception: p.kill()
+                try:
+                    p.wait(timeout=5)
+                except Exception:
+                    p.kill()
             self._local_desktop_procs = None
             self._log("[Relay] Local desktop stopped")
             return {"ok": True}
@@ -1149,7 +1158,10 @@ class RelayThread:
 
         try:
             if sys.platform != "win32":
-                import pty as _pty_mod, fcntl, struct, termios
+                import pty as _pty_mod
+                import fcntl
+                import struct
+                import termios
                 master, slave = _pty_mod.openpty()
                 winsize = struct.pack("HHHH", rows, cols, 0, 0)
                 fcntl.ioctl(slave, termios.TIOCSWINSZ, winsize)

@@ -243,6 +243,10 @@ def _copy_runtime_files(out_dir: Path) -> None:
     for src in [
         ROOT / "tools" / "pawflow_relay_launcher.py",
         ROOT / "tools" / "fs_actions.py",
+        ROOT / "tools" / "_fs_paths.py",
+        ROOT / "tools" / "_fs_read.py",
+        ROOT / "tools" / "_fs_grep.py",
+        ROOT / "tools" / "_fs_edit.py",
         ROOT / "tools" / "fs_exec.py",
         ROOT / "tools" / "fs_screen.py",
         ROOT / "tools" / "fs_mcp.py",

@@ -2661,7 +2661,9 @@ def test_cci_tmux_session_pins_window_size_so_viewer_cannot_resize():
     """
     from pathlib import Path
 
-    src = Path("core/claude_code_interactive_pool.py").read_text(encoding="utf-8")
+    # The spawn/tmux machinery was split out to _cci_pool_spawn; scan both.
+    src = (Path("core/claude_code_interactive_pool.py").read_text(encoding="utf-8")
+           + Path("core/_cci_pool_spawn.py").read_text(encoding="utf-8"))
     assert "tmux new-session -d -s pawflow -x 220 -y 50" in src
     assert "window-size manual" in src
 

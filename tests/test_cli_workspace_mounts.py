@@ -279,7 +279,9 @@ def test_relay_binding_changes_invalidate_cli_sessions_when_mount_enabled(monkey
 def test_interactive_cc_pool_mounts_skill_dirs():
     # The persistent interactive CC container must bind-mount skill scope
     # dirs so SKILL.md assets resolve, like the batch claude-code pool.
-    src = Path("core/claude_code_interactive_pool.py").read_text(encoding="utf-8")
+    # _spawn_container + skill-mount logic was split out to _cci_pool_spawn; scan both.
+    src = (Path("core/claude_code_interactive_pool.py").read_text(encoding="utf-8")
+           + Path("core/_cci_pool_spawn.py").read_text(encoding="utf-8"))
     assert "build_skill_mount_args" in src
     assert "_spawn_container(" in src
 

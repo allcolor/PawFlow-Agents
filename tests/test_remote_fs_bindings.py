@@ -360,7 +360,8 @@ def test_agent_pool_containers_keep_tini_as_pid_one():
         "core/claude_code_pool.py",
         "core/codex_pool.py",
         "core/gemini_pool.py",
-        "core/claude_code_interactive_pool.py",
+        # interactive pool's container run-args live in the split-out spawn module
+        "core/_cci_pool_spawn.py",
         "core/antigravity_observer_pool.py",
     ):
         src = Path(path).read_text(encoding="utf-8")

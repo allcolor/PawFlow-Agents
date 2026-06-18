@@ -77,7 +77,8 @@ def test_relay_uses_canonical_no_inline_copy():
     "core/claude_code_pool.py",
     "core/gemini_pool.py",
     "core/codex_pool.py",
-    "core/claude_code_interactive_pool.py",
+    # interactive pool's mcp_bridge/tool_json vendoring lives in the spawn module
+    "core/_cci_pool_spawn.py",
     "core/antigravity_observer_pool.py",
     "scripts/install-pawflow.sh",
 ])

@@ -68,7 +68,7 @@ def test_clear_last_relay_unblocks_all_pending_even_without_reader_tag():
 
 
 def test_request_retries_transient_relay_disconnect(monkeypatch):
-    import services.filesystem_service as fs_mod
+    import services._filesystem_ops as fs_mod  # _request/time.sleep live here post-split
 
     svc = RelayService({"_service_id": "fs1", "token": "tok"})
     calls = {"count": 0}
@@ -100,7 +100,7 @@ def test_request_retries_transient_relay_disconnect(monkeypatch):
 
 
 def test_request_does_not_retry_functional_relay_error(monkeypatch):
-    import services.filesystem_service as fs_mod
+    import services._filesystem_ops as fs_mod  # _request/time.sleep live here post-split
 
     svc = RelayService({"_service_id": "fs1", "token": "tok"})
     calls = {"count": 0}
@@ -118,7 +118,7 @@ def test_request_does_not_retry_functional_relay_error(monkeypatch):
 
 
 def test_request_marks_relay_disconnect_after_retry_exhaustion(monkeypatch):
-    import services.filesystem_service as fs_mod
+    import services._filesystem_ops as fs_mod  # _request/time.sleep live here post-split
 
     svc = RelayService({"_service_id": "fs1", "token": "tok"})
     calls = {"count": 0}
@@ -179,7 +179,7 @@ async def test_relay_main_loop_exits_when_reader_stores_socket_timeout():
 
 @pytest.mark.asyncio
 async def test_relay_main_loop_ignores_bad_json_frame(monkeypatch):
-    import services.filesystem_service as fs_mod
+    import services._relay_conn as fs_mod  # _relay_main_loop/_ws_recv_frame live here post-split
 
     svc = RelayService({"_service_id": "fs1", "token": "tok"})
     frames = iter([(0x01, b"{bad-json"), (0x08, b"")])
@@ -194,7 +194,7 @@ async def test_relay_main_loop_ignores_bad_json_frame(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_relay_main_loop_keeps_session_after_dispatch_error(monkeypatch):
-    import services.filesystem_service as fs_mod
+    import services._relay_conn as fs_mod  # _relay_main_loop/_ws_recv_frame live here post-split
 
     svc = RelayService({"_service_id": "fs1", "token": "tok"})
     frames = iter([
@@ -216,7 +216,7 @@ async def test_relay_main_loop_keeps_session_after_dispatch_error(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_relay_main_loop_labels_result_with_pending_action(monkeypatch):
-    import services.filesystem_service as fs_mod
+    import services._relay_conn as fs_mod  # _relay_main_loop/_ws_recv_frame live here post-split
 
     svc = RelayService({"_service_id": "fs1", "token": "tok"})
     evt = asyncio.Event()
@@ -248,7 +248,7 @@ async def test_relay_main_loop_labels_result_with_pending_action(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_relay_request_handler_returns_eio_on_fs_exception(monkeypatch):
-    import services.filesystem_service as fs_mod
+    import services._relay_conn as fs_mod  # _handle_relay_request/_ws_send_frame live here post-split
 
     class _BoomFs:
         def handle(self, _method, _args):

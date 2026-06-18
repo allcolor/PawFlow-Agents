@@ -15,7 +15,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import pytest
 
 _ACTIVE_AGENTS_JS = Path(
     "tasks/io/chat_ui/active_agents.js").read_text(encoding="utf-8")
@@ -38,7 +37,13 @@ _CONTEXT_EDITOR_JS = Path(
     "tasks/io/chat_ui/context_editor.js").read_text(encoding="utf-8")
 _AGENT_ACTIONS_PY = Path("tasks/ai/agent_actions.py").read_text(encoding="utf-8")
 _AGENT_POLLER_PY = Path("tasks/ai/agent_poller.py").read_text(encoding="utf-8")
-_FILESYSTEM_SERVICE_PY = Path("services/filesystem_service.py").read_text(encoding="utf-8")
+_FILESYSTEM_SERVICE_PY = (
+    Path("services/filesystem_service.py").read_text(encoding="utf-8")
+    # relay session/dispatch + fs-op methods split to sibling modules (<=800 lines)
+    + Path("services/_relay_conn.py").read_text(encoding="utf-8")
+    + Path("services/_filesystem_ops.py").read_text(encoding="utf-8")
+    + Path("services/_relay_ws.py").read_text(encoding="utf-8")
+)
 _HTTP_LISTENER_SERVICE_PY = "".join(Path(_f).read_text(encoding="utf-8") for _f in ("services/http_listener_service.py", "services/_http_base.py", "services/_http_request.py", "services/_http_server.py"))
 
 
@@ -1317,7 +1322,12 @@ def test_api_tool_execution_registers_kill_hooks_for_ui_kill():
 def test_screen_actions_have_server_side_timeout_and_cancel_pending():
     screen_src = Path("core/handlers/screen.py").read_text(encoding="utf-8")
     tool_config_src = Path("tasks/ai/agent_tool_config.py").read_text(encoding="utf-8")
-    fs_src = Path("services/filesystem_service.py").read_text(encoding="utf-8")
+    fs_src = (
+        Path("services/filesystem_service.py").read_text(encoding="utf-8")
+        # _request transport + cancel_pending split to sibling modules (<=800 lines)
+        + Path("services/_filesystem_ops.py").read_text(encoding="utf-8")
+        + Path("services/_relay_conn.py").read_text(encoding="utf-8")
+    )
     host_screen_src = Path("tools/screen_actions.py").read_text(encoding="utf-8")
     assert "Provider-invariant handler context" in tool_config_src
     assert "hasattr(h, 'set_user_id')" in tool_config_src

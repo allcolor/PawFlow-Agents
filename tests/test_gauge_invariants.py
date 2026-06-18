@@ -1650,7 +1650,7 @@ def test_agent_background_llm_calls_pass_provider_agnostic_scope():
         ("tasks/ai/agent_compaction.py", "_synth_call_kwargs = {"),
         ("tasks/ai/_agent_streaming_loop.py", "call_agent_name=\"title\""),
         ("tasks/ai/agent_side_channels.py", "_btw_call_kwargs = {"),
-        ("core/agent_executor.py", "_delegate_call_kwargs"),
+        ("core/_agent_executor_loop.py", "_delegate_call_kwargs"),
         ("core/agent_executor.py", "**(call_kwargs or {})"),
         ("core/handlers/learn.py", "call_agent_name=self._agent_name or \"learn\""),
         ("core/memory_auto_extract.py", "call_agent_name=\"memory\""),
@@ -1660,7 +1660,9 @@ def test_agent_background_llm_calls_pass_provider_agnostic_scope():
 
 
 def test_sub_agent_provider_compact_is_provider_agnostic():
-    src = Path("core/agent_executor.py").read_text(encoding="utf-8")
+    # the sub-agent loop (and its LLM-error compaction handling) moved to
+    # _agent_executor_loop.
+    src = Path("core/_agent_executor_loop.py").read_text(encoding="utf-8")
     block = src[src.index("except Exception as _llm_err:"):
                 src.index("# Recover OAuth tokens", src.index("except Exception as _llm_err:"))]
 

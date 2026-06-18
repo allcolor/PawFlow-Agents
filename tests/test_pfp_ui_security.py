@@ -444,8 +444,9 @@ def test_handler_secret_bindings_propagate_to_runtime(tmp_path, monkeypatch):
     # Pretend the secret exists in the user's secret store — the install
     # plan only checks the binding is bound to a key, not that the key
     # itself exists in this test environment.
+    from core.pfp_package import _pp_mod2 as _pp_secret_mod
     monkeypatch.setattr(
-        pfp_package, "_secret_key_exists",
+        _pp_secret_mod, "_secret_key_exists",
         lambda secret_key, user_id, conversation_id: True)
     result = pfp_package.install_pfp(
         built["path"], user_id="alice",

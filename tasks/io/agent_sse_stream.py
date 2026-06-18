@@ -72,7 +72,7 @@ class AgentSSEStreamTask(BaseTask):
         # [phaseB-diag] Mark when the events SSE handler runs and when it
         # first streams — to see if the post-login blank is the SSE never
         # opening vs opening but starving for events.
-        logger.info("[sse-events] handler conv=%s client=%s replay=%s",
+        logger.debug("[sse-events] handler conv=%s client=%s replay=%s",
                     conversation_id[:8], client_id[:12], replay)
 
         # Subscribe to events
@@ -91,7 +91,7 @@ class AgentSSEStreamTask(BaseTask):
                 for chunk in writer.iterate(timeout=15.0):
                     if _diag_first:
                         _diag_first = False
-                        logger.info("[sse-events] first chunk conv=%s client=%s",
+                        logger.debug("[sse-events] first chunk conv=%s client=%s",
                                     conversation_id[:8], client_id[:12])
                     # Deliver the freshly-dequeued chunk BEFORE checking the
                     # lifetime cap. Checking first dropped this chunk on the

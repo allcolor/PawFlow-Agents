@@ -227,7 +227,7 @@ class ExecutorRegistry:
             _t0 = time.monotonic()
             ServiceRegistry.get_instance().connect_all_enabled("global", "")
             logger.info("Global services connected at startup")
-            logger.info("[startup-timing] global services connect: %.1fms",
+            logger.debug("[startup-timing] global services connect: %.1fms",
                         (time.monotonic() - _t0) * 1000)
         except Exception as e:
             logger.warning("Failed to connect global services: %s", e)
@@ -236,7 +236,7 @@ class ExecutorRegistry:
         if dr:
             _t0 = time.monotonic()
             dr._ensure_loaded()
-            logger.info("[startup-timing] deployment registry load: %.1fms",
+            logger.debug("[startup-timing] deployment registry load: %.1fms",
                         (time.monotonic() - _t0) * 1000)
             # Do NOT sync before restore — sync would mark all "running" as
             # "stopped" because executors aren't in memory yet (fresh process).
@@ -256,10 +256,10 @@ class ExecutorRegistry:
                                        owner=inst.owner or "",
                                        conversation_id=inst.conversation_id or "",
                                        agent_name=getattr(inst, 'agent_name', '') or "")
-                logger.info("[startup-timing] restore instance %s: %.1fms",
+                logger.debug("[startup-timing] restore instance %s: %.1fms",
                             iid, (time.monotonic() - _inst_t0) * 1000)
 
-        logger.info("[startup-timing] executor registry restore total: %.1fms",
+        logger.debug("[startup-timing] executor registry restore total: %.1fms",
                     (time.monotonic() - _restore_t0) * 1000)
 
 
@@ -280,7 +280,7 @@ class ExecutorRegistry:
             from tasks import register_all_tasks
             _t0 = time.monotonic()
             register_all_tasks()
-            logger.info("[startup-timing] %s register_all_tasks: %.1fms",
+            logger.debug("[startup-timing] %s register_all_tasks: %.1fms",
                         instance_id, (time.monotonic() - _t0) * 1000)
 
             raw = None
@@ -312,7 +312,7 @@ class ExecutorRegistry:
                     if raw:
                         logger.info("Restored '%s' from repository (%s)",
                                     instance_id, flow_fqn)
-                    logger.info("[startup-timing] %s repository lookup: %.1fms",
+                    logger.debug("[startup-timing] %s repository lookup: %.1fms",
                                 instance_id, (time.monotonic() - _t0) * 1000)
                 except Exception as e:
                     logger.debug("Repository lookup failed for '%s': %s",
@@ -326,7 +326,7 @@ class ExecutorRegistry:
                     return False
                 with open(flow_path, "r", encoding="utf-8") as ff:
                     raw = json.load(ff)
-                logger.info("[startup-timing] %s flow file load: %.1fms",
+                logger.debug("[startup-timing] %s flow file load: %.1fms",
                             instance_id, (time.monotonic() - _t0) * 1000)
             clean = {k: copy.deepcopy(v) for k, v in raw.items() if not k.startswith("_")}
             source_dir = _flow_source_dir(
@@ -348,7 +348,7 @@ class ExecutorRegistry:
             _t0 = time.monotonic()
             flow = FlowParser.parse(clean)
             _apply_service_bindings(flow, service_overrides, service_configs)
-            logger.info("[startup-timing] %s parse/bind flow: %.1fms",
+            logger.debug("[startup-timing] %s parse/bind flow: %.1fms",
                         instance_id, (time.monotonic() - _t0) * 1000)
 
             # Allow flow parameters to override max_workers
@@ -387,16 +387,16 @@ class ExecutorRegistry:
                             for ff_item in ffs:
                                 conn.enqueue(ff_item)
                     logger.info("Restored checkpoint for '%s'", instance_id)
-                logger.info("[startup-timing] %s checkpoint restore: %.1fms",
+                logger.debug("[startup-timing] %s checkpoint restore: %.1fms",
                             instance_id, (time.monotonic() - _t0) * 1000)
 
             _t0 = time.monotonic()
             executor.start()
-            logger.info("[startup-timing] %s executor.start: %.1fms",
+            logger.debug("[startup-timing] %s executor.start: %.1fms",
                         instance_id, (time.monotonic() - _t0) * 1000)
             self.register(instance_id, executor)
             logger.info("Restored executor for '%s'", instance_id)
-            logger.info("[startup-timing] %s restore total: %.1fms",
+            logger.debug("[startup-timing] %s restore total: %.1fms",
                         instance_id, (time.monotonic() - _restore_t0) * 1000)
             return True
         except Exception as e:

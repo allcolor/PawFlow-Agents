@@ -153,7 +153,7 @@ class AgentLoopTask(
             )
             poller.start()
             logger.info(f"Agent poller started at flow init (interval={poll_interval}s)")
-            logger.info("[startup-timing] agentLoop poller start: %.1fms",
+            logger.debug("[startup-timing] agentLoop poller start: %.1fms",
                         (time.monotonic() - _t0) * 1000)
 
         # Wire the shared-pyramid background builder to this task's
@@ -172,11 +172,11 @@ class AgentLoopTask(
             _bb.set_summarize_fn(self._summarize_messages)
             logger.info("[bg-bucket] wired resolver + summarize_fn "
                          "from AgentLoopTask.initialize()")
-            logger.info("[startup-timing] agentLoop bg bucket wiring: %.1fms",
+            logger.debug("[startup-timing] agentLoop bg bucket wiring: %.1fms",
                         (time.monotonic() - _t0) * 1000)
         except Exception:
             logger.warning("[bg-bucket] wiring failed", exc_info=True)
-        logger.info("[startup-timing] agentLoop initialize total: %.1fms",
+        logger.debug("[startup-timing] agentLoop initialize total: %.1fms",
                     (time.monotonic() - _init_t0) * 1000)
 
 

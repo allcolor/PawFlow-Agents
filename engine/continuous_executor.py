@@ -285,7 +285,7 @@ class ContinuousFlowExecutor:
         if self._checkpoint_mgr:
             _t0 = time.monotonic()
             self._recover_from_checkpoint()
-            logger.info("[startup-timing] executor checkpoint recover: %.1fms",
+            logger.debug("[startup-timing] executor checkpoint recover: %.1fms",
                         (time.monotonic() - _t0) * 1000)
 
         # Re-connect services (needed after stop/start cycle, idempotent)
@@ -296,11 +296,11 @@ class ContinuousFlowExecutor:
                     _svc_t0 = time.monotonic()
                     service.connect()
                     logger.info(f"Service '{service_id}' connected")
-                    logger.info("[startup-timing] executor service %s connect: %.1fms",
+                    logger.debug("[startup-timing] executor service %s connect: %.1fms",
                                 service_id, (time.monotonic() - _svc_t0) * 1000)
                 except Exception as e:
                     logger.error(f"Service '{service_id}' failed to connect: {e}")
-        logger.info("[startup-timing] executor service reconnect phase: %.1fms",
+        logger.debug("[startup-timing] executor service reconnect phase: %.1fms",
                     (time.monotonic() - _t0) * 1000)
 
         # Re-initialize tasks (e.g. register HTTP routes, idempotent)
@@ -310,11 +310,11 @@ class ContinuousFlowExecutor:
                 if hasattr(task, 'initialize'):
                     _task_t0 = time.monotonic()
                     task.initialize()
-                    logger.info("[startup-timing] executor task %s initialize: %.1fms",
+                    logger.debug("[startup-timing] executor task %s initialize: %.1fms",
                                 task_id, (time.monotonic() - _task_t0) * 1000)
             except Exception as e:
                 logger.error(f"Task '{task_id}' initialization failed: {e}")
-        logger.info("[startup-timing] executor task init phase: %.1fms",
+        logger.debug("[startup-timing] executor task init phase: %.1fms",
                     (time.monotonic() - _t0) * 1000)
 
         # Transition all tasks to RUNNING
@@ -336,7 +336,7 @@ class ContinuousFlowExecutor:
         )
         self._scheduler_thread.start()
         logger.info("ContinuousFlowExecutor started")
-        logger.info("[startup-timing] executor scheduler/start phase: %.1fms",
+        logger.debug("[startup-timing] executor scheduler/start phase: %.1fms",
                     (time.monotonic() - _t0) * 1000)
 
         # Safety net: reclaim orphan CLI session dirs accumulated across
@@ -350,7 +350,7 @@ class ContinuousFlowExecutor:
                 if _removed:
                     logger.info("Reclaimed %d orphan CLI session dir(s) on boot",
                                 _removed)
-                logger.info("[startup-timing] executor CLI session cleanup async: %.1fms",
+                logger.debug("[startup-timing] executor CLI session cleanup async: %.1fms",
                             (time.monotonic() - _t0) * 1000)
             except Exception as _e:
                 logger.debug("CLI session cleanup on boot failed: %s", _e)
@@ -360,7 +360,7 @@ class ContinuousFlowExecutor:
             name="cli-session-cleanup",
             daemon=True,
         ).start()
-        logger.info("[startup-timing] executor start total: %.1fms",
+        logger.debug("[startup-timing] executor start total: %.1fms",
                     (time.monotonic() - _start_t0) * 1000)
 
     def stop(self):

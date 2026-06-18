@@ -227,7 +227,7 @@ class ConversationEventBus:
             logger.debug(f"EventBus: new subscriber for conv={conversation_id} "
                          f"(skipped {len(buffered)} buffered events, replay=False)")
         if replaced:
-            logger.info("EventBus: replaced stale SSE subscriber for conv=%s client=%s",
+            logger.debug("EventBus: replaced stale SSE subscriber for conv=%s client=%s",
                         conversation_id[:8], client_id[:12])
         return writer
 

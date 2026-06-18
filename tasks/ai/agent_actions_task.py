@@ -66,12 +66,12 @@ class AgentActionsTask(AgentLoopTask):
         except Exception:
             logger.debug("[ui-action] could not parse action body for diag", exc_info=True)
         _t0 = time.monotonic()
-        logger.info("[ui-action] start action=%s conv=%s", _diag_action, _diag_conv)
+        logger.debug("[ui-action] start action=%s conv=%s", _diag_action, _diag_conv)
         try:
             result = self._handle_action(flowfile)
         finally:
             _dt = (time.monotonic() - _t0) * 1000.0
-            _lvl = logging.WARNING if _dt > 2000 else logging.INFO
+            _lvl = logging.WARNING if _dt > 2000 else logging.DEBUG
             logger.log(_lvl, "[ui-action] done action=%s conv=%s took=%.0fms",
                        _diag_action, _diag_conv, _dt)
         if result is None:

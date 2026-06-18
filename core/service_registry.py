@@ -638,7 +638,7 @@ class ServiceRegistry:
         for svc_id in ids:
             _t0 = time.monotonic()
             self._connect_one(sid, svc_id)
-            logger.info("[startup-timing] service connect %s/%s: %.1fms",
+            logger.debug("[startup-timing] service connect %s/%s: %.1fms",
                         sid[:8] if len(sid) > 8 else sid, svc_id,
                         (time.monotonic() - _t0) * 1000)
 
@@ -682,7 +682,7 @@ class ServiceRegistry:
             _t0 = time.monotonic()
             from tasks import _register_all_services
             _register_all_services()
-            logger.info("[startup-timing] service %s register services: %.1fms",
+            logger.debug("[startup-timing] service %s register services: %.1fms",
                         service_id, (time.monotonic() - _t0) * 1000)
             svc_class = ServiceFactory.get(svc_def.service_type)
             from core.expression import LazyResolveDict
@@ -700,7 +700,7 @@ class ServiceRegistry:
             svc_instance = svc_class(lazy_config)
             _t0 = time.monotonic()
             svc_instance.connect()
-            logger.info("[startup-timing] service %s connect call: %.1fms",
+            logger.debug("[startup-timing] service %s connect call: %.1fms",
                         service_id, (time.monotonic() - _t0) * 1000)
             with self._data_lock:
                 self._live_instances.setdefault(scope_id, {})[service_id] = svc_instance
@@ -859,7 +859,7 @@ class ServiceRegistry:
             _frames = _tb.extract_stack(limit=8)[:-1]
             _caller = " < ".join(
                 "%s:%s" % (f.name, f.lineno) for f in reversed(_frames[-5:]))
-            logger.info("[svc-load] START user scope id=%s caller=%s",
+            logger.debug("[svc-load] START user scope id=%s caller=%s",
                         scope_id[:8] if len(scope_id) > 8 else scope_id, _caller)
         try:
             if scope == SCOPE_GLOBAL:
@@ -877,7 +877,7 @@ class ServiceRegistry:
                 scope, scope_id[:8] if len(scope_id) > 8 else scope_id, e)
         if _diag_t0 is not None:
             import time as _t
-            logger.info("[svc-load] END user scope id=%s took=%.0fms",
+            logger.debug("[svc-load] END user scope id=%s took=%.0fms",
                         scope_id[:8] if len(scope_id) > 8 else scope_id,
                         (_t.monotonic() - _diag_t0) * 1000.0)
 

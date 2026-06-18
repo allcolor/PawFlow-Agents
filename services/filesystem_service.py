@@ -533,8 +533,8 @@ class RelayService(BaseService):
             conn_state['relay_id'] = relay_id
             with self._relay_pool_lock:
                 _alive = len(self._relay_pool)
-            logger.info('Relay connected: %s (addr=%s) conn#%d alive_before=%d',
-                        relay_id, remote, conn_id, _alive)
+            logger.debug('Relay connected: %s (addr=%s) conn#%d alive_before=%d',
+                         relay_id, remote, conn_id, _alive)
             if reg_info.get('shells'):
                 service._relay_shells = reg_info['shells']
             if reg_info:
@@ -873,7 +873,7 @@ class RelayService(BaseService):
                                       "loop": loop, "send_lock": send_lock,
                                       "tasks": relay_tasks})
             count = len(self._relay_pool)
-        logger.info("Relay pool: %d connection(s) for '%s'", count, self._service_id)
+        logger.debug("Relay pool: %d connection(s) for '%s'", count, self._service_id)
         _invalidate_tool_relay_registry_cache()
         self.push_remote_fs_manifest()
         # Notify all SSE clients to refresh resources (relay status changed)

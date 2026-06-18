@@ -1757,6 +1757,12 @@ function connectSSE(cid, onReady, opts) {
     // rendering stays on the SSE channel instead of falling back to polling.
     if (eventSource) { try { eventSource.close(); } catch (_) {} }
     eventSource = null;
+    // An expired/invalid session makes the events endpoint answer 401, but
+    // EventSource exposes that only as an opaque onerror — so without this
+    // probe the stream would back off forever behind a blank screen with no
+    // hint to the user. Classify the failure once: 401/403 → re-auth,
+    // anything else (network blip, proxy idle-kill) → silent backoff.
+    _probeSSEAuth(cid);
     _scheduleSSEReconnect(cid);
   };
 
@@ -1889,7 +1895,63 @@ function _checkServerRestart(data) {
   _forceSSEReconnect(conversationId, { noReplay: true });
 }
 
+// One-shot session-expiry handler. A confirmed 401/403 on the events stream
+// is terminal for this page load: stop the reconnect machinery, tell the user,
+// and bounce through the server's HTML login redirect (/auth/login →
+// /auth/callback) to mint a fresh session. Guarded so racing probes can't
+// trigger it (or the redirect) more than once.
+var _sseSessionExpired = false;
+function _handleSessionExpired() {
+  if (_sseSessionExpired) return;
+  _sseSessionExpired = true;
+  if (sseReconnectTimer) { clearTimeout(sseReconnectTimer); sseReconnectTimer = null; }
+  if (eventSource) { try { eventSource.close(); } catch (_) {} eventSource = null; }
+  try { document.getElementById('status').textContent = t('sessionExpired'); } catch (_) {}
+  try { addMsg('error', t('sessionExpired')); } catch (_) {}
+  var _dest = (typeof LOGIN_URL !== 'undefined' && LOGIN_URL) ? LOGIN_URL : '/auth/login';
+  setTimeout(function () { try { window.location.href = _dest; } catch (_) {} }, 1200);
+}
+
+// Classify an opaque EventSource failure by re-hitting the same endpoint with
+// fetch (which DOES expose the status). Aborts the body immediately so a
+// healthy 200 stream never lingers as a second subscriber. Only a definitive
+// 401/403 triggers re-auth; network errors and 200s fall through to the normal
+// backoff reconnect already scheduled by the caller.
+var _sseAuthProbeInFlight = false;
+function _probeSSEAuth(cid) {
+  if (_sseSessionExpired || _sseAuthProbeInFlight || !cid) return;
+  if (typeof fetch !== 'function') return;
+  _sseAuthProbeInFlight = true;
+  var token = (typeof getToken === 'function') ? getToken() : null;
+  var url = SSE_URL + '?probe=1&conversation_id=' + encodeURIComponent(cid)
+    + (token ? '&token=' + encodeURIComponent(token) : '');
+  var ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+  var settled = false;
+  var done = function () {
+    if (settled) return;
+    settled = true;
+    _sseAuthProbeInFlight = false;
+    if (ctrl) { try { ctrl.abort(); } catch (_) {} }
+  };
+  var headers = (typeof getAuthHeaders === 'function') ? getAuthHeaders() : {};
+  fetch(url, {
+    method: 'GET',
+    credentials: 'same-origin',
+    headers: headers,
+    signal: ctrl ? ctrl.signal : undefined,
+  }).then(function (resp) {
+    var expired = resp.status === 401 || resp.status === 403
+      || resp.type === 'opaqueredirect';
+    done();
+    if (expired) _handleSessionExpired();
+  }).catch(function () {
+    // Network failure / abort — not an auth problem; let backoff retry.
+    done();
+  });
+}
+
 function _scheduleSSEReconnect(cid) {
+  if (_sseSessionExpired) return;  // re-auth in progress — stop retrying
   if (sseReconnectTimer) clearTimeout(sseReconnectTimer);
   // Exponential backoff: 1s, 2s, 4s, 8s, 16s, 30s, 60s
   const delay = Math.min(1000 * Math.pow(2, sseRetryCount), 60000);
@@ -1897,6 +1959,7 @@ function _scheduleSSEReconnect(cid) {
   pawflowDebugLog('[SSE] reconnecting in', delay, 'ms (attempt', sseRetryCount, ')');
   sseReconnectTimer = setTimeout(() => {
     sseReconnectTimer = null;
+    if (_sseSessionExpired) return;  // re-auth in progress — stop retrying
     if (!cid || cid !== conversationId) return;  // conversation changed, skip
     connectSSE(cid);
   }, delay);

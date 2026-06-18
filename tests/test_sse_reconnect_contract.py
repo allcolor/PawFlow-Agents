@@ -27,6 +27,35 @@ def test_sse_onerror_owns_reconnect_instead_of_waiting_for_browser_retry():
     assert "readyState === EventSource.CLOSED" not in handler
 
 
+def test_sse_onerror_classifies_expired_session_for_reauth():
+    # An expired session yields an opaque EventSource error; the handler must
+    # probe the endpoint to distinguish 401 (→ re-auth) from a network blip
+    # (→ silent backoff) instead of looping forever behind a blank screen.
+    handler_start = SSE_JS.index("eventSource.onerror = (err) => {")
+    handler_end = SSE_JS.index("eventSource.onopen = () => {", handler_start)
+    handler = SSE_JS[handler_start:handler_end]
+    assert "_probeSSEAuth(cid)" in handler
+
+    probe = SSE_JS[
+        SSE_JS.index("function _probeSSEAuth"):
+        SSE_JS.index("function _scheduleSSEReconnect")]
+    # Re-hit the events endpoint with fetch (which exposes the status) and
+    # only a definitive 401/403 triggers re-auth.
+    assert "resp.status === 401" in probe
+    assert "resp.status === 403" in probe
+    assert "_handleSessionExpired()" in probe
+
+    expired = SSE_JS[
+        SSE_JS.index("function _handleSessionExpired"):
+        SSE_JS.index("function _probeSSEAuth")]
+    assert "t('sessionExpired')" in expired
+    assert "LOGIN_URL" in expired
+    # A confirmed expiry stops the backoff loop.
+    assert "_sseSessionExpired" in SSE_JS[
+        SSE_JS.index("function _scheduleSSEReconnect"):
+        SSE_JS.index("function _scheduleSSEReconnect") + 400]
+
+
 def test_sse_reconnect_paths_never_poll_render_history():
     assert "_recoverConversation(" not in SSE_JS
     assert "function _forceSSEReconnect" in SSE_JS

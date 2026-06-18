@@ -47,11 +47,12 @@ def test_relay_binary_entry_exposes_screen_action_child_route():
 
 def test_host_python_command_does_not_return_frozen_relay_binary(monkeypatch):
     from pawflow_relay import thread
+    from pawflow_relay import _thread_base
 
     monkeypatch.delenv("PAWFLOW_RELAY_PYTHON", raising=False)
     monkeypatch.delenv("PYTHON", raising=False)
-    monkeypatch.setattr(thread.sys, "executable", "/opt/pawflow/pawflow-relay", raising=False)
-    monkeypatch.setattr(thread.sys, "frozen", True, raising=False)
-    monkeypatch.setattr(thread.shutil, "which", lambda name: "/usr/bin/python3" if name == "python3" else None)
+    monkeypatch.setattr(_thread_base.sys, "executable", "/opt/pawflow/pawflow-relay", raising=False)
+    monkeypatch.setattr(_thread_base.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(_thread_base.shutil, "which", lambda name: "/usr/bin/python3" if name == "python3" else None)
 
     assert thread._host_python_command() == "/usr/bin/python3"

@@ -316,6 +316,13 @@ function resumeConv(cid, force) {
     });
   }
 
+  // Visible loading state in the (now empty) message area. load_history
+  // results arrive via the /api/ui task slot + UI-action SSE bus; if that
+  // slot is busy (e.g. first post-restart request while the backend loads
+  // services / spawns the relay), the response can take tens of seconds.
+  // Without this the chat is a silent blank during that wait.
+  _showConvLoadingPlaceholder();
+
   // 2. LOAD histo(50). No SSE is open yet: nothing can pollute
   //    _seenMsgIds before render.
   action$('load_history', { conversation_id: cid, limit: displayWindow, offset: 0 })
@@ -388,7 +395,31 @@ function _getHistTaskBlock(taskId, iteration, agentName) {
   return _histTaskBlocks[blockKey];
 }
 
+// Transient "loading conversation" row shown in #messages between the
+// clear and the load_history render. Cleared by _renderHistory on any
+// outcome. Idempotent.
+function _showConvLoadingPlaceholder() {
+  var box = document.getElementById('messages');
+  if (!box) return;
+  if (document.getElementById('convLoadingPlaceholder')) return;
+  var el = document.createElement('div');
+  el.id = 'convLoadingPlaceholder';
+  el.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:8px;'
+    + 'padding:40px 16px;color:var(--pf-muted);font-size:13px;';
+  el.innerHTML = '<span class="pf-spin" style="width:14px;height:14px;border:2px solid var(--pf-border);'
+    + 'border-top-color:var(--pf-accent);border-radius:50%;display:inline-block;'
+    + 'animation:spin 0.8s linear infinite;"></span>'
+    + '<span>' + escapeHtml(t('loading')) + '</span>';
+  box.appendChild(el);
+}
+
+function _clearConvLoadingPlaceholder() {
+  var el = document.getElementById('convLoadingPlaceholder');
+  if (el) el.remove();
+}
+
 function _renderHistory(data) {
+  _clearConvLoadingPlaceholder();
   if (!data || data.error) {
     addMsg('error', (data && data.error) || t('loadError'));
     document.getElementById('status').textContent = t('error');

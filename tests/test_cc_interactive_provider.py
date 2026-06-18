@@ -986,7 +986,7 @@ def test_initial_interactive_prompt_requires_pawflow_mcp_tools(tmp_path):
     from core.llm_client import LLMMessage, LLMToolDefinition
 
     client = LLMClient("claude-code-interactive")
-    prompt = client._cci_prompt(
+    client._cci_prompt(
         [LLMMessage(role="user", content="status", conversation_id="conv")],
         [LLMToolDefinition(name="use_tool", description="dispatch", parameters={})],
         str(tmp_path),
@@ -1338,6 +1338,15 @@ def test_interactive_pool_send_text_waits_for_prompt_ready_on_cold_start(monkeyp
     assert sleeps == [0.4, 0.4, 1.0]
 
 
+def _join_verify_thread(timeout=5.0):
+    """send_interrupt runs the submit verifier on a daemon thread (it must
+    not block the HTTP request). Join it so assertions on the pane/Enter
+    counts are deterministic instead of racing the background thread."""
+    for t in threading.enumerate():
+        if t.name == "cci-verify-submit":
+            t.join(timeout)
+
+
 def _make_verify_pool(monkeypatch, fake_run):
     from core.claude_code_interactive_pool import InteractiveClaudeCodePool, InteractiveContainer
 
@@ -1452,6 +1461,7 @@ def test_send_interrupt_represses_enter_when_submit_swallowed(monkeypatch):
 
     pool, state = _make_verify_pool(monkeypatch, fake_run)
     assert pool.send_interrupt(state, text) is True
+    _join_verify_thread()
 
     assert any(c[-2:] == ["pawflow", "Escape"] for c in calls)
     enters = [c for c in calls if c[-2:] == ["pawflow", "Enter"]]
@@ -1490,6 +1500,7 @@ def test_send_interrupt_verifier_waits_out_old_turn_running_marker(monkeypatch):
 
     pool, state = _make_verify_pool(monkeypatch, fake_run)
     assert pool.send_interrupt(state, text) is True
+    _join_verify_thread()
 
     enters = [c for c in calls if c[-2:] == ["pawflow", "Enter"]]
     # Initial Enter + one retry after the stale marker cleared.

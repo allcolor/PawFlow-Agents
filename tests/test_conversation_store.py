@@ -1847,6 +1847,13 @@ class TestCleanupCliRuntimeSessions:
         gemini = tmp_path / "sessions" / "gemini"
         codex.mkdir(parents=True)
         gemini.mkdir(parents=True)
+        # Also isolate the Claude root: cleanup_orphan_cli_sessions() scans
+        # ALL provider roots, so without this the test would scan the
+        # machine's real CLAUDE_SESSIONS_DIR and count orphans left by
+        # other tests in the suite (order-dependent flake).
+        claude = tmp_path / "sessions" / "claude"
+        claude.mkdir(parents=True)
+        monkeypatch.setattr(_paths, "CLAUDE_SESSIONS_DIR", claude)
         monkeypatch.setattr(_paths, "CODEX_SESSIONS_DIR", codex)
         monkeypatch.setattr(_paths, "GEMINI_SESSIONS_DIR", gemini)
         return codex, gemini

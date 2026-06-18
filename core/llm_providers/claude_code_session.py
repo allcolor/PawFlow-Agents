@@ -9,7 +9,24 @@ import logging
 import os
 from typing import Optional
 
-from core.docker_utils import docker_cmd as _docker_cmd, to_host_path
+# Credential-pool CRUD, OAuth token persistence, relay-proxy URL transform, and
+# the per-session workdir base live in _cc_credentials to keep this module <=800
+# lines; re-exported so core.llm_providers.claude_code_session stays the public
+# path and monkeypatch targets (_find_cc_service_id, _load_credentials_pool, ...)
+# resolve here.
+from core.llm_providers._cc_credentials import (  # noqa: F401
+    _find_cc_service_id,
+    _get_sessions_base,
+    _load_credentials_pool,
+    _maybe_transform_relay_proxy_url,
+    _persist_tokens_to_service,
+    _save_credentials_pool,
+    _validate_oauth_token,
+    add_credential_to_pool,
+    recover_tokens_from_workdir,
+    remove_credential_from_pool,
+    reset_credentials_pool,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -28,263 +45,6 @@ class OAuthRejectedError(Exception):
     """
 
 
-def _maybe_transform_relay_proxy_url(url: str, user_id: str = "",
-                                     conv_id: str = "") -> Optional[str]:
-    """Backward-compatible wrapper around the central relay URL helper."""
-    from core.relay_proxy_url import maybe_transform_relay_proxy_url
-    return maybe_transform_relay_proxy_url(url, user_id=user_id, conv_id=conv_id)
-
-
-def _find_cc_service_id(service_id: str = "", user_id: str = "",
-                        conv_id: str = "") -> str:
-    """Find the credential-pool owner for Claude Code OAuth."""
-    try:
-        from services.llm_credential_oauth import (
-            credential_service_id_from_llm_service,
-            resolve_credential_service_id,
-        )
-        return (resolve_credential_service_id(
-            "claude-code", service_id, user_id=user_id, conv_id=conv_id)
-            or credential_service_id_from_llm_service(
-                "claude-code", service_id, user_id=user_id, conv_id=conv_id))
-    except Exception:
-        return ""
-
-
-def _load_credentials_pool(service_id: str = "", user_id: str = "",
-                           conv_id: str = "") -> list:
-    """Load the credentials pool for a CC service.
-
-    Returns list of {"access_token", "refresh_token", "expires_at", "account", "added_at"}.
-    """
-    from core.secrets import get_secrets_manager
-
-    sid = _find_cc_service_id(service_id, user_id=user_id, conv_id=conv_id)
-    if not sid:
-        return []
-    sm = get_secrets_manager()
-    prefix = sid.replace("-", "_")
-
-    from core.paths import GLOBAL_SECRETS_FILE
-    secrets_path = GLOBAL_SECRETS_FILE
-    if not secrets_path.exists():
-        return []
-    existing = json.loads(secrets_path.read_text(encoding="utf-8"))
-    pool_key = f"{prefix}_credentials_pool"
-    if pool_key not in existing:
-        return []
-    try:
-        return json.loads(sm.decrypt(existing[pool_key]))
-    except Exception:
-        return []
-
-
-def _save_credentials_pool(pool: list, service_id: str = "", user_id: str = "",
-                           conv_id: str = ""):
-    """Save the credentials pool to secrets (encrypted)."""
-    from pathlib import Path
-    from core.secrets import get_secrets_manager
-
-    sid = _find_cc_service_id(service_id, user_id=user_id, conv_id=conv_id)
-    if not sid:
-        return
-    sm = get_secrets_manager()
-    prefix = sid.replace("-", "_")
-
-    from core.paths import GLOBAL_SECRETS_FILE
-    secrets_path = GLOBAL_SECRETS_FILE
-    secrets_path.parent.mkdir(parents=True, exist_ok=True)
-    existing = {}
-    if secrets_path.exists():
-        existing = json.loads(secrets_path.read_text(encoding="utf-8"))
-    existing[f"{prefix}_credentials_pool"] = sm.encrypt(json.dumps(pool))
-    secrets_path.write_text(
-        json.dumps(existing, indent=2, ensure_ascii=False), encoding="utf-8")
-    logger.info("[claude-code] credentials pool (%d) persisted for '%s'", len(pool), sid)
-
-
-def add_credential_to_pool(access_token: str, refresh_token: str,
-                           expires_at, account: str = "",
-                           service_id: str = "", user_id: str = "",
-                           conv_id: str = ""):
-    """Add a credential to the pool."""
-    import time
-    sid = _find_cc_service_id(service_id, user_id=user_id, conv_id=conv_id)
-    if not sid:
-        raise ValueError(f"Claude Code credential service '{service_id}' not found")
-    pool = _load_credentials_pool(service_id, user_id=user_id, conv_id=conv_id)
-    # Dedup: if same refresh_token exists, update it (same account re-login)
-    for i, existing in enumerate(pool):
-        if existing.get("refresh_token") == refresh_token:
-            pool[i] = {
-                "access_token": access_token,
-                "refresh_token": refresh_token,
-                "expires_at": int(expires_at),
-                "account": account or existing.get("account", ""),
-                "added_at": int(time.time()),
-            }
-            _save_credentials_pool(
-                pool, service_id, user_id=user_id, conv_id=conv_id)
-            logger.info("[claude-code] credential updated in pool (slot %d) for '%s'",
-                        i, sid)
-            return
-    pool.append({
-        "access_token": access_token,
-        "refresh_token": refresh_token,
-        "expires_at": int(expires_at),
-        "account": account,
-        "added_at": int(time.time()),
-    })
-    _save_credentials_pool(pool, service_id, user_id=user_id, conv_id=conv_id)
-    logger.info("[claude-code] credential added to pool (now %d) for '%s'",
-                len(pool), sid)
-
-
-def remove_credential_from_pool(index: int, service_id: str = "",
-                                user_id: str = "", conv_id: str = "") -> bool:
-    """Remove a credential from the pool by index (0-based)."""
-    pool = _load_credentials_pool(service_id, user_id=user_id, conv_id=conv_id)
-    if 0 <= index < len(pool):
-        pool.pop(index)
-        _save_credentials_pool(pool, service_id, user_id=user_id, conv_id=conv_id)
-        return True
-    return False
-
-
-def reset_credentials_pool(service_id: str = "", user_id: str = "",
-                           conv_id: str = ""):
-    """Clear all credentials from the pool."""
-    _save_credentials_pool([], service_id, user_id=user_id, conv_id=conv_id)
-
-
-def _validate_oauth_token(access_token: str, refresh_token: str,
-                           expires_at) -> bool:
-    """Sanity check: never persist a token we can already see is broken.
-
-    - access_token + refresh_token must be non-empty strings
-    - expires_at must be a number in the future (handles both seconds
-      and milliseconds — Anthropic uses ms).
-    """
-    import time as _t
-    if not access_token or not isinstance(access_token, str):
-        return False
-    if not refresh_token or not isinstance(refresh_token, str):
-        return False
-    try:
-        _exp = int(expires_at)
-    except (TypeError, ValueError):
-        return False
-    # Accept both sec and ms. If value > 1e12, it's ms; otherwise sec.
-    _exp_s = _exp / 1000 if _exp > 1e12 else _exp
-    return _exp_s > _t.time()
-
-
-def _persist_tokens_to_service(access_token: str, refresh_token: str,
-                               expires_at, service_id: str = "",
-                               pool_index: int = -1, user_id: str = "",
-                               conv_id: str = ""):
-    """Update a credential in the pool (after refresh).
-
-    If pool_index >= 0, updates that specific slot. Otherwise finds
-    the matching credential by refresh_token.
-
-    Refuses to persist a token that fails basic validation (empty
-    fields, expires_at in the past) — better to keep the old broken
-    token and let _setup_credentials drop the slot than to pollute
-    the pool with a token we already know is dead.
-    """
-    if not _validate_oauth_token(access_token, refresh_token, expires_at):
-        logger.warning(
-            "[claude-code] refusing to persist invalid token "
-            "(access_token=%r, expires_at=%r) to pool[%s] — keeping old",
-            bool(access_token), expires_at, pool_index)
-        return
-    sid = _find_cc_service_id(service_id, user_id=user_id, conv_id=conv_id)
-    if not sid:
-        return
-    pool = _load_credentials_pool(sid, user_id=user_id, conv_id=conv_id)
-    if not pool:
-        # No pool yet — create one
-        add_credential_to_pool(access_token, refresh_token, expires_at,
-                               service_id=sid, user_id=user_id, conv_id=conv_id)
-        return
-
-    if 0 <= pool_index < len(pool):
-        pool[pool_index]["access_token"] = access_token
-        pool[pool_index]["refresh_token"] = refresh_token
-        pool[pool_index]["expires_at"] = int(expires_at)
-    else:
-        # Find by matching refresh_token (access_token changes on refresh)
-        for cred in pool:
-            if cred.get("refresh_token") == refresh_token:
-                cred["access_token"] = access_token
-                cred["expires_at"] = int(expires_at)
-                break
-        else:
-            logger.warning(
-                "[claude-code] refusing to persist refreshed token: "
-                "no matching credential in pool '%s'", sid)
-            return
-
-    _save_credentials_pool(pool, sid, user_id=user_id, conv_id=conv_id)
-    logger.info("[claude-code] credential updated in pool for '%s'", sid)
-
-
-def recover_tokens_from_workdir(workdir: str, service_id: str,
-                               pool_index: int, user_id: str = "",
-                               conv_id: str = "") -> bool:
-    """Read CC-refreshed OAuth tokens back from <workdir>/.credentials.json
-    and persist them to the exact pool slot.
-
-    Called from live-session teardown (idle sweep / shutdown / evict),
-    where the claude CLI inside the long-lived container may have rotated
-    the OAuth token on its own. Anthropic's refresh_token is single-use:
-    issuing a new one invalidates the old, so if teardown drops the
-    container without copying the renewed credential back, the pool keeps
-    a dead refresh_token and the user is logged out on the next turn.
-
-    Unlike the instance method ``_recover_tokens`` (which reads
-    ``self._current_pool_index`` / ``self._agent_service``), this targets
-    the slot via the SESSION's own ``service_id`` / ``pool_index`` -- the
-    sweeper tears down arbitrary sessions, so instance state is not a
-    reliable source for which credential to update.
-
-    Returns True if a token was recovered and persisted, else False.
-    """
-    creds_path = os.path.join(workdir, ".credentials.json")
-    if not os.path.exists(creds_path):
-        return False
-    try:
-        with open(creds_path, "r", encoding="utf-8") as f:
-            creds = json.load(f)
-        oauth = creds.get("claudeAiOauth", {})
-        new_access = oauth.get("accessToken", "")
-        new_refresh = oauth.get("refreshToken", "")
-        new_expires = oauth.get("expiresAt", 0)
-        if not new_access:
-            return False
-        # _persist_tokens_to_service refuses invalid tokens (empty /
-        # already-expired) and addresses pool_index directly when >= 0.
-        _persist_tokens_to_service(
-            new_access, new_refresh, new_expires,
-            service_id=service_id, pool_index=pool_index,
-            user_id=user_id, conv_id=conv_id)
-        logger.info(
-            "[claude-code] recovered teardown tokens [pool:%s] for '%s'",
-            pool_index, service_id)
-        return True
-    except Exception:
-        logger.debug(
-            "[claude-code] teardown token recovery failed", exc_info=True)
-        return False
-
-
-# Base directory for per-session Claude Code workdirs — read dynamically
-def _get_sessions_base():
-    import core.paths as _p
-    return str(_p.CLAUDE_SESSIONS_DIR.resolve())
-
-
 class ClaudeCodeSessionMixin:
     """Session/workdir management for Claude Code CLI.
 
@@ -300,6 +60,28 @@ class ClaudeCodeSessionMixin:
     # Class-level round-robin counter
     _pool_counter = 0
     _pool_lock = __import__('threading').Lock()
+
+    # Per-slot refresh locks: serialize concurrent refreshes of the SAME
+    # pool slot across sessions in this process. Anthropic's refresh_token
+    # is single-use — a successful refresh rotates it and invalidates the
+    # old one. Two sessions sharing a slot (e.g. a one-credential pool, or
+    # two agents resuming the same _current_pool_index) would otherwise
+    # both POST the same token; the loser gets invalid_grant and wrongly
+    # drops a credential the winner just renewed. Keyed by
+    # (service_id, pool_index) so it is bounded by pool size.
+    _refresh_locks_guard = __import__('threading').Lock()
+    _refresh_locks = {}
+
+    @classmethod
+    def _slot_refresh_lock(cls, service_id: str, pool_index: int):
+        """Return the process-wide lock guarding refresh of one pool slot."""
+        key = (service_id, pool_index)
+        with cls._refresh_locks_guard:
+            lock = cls._refresh_locks.get(key)
+            if lock is None:
+                lock = __import__('threading').Lock()
+                cls._refresh_locks[key] = lock
+            return lock
 
     def _resolve_service_tokens(self, pool_index: int = -1,
                                 user_id: str = "",
@@ -378,7 +160,9 @@ class ClaudeCodeSessionMixin:
             _drop_dead_slot("no refresh_token")
             return False
         try:
-            tokens = self._refresh_oauth_token(refresh_token)
+            tokens = self._refresh_oauth_token_coordinated(
+                refresh_token, service_id=svc_id, pool_index=pool_index,
+                user_id=uid, conv_id=cid)
         except OAuthRejectedError as e:
             logger.warning("[force-refresh] pool[%d] refresh rejected: %s",
                            pool_index, e)
@@ -468,6 +252,38 @@ class ClaudeCodeSessionMixin:
             "expires_at": int(expires_at_ms),
         }
 
+    def _refresh_oauth_token_coordinated(self, refresh_token: str, *,
+                                         service_id: str, pool_index: int,
+                                         user_id: str, conv_id: str) -> dict:
+        """Serialized, idempotent refresh of one pool slot's single-use token.
+
+        Holds the per-slot lock so two sessions sharing the slot can't both
+        POST the same refresh_token (the second would get invalid_grant and
+        drop a credential the first just rotated). After acquiring the lock
+        we re-read the pool: if a peer already rotated this slot, the
+        freshly-persisted token is returned with NO network call — so the
+        caller never sees a spurious OAuthRejectedError for a token that was
+        consumed by a concurrent, successful refresh.
+        """
+        lock = self._slot_refresh_lock(service_id, pool_index)
+        with lock:
+            pool = _load_credentials_pool(service_id, user_id=user_id, conv_id=conv_id)
+            if 0 <= pool_index < len(pool):
+                slot = pool[pool_index]
+                if slot.get("access_token") and slot.get("refresh_token") != refresh_token:
+                    # A peer rotated this slot while we waited for the lock;
+                    # adopt its result instead of POSTing a consumed token.
+                    logger.info(
+                        "OAuth token [pool:%d] already refreshed by a peer "
+                        "session; reusing rotated credential (no network call)",
+                        pool_index)
+                    return {
+                        "access_token": slot.get("access_token", ""),
+                        "refresh_token": slot.get("refresh_token", ""),
+                        "expires_at": slot.get("expires_at", 0),
+                    }
+            return self._refresh_oauth_token(refresh_token)
+
     def _get_session_workdir(self, conversation_id: str,
                              agent_name: str = "",
                              user_id: str = "") -> str:
@@ -531,7 +347,10 @@ class ClaudeCodeSessionMixin:
             # already point at the in-container MCP bridge; leave untouched.
             if "/relay-proxy/" not in _base_url:
                 import re
-                _repl = lambda m: m.group(1) + "host.docker.internal" + (m.group(2) or '')
+
+                def _repl(m):
+                    return m.group(1) + "host.docker.internal" + (m.group(2) or '')
+
                 _base_url = re.sub(
                     r'(https?://)localhost(:\d+)?', _repl, _base_url)
                 _base_url = re.sub(
@@ -731,7 +550,9 @@ class ClaudeCodeSessionMixin:
                     logger.info("OAuth token [pool:%d] %s — attempting refresh", _pidx,
                                 "expired" if _remaining < 0 else f"expiring in {_remaining:.0f}s")
                     try:
-                        new_tokens = self._refresh_oauth_token(refresh_token)
+                        new_tokens = self._refresh_oauth_token_coordinated(
+                            refresh_token, service_id=svc_id, pool_index=_pidx,
+                            user_id=uid, conv_id=cid)
                         access_token = new_tokens["access_token"]
                         refresh_token = new_tokens.get("refresh_token", refresh_token)
                         expires_at = new_tokens["expires_at"]

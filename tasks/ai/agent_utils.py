@@ -270,8 +270,6 @@ class AgentUtilsMixin(_AgentMediaMixin, _AgentMsgProcMixin):
     # ── Media service discovery (generic for image/video) ───────────
 
 
-    @staticmethod
-
     def _filter_tools_by_role(self, registry: ToolRegistry,
                               user_role: str) -> ToolRegistry:
         """Return a filtered registry containing only tools the user can access.

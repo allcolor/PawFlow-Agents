@@ -43,6 +43,7 @@ class _MediaServiceRef(tuple):
 class _AgentMediaMixin:
     """Media-service discovery + capability resolver factories."""
 
+    @staticmethod
     def _get_media_types(base_class) -> set:
         """Get all registered service_type strings that inherit from base_class."""
         try:

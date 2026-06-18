@@ -34,7 +34,7 @@ def test_preempt_kill_fast_restarts_streaming_loop():
 # Conversation store extras.tmp → extras.json Windows AV race fix
 # ---------------------------------------------------------------------------
 
-_CONV_STORE = Path("core/conversation_store.py").read_text(encoding="utf-8")
+_CONV_STORE = "".join(p.read_text(encoding="utf-8") for p in sorted(Path("core").glob("*conversation_store*.py")))  # split across _conversation_store_*.py
 _CONTINUOUS_EXECUTOR = Path("engine/continuous_executor.py").read_text(encoding="utf-8")
 
 

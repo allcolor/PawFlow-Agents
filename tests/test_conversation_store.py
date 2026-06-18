@@ -210,8 +210,8 @@ class TestCreateConversation:
         store, cid, uid = conv
         import core.conversation_store as cs_mod
 
-        monkeypatch.setattr(cs_mod, "_HOT_METADATA_FLUSH_INTERVAL_SEC", 3600.0)
-        monkeypatch.setattr(cs_mod, "_HOT_METADATA_FLUSH_MSG_DELTA", 1000)
+        monkeypatch.setattr("core._conversation_store_base._HOT_METADATA_FLUSH_INTERVAL_SEC", 3600.0)
+        monkeypatch.setattr("core._conversation_store_base._HOT_METADATA_FLUSH_MSG_DELTA", 1000)
         original_write = store._write_extras
         writes = {"count": 0}
         first_write = threading.Event()
@@ -254,7 +254,7 @@ class TestCreateConversation:
         def fail_write_extras(*_args, **_kwargs):
             raise AssertionError("append hot path must not write extras.json")
 
-        monkeypatch.setattr(cs_mod, "_HOT_METADATA_EXECUTOR", FakeExecutor())
+        monkeypatch.setattr("core._conversation_store_base._HOT_METADATA_EXECUTOR", FakeExecutor())
         monkeypatch.setattr(store, "_write_extras", fail_write_extras)
 
         store.append_message(
@@ -312,7 +312,7 @@ class TestCreateConversation:
 
         import core.conversation_store as cs_mod
 
-        monkeypatch.setattr(cs_mod, "_HOT_METADATA_EXECUTOR", FakeExecutor())
+        monkeypatch.setattr("core._conversation_store_base._HOT_METADATA_EXECUTOR", FakeExecutor())
         monkeypatch.setattr(store, "_notify_bg_transcript_chars", notify)
 
         store.append_message(
@@ -345,9 +345,9 @@ class TestCreateConversation:
             pytest.skip("git unavailable")
         import core.conversation_store as cs_mod
 
-        monkeypatch.setattr(cs_mod, "_GIT_RETENTION_DAYS", 0)
-        monkeypatch.setattr(cs_mod, "_GIT_RETENTION_COMMITS", 2)
-        monkeypatch.setattr(cs_mod, "_GIT_RETENTION_INTERVAL_SEC", 0)
+        monkeypatch.setattr("core._conversation_store_base._GIT_RETENTION_DAYS", 0)
+        monkeypatch.setattr("core._conversation_store_base._GIT_RETENTION_COMMITS", 2)
+        monkeypatch.setattr("core._conversation_store_base._GIT_RETENTION_INTERVAL_SEC", 0)
 
         cid = store.generate_id()
         store.save(cid, [], user_id="alice")
@@ -386,8 +386,8 @@ class TestCreateConversation:
             def submit(self, fn, *args):
                 submitted.append((fn, args))
 
-        monkeypatch.setattr(cs_mod, "_GIT_RETENTION_INTERVAL_SEC", 1)
-        monkeypatch.setattr(cs_mod, "_GIT_RETENTION_EXECUTOR", _Executor())
+        monkeypatch.setattr("core._conversation_store_base._GIT_RETENTION_INTERVAL_SEC", 1)
+        monkeypatch.setattr("core._conversation_store_base._GIT_RETENTION_EXECUTOR", _Executor())
         monkeypatch.setattr(store, "_maybe_prune_git_history", lambda *_a, **_k: None)
 
         store.set_extra(cid, "title", "schedule retention")

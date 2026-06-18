@@ -1795,7 +1795,7 @@ def test_bg_bucket_is_independent_from_foreground_agent_state():
     for term in forbidden:
         assert term not in src
 
-    store_src = Path("core/conversation_store.py").read_text(encoding="utf-8")
+    store_src = "".join(p.read_text(encoding="utf-8") for p in sorted(Path("core").glob("*conversation_store*.py")))  # split across _conversation_store_*.py
     assert "maybe_trigger_async" in store_src
 
 
@@ -1855,7 +1855,7 @@ def test_missing_agent_context_is_seeded_from_shared_before_first_append():
     before appending the current row; context preparation then treats an
     existing agent context as authoritative.
     """
-    store_src = Path("core/conversation_store.py").read_text(encoding="utf-8")
+    store_src = "".join(p.read_text(encoding="utf-8") for p in sorted(Path("core").glob("*conversation_store*.py")))  # split across _conversation_store_*.py
     assert "def _seed_agent_context_from_shared_if_missing" in store_src
     assert "copy the current shared context personalized for this agent" in store_src
     assert "_seed_agent_context_from_shared_if_missing(\n                            cid, route_agent)" in store_src

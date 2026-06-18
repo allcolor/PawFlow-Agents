@@ -17,7 +17,7 @@ MEDIA_ACTIONS = Path("tasks/ai/actions/media.py").read_text(encoding="utf-8")
 ATTACHMENTS_JS = Path("tasks/io/chat_ui/attachments.js").read_text(encoding="utf-8")
 FILES_PANEL_JS = Path("tasks/io/chat_ui/files_panel.js").read_text(encoding="utf-8")
 SECRETS_JS = Path("tasks/io/chat_ui/secrets.js").read_text(encoding="utf-8")
-HTTP_LISTENER = Path("services/http_listener_service.py").read_text(encoding="utf-8")
+HTTP_LISTENER = "".join(Path(_f).read_text(encoding="utf-8") for _f in ("services/http_listener_service.py", "services/_http_base.py", "services/_http_request.py", "services/_http_server.py"))
 
 
 def test_client_unwrap_reads_arguments_json_like_server():

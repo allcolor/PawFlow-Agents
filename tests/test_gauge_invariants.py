@@ -39,7 +39,7 @@ _CONTEXT_EDITOR_JS = Path(
 _AGENT_ACTIONS_PY = Path("tasks/ai/agent_actions.py").read_text(encoding="utf-8")
 _AGENT_POLLER_PY = Path("tasks/ai/agent_poller.py").read_text(encoding="utf-8")
 _FILESYSTEM_SERVICE_PY = Path("services/filesystem_service.py").read_text(encoding="utf-8")
-_HTTP_LISTENER_SERVICE_PY = Path("services/http_listener_service.py").read_text(encoding="utf-8")
+_HTTP_LISTENER_SERVICE_PY = "".join(Path(_f).read_text(encoding="utf-8") for _f in ("services/http_listener_service.py", "services/_http_base.py", "services/_http_request.py", "services/_http_server.py"))
 
 
 def test_set_context_usage_blocks_demote_to_zero():

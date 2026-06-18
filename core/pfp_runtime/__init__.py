@@ -1,0 +1,91 @@
+"""Runtime safety checks for installed PawFlow Package objects.
+
+Package facade: re-exports the public surface from the split submodules
+(_base/_helpers/_bridge/_invoke). Import path core.pfp_runtime is unchanged.
+"""
+
+from core.pfp_runtime._base import (  # noqa: F401
+    HOST_CALL_FORMAT,
+    PackageRuntimeError,
+    RUNTIME_INVOKE_FORMAT,
+    RUNTIME_RESULT_FORMAT,
+    _safe_cache_name,
+)
+from core.pfp_runtime._bridge import (  # noqa: F401
+    RelayPackageRuntimeBridge,
+    _RELAY_RUNNER,
+)
+from core.pfp_runtime._invoke import (  # noqa: F401
+    PackageRuntimeHost,
+    _invoke_bridge,
+    build_agent_hook_invocation,
+    build_service_invocation,
+    build_task_invocation,
+    build_tool_invocation,
+    build_ui_handler_invocation,
+    invoke_agent_hook,
+    invoke_service,
+    invoke_task,
+    invoke_tool,
+    invoke_ui_handler,
+    prepare_runtime_entrypoint,
+    resolve_flow_task_runtime,
+    runtime_host_from_invocation,
+)
+from core.pfp_runtime._helpers import (  # noqa: F401
+    _artifact_from_result,
+    _caller_identity,
+    _filter_conversation_id,
+    _flowfile_content_from_path,
+    _flowfile_content_path,
+    _flowfile_descriptor,
+    _flowfile_from_payload,
+    _invocation_envelope,
+    _is_blocked_builtin_service_operation,
+    _json_safe_service_result,
+    _list_value,
+    _normalize_service_result,
+    _normalize_task_result,
+    _normalize_tool_result,
+    _parent_conversation_ids,
+    _raise_result_error,
+    _require_runtime_target,
+    _required_object_ids,
+    _resolve_package_service,
+    _resolve_package_tool,
+    _resolve_package_tool_from_store,
+    _resolve_secret_value,
+    _runtime_context,
+    _runtime_matches_target,
+    _runtime_metadata,
+    _safe_artifact_relpath,
+    _safe_entrypoint,
+    _secret_env_name,
+    _secret_env_vars,
+    _sha256_file,
+    _subprocess_env,
+    _target_ref,
+)
+
+__all__ = [
+    "HOST_CALL_FORMAT",
+    "PackageRuntimeError",
+    "PackageRuntimeHost",
+    "RUNTIME_INVOKE_FORMAT",
+    "RUNTIME_RESULT_FORMAT",
+    "RelayPackageRuntimeBridge",
+    "_RELAY_RUNNER",
+    "build_agent_hook_invocation",
+    "build_service_invocation",
+    "build_task_invocation",
+    "build_tool_invocation",
+    "build_ui_handler_invocation",
+    "invoke_agent_hook",
+    "invoke_service",
+    "invoke_task",
+    "invoke_tool",
+    "invoke_ui_handler",
+    "prepare_runtime_entrypoint",
+    "resolve_flow_task_runtime",
+    "runtime_host_from_invocation",
+]

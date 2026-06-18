@@ -284,7 +284,7 @@ def test_handle_pfp_ui_dispatches_to_relay_bridge(tmp_path, keypair, monkeypatch
             "result": {"echo": "pong"},
         }
 
-    monkeypatch.setattr(pfp_runtime, "_invoke_bridge", _fake_bridge)
+    monkeypatch.setattr(pfp_runtime._invoke, "_invoke_bridge", _fake_bridge)  # _invoke_bridge lives in _invoke submodule post-split
 
     from tasks.ai.actions.pfp_ui import _handle_pfp_ui
     body = {
@@ -325,7 +325,7 @@ def test_handle_pfp_ui_respects_explicit_user_scope_with_conversation_id(tmp_pat
             "result": {"ok": True},
         }
 
-    monkeypatch.setattr(pfp_runtime, "_invoke_bridge", _fake_bridge)
+    monkeypatch.setattr(pfp_runtime._invoke, "_invoke_bridge", _fake_bridge)  # _invoke_bridge lives in _invoke submodule post-split
 
     from tasks.ai.actions.pfp_ui import _handle_pfp_ui
     body = {
@@ -348,7 +348,7 @@ def test_handle_pfp_ui_502_when_runtime_raises(tmp_path, keypair, monkeypatch):
     def _fake_bridge(request):
         raise pfp_runtime.PackageRuntimeError("forced failure")
 
-    monkeypatch.setattr(pfp_runtime, "_invoke_bridge", _fake_bridge)
+    monkeypatch.setattr(pfp_runtime._invoke, "_invoke_bridge", _fake_bridge)  # _invoke_bridge lives in _invoke submodule post-split
 
     from tasks.ai.actions.pfp_ui import _handle_pfp_ui
     body = {"action": "hello.ping", "_ext": "examples.ui-hello"}

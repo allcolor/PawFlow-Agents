@@ -4,12 +4,8 @@ import json
 import logging
 import time
 import threading
-from typing import Dict, Any, List, Optional
 
-from core import FlowFile
-from core.llm_client import LLMMessage, LLMClient
 from core.task_lifecycle import cleanup_agent_task_context
-from core.tool_registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -232,7 +228,7 @@ def _handle_cancel_interrupt(self, action, body, store, user_id, flowfile):
 
             # 5. Cancel the scheduled task in the poller
             try:
-                from engine.continuous_executor import PollScheduler
+                from core.poll_scheduler import PollScheduler
                 PollScheduler.instance().cancel(_task_cid)
             except Exception:
                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)

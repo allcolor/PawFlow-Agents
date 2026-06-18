@@ -451,3 +451,4 @@ class VerifyTaskHandler(ToolHandler):
                 reason=f"[agent_task:{task_id}] rejected: {reason[:80]} ({target_agent})",
                 user_id=task.get("assigned_by", ""),
             )
+            return f"Task {task_id} rejected. Agent '{target_agent}' rescheduled."

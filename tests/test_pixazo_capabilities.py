@@ -11,8 +11,8 @@ so the tests stay self-contained and don't depend on doc ingestion.
 
 import pytest
 
-from services._pixazo_base import _CATALOG_CACHE  # noqa: F401
 import services._pixazo_base as _base
+import services._pixazo_helpers as _ph
 from services.pixazo_capability_services import (
     Pixazo3DService, PixazoUpscaleService, PixazoTryOnService,
     PixazoLipsyncService, PixazoTrainerService,
@@ -93,7 +93,7 @@ def _inject_capability_catalog(monkeypatch):
     # Merge into the real catalog for the test's lifetime.
     original = dict(_base._load_catalog())
     merged = {**original, **extra}
-    monkeypatch.setattr(_base, "_CATALOG_CACHE", merged)
+    monkeypatch.setattr(_ph, "_CATALOG_CACHE", merged)
 
 
 def _mk(cls, model: str):

@@ -5,8 +5,6 @@ import atexit
 import os
 import queue
 import signal
-import shlex
-import subprocess  # nosec B404
 import sys
 import threading
 import time
@@ -17,7 +15,6 @@ if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
-from pawflow_cli.auth import authenticate
 from pawflow_cli.api import AgentAPIClient, SSEClient
 from pawflow_cli.ui.renderer import TerminalRenderer
 from pawflow_cli.config import load_config, save_config
@@ -54,7 +51,12 @@ _COMMANDS = [
 _completer = WordCompleter(_COMMANDS, sentence=True) if HAS_PROMPT_TOOLKIT else None
 
 
-class PawCode:
+from pawflow_cli._app_messaging import _PawCodeMessagingMixin  # noqa: E402
+from pawflow_cli._app_events import _PawCodeEventsMixin  # noqa: E402
+from pawflow_cli._app_commands import _PawCodeCommandsMixin  # noqa: E402
+
+
+class PawCode(_PawCodeMessagingMixin, _PawCodeEventsMixin, _PawCodeCommandsMixin):
     """Main CLI application."""
 
     def __init__(self, server_url: str, directory: str,
@@ -228,7 +230,6 @@ class PawCode:
 
         if HAS_PROMPT_TOOLKIT:
             from prompt_toolkit.patch_stdout import patch_stdout
-            from prompt_toolkit.formatted_text import HTML
 
             # Custom key bindings
             bindings = KeyBindings()
@@ -252,7 +253,6 @@ class PawCode:
             # Support Shift+Enter and Ctrl+Enter on modern terminals
             # (Windows Terminal, iTerm2, Kitty send CSI u sequences)
             try:
-                from prompt_toolkit.input import vt100_parser
                 # \x1b[13;2u = Shift+Enter, \x1b[13;5u = Ctrl+Enter
                 bindings.add(Keys.Vt100MouseEvent)  # dummy to test availability
             except Exception:
@@ -273,7 +273,8 @@ class PawCode:
                     img = ImageGrab.grabclipboard()
                     if img is not None:
                         # Clipboard has an image — queue it
-                        import io, base64
+                        import io
+                        import base64
                         buf = io.BytesIO()
                         img.save(buf, format="PNG")
                         b64 = base64.b64encode(buf.getvalue()).decode("ascii")
@@ -378,621 +379,6 @@ class PawCode:
         else:
             self._send_message(text)
 
-    def _send_message(self, text: str):
-        """Send a message to the agent (non-blocking — events rendered by background thread)."""
-        # A message only exists inside a conversation — never create one
-        # implicitly. Require an explicit /new or /conv first.
-        if not self.conversation_id:
-            self.renderer.print_error(
-                "No active conversation. Use /new to create one or /conv <id> to select one.")
-            return
-        if not self.selected_agent:
-            self.renderer.print_error("No active agent selected. Use /new [agent] or /conv <id> first.")
-            return
-        # Erase the raw prompt line, replace with styled Panel
-        sys.stdout.write("\033[A\033[2K")
-        sys.stdout.flush()
-        # Show attachment count in user message if any
-        attach_info = f" [📎 {len(self._pending_attachments)} file(s)]" if self._pending_attachments else ""
-        self.renderer.print_user_message(text + attach_info, self.selected_agent)
-        try:
-            attachments = self._pending_attachments if self._pending_attachments else None
-            self._ensure_sse()
-            resp = self.api.send_message(
-                message=text,
-                conversation_id=self.conversation_id,
-                target_agent=self.selected_agent,
-                attachments=attachments,
-                msg_id=self._new_outgoing_msg_id(),
-            )
-            if resp.get("error"):
-                self.renderer.print_error(resp["error"])
-                return
-            self._pending_attachments = []  # clear after successful send
-
-            cid = resp.get("conversation_id")
-            if cid:
-                self.conversation_id = cid
-                save_config({"last_conversation_id": cid})
-
-        except PermissionError:
-            self.renderer.print_error("Session expired. Run /login to re-authenticate.")
-        except Exception as e:
-            self.renderer.print_error(f"Send error: {e}")
-
-    def _send_targeted_message(self, text: str, target_agent: str = ""):
-        """Send a message to a specific agent without blocking the prompt."""
-        if not self.conversation_id:
-            self.renderer.print_error(
-                "No active conversation. Use /new to create one or /conv <id> to select one.")
-            return
-        target = target_agent or self.selected_agent
-        if not target:
-            self.renderer.print_error("No target agent selected")
-            return
-        sys.stdout.write("\033[A\033[2K")
-        sys.stdout.flush()
-        attach_info = f" [📎 {len(self._pending_attachments)} file(s)]" if self._pending_attachments else ""
-        self.renderer.print_user_message(text + attach_info, target)
-        try:
-            attachments = self._pending_attachments if self._pending_attachments else None
-            self._ensure_sse()
-            resp = self.api.send_message(
-                message=text,
-                conversation_id=self.conversation_id,
-                target_agent=target,
-                attachments=attachments,
-                msg_id=self._new_outgoing_msg_id(),
-            )
-            if resp.get("error"):
-                self.renderer.print_error(resp["error"])
-                return
-            self._pending_attachments = []
-            cid = resp.get("conversation_id")
-            if cid:
-                self.conversation_id = cid
-                save_config({"last_conversation_id": cid})
-        except Exception as e:
-            self.renderer.print_error(f"Send error: {e}")
-
-    def _upload_file(self, file_path: str):
-        """Queue a local file as pending attachment (sent with next message)."""
-        import base64
-        import mimetypes
-        path = Path(file_path)
-        if not path.is_file():
-            self.renderer.print_error(f"File not found: {file_path}")
-            return
-        if path.stat().st_size > 10 * 1024 * 1024:
-            self.renderer.print_error(f"File too large (max 10MB): {path.name}")
-            return
-        mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
-        data = path.read_bytes()
-        b64 = base64.b64encode(data).decode("ascii")
-        self._pending_attachments.append({
-            "filename": path.name,
-            "mime_type": mime,
-            "data": b64,
-        })
-        n = len(self._pending_attachments)
-        self.renderer.print_system(f"📎 {path.name} ({len(data):,} bytes) — {n} file(s) queued. Type message + Enter to send.")
-
-    def _paste_clipboard_image(self):
-        """Queue clipboard image as pending attachment."""
-        import base64
-        try:
-            from PIL import ImageGrab
-            img = ImageGrab.grabclipboard()
-            if img is None:
-                self.renderer.print_error("No image in clipboard")
-                return
-            import io
-            buf = io.BytesIO()
-            img.save(buf, format="PNG")
-            b64 = base64.b64encode(buf.getvalue()).decode("ascii")
-            self._pending_attachments.append({
-                "filename": "clipboard.png",
-                "mime_type": "image/png",
-                "data": b64,
-            })
-            n = len(self._pending_attachments)
-            self.renderer.print_system(f"📎 clipboard image ({len(buf.getvalue()):,} bytes) — {n} file(s) queued. Type message + Enter to send.")
-        except ImportError:
-            self.renderer.print_error("Install Pillow for clipboard support: pip install Pillow")
-        except Exception as e:
-            self.renderer.print_error(f"Clipboard paste failed: {e}")
-
-    def _clear_attachments(self):
-        """Clear pending attachments."""
-        self._pending_attachments.clear()
-        self.renderer.print_system("Attachments cleared.")
-
-    def _copy_last_message(self, arg: str = ""):
-        """Copy last agent response (or Nth) to clipboard."""
-        if not self._last_responses:
-            self.renderer.print_error("No responses to copy")
-            return
-        idx = -1
-        if arg and arg.isdigit():
-            idx = -int(arg) if int(arg) > 0 else -1
-        try:
-            text = self._last_responses[idx]
-        except IndexError:
-            self.renderer.print_error(f"Only {len(self._last_responses)} responses available")
-            return
-        try:
-            # Try pyperclip first (cross-platform)
-            import pyperclip
-            pyperclip.copy(text)
-            self.renderer.print_system(f"Copied {len(text):,} chars to clipboard")
-        except ImportError:
-            # Fallback: platform-specific
-            if sys.platform == "win32":
-                import subprocess  # nosec B404
-                subprocess.run(["clip"], input=text.encode("utf-8"), check=True)  # nosec B603, B607
-                self.renderer.print_system(f"Copied {len(text):,} chars to clipboard")
-            elif sys.platform == "darwin":
-                import subprocess  # nosec B404
-                subprocess.run(["pbcopy"], input=text.encode("utf-8"), check=True)  # nosec B603, B607
-                self.renderer.print_system(f"Copied {len(text):,} chars to clipboard")
-            else:
-                # Linux — try xclip
-                try:
-                    import subprocess  # nosec B404
-                    subprocess.run(["xclip", "-selection", "clipboard"],  # nosec B603, B607
-                                   input=text.encode("utf-8"), check=True)
-                    self.renderer.print_system(f"Copied {len(text):,} chars to clipboard")
-                except Exception:
-                    self.renderer.print_error("Install pyperclip or xclip for clipboard support")
-        except Exception as e:
-            self.renderer.print_error(f"Copy failed: {e}")
-
-    def _ensure_sse(self):
-        """Ensure SSE client is connected for the current conversation."""
-        if self.conversation_id and (not self.sse or not self.sse.connected):
-            self.sse = SSEClient(self.server_url, self.session_token, self.gateway_cookie)
-            self.sse.connect(self.conversation_id)
-
-    def _start_event_consumer(self):
-        """Start the event consumer thread (idempotent)."""
-        if hasattr(self, '_event_thread') and self._event_thread and self._event_thread.is_alive():
-            return
-        self._event_thread = threading.Thread(target=self._event_consumer,
-                                               daemon=True, name="pawcode-events")
-        self._event_thread.start()
-
-    def _event_consumer(self):
-        """Background thread: continuously consume SSE events and render them."""
-        streaming_agent = ""
-        thinking_agent = ""
-
-        while self._running:
-            # Wait for SSE client to be available
-            if not self.sse:
-                time.sleep(0.2)
-                continue
-
-            try:
-                event = self.sse.events.get(timeout=0.5)
-            except queue.Empty:
-                continue
-            except Exception:
-                time.sleep(0.5)
-                continue
-
-            try:
-                still_waiting = self._dispatch_event(event, streaming_agent, thinking_agent)
-                streaming_agent = self._ev_streaming_agent
-                thinking_agent = self._ev_thinking_agent
-                # On done/error/cancelled, reset streaming state
-                if not still_waiting:
-                    streaming_agent = ""
-                    thinking_agent = ""
-            except Exception as e:
-                self._safe_stop_live()
-                try:
-                    self.renderer.print_error(f"Event error: {e}")
-                except Exception:
-                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-
-    _last_session_renew = 0.0
-
-    def _active_agents_poller(self):
-        """Background thread: poll server for active agents every 3s.
-
-        This is the SINGLE source of truth for the typing/status indicator,
-        matching the web UI's syncActiveFromServer approach.
-        Also renews the local session expiry every 30 minutes.
-        """
-        while self._running:
-            time.sleep(3)
-            if not self._running or not self.api or not self.conversation_id:
-                continue
-            try:
-                data = self.api.send_action("list_active",
-                                             conversation_id=self.conversation_id)
-                server_active = data.get("active", [])
-                server_keys = set()
-                for _sa in server_active:
-                    _n = _sa.get("agent_name", "").lower()
-                    _t = _sa.get("task_id", "")
-                    server_keys.add((_n + "::" + _t) if _t else _n)
-
-                # Remove agents server doesn't know about
-                for key in list(self._active_agents.keys()):
-                    if key not in server_keys:
-                        del self._active_agents[key]
-
-                # Add/update from server
-                for a in server_active:
-                    _an = a.get("agent_name", "").lower()
-                    _tid = a.get("task_id", "")
-                    key = (_an + "::" + _tid) if _tid else _an
-                    existing = self._active_agents.get(key, {})
-                    self._active_agents[key] = {
-                        "name": a.get("agent_name", ""),
-                        "task_id": a.get("task_id", ""),
-                        "iteration": a.get("iteration", existing.get("iteration", 0)),
-                        "round": a.get("round", 0),
-                        "max_rounds": a.get("max_rounds", 0),
-                        "last_tool": a.get("last_tool", existing.get("last_tool", "")),
-                        "total_tools": a.get("total_tools", existing.get("total_tools", 0)),
-                        "duration_s": a.get("duration_s", 0),
-                    }
-
-                # Update status bar based on active agents (single source of truth)
-                if self._active_agents:
-                    from pawflow_cli.ui.renderer import _random_verb
-                    parts = []
-                    for info in self._active_agents.values():
-                        name = info["name"]
-                        if info.get("task_id"):
-                            name += f" [task:{info['task_id']}]"
-                        detail_parts = []
-                        if info.get("iteration"):
-                            detail_parts.append(f"iter {info['iteration']}")
-                        # `round x/y` removed: it tracks an internal agent-loop
-                        # counter that is meaningless to the user.
-                        if info.get("total_tools"):
-                            detail_parts.append(f"{info['total_tools']} tools")
-                        if info.get("last_tool"):
-                            detail_parts.append(info["last_tool"])
-                        detail = " \u00b7 ".join(detail_parts) if detail_parts else _random_verb() + "..."
-                        parts.append(f"{name} ({detail})")
-                    self._update_status(f"\u25b6 {', '.join(parts)}")
-                else:
-                    # Only clear if no active streams either (avoid flicker during token streaming)
-                    if not self.renderer._streams:
-                        self._update_status("")
-                # Renew local session expiry every 30 min (sliding window)
-                now = time.time()
-                if now - self._last_session_renew > 1800 and self.session_token:
-                    self._last_session_renew = now
-                    from pawflow_cli.config import save_session
-                    save_session(self.session_token, self.username,
-                                 self.server_url, now + 8 * 3600)
-            except Exception:
-                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-
-    def _dispatch_event(self, event, streaming_agent, thinking_agent):
-        """Dispatch a single SSE event. Returns True to keep waiting, False when done."""
-        from pawflow_cli.event_handler import dispatch_event
-        result, self._ev_streaming_agent, self._ev_thinking_agent = dispatch_event(
-            self, event, streaming_agent, thinking_agent)
-        return result
-
-    def _handle_exec_approval(self, data: dict):
-        """Handle exec approval request — delegate to main thread via queue."""
-        self.renderer.print_exec_approval(
-            data.get("command", "?"),
-            data.get("risk_level", "normal"),
-            data.get("request_id", ""),
-        )
-        # Put request in queue for main thread to handle
-        self._approval_queue.put({
-            "type": "exec",
-            "request_id": data.get("request_id", ""),
-            "result_map": {"y": "approved", "n": "denied", "s": "session_allow", "a": "always_allow"},
-            "action": "exec_result",
-        })
-        # Wait for response from main thread (timeout 60s)
-        try:
-            result = self._approval_response.get(timeout=60)
-        except queue.Empty:
-            result = "denied"
-        try:
-            self.api.send_action("exec_result",
-                                 request_id=data.get("request_id", ""),
-                                 result=result,
-                                 conversation_id=self.conversation_id)
-        except Exception as e:
-            self.renderer.print_error(f"Approval error: {e}")
-
-    def _handle_tool_approval(self, data: dict):
-        """Handle tool approval request — delegate to main thread via queue."""
-        self.renderer.print_approval_request(
-            data.get("tool_name", "?"),
-            data.get("action_summary", ""),
-            data.get("request_id", ""),
-        )
-        self._approval_queue.put({
-            "type": "tool",
-            "request_id": data.get("request_id", ""),
-            "result_map": {"y": "allow_once", "n": "denied", "s": "session_allow", "a": "always_allow"},
-            "action": "tool_approval_result",
-        })
-        try:
-            result = self._approval_response.get(timeout=60)
-        except queue.Empty:
-            result = "denied"
-        try:
-            self.api.send_action("tool_approval_result",
-                                 request_id=data.get("request_id", ""),
-                                 result={"choice": result},
-                                 conversation_id=self.conversation_id)
-        except Exception as e:
-            self.renderer.print_error(f"Approval error: {e}")
-
-    # Client-side help: categories mirror the server's /help so the terminal
-    # always has a usable command reference, even offline or before login.
-    _HELP_CATEGORIES = {
-        "Conversation": ["/new", "/conv", "/delete", "/rename", "/export",
-                         "/history", "/search", "/fork"],
-        "Agent": ["/agent", "/msg", "/btw", "/stop", "/resume", "/setname"],
-        "Context": ["/compact", "/git-prune", "/context", "/model", "/llm",
-                    "/effort", "/fast", "/rebuild", "/restart", "/rewind",
-                    "/summary", "/cc_restart", "/cc_live"],
-        "Resources": ["/resources", "/tools", "/call", "/skill", "/task",
-                      "/service", "/flow", "/prompt", "/memory", "/cost"],
-        "Secrets & Variables": ["/secrets", "/add-secret", "/variables",
-                                "/add-variable"],
-        "Scheduling": ["/schedules", "/autoconv", "/loop"],
-        "Files": ["/files", "/upload", "/paste", "/copy", "/view", "/run",
-                  "/diff", "/relay", "/workspace"],
-        "Mode": ["/plan", "/hooks", "/permission"],
-        "Session": ["/login", "/help", "/doctor", "/clear", "/quit"],
-        "Analysis": ["/stats", "/insights", "/security-review", "/feedback"],
-    }
-
-    def _print_offline_help(self, topic: str = ""):
-        """Render the command reference client-side (no server round-trip)."""
-        if topic:
-            cmd = topic if topic.startswith("/") else f"/{topic}"
-            self.renderer.print_system(
-                f"For detailed help on {cmd}, run it with no argument or see "
-                "the docs. (Full per-command help requires a logged-in session.)")
-            return
-        lines = ["## Available Commands"]
-        for cat, cmds in self._HELP_CATEGORIES.items():
-            lines.append(f"\n**{cat}**: " + "  ".join(cmds))
-        lines.append("\nType a message to talk to the selected agent. "
-                     "/login to authenticate (/login paste for headless/SSH), "
-                     "/quit to exit.")
-        self.renderer.print_markdown("\n".join(lines))
-
-    def _handle_command(self, text: str):
-        """Handle slash commands — server-first, client-only exceptions.
-
-        ALL commands go to the server except UI-specific ones that
-        only make sense client-side (clear, quit, file upload, etc.).
-        """
-        parts = text.split(None, 1)
-        cmd = parts[0].lower()
-        arg = parts[1] if len(parts) > 1 else ""
-
-        # Blocked commands (not available in CLI/relay context)
-        if cmd in ("/cls", "/claude-login-server"):
-            self.renderer.print_error("Server login is only available from the webchat.")
-            return
-
-        # /help is rendered client-side: it must work offline (before login
-        # or when the server is unreachable) and never round-trips, so it
-        # can't hang waiting on the server.
-        if cmd == "/help":
-            self._print_offline_help(arg.strip())
-            return
-
-        # Client-only commands (UI-specific, never sent to server)
-        if cmd == "/clear":
-            subprocess.run(["cmd", "/c", "cls"] if os.name == "nt" else ["clear"], check=False)  # nosec B603
-            return
-        if cmd in ("/quit", "/exit"):
-            raise KeyboardInterrupt()
-
-        # File/relay/session commands — need local state
-        from pawflow_cli.commands.files import handle_files_commands
-        from pawflow_cli.commands.session import handle_session_commands
-        from pawflow_cli.commands.conversation import handle_conversation_commands
-        for handler in (handle_files_commands, handle_session_commands, handle_conversation_commands):
-            if handler(self, cmd, arg, text):
-                return
-
-        if self._handle_agent_stream_command(cmd, arg, text):
-            return
-
-        # Everything past this point needs an authenticated session. Without
-        # one the POST would 401/block — tell the user to /login instead.
-        if not self.session_token:
-            self.renderer.print_error(
-                f"Not logged in — {cmd} needs a server session. Run /login first.")
-            return
-
-        # Everything else → server (single source of truth)
-        try:
-            data = self.api.send_action("command", text=text,
-                                         agent_name=self.selected_agent or "",
-                                         conversation_id=self.conversation_id or "")
-            if isinstance(data, dict):
-                # Apply state updates from server
-                if data.get("state_update"):
-                    for k, v in data["state_update"].items():
-                        if hasattr(self, k):
-                            setattr(self, k, v)
-                # Display
-                if data.get("client_only"):
-                    self.renderer.print_system(f"Client-only command: {cmd}")
-                elif data.get("help"):
-                    self.renderer.print_markdown(data["help"])
-                elif data.get("display"):
-                    self.renderer.print_system(data["display"])
-                elif data.get("message"):
-                    self.renderer.print_system(data["message"])
-                elif data.get("conversations"):
-                    # Conversation list
-                    for c in data["conversations"][:20]:
-                        cid = c.get("id", "?")[:8]
-                        title = c.get("title") or c.get("preview", "")[:60] or "(empty)"
-                        count = c.get("message_count", 0)
-                        self.renderer.print_system(f"  {cid}  {title}  ({count} msgs)")
-                elif data.get("error"):
-                    self.renderer.print_error(data["error"])
-                elif data.get("status") in ("ok", "accepted"):
-                    # Silent success (agent action dispatched)
-                    pass
-                else:
-                    self.renderer.print_system(str(data))
-            else:
-                self.renderer.print_error(f"Unknown command: {cmd}. Type /help for available commands.")
-        except Exception as e:
-            self.renderer.print_error(f"Command failed: {e}")
-        return
-
-    @staticmethod
-    def _parse_command_args(text: str) -> list:
-        try:
-            return shlex.split(text)
-        except ValueError:
-            return text.split()
-
-    @staticmethod
-    def _strip_agent_target(value: str) -> str:
-        return (value or "").strip().lstrip("@")
-
-    def _handle_agent_stream_command(self, cmd: str, arg: str, text: str) -> bool:
-        """Handle commands whose useful result is the agent stream itself."""
-        if cmd == "/resume":
-            target = self._strip_agent_target(arg.split()[0]) if arg else self.selected_agent
-            if target.upper() == "ALL":
-                self.api.send_action_fire("broadcast_agents",
-                                          conversation_id=self.conversation_id or "",
-                                          message="Continue from where you stopped")
-                self.renderer.print_system("Resume requested for all agents.")
-                return True
-            self._send_targeted_message("Continue from where you stopped", target)
-            return True
-
-        if cmd in ("/msg", "/message"):
-            parts = self._parse_command_args(text)
-            if len(parts) < 2:
-                self.renderer.print_error("Usage: /msg [@agent|@ALL] <message>")
-                return True
-            if parts[1].startswith("@"):
-                target = self._strip_agent_target(parts[1])
-                message = " ".join(parts[2:])
-            else:
-                target = self.selected_agent
-                message = " ".join(parts[1:])
-            if not target or not message:
-                self.renderer.print_error("Usage: /msg [@agent|@ALL] <message>")
-                return True
-            if target.upper() == "ALL":
-                self.api.send_action_fire("broadcast_agents",
-                                          conversation_id=self.conversation_id or "",
-                                          message=message)
-                self.renderer.print_system("Broadcast requested.")
-                return True
-            self._send_targeted_message(message, target)
-            return True
-
-        if cmd == "/btw":
-            parts = self._parse_command_args(text)
-            if len(parts) < 2:
-                self.renderer.print_error("Usage: /btw [@agent|@ALL] <question>")
-                return True
-            if parts[1].startswith("@"):
-                target = self._strip_agent_target(parts[1])
-                question = " ".join(parts[2:])
-            else:
-                target = self.selected_agent
-                question = " ".join(parts[1:])
-            if not question:
-                self.renderer.print_error("Usage: /btw [@agent|@ALL] <question>")
-                return True
-            self.api.send_action_fire("btw", conversation_id=self.conversation_id or "",
-                                      agent_name=target or "", message=question)
-            self.renderer.print_system("Side question requested.")
-            return True
-
-        if cmd in ("/stop", "/interrupt"):
-            target = self._strip_agent_target(arg.replace("-f", "").strip())
-            if target.upper() == "ALL":
-                target = ""
-            action = "interrupt" if cmd == "/interrupt" else "cancel"
-            self.api.send_action_fire(action, conversation_id=self.conversation_id or "",
-                                      agent_name=target or self.selected_agent or "")
-            self.renderer.print_system("Interrupt requested." if action == "interrupt" else "Stop requested.")
-            return True
-
-        if cmd == "/agent":
-            parts = self._parse_command_args(text)
-            sub = parts[1].lower() if len(parts) > 1 else ""
-            if sub in ("resume", "msg", "message", "btw", "interrupt"):
-                target = self._strip_agent_target(parts[2]) if len(parts) > 2 else ""
-                rest = " ".join(parts[3:])
-                if sub == "resume":
-                    resume_text = rest or "Continue from where you stopped"
-                    if target.upper() == "ALL":
-                        self.api.send_action_fire("broadcast_agents",
-                                                  conversation_id=self.conversation_id or "",
-                                                  message=resume_text)
-                        self.renderer.print_system("Resume requested for all agents.")
-                    else:
-                        self._send_targeted_message(resume_text, target or self.selected_agent)
-                    return True
-                if sub in ("msg", "message"):
-                    if not target or not rest:
-                        self.renderer.print_error("Usage: /agent msg <agent|ALL> <message>")
-                        return True
-                    if target.upper() == "ALL":
-                        self.api.send_action_fire("broadcast_agents",
-                                                  conversation_id=self.conversation_id or "",
-                                                  message=rest)
-                        self.renderer.print_system("Broadcast requested.")
-                    else:
-                        self._send_targeted_message(rest, target)
-                    return True
-                if sub == "btw":
-                    if not rest:
-                        self.renderer.print_error("Usage: /agent btw <agent|ALL> <question>")
-                        return True
-                    self.api.send_action_fire("btw", conversation_id=self.conversation_id or "",
-                                              agent_name=target or "", message=rest)
-                    self.renderer.print_system("Side question requested.")
-                    return True
-                if sub == "interrupt":
-                    self.api.send_action_fire("interrupt", conversation_id=self.conversation_id or "",
-                                              agent_name="" if target.upper() == "ALL" else target)
-                    self.renderer.print_system("Interrupt requested.")
-                    return True
-
-        return False
-
-    def _display_history(self, messages: list, show_n: int = 10):
-        """Display the last N messages from conversation history."""
-        # Filter out system messages but keep tool_call/tool_result for context
-        displayable = [m for m in messages if m.get("type", m.get("role", "")) != "system"]
-        recent = displayable[-show_n:] if len(displayable) > show_n else displayable
-        if len(displayable) > show_n:
-            self.renderer.print_system(
-                f"... ({len(displayable) - show_n} earlier messages, use /history {len(displayable)} to see all)")
-        import traceback as _tb
-        for i, m in enumerate(recent):
-            try:
-                self.renderer.render_history_message(m)
-            except Exception as e:
-                sys.stderr.write(f"Render error msg {i}: {e}\n")
-                _tb.print_exc(file=sys.stderr)
-
     def _update_status(self, text: str):
         """Update the bottom toolbar status text (called from renderer)."""
         self._status_text = text
@@ -1029,125 +415,6 @@ class PawCode:
         except Exception:
             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         os._exit(0)
-
-    def run_prompt(self, prompt: str, conversation_id: str = None,
-                   output_format: str = "text"):
-        """Prompt mode: send one prompt, stream response, exit."""
-        import json as _json
-
-        # Authenticate silently
-        auth = authenticate(self.server_url, gateway_cookie=self.gateway_cookie)
-        self.session_token = auth["token"]
-        self.username = auth["username"]
-        self.api = AgentAPIClient(self.server_url, self.session_token, self.gateway_cookie)
-
-        # PawCode no longer owns relay lifecycle. Filesystem relays are managed
-        # by webchat server resources or the standalone pawflow-relay client.
-
-        # Resolve or create a conversation, then target its active agent.
-        if not conversation_id:
-            config = load_config()
-            conversation_id = config.get("last_conversation_id")
-        from pawflow_cli.conversation_bootstrap import ensure_conversation_and_agent
-        conversation_id, target_agent = ensure_conversation_and_agent(
-            self.api, conversation_id or "")
-
-        # Send message
-        resp = self.api.send_message(
-            message=prompt,
-            conversation_id=conversation_id,
-            target_agent=target_agent,
-        )
-        if resp.get("error"):
-            print(resp["error"], file=sys.stderr)
-            self._cleanup()
-            sys.exit(1)
-
-        cid = resp.get("conversation_id")
-        if cid:
-            self.conversation_id = cid
-            save_config({"last_conversation_id": cid})
-
-        # Connect SSE and wait for response
-        self.sse = SSEClient(self.server_url, self.session_token, self.gateway_cookie)
-        self.sse.connect(cid)
-
-        response_text = ""
-        streaming_tokens = {}
-        is_full = output_format == "full"
-
-        while True:
-            try:
-                event = self.sse.events.get(timeout=120)
-            except queue.Empty:
-                print("Timeout waiting for response", file=sys.stderr)
-                break
-
-            ev_type = event.get("event", "")
-            data = event.get("data", {})
-
-            if ev_type == "token":
-                agent = data.get("agent_name", "")
-                text = data.get("text", "")
-                streaming_tokens.setdefault(agent, "")
-                streaming_tokens[agent] += text
-                if output_format == "text":
-                    sys.stdout.write(text)
-                    sys.stdout.flush()
-
-            elif ev_type == "tool_call" and is_full:
-                tool = data.get("tool", "?")
-                args = data.get("arguments", {})
-                print(f"\n[tool_call] {tool}({_json.dumps(args, ensure_ascii=False)[:200]})",
-                      file=sys.stderr)
-
-            elif ev_type == "tool_result" and is_full:
-                tool = data.get("tool", "?")
-                result = str(data.get("result", ""))[:500]
-                print(f"[tool_result] {tool}: {result}", file=sys.stderr)
-
-            elif ev_type == "done":
-                response_text = data.get("response", "")
-                agent = data.get("agent_name", "")
-                # If we were streaming tokens, we already printed them
-                if not streaming_tokens.get(agent) and response_text:
-                    if output_format == "text":
-                        sys.stdout.write(response_text)
-                elif streaming_tokens.get(agent) and output_format == "text":
-                    pass  # already printed via tokens
-
-                if output_format == "json":
-                    result = {
-                        "response": response_text or streaming_tokens.get(agent, ""),
-                        "agent": agent,
-                        "conversation_id": cid,
-                        "tokens_in": data.get("tokens_in", 0),
-                        "tokens_out": data.get("tokens_out", 0),
-                        "model": data.get("model", ""),
-                    }
-                    print(_json.dumps(result, ensure_ascii=False))
-                elif output_format == "markdown":
-                    text = response_text or streaming_tokens.get(agent, "")
-                    print(text)
-
-                if not data.get("continuing"):
-                    break
-
-            elif ev_type == "error_event":
-                print(f"\nError: {data.get('message', 'Unknown error')}", file=sys.stderr)
-                break
-
-            elif ev_type == "cancelled":
-                print(f"\nCancelled", file=sys.stderr)
-                break
-
-        # Ensure trailing newline for text mode
-        if output_format == "text" and (response_text or streaming_tokens):
-            sys.stdout.write("\n")
-            sys.stdout.flush()
-
-        self._cleanup()
-
     def connect_relay(self, directory: str = ""):
         """Relay lifecycle is owned by the standalone relay client."""
         self.renderer.print_error(
@@ -1158,7 +425,6 @@ class PawCode:
     def _cleanup(self):
         if self.sse:
             self.sse.disconnect()
-
 
 def _normalize_server_url(entered: str) -> str:
     """Add a scheme when the user types a bare host: http for loopback,
@@ -1335,7 +601,7 @@ def main():
                                     gateway_cookie=gateway_cookie,
                                     no_browser=args.no_browser)
                 print(f"Authenticated as {auth['username']}")
-                print(f"Token saved to ~/.pawflow/session.json (encrypted)")
+                print("Token saved to ~/.pawflow/session.json (encrypted)")
             except Exception as e:
                 print(f"Login failed: {e}", file=sys.stderr)
                 sys.exit(1)
@@ -1361,7 +627,7 @@ def main():
             else:
                 print("Not authenticated.")
                 print(f"Run: pawcode auth login --server {args.server}"
-                      + (f" --gateway-key <key>" if not gateway_cookie else ""))
+                      + (" --gateway-key <key>" if not gateway_cookie else ""))
                 sys.exit(1)
             sys.exit(0)
         else:
@@ -1420,8 +686,8 @@ def main():
         cli.start()
     except ConnectionRefusedError:
         print(f"\n  Error: Cannot connect to PawFlow server at {args.server}")
-        print(f"  Make sure the server is running and the URL is correct.")
-        print(f"  Set PAWFLOW_SERVER env var or use --server to change the URL.\n")
+        print("  Make sure the server is running and the URL is correct.")
+        print("  Set PAWFLOW_SERVER env var or use --server to change the URL.\n")
         sys.exit(1)
     except TimeoutError as e:
         print(f"\n  Error: {e}\n")
@@ -1429,6 +695,6 @@ def main():
     except Exception as e:
         if "Connection refused" in str(e) or "connect" in str(e).lower():
             print(f"\n  Error: Cannot connect to PawFlow server at {args.server}")
-            print(f"  Make sure the server is running.\n")
+            print("  Make sure the server is running.\n")
             sys.exit(1)
         raise

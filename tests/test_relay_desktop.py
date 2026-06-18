@@ -140,7 +140,7 @@ def test_relay_desktop_uses_python_manager_and_safe_preload():
 
 def test_relay_manager_exposes_workspace_runtime_cleanup():
     manager = (ROOT / "pawflow_relay" / "manager.py").read_text(encoding="utf-8")
-    thread = (ROOT / "pawflow_relay" / "thread.py").read_text(encoding="utf-8")
+    thread = "".join(q.read_text(encoding="utf-8") for q in sorted((ROOT / "pawflow_relay").glob("*thread*.py")))
 
     assert "def stop_workspace_runtime" in manager
     assert "service_uninstall" in manager

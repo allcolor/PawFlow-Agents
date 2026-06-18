@@ -364,7 +364,10 @@ def test_agent_pool_containers_keep_tini_as_pid_one():
         "core/_cci_pool_spawn.py",
         "core/antigravity_observer_pool.py",
     ):
-        src = Path(path).read_text(encoding="utf-8")
+        if path.endswith("thread.py"):
+            src = "".join(q.read_text(encoding="utf-8") for q in sorted(Path(path).parent.glob("*thread*.py")))
+        else:
+            src = Path(path).read_text(encoding="utf-8")
         assert '"--init"' in src
         assert '"--entrypoint", "/usr/bin/sleep"' in src
         assert '"/usr/bin/sleep"' in src
@@ -383,7 +386,10 @@ def test_container_launchers_request_docker_init():
         "pawflow-relay-desktop/runtime/pawflow_relay/thread.py",
         "pawflow-relay-desktop/runtime/pawflow_relay/worker.py",
     ):
-        src = Path(path).read_text(encoding="utf-8")
+        if path.endswith("thread.py"):
+            src = "".join(q.read_text(encoding="utf-8") for q in sorted(Path(path).parent.glob("*thread*.py")))
+        else:
+            src = Path(path).read_text(encoding="utf-8")
         assert '"--init"' in src
 
     docker_utils = Path("core/docker_utils.py").read_text(encoding="utf-8")

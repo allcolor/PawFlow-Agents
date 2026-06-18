@@ -234,7 +234,7 @@ def test_relay_thread_full_reconnect_reinstalls_with_new_token(monkeypatch, tmp_
 
 
 def test_relay_docker_loop_reregisters_service_without_killing_container():
-    source = Path("pawflow_relay/thread.py").read_text(encoding="utf-8")
+    source = "".join(q.read_text(encoding="utf-8") for q in sorted(Path("pawflow_relay").glob("*thread*.py")))  # split across _thread_*.py
 
     assert 'if "HTTP/1.1 400 Bad Request" in msg:' in source
     bad_request_branch = source.split('if "HTTP/1.1 400 Bad Request" in msg:', 1)[1]

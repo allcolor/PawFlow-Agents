@@ -1037,7 +1037,7 @@ def test_code_server_worker_does_not_pass_base_path_to_process():
 
 
 def test_local_code_server_uses_abs_proxy_base_path_not_base_path():
-    src = open("pawflow_relay/thread.py", encoding="utf-8").read()
+    src = "".join(q.read_text(encoding="utf-8") for q in sorted(__import__("pathlib").Path("pawflow_relay").glob("*thread*.py")))
     start = src.index('def _host_start_local_code_server')
     start_block = src[start:]
 

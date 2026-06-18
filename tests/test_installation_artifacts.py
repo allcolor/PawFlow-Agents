@@ -87,7 +87,7 @@ def test_server_dockerfile_supports_bootstrap_docker_builds():
     assert "kotlin-compiler" not in relay_dev
 
     server_relay = (Path("core/server_relay_manager.py").read_text(encoding="utf-8") + Path("core/_relay_naming.py").read_text(encoding="utf-8"))
-    relay_thread = Path("pawflow_relay/thread.py").read_text(encoding="utf-8")
+    relay_thread = "".join(q.read_text(encoding="utf-8") for q in sorted(Path("pawflow_relay").glob("*thread*.py")))  # split across _thread_*.py
     for src in (server_relay, relay_thread):
         assert "CARGO_HOME=/opt/local/rust/cargo" in src
         assert "RUSTUP_HOME=/opt/local/rust/rustup" in src

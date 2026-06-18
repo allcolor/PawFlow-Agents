@@ -22,6 +22,7 @@ least-invasive way to lock the config without extracting helpers.
 """
 
 import inspect
+from pathlib import Path
 import unittest
 
 
@@ -43,7 +44,7 @@ class RelayFuseLaunchTests(unittest.TestCase):
 
     def test_thread_py_docker_run_has_fuse_flags(self):
         from pawflow_relay import thread
-        src = inspect.getsource(thread)
+        src = "".join(q.read_text(encoding="utf-8") for q in sorted(Path("pawflow_relay").glob("*thread*.py")))
         self._assert_all_present(src, self._FUSE_DOCKER_FLAGS,
                                   'pawflow_relay/thread.py docker run')
 
@@ -51,20 +52,20 @@ class RelayFuseLaunchTests(unittest.TestCase):
         """AppArmor: pawflow-relay when loaded on the host, unconfined
         fallback otherwise — never the hardcoded unconfined literal."""
         from pawflow_relay import thread
-        src = inspect.getsource(thread)
+        src = "".join(q.read_text(encoding="utf-8") for q in sorted(Path("pawflow_relay").glob("*thread*.py")))
         self.assertIn('*_relay_apparmor_security_opts(', src)
         self.assertNotIn('"--security-opt", "apparmor:unconfined"', src)
 
     def test_thread_py_passes_server_mount_to_launcher(self):
         from pawflow_relay import thread
-        src = inspect.getsource(thread)
+        src = "".join(q.read_text(encoding="utf-8") for q in sorted(Path("pawflow_relay").glob("*thread*.py")))
         self.assertIn('"--server-mount", "/cc_sessions"', src,
                       'pawflow_relay/thread.py must pass --server-mount '
                       '/cc_sessions to pawflow_relay_launcher.py')
 
     def test_thread_py_passes_filestore_mount_to_launcher(self):
         from pawflow_relay import thread
-        src = inspect.getsource(thread)
+        src = "".join(q.read_text(encoding="utf-8") for q in sorted(Path("pawflow_relay").glob("*thread*.py")))
         self.assertIn('"--filestore-mount", "/filestore"', src,
                       'pawflow_relay/thread.py must pass --filestore-mount '
                       '/filestore to pawflow_relay_launcher.py so the FileStore '
@@ -72,7 +73,7 @@ class RelayFuseLaunchTests(unittest.TestCase):
 
     def test_thread_py_passes_skills_mount_to_launcher(self):
         from pawflow_relay import thread
-        src = inspect.getsource(thread)
+        src = "".join(q.read_text(encoding="utf-8") for q in sorted(Path("pawflow_relay").glob("*thread*.py")))
         self.assertIn('"--skills-mount", "/skills"', src,
                       'pawflow_relay/thread.py must pass --skills-mount '
                       '/skills to pawflow_relay_launcher.py so the skills '
@@ -173,7 +174,7 @@ class RelayFuseLaunchTests(unittest.TestCase):
 
     def test_host_helper_executes_forwarded_filesystem_actions(self):
         from pawflow_relay import thread
-        src = inspect.getsource(thread)
+        src = "".join(q.read_text(encoding="utf-8") for q in sorted(Path("pawflow_relay").glob("*thread*.py")))
         self.assertIn('from fs_actions import ACTIONS as _FS_ACTIONS', src)
         self.assertIn('handler(self.directory, abs_path, req, allow_exec=True)', src)
 

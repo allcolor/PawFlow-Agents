@@ -1747,7 +1747,10 @@ def test_bg_bucket_is_independent_from_foreground_agent_state():
     inspect PendingQueue/AgentLoopTask liveness and must not invalidate or
     mutate foreground provider sessions.
     """
-    src = Path("core/bg_bucket_builder.py").read_text(encoding="utf-8")
+    # builder logic is split across bg_bucket_builder + _bg_bucket_build; scan both
+    # so the forbidden-term invariant still covers the moved build pipeline.
+    src = (Path("core/bg_bucket_builder.py").read_text(encoding="utf-8")
+           + Path("core/_bg_bucket_build.py").read_text(encoding="utf-8"))
     assert "ThreadPoolExecutor" in src
     assert "thread_name_prefix=\"bg-bucket\"" in src
     assert "seq cache cold — seeding asynchronously" in src
@@ -1770,7 +1773,8 @@ def test_bg_bucket_is_independent_from_foreground_agent_state():
 
 
 def test_bg_bucket_trace_does_not_load_full_transcript():
-    src = Path("core/bg_bucket_builder.py").read_text(encoding="utf-8")
+    # _extract_trace/_pick_chunk moved to the split-out build pipeline module.
+    src = Path("core/_bg_bucket_build.py").read_text(encoding="utf-8")
     start = src.index("    def _extract_trace")
     end = src.index("    def _pick_chunk", start)
     body = src[start:end]

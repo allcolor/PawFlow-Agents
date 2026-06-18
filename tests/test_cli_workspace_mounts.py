@@ -219,6 +219,9 @@ def test_cli_providers_pass_identity_to_workspace_mount_builder():
     }
     for path, needles in checks.items():
         src = Path(path).read_text(encoding="utf-8")
+        if path == "core/llm_providers/gemini.py":
+            # _stream_gemini (with the workspace-mount call) split to _gemini_stream
+            src += Path("core/llm_providers/_gemini_stream.py").read_text(encoding="utf-8")
         for needle in needles:
             assert needle in src
 

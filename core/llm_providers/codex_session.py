@@ -172,6 +172,25 @@ class CodexSessionMixin:
     _pool_counter = 0
     _pool_lock = __import__('threading').Lock()
 
+    # Per-slot refresh locks — serialize concurrent refreshes of the SAME
+    # pool slot so two sessions sharing a credential can't both POST the
+    # same single-use refresh_token (the loser would error and drop a slot
+    # the winner just rotated). Mirror of ClaudeCodeSessionMixin; keyed by
+    # (service_id, pool_index), private to the codex pool.
+    _codex_refresh_locks_guard = __import__('threading').Lock()
+    _codex_refresh_locks = {}
+
+    @classmethod
+    def _codex_slot_refresh_lock(cls, service_id: str, pool_index: int):
+        """Return the process-wide lock guarding refresh of one pool slot."""
+        key = (service_id, pool_index)
+        with cls._codex_refresh_locks_guard:
+            lock = cls._codex_refresh_locks.get(key)
+            if lock is None:
+                lock = __import__('threading').Lock()
+                cls._codex_refresh_locks[key] = lock
+            return lock
+
     def _codex_resolve_service_tokens(self, pool_index: int = -1,
                                       user_id: str = "",
                                       conversation_id: str = "") -> dict:
@@ -240,7 +259,9 @@ class CodexSessionMixin:
             _drop_dead_slot("no refresh_token")
             return False
         try:
-            new = refresh_oauth_token(refresh_token)
+            new = self._codex_refresh_oauth_token_coordinated(
+                refresh_token, service_id=svc_id, pool_index=pool_index,
+                user_id=uid, conv_id=cid)
         except Exception as e:
             logger.warning("[codex force-refresh] pool[%d] failed: %s",
                            pool_index, e)
@@ -269,6 +290,37 @@ class CodexSessionMixin:
         """Wrapper around module-level refresh_oauth_token, signature-compat
         with ClaudeCodeSessionMixin._refresh_oauth_token."""
         return refresh_oauth_token(refresh_token)
+
+    def _codex_refresh_oauth_token_coordinated(self, refresh_token: str, *,
+                                               service_id: str, pool_index: int,
+                                               user_id: str, conv_id: str) -> dict:
+        """Serialized, idempotent refresh of one pool slot's single-use token.
+
+        Holds the per-slot lock so two sessions sharing the slot can't both
+        POST the same refresh_token (the loser would error and drop a slot
+        the winner just rotated). After taking the lock we re-read the pool:
+        if a peer already rotated this slot, the freshly-persisted token
+        (incl. id_token/account) is returned with NO network call. Mirror of
+        ClaudeCodeSessionMixin._refresh_oauth_token_coordinated.
+        """
+        lock = self._codex_slot_refresh_lock(service_id, pool_index)
+        with lock:
+            pool = _load_credentials_pool(service_id, user_id=user_id, conv_id=conv_id)
+            if 0 <= pool_index < len(pool):
+                slot = pool[pool_index]
+                if slot.get("access_token") and slot.get("refresh_token") != refresh_token:
+                    logger.info(
+                        "[codex] OAuth token [pool:%d] already refreshed by a "
+                        "peer session; reusing rotated credential (no network call)",
+                        pool_index)
+                    return {
+                        "access_token": slot.get("access_token", ""),
+                        "refresh_token": slot.get("refresh_token", ""),
+                        "expires_at": slot.get("expires_at", 0),
+                        "id_token": slot.get("id_token", ""),
+                        "account": slot.get("account", ""),
+                    }
+            return refresh_oauth_token(refresh_token)
 
     def _codex_get_session_workdir(self, conversation_id: str,
                               agent_name: str = "",
@@ -426,7 +478,9 @@ class CodexSessionMixin:
                     logger.info("[codex] pool[%d] %s — refreshing", _pidx,
                                 "expired" if _remaining < 0 else f"expiring in {_remaining:.0f}s")
                     try:
-                        new_tokens = self._codex_refresh_oauth_token(refresh_token)
+                        new_tokens = self._codex_refresh_oauth_token_coordinated(
+                            refresh_token, service_id=svc_id, pool_index=_pidx,
+                            user_id=uid, conv_id=cid)
                         access_token = new_tokens["access_token"]
                         refresh_token = new_tokens.get("refresh_token", refresh_token)
                         id_token = new_tokens.get("id_token", id_token) or id_token

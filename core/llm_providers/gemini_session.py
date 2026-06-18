@@ -16,7 +16,6 @@ import json
 import logging
 import os
 import time
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -317,6 +316,25 @@ class GeminiSessionMixin:
     _pool_counter = 0
     _pool_lock = __import__('threading').Lock()
 
+    # Per-slot refresh locks — serialize concurrent refreshes of the SAME
+    # pool slot so two sessions sharing a credential can't both POST the
+    # same single-use refresh_token (the loser would error and drop a slot
+    # the winner just rotated). Mirror of ClaudeCodeSessionMixin; keyed by
+    # (service_id, pool_index), private to the gemini pool.
+    _gemini_refresh_locks_guard = __import__('threading').Lock()
+    _gemini_refresh_locks = {}
+
+    @classmethod
+    def _gemini_slot_refresh_lock(cls, service_id: str, pool_index: int):
+        """Return the process-wide lock guarding refresh of one pool slot."""
+        key = (service_id, pool_index)
+        with cls._gemini_refresh_locks_guard:
+            lock = cls._gemini_refresh_locks.get(key)
+            if lock is None:
+                lock = __import__('threading').Lock()
+                cls._gemini_refresh_locks[key] = lock
+            return lock
+
     def _gemini_resolve_service_tokens(self, pool_index: int = -1,
                                        user_id: str = "",
                                        conversation_id: str = "") -> dict:
@@ -373,7 +391,9 @@ class GeminiSessionMixin:
             _drop_dead_slot("no refresh_token")
             return False
         try:
-            new = refresh_oauth_token(refresh_token)
+            new = self._gemini_refresh_oauth_token_coordinated(
+                refresh_token, service_id=svc_id, pool_index=pool_index,
+                user_id=uid, conv_id=cid)
         except Exception as e:
             logger.warning("[gemini force-refresh] pool[%d] failed: %s",
                            pool_index, e)
@@ -393,6 +413,36 @@ class GeminiSessionMixin:
     @staticmethod
     def _gemini_refresh_oauth_token(refresh_token: str) -> dict:
         return refresh_oauth_token(refresh_token)
+
+    def _gemini_refresh_oauth_token_coordinated(self, refresh_token: str, *,
+                                                service_id: str, pool_index: int,
+                                                user_id: str, conv_id: str) -> dict:
+        """Serialized, idempotent refresh of one pool slot's single-use token.
+
+        Holds the per-slot lock so two sessions sharing the slot can't both
+        POST the same refresh_token (the loser would error and drop a slot
+        the winner just rotated). After taking the lock we re-read the pool:
+        if a peer already rotated this slot, the freshly-persisted token is
+        returned with NO network call. Mirror of
+        ClaudeCodeSessionMixin._refresh_oauth_token_coordinated.
+        """
+        lock = self._gemini_slot_refresh_lock(service_id, pool_index)
+        with lock:
+            pool = _load_credentials_pool(service_id, user_id=user_id, conv_id=conv_id)
+            if 0 <= pool_index < len(pool):
+                slot = pool[pool_index]
+                if slot.get("access_token") and slot.get("refresh_token") != refresh_token:
+                    logger.info(
+                        "[gemini] OAuth token [pool:%d] already refreshed by a "
+                        "peer session; reusing rotated credential (no network call)",
+                        pool_index)
+                    return {
+                        "access_token": slot.get("access_token", ""),
+                        "refresh_token": slot.get("refresh_token", ""),
+                        "expires_at": slot.get("expires_at", 0),
+                        "account": slot.get("account", ""),
+                    }
+            return refresh_oauth_token(refresh_token)
 
     def _gemini_get_session_workdir(self, conversation_id: str,
                               agent_name: str = "",
@@ -442,7 +492,10 @@ class GeminiSessionMixin:
         if _base_url:
             if "/relay-proxy/" not in _base_url:
                 import re
-                _repl = lambda m: m.group(1) + "host.docker.internal" + (m.group(2) or '')
+
+                def _repl(m):
+                    return m.group(1) + "host.docker.internal" + (m.group(2) or '')
+
                 _base_url = re.sub(
                     r'(https?://)localhost(:\d+)?', _repl, _base_url)
                 _base_url = re.sub(
@@ -529,7 +582,9 @@ class GeminiSessionMixin:
                     logger.info("[gemini] pool[%d] %s — refreshing", _pidx,
                                 "expired" if _remaining < 0 else f"expiring in {_remaining:.0f}s")
                     try:
-                        new_tokens = self._gemini_refresh_oauth_token(refresh_token)
+                        new_tokens = self._gemini_refresh_oauth_token_coordinated(
+                            refresh_token, service_id=svc_id, pool_index=_pidx,
+                            user_id=uid, conv_id=cid)
                         access_token = new_tokens["access_token"]
                         refresh_token = new_tokens.get("refresh_token", refresh_token)
                         expires_at = new_tokens["expires_at"]

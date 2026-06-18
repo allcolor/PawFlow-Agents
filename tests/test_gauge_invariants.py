@@ -1290,7 +1290,11 @@ def test_live_badge_requires_reused_live_process():
 
 def test_interrupt_uses_live_stop_or_graceful_api_stop_turn():
     """Interrupt steers live providers; APIs run one STOP turn then end."""
-    loop_src = Path("tasks/ai/agent_loop.py").read_text(encoding="utf-8")
+    loop_src = (
+        Path("tasks/ai/agent_loop.py").read_text(encoding="utf-8")
+        # cancel/interrupt cluster split to _agent_interrupt (<=800 lines)
+        + Path("tasks/ai/_agent_interrupt.py").read_text(encoding="utf-8")
+    )
     core_src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
     emitter_src = Path("tasks/ai/agent_emitter.py").read_text(encoding="utf-8")
     assert "send_user_message(" in loop_src
@@ -1351,7 +1355,11 @@ def test_screen_actions_have_server_side_timeout_and_cancel_pending():
 
 def test_live_agent_thread_without_context_is_not_killed_as_zombie():
     streaming_src = Path("tasks/ai/agent_streaming.py").read_text(encoding="utf-8")
-    loop_src = Path("tasks/ai/agent_loop.py").read_text(encoding="utf-8")
+    loop_src = (
+        Path("tasks/ai/agent_loop.py").read_text(encoding="utf-8")
+        # cancel/interrupt cluster split to _agent_interrupt (<=800 lines)
+        + Path("tasks/ai/_agent_interrupt.py").read_text(encoding="utf-8")
+    )
     core_src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
     codex_src = Path("core/llm_providers/codex_app_server.py").read_text(encoding="utf-8")
     assert "zombie thread detected" not in streaming_src
@@ -1594,7 +1602,11 @@ def test_codex_app_marks_terminal_turn_callback_after_turn_completed():
 
 
 def test_pending_wake_is_not_lost_while_conversation_is_still_active():
-    loop_src = Path("tasks/ai/agent_loop.py").read_text(encoding="utf-8")
+    loop_src = (
+        Path("tasks/ai/agent_loop.py").read_text(encoding="utf-8")
+        # cancel/interrupt cluster split to _agent_interrupt (<=800 lines)
+        + Path("tasks/ai/_agent_interrupt.py").read_text(encoding="utf-8")
+    )
     poller_src = Path("tasks/ai/agent_poller.py").read_text(encoding="utf-8")
     assert "even_if_active: bool = False" in loop_src
     assert "and not even_if_active" in loop_src
@@ -1870,7 +1882,11 @@ def test_force_stop_kills_cli_processes_and_blocks_late_appends():
     provider/tool callbacks before they can persist or publish messages.
     """
     cancel_src = Path("tasks/ai/actions/cancel_interrupt.py").read_text(encoding="utf-8")
-    loop_src = Path("tasks/ai/agent_loop.py").read_text(encoding="utf-8")
+    loop_src = (
+        Path("tasks/ai/agent_loop.py").read_text(encoding="utf-8")
+        # cancel/interrupt cluster split to _agent_interrupt (<=800 lines)
+        + Path("tasks/ai/_agent_interrupt.py").read_text(encoding="utf-8")
+    )
     core_src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
     openai_src = Path("core/llm_providers/openai.py").read_text(encoding="utf-8")
     codex_app_src = Path("core/llm_providers/codex_app_server.py").read_text(encoding="utf-8")
@@ -1912,7 +1928,11 @@ def test_force_stop_kills_cli_processes_and_blocks_late_appends():
 
 def test_soft_interrupt_live_stop_is_not_persisted_for_api_fallback():
     policy_src = Path("core/interrupt_policy.py").read_text(encoding="utf-8")
-    loop_src = Path("tasks/ai/agent_loop.py").read_text(encoding="utf-8")
+    loop_src = (
+        Path("tasks/ai/agent_loop.py").read_text(encoding="utf-8")
+        # cancel/interrupt cluster split to _agent_interrupt (<=800 lines)
+        + Path("tasks/ai/_agent_interrupt.py").read_text(encoding="utf-8")
+    )
     core_src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
     cc_src = Path("core/llm_providers/claude_code.py").read_text(encoding="utf-8")
     assert "STOP IMMEDIATELY!" in policy_src

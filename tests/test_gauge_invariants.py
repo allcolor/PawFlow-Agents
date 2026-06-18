@@ -1591,7 +1591,8 @@ def test_pending_wake_is_not_lost_while_conversation_is_still_active():
 
 
 def test_api_summarizer_preserves_thinking_signature_across_tool_loop():
-    src = Path("tasks/ai/agent_summarize.py").read_text(encoding="utf-8")
+    # API summarizer backend was split out to _summarize_backends.
+    src = Path("tasks/ai/_summarize_backends.py").read_text(encoding="utf-8")
     assert "thinking=getattr(response, \"thinking\", \"\") or \"\"" in src
     assert "thinking_signature=getattr(response, \"thinking_signature\", \"\") or \"\"" in src
 
@@ -1641,8 +1642,8 @@ def test_agent_background_llm_calls_pass_provider_agnostic_scope():
     keeps the selected llm_service irrelevant to the task semantics.
     """
     expected = [
-        ("tasks/ai/agent_summarize.py", "call_scope = {"),
-        ("tasks/ai/agent_summarize.py", "read_handler.set_user_id(user_id)"),
+        ("tasks/ai/_summarize_backends.py", "call_scope = {"),
+        ("tasks/ai/_summarize_backends.py", "read_handler.set_user_id(user_id)"),
         ("tasks/ai/agent_core.py", "_interrupt_call_kwargs = {"),
         ("tasks/ai/agent_compaction.py", "_synth_call_kwargs = {"),
         ("tasks/ai/_agent_streaming_loop.py", "call_agent_name=\"title\""),

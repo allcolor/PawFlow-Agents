@@ -9,7 +9,9 @@ from core.context_window import effective_context_window
 from core.llm_providers.codex_app_server import LLMCodexAppServerMixin
 from core.llm_providers.gemini import LLMGeminiMixin
 
-_GEMINI_SRC = Path("core/llm_providers/gemini.py").read_text(encoding="utf-8")
+_GEMINI_SRC = (Path("core/llm_providers/gemini.py").read_text(encoding="utf-8")
+               + Path("core/llm_providers/_gemini_stream.py").read_text(encoding="utf-8")
+               + Path("core/llm_providers/_gemini_acp.py").read_text(encoding="utf-8"))
 
 
 def test_effective_context_window_uses_smaller_known_budget():

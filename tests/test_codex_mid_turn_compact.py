@@ -2,7 +2,9 @@
 
 from pathlib import Path
 
-_GEMINI = Path("core/llm_providers/gemini.py").read_text(encoding="utf-8")
+_GEMINI = (Path("core/llm_providers/gemini.py").read_text(encoding="utf-8")
+           + Path("core/llm_providers/_gemini_stream.py").read_text(encoding="utf-8")
+           + Path("core/llm_providers/_gemini_acp.py").read_text(encoding="utf-8"))
 _AGENT_CORE = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
 _AGENT_CONTEXT = Path("tasks/ai/agent_context.py").read_text(encoding="utf-8")
 _AGENT_EMITTER = Path("tasks/ai/agent_emitter.py").read_text(encoding="utf-8")

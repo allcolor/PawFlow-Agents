@@ -108,7 +108,12 @@ def test_gemini_provider_uses_acp_runtime_contracts():
     """Gemini provider must use ACP, not the old headless stream-json path."""
     from core.llm_providers.gemini import LLMGeminiMixin
 
-    provider_src = inspect.getsource(LLMGeminiMixin)
+    # LLMGeminiMixin's ACP protocol + streaming methods were split into base
+    # mixins (_gemini_acp / _gemini_stream); scan all three module sources.
+    provider_src = (
+        Path("core/llm_providers/gemini.py").read_text(encoding="utf-8")
+        + Path("core/llm_providers/_gemini_stream.py").read_text(encoding="utf-8")
+        + Path("core/llm_providers/_gemini_acp.py").read_text(encoding="utf-8"))
     stream_src = inspect.getsource(LLMGeminiMixin._stream_gemini)
     proc_src = inspect.getsource(LLMGeminiMixin._gemini_acp_start_process)
     settings_src = inspect.getsource(LLMGeminiMixin._gemini_acp_write_settings)

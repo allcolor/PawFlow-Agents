@@ -1375,7 +1375,9 @@ def test_accepted_live_preempt_keeps_pending_rescue():
     providers that can prove inline consumption suppress the rerun; providers
     without proof cannot lose a late steer.
     """
-    src = Path("tasks/ai/agent_streaming.py").read_text(encoding="utf-8")
+    # The streaming loop was split out to _agent_streaming_loop; scan both.
+    src = (Path("tasks/ai/agent_streaming.py").read_text(encoding="utf-8")
+           + Path("tasks/ai/_agent_streaming_loop.py").read_text(encoding="utf-8"))
     assert "supports_live_preempt" in src
     assert "source=\"preempt_rescue\"" in src
     assert "preempted active provider session" in src
@@ -1643,7 +1645,7 @@ def test_agent_background_llm_calls_pass_provider_agnostic_scope():
         ("tasks/ai/agent_summarize.py", "read_handler.set_user_id(user_id)"),
         ("tasks/ai/agent_core.py", "_interrupt_call_kwargs = {"),
         ("tasks/ai/agent_compaction.py", "_synth_call_kwargs = {"),
-        ("tasks/ai/agent_streaming.py", "call_agent_name=\"title\""),
+        ("tasks/ai/_agent_streaming_loop.py", "call_agent_name=\"title\""),
         ("tasks/ai/agent_side_channels.py", "_btw_call_kwargs = {"),
         ("core/agent_executor.py", "_delegate_call_kwargs"),
         ("core/agent_executor.py", "**(call_kwargs or {})"),

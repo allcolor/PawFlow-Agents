@@ -193,7 +193,9 @@ def test_live_tool_call_passes_arguments_to_renderer():
 def test_incomplete_mcp_tool_calls_are_filtered_before_persist_and_display():
     core_src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
     serialization_src = Path("tasks/ai/agent_serialization.py").read_text(encoding="utf-8")
-    client_src = Path("core/llm_client.py").read_text(encoding="utf-8")
+    # llm_client was split; MCP helpers live in _llm_types (re-exported).
+    client_src = (Path("core/llm_client.py").read_text(encoding="utf-8")
+                  + Path("core/_llm_types.py").read_text(encoding="utf-8"))
 
     assert "def has_complete_mcp_tool_call" in client_src
     assert "if not has_complete_mcp_tool_call(_raw_name, _raw_args):" in core_src
@@ -1869,7 +1871,9 @@ def test_force_stop_kills_cli_processes_and_blocks_late_appends():
     assert "GeminiLiveRegistry" in cancel_src
     assert "LiveSessionRegistry" in cancel_src
     anthropic_src = Path("core/llm_providers/anthropic.py").read_text(encoding="utf-8")
-    llm_client_src = Path("core/llm_client.py").read_text(encoding="utf-8")
+    # complete/abort driver split out to _llm_client_driver.
+    llm_client_src = (Path("core/llm_client.py").read_text(encoding="utf-8")
+                      + Path("core/_llm_client_driver.py").read_text(encoding="utf-8"))
     assert "_kill_live_cli_sessions(conv_id, agent_name, \"force_stop\")" in cancel_src
     assert "client.abort()" in cancel_src
     assert "or getattr(_cc, 'abort', None)" in loop_src

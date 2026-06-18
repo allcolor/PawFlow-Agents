@@ -25,11 +25,13 @@ def _parse_dispatch_branches() -> dict:
     """Return {provider: {kwarg_name, ...}} as actually called in
     `complete_stream`'s `_do_stream` block.
 
-    Walks the AST of core/llm_client.py and finds each
+    Walks the AST of core/_llm_client_driver.py (complete_stream's home
+    after the llm_client split) and finds each
     `if/elif self.provider == "X": ... self._stream_*(...)` call,
     collecting the keyword argument names passed.
     """
-    src = Path(core.llm_client.__file__).read_text(encoding="utf-8")
+    src = Path(core.llm_client.__file__).with_name(
+        "_llm_client_driver.py").read_text(encoding="utf-8")
     tree = ast.parse(src)
     out: dict = {}
     for node in ast.walk(tree):

@@ -44,16 +44,18 @@ def test_all_paths_recover_truncation_identically():
 
 
 def _unwrap_source():
-    """Slice just the unwrap_mcp_tool function body from llm_client.py."""
-    src = (ROOT / "core" / "llm_client.py").read_text()
+    """Slice just the unwrap_mcp_tool function body from _llm_types.py."""
+    src = (ROOT / "core" / "_llm_types.py").read_text()
     start = src.index("def unwrap_mcp_tool(")
     rest = src[start:]
-    nxt = rest.index("\ndef ", 1)
+    import re as _re
+    m = _re.search(r"\n(?:def |class |@)", rest[1:])
+    nxt = m.start() + 1 if m else len(rest)
     return rest[:nxt]
 
 
 def test_unwrap_routes_through_shared_decoder():
-    src = (ROOT / "core" / "llm_client.py").read_text()
+    src = (ROOT / "core" / "_llm_types.py").read_text()
     assert "_decode_str_arg" in src
     # the old per-branch inline json.loads inside unwrap_mcp_tool is gone --
     # every inner decode now routes through _decode_str_arg. (The strict

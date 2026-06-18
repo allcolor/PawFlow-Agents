@@ -31,8 +31,9 @@ def test_seed_persisted_seq_zero_initializes_cache(monkeypatch):
         lc_mod._msg_seq_persisted.pop(cid, None)
 
     lc_mod._seed_persisted_seq(cid, 0)
+    # seq helpers live in core._llm_seq (re-exported from llm_client); patch there.
     monkeypatch.setattr(
-        lc_mod, "_bootstrap_seq_for",
+        "core._llm_seq._bootstrap_seq_for",
         lambda _cid: (_ for _ in ()).throw(
             AssertionError("zero seed must avoid bootstrap")),
     )
@@ -60,7 +61,7 @@ def test_seq_bootstrap_does_not_hold_global_seq_lock(monkeypatch):
             return 40
         return 0
 
-    monkeypatch.setattr(lc_mod, "_bootstrap_seq_for", _bootstrap)
+    monkeypatch.setattr("core._llm_seq._bootstrap_seq_for", _bootstrap)
 
     result = {}
     t = threading.Thread(

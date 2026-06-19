@@ -1776,24 +1776,24 @@ def test_flash_delegate_is_registered_and_prompted():
 
 
 def test_relay_desktop_has_periodic_healthcheck():
-    src = Path("pawflow_relay/worker.py").read_text(encoding="utf-8")
-    assert "def _desktop_is_healthy" in src
-    assert "def _novnc_http_ready" in src
-    assert "and _novnc_http_ready()" in src
-    assert "def _start_desktop_watchdog" in src
+    src = Path("pawflow_relay/_relay_desktop.py").read_text(encoding="utf-8")
+    assert "def desktop_is_healthy" in src
+    assert "def novnc_http_ready" in src
+    assert "and novnc_http_ready(state)" in src
+    assert "def start_desktop_watchdog" in src
     assert "desktop-healthcheck" in src
     assert "healthcheck failed" in src
 
 
 def test_relay_desktop_waits_for_reachable_novnc():
-    src = Path("pawflow_relay/worker.py").read_text(encoding="utf-8")
-    start_desktop = src[src.index('if action == "start_desktop"'):src.index('if action == "stop_desktop"')]
+    src = Path("pawflow_relay/_relay_desktop.py").read_text(encoding="utf-8")
+    start_desktop = src[src.index("def start_desktop("):src.index("def stop_desktop(")]
 
     assert 'f"0.0.0.0:{_novnc_port}"' in start_desktop
     assert 'GET /vnc.html HTTP/1.1' in src
-    assert "_novnc_http_ready(_novnc_port" in start_desktop
+    assert "novnc_http_ready(state, _novnc_port" in start_desktop
     assert "noVNC failed to become ready" in start_desktop
-    procs_registered = start_desktop.index("_state.desktop_procs = _procs")
+    procs_registered = start_desktop.index("state.desktop_procs = _procs")
     readiness_error = start_desktop.index("noVNC failed to become ready")
     assert procs_registered < readiness_error
 
@@ -1819,18 +1819,18 @@ def test_vnc_proxy_injects_native_clipboard_and_key_repeat_bridge():
 
 
 def test_relay_desktop_starts_x11_clipboard_sync_when_available():
-    worker_paths = [Path("pawflow_relay/worker.py")]
-    runtime_worker = Path("pawflow-relay-desktop/runtime/pawflow_relay/worker.py")
-    if runtime_worker.exists():
-        worker_paths.append(runtime_worker)
+    desktop_paths = [Path("pawflow_relay/_relay_desktop.py")]
+    runtime_desktop = Path("pawflow-relay-desktop/runtime/pawflow_relay/_relay_desktop.py")
+    if runtime_desktop.exists():
+        desktop_paths.append(runtime_desktop)
     dockerfile = Path("docker/relay-dev/Dockerfile").read_text(encoding="utf-8")
 
     assert "autocutsel" in dockerfile
-    for worker_path in worker_paths:
-        worker_src = worker_path.read_text(encoding="utf-8")
-        assert '_shutil.which("autocutsel")' in worker_src
-        assert '("CLIPBOARD", "PRIMARY")' in worker_src
-        assert '["autocutsel", "-selection", _selection]' in worker_src
+    for desktop_path in desktop_paths:
+        desktop_src = desktop_path.read_text(encoding="utf-8")
+        assert '_shutil.which("autocutsel")' in desktop_src
+        assert '("CLIPBOARD", "PRIMARY")' in desktop_src
+        assert '["autocutsel", "-selection", _selection]' in desktop_src
 
 
 def test_bg_bucket_is_independent_from_foreground_agent_state():

@@ -12,8 +12,10 @@ _AGENT_ACTIONS = Path("tasks/ai/agent_actions.py").read_text(encoding="utf-8")
 _AGENT_POLLER = (Path("tasks/ai/agent_poller.py").read_text(encoding="utf-8")
                 + Path("tasks/ai/_agent_poll_checkin.py").read_text(encoding="utf-8"))
 _CODEX_APP = Path("core/llm_providers/codex_app_server.py").read_text(encoding="utf-8")
-_AGENT_COMPACTION = Path("tasks/ai/agent_compaction.py").read_text(
-    encoding="utf-8")
+_AGENT_COMPACTION = "".join(
+    Path(f"tasks/ai/{_f}").read_text(encoding="utf-8")
+    for _f in ("agent_compaction.py", "_agent_compact_base.py",
+               "_agent_compact_core.py", "_agent_compact_independent.py"))
 _CONTEXT_OPS = Path("tasks/ai/actions/context_ops.py").read_text(
     encoding="utf-8")
 _AGENT_RESOURCE = Path("tasks/ai/actions/agent_resource.py").read_text(

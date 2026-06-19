@@ -31,7 +31,10 @@ _MESSAGES_JS = Path("tasks/io/chat_ui/messages.js").read_text(encoding="utf-8")
 _RXBUS_JS = Path("tasks/io/chat_ui/rxbus.js").read_text(encoding="utf-8")
 _AGENT_CONTEXT_PY = Path("tasks/ai/agent_context.py").read_text(encoding="utf-8")
 _AGENT_CORE_PY = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
-_AGENT_COMPACTION_PY = Path("tasks/ai/agent_compaction.py").read_text(encoding="utf-8")
+_AGENT_COMPACTION_PY = "".join(
+    Path(f"tasks/ai/{_f}").read_text(encoding="utf-8")
+    for _f in ("agent_compaction.py", "_agent_compact_base.py",
+               "_agent_compact_core.py", "_agent_compact_independent.py"))
 _CONTEXT_OPS_PY = Path("tasks/ai/actions/context_ops.py").read_text(encoding="utf-8")
 _CONTEXT_EDITOR_JS = Path(
     "tasks/io/chat_ui/context_editor.js").read_text(encoding="utf-8")
@@ -1445,7 +1448,10 @@ def test_final_drain_suppresses_confirmed_live_preempt_rescues():
 def test_context_gauge_events_always_include_timestamp():
     core_src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
     emitter_src = Path("tasks/ai/agent_emitter.py").read_text(encoding="utf-8")
-    compact_src = Path("tasks/ai/agent_compaction.py").read_text(encoding="utf-8")
+    compact_src = "".join(
+    Path(f"tasks/ai/{_f}").read_text(encoding="utf-8")
+    for _f in ("agent_compaction.py", "_agent_compact_base.py",
+               "_agent_compact_core.py", "_agent_compact_independent.py"))
     usage_src = Path("tasks/ai/context_usage.py").read_text(encoding="utf-8")
     provider_src = Path("core/llm_providers/claude_code.py").read_text(encoding="utf-8")
 

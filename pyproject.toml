@@ -121,7 +121,7 @@ Repository = "https://github.com/allcolor/PawFlow-Agents"
 Issues = "https://github.com/allcolor/PawFlow-Agents/issues"
 
 [tool.setuptools]
-py-modules = ["cli"]
+py-modules = ["cli", "cli_commands"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

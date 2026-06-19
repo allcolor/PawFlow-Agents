@@ -14,7 +14,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
-import subprocess  # noqa: F401  # re-exported so tests can patch ib.subprocess
+import subprocess  # noqa: F401  # nosec B404  # re-exported so tests can patch ib.subprocess
 import threading  # noqa: F401  # re-exported so tests can patch ib.threading
 import time
 from typing import Any, Dict

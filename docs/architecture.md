@@ -19,7 +19,7 @@ This document describes PawFlow's internal architecture, its core components, an
 │  │ Connection   │  │ CheckpointMgr     │  │ Capabilities │  │ Providers  │ │
 │  │ Security     │  │ Provenance        │  │ Proxies      │  │            │ │
 │  │ Plugin       │  │ VersionManager    │  │              │  │            │ │
-│  │ SpillTracker │  │ WorkerCoordinator │  │              │  │            │ │
+│  │ SpillTracker │  │                   │  │              │  │            │ │
 │  └──────────────┘  └───────────────────┘  └──────────────┘  └────────────┘ │
 │                                                                              │
 │  ┌──────────────────────────────────────────────────────────────────────┐   │
@@ -216,37 +216,6 @@ flowfiles = mgr.restore_flowfiles(data)
 ```
 
 Format: JSON with FlowFile content as base64 (small) or files (> 256 KB).
-
----
-
-## Remote Workers
-
-### WorkerCoordinator
-
-Distributes tasks across local or remote workers:
-
-```python
-coord = WorkerCoordinator(
-    heartbeat_timeout_seconds=60,
-    max_consecutive_failures=5,
-)
-coord.register_worker("remote-1", "192.168.1.10", 9000)
-coord.get_health_summary()
-```
-
-**Circuit breaker**: after N consecutive failures, worker → OFFLINE.
-
-### WorkerServer / WorkerClient
-
-HTTP communication with binary streaming protocol and API key auth:
-
-```python
-server = WorkerServer(port=9000, api_key="secret")
-server.start()
-
-client = WorkerClient("192.168.1.10", 9000, api_key="secret")
-result = client.execute_task("log", config, content, attributes)
-```
 
 ---
 

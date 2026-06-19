@@ -1,4 +1,4 @@
-"""Tests for runtime infrastructure: TaskState, Connection, RemoteWorker."""
+"""Tests for runtime infrastructure: TaskState, Connection."""
 
 import pytest
 
@@ -9,7 +9,6 @@ from core import FlowFile
 from core.task_state import TaskState, TaskStateManager
 from core.connection import Connection, ConnectionManager
 from core.prioritizer import PrioritizerType
-from engine.remote_worker import WorkerCoordinator, WorkerStatus
 
 
 class TestTaskStateManager:
@@ -160,114 +159,3 @@ class TestConnectionManager:
         mgr.add_connection(conn)
         conn.enqueue(FlowFile(content=b"x"))
         assert mgr.any_backpressured("a")
-
-
-class TestWorkerCoordinator:
-
-    def setup_method(self):
-        self.coord = WorkerCoordinator()
-
-    def test_local_worker_exists(self):
-        workers = self.coord.get_workers()
-        assert any(w["worker_id"] == "local" for w in workers)
-
-    def test_register_worker(self):
-        worker = self.coord.register_worker("test", "192.168.1.1", 8080)
-        assert worker.name == "test"
-        assert len(self.coord.get_workers()) == 2
-
-    def test_select_worker(self):
-        worker = self.coord.select_worker()
-        assert worker is not None
-        assert worker.worker_id == "local"
-
-    def test_submit_and_execute_local(self):
-        assignment = self.coord.submit_task(
-            task_id="log_1",
-            task_type="log",
-            config={"message": "test", "level": "INFO"},
-            flowfile_content=b"data",
-            flowfile_attributes={"source": "test"},
-        )
-        assert assignment.status == "pending"
-
-        self.coord.execute_local(assignment)
-        updated = self.coord.get_assignment(assignment.assignment_id)
-        assert updated.status == "completed"
-        assert updated.result_content is not None
-
-    def test_execute_local_failure(self):
-        assignment = self.coord.submit_task(
-            task_id="bad",
-            task_type="nonExistentType999",
-            config={},
-            flowfile_content=b"data",
-            flowfile_attributes={},
-        )
-        self.coord.execute_local(assignment)
-        updated = self.coord.get_assignment(assignment.assignment_id)
-        assert updated.status == "failed"
-        assert updated.error is not None
-
-    def test_worker_heartbeat(self):
-        worker = self.coord.register_worker("hb_test")
-        self.coord.heartbeat(worker.worker_id)
-        # No error means success
-
-    def test_unregister_worker(self):
-        worker = self.coord.register_worker("temp")
-        self.coord.unregister_worker(worker.worker_id)
-        workers = self.coord.get_workers()
-        assert not any(w["worker_id"] == worker.worker_id for w in workers)
-
-    def test_affinity_label_match(self):
-        w1 = self.coord.register_worker("eu-gpu", labels={"zone": "eu", "gpu": "true"})
-        w2 = self.coord.register_worker("us-cpu", labels={"zone": "us", "gpu": "false"})
-        # Select with EU affinity
-        selected = self.coord.select_worker(affinity={"zone": "eu"})
-        assert selected.worker_id == w1.worker_id
-
-    def test_affinity_no_match(self):
-        self.coord.register_worker("us-only", labels={"zone": "us"})
-        selected = self.coord.select_worker(affinity={"zone": "asia"})
-        assert selected is None  # no match and affinity specified
-
-    def test_affinity_multi_label(self):
-        self.coord.register_worker("full", labels={"zone": "eu", "gpu": "true", "ram": "high"})
-        self.coord.register_worker("partial", labels={"zone": "eu", "gpu": "false"})
-        selected = self.coord.select_worker(affinity={"zone": "eu", "gpu": "true"})
-        assert selected.labels.get("gpu") == "true"
-
-    def test_submit_with_affinity(self):
-        self.coord.register_worker("target", labels={"env": "prod"})
-        assignment = self.coord.submit_task(
-            task_id="log_1", task_type="log",
-            config={"message": "test", "level": "INFO"},
-            flowfile_content=b"data", flowfile_attributes={},
-            affinity={"env": "prod"},
-        )
-        assert assignment.worker_id != "local"
-
-    def test_submit_no_affinity_match_raises(self):
-        with pytest.raises(RuntimeError, match="No available worker"):
-            self.coord.submit_task(
-                task_id="t1", task_type="log",
-                config={}, flowfile_content=b"", flowfile_attributes={},
-                affinity={"env": "nonexistent"},
-            )
-
-    def test_least_loaded_selection(self):
-        w1 = self.coord.register_worker("w1", labels={"pool": "a"}, max_concurrent=4)
-        w2 = self.coord.register_worker("w2", labels={"pool": "a"}, max_concurrent=4)
-        # Load up w1
-        self.coord.submit_task("t1", "log", {"message": "x", "level": "INFO"},
-                               b"", {}, worker_id=w1.worker_id)
-        self.coord.submit_task("t2", "log", {"message": "x", "level": "INFO"},
-                               b"", {}, worker_id=w1.worker_id)
-        # Select should prefer w2 (less loaded)
-        selected = self.coord.select_worker(affinity={"pool": "a"})
-        assert selected.worker_id == w2.worker_id
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])

@@ -1,4 +1,4 @@
-"""Tests for Security, Checkpoint, and Worker Health features."""
+"""Tests for Security and Checkpoint features."""
 
 import json
 import time
@@ -252,84 +252,6 @@ class TestCheckpoint:
 
 
 # ============================================================================
-# Worker Health Tests
-# ============================================================================
-
-class TestWorkerHealth:
-
-    def test_circuit_breaker_trips(self):
-        from engine.remote_worker import WorkerCoordinator, WorkerStatus
-
-        coord = WorkerCoordinator(max_consecutive_failures=3)
-        worker = coord.register_worker("test-worker", "host", 9999)
-
-        # Simulate consecutive failures
-        for i in range(3):
-            assignment = coord.submit_task(
-                f"t{i}", "log", {"message": "x", "level": "INFO"},
-                b"data", {}, worker_id=worker.worker_id,
-            )
-            coord.fail_task(assignment.assignment_id, "error")
-            coord._record_failure(worker.worker_id)
-
-        # Worker should be OFFLINE
-        assert coord._workers[worker.worker_id].status == WorkerStatus.OFFLINE
-
-    def test_success_resets_failures(self):
-        from engine.remote_worker import WorkerCoordinator
-
-        coord = WorkerCoordinator(max_consecutive_failures=5)
-        worker = coord.register_worker("test-worker", "host", 9999)
-
-        # 3 failures
-        for i in range(3):
-            coord._record_failure(worker.worker_id)
-        assert coord._consecutive_failures[worker.worker_id] == 3
-
-        # Success resets
-        coord._record_success(worker.worker_id)
-        assert worker.worker_id not in coord._consecutive_failures
-
-    def test_manual_reset_worker(self):
-        from engine.remote_worker import WorkerCoordinator, WorkerStatus
-
-        coord = WorkerCoordinator(max_consecutive_failures=1)
-        worker = coord.register_worker("test-worker", "host", 9999)
-
-        coord._record_failure(worker.worker_id)
-        assert coord._workers[worker.worker_id].status == WorkerStatus.OFFLINE
-
-        coord.reset_worker(worker.worker_id)
-        assert coord._workers[worker.worker_id].status == WorkerStatus.IDLE
-
-    def test_heartbeat_timeout(self):
-        from engine.remote_worker import WorkerCoordinator, WorkerStatus
-        from datetime import datetime, timedelta
-
-        coord = WorkerCoordinator(heartbeat_timeout_seconds=1)
-        worker = coord.register_worker("test-worker", "host", 9999)
-
-        # Backdate heartbeat
-        coord._workers[worker.worker_id].last_heartbeat = (
-            datetime.now() - timedelta(seconds=5)
-        )
-
-        coord._check_worker_health()
-        assert coord._workers[worker.worker_id].status == WorkerStatus.OFFLINE
-
-    def test_health_summary(self):
-        from engine.remote_worker import WorkerCoordinator
-
-        coord = WorkerCoordinator()
-        coord.register_worker("w1", "h1", 9001)
-        coord.register_worker("w2", "h2", 9002)
-
-        summary = coord.get_health_summary()
-        assert summary["total_workers"] == 3  # 2 + local
-        assert summary["online"] == 3
-
-
-# ============================================================================
 # Controller Service Injection Tests
 # ============================================================================
 
@@ -381,62 +303,3 @@ class TestServiceInjection:
 
         # get_service with the config's service_id
         assert task.get_service("my_db") == "db_connection"
-
-
-# ============================================================================
-# Worker Auth Tests
-# ============================================================================
-
-class TestWorkerAuth:
-
-    def test_server_with_api_key(self):
-        from engine.worker_server import WorkerServer
-        from engine.worker_client import WorkerClient
-
-        server = WorkerServer(port=0, api_key="test-secret-key")
-        server.start()
-        try:
-            port = server.port
-
-            # Request without auth should fail
-            import http.client
-            conn = http.client.HTTPConnection("localhost", port, timeout=5)
-            conn.request("GET", "/status")
-            resp = conn.getresponse()
-            assert resp.status == 401
-
-            # Request with correct auth should succeed
-            conn2 = http.client.HTTPConnection("localhost", port, timeout=5)
-            conn2.request("GET", "/status", headers={
-                "Authorization": "Bearer test-secret-key"
-            })
-            resp2 = conn2.getresponse()
-            assert resp2.status == 200
-
-            # Request with wrong auth should fail
-            conn3 = http.client.HTTPConnection("localhost", port, timeout=5)
-            conn3.request("GET", "/status", headers={
-                "Authorization": "Bearer wrong-key"
-            })
-            resp3 = conn3.getresponse()
-            assert resp3.status == 401
-        finally:
-            server.stop()
-
-    def test_server_without_api_key(self):
-        from engine.worker_server import WorkerServer
-
-        server = WorkerServer(port=0)  # No API key
-        server.start()
-        try:
-            import http.client
-            conn = http.client.HTTPConnection("localhost", server.port, timeout=5)
-            conn.request("GET", "/status")
-            resp = conn.getresponse()
-            assert resp.status == 200  # No auth required
-        finally:
-            server.stop()
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])

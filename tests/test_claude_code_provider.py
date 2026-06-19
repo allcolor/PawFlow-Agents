@@ -641,7 +641,7 @@ class TestStreamContinuesPastResultWhenPreemptPending(unittest.TestCase):
                           return_value=(mock_proc, None)), \
              patch.object(client, '_check_preempt_in_jsonl',
                           return_value='unread'), \
-             patch('core.llm_providers.claude_code.time.sleep'):
+             patch('core.llm_providers._cc_stream_result.time.sleep'):
             client.complete_stream(
                 [LLMMessage(role="user", content="Hi", conversation_id="test_conv")],
                 turn_callback=lambda text, tc: turns.append(text),

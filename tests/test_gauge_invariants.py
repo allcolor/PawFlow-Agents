@@ -1507,7 +1507,11 @@ def test_context_gauge_events_always_include_timestamp():
     for _f in ("agent_compaction.py", "_agent_compact_base.py",
                "_agent_compact_core.py", "_agent_compact_independent.py"))
     usage_src = Path("tasks/ai/context_usage.py").read_text(encoding="utf-8")
-    provider_src = Path("core/llm_providers/claude_code.py").read_text(encoding="utf-8")
+    # _stream_claude_code split into _cc_stream* sub-mixins (<=800 lines);
+    # the live-usage + result-meta markers now live in the loop + result files.
+    provider_src = "".join(
+        Path(f"core/llm_providers/{_f}").read_text(encoding="utf-8")
+        for _f in ("claude_code.py", "_cc_stream_loop.py", "_cc_stream_result.py"))
 
     assert '"updated_at": time.time()' in usage_src
     assert "usage_event_payload" in core_src

@@ -84,7 +84,21 @@ def test_delete_flow_template_invalidates_resource_cache(tmp_path, monkeypatch):
 
 
 def test_flow_template_mutations_refresh_resource_panel_immediately():
-    service_flow = Path("tasks/ai/actions/service_flow.py").read_text(encoding="utf-8")
+    service_flow = "".join(
+    Path(f"tasks/ai/actions/{_sf}").read_text(encoding="utf-8")
+    for _sf in (
+        "service_flow.py",
+        "_sf_base.py",
+        "_sf_routes.py",
+        "_sf_k1.py",
+        "_sf_k2.py",
+        "_sf_k3.py",
+        "_sf_k4.py",
+        "_sf_k5.py",
+        "_sf_k6.py",
+        "_sf_k7.py",
+        "_sf_k8.py",
+        "_sf_k9.py"))
     # resources.js was split into resources*.js modules; concatenate them so the
     # presence checks below are independent of which module a helper landed in.
     resources_js = "".join(

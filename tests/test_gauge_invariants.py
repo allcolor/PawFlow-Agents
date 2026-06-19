@@ -638,7 +638,21 @@ def test_view_menu_has_three_grouping_toggles():
 
 def test_terminal_frontend_keeps_scrollback_and_cci_tmux_mouse():
     terminal_src = Path("tasks/io/chat_ui/terminal.js").read_text(encoding="utf-8")
-    service_flow_src = Path("tasks/ai/actions/service_flow.py").read_text(encoding="utf-8")
+    service_flow_src = "".join(
+    Path(f"tasks/ai/actions/{_sf}").read_text(encoding="utf-8")
+    for _sf in (
+        "service_flow.py",
+        "_sf_base.py",
+        "_sf_routes.py",
+        "_sf_k1.py",
+        "_sf_k2.py",
+        "_sf_k3.py",
+        "_sf_k4.py",
+        "_sf_k5.py",
+        "_sf_k6.py",
+        "_sf_k7.py",
+        "_sf_k8.py",
+        "_sf_k9.py"))
 
     assert "scrollback: 10000" in terminal_src
     assert "fastScrollModifier" in terminal_src
@@ -663,7 +677,21 @@ def test_telegram_user_messages_wait_for_pre_persist_before_ack():
 
 
 def test_open_desktop_backend_does_not_emit_audio_session_without_token():
-    src = Path("tasks/ai/actions/service_flow.py").read_text(encoding="utf-8")
+    src = "".join(
+    Path(f"tasks/ai/actions/{_sf}").read_text(encoding="utf-8")
+    for _sf in (
+        "service_flow.py",
+        "_sf_base.py",
+        "_sf_routes.py",
+        "_sf_k1.py",
+        "_sf_k2.py",
+        "_sf_k3.py",
+        "_sf_k4.py",
+        "_sf_k5.py",
+        "_sf_k6.py",
+        "_sf_k7.py",
+        "_sf_k8.py",
+        "_sf_k9.py"))
     assert "_audio_token = register_audio_source" in src
     assert '"audio_session": session_id if _audio_token else ""' in src
     assert '"audio_session": _sid if _audio_token else ""' in src

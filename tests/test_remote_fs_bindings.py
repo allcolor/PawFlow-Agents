@@ -242,7 +242,21 @@ def test_chat_ui_routes_rclone_oauth_through_vnc_dialog():
 
 
 def test_service_flow_saves_rclone_login_result_into_sensitive_service_config():
-    src = Path("tasks/ai/actions/service_flow.py").read_text(encoding="utf-8")
+    src = "".join(
+    Path(f"tasks/ai/actions/{_sf}").read_text(encoding="utf-8")
+    for _sf in (
+        "service_flow.py",
+        "_sf_base.py",
+        "_sf_routes.py",
+        "_sf_k1.py",
+        "_sf_k2.py",
+        "_sf_k3.py",
+        "_sf_k4.py",
+        "_sf_k5.py",
+        "_sf_k6.py",
+        "_sf_k7.py",
+        "_sf_k8.py",
+        "_sf_k9.py"))
 
     assert 'action == "rclone_server_login"' in src
     assert '"cli": "rclone"' in src
@@ -255,7 +269,21 @@ def test_service_flow_saves_rclone_login_result_into_sensitive_service_config():
 
 
 def test_service_flow_notifies_relays_after_rclone_service_update():
-    src = Path("tasks/ai/actions/service_flow.py").read_text(encoding="utf-8")
+    src = "".join(
+    Path(f"tasks/ai/actions/{_sf}").read_text(encoding="utf-8")
+    for _sf in (
+        "service_flow.py",
+        "_sf_base.py",
+        "_sf_routes.py",
+        "_sf_k1.py",
+        "_sf_k2.py",
+        "_sf_k3.py",
+        "_sf_k4.py",
+        "_sf_k5.py",
+        "_sf_k6.py",
+        "_sf_k7.py",
+        "_sf_k8.py",
+        "_sf_k9.py"))
 
     assert "def _notify_remote_mounts_after_service_change" in src
     assert '"rcloneFilesystem", "rcloneOAuthCredentials"' in src

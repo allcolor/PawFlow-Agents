@@ -2624,7 +2624,21 @@ def test_cci_terminal_viewer_attaches_tmux_as_pool_uid_not_hardcoded():
     """
     from pathlib import Path
 
-    src = Path("tasks/ai/actions/service_flow.py").read_text(encoding="utf-8")
+    src = "".join(
+    Path(f"tasks/ai/actions/{_sf}").read_text(encoding="utf-8")
+    for _sf in (
+        "service_flow.py",
+        "_sf_base.py",
+        "_sf_routes.py",
+        "_sf_k1.py",
+        "_sf_k2.py",
+        "_sf_k3.py",
+        "_sf_k4.py",
+        "_sf_k5.py",
+        "_sf_k6.py",
+        "_sf_k7.py",
+        "_sf_k8.py",
+        "_sf_k9.py"))
     start = src.index('if action == "open_cc_interactive_terminal":')
     end = src.index('if action in {"open_antigravity_interactive_terminal"')
     block = src[start:end]

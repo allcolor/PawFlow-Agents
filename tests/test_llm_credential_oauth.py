@@ -154,7 +154,21 @@ def test_cli_runtime_token_resolution_passes_scope_to_pool_loaders(monkeypatch):
 
 
 def test_credential_pool_actions_pass_user_scope_to_cli_helpers():
-    src = Path("tasks/ai/actions/service_flow.py").read_text(encoding="utf-8")
+    src = "".join(
+    Path(f"tasks/ai/actions/{_sf}").read_text(encoding="utf-8")
+    for _sf in (
+        "service_flow.py",
+        "_sf_base.py",
+        "_sf_routes.py",
+        "_sf_k1.py",
+        "_sf_k2.py",
+        "_sf_k3.py",
+        "_sf_k4.py",
+        "_sf_k5.py",
+        "_sf_k6.py",
+        "_sf_k7.py",
+        "_sf_k8.py",
+        "_sf_k9.py"))
 
     assert "mod._load_credentials_pool(svc_id, user_id=user_id, conv_id=conv_id)" in src
     assert "mod.reset_credentials_pool(svc_id, user_id=user_id, conv_id=conv_id)" in src

@@ -1054,7 +1054,21 @@ def test_chat_ui_exposes_single_agent_tmux_action_for_antigravity():
     terminal = Path("tasks/io/chat_ui/terminal.js").read_text(encoding="utf-8")
     template = Path("tasks/io/chat_ui/template.html").read_text(encoding="utf-8")
     commands = Path("tasks/io/chat_ui/commands.js").read_text(encoding="utf-8")
-    service_flow = Path("tasks/ai/actions/service_flow.py").read_text(encoding="utf-8")
+    service_flow = "".join(
+    Path(f"tasks/ai/actions/{_sf}").read_text(encoding="utf-8")
+    for _sf in (
+        "service_flow.py",
+        "_sf_base.py",
+        "_sf_routes.py",
+        "_sf_k1.py",
+        "_sf_k2.py",
+        "_sf_k3.py",
+        "_sf_k4.py",
+        "_sf_k5.py",
+        "_sf_k6.py",
+        "_sf_k7.py",
+        "_sf_k8.py",
+        "_sf_k9.py"))
 
     assert "function cmdAgentTmux" in terminal
     assert "provider === 'antigravity-interactive'" in terminal

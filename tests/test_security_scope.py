@@ -500,7 +500,7 @@ class TestGlobalScopePermissions:
         dr = MagicMock()
         dr.deploy.return_value = "flow1"
         dr.get.return_value = None
-        with patch("tasks.ai.actions.service_flow._resolve_flow_template_path", return_value=Path("/tmp/flow.json")), \
+        with patch("tasks.ai.actions._sf_k5._resolve_flow_template_path", return_value=Path("/tmp/flow.json")), \
                 patch("pathlib.Path.read_text", return_value=json.dumps({
                     "id": "flow", "name": "Flow", "scope": "conversation",
                 })), \
@@ -530,7 +530,7 @@ class TestGlobalScopePermissions:
         dr = MagicMock()
         dr.deploy.return_value = "flow1"
         dr.get.return_value = None
-        with patch("tasks.ai.actions.service_flow._resolve_flow_template_path", return_value=Path("/tmp/flow.json")), \
+        with patch("tasks.ai.actions._sf_k5._resolve_flow_template_path", return_value=Path("/tmp/flow.json")), \
                 patch("pathlib.Path.read_text", return_value=json.dumps({
                     "id": "flow", "name": "Flow", "scope": "conversation",
                 })), \
@@ -559,7 +559,7 @@ class TestGlobalScopePermissions:
         dr = MagicMock()
         dr.deploy.return_value = "flow1"
         dr.get.return_value = None
-        with patch("tasks.ai.actions.service_flow._resolve_flow_template_path", return_value=Path("/tmp/flow.json")), \
+        with patch("tasks.ai.actions._sf_k5._resolve_flow_template_path", return_value=Path("/tmp/flow.json")), \
                 patch("pathlib.Path.read_text", return_value=json.dumps({
                     "id": "flow", "name": "Flow", "scope": "independent",
                 })), \

@@ -1060,7 +1060,21 @@ def test_install_bootstrap_reset_is_implemented():
 
 
 def test_vnc_login_routes_skip_session_auth():
-    src = Path("tasks/ai/actions/service_flow.py").read_text(encoding="utf-8")
+    src = "".join(
+    Path(f"tasks/ai/actions/{_sf}").read_text(encoding="utf-8")
+    for _sf in (
+        "service_flow.py",
+        "_sf_base.py",
+        "_sf_routes.py",
+        "_sf_k1.py",
+        "_sf_k2.py",
+        "_sf_k3.py",
+        "_sf_k4.py",
+        "_sf_k5.py",
+        "_sf_k6.py",
+        "_sf_k7.py",
+        "_sf_k8.py",
+        "_sf_k9.py"))
 
     assert "ws_handler=vnc_ws_proxy, public=True" in src
     assert "callback=vnc_http_proxy, public=True" in src
@@ -1076,7 +1090,21 @@ def test_vnc_login_routes_skip_session_auth():
 
 
 def test_server_relay_desktop_uses_container_ip_without_published_host():
-    src = Path("tasks/ai/actions/service_flow.py").read_text(encoding="utf-8")
+    src = "".join(
+    Path(f"tasks/ai/actions/{_sf}").read_text(encoding="utf-8")
+    for _sf in (
+        "service_flow.py",
+        "_sf_base.py",
+        "_sf_routes.py",
+        "_sf_k1.py",
+        "_sf_k2.py",
+        "_sf_k3.py",
+        "_sf_k4.py",
+        "_sf_k5.py",
+        "_sf_k6.py",
+        "_sf_k7.py",
+        "_sf_k8.py",
+        "_sf_k9.py"))
     open_desktop = src[src.index('if action == "open_desktop"'):src.index('if action == "close_desktop"')]
 
     assert "def _get_server_relay_container_ip" in src
@@ -1105,7 +1133,21 @@ def test_server_relay_desktop_uses_container_ip_without_published_host():
 
 
 def test_server_login_vnc_uses_published_docker_host():
-    src = Path("tasks/ai/actions/service_flow.py").read_text(encoding="utf-8")
+    src = "".join(
+    Path(f"tasks/ai/actions/{_sf}").read_text(encoding="utf-8")
+    for _sf in (
+        "service_flow.py",
+        "_sf_base.py",
+        "_sf_routes.py",
+        "_sf_k1.py",
+        "_sf_k2.py",
+        "_sf_k3.py",
+        "_sf_k4.py",
+        "_sf_k5.py",
+        "_sf_k6.py",
+        "_sf_k7.py",
+        "_sf_k8.py",
+        "_sf_k9.py"))
     login_blocks = [
         src[src.index('if action == "claude_code_server_login"'):src.index('if action == "claude_code_server_login_cleanup"')],
         src[src.index('if action == "codex_server_login"'):src.index('if action == "codex_server_login_cleanup"')],
@@ -1128,7 +1170,21 @@ def test_server_login_vnc_uses_published_docker_host():
 
 
 def test_server_login_status_falls_back_to_registered_service_id():
-    src = Path("tasks/ai/actions/service_flow.py").read_text(encoding="utf-8")
+    src = "".join(
+    Path(f"tasks/ai/actions/{_sf}").read_text(encoding="utf-8")
+    for _sf in (
+        "service_flow.py",
+        "_sf_base.py",
+        "_sf_routes.py",
+        "_sf_k1.py",
+        "_sf_k2.py",
+        "_sf_k3.py",
+        "_sf_k4.py",
+        "_sf_k5.py",
+        "_sf_k6.py",
+        "_sf_k7.py",
+        "_sf_k8.py",
+        "_sf_k9.py"))
 
     def block_between(start_marker: str, end_marker: str) -> str:
         start = src.index(start_marker)
@@ -1139,7 +1195,7 @@ def test_server_login_status_falls_back_to_registered_service_id():
         block_between('if action == "claude_code_server_login_status"', 'if action == "claude_code_login_url"'),
         block_between('if action == "codex_server_login_status"', 'if action in {"gemini_server_login", "agy_server_login"}'),
         block_between('if action in {"gemini_server_login_status", "agy_server_login_status"}', 'if action == "rclone_server_login"'),
-        block_between('if action == "rclone_server_login_status"', '    return None'),
+        block_between('if action == "rclone_server_login_status"', '    return _UNHANDLED'),
     ]
 
     for block in status_blocks:

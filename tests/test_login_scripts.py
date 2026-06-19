@@ -50,9 +50,12 @@ def test_agy_server_login_writes_gemini_oauth_credentials():
 
 
 def test_gemini_server_login_mounts_current_script():
-    service_flow = (ROOT / "tasks" / "ai" / "actions" / "service_flow.py").read_text(
-        encoding="utf-8"
-    )
+    service_flow = "".join(
+        (ROOT / "tasks" / "ai" / "actions" / _sf).read_text(encoding="utf-8")
+        for _sf in (
+            "service_flow.py", "_sf_base.py", "_sf_routes.py",
+            "_sf_k1.py", "_sf_k2.py", "_sf_k3.py", "_sf_k4.py", "_sf_k5.py",
+            "_sf_k6.py", "_sf_k7.py", "_sf_k8.py", "_sf_k9.py"))
 
     assert "gemini_auth_login.sh" in service_flow
     assert "agy_auth_login.sh" in service_flow

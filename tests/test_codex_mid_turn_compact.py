@@ -19,8 +19,10 @@ _AGENT_COMPACTION = "".join(
     Path(f"tasks/ai/{_f}").read_text(encoding="utf-8")
     for _f in ("agent_compaction.py", "_agent_compact_base.py",
                "_agent_compact_core.py", "_agent_compact_independent.py"))
-_CONTEXT_OPS = Path("tasks/ai/actions/context_ops.py").read_text(
-    encoding="utf-8")
+_CONTEXT_OPS = "".join(
+    Path(f"tasks/ai/actions/{_cf}").read_text(encoding="utf-8")
+    for _cf in ("context_ops.py", "_ctxops_base.py", "_ctxops_k1.py",
+                    "_ctxops_k2.py", "_ctxops_k3.py", "_ctxops_k4.py"))
 _AGENT_RESOURCE = Path("tasks/ai/actions/agent_resource.py").read_text(
     encoding="utf-8")
 

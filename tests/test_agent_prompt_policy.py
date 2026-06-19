@@ -124,9 +124,11 @@ def test_compaction_does_not_persist_provider_system_prompt():
 
 
 def test_context_editor_displays_tool_call_only_messages():
-    from tasks.ai.actions import context_ops
+    from tasks.ai.actions import (
+        context_ops, _ctxops_base, _ctxops_k1, _ctxops_k2, _ctxops_k3, _ctxops_k4)
 
-    context_ops_src = inspect.getsource(context_ops)
+    context_ops_src = "".join(inspect.getsource(_m) for _m in (
+        context_ops, _ctxops_base, _ctxops_k1, _ctxops_k2, _ctxops_k3, _ctxops_k4))
     editor_src = open("tasks/io/chat_ui/context_editor.js", encoding="utf-8").read()
 
     assert '"tool_calls": m.get("tool_calls") or []' in context_ops_src

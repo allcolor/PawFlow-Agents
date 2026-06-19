@@ -35,7 +35,10 @@ _AGENT_COMPACTION_PY = "".join(
     Path(f"tasks/ai/{_f}").read_text(encoding="utf-8")
     for _f in ("agent_compaction.py", "_agent_compact_base.py",
                "_agent_compact_core.py", "_agent_compact_independent.py"))
-_CONTEXT_OPS_PY = Path("tasks/ai/actions/context_ops.py").read_text(encoding="utf-8")
+_CONTEXT_OPS_PY = "".join(
+    Path(f"tasks/ai/actions/{_cf}").read_text(encoding="utf-8")
+    for _cf in ("context_ops.py", "_ctxops_base.py", "_ctxops_k1.py",
+                    "_ctxops_k2.py", "_ctxops_k3.py", "_ctxops_k4.py"))
 _CONTEXT_EDITOR_JS = Path(
     "tasks/io/chat_ui/context_editor.js").read_text(encoding="utf-8")
 _AGENT_ACTIONS_PY = Path("tasks/ai/agent_actions.py").read_text(encoding="utf-8")
@@ -448,7 +451,10 @@ def test_frontend_context_gauge_has_no_client_estimator():
 
 
 def test_context_command_shared_view_exposes_display_role_not_raw_llm_role():
-    context_src = Path("tasks/ai/actions/context_ops.py").read_text(encoding="utf-8")
+    context_src = "".join(
+    Path(f"tasks/ai/actions/{_cf}").read_text(encoding="utf-8")
+    for _cf in ("context_ops.py", "_ctxops_base.py", "_ctxops_k1.py",
+                    "_ctxops_k2.py", "_ctxops_k3.py", "_ctxops_k4.py"))
     get_context = context_src[
         context_src.index('if action == "get_context":'):
         context_src.index('if action == "get_context_full":')]
@@ -460,7 +466,10 @@ def test_context_command_shared_view_exposes_display_role_not_raw_llm_role():
 
 
 def test_context_command_exposes_full_agent_context_usage():
-    context_src = Path("tasks/ai/actions/context_ops.py").read_text(encoding="utf-8")
+    context_src = "".join(
+    Path(f"tasks/ai/actions/{_cf}").read_text(encoding="utf-8")
+    for _cf in ("context_ops.py", "_ctxops_base.py", "_ctxops_k1.py",
+                    "_ctxops_k2.py", "_ctxops_k3.py", "_ctxops_k4.py"))
     ui_src = Path("tasks/io/chat_ui/context_editor.js").read_text(encoding="utf-8")
     get_context = context_src[
         context_src.index('if action == "get_context":'):
@@ -1037,7 +1046,10 @@ def test_context_panel_token_estimate_uses_gauge_when_available():
     The per-page estimate only covers the loaded page; showing it next to
     the full message_count contradicts the gauge line.
     """
-    src = Path("tasks/ai/actions/context_ops.py").read_text(encoding="utf-8")
+    src = "".join(
+    Path(f"tasks/ai/actions/{_cf}").read_text(encoding="utf-8")
+    for _cf in ("context_ops.py", "_ctxops_base.py", "_ctxops_k1.py",
+                    "_ctxops_k2.py", "_ctxops_k3.py", "_ctxops_k4.py"))
     assert 'estimated = int(_context_usage.get("used", 0) or 0)' in src
 
 

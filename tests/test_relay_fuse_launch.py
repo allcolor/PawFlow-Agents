@@ -162,9 +162,11 @@ class RelayFuseLaunchTests(unittest.TestCase):
 
     def test_worker_forwards_local_flag_to_host_helper(self):
         import os
+        # The per-message dispatch (incl. local=True host-forwarding) lives in
+        # _relay_dispatch since the worker.py split; scan it there.
         path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            'pawflow_relay', 'worker.py')
+            'pawflow_relay', '_relay_dispatch.py')
         with open(path, 'r') as f:
             src = f.read()
         self.assertIn('msg.get("local", False)', src)

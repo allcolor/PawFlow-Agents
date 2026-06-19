@@ -94,12 +94,16 @@ def test_agent_skills_use_assigned_skills_as_single_source():
     from core.agent_executor import resolve_agent_task
     import core.conv_agent_config as conv_agent_config
     from core.conv_agent_config import add_agent_to_conv
-    from tasks.ai.actions import agent_resource
+    from tasks.ai.actions import (
+        agent_resource, _agentres_base, _agentres_k1, _agentres_k2,
+        _agentres_k3, _agentres_k4, _agentres_k5)
     from tasks.ai.agent_context import AgentContextMixin
 
     context_src = inspect.getsource(AgentContextMixin)
     executor_src = inspect.getsource(resolve_agent_task)
-    resource_src = inspect.getsource(agent_resource)
+    resource_src = "".join(inspect.getsource(_m) for _m in (
+        agent_resource, _agentres_base, _agentres_k1, _agentres_k2,
+        _agentres_k3, _agentres_k4, _agentres_k5))
     add_src = inspect.getsource(add_agent_to_conv)
     config_src = inspect.getsource(conv_agent_config)
 

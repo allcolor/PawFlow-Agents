@@ -23,8 +23,11 @@ _CONTEXT_OPS = "".join(
     Path(f"tasks/ai/actions/{_cf}").read_text(encoding="utf-8")
     for _cf in ("context_ops.py", "_ctxops_base.py", "_ctxops_k1.py",
                     "_ctxops_k2.py", "_ctxops_k3.py", "_ctxops_k4.py"))
-_AGENT_RESOURCE = Path("tasks/ai/actions/agent_resource.py").read_text(
-    encoding="utf-8")
+_AGENT_RESOURCE = "".join(
+    Path(f"tasks/ai/actions/{_cf}").read_text(encoding="utf-8")
+    for _cf in ("agent_resource.py", "_agentres_base.py", "_agentres_k1.py",
+                    "_agentres_k2.py", "_agentres_k3.py", "_agentres_k4.py",
+                    "_agentres_k5.py"))
 
 
 def test_ccd_handler_propagates_trigger_fraction():

@@ -538,7 +538,11 @@ def test_context_usage_cache_counts_suffix_then_resets():
 
 
 def test_list_resources_does_not_transport_context_usage():
-    src = Path("tasks/ai/actions/agent_resource.py").read_text(encoding="utf-8")
+    src = "".join(
+    Path(f"tasks/ai/actions/{_cf}").read_text(encoding="utf-8")
+    for _cf in ("agent_resource.py", "_agentres_base.py", "_agentres_k1.py",
+                    "_agentres_k2.py", "_agentres_k3.py", "_agentres_k4.py",
+                    "_agentres_k5.py"))
     list_resources_block = src[
         src.index('if action == "list_resources":'):
         src.index('if action == "get_resource_detail":')]
@@ -548,7 +552,11 @@ def test_list_resources_does_not_transport_context_usage():
 
 
 def test_list_resources_uses_async_flow_template_cache():
-    src = Path("tasks/ai/actions/agent_resource.py").read_text(encoding="utf-8")
+    src = "".join(
+    Path(f"tasks/ai/actions/{_cf}").read_text(encoding="utf-8")
+    for _cf in ("agent_resource.py", "_agentres_base.py", "_agentres_k1.py",
+                    "_agentres_k2.py", "_agentres_k3.py", "_agentres_k4.py",
+                    "_agentres_k5.py"))
     list_resources_block = src[
         src.index('if action == "list_resources":'):
         src.index('if action == "get_resource_detail":')]

@@ -12,7 +12,6 @@ connection drives them through the `_execute_command` dispatcher.
 Public entry points:
     _ws_connect(url, token, secret, relay_id, root_dir, readonly, ...)
     _is_allowed_tmp_path(path)
-    _WRITE_ACTIONS
 
 Stdlib-only plus the in-tools sibling modules fs_common / fs_actions /
 fs_exec / fs_screen / fs_mcp / fs_http, which are imported lazily where
@@ -36,16 +35,9 @@ from fs_common import (
     _docker_cmd, _translate_path, _to_host_path,
 )
 from pawflow_relay.auth import (
-    claude_auth_login as _claude_auth_login,
-    codex_auth_login as _codex_auth_login,
-    gemini_auth_login as _gemini_auth_login,
     forward_to_host_helper as _forward_to_host_helper,
 )
 
-
-_WRITE_ACTIONS = frozenset({
-    "write_file", "delete_file", "mkdir", "find_replace", "edit", "exec",
-})
 
 
 # ── Path allowlist (outside root_dir) ─────────────────────────────
@@ -89,28 +81,9 @@ from pawflow_relay.proc_registry import (  # noqa: E402
     kill_inflight_proc,
 )
 from pawflow_relay._relay_terminal import TerminalManager  # noqa: E402
-from pawflow_relay._relay_codeserver import (  # noqa: E402
-    start_code_server as _cs_start,
-    stop_code_server as _cs_stop,
-    cs_ws_open as _cs_ws_open,
-    cs_ws_send as _cs_ws_send,
-    cs_ws_close as _cs_ws_close,
-)
-from pawflow_relay._relay_actions import (  # noqa: E402
-    http_proxy as _act_http_proxy,
-    script_hash as _act_script_hash,
-    update_scripts as _act_update_scripts,
-)
-from pawflow_relay._relay_desktop import (  # noqa: E402
-    desktop_ws_open as _dt_ws_open,
-    desktop_ws_send as _dt_ws_send,
-    desktop_ws_close as _dt_ws_close,
-    start_desktop as _dt_start_desktop,
-    stop_desktop as _dt_stop_desktop,
-    desktop_status as _dt_desktop_status,
-    start_local_desktop as _dt_start_local_desktop,
-    stop_local_desktop as _dt_stop_local_desktop,
-    local_screen_check as _dt_local_screen_check,
+from pawflow_relay._relay_dispatch import (  # noqa: E402
+    DispatchCtx,
+    execute_command as _dispatch_execute,
 )
 
 
@@ -262,274 +235,10 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
     from pawflow_relay.ws_frame import ws_send as _ws_frame_send, ws_recv as _ws_frame_recv
 
     def _execute_command(msg, on_output=None):
-        action = msg.get("action", "")
-        rel_path = msg.get("path", ".")
-
-        # Token already validated at WS connect time — no per-command secret check
-
-        if readonly and action in _WRITE_ACTIONS:
-            return {"ok": False, "error": "Operation not allowed in readonly mode"}
-
-        # Encryption ops (phase 5b/6) -- opt-in: only when the server sends one
-        # of these new actions. A relay that never receives them is unaffected.
-        try:
-            from pawflow_relay import key_ops as _key_ops
-        except Exception:
-            _key_ops = None
-        if _key_ops is not None and _key_ops.is_key_action(action):
-            return _key_ops.handle(action, msg)
-
-        if msg.get("local", False):
-            if not allow_local:
-                return {"ok": False, "error": "Local execution disabled. Start relay with --allow-local"}
-            _host_helper = os.environ.get("PAWFLOW_HOST_HELPER", "")
-            if not _host_helper:
-                return {"ok": False, "error": "Local execution requested but host helper is unavailable"}
-            _fwd = dict(msg)
-            return _forward_to_host_helper(_host_helper, _fwd, ws_sock_ref[0], _ws_frame_send)
-
-        abs_path = _resolve(rel_path)
-        if abs_path is None:
-            return {"ok": False, "error": f"Path traversal blocked: {rel_path}"}
-
-        # Host-level action: per-CLI auth login (claude / codex / gemini).
-        # If in Docker → forward to host helper; if native → run directly.
-        # The 3 actions share the same dispatch shape: pick the matching
-        # auth helper, stream URL via send_progress, return the credentials.
-        if action in ("claude_auth_login", "codex_auth_login", "gemini_auth_login"):
-            host_helper = os.environ.get("PAWFLOW_HOST_HELPER", "")
-            if host_helper:
-                return _forward_to_host_helper(host_helper, msg, ws_sock_ref[0], _ws_frame_send)
-            else:
-                def _send_progress(data):
-                    if ws_sock_ref[0]:
-                        progress = json.dumps({
-                            "type": "progress",
-                            "request_id": msg.get("request_id", ""),
-                            "data": data,
-                        }).encode("utf-8")
-                        try:
-                            _ws_frame_send(ws_sock_ref[0], progress)
-                        except Exception:
-                            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-                _login_fn = {
-                    "claude_auth_login": _claude_auth_login,
-                    "codex_auth_login": _codex_auth_login,
-                    "gemini_auth_login": _gemini_auth_login,
-                }[action]
-                try:
-                    result = _login_fn(msg, send_progress=_send_progress)
-                    if "error" in result:
-                        return {"ok": False, "error": result["error"]}
-                    return {"ok": True, "data": result}
-                except Exception as e:
-                    return {"ok": False, "error": str(e)}
-
-        # Terminal actions (handled here, not in fs_actions)
-        if action == "open_terminal":
-            if not allow_exec:
-                return {"ok": False, "error": "Exec not allowed"}
-            try:
-                _sid = _term_mgr.open(
-                    cols=msg.get("cols", 80),
-                    rows=msg.get("rows", 24),
-                    shell=msg.get("shell"),  # nosec B604 - terminal tool intentionally opens requested shell.
-                )
-                return {"ok": True, "data": {"session_id": _sid}}
-            except Exception as e:
-                return {"ok": False, "error": f"Failed to open terminal: {e}"}
-
-        if action == "close_terminal":
-            _sid = msg.get("session_id", "")
-            if not _sid:
-                return {"ok": False, "error": "Missing session_id"}
-            if _sid.startswith("local_term_"):
-                _hh = os.environ.get("PAWFLOW_HOST_HELPER", "")
-                if _hh:
-                    return _forward_to_host_helper(_hh, msg, ws_sock_ref[0], _ws_frame_send)
-            ok = _term_mgr.close(_sid)
-            return {"ok": ok, "error": "" if ok else "Session not found"}
-
-        if action == "write_terminal":
-            _sid = msg.get("session_id", "")
-            if _sid.startswith("local_term_"):
-                _hh = os.environ.get("PAWFLOW_HOST_HELPER", "")
-                if _hh:
-                    return _forward_to_host_helper(_hh, msg, ws_sock_ref[0], _ws_frame_send)
-            _ok, _err = _term_mgr.write(_sid, msg.get("data", ""))
-            return {"ok": True} if _ok else {"ok": False, "error": _err}
-
-        if action == "resize_terminal":
-            _sid = msg.get("session_id", "")
-            if _sid.startswith("local_term_"):
-                _hh = os.environ.get("PAWFLOW_HOST_HELPER", "")
-                if _hh:
-                    return _forward_to_host_helper(_hh, msg, ws_sock_ref[0], _ws_frame_send)
-            _ok, _err = _term_mgr.resize(_sid, cols=msg.get("cols", 80), rows=msg.get("rows", 24))
-            return {"ok": True} if _ok else {"ok": False, "error": _err}
-
-        if action == "list_terminals":
-            return {"ok": True, "data": {"sessions": _term_mgr.list()}}
-
-        if action == "http_proxy":
-            if not allow_exec:
-                return {"ok": False, "error": "Exec not allowed"}
-            return _act_http_proxy(msg)
-
-        if action == "start_code_server":
-            if not allow_exec:
-                return {"ok": False, "error": "Exec not allowed"}
-            return _cs_start(_state, msg, root_dir)
-
-        # -- Code-server WS tunnel --
-        if action == "cs_ws_open":
-            if not allow_exec:
-                return {"ok": False, "error": "Exec not allowed"}
-
-            def _cs_send(_frame):
-                with _send_lock:
-                    _ws_frame_send(ws_sock_ref[0], _frame)
-            return _cs_ws_open(_state, msg, _cs_send)
-
-        if action == "cs_ws_send":
-            return _cs_ws_send(_state, msg)
-
-        if action == "cs_ws_close":
-            return _cs_ws_close(_state, msg)
-
-        if action == "stop_code_server":
-            return _cs_stop(_state)
-
-        # ── Forward local screen/desktop to host helper if in Docker ────
-        _explicitly_local = action in (
-            "start_local_desktop", "stop_local_desktop", "local_screen_check",
-            "open_local_terminal", "start_local_code_server")
-        # NOTE: write_terminal/resize_terminal/close_terminal for local_term_*
-        # are forwarded inline in the terminal action handlers above.
-        _screen_with_flag = action.startswith("screen_") and msg.get("local", False)
-        _host_helper = os.environ.get("PAWFLOW_HOST_HELPER", "")
-        if (_explicitly_local or _screen_with_flag) and _host_helper:
-            _fwd = dict(msg)
-            return _forward_to_host_helper(_host_helper, _fwd, ws_sock_ref[0], _ws_frame_send)
-
-        # ── Desktop VNC (singleton) ──
-        if action == "start_desktop":
-            if not allow_exec:
-                return {"ok": False, "error": "Exec not allowed"}
-            return _dt_start_desktop(_state, msg)
-
-        if action == "stop_desktop":
-            return _dt_stop_desktop(_state)
-
-        if action == "desktop_status":
-            return _dt_desktop_status(_state)
-
-        # NOTE: local action forwarding is handled by the main dispatch
-        # block at the top of _execute_command. No duplicate here.
-        if action == "start_local_desktop":
-            return _dt_start_local_desktop(_state, msg)
-
-        if action == "stop_local_desktop":
-            return _dt_stop_local_desktop(_state)
-
-        if action == "local_screen_check":
-            return _dt_local_screen_check(allow_local_screen)
-
-        # ── Desktop VNC WS tunnel (same pattern as cs_ws_*) ────────────────
-        if action == "desktop_ws_open":
-            if not allow_exec:
-                return {"ok": False, "error": "Exec not allowed"}
-
-            def _dt_send(_frame):
-                with _send_lock:
-                    _ws_frame_send(ws_sock_ref[0], _frame)
-            return _dt_ws_open(_state, msg, _dt_send)
-
-        if action == "desktop_ws_send":
-            return _dt_ws_send(_state, msg)
-
-        if action == "desktop_ws_close":
-            return _dt_ws_close(_state, msg)
-
-        if action == "script_hash":
-            return _act_script_hash()
-
-        if action == "update_scripts":
-            return _act_update_scripts(msg)
-
-        # Note: permission checks are enforced server-side by ToolApprovalGate.
-        # (local_screen forwarding handled earlier, before desktop handlers)
-
-        # Generic local=True forward: any action with local=true runs on the
-        # user's host (via PawCode CLI helper), not in this relay container.
-        # This is the equivalent of "exec on host" for all tools — used by
-        # http_fetch (LLM proxy) and any other tool that needs the user's
-        # actual localhost / host network.
-        #
-        # STRICT: local=True is a contract, not a hint. If we can't honour
-        # it, we MUST fail loud. The previous fallthrough silently ran the
-        # action inside the relay container — which means
-        # `http_fetch("http://localhost:8080/")` hit the container's
-        # network namespace instead of the user's host. Repro: CC gets
-        # HTTP 200 with an empty/malformed body (whatever happens to
-        # listen on :8080 INSIDE the container, or an immediate EOF from
-        # the in-container proxy), qwen on the user's host sees zero
-        # requests, and the operator spends an afternoon hunting a ghost.
-        # Fail explicitly so the error surfaces as "host helper
-        # unavailable" rather than a misleading upstream error.
-        if msg.get("local"):
-            _hh = os.environ.get("PAWFLOW_HOST_HELPER", "")
-            if not _hh:
-                return {
-                    "ok": False,
-                    "error": (
-                        "local=True requested but PAWFLOW_HOST_HELPER is "
-                        "not configured on the relay container. "
-                        "Host-forwarding is required for this action "
-                        "(e.g. http_fetch to the user's localhost). "
-                        "Restart the relay via the managed path so the "
-                        "host-helper thread starts and the env var is "
-                        "propagated."),
-                }
-            if not ws_sock_ref[0]:
-                return {
-                    "ok": False,
-                    "error": (
-                        "local=True requested but the relay's WS to the "
-                        "server is not alive — cannot stream progress "
-                        "back from the host helper."),
-                }
-            _fwd = dict(msg)
-            return _forward_to_host_helper(
-                _hh, _fwd, ws_sock_ref[0], _ws_frame_send)
-
-        from fs_actions import ACTIONS as _FS_ACTIONS
-        handler_func = _FS_ACTIONS.get(action)
-        if not handler_func:
-            return {"ok": False, "error": f"Unknown action: {action}"}
-
-        try:
-            if action in ("exec", "exec_stream"):
-                result = handler_func(root_dir, abs_path, msg,
-                                       allow_exec=getattr(mock, 'allow_exec', False),
-                                       **({"on_output": on_output} if action == "exec_stream" and on_output else {}))
-            elif action == "http_fetch":
-                # http_fetch: stream chunks when the caller wired
-                # on_output (LLM proxy, SSE relay), else run in sync
-                # mode so the action returns {status, headers, body}
-                # inline (Pixazo polling, generic GET).
-                if on_output:
-                    def _on_chunk(kind, data):
-                        on_output(kind, data)
-                    result = handler_func(root_dir, abs_path, msg,
-                                           on_chunk=_on_chunk)
-                else:
-                    result = handler_func(root_dir, abs_path, msg)
-            else:
-                result = handler_func(root_dir, abs_path, msg)
-            return {"ok": True, "data": result}
-        except Exception as e:
-            return {"ok": False, "error": str(e)}
+        # Connection-scoped deps are bundled into _dispatch_ctx (built per
+        # reconnect, once the socket / send-lock / terminal-manager exist);
+        # the per-action routing lives in pawflow_relay._relay_dispatch.
+        return _dispatch_execute(_dispatch_ctx, msg, on_output=on_output)
 
     # ── FUSE mounts (one-shot, survive WS reconnects) ────────────────
     # Create the FUSE mounts BEFORE entering the reconnect loop and
@@ -813,6 +522,16 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             # Recreated per (re)connection so PTY sessions never outlive
             # their socket (mirrors the old per-connection _terminal_sessions).
             _term_mgr = TerminalManager(root_dir, _term_send)
+            # Connection-scoped dependencies the action dispatcher closes over.
+            # Rebuilt per reconnect so it carries the live socket ref / send
+            # lock / terminal manager; _state and the flags are stable.
+            _dispatch_ctx = DispatchCtx(
+                state=_state, term_mgr=_term_mgr, send_lock=_send_lock,
+                ws_sock_ref=ws_sock_ref, ws_frame_send=_ws_frame_send,
+                resolve=_resolve, forward_to_host_helper=_forward_to_host_helper,
+                root_dir=root_dir, readonly=readonly, allow_exec=allow_exec,
+                allow_local=allow_local, allow_local_screen=allow_local_screen,
+                allow_automation=allow_automation)
             _disconnect_reason = "unknown"
             _close_info = ""
             _inflight_cmds = {}

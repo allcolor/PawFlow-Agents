@@ -1022,9 +1022,9 @@ def test_code_server_dispatch_can_forward_raw_backend_frame():
 
 
 def test_code_server_worker_does_not_pass_base_path_to_process():
-    src = open("pawflow_relay/worker.py", encoding="utf-8").read()
-    start = src.index('if action == "start_code_server":')
-    stop = src.index('# -- Code-server WS tunnel --', start)
+    src = open("pawflow_relay/_relay_codeserver.py", encoding="utf-8").read()
+    start = src.index("def start_code_server(")
+    stop = src.index("def cs_ws_open(", start)
     start_block = src[start:stop]
     assert '_public_base_path = msg.get("base_path", "")' in start_block
     assert '"--base-path"' not in start_block
@@ -1048,9 +1048,9 @@ def test_local_code_server_uses_abs_proxy_base_path_not_base_path():
 
 
 def test_code_server_worker_starts_with_isolated_profile_and_no_updates():
-    src = open("pawflow_relay/worker.py", encoding="utf-8").read()
-    start = src.index('if action == "start_code_server":')
-    stop = src.index('# -- Code-server WS tunnel --', start)
+    src = open("pawflow_relay/_relay_codeserver.py", encoding="utf-8").read()
+    start = src.index("def start_code_server(")
+    stop = src.index("def cs_ws_open(", start)
     start_block = src[start:stop]
 
     assert '"--user-data-dir"' in start_block
@@ -1078,9 +1078,9 @@ def test_code_server_worker_keeps_ws_frames_ordered_outside_pool():
 
 
 def test_code_server_worker_forwards_leftover_backend_ws_frames():
-    src = open("pawflow_relay/worker.py", encoding="utf-8").read()
-    start = src.index('if action == "cs_ws_open":')
-    stop = src.index('if action == "cs_ws_send":', start)
+    src = open("pawflow_relay/_relay_codeserver.py", encoding="utf-8").read()
+    start = src.index("def cs_ws_open(")
+    stop = src.index("def cs_ws_send(", start)
     ws_open_block = src[start:stop]
 
     assert "pass  # Leftover bytes will be read by the reader thread" not in ws_open_block
@@ -1091,9 +1091,9 @@ def test_code_server_worker_forwards_leftover_backend_ws_frames():
 
 
 def test_code_server_worker_strips_browser_headers_from_backend_ws_handshake():
-    src = open("pawflow_relay/worker.py", encoding="utf-8").read()
-    start = src.index('if action == "cs_ws_open":')
-    stop = src.index('if action == "cs_ws_send":', start)
+    src = open("pawflow_relay/_relay_codeserver.py", encoding="utf-8").read()
+    start = src.index("def cs_ws_open(")
+    stop = src.index("def cs_ws_send(", start)
     ws_open_block = src[start:stop]
 
     assert "Do not forward browser/proxy headers" in ws_open_block

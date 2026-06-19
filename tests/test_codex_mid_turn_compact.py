@@ -11,7 +11,10 @@ _AGENT_EMITTER = Path("tasks/ai/agent_emitter.py").read_text(encoding="utf-8")
 _AGENT_ACTIONS = Path("tasks/ai/agent_actions.py").read_text(encoding="utf-8")
 _AGENT_POLLER = (Path("tasks/ai/agent_poller.py").read_text(encoding="utf-8")
                 + Path("tasks/ai/_agent_poll_checkin.py").read_text(encoding="utf-8"))
-_CODEX_APP = Path("core/llm_providers/codex_app_server.py").read_text(encoding="utf-8")
+_CODEX_APP = "".join(
+    Path(f"core/llm_providers/{_cf}").read_text(encoding="utf-8")
+    for _cf in ("codex_app_server.py", "_codex_app_stream.py",
+                "_codex_app_rpc.py"))
 _AGENT_COMPACTION = "".join(
     Path(f"tasks/ai/{_f}").read_text(encoding="utf-8")
     for _f in ("agent_compaction.py", "_agent_compact_base.py",
@@ -284,7 +287,7 @@ def test_codex_context_session_skip_requires_live_session_or_rollout():
 
 def test_codex_context_compaction_clears_thread_before_pawflow_compact():
     block = _CODEX_APP[
-        _CODEX_APP.index('def _hard_kill_for_context_compaction'):
+        _CODEX_APP.index('def _codex_app_hard_kill_for_context_compaction'):
         _CODEX_APP.index('try:', _CODEX_APP.index('lock = self._codex_app_ensure_lock'))]
     assert 'codex_app_server_thread:' in block
     assert 'codex_app_pool_idx:' in block

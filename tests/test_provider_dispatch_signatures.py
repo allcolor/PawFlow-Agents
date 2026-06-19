@@ -234,7 +234,10 @@ def test_cli_providers_do_not_force_default_model_flags():
     assert '"--thinking-display", "summarized"' in cc_cmd_src
     assert '"--model", model or "gpt-5.2-codex"' not in inspect.getsource(
         CodexSessionMixin._build_codex_cmd)
-    codex_src = inspect.getsource(LLMCodexAppServerMixin)
+    codex_src = "".join(
+        inspect.getsource(_c) for _c in LLMCodexAppServerMixin.__mro__
+        if _c.__module__.startswith("core.llm_providers.")
+        and "codex_session" not in _c.__module__)
     assert 'model or "gpt-5.4"' not in codex_src
     assert 'params["model"] = model' in codex_src
     gemini_src = inspect.getsource(LLMGeminiMixin._gemini_acp_start_process)
@@ -356,7 +359,10 @@ def test_tool_relay_info_refreshes_registered_ws_route():
 def test_mcp_bridge_and_tool_relay_emit_timing_breakdown():
     bridge_src = Path("tools/mcp_bridge.py").read_text(encoding="utf-8")
     relay_src = "".join(f.read_text(encoding="utf-8") for f in sorted(Path("services").glob("*tool_relay*.py")))  # split across _tool_relay_*.py
-    codex_src = Path("core/llm_providers/codex_app_server.py").read_text(encoding="utf-8")
+    codex_src = "".join(
+    Path(f"core/llm_providers/{_cf}").read_text(encoding="utf-8")
+    for _cf in ("codex_app_server.py", "_codex_app_stream.py",
+                "_codex_app_rpc.py"))
 
     assert "TIMING tools/call" in bridge_src
     assert "bridge_ms=" in bridge_src

@@ -1364,7 +1364,10 @@ def test_live_agent_thread_without_context_is_not_killed_as_zombie():
         + Path("tasks/ai/_agent_interrupt.py").read_text(encoding="utf-8")
     )
     core_src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
-    codex_src = Path("core/llm_providers/codex_app_server.py").read_text(encoding="utf-8")
+    codex_src = "".join(
+    Path(f"core/llm_providers/{_cf}").read_text(encoding="utf-8")
+    for _cf in ("codex_app_server.py", "_codex_app_stream.py",
+                "_codex_app_rpc.py"))
     assert "zombie thread detected" not in streaming_src
     assert "active turn has no context yet" in streaming_src
     assert "active turn not preemptable yet — queuing for next drain" in streaming_src
@@ -1373,10 +1376,10 @@ def test_live_agent_thread_without_context_is_not_killed_as_zombie():
     assert "t.name.startswith(f\"agent-stream-{conversation_id}:\")" in loop_src
     assert "resurrects" in core_src
     assert "emitter.generation = self._conv_generation.get" not in core_src
-    assert "def _hard_kill_for_context_compaction" in codex_src
-    assert "_hard_kill_for_context_compaction(\"item/started\")" in codex_src
-    assert "_hard_kill_for_context_compaction(\"item/completed\")" in codex_src
-    assert "not keep_alive and not compact_hard_killed" in codex_src
+    assert "def _codex_app_hard_kill_for_context_compaction" in codex_src
+    assert "_codex_app_hard_kill_for_context_compaction(\"item/started\"" in codex_src
+    assert "_codex_app_hard_kill_for_context_compaction(\"item/completed\"" in codex_src
+    assert "not keep_alive and not self._codex_app_compact_hard_killed" in codex_src
 
 
 
@@ -1599,7 +1602,10 @@ def test_relay_reconnect_shuts_down_command_pool():
 
 
 def test_codex_app_marks_terminal_turn_callback_after_turn_completed():
-    src = Path("core/llm_providers/codex_app_server.py").read_text(encoding="utf-8")
+    src = "".join(
+    Path(f"core/llm_providers/{_cf}").read_text(encoding="utf-8")
+    for _cf in ("codex_app_server.py", "_codex_app_stream.py",
+                "_codex_app_rpc.py"))
     assert "self._codex_app_turn_completed_for_callback = False" in src
     turn_done = src[
         src.index('if method == "turn/completed"'):
@@ -1895,7 +1901,10 @@ def test_force_stop_kills_cli_processes_and_blocks_late_appends():
     )
     core_src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
     openai_src = Path("core/llm_providers/openai.py").read_text(encoding="utf-8")
-    codex_app_src = Path("core/llm_providers/codex_app_server.py").read_text(encoding="utf-8")
+    codex_app_src = "".join(
+    Path(f"core/llm_providers/{_cf}").read_text(encoding="utf-8")
+    for _cf in ("codex_app_server.py", "_codex_app_stream.py",
+                "_codex_app_rpc.py"))
     assert "def _kill_live_cli_sessions" in cancel_src
     # The interactive CC pool is intentionally NOT force-killed: its
     # container is a persistent tmux session holding OAuth credentials

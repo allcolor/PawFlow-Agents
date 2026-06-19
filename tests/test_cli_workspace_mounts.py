@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 
 from core.cli_workspace_mounts import (
@@ -222,6 +221,9 @@ def test_cli_providers_pass_identity_to_workspace_mount_builder():
         if path == "core/llm_providers/gemini.py":
             # _stream_gemini (with the workspace-mount call) split to _gemini_stream
             src += Path("core/llm_providers/_gemini_stream.py").read_text(encoding="utf-8")
+        if path == "core/llm_providers/codex_app_server.py":
+            # _stream_codex_app_server (with the mount call markers) split to _codex_app_stream
+            src += Path("core/llm_providers/_codex_app_stream.py").read_text(encoding="utf-8")
         for needle in needles:
             assert needle in src
 

@@ -40,7 +40,10 @@ def test_codex_app_server_dispatch_contracts_are_wired():
 
 
 def test_codex_app_server_uses_app_server_protocol_and_local_images():
-    src = inspect.getsource(LLMCodexAppServerMixin)
+    src = "".join(
+        inspect.getsource(_c) for _c in LLMCodexAppServerMixin.__mro__
+        if _c.__module__.startswith("core.llm_providers.")
+        and "codex_session" not in _c.__module__)
     assert '["app-server"]' in src
     assert '"thread/start"' in src
     assert '"thread/resume"' in src
@@ -104,7 +107,10 @@ def test_codex_app_server_rollout_receipt_marks_preempt_handled():
 
 
 def test_codex_app_server_stdio_is_utf8_and_ascii_safe_json():
-    src = inspect.getsource(LLMCodexAppServerMixin)
+    src = "".join(
+        inspect.getsource(_c) for _c in LLMCodexAppServerMixin.__mro__
+        if _c.__module__.startswith("core.llm_providers.")
+        and "codex_session" not in _c.__module__)
     assert 'encoding="utf-8"' in src
     assert 'errors="replace"' in src
     assert "json.dumps(msg, ensure_ascii=True)" in src
@@ -133,7 +139,10 @@ def test_codex_app_server_initialize_error_includes_stderr():
 def test_codex_app_server_reasoning_is_wired():
     complete_src = inspect.getsource(LLMClient.complete)
     stream_src = inspect.getsource(LLMClient.complete_stream)
-    provider_src = inspect.getsource(LLMCodexAppServerMixin)
+    provider_src = "".join(
+        inspect.getsource(_c) for _c in LLMCodexAppServerMixin.__mro__
+        if _c.__module__.startswith("core.llm_providers.")
+        and "codex_session" not in _c.__module__)
     assert "thinking_budget=thinking_budget" in complete_src
     assert "thinking_budget=thinking_budget" in stream_src
     assert "_codex_app_effort" in provider_src
@@ -255,11 +264,13 @@ def test_codex_app_server_marks_native_and_mcp_tool_origins():
 
 
 def test_codex_app_server_steers_mcp_hint_after_native_tool():
-    src = inspect.getsource(LLMCodexAppServerMixin._stream_codex_app_server)
-    assert "native_tool_hint_sent = False" in src
+    src = (inspect.getsource(LLMCodexAppServerMixin._stream_codex_app_server)
+           + inspect.getsource(
+               LLMCodexAppServerMixin._codex_app_send_native_tool_hint))
+    assert "self._codex_app_native_tool_hint_sent = False" in src
     assert "PawFlow internal efficiency hint" in src
     assert '"method": "turn/steer"' in src
-    assert "_send_native_tool_hint(native_name)" in src
+    assert "self._codex_app_send_native_tool_hint(native_name" in src
 
 
 def test_codex_app_server_routes_live_thinking_through_neutral_callback():
@@ -275,7 +286,7 @@ def test_codex_app_server_routes_live_thinking_through_neutral_callback():
 
 def test_codex_app_server_live_thinking_preserves_chunk_boundary_spaces():
     src = inspect.getsource(LLMCodexAppServerMixin._stream_codex_app_server)
-    block = src[src.index("def _flush_live_thinking"):src.index("def _append_final_reasoning")]
+    block = src[src.index("def _flush_live_thinking"):src.index("turn_failed = False")]
     assert 'text = "".join(live_thinking_parts)' in block
     assert 'if not text.strip():' in block
     assert '"".join(live_thinking_parts).strip()' not in block
@@ -283,7 +294,7 @@ def test_codex_app_server_live_thinking_preserves_chunk_boundary_spaces():
 
 def test_codex_app_server_live_thinking_coalesces_tiny_chunks():
     src = inspect.getsource(LLMCodexAppServerMixin._stream_codex_app_server)
-    block = src[src.index("def _flush_live_thinking"):src.index("def _append_final_reasoning")]
+    block = src[src.index("def _flush_live_thinking"):src.index("turn_failed = False")]
     assert "if len(text) < 160:" in block
     assert "if now - last_thinking_emit < 4.0:" in block
     assert "now - last_thinking_emit < 1.0" not in block

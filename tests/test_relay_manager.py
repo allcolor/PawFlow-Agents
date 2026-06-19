@@ -269,9 +269,13 @@ def test_relay_docker_launcher_passes_token_as_equals_arg():
 def test_relay_worker_sends_gateway_key_header_for_ws_private_gateway():
     worker_source = Path("pawflow_relay/worker.py").read_text(encoding="utf-8")
     cli_source = Path("pawflow_relay/cli.py").read_text(encoding="utf-8")
+    # The WS upgrade handshake (incl. the gateway-key header) moved to
+    # _relay_conn since the worker.py split; the _ws_connect signature
+    # default stays in worker.py.
+    conn_source = Path("pawflow_relay/_relay_conn.py").read_text(encoding="utf-8")
 
     assert "gateway_cookie=\"\", gateway_key=\"\"" in worker_source
-    assert "X-PawFlow-Gateway-Key: {gateway_key}" in worker_source
+    assert "X-PawFlow-Gateway-Key: {gateway_key}" in conn_source
     assert "gateway_key=args.gateway_key" in cli_source
     assert "PAWFLOW_GATEWAY_KEY={args.gateway_key}" in cli_source
 

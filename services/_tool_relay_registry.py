@@ -517,12 +517,24 @@ class _ToolRelayRegistryMixin:
                 return any(hasattr(svc, method) for method in required)
 
             first_sid = matching[0].service_id
+            op_desc = ", ".join(required) or media_type
+            any_resolved = False
             for sdef in matching:
                 svc = _ToolRelayRegistryMixin._resolve_service_definition(
                     _sreg, sdef, user_id=user_id,
                     conversation_id=conversation_id)
+                if svc is None:
+                    continue
+                any_resolved = True
                 if _service_supports_required_methods(svc):
                     return svc, None
+            # Distinguish 'no service could be reached' from 'the deployed
+            # service(s) are up but don't implement this operation'.
+            if any_resolved:
+                deployed = ", ".join(s.service_id for s in matching)
+                return None, (
+                    f"No deployed {media_type} service supports this operation "
+                    f"({op_desc}); available: {deployed}")
             return None, f"{media_type.title()} service '{first_sid}' failed to connect"
         return resolver
 

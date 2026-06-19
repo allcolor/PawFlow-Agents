@@ -220,6 +220,7 @@ class _AgentMediaMixin:
 
         def resolver(required_methods_override=()):
             active_required = tuple(required_methods_override or required_methods)
+            op_desc = ", ".join(active_required) or label
             available = _self._discover_media_services(
                 user_id, base_class, conversation_id)
             if not available:
@@ -232,9 +233,14 @@ class _AgentMediaMixin:
                 else:
                     svc = _self._resolve_media_service_by_id(
                         available[0][0], user_id, conversation_id)
+                if svc is None:
+                    return None, f"{label.title()} service '{available[0][0]}' failed to connect"
                 if _service_supports_required_methods(svc, active_required):
                     return svc, None
-                return None, f"{label.title()} service '{available[0][0]}' failed to connect"
+                # Service is up but doesn't implement the requested operation.
+                return None, (
+                    f"{label.title()} service '{available[0][0]}' does not support "
+                    f"this operation ({op_desc})")
             # Multiple → check per-agent preference, then wildcard, then
             # deterministic first available service. A tool call can still
             # override per-call with service=<name>.
@@ -251,6 +257,7 @@ class _AgentMediaMixin:
                         return svc, None
             if require_preference:
                 return None, f"Multiple {label} services available; choose a conversation default"
+            any_resolved = False
             for service_ref in available:
                 service_def = getattr(service_ref, "service_def", None)
                 if service_def is not None:
@@ -259,8 +266,17 @@ class _AgentMediaMixin:
                 else:
                     svc = _self._resolve_media_service_by_id(
                         service_ref[0], user_id, conversation_id)
+                if svc is None:
+                    continue
+                any_resolved = True
                 if _service_supports_required_methods(svc, active_required):
                     return svc, None
+            # Distinguish 'none reachable' from 'up but none implement this op'.
+            if any_resolved:
+                deployed = ", ".join(ref[0] for ref in available)
+                return None, (
+                    f"No deployed {label} service supports this operation "
+                    f"({op_desc}); available: {deployed}")
             return None, f"{label.title()} service '{available[0][0]}' failed to connect"
         return resolver
 
@@ -410,11 +426,20 @@ class _AgentMediaMixin:
                     sid, user_id, conversation_id)
                 if svc and hasattr(svc, "speech_to_video"):
                     return svc, None
+            any_resolved = False
             for service_def in ordered:
                 svc = _self._resolve_media_service_definition(
                     service_def, user_id, conversation_id)
-                if svc and hasattr(svc, "speech_to_video"):
+                if svc is None:
+                    continue
+                any_resolved = True
+                if hasattr(svc, "speech_to_video"):
                     return svc, None
+            if any_resolved:
+                deployed = ", ".join(s.service_id for s in ordered)
+                return None, (
+                    "No deployed service supports this operation "
+                    f"(speech_to_video); available: {deployed}")
             return None, f"Speech-to-video service '{ordered[0].service_id}' failed to connect"
 
         return resolver

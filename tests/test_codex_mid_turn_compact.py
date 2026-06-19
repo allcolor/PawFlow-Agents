@@ -6,7 +6,14 @@ _GEMINI = (Path("core/llm_providers/gemini.py").read_text(encoding="utf-8")
            + Path("core/llm_providers/_gemini_stream.py").read_text(encoding="utf-8")
            + Path("core/llm_providers/_gemini_acp.py").read_text(encoding="utf-8"))
 _AGENT_CORE = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
-_AGENT_CONTEXT = Path("tasks/ai/agent_context.py").read_text(encoding="utf-8")
+import re as _re
+# agent_context.py split into _agentctx_base/_agentctx_p1..p3 for <=800 lines;
+# the split routes per-call locals through a state object `st.` — strip that
+# namespacing so the pre-split structural markers still match.
+_AGENT_CONTEXT = _re.sub(r"\bst\.", "", "".join(
+    Path(f"tasks/ai/{_f}").read_text(encoding="utf-8")
+    for _f in ("agent_context.py", "_agentctx_base.py", "_agentctx_p1.py",
+               "_agentctx_p2.py", "_agentctx_p3.py")))
 _AGENT_EMITTER = Path("tasks/ai/agent_emitter.py").read_text(encoding="utf-8")
 _AGENT_ACTIONS = Path("tasks/ai/agent_actions.py").read_text(encoding="utf-8")
 _AGENT_POLLER = (Path("tasks/ai/agent_poller.py").read_text(encoding="utf-8")

@@ -197,7 +197,12 @@ def test_tool_mcp_filter_actions_round_trip(tmp_path):
 
 
 def test_mcp_loader_uses_conversation_scope_local_and_proxy_hooks():
-    agent_context_src = Path("tasks/ai/agent_context.py").read_text(encoding="utf-8")
+    import re as _re
+    # agent_context.py split into _agentctx_*; strip state-obj `st.` namespacing
+    agent_context_src = _re.sub(r"\bst\.", "", "".join(
+        Path(f"tasks/ai/{_f}").read_text(encoding="utf-8")
+        for _f in ("agent_context.py", "_agentctx_base.py", "_agentctx_p1.py",
+                   "_agentctx_p2.py", "_agentctx_p3.py")))
     tool_relay_src = "".join(f.read_text(encoding="utf-8") for f in sorted(Path("services").glob("*tool_relay*.py")))  # split across _tool_relay_*.py
     agent_tools_src = Path("core/handlers/agent_tools.py").read_text(encoding="utf-8")
 

@@ -482,8 +482,13 @@ def test_conv_agent_max_depth_does_not_clobber_max_iterations():
     with max_depth=1 died after one tool call). See agent_context.py.
     """
     from pathlib import Path
+    import re
 
-    src = Path("tasks/ai/agent_context.py").read_text(encoding="utf-8")
+    # agent_context.py split into _agentctx_*; strip state-obj `st.` namespacing
+    src = re.sub(r"\bst\.", "", "".join(
+        Path(f"tasks/ai/{_f}").read_text(encoding="utf-8")
+        for _f in ("agent_context.py", "_agentctx_base.py", "_agentctx_p1.py",
+                   "_agentctx_p2.py", "_agentctx_p3.py")))
     # The old conflation explicitly assigned the loop cap from max_depth.
     assert "max_iterations = _md" not in src
     # max_iterations stays resolved from service/config, never from max_depth.

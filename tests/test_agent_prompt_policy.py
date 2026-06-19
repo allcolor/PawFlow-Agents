@@ -6,6 +6,19 @@ from core.agent_prompt_policy import (
 )
 
 
+def _agent_context_src():
+    """Full AgentContextMixin source: facade + _agentctx_p1..p3 (split for
+    <=800 lines). The split routes per-call locals through a state object `st.`;
+    strip that namespacing so pre-split structural markers still match."""
+    import re
+    from pathlib import Path
+    raw = "".join(
+        Path(f"tasks/ai/{_f}").read_text(encoding="utf-8")
+        for _f in ("agent_context.py", "_agentctx_base.py", "_agentctx_p1.py",
+                   "_agentctx_p2.py", "_agentctx_p3.py"))
+    return re.sub(r"\bst\.", "", raw)
+
+
 def test_common_agent_prompt_contains_four_operating_points_without_mcp():
     for title in (
         "Think Before Coding",
@@ -51,9 +64,8 @@ def test_agent_builders_inject_common_prompt_and_cli_mcp_separately():
     from tasks.ai.agent_core import AgentCoreMixin
     from tasks.ai.agent_context import AgentContextMixin
 
-    assert "inject_common_agent_system_prompt" in inspect.getsource(
-        AgentContextMixin)
-    agent_context_src = inspect.getsource(AgentContextMixin)
+    agent_context_src = _agent_context_src()
+    assert "inject_common_agent_system_prompt" in agent_context_src
     assert '"_provider_system_prompt": _provider_system_prompt' in agent_context_src
     assert "messages.insert(0, LLMMessage(role=\"system\"" not in agent_context_src
     assert "inject_common_agent_system_prompt" in inspect.getsource(
@@ -99,7 +111,7 @@ def test_agent_skills_use_assigned_skills_as_single_source():
         _agentres_k3, _agentres_k4, _agentres_k5)
     from tasks.ai.agent_context import AgentContextMixin
 
-    context_src = inspect.getsource(AgentContextMixin)
+    context_src = _agent_context_src()
     executor_src = inspect.getsource(resolve_agent_task)
     resource_src = "".join(inspect.getsource(_m) for _m in (
         agent_resource, _agentres_base, _agentres_k1, _agentres_k2,
@@ -143,9 +155,7 @@ def test_context_editor_displays_tool_call_only_messages():
 
 
 def test_agent_context_tracks_effective_context_budget():
-    from tasks.ai.agent_context import AgentContextMixin
-
-    src = inspect.getsource(AgentContextMixin)
+    src = _agent_context_src()
     assert "_configured_max_ctx = _svc_max or _agent_max or _task_max or 0" in src
     assert "effective_context_window(" in src
     assert '"configured_context_size": int(_configured_max_ctx or 0)' in src

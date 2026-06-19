@@ -1098,8 +1098,13 @@ def test_interactive_prompt_escapes_latest_turn_message_markup(tmp_path):
 
 def test_interactive_provider_is_treated_as_stateful_cli():
     from pathlib import Path
+    import re
 
-    agent_context = Path("tasks/ai/agent_context.py").read_text(encoding="utf-8")
+    # agent_context.py split into _agentctx_*; strip state-obj `st.` namespacing
+    agent_context = re.sub(r"\bst\.", "", "".join(
+        Path(f"tasks/ai/{_f}").read_text(encoding="utf-8")
+        for _f in ("agent_context.py", "_agentctx_base.py", "_agentctx_p1.py",
+                   "_agentctx_p2.py", "_agentctx_p3.py")))
     agent_core = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
 
     assert '_is_claude_code_interactive = (_provider_name == "claude-code-interactive")' in agent_context

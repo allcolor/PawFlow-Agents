@@ -29,7 +29,10 @@ _TABS_JS = Path("tasks/io/chat_ui/tabs.js").read_text(encoding="utf-8")
 _FLOW_GRAPH_HTML = Path("tasks/io/chat_ui/flow_graph.html").read_text(encoding="utf-8")
 _MESSAGES_JS = Path("tasks/io/chat_ui/messages.js").read_text(encoding="utf-8")
 _RXBUS_JS = Path("tasks/io/chat_ui/rxbus.js").read_text(encoding="utf-8")
-_AGENT_CONTEXT_PY = Path("tasks/ai/agent_context.py").read_text(encoding="utf-8")
+_AGENT_CONTEXT_PY = __import__("re").sub(r"\bst\.", "", "".join(
+    Path(f"tasks/ai/{_f}").read_text(encoding="utf-8")  # split for <=800 lines; strip state-obj `st.` namespacing
+    for _f in ("agent_context.py", "_agentctx_base.py", "_agentctx_p1.py",
+               "_agentctx_p2.py", "_agentctx_p3.py")))
 _AGENT_CORE_PY = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
 _AGENT_COMPACTION_PY = "".join(
     Path(f"tasks/ai/{_f}").read_text(encoding="utf-8")
@@ -1927,7 +1930,7 @@ def test_missing_agent_context_is_seeded_from_shared_before_first_append():
     assert "copy the current shared context personalized for this agent" in store_src
     assert "_seed_agent_context_from_shared_if_missing(\n                            cid, route_agent)" in store_src
 
-    src = Path("tasks/ai/agent_context.py").read_text(encoding="utf-8")
+    src = _AGENT_CONTEXT_PY  # split across _agentctx_*; state-obj `st.` already stripped
     assert "def _load_pawflow_initial_context" in src
     assert "store.load_shared_for_agent" in src
     assert "Agent context exists: use it as the PawFlow agent" in src

@@ -70,7 +70,8 @@ def test_agent_builders_inject_common_prompt_and_cli_mcp_separately():
     assert "messages.insert(0, LLMMessage(role=\"system\"" not in agent_context_src
     assert "inject_common_agent_system_prompt" in inspect.getsource(
         resolve_agent_task)
-    agent_core_src = inspect.getsource(AgentCoreMixin)
+    from tests._agent_core_src import agent_core_src as _acsrc
+    agent_core_src = _acsrc()  # AgentCoreMixin split into _alc_* mixins (<=800 lines)
     assert "_with_provider_system_prompt" in agent_core_src
     assert "_provider_system_prompt" in agent_core_src
     assert 'ctx.get("_is_cli_provider") and ctx.get("_cli_has_session")' in agent_core_src

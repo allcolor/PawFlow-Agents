@@ -15,6 +15,7 @@ import pytest
 from unittest.mock import MagicMock, patch, PropertyMock
 
 from core.handlers.resource_agent import FlashAgentHandler, SpawnAgentsHandler
+from tests._agent_core_src import agent_core_src
 from core.agent_executor import (
     AgentResult,
     AgentTask,
@@ -80,7 +81,7 @@ class TestRunningDelegateInjection:
         assert "injected_queued" in result
 
     def test_agent_core_rehydrates_delegate_turn_mode_after_pending_drain(self):
-        src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
+        src = agent_core_src()
         assert "def _apply_queued_delegate_turn_mode" in src
         assert 'ctx["_turn_mode"] = {' in src
         final_drain = src[src.index("# Final drain:"):]

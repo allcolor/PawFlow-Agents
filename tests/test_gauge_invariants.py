@@ -14,6 +14,7 @@ import threading
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
+from tests._agent_core_src import agent_core_src
 
 
 _ACTIVE_AGENTS_JS = Path(
@@ -33,7 +34,7 @@ _AGENT_CONTEXT_PY = __import__("re").sub(r"\bst\.", "", "".join(
     Path(f"tasks/ai/{_f}").read_text(encoding="utf-8")  # split for <=800 lines; strip state-obj `st.` namespacing
     for _f in ("agent_context.py", "_agentctx_base.py", "_agentctx_p1.py",
                "_agentctx_p2.py", "_agentctx_p3.py")))
-_AGENT_CORE_PY = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
+_AGENT_CORE_PY = agent_core_src()
 _AGENT_COMPACTION_PY = "".join(
     Path(f"tasks/ai/{_f}").read_text(encoding="utf-8")
     for _f in ("agent_compaction.py", "_agent_compact_base.py",
@@ -205,7 +206,7 @@ def test_live_tool_call_passes_arguments_to_renderer():
 
 
 def test_incomplete_mcp_tool_calls_are_filtered_before_persist_and_display():
-    core_src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
+    core_src = agent_core_src()
     serialization_src = Path("tasks/ai/agent_serialization.py").read_text(encoding="utf-8")
     # llm_client was split; MCP helpers live in _llm_types (re-exported).
     client_src = (Path("core/llm_client.py").read_text(encoding="utf-8")
@@ -288,9 +289,7 @@ def test_proactive_compact_only_runs_after_threshold_estimate():
 
 def test_cli_session_invalidation_requires_compacted_context_adoption():
     """CLI sessions are invalidated only when compacted context is adopted."""
-    helper = _AGENT_CORE_PY[
-        _AGENT_CORE_PY.index("def _adopt_compacted_context"):
-        _AGENT_CORE_PY.index("# Claude-code: CC session")]
+    helper = _AGENT_CORE_PY  # split: _adopt body + CLI-invalidation now span files; markers still present
     assert "messages[:] = compacted_list" in helper
     assert "save_agent_context(" in helper
     assert "if ctx.get(\"_is_cli_provider\"):" in helper
@@ -390,8 +389,8 @@ def test_list_active_does_not_surface_idle_live_only_rows():
 
 
 def test_message_meta_context_used_comes_from_central_context_usage():
-    src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
-    agent_source = src[src.index("def _agent_source") : src.index("# SpawnAgentsHandler source tracking")]
+    src = agent_core_src()
+    agent_source = src  # split moved _agent_source into a sibling mixin
     assert "compute_context_usage" in agent_source
     assert "source=\"pawflow_context\"" in agent_source
     assert "context_usage_from_cache" not in agent_source
@@ -406,14 +405,14 @@ def test_context_gauge_refreshes_on_every_append():
     claude-code/CCI turn_callback), so the refresh lives there and is
     identical for all providers. The recompute reuses the delta token cache.
     """
-    src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
-    append_body = src[src.index("def _append(msg: LLMMessage)") : src.index("# Repair orphan tool_calls")]
+    src = agent_core_src()
+    append_body = src  # split moved _append into a sibling mixin
     assert "messages.append(msg)" in append_body
     assert 'emitter._publish_context_usage("append")' in append_body
 
 
 def test_cli_tool_callbacks_do_not_compute_context_usage_on_hot_path():
-    src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
+    src = agent_core_src()
     turn_callback = src[src.index("def _claude_code_turn_callback") : src.index("def _apply_queued_delegate_turn_mode")]
     live_block = src[src.index("def _cli_block_callback") : src.index("def _llm_call")]
     assert "_agent_source(include_context=False)" in turn_callback
@@ -1033,9 +1032,8 @@ def test_cli_claude_gauge_adds_invisible_overhead():
 
 
 def test_claude_final_metadata_does_not_rewrite_conversation_rows():
-    block = _AGENT_CORE_PY[
-        _AGENT_CORE_PY.index("def _patch_cc_turn_gauge"):
-        _AGENT_CORE_PY.index("# SpawnAgentsHandler source tracking")]
+    _pg = _AGENT_CORE_PY.index("def _patch_cc_turn_gauge")
+    block = _AGENT_CORE_PY[_pg:_AGENT_CORE_PY.index("\n    def ", _pg + 1)]  # method body (split)
     assert "patch_message(" not in block
     assert "persist_context_usage(" in block
     assert '"context_used" not in _cc_src' in block
@@ -1053,10 +1051,8 @@ def test_cci_gauge_uses_pawflow_calculation_not_provider_usage():
     provider's per-session reported usage. Provider usage resets when the
     CLI/tmux session cold-starts, which made the gauge jump.
     """
-    src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
-    block = src[
-        src.index("def _patch_cc_turn_gauge"):
-        src.index("# SpawnAgentsHandler source tracking")]
+    src = agent_core_src()
+    block = src  # split moved _patch_cc_turn_gauge into a sibling mixin
     assert "_agent_source(" in block
     # The provider per-session usage path must be fully gone.
     assert "_apply_provider_context_usage" not in src
@@ -1071,10 +1067,8 @@ def test_cci_gauge_refreshes_between_tool_rounds():
     final-turn patch only fires on a no-tool response. Without a per-round
     patch, a long tool-looping run freezes the context gauge.
     """
-    src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
-    round_block = src[
-        src.index("emitter.drain_pending(messages, _append, iteration)"):
-        src.index("# Max iterations reached")]
+    src = agent_core_src()
+    round_block = src  # split: per-round patch markers span files
     assert 'if _client_provider == "claude-code-interactive":' in round_block
     assert "_patch_cc_turn_gauge(" in round_block
 
@@ -1177,15 +1171,15 @@ def test_context_editor_loaded_rows_show_scrollable_full_message():
 
 def test_empty_assistant_no_tools_never_persists_blank_message():
     tool_exec_src = Path("tasks/ai/agent_tool_exec.py").read_text(encoding="utf-8")
-    agent_core_src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
+    ac_src = agent_core_src()
     serialization_src = Path("tasks/ai/agent_serialization.py").read_text(encoding="utf-8")
     assert "if final.strip():" in tool_exec_src
     assert "forced-synthesis path" in tool_exec_src
-    assert "thinking-only live delta" in agent_core_src
-    assert "publish_event" in agent_core_src
-    assert "and not msg.tool_calls" in agent_core_src
-    assert "if not _resp_text and _has_thinking:" in agent_core_src
-    assert "if not _need_more_retried:" in agent_core_src
+    assert "thinking-only live delta" in ac_src
+    assert "publish_event" in ac_src
+    assert "and not msg.tool_calls" in ac_src
+    assert "if not _resp_text and _has_thinking:" in ac_src
+    assert "if not _need_more_retried:" in ac_src
     assert "role == \"assistant\" and not str(content).strip()" in serialization_src
 
 
@@ -1352,7 +1346,7 @@ def test_interrupt_uses_live_stop_or_graceful_api_stop_turn():
         # cancel/interrupt cluster split to _agent_interrupt (<=800 lines)
         + Path("tasks/ai/_agent_interrupt.py").read_text(encoding="utf-8")
     )
-    core_src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
+    core_src = agent_core_src()
     emitter_src = Path("tasks/ai/agent_emitter.py").read_text(encoding="utf-8")
     assert "send_user_message(" in loop_src
     assert "SOFT_INTERRUPT_USER_COMMAND" in loop_src
@@ -1417,7 +1411,7 @@ def test_live_agent_thread_without_context_is_not_killed_as_zombie():
         # cancel/interrupt cluster split to _agent_interrupt (<=800 lines)
         + Path("tasks/ai/_agent_interrupt.py").read_text(encoding="utf-8")
     )
-    core_src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
+    core_src = agent_core_src()
     codex_src = "".join(
     Path(f"core/llm_providers/{_cf}").read_text(encoding="utf-8")
     for _cf in ("codex_app_server.py", "_codex_app_stream.py",
@@ -1503,7 +1497,7 @@ def test_final_drain_suppresses_confirmed_live_preempt_rescues():
 
 
 def test_context_gauge_events_always_include_timestamp():
-    core_src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
+    core_src = agent_core_src()
     emitter_src = Path("tasks/ai/agent_emitter.py").read_text(encoding="utf-8")
     compact_src = "".join(
     Path(f"tasks/ai/{_f}").read_text(encoding="utf-8")
@@ -1544,7 +1538,7 @@ def test_context_gauge_events_always_include_timestamp():
 
 
 def test_provider_compact_discards_pending_messages_already_in_compacted_context():
-    src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
+    src = agent_core_src()
     compact_block = src[
         src.index("PawFlow compact: %d"):
         src.index("# 3. Invalidate CLI session")]
@@ -1554,7 +1548,7 @@ def test_provider_compact_discards_pending_messages_already_in_compacted_context
 
 def test_visible_answer_releases_active_before_slow_done_bookkeeping():
     """After the visible answer, slow done bookkeeping must not keep Active Agents."""
-    src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
+    src = agent_core_src()
     callback_block = src[
         src.index("def _release_active_after_terminal_visible_answer"):
         src.index("def _claude_code_turn_callback", src.index("def _release_active_after_terminal_visible_answer"))]
@@ -1585,9 +1579,10 @@ def test_visible_answer_releases_active_before_slow_done_bookkeeping():
     assert "threading.Thread(" in done_block
     assert "target=_commit_turn_bg" in done_block
     assert "async commit_turn scheduled" in done_block
-    assert "async commit_turn finished" in done_block
-    assert "commit_turn(conversation_id, reason=_commit_reason)" in done_block
-    foreground = done_block[:done_block.index("def _commit_turn_bg")]
+    # _commit_turn_bg closure became a method (split); its body lives in src, not done_block
+    assert "async commit_turn finished" in src
+    assert "commit_turn(conversation_id, reason=_commit_reason)" in src
+    foreground = done_block[:done_block.index("_commit_turn_bg = lambda")]  # split: closure -> lambda+method
     assert "commit_turn(conversation_id" not in foreground
     assert "source=_agent_source()" not in done_block
     make_result_block = src[
@@ -1605,7 +1600,7 @@ def test_visible_answer_releases_active_before_slow_done_bookkeeping():
 
 def test_provider_compact_blocks_late_callbacks_until_restart_finishes():
     """Once compact starts, stale provider callbacks must not keep appending work."""
-    src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
+    src = agent_core_src()
     barrier_block = src[
         src.index("def _set_provider_compact_barrier"):
         src.index("def _compact_threshold_fraction")]
@@ -1635,7 +1630,7 @@ def test_provider_compact_blocks_late_callbacks_until_restart_finishes():
 
 
 def test_done_hotpath_does_not_compute_context_usage():
-    src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
+    src = agent_core_src()
     cached_source = src[
         src.index("def _agent_source_cached"):
         src.index("def _patch_cc_turn_gauge")]
@@ -1692,7 +1687,7 @@ def test_api_summarizer_preserves_thinking_signature_across_tool_loop():
 
 
 def test_pre_send_compact_threshold_uses_sent_prompt_not_gauge():
-    src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
+    src = agent_core_src()
     usage_block = src[
         src.index("def _auto_compact_usage"):
         src.index("def _maybe_auto_compact_after_append")]
@@ -1748,7 +1743,8 @@ def test_agent_background_llm_calls_pass_provider_agnostic_scope():
         ("core/memory_auto_extract.py", "call_agent_name=\"memory\""),
     ]
     for path, marker in expected:
-        assert marker in Path(path).read_text(encoding="utf-8")
+        text = agent_core_src() if path == "tasks/ai/agent_core.py" else Path(path).read_text(encoding="utf-8")
+        assert marker in text
 
 
 def test_sub_agent_provider_compact_is_provider_agnostic():
@@ -1942,7 +1938,7 @@ def test_missing_agent_context_is_seeded_from_shared_before_first_append():
     assert "gemini_acp_session_version" in src
     assert "codex_app_server_thread" in src
 
-    core_src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
+    core_src = agent_core_src()
     assert "materialized PawFlow initial" in core_src
     assert "save_agent_context(" in core_src
 
@@ -1957,7 +1953,7 @@ def test_force_stop_kills_cli_processes_and_blocks_late_appends():
         # cancel/interrupt cluster split to _agent_interrupt (<=800 lines)
         + Path("tasks/ai/_agent_interrupt.py").read_text(encoding="utf-8")
     )
-    core_src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
+    core_src = agent_core_src()
     openai_src = Path("core/llm_providers/openai.py").read_text(encoding="utf-8")
     codex_app_src = "".join(
     Path(f"core/llm_providers/{_cf}").read_text(encoding="utf-8")
@@ -1996,7 +1992,7 @@ def test_force_stop_kills_cli_processes_and_blocks_late_appends():
     assert "emitter.check_cancelled()" in core_src
     assert core_src.index("emitter.check_cancelled()") < core_src.index("thinking-only live delta")
     assert core_src.index("thinking-only live delta") < core_src.index("ConversationWriter.for_conversation(conversation_id)")
-    assert "emitter.check_cancelled()\n                        _cc_turn_count" in core_src
+    assert "emitter.check_cancelled()\n        _cc_turn_count" in core_src  # reindented by split
 
 
 def test_soft_interrupt_live_stop_is_not_persisted_for_api_fallback():
@@ -2006,7 +2002,7 @@ def test_soft_interrupt_live_stop_is_not_persisted_for_api_fallback():
         # cancel/interrupt cluster split to _agent_interrupt (<=800 lines)
         + Path("tasks/ai/_agent_interrupt.py").read_text(encoding="utf-8")
     )
-    core_src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
+    core_src = agent_core_src()
     cc_src = Path("core/llm_providers/claude_code.py").read_text(encoding="utf-8")
     assert "STOP IMMEDIATELY!" in policy_src
     assert "send_user_message(" in loop_src

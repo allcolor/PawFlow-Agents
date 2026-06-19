@@ -14,6 +14,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import core.background_tool as bg
+from tests._agent_core_src import agent_core_src
 
 
 def _reset_state():
@@ -351,10 +352,10 @@ def test_background_wait_has_no_default_timeout():
 
 
 def test_agent_core_waits_for_background_without_default_timeout():
-    src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
+    src = agent_core_src()
 
     assert "wait_pending(conversation_id, timeout=120" not in src
-    assert "wait_pending(\n                                conversation_id,\n                                cancel_check=" in src
+    assert "wait_pending(\n                    conversation_id,\n                    cancel_check=" in src  # reindented by split
 
 
 def test_tool_relay_has_no_implicit_execution_timeout():

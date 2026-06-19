@@ -9,6 +9,7 @@ import pytest
 from core.llm_client import LLMClient
 from core.llm_providers.claude_code_interactive import _CCITurnCoordinator
 from core.llm_providers.claude_code_interactive import _loads_tolerant
+from tests._agent_core_src import agent_core_src
 
 
 class _Events:
@@ -1105,7 +1106,7 @@ def test_interactive_provider_is_treated_as_stateful_cli():
         Path(f"tasks/ai/{_f}").read_text(encoding="utf-8")
         for _f in ("agent_context.py", "_agentctx_base.py", "_agentctx_p1.py",
                    "_agentctx_p2.py", "_agentctx_p3.py")))
-    agent_core = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
+    agent_core = agent_core_src()
 
     assert '_is_claude_code_interactive = (_provider_name == "claude-code-interactive")' in agent_context
     assert '"_is_claude_code": _is_claude_code or _is_claude_code_interactive' in agent_context
@@ -1115,7 +1116,7 @@ def test_interactive_provider_is_treated_as_stateful_cli():
 def test_cc_interactive_interrupt_turn_sends_only_stop_transport():
     from pathlib import Path
 
-    agent_core = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
+    agent_core = agent_core_src()
     cci_start = agent_core.index('if _client_provider in ("claude-code-interactive", "antigravity-interactive")')
     cci_end = agent_core.index('logger.info(f"[agent:{conversation_id[:8]}] interrupted', cci_start)
     cci_branch = agent_core[cci_start:cci_end]

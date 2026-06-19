@@ -19,6 +19,7 @@ from pathlib import Path
 
 import core.llm_client  # registers providers
 from core.llm_client import LLMClient, is_mcp_tool_call_name, unwrap_mcp_tool
+from tests._agent_core_src import agent_core_src
 
 
 def _parse_dispatch_branches() -> dict:
@@ -480,7 +481,7 @@ def test_gemini_acp_permission_result_cancels_without_allow_option():
 
 
 def test_agent_core_passes_live_block_callback_to_acp_providers():
-    src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
+    src = agent_core_src()
     assert 'block_callback=_cli_block_callback if _client_provider in ("claude-code-interactive", "antigravity-interactive", "codex-app-server", "gemini") else None' in src
     assert 'turn_callback=_claude_code_turn_callback if _client_provider in ("claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "gemini") else None' in src
 
@@ -575,7 +576,7 @@ def test_gemini_acp_recovers_replayed_tool_args_from_history(tmp_path):
 
 
 def test_agent_core_hides_schema_tool_events_on_purpose():
-    src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
+    src = agent_core_src()
     tool_call_sse = src[src.index("# Assistant tool_calls"):src.index("# role=tool")]
     tool_result_sse = src[src.index("# role=tool"):src.index("_agent_for_route")]
     assert "get_tool_schema" in tool_call_sse

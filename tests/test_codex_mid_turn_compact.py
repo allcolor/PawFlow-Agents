@@ -1,12 +1,13 @@
 """Lock compact threshold handling and Gemini ACP parity."""
 
 from pathlib import Path
+import re as _re
+from tests._agent_core_src import agent_core_src
 
 _GEMINI = (Path("core/llm_providers/gemini.py").read_text(encoding="utf-8")
            + Path("core/llm_providers/_gemini_stream.py").read_text(encoding="utf-8")
            + Path("core/llm_providers/_gemini_acp.py").read_text(encoding="utf-8"))
-_AGENT_CORE = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
-import re as _re
+_AGENT_CORE = agent_core_src()
 # agent_context.py split into _agentctx_base/_agentctx_p1..p3 for <=800 lines;
 # the split routes per-call locals through a state object `st.` — strip that
 # namespacing so the pre-split structural markers still match.
@@ -364,9 +365,8 @@ def test_compact_adoption_skips_duplicate_save_when_already_persisted():
     """_compact() already persisted its output; restart adoption must not
     repeat that write on the foreground path.
     """
-    helper = _AGENT_CORE[
-        _AGENT_CORE.index("def _adopt_compacted_context"):
-        _AGENT_CORE.index("# Claude-code: CC session")]
+    _ac = _AGENT_CORE.index("def _adopt_compacted_context")
+    helper = _AGENT_CORE[_ac:_AGENT_CORE.index("\n    def ", _ac + 1)]  # method body (split)
     assert "already_persisted: bool = False" in helper
     assert "if not already_persisted:" in helper
     assert helper.index("if not already_persisted:") < helper.index(

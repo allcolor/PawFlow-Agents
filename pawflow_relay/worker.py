@@ -1,14 +1,16 @@
-"""PawFlow relay — worker-side HTTP/WS protocol, action dispatch, FSRelayHandler.
+"""PawFlow relay — worker-side WS protocol, action dispatch.
 
 This module is the body of the relay worker. It runs either natively on
 the user's host or inside the relay Docker container; in both cases
 `pawflow_relay/` is on the Python path (mounted alongside the launcher
 script in the container; importable via the source tree on the host).
 
+The per-action handlers live in sibling modules — `_relay_terminal`,
+`_relay_codeserver`, `_relay_desktop`, `_relay_actions` — and the
+connection drives them through the `_execute_command` dispatcher.
+
 Public entry points:
     _ws_connect(url, token, secret, relay_id, root_dir, readonly, ...)
-    _make_handler_class(root_dir, secret, readonly, ...)
-    FSRelayHandler
     _is_allowed_tmp_path(path)
     _WRITE_ACTIONS
 
@@ -19,9 +21,6 @@ world.
 """
 import logging
 
-import base64
-import hashlib
-import hmac
 import json
 import os
 import socket
@@ -29,10 +28,8 @@ import struct
 import subprocess  # nosec B404
 import sys
 import tempfile
-import threading
 import time
 from dataclasses import dataclass, field
-from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
 from fs_common import (
@@ -61,7 +58,6 @@ _WRITE_ACTIONS = frozenset({
 # commit message files, editor swap files).
 
 def _tmp_allowlist():
-    import tempfile
     dirs = ["/tmp", "/var/tmp"]  # nosec B108 - explicit temp-dir allowlist for relay sandbox.
     try:
         dirs.append(tempfile.gettempdir())
@@ -168,164 +164,6 @@ class RelayWorkerState:
     local_desktop_procs: object = None
     local_desktop_vnc_port: object = None
     local_desktop_novnc_port: object = None
-
-
-# ── Request handler ───────────────────────────────────────────────
-
-class FSRelayHandler(BaseHTTPRequestHandler):
-    """HTTP POST handler for filesystem relay operations."""
-
-    server_version = "PawFlow-FSRelay/1.0"
-
-    # Set by the factory function
-    root_dir: str = "."
-    secret: str = ""
-    readonly: bool = False
-
-    def log_message(self, fmt, *args):
-        sys.stderr.write(f"[FSRelay] {self.address_string()} - {fmt % args}\n")
-
-    def _log_op(self, action: str, path: str, ok: bool, detail: str = ""):
-        tag = "OK" if ok else "FAIL"
-        extra = f" | {detail}" if detail else ""
-        sys.stderr.write(f"[FSRelay] [{tag}] {action} path={path}{extra}\n")
-
-    def _send_json(self, ok: bool, data=None, error=None):
-        resp = {"ok": ok}
-        if ok and data is not None:
-            resp["data"] = data
-        elif not ok and error:
-            resp["error"] = error
-        body = json.dumps(resp, ensure_ascii=False, default=str).encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def _resolve_fs_url(self, value: str) -> str:
-        """Resolve fs://relay_id/path → relative path."""
-        if not value or not value.startswith("fs://"):
-            return value
-        # fs://any_relay_id/some/path → some/path
-        import re as _re_fs
-        m = _re_fs.match(r'fs://[^/]+/(.*)', value)
-        return m.group(1) if m else value
-
-    def _resolve(self, rel_path: str):
-        """Resolve relative path to absolute, checking traversal.
-
-        Returns absolute path string or None if blocked.
-
-        Absolute paths under an allowlisted system temp dir (/tmp,
-        /var/tmp, tempfile.gettempdir()) are passed through unchanged —
-        they are sandboxed to the container/process and never escape to
-        host state, so blocking them just breaks legitimate "write to
-        tmp" use cases (test artifacts, editor swap files, etc.).
-        """
-        rel_path = self._resolve_fs_url(rel_path)
-        if _is_allowed_tmp_path(rel_path):
-            return str(Path(rel_path).resolve())
-        root = Path(self.root_dir).resolve()
-        target = (root / rel_path).resolve()
-        try:
-            target.relative_to(root)
-        except ValueError:
-            return None
-        return str(target)
-
-    # ── HTTP verbs ────────────────────────────────────────────────
-
-    def do_GET(self):
-        self._send_json(True, data={"service": "PawFlow-FSRelay", "version": "1.0"})
-
-    def do_POST(self):
-        # Read body
-        length = int(self.headers.get("Content-Length", 0))
-        raw = self.rfile.read(length)
-        try:
-            req = json.loads(raw.decode("utf-8"))
-        except (json.JSONDecodeError, UnicodeDecodeError) as e:
-            self._send_json(False, error=f"Invalid JSON: {e}")
-            return
-
-        # Validate secret
-        if not hmac.compare_digest(req.get("secret", ""), self.secret):
-            self._send_json(False, error="Invalid secret")
-            return
-
-        action = req.get("action", "")
-        rel_path = self._resolve_fs_url(req.get("path", "."))
-        # Also resolve fs:// in other path-like fields
-        for _fk in ("source_path", "dest_path"):
-            if _fk in req and isinstance(req[_fk], str):
-                req[_fk] = self._resolve_fs_url(req[_fk])
-
-        # Readonly check
-        from fs_actions import WRITE_ACTIONS
-        if self.readonly and action in WRITE_ACTIONS:
-            self._log_op(action, rel_path, False, "readonly mode")
-            self._send_json(False, error="Operation not allowed in readonly mode")
-            return
-        # Note: permission checks are enforced server-side by ToolApprovalGate.
-        # The relay is a transport — it executes whatever the server sends.
-
-        # Resolve path
-        abs_path = self._resolve(rel_path)
-        if abs_path is None:
-            self._log_op(action, rel_path, False, "path traversal blocked")
-            self._send_json(False, error=f"Path traversal blocked: {rel_path}")
-            return
-
-        # Dispatch via shared fs_actions module
-        from fs_actions import ACTIONS as _FS_ACTIONS, WRITE_ACTIONS
-        handler_fn = _FS_ACTIONS.get(action)
-        if not handler_fn:
-            self._log_op(action, rel_path, False, "unknown action")
-            self._send_json(False, error=f"Unknown action: {action}")
-            return
-
-        try:
-            if action == "exec":
-                result = handler_fn(self.root_dir, abs_path, req,
-                                     allow_exec=getattr(self, 'allow_exec', False))
-            else:
-                result = handler_fn(self.root_dir, abs_path, req)
-            self._log_op(action, rel_path, True)
-            self._send_json(True, data=result)
-        except Exception as e:
-            self._log_op(action, rel_path, False, str(e))
-            self._send_json(False, error=str(e))
-
-
-# Action implementations live in tools/fs_actions.py and are dispatched
-# via `fs_actions.ACTIONS` (see the HTTP handler above and the WS handler
-# further down). A duplicate set of `_action_*` handlers used to live
-# here as a legacy fallback — removed as dead code.
-
-
-# ── Claude auth login (host action) ──────────────────────────────
-
-
-
-# ── Main ──────────────────────────────────────────────────────────
-
-def _make_handler_class(root_dir: str, secret: str, readonly: bool,
-                        allow_exec: bool = False, allow_automation: bool = False,
-                        allow_local_screen: bool = False, allow_local: bool = False):
-    """Create a handler class with bound config (avoids lambda issues)."""
-
-    class ConfiguredHandler(FSRelayHandler):
-        pass
-
-    ConfiguredHandler.root_dir = root_dir
-    ConfiguredHandler.secret = secret
-    ConfiguredHandler.readonly = readonly
-    ConfiguredHandler.allow_exec = allow_exec
-    ConfiguredHandler.allow_automation = allow_automation
-    ConfiguredHandler.allow_local_screen = allow_local_screen
-    ConfiguredHandler.allow_local = allow_local
-    return ConfiguredHandler
 
 
 # ── WS Reverse client ─────────────────────────────────────────────

@@ -7,7 +7,7 @@ package:
 
   pawflow_relay/
     cli.py       — argparse + main() (worker_main)
-    worker.py    — FSRelayHandler, _ws_connect, action dispatch
+    worker.py    — _ws_connect, action dispatch
     auth.py      — claude auth login + host-helper bridge
     register.py  — OAuth auto-registration + service (un)install
     ws_frame.py  — stdlib WebSocket frame codec

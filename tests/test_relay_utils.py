@@ -7,6 +7,11 @@ from unittest.mock import patch
 # Ensure the project root is first in sys.path so that the pawflow_relay/
 # *package* is found before tools/pawflow_relay.py (standalone script).
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# tools/ on the path too (appended, AFTER root so the pawflow_relay package
+# still wins over tools/pawflow_relay.py): the relay tool modules (fs_exec,
+# ...) bare-import their siblings (`from fs_common import ...`) the way they
+# do inside the relay container, so tools/ must be importable.
+sys.path.append(str(Path(__file__).resolve().parent.parent / "tools"))
 
 from pawflow_relay.utils import translate_path
 from tools.fs_common import windows_shell_cwd

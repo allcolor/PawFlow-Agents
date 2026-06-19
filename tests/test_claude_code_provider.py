@@ -271,6 +271,67 @@ class TestStreamClaude(unittest.TestCase):
             # turn_callback receives the full turn text
             self.assertEqual(turns, ["Hello world!"])
 
+    def _run_tool_turn(self, **stream_kwargs):
+        """Drive a tool_use(m1) → tool_result → text(m2) stream and return
+        whatever the provided callbacks captured. msg_id m1→m2 forces the
+        turn-1 flush so we can observe whether the tool_call is re-emitted."""
+        events = [
+            json.dumps({"type": "assistant", "message": {"id": "m1", "content": [
+                {"type": "tool_use", "id": "tc1", "name": "Read",
+                 "input": {"path": "/x"}}]}}),
+            json.dumps({"type": "user", "message": {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "tc1",
+                 "content": "file body"}]}}),
+            json.dumps({"type": "assistant", "message": {"id": "m2", "content": [
+                {"type": "text", "text": "Done"}]}}),
+            json.dumps({"type": "result", "result": "", "model": "sonnet",
+                        "usage": {"input_tokens": 10, "output_tokens": 5}}),
+        ]
+        mock_stdout = MagicMock()
+        mock_stdout.__iter__ = MagicMock(
+            return_value=iter([line + "\n" for line in events]))
+        mock_proc = MagicMock()
+        mock_proc.stdout = mock_stdout
+        mock_proc.returncode = 0
+        with patch.object(self.client, '_pool_popen',
+                          return_value=(mock_proc, None)):
+            self.client.complete_stream(
+                [LLMMessage(role="user", content="Hi",
+                            conversation_id="test_conv")],
+                **stream_kwargs)
+
+    def test_block_callback_no_double_persist_tool_call(self):
+        """With block_callback wired (claude-code is now in the gate), a
+        tool_use is persisted LIVE via block_callback and must NOT be
+        re-emitted to turn_callback at the end-of-turn flush — else the
+        transcript carries the tool_call twice. Regression for the cc-p
+        live-tool SSE fix."""
+        blocks = []
+        turn_tcs = []
+        self._run_tool_turn(
+            block_callback=lambda et, payload: blocks.append((et, payload)),
+            turn_callback=lambda text, tc, *a: turn_tcs.extend(tc),
+        )
+        # tool_use went out live via block_callback, exactly once
+        tool_use_blocks = [p for (et, p) in blocks if et == "tool_use"]
+        self.assertEqual(len(tool_use_blocks), 1)
+        self.assertEqual(tool_use_blocks[0]["id"], "tc1")
+        # its result went live too
+        self.assertTrue(any(et == "tool_result" and p.get("tc_id") == "tc1"
+                            for (et, p) in blocks))
+        # turn flush must NOT carry tc1 again (no double-persist)
+        self.assertNotIn("tc1", [t.get("id") for t in turn_tcs])
+
+    def test_no_block_callback_tool_call_persisted_at_flush(self):
+        """Control: without block_callback (pre-fix default), the tool_use is
+        delivered to turn_callback at the flush — persisted exactly once
+        there, never lost."""
+        turn_tcs = []
+        self._run_tool_turn(
+            turn_callback=lambda text, tc, *a: turn_tcs.extend(tc),
+        )
+        self.assertIn("tc1", [t.get("id") for t in turn_tcs])
+
     def test_stream_binary_not_found(self):
         with patch.object(self.client, '_pool_popen',
                           side_effect=FileNotFoundError()):

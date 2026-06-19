@@ -611,7 +611,7 @@ class _ALCClosures2Mixin:
                 thinking_budget=st._tb,
                 thinking_callback=st.emitter.get_thinking_callback(ps) if st._tb > 0 else None,
                 turn_callback=st._claude_code_turn_callback if st._client_provider in ("claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "gemini") else None,
-                block_callback=st._cli_block_callback if st._client_provider in ("claude-code-interactive", "antigravity-interactive", "codex-app-server", "gemini") else None,
+                block_callback=st._cli_block_callback if st._client_provider in ("claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "gemini") else None,
                 **_call_kwargs)
         return st.client.complete(
             messages=msgs, model=st.model or None,

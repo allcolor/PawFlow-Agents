@@ -414,6 +414,7 @@ class _CCStreamMixin:
         st._last_tool_result_time = 0.0  # monotonic time of last tool_result with no pending tools
         st._pending_tool_ids = set()     # tool_use ids awaiting results
         st._emitted_sse_tcs = set()      # tool_use ids for which we sent a SSE tool_call
+        st._block_persisted_tc_ids = set()  # tool_use ids already persisted live via block_callback (skip at turn flush to avoid double-persist)
         st._compact_result_done = False  # flip when compact_result tool delivers
 
         # Phantom tool call detector: if CC emits too many empty/phantom

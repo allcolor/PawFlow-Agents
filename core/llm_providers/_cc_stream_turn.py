@@ -206,12 +206,17 @@ class _CCStreamTurnMixin:
             if t.get("name") == "bash" and isinstance(args, dict) and not str(args.get("command", "")).strip():
                 return False
             return True
-        tc = [t for t in st._turn_tool_calls if _has_real_args(t)]
-        _dropped = len(st._turn_tool_calls) - len(tc)
+        _real = [t for t in st._turn_tool_calls if _has_real_args(t)]
+        _dropped = len(st._turn_tool_calls) - len(_real)
         if _dropped:
             _dropped_tcs = [t for t in st._turn_tool_calls if not _has_real_args(t)]
             logger.warning("[CC-DROPPED] %d phantom tool call(s): %s", _dropped,
                          json.dumps(_dropped_tcs, default=str, ensure_ascii=False)[:3000])
+        # Skip tool calls already persisted live via block_callback so the
+        # turn flush does not persist them a second time (mirrors the
+        # _tool_results.pop dedup for results). Empty set when block_callback
+        # is disabled, so this is a no-op for that path.
+        tc = [t for t in _real if t.get("id") not in st._block_persisted_tc_ids]
         turn_thinking = st._turn_thinking
         # Redacted thinking synthesis: if CC sent thinking blocks with
         # signature but no content (Anthropic API policy — reasoning

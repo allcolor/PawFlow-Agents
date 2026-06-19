@@ -482,7 +482,10 @@ def test_gemini_acp_permission_result_cancels_without_allow_option():
 
 def test_agent_core_passes_live_block_callback_to_acp_providers():
     src = agent_core_src()
-    assert 'block_callback=_cli_block_callback if _client_provider in ("claude-code-interactive", "antigravity-interactive", "codex-app-server", "gemini") else None' in src
+    # claude-code (-p) is now in the block_callback gate too, so its
+    # tool_use/tool_result blocks stream live instead of bundling at the
+    # end-of-turn flush (cc-p live-tool SSE fix). Must match turn_callback.
+    assert 'block_callback=_cli_block_callback if _client_provider in ("claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "gemini") else None' in src
     assert 'turn_callback=_claude_code_turn_callback if _client_provider in ("claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "gemini") else None' in src
 
 

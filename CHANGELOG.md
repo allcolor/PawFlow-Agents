@@ -4,6 +4,21 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- claude-code (`-p`) tool calls now stream live again instead of arriving
+  bundled with their results at the end of the turn. agent_core wired
+  `block_callback` for every CLI provider except `claude-code`, so its
+  tool_use/tool_result blocks were held until the end-of-turn flush — the
+  UI showed the tool_call and its result together, late, with no BG/Kill
+  window (worsened by newer Claude Code CLIs emitting the whole response
+  under a single turn). `claude-code` is now in the `block_callback` gate,
+  and the claude-code stream loop marks block-persisted tool_use ids so the
+  turn flush no longer re-persists them (no double tool_call in the
+  transcript).
+
 ## [1.0.0-alpha.50] — 2026-06-18
 
 ### Fixed

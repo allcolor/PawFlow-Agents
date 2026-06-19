@@ -287,6 +287,13 @@ class _CCStreamLoopMixin:
                                 if _parent_tc_id:
                                     _bc_payload["parent_tc_id"] = _parent_tc_id
                                 st.block_callback("tool_use", _bc_payload)
+                                # Persisted live via block_callback — skip it at
+                                # the end-of-turn flush so it isn't persisted
+                                # twice (mirrors the _tool_results.pop dedup for
+                                # results). Only reached when block_callback is
+                                # wired (claude-code now included); a no-op set
+                                # otherwise.
+                                st._block_persisted_tc_ids.add(_block_id)
                                 st._turn_thinking = ""
                             except Exception as _bc_err:
                                 logger.error(

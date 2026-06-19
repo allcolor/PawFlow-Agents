@@ -4,10 +4,22 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [1.0.0-alpha.52] — 2026-06-19
 
 ### Fixed
 
+- Installed wheel could not start (`pawflow`/`pawcode` crashed with
+  `ModuleNotFoundError: No module named 'cli_commands'`). `cli.py` imports
+  `cli_commands` at module load, but only `cli` was listed in
+  `[tool.setuptools] py-modules`, so `cli_commands.py` was never packaged.
+  Both top-level modules are now declared.
+- CI bandit run failed on the deliberate `subprocess` re-export in
+  `core/install_bootstrap.py` (kept so tests can patch `ib.subprocess`);
+  the import is now annotated `# nosec B404`.
+- Pixazo describe/remix now upload the image bytes instead of handing
+  Pixazo a URL it must fetch.
+- Media error messages distinguish an unsupported operation from a
+  failed-to-connect condition.
 - claude-code (`-p`) tool calls now stream live again instead of arriving
   bundled with their results at the end of the turn. agent_core wired
   `block_callback` for every CLI provider except `claude-code`, so its

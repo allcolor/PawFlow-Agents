@@ -148,6 +148,8 @@ class _InteractiveContainerSpawnMixin:
             (project_root / "core" / "tool_json.py", "/opt/pawflow/tool_json.py"),
             (project_root / "tools" / "cc_interactive_filters.py", "/opt/pawflow/cc_interactive_filters.py"),
             (project_root / "tools" / "cc_interactive_proxy.py", "/opt/pawflow/cc_interactive_proxy.py"),
+            (project_root / "tools" / "cc_interactive_common.py", "/opt/pawflow/cc_interactive_common.py"),
+            (project_root / "tools" / "cc_interactive_observers.py", "/opt/pawflow/cc_interactive_observers.py"),
             (project_root / "tools" / "cc_interactive_hook.py", "/opt/pawflow/cc_interactive_hook.py"),
             (project_root / "docker" / "pawflow_sdk" / "pawflow.py", "/opt/pawflow/pawflow.py"),
         ]

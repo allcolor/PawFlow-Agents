@@ -154,6 +154,7 @@ def test_speech_to_video_requires_both_urls():
 
 def test_describe_image_sends_image_url():
     s = _image("ideogram")
+    s._fetch_multipart_file = lambda u: None  # deterministic: skip real fetch, URL fallback
     # describe uses convention=sync — _post must return the description inline
     captured = {}
     def _fake_post(ep, body, **kw):
@@ -178,6 +179,7 @@ def test_describe_image_requires_image_url():
 
 def test_remix_image_sends_prompt_and_image():
     s = _image("ideogram")
+    s._fetch_multipart_file = lambda u: None  # deterministic: skip real fetch, URL fallback
     cap = _stub(s, media_bytes=b"PNG", content_type="image/png")
     out = s.remix_image(prompt="make it cyberpunk",
                          image_url="https://src/base.png")
@@ -217,7 +219,7 @@ def test_upscale_video_requires_video_url():
 
 def test_remove_background_sends_image_url():
     s = _upscale("bria-rmbg-2-0-682")
-    cap = _stub(s, media_bytes=b"PNG", content_type="image/png")
+    _stub(s, media_bytes=b"PNG", content_type="image/png")
     out = s.remove_background(image_url="https://src/photo.jpg")
     assert out["bytes"] == b"PNG"
 
@@ -386,3 +388,40 @@ def test_speech_to_video_no_resolver():
     h = SpeechToVideoHandler()
     assert "Error" in h.execute({"image_url": "https://i.png",
                                   "audio_url": "https://a.mp3"})
+
+
+# ── describe/remix upload bytes instead of a URL Pixazo must fetch ────
+
+
+def test_describe_image_uploads_bytes_when_multipart():
+    """describe sends the image as a binary multipart part (not a URL Pixazo
+    fetches), so PawFlow-local filestore URLs work."""
+    from services._pixazo_base import _MultipartFile
+    s = _image("ideogram")
+    s._fetch_multipart_file = lambda u: _MultipartFile("p.png", "image/png", b"PNGBYTES")
+    captured = {}
+
+    def _fake_post(ep, body, **kw):
+        captured["body"] = body
+        captured["multipart"] = kw.get("multipart")
+        return {"data": {"description": "a cat"}}
+
+    s._post = _fake_post
+    out = s.describe_image(image_url="http://localhost:9090/files/abc/x.png")
+    assert out["description"] == "a cat"
+    assert captured["multipart"] is True
+    part = captured["body"]["image_file"]
+    assert isinstance(part, _MultipartFile)
+    assert part.data == b"PNGBYTES"
+
+
+def test_encode_multipart_emits_binary_file_part():
+    from services._pixazo_base import _PixazoBaseService, _MultipartFile
+    body, boundary = _PixazoBaseService._encode_multipart({
+        "prompt": "hi",
+        "image_file": _MultipartFile("a.png", "image/png", b"\x89PNGDATA"),
+    })
+    assert b'name="prompt"' in body and b"hi" in body
+    assert b'name="image_file"; filename="a.png"' in body
+    assert b"Content-Type: image/png" in body
+    assert b"\x89PNGDATA" in body

@@ -47,6 +47,16 @@ from services._pixazo_helpers import (  # noqa: F401 -- re-exported for back-com
 logger = logging.getLogger(__name__)
 
 
+class _MultipartFile:
+    """A binary file part for ``_encode_multipart`` (form-data file upload)."""
+    __slots__ = ("filename", "content_type", "data")
+
+    def __init__(self, filename: str, content_type: str, data: bytes):
+        self.filename = filename or "upload.bin"
+        self.content_type = content_type or "application/octet-stream"
+        self.data = data
+
+
 class _PixazoBaseService(BaseService):
     """Generic Pixazo catalog dispatcher. Subclass per category."""
 
@@ -244,16 +254,26 @@ class _PixazoBaseService(BaseService):
     def _encode_multipart(fields: Dict[str, Any]) -> Tuple[bytes, str]:
         """Build a tiny multipart/form-data body.
 
-        Only string fields are supported — sufficient for Pixazo's
-        describe/edit/remix endpoints where the payload is a handful
-        of short text fields plus an image URL. For file uploads,
-        callers should use the image_urls convention instead.
+        String fields become plain form fields. A ``_MultipartFile`` value is
+        sent as a binary file part (filename + Content-Type) — used by
+        describe/remix so Pixazo receives the image bytes directly instead of a
+        URL it must fetch server-side (which fails for PawFlow-local filestore
+        URLs unreachable from Pixazo).
         """
         import uuid as _uuid
         boundary = f"pawflowPixazoBoundary{_uuid.uuid4().hex}"
         lines = []
         for name, value in fields.items():
             lines.append(f"--{boundary}".encode())
+            if isinstance(value, _MultipartFile):
+                lines.append((
+                    f'Content-Disposition: form-data; name="{name}"; '
+                    f'filename="{value.filename}"').encode())
+                lines.append(f"Content-Type: {value.content_type}".encode())
+                lines.append(b"")
+                lines.append(value.data if isinstance(value.data, bytes)
+                             else str(value.data).encode("utf-8"))
+                continue
             lines.append(
                 f'Content-Disposition: form-data; name="{name}"'.encode())
             lines.append(b"")
@@ -263,6 +283,43 @@ class _PixazoBaseService(BaseService):
         lines.append(f"--{boundary}--".encode())
         lines.append(b"")
         return b"\r\n".join(lines), boundary
+
+    def _fetch_multipart_file(self, url: str) -> Optional["_MultipartFile"]:
+        """Fetch an image URL to bytes for binary multipart upload.
+
+        Pixazo's describe/remix endpoints otherwise fetch the supplied URL
+        server-side, which fails (500) for PawFlow-local filestore URLs such as
+        ``http://localhost:9090/files/...`` that Pixazo cannot reach. PawFlow
+        *can* reach its own filestore, so we fetch here and upload the raw
+        bytes. Returns None (caller falls back to the URL string) on any error
+        or for non-fetchable schemes.
+        """
+        if not url or not isinstance(url, str):
+            return None
+        low = url.lower()
+        if not (low.startswith("http://") or low.startswith("https://")
+                or low.startswith("data:")):
+            return None
+        try:
+            ctx = ssl.create_default_context()
+            req = urllib.request.Request(
+                url, headers={"User-Agent": self._cf_ua or _BROWSER_UA})
+            with urllib.request.urlopen(  # nosec B310 - PawFlow filestore / caller-supplied image URL.
+                    req, timeout=self.timeout, context=ctx) as resp:
+                data = resp.read()
+                ctype = (resp.headers.get("Content-Type", "")
+                         or "application/octet-stream")
+            ctype = ctype.split(";")[0].strip() or "application/octet-stream"
+            from urllib.parse import urlparse
+            name = urlparse(url).path.rsplit("/", 1)[-1] or "image"
+            if "." not in name:
+                import mimetypes
+                name = "image" + (mimetypes.guess_extension(ctype) or ".png")
+            return _MultipartFile(name, ctype, data)
+        except Exception:
+            logger.debug("[PIXAZO] multipart image fetch failed for %s",
+                         self._short_url(url), exc_info=True)
+            return None
 
     def _post(self, endpoint: str, body: Dict[str, Any],
               *, multipart: bool = False,

@@ -113,6 +113,11 @@ class PixazoImageService(_PixazoBaseService, BaseImageGenerationService):
             if k not in body and k not in ("destination", "path", "service", "model"):
                 body[k] = v
         if multipart:
+            # Upload the image bytes directly so Pixazo doesn't have to fetch
+            # the URL (PawFlow-local filestore URLs are unreachable from it).
+            uploaded = self._fetch_multipart_file(image_url)
+            if uploaded is not None:
+                body[input_field] = uploaded
             data = self._post(endpoint, body, multipart=True)
         else:
             data = self._post(endpoint, body)
@@ -141,6 +146,11 @@ class PixazoImageService(_PixazoBaseService, BaseImageGenerationService):
         for k, v in kwargs.items():
             if k not in body and k not in ("destination", "path", "service", "model"):
                 body[k] = v
+        if op.get("multipart_form_data") and isinstance(body.get(input_field), str):
+            # Upload bytes instead of a URL Pixazo would have to fetch.
+            uploaded = self._fetch_multipart_file(image_url)
+            if uploaded is not None:
+                body[input_field] = uploaded
         r = self._invoke("remix_image", body, model_id=model)
         return {"image_bytes": r["bytes"],
                 "content_type": r["content_type"],

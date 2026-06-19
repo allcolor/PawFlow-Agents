@@ -92,6 +92,7 @@ _TMP_ALLOWLIST = _tmp_allowlist()
 from pawflow_relay.proc_registry import (  # noqa: E402
     kill_inflight_proc,
 )
+from pawflow_relay._relay_terminal import TerminalManager  # noqa: E402
 
 
 def _is_allowed_tmp_path(path: str) -> bool:
@@ -538,7 +539,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             if not allow_exec:
                 return {"ok": False, "error": "Exec not allowed"}
             try:
-                _sid = _open_terminal(
+                _sid = _term_mgr.open(
                     cols=msg.get("cols", 80),
                     rows=msg.get("rows", 24),
                     shell=msg.get("shell"),  # nosec B604 - terminal tool intentionally opens requested shell.
@@ -555,7 +556,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 _hh = os.environ.get("PAWFLOW_HOST_HELPER", "")
                 if _hh:
                     return _forward_to_host_helper(_hh, msg, ws_sock_ref[0], _ws_frame_send)
-            ok = _close_terminal(_sid)
+            ok = _term_mgr.close(_sid)
             return {"ok": ok, "error": "" if ok else "Session not found"}
 
         if action == "write_terminal":
@@ -564,15 +565,8 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 _hh = os.environ.get("PAWFLOW_HOST_HELPER", "")
                 if _hh:
                     return _forward_to_host_helper(_hh, msg, ws_sock_ref[0], _ws_frame_send)
-            _tsess = _terminal_sessions.get(_sid)
-            if not _tsess:
-                return {"ok": False, "error": f"Terminal session not found: {_sid}"}
-            try:
-                _raw = base64.b64decode(msg.get("data", ""))
-                os.write(_tsess["master_fd"], _raw)
-                return {"ok": True}
-            except OSError as e:
-                return {"ok": False, "error": str(e)}
+            _ok, _err = _term_mgr.write(_sid, msg.get("data", ""))
+            return {"ok": True} if _ok else {"ok": False, "error": _err}
 
         if action == "resize_terminal":
             _sid = msg.get("session_id", "")
@@ -580,28 +574,11 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 _hh = os.environ.get("PAWFLOW_HOST_HELPER", "")
                 if _hh:
                     return _forward_to_host_helper(_hh, msg, ws_sock_ref[0], _ws_frame_send)
-            _tsess = _terminal_sessions.get(_sid)
-            if not _tsess:
-                return {"ok": False, "error": f"Terminal session not found: {_sid}"}
-            try:
-                import fcntl as _fcntl_rt
-                import termios as _termios_rt
-                import array as _array_rt
-                _c = msg.get("cols", 80)
-                _r = msg.get("rows", 24)
-                _ws = _array_rt.array("H", [_r, _c, 0, 0])
-                _fcntl_rt.ioctl(_tsess["master_fd"], _termios_rt.TIOCSWINSZ, _ws)
-                return {"ok": True}
-            except Exception as e:
-                return {"ok": False, "error": str(e)}
+            _ok, _err = _term_mgr.resize(_sid, cols=msg.get("cols", 80), rows=msg.get("rows", 24))
+            return {"ok": True} if _ok else {"ok": False, "error": _err}
 
         if action == "list_terminals":
-            return {"ok": True, "data": {
-                "sessions": [
-                    {"session_id": sid, "shell": s["shell"]}
-                    for sid, s in _terminal_sessions.items()
-                ]
-            }}
+            return {"ok": True, "data": {"sessions": _term_mgr.list()}}
 
         if action == "http_proxy":
             if not allow_exec:
@@ -1923,7 +1900,16 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             _wd_thread.start()
             _send_lock = _threading.Lock()
             _child_relays = {}  # relay_id → thread (child relay instances)
-            _terminal_sessions = {}  # session_id → {master_fd, pid, reader}
+
+            def _term_send(_frame):
+                # PTY reader threads stream output here; take the shared
+                # send lock before writing to the (SSL) socket — concurrent
+                # writes interleave mid-record and corrupt the stream.
+                with _send_lock:
+                    _ws_frame_send(sock, _frame)
+            # Recreated per (re)connection so PTY sessions never outlive
+            # their socket (mirrors the old per-connection _terminal_sessions).
+            _term_mgr = TerminalManager(root_dir, _term_send)
             _disconnect_reason = "unknown"
             _close_info = ""
             _inflight_cmds = {}
@@ -1981,92 +1967,6 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                     send_callable=lambda b: _ws_frame_send(sock, b),
                     send_lock=_send_lock)
                 _skills_fs_swap.set_inner(_skills_fs_client)
-
-            def _open_terminal(cols=80, rows=24, shell=None):
-                import uuid as _uuid_term
-                import fcntl
-                import termios
-                import array
-
-                _sid = _uuid_term.uuid4().hex[:12]
-                _shell = shell or os.environ.get("SHELL", "/bin/bash")
-
-                pid, master_fd = os.forkpty()
-                if pid == 0:
-                    os.chdir(root_dir)
-                    env = os.environ.copy()
-                    env["TERM"] = "xterm-256color"
-                    env["COLUMNS"] = str(cols)
-                    env["LINES"] = str(rows)
-                    os.execvpe(_shell, [_shell], env)  # nosec B606
-
-                # Set terminal size
-                try:
-                    winsize = array.array("H", [rows, cols, 0, 0])
-                    fcntl.ioctl(master_fd, termios.TIOCSWINSZ, winsize)
-                except Exception:
-                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-
-                # Reader thread: PTY fd → WS
-                def _pty_reader(_fd, _sid):
-                    try:
-                        while True:
-                            data = os.read(_fd, 4096)
-                            if not data:
-                                break
-                            frame = json.dumps({
-                                "type": "terminal_data",
-                                "session_id": _sid,
-                                "data": base64.b64encode(data).decode("ascii"),
-                            }).encode("utf-8")
-                            with _send_lock:
-                                _ws_frame_send(sock, frame)
-                    except OSError:
-                        pass
-                    finally:
-                        try:
-                            frame = json.dumps({
-                                "type": "terminal_exit",
-                                "session_id": _sid,
-                            }).encode("utf-8")
-                            with _send_lock:
-                                _ws_frame_send(sock, frame)
-                        except Exception:
-                            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-
-                reader = _threading.Thread(
-                    target=_pty_reader, args=(master_fd, _sid),
-                    daemon=True, name=f"pty-reader-{_sid}")
-                reader.start()
-
-                _terminal_sessions[_sid] = {
-                    "master_fd": master_fd,
-                    "pid": pid,
-                    "reader": reader,
-                    "shell": _shell,
-                }
-                sys.stderr.write(f"[FSRelay] Terminal opened: {_sid} (shell={_shell})\n")
-                return _sid
-
-            def _close_terminal(session_id):
-                sess = _terminal_sessions.pop(session_id, None)
-                if not sess:
-                    return False
-                try:
-                    os.close(sess["master_fd"])
-                except OSError:
-                    pass
-                try:
-                    os.kill(sess["pid"], 9)
-                    os.waitpid(sess["pid"], os.WNOHANG)
-                except (OSError, ChildProcessError):
-                    pass
-                sys.stderr.write(f"[FSRelay] Terminal closed: {session_id}\n")
-                return True
-
-            def _close_all_terminals():
-                for sid in list(_terminal_sessions):
-                    _close_terminal(sid)
 
             while True:
                 try:
@@ -2249,28 +2149,15 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
 
                 elif msg.get("type") == "terminal_input":
                     _tid = msg.get("session_id", "")
-                    _tsess = _terminal_sessions.get(_tid)
-                    if _tsess:
-                        try:
-                            _raw = base64.b64decode(msg.get("data", ""))
-                            os.write(_tsess["master_fd"], _raw)
-                        except OSError as _oe:
-                            sys.stderr.write(f"[FSRelay] terminal write error: {_oe}\n")
+                    if _tid in _term_mgr.sessions:
+                        _ok, _err = _term_mgr.write(_tid, msg.get("data", ""))
+                        if not _ok and _err:
+                            sys.stderr.write(f"[FSRelay] terminal write error: {_err}\n")
 
                 elif msg.get("type") == "terminal_resize":
                     _tid = msg.get("session_id", "")
-                    _tsess = _terminal_sessions.get(_tid)
-                    if _tsess:
-                        try:
-                            import fcntl as _fcntl_r
-                            import termios as _termios_r
-                            import array as _array_r
-                            _c = msg.get("cols", 80)
-                            _r = msg.get("rows", 24)
-                            _ws = _array_r.array("H", [_r, _c, 0, 0])
-                            _fcntl_r.ioctl(_tsess["master_fd"], _termios_r.TIOCSWINSZ, _ws)
-                        except Exception:
-                            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+                    if _tid in _term_mgr.sessions:
+                        _term_mgr.resize(_tid, cols=msg.get("cols", 80), rows=msg.get("rows", 24))
 
                 elif msg.get("type") == "command":
                     request_id = msg.get("request_id", "")
@@ -2349,7 +2236,9 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
 
         except KeyboardInterrupt:
             sys.stderr.write("\n[FSRelay] Shutting down.\n")
-            _close_all_terminals()
+            _tm = locals().get('_term_mgr')
+            if _tm:
+                _tm.close_all()
             # Final exit — unmount the combined FUSE filesystem before
             # returning so we don't leave a dangling pyfuse3 mount
             # pointing at a dead WS.
@@ -2378,11 +2267,12 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 f"inflight={locals().get('_active_cmd_summary', lambda: 'unknown')()} "
                 f"diag={locals().get('_diag_summary', lambda: 'unknown')()})\n")
         finally:
-            # Guard: on early connect errors, _close_all_terminals may not
-            # be defined yet (its definition sits past the handshake).
-            _ct = locals().get('_close_all_terminals')
-            if _ct:
-                _ct()
+            # Guard: on early connect errors, _term_mgr may not be defined
+            # yet (it is created during per-connection setup, past the
+            # handshake).
+            _tm = locals().get('_term_mgr')
+            if _tm:
+                _tm.close_all()
             # Detach the per-WS ServerFsClient from the FUSE mount and
             # cancel its pending requests with EIO so the kernel doesn't
             # hang on the dead socket. The FUSE mount itself stays up

@@ -1793,7 +1793,7 @@ def test_relay_desktop_waits_for_reachable_novnc():
     assert 'GET /vnc.html HTTP/1.1' in src
     assert "_novnc_http_ready(_novnc_port" in start_desktop
     assert "noVNC failed to become ready" in start_desktop
-    procs_registered = start_desktop.index("_execute_command._desktop_procs = _procs")
+    procs_registered = start_desktop.index("_state.desktop_procs = _procs")
     readiness_error = start_desktop.index("noVNC failed to become ready")
     assert procs_registered < readiness_error
 

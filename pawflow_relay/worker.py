@@ -31,6 +31,7 @@ import sys
 import tempfile
 import threading
 import time
+from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
@@ -111,6 +112,38 @@ def _is_allowed_tmp_path(path: str) -> bool:
         except ValueError:
             continue
     return False
+
+
+@dataclass
+class RelayWorkerState:
+    """Per-connection mutable state for a WS relay worker.
+
+    Holds the long-lived process/session handles that the action
+    handlers in `_execute_command` read and mutate. Previously these
+    lived as ad-hoc attributes stashed on the `_execute_command`
+    function object; a fresh instance is created per `_ws_connect`
+    call so nothing leaks across connections. Defaults mirror the old
+    lazy-init values exactly (None for handles/ports, a fresh dict for
+    each WS-session map).
+    """
+    # code-server
+    code_server_proc: object = None
+    code_server_port: object = None
+    code_server_base_path: str = ""
+    cs_ws_sessions: dict = field(default_factory=dict)
+    # desktop (containerized)
+    desktop_procs: object = None
+    desktop_essential_procs: object = None
+    desktop_vnc_port: object = None
+    desktop_novnc_port: object = None
+    desktop_display: object = None
+    desktop_watchdog_stop: object = None
+    desktop_watchdog_thread: object = None
+    desktop_ws_sessions: dict = field(default_factory=dict)
+    # local desktop (host screen)
+    local_desktop_procs: object = None
+    local_desktop_vnc_port: object = None
+    local_desktop_novnc_port: object = None
 
 
 # ── Request handler ───────────────────────────────────────────────
@@ -359,10 +392,15 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
     MockHandler.allow_local = allow_local
     mock = MockHandler()
 
+    # Per-connection mutable state (process/session handles). Captured by
+    # the action closures below; replaces the old _execute_command.<attr>
+    # function-attribute stash.
+    _state = RelayWorkerState()
+
     from pawflow_relay.ws_frame import ws_send as _ws_frame_send, ws_recv as _ws_frame_recv
 
     def _novnc_http_ready(port=None, timeout=1.0):
-        port = int(port or getattr(_execute_command, '_desktop_novnc_port', 0) or 0)
+        port = int(port or getattr(_state, 'desktop_novnc_port', 0) or 0)
         if not port:
             return False
         try:
@@ -375,17 +413,17 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             return False
 
     def _desktop_is_healthy():
-        procs = getattr(_execute_command, '_desktop_procs', None)
+        procs = getattr(_state, 'desktop_procs', None)
         if not procs:
             return False
-        essential = getattr(_execute_command, '_desktop_essential_procs', None) or procs
+        essential = getattr(_state, 'desktop_essential_procs', None) or procs
         return all(p.poll() is None for p in essential) and _novnc_http_ready()
 
     def _desktop_cleanup(reason=""):
-        stop = getattr(_execute_command, '_desktop_watchdog_stop', None)
+        stop = getattr(_state, 'desktop_watchdog_stop', None)
         if stop:
             stop.set()
-        procs = getattr(_execute_command, '_desktop_procs', None) or []
+        procs = getattr(_state, 'desktop_procs', None) or []
         for p in procs:
             try:
                 if p.poll() is None:
@@ -403,13 +441,13 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                     logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             except Exception:
                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-        _execute_command._desktop_procs = None
-        _execute_command._desktop_essential_procs = None
-        _execute_command._desktop_vnc_port = None
-        _execute_command._desktop_novnc_port = None
-        _execute_command._desktop_display = None
-        _execute_command._desktop_watchdog_stop = None
-        _execute_command._desktop_watchdog_thread = None
+        _state.desktop_procs = None
+        _state.desktop_essential_procs = None
+        _state.desktop_vnc_port = None
+        _state.desktop_novnc_port = None
+        _state.desktop_display = None
+        _state.desktop_watchdog_stop = None
+        _state.desktop_watchdog_thread = None
         if "DISPLAY" in os.environ:
             del os.environ["DISPLAY"]
         if reason:
@@ -417,18 +455,18 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
 
     def _start_desktop_watchdog(procs):
         stop = threading.Event()
-        _execute_command._desktop_watchdog_stop = stop
+        _state.desktop_watchdog_stop = stop
 
         def _watchdog():
             while not stop.wait(5):
-                if getattr(_execute_command, '_desktop_procs', None) is not procs:
+                if getattr(_state, 'desktop_procs', None) is not procs:
                     return
                 if not _desktop_is_healthy():
                     _desktop_cleanup("healthcheck failed")
                     return
 
         t = threading.Thread(target=_watchdog, daemon=True, name="desktop-healthcheck")
-        _execute_command._desktop_watchdog_thread = t
+        _state.desktop_watchdog_thread = t
         t.start()
 
     def _execute_command(msg, on_output=None):
@@ -600,12 +638,12 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             _public_base_path = msg.get("base_path", "")
             _upstream_base_path = "/"
             _abs_proxy_base_path = _public_base_path.rstrip("/")
-            if hasattr(_execute_command, '_code_server_proc') and _execute_command._code_server_proc:
-                p = _execute_command._code_server_proc
+            if hasattr(_state, 'code_server_proc') and _state.code_server_proc:
+                p = _state.code_server_proc
                 if p.poll() is None:
-                    _running_base = getattr(_execute_command, '_code_server_base_path', "")
+                    _running_base = getattr(_state, 'code_server_base_path', "")
                     if _running_base == _public_base_path:
-                        return {"ok": True, "data": {"port": _execute_command._code_server_port, "already_running": True}}
+                        return {"ok": True, "data": {"port": _state.code_server_port, "already_running": True}}
                     p.terminate()
             _cs_port = msg.get("port", 0)
             if not _cs_port:
@@ -680,9 +718,9 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                     except Exception:
                         logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                     return {"ok": False, "error": f"code-server did not become ready on port {_cs_port}: {_last_err}"}
-                _execute_command._code_server_proc = _cs_proc
-                _execute_command._code_server_port = _cs_port
-                _execute_command._code_server_base_path = _public_base_path
+                _state.code_server_proc = _cs_proc
+                _state.code_server_port = _cs_port
+                _state.code_server_base_path = _public_base_path
                 sys.stderr.write(f"[FSRelay] code-server started on port {_cs_port} public_base_path={_public_base_path} upstream_base_path={_upstream_base_path}\n")
                 return {"ok": True, "data": {"port": _cs_port, "pid": _cs_proc.pid, "upstream_base_path": _upstream_base_path}}
             except FileNotFoundError:
@@ -734,9 +772,9 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                     _cs_sock.close()
                     return {"ok": False, "error": f"WS handshake rejected: {_status_line.decode(errors='replace')}"}
                 # Reader thread: code-server WS -> relay WS -> server -> browser
-                if not hasattr(_execute_command, '_cs_ws_sessions'):
-                    _execute_command._cs_ws_sessions = {}
-                _execute_command._cs_ws_sessions[_ws_sid] = {"sock": _cs_sock}
+                if not hasattr(_state, 'cs_ws_sessions'):
+                    _state.cs_ws_sessions = {}
+                _state.cs_ws_sessions[_ws_sid] = {"sock": _cs_sock}
 
                 def _forward_cs_ws_frame(_sid, _raw_frame, _op, _payload, _fin=True):
                     sys.stderr.write(f"[FSRelay] cs_ws_data: sid={_sid} op={_op} len={len(_payload)}\n")
@@ -816,8 +854,8 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                             _sock.close()
                         except Exception:
                             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-                        if hasattr(_execute_command, '_cs_ws_sessions'):
-                            _execute_command._cs_ws_sessions.pop(_sid, None)
+                        if hasattr(_state, 'cs_ws_sessions'):
+                            _state.cs_ws_sessions.pop(_sid, None)
                         try:
                             with _send_lock:
                                 _ws_frame_send(ws_sock_ref[0], json.dumps({"type": "cs_ws_close", "session_id": _sid}).encode("utf-8"))
@@ -831,7 +869,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                     _forward_cs_ws_frame(_ws_sid, _leftover, _leftover[0] & 0x0F, b"", bool(_leftover[0] & 0x80))
                 _t = _threading.Thread(target=_cs_ws_reader, args=(_cs_sock, _ws_sid), daemon=True)
                 _t.start()
-                _execute_command._cs_ws_sessions[_ws_sid]["reader"] = _t
+                _state.cs_ws_sessions[_ws_sid]["reader"] = _t
                 return {"ok": True}
             except Exception as e:
                 return {"ok": False, "error": f"cs_ws_open error: {e}"}
@@ -840,9 +878,9 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             _ws_sid = msg.get("session_id", "")
             _ws_data = msg.get("data", "")
             _ws_op = msg.get("opcode", 1)
-            if not hasattr(_execute_command, '_cs_ws_sessions'):
+            if not hasattr(_state, 'cs_ws_sessions'):
                 return {"ok": False, "error": "No WS sessions"}
-            _ws_sess = _execute_command._cs_ws_sessions.get(_ws_sid)
+            _ws_sess = _state.cs_ws_sessions.get(_ws_sid)
             if not _ws_sess:
                 return {"ok": False, "error": f"WS session not found: {_ws_sid}"}
             try:
@@ -871,8 +909,8 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
 
         if action == "cs_ws_close":
             _ws_sid = msg.get("session_id", "")
-            if hasattr(_execute_command, '_cs_ws_sessions'):
-                _ws_sess = _execute_command._cs_ws_sessions.pop(_ws_sid, None)
+            if hasattr(_state, 'cs_ws_sessions'):
+                _ws_sess = _state.cs_ws_sessions.pop(_ws_sid, None)
                 if _ws_sess and _ws_sess.get("sock"):
                     try:
                         _ws_sess["sock"].close()
@@ -881,16 +919,16 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             return {"ok": True}
 
         if action == "stop_code_server":
-            if hasattr(_execute_command, '_code_server_proc') and _execute_command._code_server_proc:
-                p = _execute_command._code_server_proc
+            if hasattr(_state, 'code_server_proc') and _state.code_server_proc:
+                p = _state.code_server_proc
                 if p.poll() is None:
                     p.terminate()
                     try:
                         p.wait(timeout=5)
                     except subprocess.TimeoutExpired:
                         p.kill()
-                _execute_command._code_server_proc = None
-                _execute_command._code_server_port = None
+                _state.code_server_proc = None
+                _state.code_server_port = None
                 sys.stderr.write("[FSRelay] code-server stopped\n")
                 return {"ok": True}
             return {"ok": True, "data": {"was_running": False}}
@@ -912,12 +950,12 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             if not allow_exec:
                 return {"ok": False, "error": "Exec not allowed"}
             # Idempotent: if already running, return existing info
-            if hasattr(_execute_command, '_desktop_procs') and _execute_command._desktop_procs:
+            if hasattr(_state, 'desktop_procs') and _state.desktop_procs:
                 if _desktop_is_healthy():
                     return {"ok": True, "data": {
-                        "vnc_port": _execute_command._desktop_vnc_port,
-                        "novnc_port": _execute_command._desktop_novnc_port,
-                        "display": _execute_command._desktop_display,
+                        "vnc_port": _state.desktop_vnc_port,
+                        "novnc_port": _state.desktop_novnc_port,
+                        "display": _state.desktop_display,
                         "already_running": True
                     }}
                 _desktop_cleanup("stale desktop process")
@@ -1051,11 +1089,11 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                      f"0.0.0.0:{_novnc_port}", f"localhost:{_vnc_port}"],
                     stdout=_log_d, stderr=_log_d)
                 _procs.append(_p_novnc)
-                _execute_command._desktop_procs = _procs
-                _execute_command._desktop_essential_procs = [_p_xvfb, _p_vnc, _p_novnc]
-                _execute_command._desktop_vnc_port = _vnc_port
-                _execute_command._desktop_novnc_port = _novnc_port
-                _execute_command._desktop_display = _display
+                _state.desktop_procs = _procs
+                _state.desktop_essential_procs = [_p_xvfb, _p_vnc, _p_novnc]
+                _state.desktop_vnc_port = _vnc_port
+                _state.desktop_novnc_port = _novnc_port
+                _state.desktop_display = _display
 
                 _deadline = _time_mod.time() + 8
                 _novnc_ready = False
@@ -1083,27 +1121,27 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 return {"ok": False, "error": f"Failed to start desktop: {e}"}
 
         if action == "stop_desktop":
-            if hasattr(_execute_command, '_desktop_procs') and _execute_command._desktop_procs:
+            if hasattr(_state, 'desktop_procs') and _state.desktop_procs:
                 _desktop_cleanup("requested")
                 return {"ok": True}
             return {"ok": True, "data": {"was_running": False}}
 
         if action == "desktop_status":
             _running = _desktop_is_healthy()
-            if getattr(_execute_command, '_desktop_procs', None) and not _running:
+            if getattr(_state, 'desktop_procs', None) and not _running:
                 _desktop_cleanup("healthcheck failed")
             _local_running = False
-            if hasattr(_execute_command, '_local_desktop_procs') and _execute_command._local_desktop_procs:
-                _local_running = all(p.poll() is None for p in _execute_command._local_desktop_procs)
-            _novnc = getattr(_execute_command, '_desktop_novnc_port', None)
+            if hasattr(_state, 'local_desktop_procs') and _state.local_desktop_procs:
+                _local_running = all(p.poll() is None for p in _state.local_desktop_procs)
+            _novnc = getattr(_state, 'desktop_novnc_port', None)
             return {"ok": True, "data": {
                 "running": _running,
-                "display": getattr(_execute_command, '_desktop_display', None),
-                "vnc_port": getattr(_execute_command, '_desktop_vnc_port', None),
+                "display": getattr(_state, 'desktop_display', None),
+                "vnc_port": getattr(_state, 'desktop_vnc_port', None),
                 "novnc_port": _novnc,
                 "audio_port": (_novnc + 100) if _novnc and _running else 0,
                 "local_screen_running": _local_running,
-                "local_screen_novnc_port": getattr(_execute_command, '_local_desktop_novnc_port', None),
+                "local_screen_novnc_port": getattr(_state, 'local_desktop_novnc_port', None),
             }}
 
         # NOTE: local action forwarding is handled by the main dispatch
@@ -1111,20 +1149,20 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
 
         if action == "start_local_desktop":
             # Idempotent
-            if hasattr(_execute_command, '_local_desktop_procs') and _execute_command._local_desktop_procs:
-                _alive = all(p.poll() is None for p in _execute_command._local_desktop_procs)
+            if hasattr(_state, 'local_desktop_procs') and _state.local_desktop_procs:
+                _alive = all(p.poll() is None for p in _state.local_desktop_procs)
                 if _alive:
                     return {"ok": True, "data": {
-                        "novnc_port": _execute_command._local_desktop_novnc_port,
+                        "novnc_port": _state.local_desktop_novnc_port,
                         "already_running": True
                     }}
                 else:
-                    for p in _execute_command._local_desktop_procs:
+                    for p in _state.local_desktop_procs:
                         try:
                             p.kill()
                         except Exception:
                             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-                    _execute_command._local_desktop_procs = None
+                    _state.local_desktop_procs = None
 
             # Detect available VNC server
             _vnc_cmd = None
@@ -1223,9 +1261,9 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 _p_novnc = subprocess.Popen(_ws_args, stdout=_log_d, stderr=_log_d)  # nosec B603
                 _procs.append(_p_novnc)
 
-                _execute_command._local_desktop_procs = _procs
-                _execute_command._local_desktop_vnc_port = _vnc_port
-                _execute_command._local_desktop_novnc_port = _novnc_port
+                _state.local_desktop_procs = _procs
+                _state.local_desktop_vnc_port = _vnc_port
+                _state.local_desktop_novnc_port = _novnc_port
                 sys.stderr.write(f"[FSRelay] Local desktop started: vnc={_vnc_port} novnc={_novnc_port} platform={_platform}\n")
                 return {"ok": True, "data": {
                     "vnc_port": _vnc_port, "novnc_port": _novnc_port,
@@ -1237,18 +1275,18 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 return {"ok": False, "error": f"Failed to start local desktop: {e}"}
 
         if action == "stop_local_desktop":
-            if hasattr(_execute_command, '_local_desktop_procs') and _execute_command._local_desktop_procs:
-                for p in _execute_command._local_desktop_procs:
+            if hasattr(_state, 'local_desktop_procs') and _state.local_desktop_procs:
+                for p in _state.local_desktop_procs:
                     if p.poll() is None:
                         p.terminate()
-                for p in _execute_command._local_desktop_procs:
+                for p in _state.local_desktop_procs:
                     try:
                         p.wait(timeout=5)
                     except subprocess.TimeoutExpired:
                         p.kill()
-                _execute_command._local_desktop_procs = None
-                _execute_command._local_desktop_vnc_port = None
-                _execute_command._local_desktop_novnc_port = None
+                _state.local_desktop_procs = None
+                _state.local_desktop_vnc_port = None
+                _state.local_desktop_novnc_port = None
                 sys.stderr.write("[FSRelay] Local desktop stopped\n")
                 return {"ok": True}
             return {"ok": True, "data": {"was_running": False}}
@@ -1332,9 +1370,9 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                     sys.stderr.write(f"[FSRelay] desktop_ws_open handshake rejected: {_resp[:500]}\n")
                     _vnc_sock.close()
                     return {"ok": False, "error": f"WS handshake rejected: {_status_line.decode(errors='replace')}"}
-                if not hasattr(_execute_command, '_desktop_ws_sessions'):
-                    _execute_command._desktop_ws_sessions = {}
-                _execute_command._desktop_ws_sessions[_ws_sid] = {"sock": _vnc_sock}
+                if not hasattr(_state, 'desktop_ws_sessions'):
+                    _state.desktop_ws_sessions = {}
+                _state.desktop_ws_sessions[_ws_sid] = {"sock": _vnc_sock}
 
                 def _desktop_ws_reader(_sock, _sid):
                     sys.stderr.write(f"[FSRelay] desktop_ws_reader started for {_sid}\n")
@@ -1409,8 +1447,8 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                             _sock.close()
                         except Exception:
                             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-                        if hasattr(_execute_command, '_desktop_ws_sessions'):
-                            _execute_command._desktop_ws_sessions.pop(_sid, None)
+                        if hasattr(_state, 'desktop_ws_sessions'):
+                            _state.desktop_ws_sessions.pop(_sid, None)
                         try:
                             with _send_lock:
                                 _ws_frame_send(ws_sock_ref[0], json.dumps({"type": "desktop_ws_close", "session_id": _sid}).encode("utf-8"))
@@ -1419,7 +1457,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
 
                 _t = _threading.Thread(target=_desktop_ws_reader, args=(_vnc_sock, _ws_sid), daemon=True)
                 _t.start()
-                _execute_command._desktop_ws_sessions[_ws_sid]["reader"] = _t
+                _state.desktop_ws_sessions[_ws_sid]["reader"] = _t
                 return {"ok": True}
             except Exception as e:
                 return {"ok": False, "error": f"desktop_ws_open error: {e}"}
@@ -1428,9 +1466,9 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             _ws_sid = msg.get("session_id", "")
             _ws_data = msg.get("data", "")
             _ws_op = msg.get("opcode", 2)  # binary by default for VNC
-            if not hasattr(_execute_command, '_desktop_ws_sessions'):
+            if not hasattr(_state, 'desktop_ws_sessions'):
                 return {"ok": False, "error": "No desktop WS sessions"}
-            _ws_sess = _execute_command._desktop_ws_sessions.get(_ws_sid)
+            _ws_sess = _state.desktop_ws_sessions.get(_ws_sid)
             if not _ws_sess:
                 return {"ok": False, "error": f"Desktop WS session not found: {_ws_sid}"}
             try:
@@ -1450,8 +1488,8 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
 
         if action == "desktop_ws_close":
             _ws_sid = msg.get("session_id", "")
-            if hasattr(_execute_command, '_desktop_ws_sessions'):
-                _ws_sess = _execute_command._desktop_ws_sessions.pop(_ws_sid, None)
+            if hasattr(_state, 'desktop_ws_sessions'):
+                _ws_sess = _state.desktop_ws_sessions.pop(_ws_sid, None)
                 if _ws_sess and _ws_sess.get("sock"):
                     try:
                         _ws_sess["sock"].close()

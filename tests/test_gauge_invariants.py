@@ -568,7 +568,10 @@ def test_view_menu_has_three_grouping_toggles():
     convs = Path("tasks/io/chat_ui/conversations.js").read_text(encoding="utf-8")
     messages = Path("tasks/io/chat_ui/messages.js").read_text(encoding="utf-8")
     sse = Path("tasks/io/chat_ui/sse.js").read_text(encoding="utf-8")
-    conversation_py = Path("tasks/ai/actions/conversation.py").read_text(encoding="utf-8")
+    conversation_py = "".join(
+        Path(f"tasks/ai/actions/{_cf}").read_text(encoding="utf-8")
+        for _cf in ("conversation.py", "_conv_base.py", "_conv_core.py",
+                    "_conv_ops.py", "_conv_tags_export.py", "_conv_import.py"))
 
     for item_id in ("viewMenuToggle", "viewItemTechnical", "viewItemTask", "viewItemDelegate"):
         assert item_id in template

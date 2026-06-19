@@ -422,6 +422,7 @@ class AntigravityObserverPool(_AntigravityManualIngestMixin, _AntigravityInputMi
             (project_root / "tools" / "mcp_bridge.py", "/opt/pawflow/mcp_bridge.py"),
             (project_root / "core" / "tool_json.py", "/opt/pawflow/tool_json.py"),
             (project_root / "tools" / "ag_observer_proxy.py", "/opt/pawflow/ag_observer_proxy.py"),
+            (project_root / "tools" / "ag_observer_semantics.py", "/opt/pawflow/ag_observer_semantics.py"),
             (project_root / "docker" / "pawflow_sdk" / "pawflow.py", "/opt/pawflow/pawflow.py"),
         ]
         pkg_dir = project_root / "pawflow_relay"

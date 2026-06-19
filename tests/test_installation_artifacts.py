@@ -859,7 +859,9 @@ def test_startup_urls_match_install_phase():
 def test_python_package_metadata_includes_cli_and_relay_tools():
     pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
 
-    assert 'py-modules = ["cli"]' in pyproject
+    # cli.py imports cli_commands at module load, so both top-level modules
+    # must be packaged or the installed wheel fails to import cli.
+    assert 'py-modules = ["cli", "cli_commands"]' in pyproject
     include_block = pyproject[pyproject.index("[tool.setuptools.packages.find]"):]
     include_block = include_block[:include_block.index("exclude =")]
     assert '"tools*"' in include_block

@@ -1973,16 +1973,58 @@ class TestTelegramAgentClientTask(unittest.TestCase):
         task._send_tool_media = MagicMock()
 
         with patch.object(TelegramConversationBridgeTask, "_telegram_subscribers", return_value=[("alice", "chat-1")]):
-            # Streamed thinking blocks are buffered, NOT sent as separate
-            # "bouts" — Telegram only gets discrete messages.
-            task._on_event("conv1", "thinking_delta", {"agent_name": "assistant", "text": "Checking logs"})
-            task._on_event("conv1", "thinking_content", {"agent_name": "assistant", "text": "Found the bug"})
+            # cci streams the reasoning live as thinking_delta fragments (a
+            # transient preview); the durable thinking_content that follows is
+            # the SAME reasoning, finalized. Telegram must show it ONCE — the
+            # content supersedes the delta preview, it is not appended to it
+            # (appending was the duplication bug).
+            task._on_event("conv1", "thinking_delta", {"agent_name": "assistant", "text": "Found the "})
+            task._on_event("conv1", "thinking_delta", {"agent_name": "assistant", "text": "bug"})
+            task._on_event("conv1", "thinking_content", {"agent_name": "assistant", "text": "Found the bug in the parser"})
             task._send.assert_not_called()
             # The next non-thinking event flushes ONE consolidated block.
             task._on_event("conv1", "tool_result", {"agent_name": "assistant", "tool": "read"})
 
         assert [call.args[2] for call in task._send.call_args_list] == [
-            "💭 <i>assistant thinking</i>\n<blockquote>Checking logs\n\nFound the bug</blockquote>",
+            "💭 <i>assistant thinking</i>\n<blockquote>Found the bug in the parser</blockquote>",
+        ]
+
+    def test_conversation_bridge_thinking_content_not_duplicated_after_delta_preview(self):
+        """Regression: fragmented delta preview + the full durable block must
+        collapse to ONE message, not preview-fragments + the whole thing
+        again (the Telegram thinking-duplication bug)."""
+        from tasks.io.telegram_agent_client import TelegramConversationBridgeTask
+        task = TelegramConversationBridgeTask({"service_id": "telegram_bot"})
+        task._send = MagicMock()
+        task._send_tool_media = MagicMock()
+
+        full = "Worker.py shrank by 111 lines. Let me run the test suite."
+        with patch.object(TelegramConversationBridgeTask, "_telegram_subscribers", return_value=[("alice", "chat-1")]):
+            # The provider streams the block in fragments...
+            for frag in ("Worker", ".py shrank ", "by 111 lines. ", "Let me run ", "the test suite."):
+                task._on_event("conv1", "thinking_delta", {"agent_name": "assistant", "text": frag})
+            # ...then the durable, clean block.
+            task._on_event("conv1", "thinking_content", {"agent_name": "assistant", "text": full})
+            task._on_event("conv1", "done", {"agent_name": "assistant"})
+
+        assert [call.args[2] for call in task._send.call_args_list] == [
+            f"💭 <i>assistant thinking</i>\n<blockquote>{full}</blockquote>",
+        ]
+
+    def test_conversation_bridge_flushes_delta_preview_when_no_content(self):
+        """Fallback: if a thinking burst is streamed via deltas but never
+        finalized with a thinking_content (e.g. cancelled turn), the preview
+        is still flushed so the reasoning is not lost."""
+        from tasks.io.telegram_agent_client import TelegramConversationBridgeTask
+        task = TelegramConversationBridgeTask({"service_id": "telegram_bot"})
+        task._send = MagicMock()
+
+        with patch.object(TelegramConversationBridgeTask, "_telegram_subscribers", return_value=[("alice", "chat-1")]):
+            task._on_event("conv1", "thinking_delta", {"agent_name": "assistant", "text": "partial thought"})
+            task._on_event("conv1", "done", {"agent_name": "assistant"})
+
+        assert [call.args[2] for call in task._send.call_args_list] == [
+            "💭 <i>assistant thinking</i>\n<blockquote>partial thought</blockquote>",
         ]
 
     def test_conversation_bridge_forwards_periodic_waiting_progress(self):

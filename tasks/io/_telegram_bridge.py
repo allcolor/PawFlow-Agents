@@ -60,6 +60,13 @@ class TelegramConversationBridgeTask(BaseTask):
         # SINGLE consolidated block on the next non-thinking event instead of
         # spamming every fragment plus a final duplicate.
         self._thinking_buf: Dict[str, str] = {}
+        # In-progress live preview accumulated from thinking_delta events. The
+        # durable thinking_content that follows is the SAME reasoning
+        # finalized, so it supersedes (and clears) this preview rather than
+        # appending — otherwise Telegram showed the fragmented preview AND the
+        # full block (the duplication bug). A leftover preview with no content
+        # (e.g. a turn cancelled mid-thinking) is flushed as a fallback.
+        self._thinking_preview: Dict[str, str] = {}
         self._thinking_meta: Dict[str, Dict[str, Any]] = {}
 
     def get_parameter_schema(self) -> Dict[str, Any]:
@@ -118,8 +125,20 @@ class TelegramConversationBridgeTask(BaseTask):
             raw = _extract_thinking_text(event_type, data)
             if raw:
                 key = f"{conversation_id}:thinking:{self._agent_key(data)}"
-                self._thinking_buf[key] = _merge_thinking(
-                    self._thinking_buf.get(key, ""), raw)
+                if event_type == "thinking_delta":
+                    # Transient live preview of the in-progress block. Accumulate
+                    # raw (no separator); the durable thinking_content that
+                    # follows supersedes it, so it normally never reaches the
+                    # consolidated buffer.
+                    self._thinking_preview[key] = self._thinking_preview.get(key, "") + raw
+                else:
+                    # Durable complete block (thinking_content) or a status note
+                    # (thinking). It is the authoritative version of the just-
+                    # streamed preview, so drop the preview and fold the block
+                    # into the consolidated buffer.
+                    self._thinking_preview.pop(key, None)
+                    self._thinking_buf[key] = _merge_thinking(
+                        self._thinking_buf.get(key, ""), raw)
                 self._thinking_meta[key] = data
             return
         # A non-thinking event closes the current thinking burst for this agent:
@@ -190,8 +209,8 @@ class TelegramConversationBridgeTask(BaseTask):
         Multiple agents may have open bursts; flush each so no final reasoning
         is stranded when the turn closes with `done`/`error_event`."""
         prefix = f"{conversation_id}:thinking:"
-        agent_keys = [k[len(prefix):] for k in list(self._thinking_buf.keys())
-                      if k.startswith(prefix)]
+        keys = set(self._thinking_buf) | set(self._thinking_preview)
+        agent_keys = [k[len(prefix):] for k in keys if k.startswith(prefix)]
         for agent_key in agent_keys:
             self._flush_pending_thinking(conversation_id, agent_key)
 
@@ -200,7 +219,11 @@ class TelegramConversationBridgeTask(BaseTask):
         Telegram message, then clear the buffer. No-op when nothing is pending."""
         key = f"{conversation_id}:thinking:{agent_key}"
         buf = self._thinking_buf.pop(key, "")
+        # Durable blocks win; a leftover preview (block streamed via deltas but
+        # never finalized with a thinking_content, e.g. cancel) is the fallback.
+        preview = self._thinking_preview.pop(key, "")
         meta = self._thinking_meta.pop(key, None) or {}
+        buf = _merge_thinking(buf, preview)
         if not buf.strip():
             return
         text = _telegram_thinking_message(meta, buf)

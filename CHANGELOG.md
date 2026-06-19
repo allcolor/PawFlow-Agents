@@ -4,6 +4,19 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- Telegram: agent reasoning was duplicated — the live streamed preview
+  (`thinking_delta` fragments) appeared, then the same reasoning again as
+  the durable `thinking_content` block. The Telegram bridge merged the two
+  with `\n\n` separators between every delta, so the fragmented preview no
+  longer substring-matched the clean block and dedup failed. The bridge now
+  keeps the delta preview separate; the durable block supersedes it (a
+  leftover preview with no block — e.g. a cancelled turn — is still
+  flushed). Webchat was unaffected and keeps streaming thinking live.
+
 ## [1.0.0-alpha.52] — 2026-06-19
 
 ### Fixed

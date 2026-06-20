@@ -28,11 +28,12 @@ import json
 import logging
 import os
 import socket
-import struct
 import subprocess  # nosec B404
 import sys
 import threading
 from pathlib import Path
+
+from pawflow_relay._relay_ws_proto import encode_masked_frame, read_ws_frame
 
 _log = logging.getLogger(__name__)
 
@@ -81,48 +82,11 @@ def desktop_ws_open(state, msg, send_frame):
             sys.stderr.write(f"[FSRelay] desktop_ws_reader started for {_sid}\n")
             try:
                 while True:
-                    _hdr2 = b""
-                    while len(_hdr2) < 2:
-                        _c = _sock.recv(2 - len(_hdr2))
-                        if not _c:
-                            break
-                        _hdr2 += _c
-                    if len(_hdr2) < 2:
+                    _frame = read_ws_frame(_sock)
+                    if _frame is None:
                         break
-                    _op = _hdr2[0] & 0x0F
-                    _masked = bool(_hdr2[1] & 0x80)
-                    _plen = _hdr2[1] & 0x7F
-                    if _plen == 126:
-                        _lb = b""
-                        while len(_lb) < 2:
-                            _c = _sock.recv(2 - len(_lb))
-                            if not _c:
-                                break
-                            _lb += _c
-                        _plen = struct.unpack("!H", _lb)[0]
-                    elif _plen == 127:
-                        _lb = b""
-                        while len(_lb) < 8:
-                            _c = _sock.recv(8 - len(_lb))
-                            if not _c:
-                                break
-                            _lb += _c
-                        _plen = struct.unpack("!Q", _lb)[0]
-                    if _masked:
-                        _mask = b""
-                        while len(_mask) < 4:
-                            _c = _sock.recv(4 - len(_mask))
-                            if not _c:
-                                break
-                            _mask += _c
-                    _payload = b""
-                    while len(_payload) < _plen:
-                        _c = _sock.recv(min(65536, _plen - len(_payload)))
-                        if not _c:
-                            break
-                        _payload += _c
-                    if _masked:
-                        _payload = bytes(b ^ _mask[i % 4] for i, b in enumerate(_payload))
+                    _op = _frame.op
+                    _payload = _frame.payload
                     if _op == 0x08:
                         break
                     if _op == 0x09:
@@ -173,14 +137,7 @@ def desktop_ws_send(state, msg):
         return {"ok": False, "error": f"Desktop WS session not found: {_ws_sid}"}
     try:
         _raw = base64.b64decode(_ws_data)
-        _frame = bytes([0x80 | _ws_op])
-        if len(_raw) < 126:
-            _frame += bytes([0x80 | len(_raw)])
-        elif len(_raw) < 65536:
-            _frame += bytes([0x80 | 126]) + struct.pack("!H", len(_raw))
-        else:
-            _frame += bytes([0x80 | 127]) + struct.pack("!Q", len(_raw))
-        _frame += b"\x00\x00\x00\x00" + _raw
+        _frame = encode_masked_frame(_ws_op, _raw)
         _ws_sess["sock"].sendall(_frame)
         return {"ok": True}
     except Exception as e:

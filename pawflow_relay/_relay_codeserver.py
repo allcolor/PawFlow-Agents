@@ -21,13 +21,14 @@ import json
 import logging
 import os
 import socket
-import struct
 import subprocess  # nosec B404
 import sys
 import tempfile
 import threading
 import time
 from pathlib import Path
+
+from pawflow_relay._relay_ws_proto import encode_masked_frame, read_ws_frame
 
 _log = logging.getLogger(__name__)
 
@@ -200,58 +201,14 @@ def cs_ws_open(state, msg, send_frame):
             sys.stderr.write(f"[FSRelay] cs_ws_reader started for {_sid}\n")
             try:
                 while True:
-                    # Read WS frame header
-                    _hdr2 = b""
-                    while len(_hdr2) < 2:
-                        _c = _sock.recv(2 - len(_hdr2))
-                        if not _c:
-                            break
-                        _hdr2 += _c
-                    if len(_hdr2) < 2:
+                    _frame = read_ws_frame(_sock)
+                    if _frame is None:
                         break
-                    _fin = bool(_hdr2[0] & 0x80)
-                    _op = _hdr2[0] & 0x0F
-                    _masked = bool(_hdr2[1] & 0x80)
-                    _plen = _hdr2[1] & 0x7F
-                    _frame_parts = [_hdr2]
-                    if _plen == 126:
-                        _lb = b""
-                        while len(_lb) < 2:
-                            _c = _sock.recv(2 - len(_lb))
-                            if not _c:
-                                break
-                            _lb += _c
-                        _frame_parts.append(_lb)
-                        _plen = struct.unpack("!H", _lb)[0]
-                    elif _plen == 127:
-                        _lb = b""
-                        while len(_lb) < 8:
-                            _c = _sock.recv(8 - len(_lb))
-                            if not _c:
-                                break
-                            _lb += _c
-                        _frame_parts.append(_lb)
-                        _plen = struct.unpack("!Q", _lb)[0]
-                    if _masked:
-                        _mask = b""
-                        while len(_mask) < 4:
-                            _c = _sock.recv(4 - len(_mask))
-                            if not _c:
-                                break
-                            _mask += _c
-                        _frame_parts.append(_mask)
-                    _payload = b""
-                    while len(_payload) < _plen:
-                        _c = _sock.recv(min(65536, _plen - len(_payload)))
-                        if not _c:
-                            break
-                        _payload += _c
-                    _frame_parts.append(_payload)
-                    if _masked:
-                        _payload = bytes(b ^ _mask[i % 4] for i, b in enumerate(_payload))
-                    _raw_frame = b"".join(_frame_parts)
-                    _forward_cs_ws_frame(_sid, _raw_frame, _op, _payload, _fin)
-                    if _op == 0x08:  # close
+                    # code-server tunnel forwards the raw on-wire frame
+                    # (and the close frame too) up to the browser.
+                    _forward_cs_ws_frame(
+                        _sid, _frame.raw, _frame.op, _frame.payload, _frame.fin)
+                    if _frame.op == 0x08:  # close
                         break
             except Exception:
                 _log.debug("Ignored exception", exc_info=True)
@@ -297,15 +254,7 @@ def cs_ws_send(state, msg):
         _raw = base64.b64decode(_ws_data)
         sys.stderr.write(f"[FSRelay] cs_ws_send: sid={_ws_sid} op={_ws_op} len={len(_raw)}\n")
         # Build WS frame (masked, client->server)
-        _frame = bytes([0x80 | _ws_op])
-        if len(_raw) < 126:
-            _frame += bytes([0x80 | len(_raw)])  # masked (client->server)
-        elif len(_raw) < 65536:
-            _frame += bytes([0x80 | 126]) + struct.pack("!H", len(_raw))
-        else:
-            _frame += bytes([0x80 | 127]) + struct.pack("!Q", len(_raw))
-        # Mask with zeros (simplest valid mask)
-        _frame += b"\x00\x00\x00\x00" + _raw
+        _frame = encode_masked_frame(_ws_op, _raw)
         _ws_sess["sock"].sendall(_frame)
         return {"ok": True}
     except Exception as e:

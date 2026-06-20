@@ -81,8 +81,17 @@ def connect_and_handshake(host, port, path, use_ssl, gateway_cookie,
         _buf = [_leftover]
         def _patched_recv(n, _flags=0):
             if _buf:
-                data = _buf.pop(0)
-                return data[:n]  # may need to re-buffer if data > n
+                data = _buf[0]
+                if len(data) <= n:
+                    _buf.pop(0)
+                    return data
+                # Caller asked for fewer bytes than buffered: hand back
+                # the first n and keep the remainder for the next recv.
+                # Without this the tail (data[n:]) was silently dropped,
+                # corrupting the first WS frame whenever the server
+                # coalesced the 101 response with >n frame bytes.
+                _buf[0] = data[n:]
+                return data[:n]
             return _orig_recv(n)
         sock.recv = _patched_recv
     return sock

@@ -172,7 +172,10 @@ class RelayFuseLaunchTests(unittest.TestCase):
         self.assertIn('msg.get("local", False)', src)
         self.assertIn('Start relay with --allow-local', src)
         self.assertIn('Local execution requested but host helper is unavailable', src)
-        self.assertIn('_fwd = dict(msg)', src)
+        # The message is copied before host-forwarding (now via the _forward
+        # helper since the dispatch-table refactor) so the original isn't
+        # mutated by the host helper.
+        self.assertIn('dict(msg)', src)
 
     def test_host_helper_executes_forwarded_filesystem_actions(self):
         from pawflow_relay import thread

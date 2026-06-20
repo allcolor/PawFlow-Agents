@@ -97,3 +97,58 @@ def test_open_and_list_terminal_via_manager():
 def test_http_proxy_gated_by_allow_exec():
     res = d.execute_command(_ctx(allow_exec=False), {"action": "http_proxy", "port": 9})
     assert res == {"ok": False, "error": "Exec not allowed"}
+
+
+def test_local_terminal_write_forwards_to_host(monkeypatch):
+    # local_term_* terminal ops are forwarded to the host helper when set.
+    monkeypatch.setenv("PAWFLOW_HOST_HELPER", "http://hh")
+    seen = {}
+
+    def fake_forward(hh, fwd, sock, send):
+        seen["action"] = fwd.get("action")
+        return {"ok": True, "data": {"fwd": True}}
+
+    res = d.execute_command(
+        _ctx(forward_to_host_helper=fake_forward),
+        {"action": "write_terminal", "session_id": "local_term_x", "data": "abc"})
+    assert res == {"ok": True, "data": {"fwd": True}}
+    assert seen["action"] == "write_terminal"
+
+
+def test_local_terminal_write_falls_through_without_host(monkeypatch):
+    # No host helper -> the op runs against the in-relay terminal manager.
+    monkeypatch.delenv("PAWFLOW_HOST_HELPER", raising=False)
+
+    class TM:
+        def write(self, sid, data):
+            return True, ""
+
+    res = d.execute_command(
+        _ctx(term_mgr=TM()),
+        {"action": "write_terminal", "session_id": "local_term_x", "data": "abc"})
+    assert res == {"ok": True}
+
+
+def test_desktop_status_routes_via_table():
+    from pawflow_relay._relay_state import RelayWorkerState
+    res = d.execute_command(_ctx(state=RelayWorkerState()), {"action": "desktop_status"})
+    assert res["ok"] is True
+    assert res["data"]["running"] is False
+
+
+def test_start_local_desktop_forwards_when_host_helper(monkeypatch):
+    # start_local_desktop is NOT in the dispatch table: it must reach the
+    # explicitly-local forward block and go to the host helper (proves the
+    # table consulted earlier didn't swallow an order-dependent action).
+    monkeypatch.setenv("PAWFLOW_HOST_HELPER", "http://hh")
+    seen = {}
+
+    def fake_forward(hh, fwd, sock, send):
+        seen["action"] = fwd.get("action")
+        return {"ok": True, "data": {"fwd": True}}
+
+    res = d.execute_command(
+        _ctx(forward_to_host_helper=fake_forward),
+        {"action": "start_local_desktop"})
+    assert res == {"ok": True, "data": {"fwd": True}}
+    assert seen["action"] == "start_local_desktop"

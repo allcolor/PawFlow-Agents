@@ -23,7 +23,6 @@ import logging
 import json
 import os
 import socket
-import struct
 import sys
 import tempfile
 import time
@@ -86,6 +85,11 @@ from pawflow_relay._relay_dispatch import (  # noqa: E402
 )
 from pawflow_relay._relay_fs_setup import setup_combined_fs as _setup_combined_fs  # noqa: E402
 from pawflow_relay._relay_conn import connect_and_handshake as _connect_and_handshake  # noqa: E402
+from pawflow_relay._relay_session import (  # noqa: E402
+    close_frame_info as _close_frame_info,
+    attach_fuse_clients as _attach_fuse_clients,
+    detach_fuse_clients as _detach_fuse_clients,
+)
 
 
 def _is_allowed_tmp_path(path: str) -> bool:
@@ -359,18 +363,6 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                     extra = len(_inflight_cmds) - len(parts)
                     return ",".join(parts) + (f",+{extra}" if extra > 0 else "")
 
-            def _close_frame_info(payload: bytes) -> str:
-                if not payload:
-                    return "code=none reason=''"
-                try:
-                    if len(payload) >= 2:
-                        code = struct.unpack("!H", payload[:2])[0]
-                        reason = payload[2:].decode("utf-8", errors="replace")
-                        return f"code={code} reason={reason!r}"
-                    return f"code=none reason={payload.decode('utf-8', errors='replace')!r}"
-                except Exception:
-                    return f"malformed={payload[:80]!r}"
-
             # ── Per-WS-connection FUSE clients ──────────────────────────
             # The FUSE mounts themselves were created once before the
             # reconnect loop; here we just build a fresh ServerFsClient
@@ -378,27 +370,10 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             # the mount is holding. The kernel-side mount stays live
             # across WS reconnects so downstream container bind-mounts
             # of /cc_sessions and /filestore remain valid.
-            from pawflow_relay.server_fs_client import ServerFsClient
-            _server_fs_client = None
-            if _server_fs_swap is not None:
-                _server_fs_client = ServerFsClient(
-                    send_callable=lambda b: _ws_frame_send(sock, b),
-                    send_lock=_send_lock)
-                _server_fs_swap.set_inner(_server_fs_client)
-
-            _filestore_fs_client = None
-            if _filestore_fs_swap is not None:
-                _filestore_fs_client = ServerFsClient(
-                    send_callable=lambda b: _ws_frame_send(sock, b),
-                    send_lock=_send_lock)
-                _filestore_fs_swap.set_inner(_filestore_fs_client)
-
-            _skills_fs_client = None
-            if _skills_fs_swap is not None:
-                _skills_fs_client = ServerFsClient(
-                    send_callable=lambda b: _ws_frame_send(sock, b),
-                    send_lock=_send_lock)
-                _skills_fs_swap.set_inner(_skills_fs_client)
+            _fuse_swaps = (_server_fs_swap, _filestore_fs_swap, _skills_fs_swap)
+            _fuse_clients = _attach_fuse_clients(sock, _send_lock, _fuse_swaps)
+            (_server_fs_client, _filestore_fs_client,
+             _skills_fs_client) = _fuse_clients
 
             while True:
                 try:
@@ -629,20 +604,11 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             # cancel its pending requests with EIO so the kernel doesn't
             # hang on the dead socket. The FUSE mount itself stays up
             # across reconnects — see the one-shot setup before this loop.
-            for _swap in (_server_fs_swap, _filestore_fs_swap, _skills_fs_swap):
-                if _swap is not None:
-                    try:
-                        _swap.clear_inner()
-                    except Exception:
-                        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-            for _name in ('_server_fs_client', '_filestore_fs_client',
-                          '_skills_fs_client'):
-                _c = locals().get(_name)
-                if _c is not None:
-                    try:
-                        _c.cancel_all('relay disconnected')
-                    except Exception:
-                        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+            # _fuse_clients may be undefined on an early connect error;
+            # detach still clears the swaps (which are always defined).
+            _detach_fuse_clients(
+                (_server_fs_swap, _filestore_fs_swap, _skills_fs_swap),
+                locals().get('_fuse_clients'))
             # Stop watchdog
             try:
                 _watchdog_stop.set()

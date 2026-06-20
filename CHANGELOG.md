@@ -4,6 +4,18 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- claude-code (`-p`) streaming: the assistant's explanatory text ("here's
+  what I'll do") arrived in the transcript *after* the tool calls it
+  preceded. tool_use/tool_result were persisted live via `block_callback`,
+  but text was only emitted at the end-of-turn flush, so it surfaced last.
+  Text (and any pending thinking) is now persisted live in emission order —
+  `thinking → text → tool_use` — mirroring the interactive provider, with no
+  double-persist at the flush.
+
 ## [1.0.0-alpha.53] — 2026-06-20
 
 ### Changed

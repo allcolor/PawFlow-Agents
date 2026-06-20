@@ -13,9 +13,75 @@ skills) plus two teardown loops; centralising them removes the duplication
 and makes the swap/cancel contract unit-testable.
 """
 import logging
+import os
+import socket
 import struct
+import sys
+from dataclasses import dataclass
 
 _log = logging.getLogger(__name__)
+
+
+@dataclass
+class ConnectionParams:
+    """Parsed WS endpoint + the registration info payload for a connection."""
+    host: str
+    port: int
+    path: str
+    use_ssl: bool
+    info: dict
+
+
+def _is_containerized():
+    return os.path.exists("/.dockerenv") or bool(os.environ.get("PAWFLOW_DOCKER_IMAGE"))
+
+
+def build_connection_params(url, root_dir, readonly, allow_exec,
+                            allow_automation, allow_local_screen, allow_local):
+    """Parse the WS URL and build the relay registration ``info`` payload.
+
+    Pure given the environment: URL scheme/host/port/path, available shells,
+    containerization detection, and the host_root (the user's pre-Docker-mount
+    path, slash-normalised for JSON display).
+    """
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+    use_ssl = parsed.scheme in ("wss", "https")
+    host = parsed.hostname or "localhost"
+    port = parsed.port or (443 if use_ssl else 80)
+    path = parsed.path or "/ws/relay"
+
+    mode = "read" if readonly else "readwrite"
+    try:
+        from fs_actions import detect_available_shells
+        _shells = detect_available_shells()
+    except Exception:
+        _shells = {}
+
+    # host_root: the original path on the user's machine (before Docker mount).
+    # Always forward slashes (Windows backslashes break JSON display).
+    _host_root = os.environ.get("PAWFLOW_HOST_WORKDIR", "")
+    if not _host_root and not _is_containerized():
+        _host_root = root_dir
+    _host_root = _host_root.replace("\\", "/")
+
+    info = {
+        "platform": sys.platform,
+        "root": root_dir,
+        "host_root": _host_root,
+        "mode": mode,
+        "shells": list(_shells.keys()),
+        "containerized": _is_containerized(),
+        "docker_image": os.environ.get("PAWFLOW_DOCKER_IMAGE", ""),
+        "container_id": socket.gethostname() if _is_containerized() else "",
+        "allow_exec": allow_exec,
+        "allow_automation": allow_automation,
+        "allow_local_screen": allow_local_screen,
+        "allow_local": allow_local,
+    }
+    return ConnectionParams(host=host, port=port, path=path,
+                            use_ssl=use_ssl, info=info)
 
 
 def close_frame_info(payload):

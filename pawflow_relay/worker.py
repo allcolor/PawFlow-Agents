@@ -86,6 +86,7 @@ from pawflow_relay._relay_dispatch import (  # noqa: E402
 from pawflow_relay._relay_fs_setup import setup_combined_fs as _setup_combined_fs  # noqa: E402
 from pawflow_relay._relay_conn import connect_and_handshake as _connect_and_handshake  # noqa: E402
 from pawflow_relay._relay_session import (  # noqa: E402
+    build_connection_params as _build_connection_params,
     close_frame_info as _close_frame_info,
     attach_fuse_clients as _attach_fuse_clients,
     detach_fuse_clients as _detach_fuse_clients,
@@ -136,45 +137,12 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
     user's skill tree). Read-only — it lets non-CLI providers reach a
     skill's asset files referenced from its instructions.
     """
-    from urllib.parse import urlparse
-
-    parsed = urlparse(url)
-    use_ssl = parsed.scheme in ("wss", "https")
-    host = parsed.hostname or "localhost"
-    port = parsed.port or (443 if use_ssl else 80)
-    path = parsed.path or "/ws/relay"
-
-    mode = "read" if readonly else "readwrite"
-    # Detect available shells for exec
-    try:
-        from fs_actions import detect_available_shells
-        _shells = detect_available_shells()
-    except Exception:
-        _shells = {}
-    def _is_containerized():
-        return os.path.exists("/.dockerenv") or bool(os.environ.get("PAWFLOW_DOCKER_IMAGE"))
-
-    # host_root: the original path on the user's machine (before Docker mount)
-    # Always use forward slashes (Windows backslashes break JSON display)
-    _host_root = os.environ.get("PAWFLOW_HOST_WORKDIR", "")
-    if not _host_root and not _is_containerized():
-        _host_root = root_dir
-    _host_root = _host_root.replace("\\", "/")
-
-    info = {
-        "platform": sys.platform,
-        "root": root_dir,
-        "host_root": _host_root,
-        "mode": mode,
-        "shells": list(_shells.keys()),
-        "containerized": _is_containerized(),
-        "docker_image": os.environ.get("PAWFLOW_DOCKER_IMAGE", ""),
-        "container_id": socket.gethostname() if _is_containerized() else "",
-        "allow_exec": allow_exec,
-        "allow_automation": allow_automation,
-        "allow_local_screen": allow_local_screen,
-        "allow_local": allow_local,
-    }
+    _cp = _build_connection_params(
+        url, root_dir, readonly, allow_exec, allow_automation,
+        allow_local_screen, allow_local)
+    host, port, path = _cp.host, _cp.port, _cp.path
+    use_ssl = _cp.use_ssl
+    info = _cp.info
 
     def _resolve(rel_path):
         if _is_allowed_tmp_path(rel_path):
@@ -186,17 +154,6 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
         except ValueError:
             return None
         return str(target)
-
-    class MockHandler:
-        pass
-    MockHandler.root_dir = root_dir
-    MockHandler.secret = secret
-    MockHandler.readonly = readonly
-    MockHandler.allow_exec = allow_exec
-    MockHandler.allow_automation = allow_automation
-    MockHandler.allow_local_screen = allow_local_screen
-    MockHandler.allow_local = allow_local
-    mock = MockHandler()
 
     # Per-connection mutable state (process/session handles). Captured by
     # the action closures below; replaces the old _execute_command.<attr>

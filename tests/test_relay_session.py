@@ -1,5 +1,10 @@
 """Tests for pawflow_relay._relay_session (per-connection helpers)."""
 import struct
+import sys
+from pathlib import Path
+
+# tools/ on path for build_connection_params' lazy `from fs_actions import ...`.
+sys.path.append(str(Path(__file__).resolve().parent.parent / "tools"))
 
 from pawflow_relay import _relay_session as rs
 
@@ -72,3 +77,38 @@ def test_detach_tolerates_none_clients():
     s0 = _Swap()
     rs.detach_fuse_clients((s0,), None)
     assert s0.cleared
+
+
+def test_build_connection_params_wss(monkeypatch):
+    monkeypatch.setattr("fs_actions.detect_available_shells", lambda: {"bash": 1, "sh": 1})
+    monkeypatch.delenv("PAWFLOW_HOST_WORKDIR", raising=False)
+    monkeypatch.delenv("PAWFLOW_DOCKER_IMAGE", raising=False)
+    cp = rs.build_connection_params(
+        "wss://example.org:8443/ws/relay", "/root", False,
+        True, False, False, True)
+    assert (cp.host, cp.port, cp.path, cp.use_ssl) == ("example.org", 8443, "/ws/relay", True)
+    assert cp.info["mode"] == "readwrite"
+    assert cp.info["root"] == "/root"
+    assert set(cp.info["shells"]) == {"bash", "sh"}
+    assert cp.info["allow_exec"] is True and cp.info["allow_local"] is True
+
+
+def test_build_connection_params_defaults_and_readonly(monkeypatch):
+    monkeypatch.setattr("fs_actions.detect_available_shells", lambda: {})
+    monkeypatch.delenv("PAWFLOW_HOST_WORKDIR", raising=False)
+    monkeypatch.delenv("PAWFLOW_DOCKER_IMAGE", raising=False)
+    # ws scheme (not ssl), no port -> default 80, empty path -> /ws/relay
+    cp = rs.build_connection_params(
+        "ws://host/", "/r", True, False, False, False, False)
+    assert cp.use_ssl is False
+    assert cp.port == 80
+    assert cp.info["mode"] == "read"
+
+
+def test_build_connection_params_host_root_from_env(monkeypatch):
+    monkeypatch.setattr("fs_actions.detect_available_shells", lambda: {})
+    monkeypatch.setenv("PAWFLOW_HOST_WORKDIR", r"C:\Users\me\proj")
+    cp = rs.build_connection_params(
+        "wss://h/ws/relay", "/root", False, False, False, False, False)
+    # backslashes normalised to forward slashes for JSON display
+    assert cp.info["host_root"] == "C:/Users/me/proj"

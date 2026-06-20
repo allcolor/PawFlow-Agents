@@ -1,16 +1,17 @@
-"""PawFlow relay — worker-side HTTP/WS protocol, action dispatch, FSRelayHandler.
+"""PawFlow relay — worker-side WS protocol, action dispatch.
 
 This module is the body of the relay worker. It runs either natively on
 the user's host or inside the relay Docker container; in both cases
 `pawflow_relay/` is on the Python path (mounted alongside the launcher
 script in the container; importable via the source tree on the host).
 
+The per-action handlers live in sibling modules — `_relay_terminal`,
+`_relay_codeserver`, `_relay_desktop`, `_relay_actions` — and the
+connection drives them through the `_execute_command` dispatcher.
+
 Public entry points:
     _ws_connect(url, token, secret, relay_id, root_dir, readonly, ...)
-    _make_handler_class(root_dir, secret, readonly, ...)
-    FSRelayHandler
     _is_allowed_tmp_path(path)
-    _WRITE_ACTIONS
 
 Stdlib-only plus the in-tools sibling modules fs_common / fs_actions /
 fs_exec / fs_screen / fs_mcp / fs_http, which are imported lazily where
@@ -19,9 +20,6 @@ world.
 """
 import logging
 
-import base64
-import hashlib
-import hmac
 import json
 import os
 import socket
@@ -29,25 +27,17 @@ import struct
 import subprocess  # nosec B404
 import sys
 import tempfile
-import threading
 import time
-from http.server import BaseHTTPRequestHandler
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from fs_common import (
     _docker_cmd, _translate_path, _to_host_path,
 )
 from pawflow_relay.auth import (
-    claude_auth_login as _claude_auth_login,
-    codex_auth_login as _codex_auth_login,
-    gemini_auth_login as _gemini_auth_login,
     forward_to_host_helper as _forward_to_host_helper,
 )
 
-
-_WRITE_ACTIONS = frozenset({
-    "write_file", "delete_file", "mkdir", "find_replace", "edit", "exec",
-})
 
 
 # ── Path allowlist (outside root_dir) ─────────────────────────────
@@ -60,7 +50,6 @@ _WRITE_ACTIONS = frozenset({
 # commit message files, editor swap files).
 
 def _tmp_allowlist():
-    import tempfile
     dirs = ["/tmp", "/var/tmp"]  # nosec B108 - explicit temp-dir allowlist for relay sandbox.
     try:
         dirs.append(tempfile.gettempdir())
@@ -91,6 +80,13 @@ _TMP_ALLOWLIST = _tmp_allowlist()
 from pawflow_relay.proc_registry import (  # noqa: E402
     kill_inflight_proc,
 )
+from pawflow_relay._relay_terminal import TerminalManager  # noqa: E402
+from pawflow_relay._relay_dispatch import (  # noqa: E402
+    DispatchCtx,
+    execute_command as _dispatch_execute,
+)
+from pawflow_relay._relay_fs_setup import setup_combined_fs as _setup_combined_fs  # noqa: E402
+from pawflow_relay._relay_conn import connect_and_handshake as _connect_and_handshake  # noqa: E402
 
 
 def _is_allowed_tmp_path(path: str) -> bool:
@@ -113,162 +109,36 @@ def _is_allowed_tmp_path(path: str) -> bool:
     return False
 
 
-# ── Request handler ───────────────────────────────────────────────
+@dataclass
+class RelayWorkerState:
+    """Per-connection mutable state for a WS relay worker.
 
-class FSRelayHandler(BaseHTTPRequestHandler):
-    """HTTP POST handler for filesystem relay operations."""
-
-    server_version = "PawFlow-FSRelay/1.0"
-
-    # Set by the factory function
-    root_dir: str = "."
-    secret: str = ""
-    readonly: bool = False
-
-    def log_message(self, fmt, *args):
-        sys.stderr.write(f"[FSRelay] {self.address_string()} - {fmt % args}\n")
-
-    def _log_op(self, action: str, path: str, ok: bool, detail: str = ""):
-        tag = "OK" if ok else "FAIL"
-        extra = f" | {detail}" if detail else ""
-        sys.stderr.write(f"[FSRelay] [{tag}] {action} path={path}{extra}\n")
-
-    def _send_json(self, ok: bool, data=None, error=None):
-        resp = {"ok": ok}
-        if ok and data is not None:
-            resp["data"] = data
-        elif not ok and error:
-            resp["error"] = error
-        body = json.dumps(resp, ensure_ascii=False, default=str).encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def _resolve_fs_url(self, value: str) -> str:
-        """Resolve fs://relay_id/path → relative path."""
-        if not value or not value.startswith("fs://"):
-            return value
-        # fs://any_relay_id/some/path → some/path
-        import re as _re_fs
-        m = _re_fs.match(r'fs://[^/]+/(.*)', value)
-        return m.group(1) if m else value
-
-    def _resolve(self, rel_path: str):
-        """Resolve relative path to absolute, checking traversal.
-
-        Returns absolute path string or None if blocked.
-
-        Absolute paths under an allowlisted system temp dir (/tmp,
-        /var/tmp, tempfile.gettempdir()) are passed through unchanged —
-        they are sandboxed to the container/process and never escape to
-        host state, so blocking them just breaks legitimate "write to
-        tmp" use cases (test artifacts, editor swap files, etc.).
-        """
-        rel_path = self._resolve_fs_url(rel_path)
-        if _is_allowed_tmp_path(rel_path):
-            return str(Path(rel_path).resolve())
-        root = Path(self.root_dir).resolve()
-        target = (root / rel_path).resolve()
-        try:
-            target.relative_to(root)
-        except ValueError:
-            return None
-        return str(target)
-
-    # ── HTTP verbs ────────────────────────────────────────────────
-
-    def do_GET(self):
-        self._send_json(True, data={"service": "PawFlow-FSRelay", "version": "1.0"})
-
-    def do_POST(self):
-        # Read body
-        length = int(self.headers.get("Content-Length", 0))
-        raw = self.rfile.read(length)
-        try:
-            req = json.loads(raw.decode("utf-8"))
-        except (json.JSONDecodeError, UnicodeDecodeError) as e:
-            self._send_json(False, error=f"Invalid JSON: {e}")
-            return
-
-        # Validate secret
-        if not hmac.compare_digest(req.get("secret", ""), self.secret):
-            self._send_json(False, error="Invalid secret")
-            return
-
-        action = req.get("action", "")
-        rel_path = self._resolve_fs_url(req.get("path", "."))
-        # Also resolve fs:// in other path-like fields
-        for _fk in ("source_path", "dest_path"):
-            if _fk in req and isinstance(req[_fk], str):
-                req[_fk] = self._resolve_fs_url(req[_fk])
-
-        # Readonly check
-        from fs_actions import WRITE_ACTIONS
-        if self.readonly and action in WRITE_ACTIONS:
-            self._log_op(action, rel_path, False, "readonly mode")
-            self._send_json(False, error="Operation not allowed in readonly mode")
-            return
-        # Note: permission checks are enforced server-side by ToolApprovalGate.
-        # The relay is a transport — it executes whatever the server sends.
-
-        # Resolve path
-        abs_path = self._resolve(rel_path)
-        if abs_path is None:
-            self._log_op(action, rel_path, False, "path traversal blocked")
-            self._send_json(False, error=f"Path traversal blocked: {rel_path}")
-            return
-
-        # Dispatch via shared fs_actions module
-        from fs_actions import ACTIONS as _FS_ACTIONS, WRITE_ACTIONS
-        handler_fn = _FS_ACTIONS.get(action)
-        if not handler_fn:
-            self._log_op(action, rel_path, False, "unknown action")
-            self._send_json(False, error=f"Unknown action: {action}")
-            return
-
-        try:
-            if action == "exec":
-                result = handler_fn(self.root_dir, abs_path, req,
-                                     allow_exec=getattr(self, 'allow_exec', False))
-            else:
-                result = handler_fn(self.root_dir, abs_path, req)
-            self._log_op(action, rel_path, True)
-            self._send_json(True, data=result)
-        except Exception as e:
-            self._log_op(action, rel_path, False, str(e))
-            self._send_json(False, error=str(e))
-
-
-# Action implementations live in tools/fs_actions.py and are dispatched
-# via `fs_actions.ACTIONS` (see the HTTP handler above and the WS handler
-# further down). A duplicate set of `_action_*` handlers used to live
-# here as a legacy fallback — removed as dead code.
-
-
-# ── Claude auth login (host action) ──────────────────────────────
-
-
-
-# ── Main ──────────────────────────────────────────────────────────
-
-def _make_handler_class(root_dir: str, secret: str, readonly: bool,
-                        allow_exec: bool = False, allow_automation: bool = False,
-                        allow_local_screen: bool = False, allow_local: bool = False):
-    """Create a handler class with bound config (avoids lambda issues)."""
-
-    class ConfiguredHandler(FSRelayHandler):
-        pass
-
-    ConfiguredHandler.root_dir = root_dir
-    ConfiguredHandler.secret = secret
-    ConfiguredHandler.readonly = readonly
-    ConfiguredHandler.allow_exec = allow_exec
-    ConfiguredHandler.allow_automation = allow_automation
-    ConfiguredHandler.allow_local_screen = allow_local_screen
-    ConfiguredHandler.allow_local = allow_local
-    return ConfiguredHandler
+    Holds the long-lived process/session handles that the action
+    handlers in `_execute_command` read and mutate. Previously these
+    lived as ad-hoc attributes stashed on the `_execute_command`
+    function object; a fresh instance is created per `_ws_connect`
+    call so nothing leaks across connections. Defaults mirror the old
+    lazy-init values exactly (None for handles/ports, a fresh dict for
+    each WS-session map).
+    """
+    # code-server
+    code_server_proc: object = None
+    code_server_port: object = None
+    code_server_base_path: str = ""
+    cs_ws_sessions: dict = field(default_factory=dict)
+    # desktop (containerized)
+    desktop_procs: object = None
+    desktop_essential_procs: object = None
+    desktop_vnc_port: object = None
+    desktop_novnc_port: object = None
+    desktop_display: object = None
+    desktop_watchdog_stop: object = None
+    desktop_watchdog_thread: object = None
+    desktop_ws_sessions: dict = field(default_factory=dict)
+    # local desktop (host screen)
+    local_desktop_procs: object = None
+    local_desktop_vnc_port: object = None
+    local_desktop_novnc_port: object = None
 
 
 # ── WS Reverse client ─────────────────────────────────────────────
@@ -295,8 +165,6 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
     user's skill tree). Read-only — it lets non-CLI providers reach a
     skill's asset files referenced from its instructions.
     """
-    import ssl
-    import base64 as b64
     from urllib.parse import urlparse
 
     parsed = urlparse(url)
@@ -359,1259 +227,18 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
     MockHandler.allow_local = allow_local
     mock = MockHandler()
 
+    # Per-connection mutable state (process/session handles). Captured by
+    # the action closures below; replaces the old _execute_command.<attr>
+    # function-attribute stash.
+    _state = RelayWorkerState()
+
     from pawflow_relay.ws_frame import ws_send as _ws_frame_send, ws_recv as _ws_frame_recv
 
-    def _novnc_http_ready(port=None, timeout=1.0):
-        port = int(port or getattr(_execute_command, '_desktop_novnc_port', 0) or 0)
-        if not port:
-            return False
-        try:
-            with socket.create_connection(("127.0.0.1", port), timeout=timeout) as sock:
-                sock.sendall(b"GET /vnc.html HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
-                resp = sock.recv(128)
-            status = resp.split(b"\r\n", 1)[0]
-            return b" 200 " in status or b" 301 " in status or b" 302 " in status
-        except Exception:
-            return False
-
-    def _desktop_is_healthy():
-        procs = getattr(_execute_command, '_desktop_procs', None)
-        if not procs:
-            return False
-        essential = getattr(_execute_command, '_desktop_essential_procs', None) or procs
-        return all(p.poll() is None for p in essential) and _novnc_http_ready()
-
-    def _desktop_cleanup(reason=""):
-        stop = getattr(_execute_command, '_desktop_watchdog_stop', None)
-        if stop:
-            stop.set()
-        procs = getattr(_execute_command, '_desktop_procs', None) or []
-        for p in procs:
-            try:
-                if p.poll() is None:
-                    p.terminate()
-            except Exception:
-                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-        for p in procs:
-            try:
-                if p.poll() is None:
-                    p.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                try:
-                    p.kill()
-                except Exception:
-                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-            except Exception:
-                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-        _execute_command._desktop_procs = None
-        _execute_command._desktop_essential_procs = None
-        _execute_command._desktop_vnc_port = None
-        _execute_command._desktop_novnc_port = None
-        _execute_command._desktop_display = None
-        _execute_command._desktop_watchdog_stop = None
-        _execute_command._desktop_watchdog_thread = None
-        if "DISPLAY" in os.environ:
-            del os.environ["DISPLAY"]
-        if reason:
-            sys.stderr.write(f"[FSRelay] Desktop stopped: {reason}\n")
-
-    def _start_desktop_watchdog(procs):
-        stop = threading.Event()
-        _execute_command._desktop_watchdog_stop = stop
-
-        def _watchdog():
-            while not stop.wait(5):
-                if getattr(_execute_command, '_desktop_procs', None) is not procs:
-                    return
-                if not _desktop_is_healthy():
-                    _desktop_cleanup("healthcheck failed")
-                    return
-
-        t = threading.Thread(target=_watchdog, daemon=True, name="desktop-healthcheck")
-        _execute_command._desktop_watchdog_thread = t
-        t.start()
-
     def _execute_command(msg, on_output=None):
-        action = msg.get("action", "")
-        rel_path = msg.get("path", ".")
-
-        # Token already validated at WS connect time — no per-command secret check
-
-        if readonly and action in _WRITE_ACTIONS:
-            return {"ok": False, "error": "Operation not allowed in readonly mode"}
-
-        # Encryption ops (phase 5b/6) -- opt-in: only when the server sends one
-        # of these new actions. A relay that never receives them is unaffected.
-        try:
-            from pawflow_relay import key_ops as _key_ops
-        except Exception:
-            _key_ops = None
-        if _key_ops is not None and _key_ops.is_key_action(action):
-            return _key_ops.handle(action, msg)
-
-        if msg.get("local", False):
-            if not allow_local:
-                return {"ok": False, "error": "Local execution disabled. Start relay with --allow-local"}
-            _host_helper = os.environ.get("PAWFLOW_HOST_HELPER", "")
-            if not _host_helper:
-                return {"ok": False, "error": "Local execution requested but host helper is unavailable"}
-            _fwd = dict(msg)
-            return _forward_to_host_helper(_host_helper, _fwd, ws_sock_ref[0], _ws_frame_send)
-
-        abs_path = _resolve(rel_path)
-        if abs_path is None:
-            return {"ok": False, "error": f"Path traversal blocked: {rel_path}"}
-
-        # Host-level action: per-CLI auth login (claude / codex / gemini).
-        # If in Docker → forward to host helper; if native → run directly.
-        # The 3 actions share the same dispatch shape: pick the matching
-        # auth helper, stream URL via send_progress, return the credentials.
-        if action in ("claude_auth_login", "codex_auth_login", "gemini_auth_login"):
-            host_helper = os.environ.get("PAWFLOW_HOST_HELPER", "")
-            if host_helper:
-                return _forward_to_host_helper(host_helper, msg, ws_sock_ref[0], _ws_frame_send)
-            else:
-                def _send_progress(data):
-                    if ws_sock_ref[0]:
-                        progress = json.dumps({
-                            "type": "progress",
-                            "request_id": msg.get("request_id", ""),
-                            "data": data,
-                        }).encode("utf-8")
-                        try:
-                            _ws_frame_send(ws_sock_ref[0], progress)
-                        except Exception:
-                            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-                _login_fn = {
-                    "claude_auth_login": _claude_auth_login,
-                    "codex_auth_login": _codex_auth_login,
-                    "gemini_auth_login": _gemini_auth_login,
-                }[action]
-                try:
-                    result = _login_fn(msg, send_progress=_send_progress)
-                    if "error" in result:
-                        return {"ok": False, "error": result["error"]}
-                    return {"ok": True, "data": result}
-                except Exception as e:
-                    return {"ok": False, "error": str(e)}
-
-        # Terminal actions (handled here, not in fs_actions)
-        if action == "open_terminal":
-            if not allow_exec:
-                return {"ok": False, "error": "Exec not allowed"}
-            try:
-                _sid = _open_terminal(
-                    cols=msg.get("cols", 80),
-                    rows=msg.get("rows", 24),
-                    shell=msg.get("shell"),  # nosec B604 - terminal tool intentionally opens requested shell.
-                )
-                return {"ok": True, "data": {"session_id": _sid}}
-            except Exception as e:
-                return {"ok": False, "error": f"Failed to open terminal: {e}"}
-
-        if action == "close_terminal":
-            _sid = msg.get("session_id", "")
-            if not _sid:
-                return {"ok": False, "error": "Missing session_id"}
-            if _sid.startswith("local_term_"):
-                _hh = os.environ.get("PAWFLOW_HOST_HELPER", "")
-                if _hh:
-                    return _forward_to_host_helper(_hh, msg, ws_sock_ref[0], _ws_frame_send)
-            ok = _close_terminal(_sid)
-            return {"ok": ok, "error": "" if ok else "Session not found"}
-
-        if action == "write_terminal":
-            _sid = msg.get("session_id", "")
-            if _sid.startswith("local_term_"):
-                _hh = os.environ.get("PAWFLOW_HOST_HELPER", "")
-                if _hh:
-                    return _forward_to_host_helper(_hh, msg, ws_sock_ref[0], _ws_frame_send)
-            _tsess = _terminal_sessions.get(_sid)
-            if not _tsess:
-                return {"ok": False, "error": f"Terminal session not found: {_sid}"}
-            try:
-                _raw = base64.b64decode(msg.get("data", ""))
-                os.write(_tsess["master_fd"], _raw)
-                return {"ok": True}
-            except OSError as e:
-                return {"ok": False, "error": str(e)}
-
-        if action == "resize_terminal":
-            _sid = msg.get("session_id", "")
-            if _sid.startswith("local_term_"):
-                _hh = os.environ.get("PAWFLOW_HOST_HELPER", "")
-                if _hh:
-                    return _forward_to_host_helper(_hh, msg, ws_sock_ref[0], _ws_frame_send)
-            _tsess = _terminal_sessions.get(_sid)
-            if not _tsess:
-                return {"ok": False, "error": f"Terminal session not found: {_sid}"}
-            try:
-                import fcntl as _fcntl_rt
-                import termios as _termios_rt
-                import array as _array_rt
-                _c = msg.get("cols", 80)
-                _r = msg.get("rows", 24)
-                _ws = _array_rt.array("H", [_r, _c, 0, 0])
-                _fcntl_rt.ioctl(_tsess["master_fd"], _termios_rt.TIOCSWINSZ, _ws)
-                return {"ok": True}
-            except Exception as e:
-                return {"ok": False, "error": str(e)}
-
-        if action == "list_terminals":
-            return {"ok": True, "data": {
-                "sessions": [
-                    {"session_id": sid, "shell": s["shell"]}
-                    for sid, s in _terminal_sessions.items()
-                ]
-            }}
-
-        if action == "http_proxy":
-            if not allow_exec:
-                return {"ok": False, "error": "Exec not allowed"}
-            import http.client
-            _target_port = msg.get("port", 0)
-            _method = msg.get("method", "GET")
-            _req_path = msg.get("req_path", "/")
-            _req_headers = msg.get("req_headers", {})
-            _req_body = msg.get("req_body", "")  # base64
-            if not _target_port:
-                return {"ok": False, "error": "Missing port"}
-            try:
-                conn = http.client.HTTPConnection("127.0.0.1", _target_port, timeout=30)
-                _body_bytes = base64.b64decode(_req_body) if _req_body else None
-                conn.request(_method, _req_path, body=_body_bytes, headers=_req_headers)
-                resp = conn.getresponse()
-                _resp_body = resp.read()
-                _resp_headers = dict(resp.getheaders())
-                conn.close()
-                return {"ok": True, "data": {
-                    "status": resp.status,
-                    "reason": resp.reason,
-                    "headers": _resp_headers,
-                    "body": base64.b64encode(_resp_body).decode("ascii"),
-                }}
-            except Exception as e:
-                return {"ok": False, "error": f"Proxy error: {e}"}
-
-        if action == "start_code_server":
-            if not allow_exec:
-                return {"ok": False, "error": "Exec not allowed"}
-            import http.client
-            _public_base_path = msg.get("base_path", "")
-            _upstream_base_path = "/"
-            _abs_proxy_base_path = _public_base_path.rstrip("/")
-            if hasattr(_execute_command, '_code_server_proc') and _execute_command._code_server_proc:
-                p = _execute_command._code_server_proc
-                if p.poll() is None:
-                    _running_base = getattr(_execute_command, '_code_server_base_path', "")
-                    if _running_base == _public_base_path:
-                        return {"ok": True, "data": {"port": _execute_command._code_server_port, "already_running": True}}
-                    p.terminate()
-            _cs_port = msg.get("port", 0)
-            if not _cs_port:
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as _s:
-                    _s.bind(("", 0))
-                    _cs_port = _s.getsockname()[1]
-            _cs_tmp_dir = Path(tempfile.gettempdir())
-            _cs_user_data = _cs_tmp_dir / "pawflow-code-server-data"
-            _cs_extensions = _cs_tmp_dir / "pawflow-code-server-extensions"
-            _cs_settings = _cs_user_data / "User" / "settings.json"
-            _cs_settings.parent.mkdir(parents=True, exist_ok=True)
-            _cs_extensions.mkdir(parents=True, exist_ok=True)
-            _cs_settings.write_text(json.dumps({
-                "extensions.autoCheckUpdates": False,
-                "extensions.autoUpdate": False,
-                "extensions.ignoreRecommendations": True,
-                "telemetry.telemetryLevel": "off",
-                "workbench.enableExperiments": False,
-                "github.gitAuthentication": False,
-            }), encoding="utf-8")
-            _cs_env = dict(os.environ)
-            _cs_env["EXTENSIONS_GALLERY"] = "{}"
-            _cs_env["VSCODE_DISABLE_TELEMETRY"] = "1"
-            _cs_args = [
-                "code-server",
-                "--bind-addr", f"0.0.0.0:{_cs_port}",
-                "--auth", "none",
-                "--disable-telemetry",
-                "--disable-workspace-trust",
-                "--abs-proxy-base-path", _abs_proxy_base_path,
-                "--user-data-dir", str(_cs_user_data),
-                "--extensions-dir", str(_cs_extensions),
-                str(Path(root_dir).resolve()),
-            ]
-            try:
-                _cs_log = open("/tmp/code-server.log", "w")  # nosec B108 - relay-local service log.
-                _cs_proc = subprocess.Popen(  # nosec B603
-                    _cs_args, stdout=_cs_log, stderr=_cs_log, env=_cs_env)
-                _ready_path = _upstream_base_path
-                _deadline = time.time() + 10
-                _ready = False
-                _last_err = ""
-                while time.time() < _deadline:
-                    _rc = _cs_proc.poll()
-                    if _rc is not None:
-                        try:
-                            _cs_log.flush()
-                        except Exception:
-                            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-                        _tail = ""
-                        try:
-                            with open(_cs_log.name, "r", encoding="utf-8", errors="replace") as _lf:
-                                _tail = _lf.read()[-1200:]
-                        except Exception:
-                            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-                        return {"ok": False, "error": f"code-server exited with status {_rc}: {_tail}"}
-                    try:
-                        _conn = http.client.HTTPConnection("127.0.0.1", _cs_port, timeout=0.5)
-                        _conn.request("GET", _ready_path)
-                        _resp = _conn.getresponse()
-                        _resp.read(1024)
-                        _conn.close()
-                        if _resp.status < 500:
-                            _ready = True
-                            break
-                    except Exception as _e:
-                        _last_err = str(_e)
-                    time.sleep(0.2)
-                if not _ready:
-                    try:
-                        _cs_proc.terminate()
-                    except Exception:
-                        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-                    return {"ok": False, "error": f"code-server did not become ready on port {_cs_port}: {_last_err}"}
-                _execute_command._code_server_proc = _cs_proc
-                _execute_command._code_server_port = _cs_port
-                _execute_command._code_server_base_path = _public_base_path
-                sys.stderr.write(f"[FSRelay] code-server started on port {_cs_port} public_base_path={_public_base_path} upstream_base_path={_upstream_base_path}\n")
-                return {"ok": True, "data": {"port": _cs_port, "pid": _cs_proc.pid, "upstream_base_path": _upstream_base_path}}
-            except FileNotFoundError:
-                return {"ok": False, "error": "code-server not installed"}
-            except Exception as e:
-                return {"ok": False, "error": f"Failed to start code-server: {e}"}
-
-        # -- Code-server WS tunnel --
-        if action == "cs_ws_open":
-            if not allow_exec:
-                return {"ok": False, "error": "Exec not allowed"}
-            _ws_sid = msg.get("session_id", "")
-            _ws_port = msg.get("port", 0)
-            _ws_path = msg.get("ws_path", "/")
-            _ws_headers = msg.get("headers", {})
-            if not _ws_sid or not _ws_port:
-                return {"ok": False, "error": "Missing session_id or port"}
-            try:
-                _ws_key = base64.b64encode(os.urandom(16)).decode()
-                _hdr_lines = [
-                    f"GET {_ws_path} HTTP/1.1",
-                    f"Host: 127.0.0.1:{_ws_port}",
-                    "Upgrade: websocket",
-                    "Connection: Upgrade",
-                    f"Sec-WebSocket-Key: {_ws_key}",
-                    "Sec-WebSocket-Version: 13",
-                ]
-                # The browser connects to PawFlow, not directly to code-server.
-                # Do not forward browser/proxy headers such as Cookie,
-                # X-Forwarded-*, or Origin: code-server validates Origin and
-                # rejects proxied HTTPS origins with HTTP 403.
-                _ws_protocol = (_ws_headers.get("Sec-WebSocket-Protocol")
-                                or _ws_headers.get("sec-websocket-protocol"))
-                if _ws_protocol:
-                    _hdr_lines.append(f"Sec-WebSocket-Protocol: {_ws_protocol}")
-                _handshake = "\r\n".join(_hdr_lines) + "\r\n\r\n"
-                sys.stderr.write(f"[FSRelay] cs_ws_open connecting to 127.0.0.1:{_ws_port} path={_ws_path[:80]}\n")
-                _cs_sock = socket.create_connection(("127.0.0.1", _ws_port), timeout=10)
-                _cs_sock.sendall(_handshake.encode())
-                _resp = b""
-                while b"\r\n\r\n" not in _resp:
-                    _chunk = _cs_sock.recv(4096)
-                    if not _chunk:
-                        raise ConnectionError("WS handshake failed")
-                    _resp += _chunk
-                _status_line = _resp.split(b"\r\n")[0]
-                if b"101" not in _status_line:
-                    sys.stderr.write(f"[FSRelay] cs_ws_open handshake rejected: {_resp[:500]}\n")
-                    _cs_sock.close()
-                    return {"ok": False, "error": f"WS handshake rejected: {_status_line.decode(errors='replace')}"}
-                # Reader thread: code-server WS -> relay WS -> server -> browser
-                if not hasattr(_execute_command, '_cs_ws_sessions'):
-                    _execute_command._cs_ws_sessions = {}
-                _execute_command._cs_ws_sessions[_ws_sid] = {"sock": _cs_sock}
-
-                def _forward_cs_ws_frame(_sid, _raw_frame, _op, _payload, _fin=True):
-                    sys.stderr.write(f"[FSRelay] cs_ws_data: sid={_sid} op={_op} len={len(_payload)}\n")
-                    _fwd = json.dumps({
-                        "type": "cs_ws_data",
-                        "session_id": _sid,
-                        "frame": base64.b64encode(_raw_frame).decode("ascii"),
-                        "data": base64.b64encode(_payload).decode("ascii"),
-                        "opcode": -1,
-                        "fin": _fin,
-                    })
-                    with _send_lock:
-                        _ws_frame_send(ws_sock_ref[0], _fwd.encode("utf-8"))
-                    sys.stderr.write("[FSRelay] cs_ws_data sent ok\n")
-
-                def _cs_ws_reader(_sock, _sid):
-                    sys.stderr.write(f"[FSRelay] cs_ws_reader started for {_sid}\n")
-                    try:
-                        while True:
-                            # Read WS frame header
-                            _hdr2 = b""
-                            while len(_hdr2) < 2:
-                                _c = _sock.recv(2 - len(_hdr2))
-                                if not _c:
-                                    break
-                                _hdr2 += _c
-                            if len(_hdr2) < 2:
-                                break
-                            _fin = bool(_hdr2[0] & 0x80)
-                            _op = _hdr2[0] & 0x0F
-                            _masked = bool(_hdr2[1] & 0x80)
-                            _plen = _hdr2[1] & 0x7F
-                            _frame_parts = [_hdr2]
-                            if _plen == 126:
-                                _lb = b""
-                                while len(_lb) < 2:
-                                    _c = _sock.recv(2 - len(_lb))
-                                    if not _c:
-                                        break
-                                    _lb += _c
-                                _frame_parts.append(_lb)
-                                _plen = struct.unpack("!H", _lb)[0]
-                            elif _plen == 127:
-                                _lb = b""
-                                while len(_lb) < 8:
-                                    _c = _sock.recv(8 - len(_lb))
-                                    if not _c:
-                                        break
-                                    _lb += _c
-                                _frame_parts.append(_lb)
-                                _plen = struct.unpack("!Q", _lb)[0]
-                            if _masked:
-                                _mask = b""
-                                while len(_mask) < 4:
-                                    _c = _sock.recv(4 - len(_mask))
-                                    if not _c:
-                                        break
-                                    _mask += _c
-                                _frame_parts.append(_mask)
-                            _payload = b""
-                            while len(_payload) < _plen:
-                                _c = _sock.recv(min(65536, _plen - len(_payload)))
-                                if not _c:
-                                    break
-                                _payload += _c
-                            _frame_parts.append(_payload)
-                            if _masked:
-                                _payload = bytes(b ^ _mask[i % 4] for i, b in enumerate(_payload))
-                            _raw_frame = b"".join(_frame_parts)
-                            _forward_cs_ws_frame(_sid, _raw_frame, _op, _payload, _fin)
-                            if _op == 0x08:  # close
-                                break
-                    except Exception:
-                        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-                    finally:
-                        try:
-                            _sock.close()
-                        except Exception:
-                            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-                        if hasattr(_execute_command, '_cs_ws_sessions'):
-                            _execute_command._cs_ws_sessions.pop(_sid, None)
-                        try:
-                            with _send_lock:
-                                _ws_frame_send(ws_sock_ref[0], json.dumps({"type": "cs_ws_close", "session_id": _sid}).encode("utf-8"))
-                        except Exception:
-                            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-
-                # Forward any leftover data after handshake
-                _hdr_end = _resp.index(b"\r\n\r\n") + 4
-                _leftover = _resp[_hdr_end:]
-                if _leftover:
-                    _forward_cs_ws_frame(_ws_sid, _leftover, _leftover[0] & 0x0F, b"", bool(_leftover[0] & 0x80))
-                _t = _threading.Thread(target=_cs_ws_reader, args=(_cs_sock, _ws_sid), daemon=True)
-                _t.start()
-                _execute_command._cs_ws_sessions[_ws_sid]["reader"] = _t
-                return {"ok": True}
-            except Exception as e:
-                return {"ok": False, "error": f"cs_ws_open error: {e}"}
-
-        if action == "cs_ws_send":
-            _ws_sid = msg.get("session_id", "")
-            _ws_data = msg.get("data", "")
-            _ws_op = msg.get("opcode", 1)
-            if not hasattr(_execute_command, '_cs_ws_sessions'):
-                return {"ok": False, "error": "No WS sessions"}
-            _ws_sess = _execute_command._cs_ws_sessions.get(_ws_sid)
-            if not _ws_sess:
-                return {"ok": False, "error": f"WS session not found: {_ws_sid}"}
-            try:
-                _ws_frame = msg.get("frame", "")
-                if _ws_frame:
-                    _frame = base64.b64decode(_ws_frame)
-                    sys.stderr.write(f"[FSRelay] cs_ws_send frame: sid={_ws_sid} len={len(_frame)}\n")
-                    _ws_sess["sock"].sendall(_frame)
-                    return {"ok": True}
-                _raw = base64.b64decode(_ws_data)
-                sys.stderr.write(f"[FSRelay] cs_ws_send: sid={_ws_sid} op={_ws_op} len={len(_raw)}\n")
-                # Build WS frame (masked, client->server)
-                _frame = bytes([0x80 | _ws_op])
-                if len(_raw) < 126:
-                    _frame += bytes([0x80 | len(_raw)])  # masked (client->server)
-                elif len(_raw) < 65536:
-                    _frame += bytes([0x80 | 126]) + struct.pack("!H", len(_raw))
-                else:
-                    _frame += bytes([0x80 | 127]) + struct.pack("!Q", len(_raw))
-                # Mask with zeros (simplest valid mask)
-                _frame += b"\x00\x00\x00\x00" + _raw
-                _ws_sess["sock"].sendall(_frame)
-                return {"ok": True}
-            except Exception as e:
-                return {"ok": False, "error": str(e)}
-
-        if action == "cs_ws_close":
-            _ws_sid = msg.get("session_id", "")
-            if hasattr(_execute_command, '_cs_ws_sessions'):
-                _ws_sess = _execute_command._cs_ws_sessions.pop(_ws_sid, None)
-                if _ws_sess and _ws_sess.get("sock"):
-                    try:
-                        _ws_sess["sock"].close()
-                    except Exception:
-                        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-            return {"ok": True}
-
-        if action == "stop_code_server":
-            if hasattr(_execute_command, '_code_server_proc') and _execute_command._code_server_proc:
-                p = _execute_command._code_server_proc
-                if p.poll() is None:
-                    p.terminate()
-                    try:
-                        p.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        p.kill()
-                _execute_command._code_server_proc = None
-                _execute_command._code_server_port = None
-                sys.stderr.write("[FSRelay] code-server stopped\n")
-                return {"ok": True}
-            return {"ok": True, "data": {"was_running": False}}
-
-        # ── Forward local screen/desktop to host helper if in Docker ────
-        _explicitly_local = action in (
-            "start_local_desktop", "stop_local_desktop", "local_screen_check",
-            "open_local_terminal", "start_local_code_server")
-        # NOTE: write_terminal/resize_terminal/close_terminal for local_term_*
-        # are forwarded inline in the terminal action handlers above.
-        _screen_with_flag = action.startswith("screen_") and msg.get("local", False)
-        _host_helper = os.environ.get("PAWFLOW_HOST_HELPER", "")
-        if (_explicitly_local or _screen_with_flag) and _host_helper:
-            _fwd = dict(msg)
-            return _forward_to_host_helper(_host_helper, _fwd, ws_sock_ref[0], _ws_frame_send)
-
-        # ── Desktop VNC (singleton) ──────────────────────────────────────
-        if action == "start_desktop":
-            if not allow_exec:
-                return {"ok": False, "error": "Exec not allowed"}
-            # Idempotent: if already running, return existing info
-            if hasattr(_execute_command, '_desktop_procs') and _execute_command._desktop_procs:
-                if _desktop_is_healthy():
-                    return {"ok": True, "data": {
-                        "vnc_port": _execute_command._desktop_vnc_port,
-                        "novnc_port": _execute_command._desktop_novnc_port,
-                        "display": _execute_command._desktop_display,
-                        "already_running": True
-                    }}
-                _desktop_cleanup("stale desktop process")
-
-            _resolution = msg.get("resolution", "1280x800")
-            _depth = msg.get("depth", 24)
-            _display_num = msg.get("display", 99)
-            _display = f":{_display_num}"
-            _vnc_port = msg.get("vnc_port", 0)
-            # Use fixed port from env (Docker published) or find a free one
-            _novnc_port = int(os.environ.get("PAWFLOW_DESKTOP_NOVNC_PORT", 0)) or msg.get("novnc_port", 0)
-            if not _vnc_port:
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as _s:
-                    _s.bind(("", 0))
-                    _vnc_port = _s.getsockname()[1]
-            if not _novnc_port:
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as _s:
-                    _s.bind(("", 0))
-                    _novnc_port = _s.getsockname()[1]
-            try:
-                import time as _time_mod
-                _log_d = open("/tmp/desktop.log", "w")  # nosec B108 - relay-local desktop log.
-                _procs = []
-
-                # Desktop runs as current user (pawflow via Dockerfile USER)
-                _desktop_user = os.environ.get("USER", "pawflow")
-                _desktop_home = os.environ.get("HOME", "/home/pawflow")
-
-                _user_env = {
-                    **os.environ,
-                    "DISPLAY": _display,
-                    "HOME": _desktop_home,
-                    "USER": _desktop_user,
-                    "DBUS_SESSION_BUS_ADDRESS": "unix:path=/tmp/dbus-desktop",  # nosec B108 - relay-local desktop bus path.
-                    "XDG_RUNTIME_DIR": f"/tmp/xdg-{_desktop_user}",  # nosec B108 - relay-local desktop runtime dir.
-                }
-                os.makedirs(_user_env["XDG_RUNTIME_DIR"], mode=0o700, exist_ok=True)
-
-                # 1. Xvfb
-                _p_xvfb = subprocess.Popen(  # nosec B603, B607
-                    ["Xvfb", _display, "-screen", "0", f"{_resolution}x{_depth}",
-                     "-ac", "+extension", "GLX", "+render", "-noreset"],
-                    stdout=_log_d, stderr=_log_d)
-                _procs.append(_p_xvfb)
-                os.environ["DISPLAY"] = _display
-                _time_mod.sleep(0.5)
-
-                # 2. D-Bus session (needed by XFCE)
-                _p_dbus = subprocess.Popen(  # nosec B603, B607
-                    ["dbus-daemon", "--session", "--nofork",
-                     "--address=unix:path=/tmp/dbus-desktop"],
-                    env=_user_env,
-                    stdout=_log_d, stderr=_log_d)
-                _procs.append(_p_dbus)
-                _time_mod.sleep(0.3)
-
-                # 3. PulseAudio (BEFORE XFCE — so desktop apps find PA already running)
-                import shutil as _shutil
-                _audio_port = 0
-                if _shutil.which("pulseaudio"):
-                    _pa_conf_dir = Path(_desktop_home) / ".config" / "pulse"
-                    _pa_conf_dir.mkdir(parents=True, exist_ok=True)
-                    (_pa_conf_dir / "daemon.conf").write_text(
-                        "default-sample-rate = 48000\n"
-                        "alternate-sample-rate = 48000\n"
-                    )
-                    if _desktop_user:
-                        subprocess.run(["chown", "-R", _desktop_user,  # nosec B603, B607
-                                        str(_pa_conf_dir)], check=False)
-                    subprocess.run(["pulseaudio", "--kill"], env=_user_env,  # nosec B603, B607
-                                   stdout=_log_d, stderr=_log_d, timeout=5)
-                    _time_mod.sleep(0.3)
-                    _p_pulse = subprocess.Popen(  # nosec B603, B607
-                        ["pulseaudio", "--start", "--exit-idle-time=-1",
-                         "--load=module-null-sink sink_name=virtual_out rate=48000",
-                         "--load=module-always-sink"],
-                        env=_user_env, stdout=_log_d, stderr=_log_d)
-                    _procs.append(_p_pulse)
-                    _time_mod.sleep(0.5)
-                    for _pa_cmd, _pa_label in [
-                        (["pactl", "info"], "PA info"),
-                        (["pactl", "list", "short", "sinks"], "PA sinks"),
-                    ]:
-                        try:
-                            _pa_out = subprocess.check_output(  # nosec B603
-                                _pa_cmd, env=_user_env, timeout=5, text=True)
-                            sys.stderr.write(f"[FSRelay] {_pa_label}:\n{_pa_out.strip()}\n")
-                        except Exception as _pa_err:
-                            sys.stderr.write(f"[FSRelay] {_pa_label} failed: {_pa_err}\n")
-                    _audio_port = _novnc_port + 100
-                    _audio_script = Path("/opt/pawflow/audio_capture.py")
-                    if _audio_script.exists():
-                        _p_audio = subprocess.Popen(  # nosec B603
-                            [sys.executable, str(_audio_script),
-                             "--port", str(_audio_port), "--source", "pulse"],
-                            env=_user_env, stdout=_log_d, stderr=_log_d)
-                        _procs.append(_p_audio)
-                        sys.stderr.write(f"[FSRelay] Audio capture on port {_audio_port}\n")
-                    else:
-                        _audio_port = 0
-
-                # Keep the X11 clipboard used by desktop apps in sync with the
-                # VNC clipboard, so browser copy/paste behaves like a local desktop.
-                if _shutil.which("autocutsel"):
-                    for _selection in ("CLIPBOARD", "PRIMARY"):
-                        _p_clip = subprocess.Popen(  # nosec B603, B607
-                            ["autocutsel", "-selection", _selection],
-                            env=_user_env, stdout=_log_d, stderr=_log_d)
-                        _procs.append(_p_clip)
-
-                # 4. XFCE desktop session (PA already running — no plugin conflict)
-                _p_wm = subprocess.Popen(  # nosec B603, B607
-                    ["startxfce4"], env=_user_env,
-                    stdout=_log_d, stderr=_log_d)
-                _procs.append(_p_wm)
-                _time_mod.sleep(1)
-
-                # 5. x11vnc
-                _p_vnc = subprocess.Popen(  # nosec B603, B607
-                    ["x11vnc", "-display", _display, "-forever", "-nopw",
-                     "-rfbport", str(_vnc_port), "-shared", "-noxdamage",
-                     "-defer", "33"],
-                    stdout=_log_d, stderr=_log_d)
-                _procs.append(_p_vnc)
-
-                # 6. websockify (noVNC)
-                _novnc_web = "/usr/share/novnc"
-                _p_novnc = subprocess.Popen(  # nosec B603, B607
-                    ["websockify", "--web", _novnc_web,
-                     "--heartbeat", "30",
-                     f"0.0.0.0:{_novnc_port}", f"localhost:{_vnc_port}"],
-                    stdout=_log_d, stderr=_log_d)
-                _procs.append(_p_novnc)
-                _execute_command._desktop_procs = _procs
-                _execute_command._desktop_essential_procs = [_p_xvfb, _p_vnc, _p_novnc]
-                _execute_command._desktop_vnc_port = _vnc_port
-                _execute_command._desktop_novnc_port = _novnc_port
-                _execute_command._desktop_display = _display
-
-                _deadline = _time_mod.time() + 8
-                _novnc_ready = False
-                while _time_mod.time() < _deadline:
-                    if _p_novnc.poll() is not None:
-                        break
-                    if _novnc_http_ready(_novnc_port, timeout=0.5):
-                        _novnc_ready = True
-                        break
-                    _time_mod.sleep(0.2)
-                if not _novnc_ready:
-                    _desktop_cleanup("noVNC failed to become ready")
-                    return {"ok": False, "error": "noVNC failed to become ready"}
-
-                _start_desktop_watchdog(_procs)
-                sys.stderr.write(f"[FSRelay] Desktop started: display={_display} vnc={_vnc_port} novnc={_novnc_port} audio={_audio_port} res={_resolution}\n")
-                return {"ok": True, "data": {
-                    "vnc_port": _vnc_port, "novnc_port": _novnc_port,
-                    "audio_port": _audio_port,
-                    "display": _display, "resolution": _resolution
-                }}
-            except FileNotFoundError as e:
-                return {"ok": False, "error": f"Desktop dependency not installed: {e}"}
-            except Exception as e:
-                return {"ok": False, "error": f"Failed to start desktop: {e}"}
-
-        if action == "stop_desktop":
-            if hasattr(_execute_command, '_desktop_procs') and _execute_command._desktop_procs:
-                _desktop_cleanup("requested")
-                return {"ok": True}
-            return {"ok": True, "data": {"was_running": False}}
-
-        if action == "desktop_status":
-            _running = _desktop_is_healthy()
-            if getattr(_execute_command, '_desktop_procs', None) and not _running:
-                _desktop_cleanup("healthcheck failed")
-            _local_running = False
-            if hasattr(_execute_command, '_local_desktop_procs') and _execute_command._local_desktop_procs:
-                _local_running = all(p.poll() is None for p in _execute_command._local_desktop_procs)
-            _novnc = getattr(_execute_command, '_desktop_novnc_port', None)
-            return {"ok": True, "data": {
-                "running": _running,
-                "display": getattr(_execute_command, '_desktop_display', None),
-                "vnc_port": getattr(_execute_command, '_desktop_vnc_port', None),
-                "novnc_port": _novnc,
-                "audio_port": (_novnc + 100) if _novnc and _running else 0,
-                "local_screen_running": _local_running,
-                "local_screen_novnc_port": getattr(_execute_command, '_local_desktop_novnc_port', None),
-            }}
-
-        # NOTE: local action forwarding is handled by the main dispatch
-        # block at the top of _execute_command (line ~1230). No duplicate here.
-
-        if action == "start_local_desktop":
-            # Idempotent
-            if hasattr(_execute_command, '_local_desktop_procs') and _execute_command._local_desktop_procs:
-                _alive = all(p.poll() is None for p in _execute_command._local_desktop_procs)
-                if _alive:
-                    return {"ok": True, "data": {
-                        "novnc_port": _execute_command._local_desktop_novnc_port,
-                        "already_running": True
-                    }}
-                else:
-                    for p in _execute_command._local_desktop_procs:
-                        try:
-                            p.kill()
-                        except Exception:
-                            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-                    _execute_command._local_desktop_procs = None
-
-            # Detect available VNC server
-            _vnc_cmd = None
-            _platform = sys.platform
-            _vnc_port = 0
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as _s:
-                _s.bind(("", 0))
-                _vnc_port = _s.getsockname()[1]
-            _novnc_port = int(msg.get("novnc_port", 0))
-            if not _novnc_port:
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as _s:
-                    _s.bind(("", 0))
-                    _novnc_port = _s.getsockname()[1]
-
-            try:
-                import shutil
-                _procs = []
-                _log_d = open("/tmp/local_desktop.log", "w") if _platform != "win32" else open(os.path.join(os.environ.get("TEMP", "."), "local_desktop.log"), "w")  # nosec B108 - relay-local desktop log.
-
-                if _platform == "linux":
-                    # Linux: use x11vnc to share the real display :0
-                    _display = os.environ.get("DISPLAY", ":0")
-                    if not shutil.which("x11vnc"):
-                        return {"ok": False, "error": "x11vnc not installed. Install with: apt install x11vnc"}
-                    if not shutil.which("websockify"):
-                        return {"ok": False, "error": "websockify not installed. Install with: pip install websockify"}
-                    _p_vnc = subprocess.Popen(  # nosec B603, B607
-                        ["x11vnc", "-display", _display, "-forever", "-nopw",
-                         "-rfbport", str(_vnc_port), "-shared", "-noxdamage",
-                         "-defer", "33"],
-                        stdout=_log_d, stderr=_log_d)
-                    _procs.append(_p_vnc)
-
-                elif _platform == "win32":
-                    # Windows: use TightVNC or UltraVNC via WinVNC if available,
-                    # else try built-in Windows VNC (Remote Desktop) — but for noVNC we need a VNC server.
-                    # Check for common VNC servers
-                    _winvnc = None
-                    for _candidate in [
-                        r"C:\Program Files\TightVNC\tvnserver.exe",
-                        r"C:\Program Files\uvnc bvba\UltraVNC\winvnc.exe",
-                        r"C:\Program Files (x86)\TightVNC\tvnserver.exe",
-                    ]:
-                        if os.path.exists(_candidate):
-                            _winvnc = _candidate
-                            break
-                    if not _winvnc:
-                        _winvnc = shutil.which("tvnserver") or shutil.which("winvnc")
-                    if not _winvnc:
-                        return {"ok": False, "error": "No VNC server found on Windows. Install TightVNC or UltraVNC."}
-                    _websockify = shutil.which("websockify")
-                    if not _websockify:
-                        return {"ok": False, "error": "websockify not installed. Install with: pip install websockify"}
-                    # Start VNC server on the specified port
-                    _p_vnc = subprocess.Popen(  # nosec B603
-                        [_winvnc, "-rfbport", str(_vnc_port), "-localhost"],
-                        stdout=_log_d, stderr=_log_d)
-                    _procs.append(_p_vnc)
-
-                elif _platform == "darwin":
-                    # macOS: built-in VNC server (Screen Sharing)
-                    # Enable via: System Preferences → Sharing → Screen Sharing
-                    # Or start with: /System/Library/CoreServices/RemoteManagement/ARDAgent.app/...
-                    if not shutil.which("websockify"):
-                        return {"ok": False, "error": "websockify not installed. Install with: pip install websockify"}
-                    # macOS VNC server usually runs on port 5900
-                    _vnc_port = 5900
-                    # Just check it's accessible
-                    try:
-                        _test = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                        _test.settimeout(2)
-                        _test.connect(("localhost", 5900))
-                        _test.close()
-                    except Exception:
-                        return {"ok": False, "error": "macOS Screen Sharing not enabled. Enable in System Preferences → Sharing → Screen Sharing."}
-
-                else:
-                    return {"ok": False, "error": f"Unsupported platform for local screen: {_platform}"}
-
-                # Start websockify (noVNC)
-                import time as _time_mod
-                _time_mod.sleep(0.5)
-                _novnc_web = "/usr/share/novnc"
-                if _platform == "win32":
-                    _novnc_web = os.path.join(os.environ.get("PROGRAMFILES", "C:\\Program Files"), "noVNC")
-                    if not os.path.isdir(_novnc_web):
-                        _novnc_web = ""
-                elif _platform == "darwin":
-                    _novnc_web = "/usr/local/share/novnc"
-                    if not os.path.isdir(_novnc_web):
-                        _novnc_web = ""
-
-                _ws_args = ["websockify", str(_novnc_port), f"localhost:{_vnc_port}"]
-                if _novnc_web and os.path.isdir(_novnc_web):
-                    _ws_args = ["websockify", "--web", _novnc_web, str(_novnc_port), f"localhost:{_vnc_port}"]
-                _p_novnc = subprocess.Popen(_ws_args, stdout=_log_d, stderr=_log_d)  # nosec B603
-                _procs.append(_p_novnc)
-
-                _execute_command._local_desktop_procs = _procs
-                _execute_command._local_desktop_vnc_port = _vnc_port
-                _execute_command._local_desktop_novnc_port = _novnc_port
-                sys.stderr.write(f"[FSRelay] Local desktop started: vnc={_vnc_port} novnc={_novnc_port} platform={_platform}\n")
-                return {"ok": True, "data": {
-                    "vnc_port": _vnc_port, "novnc_port": _novnc_port,
-                    "platform": _platform, "local_screen": True
-                }}
-            except FileNotFoundError as e:
-                return {"ok": False, "error": f"Local desktop dependency not installed: {e}"}
-            except Exception as e:
-                return {"ok": False, "error": f"Failed to start local desktop: {e}"}
-
-        if action == "stop_local_desktop":
-            if hasattr(_execute_command, '_local_desktop_procs') and _execute_command._local_desktop_procs:
-                for p in _execute_command._local_desktop_procs:
-                    if p.poll() is None:
-                        p.terminate()
-                for p in _execute_command._local_desktop_procs:
-                    try:
-                        p.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        p.kill()
-                _execute_command._local_desktop_procs = None
-                _execute_command._local_desktop_vnc_port = None
-                _execute_command._local_desktop_novnc_port = None
-                sys.stderr.write("[FSRelay] Local desktop stopped\n")
-                return {"ok": True}
-            return {"ok": True, "data": {"was_running": False}}
-
-        if action == "local_screen_check":
-            # Check if local screen VNC dependencies are available
-            import shutil
-            _checks = {}
-            _platform = sys.platform
-            _checks["platform"] = _platform
-            _checks["allow_local_screen"] = allow_local_screen
-            if _platform == "linux":
-                _checks["x11vnc"] = bool(shutil.which("x11vnc"))
-                _checks["websockify"] = bool(shutil.which("websockify"))
-                _checks["display"] = os.environ.get("DISPLAY", "")
-                _checks["ready"] = _checks["x11vnc"] and _checks["websockify"] and bool(_checks["display"])
-            elif _platform == "win32":
-                _has_vnc = False
-                for _c in [r"C:\Program Files\TightVNC\tvnserver.exe",
-                           r"C:\Program Files\uvnc bvba\UltraVNC\winvnc.exe",
-                           r"C:\Program Files (x86)\TightVNC\tvnserver.exe"]:
-                    if os.path.exists(_c):
-                        _has_vnc = True
-                        break
-                _has_vnc = _has_vnc or bool(shutil.which("tvnserver")) or bool(shutil.which("winvnc"))
-                _checks["vnc_server"] = _has_vnc
-                _checks["websockify"] = bool(shutil.which("websockify"))
-                _checks["ready"] = _has_vnc and _checks["websockify"]
-            elif _platform == "darwin":
-                _checks["websockify"] = bool(shutil.which("websockify"))
-                try:
-                    _test = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    _test.settimeout(2)
-                    _test.connect(("localhost", 5900))
-                    _test.close()
-                    _checks["screen_sharing"] = True
-                except Exception:
-                    _checks["screen_sharing"] = False
-                _checks["ready"] = _checks["websockify"] and _checks["screen_sharing"]
-            else:
-                _checks["ready"] = False
-            return {"ok": True, "data": _checks}
-
-        # ── Desktop VNC WS tunnel (same pattern as cs_ws_*) ────────────────
-        if action == "desktop_ws_open":
-            if not allow_exec:
-                return {"ok": False, "error": "Exec not allowed"}
-            _ws_sid = msg.get("session_id", "")
-            _ws_port = msg.get("port", 0)
-            _ws_path = msg.get("ws_path", "/")
-            _ws_headers = msg.get("headers", {})
-            if not _ws_sid or not _ws_port:
-                return {"ok": False, "error": "Missing session_id or port"}
-            try:
-                _ws_key = base64.b64encode(os.urandom(16)).decode()
-                _hdr_lines = [
-                    f"GET {_ws_path} HTTP/1.1",
-                    f"Host: 127.0.0.1:{_ws_port}",
-                    "Upgrade: websocket",
-                    "Connection: Upgrade",
-                    f"Sec-WebSocket-Key: {_ws_key}",
-                    "Sec-WebSocket-Version: 13",
-                ]
-                for _hk, _hv in _ws_headers.items():
-                    _hkl = _hk.lower()
-                    if _hkl not in ("host", "upgrade", "connection",
-                                    "sec-websocket-key", "sec-websocket-version"):
-                        _hdr_lines.append(f"{_hk}: {_hv}")
-                _handshake = "\r\n".join(_hdr_lines) + "\r\n\r\n"
-                sys.stderr.write(f"[FSRelay] desktop_ws_open connecting to 127.0.0.1:{_ws_port} path={_ws_path[:80]}\n")
-                _vnc_sock = socket.create_connection(("127.0.0.1", _ws_port), timeout=10)
-                _vnc_sock.sendall(_handshake.encode())
-                _resp = b""
-                while b"\r\n\r\n" not in _resp:
-                    _chunk = _vnc_sock.recv(4096)
-                    if not _chunk:
-                        raise ConnectionError("WS handshake failed")
-                    _resp += _chunk
-                _status_line = _resp.split(b"\r\n")[0]
-                if b"101" not in _status_line:
-                    sys.stderr.write(f"[FSRelay] desktop_ws_open handshake rejected: {_resp[:500]}\n")
-                    _vnc_sock.close()
-                    return {"ok": False, "error": f"WS handshake rejected: {_status_line.decode(errors='replace')}"}
-                if not hasattr(_execute_command, '_desktop_ws_sessions'):
-                    _execute_command._desktop_ws_sessions = {}
-                _execute_command._desktop_ws_sessions[_ws_sid] = {"sock": _vnc_sock}
-
-                def _desktop_ws_reader(_sock, _sid):
-                    sys.stderr.write(f"[FSRelay] desktop_ws_reader started for {_sid}\n")
-                    try:
-                        while True:
-                            _hdr2 = b""
-                            while len(_hdr2) < 2:
-                                _c = _sock.recv(2 - len(_hdr2))
-                                if not _c:
-                                    break
-                                _hdr2 += _c
-                            if len(_hdr2) < 2:
-                                break
-                            _op = _hdr2[0] & 0x0F
-                            _masked = bool(_hdr2[1] & 0x80)
-                            _plen = _hdr2[1] & 0x7F
-                            if _plen == 126:
-                                _lb = b""
-                                while len(_lb) < 2:
-                                    _c = _sock.recv(2 - len(_lb))
-                                    if not _c:
-                                        break
-                                    _lb += _c
-                                _plen = struct.unpack("!H", _lb)[0]
-                            elif _plen == 127:
-                                _lb = b""
-                                while len(_lb) < 8:
-                                    _c = _sock.recv(8 - len(_lb))
-                                    if not _c:
-                                        break
-                                    _lb += _c
-                                _plen = struct.unpack("!Q", _lb)[0]
-                            if _masked:
-                                _mask = b""
-                                while len(_mask) < 4:
-                                    _c = _sock.recv(4 - len(_mask))
-                                    if not _c:
-                                        break
-                                    _mask += _c
-                            _payload = b""
-                            while len(_payload) < _plen:
-                                _c = _sock.recv(min(65536, _plen - len(_payload)))
-                                if not _c:
-                                    break
-                                _payload += _c
-                            if _masked:
-                                _payload = bytes(b ^ _mask[i % 4] for i, b in enumerate(_payload))
-                            if _op == 0x08:
-                                break
-                            if _op == 0x09:
-                                _pong = bytes([0x80 | 0x0A])
-                                if len(_payload) < 126:
-                                    _pong += bytes([len(_payload)])
-                                _pong += _payload
-                                try:
-                                    _sock.sendall(_pong)
-                                except Exception:
-                                    break
-                                continue
-                            _fwd = json.dumps({
-                                "type": "desktop_ws_data",
-                                "session_id": _sid,
-                                "data": base64.b64encode(_payload).decode("ascii"),
-                                "opcode": _op,
-                            })
-                            with _send_lock:
-                                _ws_frame_send(ws_sock_ref[0], _fwd.encode("utf-8"))
-                    except Exception:
-                        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-                    finally:
-                        try:
-                            _sock.close()
-                        except Exception:
-                            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-                        if hasattr(_execute_command, '_desktop_ws_sessions'):
-                            _execute_command._desktop_ws_sessions.pop(_sid, None)
-                        try:
-                            with _send_lock:
-                                _ws_frame_send(ws_sock_ref[0], json.dumps({"type": "desktop_ws_close", "session_id": _sid}).encode("utf-8"))
-                        except Exception:
-                            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-
-                _t = _threading.Thread(target=_desktop_ws_reader, args=(_vnc_sock, _ws_sid), daemon=True)
-                _t.start()
-                _execute_command._desktop_ws_sessions[_ws_sid]["reader"] = _t
-                return {"ok": True}
-            except Exception as e:
-                return {"ok": False, "error": f"desktop_ws_open error: {e}"}
-
-        if action == "desktop_ws_send":
-            _ws_sid = msg.get("session_id", "")
-            _ws_data = msg.get("data", "")
-            _ws_op = msg.get("opcode", 2)  # binary by default for VNC
-            if not hasattr(_execute_command, '_desktop_ws_sessions'):
-                return {"ok": False, "error": "No desktop WS sessions"}
-            _ws_sess = _execute_command._desktop_ws_sessions.get(_ws_sid)
-            if not _ws_sess:
-                return {"ok": False, "error": f"Desktop WS session not found: {_ws_sid}"}
-            try:
-                _raw = base64.b64decode(_ws_data)
-                _frame = bytes([0x80 | _ws_op])
-                if len(_raw) < 126:
-                    _frame += bytes([0x80 | len(_raw)])
-                elif len(_raw) < 65536:
-                    _frame += bytes([0x80 | 126]) + struct.pack("!H", len(_raw))
-                else:
-                    _frame += bytes([0x80 | 127]) + struct.pack("!Q", len(_raw))
-                _frame += b"\x00\x00\x00\x00" + _raw
-                _ws_sess["sock"].sendall(_frame)
-                return {"ok": True}
-            except Exception as e:
-                return {"ok": False, "error": str(e)}
-
-        if action == "desktop_ws_close":
-            _ws_sid = msg.get("session_id", "")
-            if hasattr(_execute_command, '_desktop_ws_sessions'):
-                _ws_sess = _execute_command._desktop_ws_sessions.pop(_ws_sid, None)
-                if _ws_sess and _ws_sess.get("sock"):
-                    try:
-                        _ws_sess["sock"].close()
-                    except Exception:
-                        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-            return {"ok": True}
-
-        if action == "script_hash":
-            # Return hash of current relay scripts for version check.
-            # Scripts live at /opt/pawflow/*.py (bind-mounted from the
-            # host's tools/ in dev setups, or written there in legacy
-            # sync setups). __file__ points at the pawflow_relay
-            # PACKAGE dir (/opt/pawflow/pawflow_relay/), so the scripts
-            # are one level up. Using __file__'s own dir misses them
-            # all, returns an empty hash, triggers update_scripts which
-            # then hits EROFS on the read-only bind-mount.
-            _script_dir = os.path.dirname(os.path.dirname(
-                os.path.abspath(__file__)))
-            _h = hashlib.sha256()
-            for _sf in ["pawflow_relay_launcher.py", "fs_actions.py",
-                        "_fs_paths.py", "_fs_read.py", "_fs_grep.py",
-                        "_fs_edit.py", "fs_exec.py",
-                        "fs_screen.py", "fs_mcp.py", "fs_common.py"]:
-                _sp = os.path.join(_script_dir, _sf)
-                if os.path.exists(_sp):
-                    with open(_sp, "rb") as _f:
-                        _h.update(_f.read())
-            return {"ok": True, "data": {"hash": _h.hexdigest()[:16]}}
-
-        if action == "update_scripts":
-            # Receive updated relay scripts from server, write to script dir, hot-reload.
-            # Same path correction as script_hash: scripts live at
-            # /opt/pawflow/, not inside the pawflow_relay/ package.
-            _scripts = msg.get("scripts", {})
-            _new_hash = msg.get("script_hash", "")
-            if not _scripts:
-                return {"ok": False, "error": "No scripts provided"}
-            _script_dir = os.path.dirname(os.path.dirname(
-                os.path.abspath(__file__)))
-            _updated = []
-            _readonly_skipped = []
-            for _fname, _content_b64 in _scripts.items():
-                if _fname not in ("pawflow_relay_launcher.py", "fs_actions.py",
-                                  "_fs_paths.py", "_fs_read.py", "_fs_grep.py",
-                                  "_fs_edit.py", "fs_exec.py",
-                                  "fs_screen.py", "fs_mcp.py", "fs_common.py"):
-                    continue  # Only accept known relay files
-                _dst = os.path.join(_script_dir, _fname)
-                _data = base64.b64decode(_content_b64)
-                try:
-                    with open(_dst, "wb") as _f:
-                        _f.write(_data)
-                    _updated.append(_fname)
-                except OSError as _e:
-                    # EROFS (errno 30): file is bind-mounted read-only
-                    # from the host in dev setups. The mount IS the
-                    # "update" — host edits are already visible. Skip
-                    # silently instead of failing the whole sync.
-                    if getattr(_e, "errno", 0) == 30:
-                        try:
-                            with open(_dst, "rb") as _f:
-                                _current = _f.read()
-                        except OSError:
-                            _current = None
-                        if _current != _data:
-                            _readonly_skipped.append(_fname)
-                    else:
-                        raise
-            # Hot-reload importable modules (not pawflow_relay.py itself)
-            import importlib
-            for _mod_name in ["fs_common", "fs_actions", "fs_exec", "fs_screen", "fs_mcp"]:
-                if f"{_mod_name}.py" in _updated and _mod_name in sys.modules:
-                    try:
-                        importlib.reload(sys.modules[_mod_name])
-                    except Exception as _e:
-                        sys.stderr.write(f"[FSRelay] Failed to reload {_mod_name}: {_e}\n")
-            _needs_restart = "pawflow_relay_launcher.py" in _updated
-            if _updated or _readonly_skipped:
-                sys.stderr.write(
-                    f"[FSRelay] Scripts updated={_updated} "
-                    f"readonly_skipped={_readonly_skipped} hash={_new_hash}"
-                    f"{' (restart needed)' if _needs_restart else ''}\n")
-            return {"ok": True, "data": {
-                "updated": _updated,
-                "readonly_skipped": _readonly_skipped,
-                "needs_restart": _needs_restart}}
-
-        # Note: permission checks are enforced server-side by ToolApprovalGate.
-        # (local_screen forwarding handled earlier, before desktop handlers)
-
-        # Generic local=True forward: any action with local=true runs on the
-        # user's host (via PawCode CLI helper), not in this relay container.
-        # This is the equivalent of "exec on host" for all tools — used by
-        # http_fetch (LLM proxy) and any other tool that needs the user's
-        # actual localhost / host network.
-        #
-        # STRICT: local=True is a contract, not a hint. If we can't honour
-        # it, we MUST fail loud. The previous fallthrough silently ran the
-        # action inside the relay container — which means
-        # `http_fetch("http://localhost:8080/")` hit the container's
-        # network namespace instead of the user's host. Repro: CC gets
-        # HTTP 200 with an empty/malformed body (whatever happens to
-        # listen on :8080 INSIDE the container, or an immediate EOF from
-        # the in-container proxy), qwen on the user's host sees zero
-        # requests, and the operator spends an afternoon hunting a ghost.
-        # Fail explicitly so the error surfaces as "host helper
-        # unavailable" rather than a misleading upstream error.
-        if msg.get("local"):
-            _hh = os.environ.get("PAWFLOW_HOST_HELPER", "")
-            if not _hh:
-                return {
-                    "ok": False,
-                    "error": (
-                        "local=True requested but PAWFLOW_HOST_HELPER is "
-                        "not configured on the relay container. "
-                        "Host-forwarding is required for this action "
-                        "(e.g. http_fetch to the user's localhost). "
-                        "Restart the relay via the managed path so the "
-                        "host-helper thread starts and the env var is "
-                        "propagated."),
-                }
-            if not ws_sock_ref[0]:
-                return {
-                    "ok": False,
-                    "error": (
-                        "local=True requested but the relay's WS to the "
-                        "server is not alive — cannot stream progress "
-                        "back from the host helper."),
-                }
-            _fwd = dict(msg)
-            return _forward_to_host_helper(
-                _hh, _fwd, ws_sock_ref[0], _ws_frame_send)
-
-        from fs_actions import ACTIONS as _FS_ACTIONS
-        handler_func = _FS_ACTIONS.get(action)
-        if not handler_func:
-            return {"ok": False, "error": f"Unknown action: {action}"}
-
-        try:
-            if action in ("exec", "exec_stream"):
-                result = handler_func(root_dir, abs_path, msg,
-                                       allow_exec=getattr(mock, 'allow_exec', False),
-                                       **({"on_output": on_output} if action == "exec_stream" and on_output else {}))
-            elif action == "http_fetch":
-                # http_fetch: stream chunks when the caller wired
-                # on_output (LLM proxy, SSE relay), else run in sync
-                # mode so the action returns {status, headers, body}
-                # inline (Pixazo polling, generic GET).
-                if on_output:
-                    def _on_chunk(kind, data):
-                        on_output(kind, data)
-                    result = handler_func(root_dir, abs_path, msg,
-                                           on_chunk=_on_chunk)
-                else:
-                    result = handler_func(root_dir, abs_path, msg)
-            else:
-                result = handler_func(root_dir, abs_path, msg)
-            return {"ok": True, "data": result}
-        except Exception as e:
-            return {"ok": False, "error": str(e)}
+        # Connection-scoped deps are bundled into _dispatch_ctx (built per
+        # reconnect, once the socket / send-lock / terminal-manager exist);
+        # the per-action routing lives in pawflow_relay._relay_dispatch.
+        return _dispatch_execute(_dispatch_ctx, msg, on_output=on_output)
 
     # ── FUSE mounts (one-shot, survive WS reconnects) ────────────────
     # Create the FUSE mounts BEFORE entering the reconnect loop and
@@ -1638,109 +265,9 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             sys.stderr.write(f"[FSRelay] workspace cryfs mount failed: {_we}\n")
 
     _server_fs_swap = None
-    _server_fs_mount = None
-    _filestore_fs_swap = None
-    _skills_fs_swap = None
-    if server_mount or filestore_mount or skills_mount:
-        from pawflow_relay.server_fs_client import SwappableServerFsClient
-        from pawflow_relay.server_fs_mount import CombinedServerFsMount
-        # ONE pyfuse3 mount at /pawflow_fs serving both cc_sessions
-        # (sfs.*) and filestore (ffs.*) subtrees. Required because
-        # pyfuse3 keeps a single global session per process — two
-        # separate mounts race on `pyfuse3.init()`, the second wins,
-        # the first goes orphan, and any syscall on the orphan blocks
-        # forever (no userspace daemon answers the kernel). The
-        # canonical paths /cc_sessions and /filestore are restored
-        # via `mount --bind` against the routed subtrees.
-        _server_fs_swap = SwappableServerFsClient()
-        _filestore_fs_swap = SwappableServerFsClient()
-        _skills_fs_swap = SwappableServerFsClient()
-        # Mountpoint under /tmp because it's tmpfs (always writable
-        # by the relay user, no Dockerfile change required to grant
-        # ownership). The bind-mounts that follow expose the canonical
-        # /cc_sessions and /filestore paths so downstream consumers
-        # don't see the temp location.
-        _combined_root = "/tmp/pf_combined_fs"  # nosec B108 - relay-local FUSE mount root.
-        try:
-            _server_fs_mount = CombinedServerFsMount(
-                _combined_root, _server_fs_swap, _filestore_fs_swap,
-                _skills_fs_swap)
-            _server_fs_mount.start()
-            sys.stderr.write(
-                f"[FSRelay] combined-fs mounted at {_combined_root}\n")
-            # Expose each canonical path as a symlink to the routed
-            # subtree of the combined FUSE mount. Symlinks rather than
-            # `mount --bind` because they're cheaper and survive any
-            # future restructuring; we route every filesystem op
-            # through `sudo` because the canonical paths live in `/`
-            # (root-owned) and pawflow can't rmdir entries there
-            # without escalating privileges. The Dockerfile grants
-            # pawflow NOPASSWD sudo precisely to enable this.
-            _aliases = []
-            if server_mount:
-                _aliases.append((f"{_combined_root}/cc_sessions", server_mount))
-            if filestore_mount:
-                _aliases.append((f"{_combined_root}/filestore", filestore_mount))
-            if skills_mount:
-                _aliases.append((f"{_combined_root}/skills", skills_mount))
-
-            def _sudo_run(argv: list, _what: str):
-                _rc = subprocess.run(  # nosec B603
-                    ["sudo", "-n"] + argv,
-                    capture_output=True, text=True, timeout=5)
-                if _rc.returncode != 0:
-                    sys.stderr.write(
-                        f"[FSRelay] {_what} FAILED rc={_rc.returncode} "
-                        f"stdout={_rc.stdout.strip()!r} "
-                        f"stderr={_rc.stderr.strip()!r}\n")
-                return _rc.returncode == 0
-
-            for _src, _dst in _aliases:
-                try:
-                    # Wipe whatever's at the canonical path (empty dir
-                    # from the Dockerfile, leftover symlink from a
-                    # previous run, …). `rm -rf` covers all cases.
-                    if not _sudo_run(["rm", "-rf", _dst],
-                                     f"sudo rm -rf {_dst}"):
-                        continue
-                    # Re-create the parent dir if `rm -rf` removed it
-                    # (it shouldn't for top-level paths like /cc_sessions
-                    # but be defensive).
-                    _parent = os.path.dirname(_dst) or "/"
-                    if not os.path.isdir(_parent):
-                        _sudo_run(["mkdir", "-p", _parent],
-                                  f"sudo mkdir -p {_parent}")
-                    if not _sudo_run(["ln", "-s", _src, _dst],
-                                     f"sudo ln -s {_src} {_dst}"):
-                        continue
-                    sys.stderr.write(
-                        f"[FSRelay] symlinked {_dst} → {_src}\n")
-                except Exception as _serr:
-                    sys.stderr.write(
-                        f"[FSRelay] symlink {_dst} → {_src} "
-                        f"FAILED: {_serr}\n")
-        except Exception as _smerr:
-            import traceback as _tb
-            _full_tb = _tb.format_exc()
-            sys.stderr.write(
-                f"[FSRelay] combined-fs mount FAILED: {_smerr}\n"
-                "  Likely cause: missing pyfuse3 / libfuse3, or no "
-                "CAP_SYS_ADMIN. Continuing without combined-fs.\n"
-                f"  full traceback follows:\n{_full_tb}")
-            # Also write the traceback into the FUSE trace file so
-            # users diagnosing a mount failure don't have to dig
-            # through relay.log to find the cause.
-            try:
-                from pawflow_relay.server_fs_mount import _fuse_trace_emit
-                _fuse_trace_emit(
-                    f"[FSRelay] combined-fs mount FAILED err={_smerr}\n"
-                    f"--- traceback ---\n{_full_tb}--- end ---")
-            except Exception:
-                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-            _server_fs_mount = None
-            _server_fs_swap = None
-            _filestore_fs_swap = None
-            _skills_fs_swap = None
+    (_server_fs_swap, _filestore_fs_swap, _skills_fs_swap,
+     _server_fs_mount) = _setup_combined_fs(
+        server_mount, filestore_mount, skills_mount)
 
     try:
         from pawflow_relay.remote_mounts import RemoteMountManager
@@ -1756,73 +283,9 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
         _last_activity = [time.time()]
         try:
             sys.stderr.write(f"[FSRelay] Connecting to {url} ...\n")
-            sock = socket.create_connection((host, port), timeout=10)
-            # TCP keepalive: detect dead connections at OS level
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-            try:
-                # Linux: start probing after 30s idle, every 10s, fail after 3 misses
-                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 30)
-                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10)
-                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3)
-            except (AttributeError, OSError):
-                pass  # not available on all platforms
-            if use_ssl:
-                ctx = ssl.create_default_context()
-                if os.environ.get('PAWFLOW_RELAY_INSECURE') == '1':
-                    ctx.check_hostname = False
-                    ctx.verify_mode = ssl.CERT_NONE
-                sock = ctx.wrap_socket(sock, server_hostname=host)
-
-            ws_key = b64.b64encode(os.urandom(16)).decode()
-            _cookies = []
-            if gateway_cookie:
-                _cookies.append(f'_pf_gw={gateway_cookie}')
-            if session_token:
-                _cookies.append(f'pawflow_token={session_token}')
-            internal_token = os.environ.get('PAWFLOW_INTERNAL_TOKEN', '')
-            if internal_token:
-                _cookies.append(f'pawflow_internal={internal_token}')
-            _extra_hdrs = ''
-            if _cookies:
-                _extra_hdrs = 'Cookie: ' + '; '.join(_cookies) + '\r\n'
-            if gateway_key:
-                _extra_hdrs += f'X-PawFlow-Gateway-Key: {gateway_key}\r\n'
-            handshake = (
-                f"GET {path} HTTP/1.1\r\n"
-                f"Host: {host}:{port}\r\n"
-                f"Upgrade: websocket\r\n"
-                f"Connection: Upgrade\r\n"
-                f"Sec-WebSocket-Key: {ws_key}\r\n"
-                f"Sec-WebSocket-Version: 13\r\n"
-                f"{_extra_hdrs}"
-                f"\r\n"
-            )
-            sock.sendall(handshake.encode())
-
-            resp = b""
-            while b"\r\n\r\n" not in resp:
-                chunk = sock.recv(4096)
-                if not chunk:
-                    raise ConnectionError("Handshake failed")
-                resp += chunk
-
-            if b"101" not in resp.split(b"\r\n")[0]:
-                _status_line = resp.split(b"\r\n")[0]
-                raise ConnectionError(f"Handshake failed: {_status_line}")
-
-            # Any bytes after \r\n\r\n are the start of the first WS frame
-            # — push them back into the socket buffer via a wrapper
-            _header_end = resp.index(b"\r\n\r\n") + 4
-            _leftover = resp[_header_end:]
-            if _leftover:
-                _orig_recv = sock.recv
-                _buf = [_leftover]
-                def _patched_recv(n, _flags=0):
-                    if _buf:
-                        data = _buf.pop(0)
-                        return data[:n]  # may need to re-buffer if data > n
-                    return _orig_recv(n)
-                sock.recv = _patched_recv
+            sock = _connect_and_handshake(
+                host, port, path, use_ssl, gateway_cookie,
+                session_token, gateway_key)
 
             sys.stderr.write(f"[FSRelay] Connected to {url}\n")
 
@@ -1885,7 +348,26 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             _wd_thread.start()
             _send_lock = _threading.Lock()
             _child_relays = {}  # relay_id → thread (child relay instances)
-            _terminal_sessions = {}  # session_id → {master_fd, pid, reader}
+
+            def _term_send(_frame):
+                # PTY reader threads stream output here; take the shared
+                # send lock before writing to the (SSL) socket — concurrent
+                # writes interleave mid-record and corrupt the stream.
+                with _send_lock:
+                    _ws_frame_send(sock, _frame)
+            # Recreated per (re)connection so PTY sessions never outlive
+            # their socket (mirrors the old per-connection _terminal_sessions).
+            _term_mgr = TerminalManager(root_dir, _term_send)
+            # Connection-scoped dependencies the action dispatcher closes over.
+            # Rebuilt per reconnect so it carries the live socket ref / send
+            # lock / terminal manager; _state and the flags are stable.
+            _dispatch_ctx = DispatchCtx(
+                state=_state, term_mgr=_term_mgr, send_lock=_send_lock,
+                ws_sock_ref=ws_sock_ref, ws_frame_send=_ws_frame_send,
+                resolve=_resolve, forward_to_host_helper=_forward_to_host_helper,
+                root_dir=root_dir, readonly=readonly, allow_exec=allow_exec,
+                allow_local=allow_local, allow_local_screen=allow_local_screen,
+                allow_automation=allow_automation)
             _disconnect_reason = "unknown"
             _close_info = ""
             _inflight_cmds = {}
@@ -1943,92 +425,6 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                     send_callable=lambda b: _ws_frame_send(sock, b),
                     send_lock=_send_lock)
                 _skills_fs_swap.set_inner(_skills_fs_client)
-
-            def _open_terminal(cols=80, rows=24, shell=None):
-                import uuid as _uuid_term
-                import fcntl
-                import termios
-                import array
-
-                _sid = _uuid_term.uuid4().hex[:12]
-                _shell = shell or os.environ.get("SHELL", "/bin/bash")
-
-                pid, master_fd = os.forkpty()
-                if pid == 0:
-                    os.chdir(root_dir)
-                    env = os.environ.copy()
-                    env["TERM"] = "xterm-256color"
-                    env["COLUMNS"] = str(cols)
-                    env["LINES"] = str(rows)
-                    os.execvpe(_shell, [_shell], env)  # nosec B606
-
-                # Set terminal size
-                try:
-                    winsize = array.array("H", [rows, cols, 0, 0])
-                    fcntl.ioctl(master_fd, termios.TIOCSWINSZ, winsize)
-                except Exception:
-                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-
-                # Reader thread: PTY fd → WS
-                def _pty_reader(_fd, _sid):
-                    try:
-                        while True:
-                            data = os.read(_fd, 4096)
-                            if not data:
-                                break
-                            frame = json.dumps({
-                                "type": "terminal_data",
-                                "session_id": _sid,
-                                "data": base64.b64encode(data).decode("ascii"),
-                            }).encode("utf-8")
-                            with _send_lock:
-                                _ws_frame_send(sock, frame)
-                    except OSError:
-                        pass
-                    finally:
-                        try:
-                            frame = json.dumps({
-                                "type": "terminal_exit",
-                                "session_id": _sid,
-                            }).encode("utf-8")
-                            with _send_lock:
-                                _ws_frame_send(sock, frame)
-                        except Exception:
-                            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-
-                reader = _threading.Thread(
-                    target=_pty_reader, args=(master_fd, _sid),
-                    daemon=True, name=f"pty-reader-{_sid}")
-                reader.start()
-
-                _terminal_sessions[_sid] = {
-                    "master_fd": master_fd,
-                    "pid": pid,
-                    "reader": reader,
-                    "shell": _shell,
-                }
-                sys.stderr.write(f"[FSRelay] Terminal opened: {_sid} (shell={_shell})\n")
-                return _sid
-
-            def _close_terminal(session_id):
-                sess = _terminal_sessions.pop(session_id, None)
-                if not sess:
-                    return False
-                try:
-                    os.close(sess["master_fd"])
-                except OSError:
-                    pass
-                try:
-                    os.kill(sess["pid"], 9)
-                    os.waitpid(sess["pid"], os.WNOHANG)
-                except (OSError, ChildProcessError):
-                    pass
-                sys.stderr.write(f"[FSRelay] Terminal closed: {session_id}\n")
-                return True
-
-            def _close_all_terminals():
-                for sid in list(_terminal_sessions):
-                    _close_terminal(sid)
 
             while True:
                 try:
@@ -2211,28 +607,15 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
 
                 elif msg.get("type") == "terminal_input":
                     _tid = msg.get("session_id", "")
-                    _tsess = _terminal_sessions.get(_tid)
-                    if _tsess:
-                        try:
-                            _raw = base64.b64decode(msg.get("data", ""))
-                            os.write(_tsess["master_fd"], _raw)
-                        except OSError as _oe:
-                            sys.stderr.write(f"[FSRelay] terminal write error: {_oe}\n")
+                    if _tid in _term_mgr.sessions:
+                        _ok, _err = _term_mgr.write(_tid, msg.get("data", ""))
+                        if not _ok and _err:
+                            sys.stderr.write(f"[FSRelay] terminal write error: {_err}\n")
 
                 elif msg.get("type") == "terminal_resize":
                     _tid = msg.get("session_id", "")
-                    _tsess = _terminal_sessions.get(_tid)
-                    if _tsess:
-                        try:
-                            import fcntl as _fcntl_r
-                            import termios as _termios_r
-                            import array as _array_r
-                            _c = msg.get("cols", 80)
-                            _r = msg.get("rows", 24)
-                            _ws = _array_r.array("H", [_r, _c, 0, 0])
-                            _fcntl_r.ioctl(_tsess["master_fd"], _termios_r.TIOCSWINSZ, _ws)
-                        except Exception:
-                            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+                    if _tid in _term_mgr.sessions:
+                        _term_mgr.resize(_tid, cols=msg.get("cols", 80), rows=msg.get("rows", 24))
 
                 elif msg.get("type") == "command":
                     request_id = msg.get("request_id", "")
@@ -2311,7 +694,9 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
 
         except KeyboardInterrupt:
             sys.stderr.write("\n[FSRelay] Shutting down.\n")
-            _close_all_terminals()
+            _tm = locals().get('_term_mgr')
+            if _tm:
+                _tm.close_all()
             # Final exit — unmount the combined FUSE filesystem before
             # returning so we don't leave a dangling pyfuse3 mount
             # pointing at a dead WS.
@@ -2340,11 +725,12 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 f"inflight={locals().get('_active_cmd_summary', lambda: 'unknown')()} "
                 f"diag={locals().get('_diag_summary', lambda: 'unknown')()})\n")
         finally:
-            # Guard: on early connect errors, _close_all_terminals may not
-            # be defined yet (its definition sits past the handshake).
-            _ct = locals().get('_close_all_terminals')
-            if _ct:
-                _ct()
+            # Guard: on early connect errors, _term_mgr may not be defined
+            # yet (it is created during per-connection setup, past the
+            # handshake).
+            _tm = locals().get('_term_mgr')
+            if _tm:
+                _tm.close_all()
             # Detach the per-WS ServerFsClient from the FUSE mount and
             # cancel its pending requests with EIO so the kernel doesn't
             # hang on the dead socket. The FUSE mount itself stays up

@@ -1,13 +1,12 @@
 """Tests for claude-code provider in LLMClient."""
 
 import json
-import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch, MagicMock
 
 from core.llm_client import (
-    LLMClient, LLMMessage, LLMResponse, LLMToolDefinition,
+    LLMClient, LLMMessage, LLMToolDefinition,
     LLMToolCall, LLMClientError,
 )
 
@@ -331,6 +330,72 @@ class TestStreamClaude(unittest.TestCase):
             turn_callback=lambda text, tc, *a: turn_tcs.extend(tc),
         )
         self.assertIn("tc1", [t.get("id") for t in turn_tcs])
+
+    def _run_text_then_tool_turn(self, **stream_kwargs):
+        """Drive thinking -> text -> tool_use within ONE message (CC emits
+        them as incremental assistant events sharing a msg_id), then the
+        tool_result and the final result. Mirrors the real ordering the
+        model produces: it explains what it will do, THEN calls the tool."""
+        events = [
+            json.dumps({"type": "assistant", "message": {"id": "m1", "content": [
+                {"type": "thinking", "thinking": "I should read the file."}]}}),
+            json.dumps({"type": "assistant", "message": {"id": "m1", "content": [
+                {"type": "text", "text": "Let me read the file."}]}}),
+            json.dumps({"type": "assistant", "message": {"id": "m1", "content": [
+                {"type": "tool_use", "id": "tc1", "name": "Read",
+                 "input": {"path": "/x"}}]}}),
+            json.dumps({"type": "user", "message": {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "tc1",
+                 "content": "file body"}]}}),
+            json.dumps({"type": "result", "result": "", "model": "sonnet",
+                        "usage": {"input_tokens": 10, "output_tokens": 5}}),
+        ]
+        mock_stdout = MagicMock()
+        mock_stdout.__iter__ = MagicMock(
+            return_value=iter([line + "\n" for line in events]))
+        mock_proc = MagicMock()
+        mock_proc.stdout = mock_stdout
+        mock_proc.returncode = 0
+        with patch.object(self.client, '_pool_popen',
+                          return_value=(mock_proc, None)):
+            self.client.complete_stream(
+                [LLMMessage(role="user", content="Hi",
+                            conversation_id="test_conv")],
+                **stream_kwargs)
+
+    def test_block_callback_text_persisted_live_before_tool(self):
+        """Regression for the cc-p SSE bug: the assistant's explanatory text
+        ('Let me read the file.') must be persisted LIVE via block_callback,
+        in emission order — BEFORE the tool_use it precedes. Pre-fix the text
+        was only flushed at end-of-turn via turn_callback, so it surfaced in
+        the transcript AFTER the tool had already run. The end-of-turn flush
+        must NOT carry the text again (no double-persist)."""
+        blocks = []
+        turn_texts = []
+        self._run_text_then_tool_turn(
+            block_callback=lambda et, payload: blocks.append((et, payload)),
+            turn_callback=lambda text, tc, *a: turn_texts.append(text),
+        )
+        kinds = [et for (et, _p) in blocks]
+        # text went out live, exactly once, with the right content
+        text_blocks = [p for (et, p) in blocks if et == "text"]
+        self.assertEqual(len(text_blocks), 1)
+        self.assertEqual(text_blocks[0]["text"], "Let me read the file.")
+        # ordering: thinking, then text, then tool_use
+        self.assertLess(kinds.index("thinking_content"), kinds.index("text"))
+        self.assertLess(kinds.index("text"), kinds.index("tool_use"))
+        # the flush must not re-persist the text
+        self.assertEqual([t for t in turn_texts if t], [])
+
+    def test_no_block_callback_text_persisted_at_flush(self):
+        """Control: without block_callback the text is delivered to
+        turn_callback at the flush — persisted exactly once there, never
+        lost (legacy path unchanged)."""
+        turn_texts = []
+        self._run_text_then_tool_turn(
+            turn_callback=lambda text, tc, *a: turn_texts.append(text),
+        )
+        self.assertIn("Let me read the file.", turn_texts)
 
     def test_stream_binary_not_found(self):
         with patch.object(self.client, '_pool_popen',

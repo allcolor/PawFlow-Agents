@@ -164,6 +164,44 @@ class _CCStreamTurnMixin:
             _p.stdin.flush()
             self._preempt_pending = getattr(self, '_preempt_pending', 0) + 1
 
+    def _ccs_emit_pending_thinking(self, st):
+        """Persist any buffered turn thinking as a live block_callback block.
+
+        Called right before a live text/tool block is emitted so the
+        reasoning lands in the transcript AHEAD of the content it preceded
+        (mirrors the interactive provider's _flush_thinking_block). Real
+        reasoning is persisted verbatim; redacted thinking (signature, no
+        content) is rendered as the same "Thought for Xs" placeholder that
+        _ccs_flush_turn synthesizes. No-op when block_callback is disabled.
+        Clears the turn thinking buffers on success so the end-of-turn flush
+        doesn't re-persist them.
+        """
+        if not st.block_callback:
+            return
+        thinking = st._turn_thinking
+        if (not thinking) and st._turn_thinking_redacted:
+            _dur_s = max(0.0, st._turn_thinking_end - st._turn_thinking_start)
+            thinking = (
+                f"[Thought for {_dur_s:.1f}s \u2014 reasoning content "
+                f"redacted by the Anthropic API; the signature is "
+                f"preserved in the session so the chain of thought "
+                f"is carried forward on resume.]")
+        if not thinking:
+            return
+        try:
+            st.block_callback("thinking_content", {"text": thinking})
+        except Exception as _bc_err:
+            # Leave the buffers intact so the end-of-turn flush still
+            # persists the thinking (no data loss on a callback failure).
+            logger.error(
+                "[claude-code] block_callback thinking failed: %s",
+                _bc_err, exc_info=True)
+            return
+        st._turn_thinking = ""
+        st._turn_thinking_redacted = False
+        st._turn_thinking_start = 0.0
+        st._turn_thinking_end = 0.0
+
     def _ccs_flush_turn(self, st):
         """Emit the accumulated turn via turn_callback."""
         text = "".join(st._turn_text_parts).strip()

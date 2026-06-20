@@ -160,10 +160,35 @@ class _CCStreamLoopMixin:
                     if btype == "text":
                         text = block.get("text", "")
                         if text:
-                            st._turn_text_parts.append(text)
                             st.content_parts.append(text)
                             if st.callback:
                                 st.callback(text)
+                            if st.block_callback:
+                                # Persist the assistant text live (as we
+                                # already do for tool_use/tool_result) so it
+                                # lands in the transcript in emission order
+                                # — BEFORE the tool_use blocks the model
+                                # requested after it. Without this, text was
+                                # only flushed at end-of-turn via
+                                # turn_callback, so the "here's what I'll do"
+                                # message surfaced AFTER the tools had already
+                                # run. Flush pending thinking first so the
+                                # reasoning still precedes the text. Keeping
+                                # the text out of _turn_text_parts makes the
+                                # flush skip it (mirrors
+                                # _block_persisted_tc_ids for tool_use); on a
+                                # callback failure we fall back to the
+                                # accumulator so nothing is lost.
+                                self._ccs_emit_pending_thinking(st)
+                                try:
+                                    st.block_callback("text", {"text": text})
+                                except Exception as _bc_err:
+                                    logger.error(
+                                        "[claude-code] block_callback text failed: %s",
+                                        _bc_err, exc_info=True)
+                                    st._turn_text_parts.append(text)
+                            else:
+                                st._turn_text_parts.append(text)
                     elif btype == "tool_use":
                         logger.debug("[CC-RAW-TOOL] block=%s", json.dumps(block, default=str, ensure_ascii=False))
                         _block_id = block.get("id", "")

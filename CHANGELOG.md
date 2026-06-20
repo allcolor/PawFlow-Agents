@@ -16,6 +16,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   keeps the delta preview separate; the durable block supersedes it (a
   leftover preview with no block — e.g. a cancelled turn — is still
   flushed). Webchat was unaffected and keeps streaming thinking live.
+- claude-code (`-p`) streaming: the assistant's explanatory text ("here's
+  what I'll do") arrived in the transcript *after* the tool calls it
+  preceded. tool_use/tool_result were persisted live via `block_callback`,
+  but text was only emitted at the end-of-turn flush, so it surfaced last.
+  Text (and any pending thinking) is now persisted live in emission order —
+  `thinking → text → tool_use` — mirroring the interactive provider, with no
+  double-persist at the flush.
+
+## [1.0.0-alpha.53] — 2026-06-20
+
+### Changed
+
+- Refactored the relay worker for maintainability. `pawflow_relay/worker.py`
+  shrank from 2390 to 776 lines (−68 %) by extracting focused modules, all
+  ≤ 800 lines: `_relay_desktop` (VNC lifecycle + WS tunnel), `_relay_dispatch`
+  (the `execute_command` router), `_relay_codeserver` (code-server process +
+  WS tunnel), `_relay_terminal` (`TerminalManager` PTY), `_relay_actions`
+  (http_proxy + script sync), `_relay_fs_setup` (combined FUSE mount), and
+  `_relay_conn` (WS connect + handshake). Per-call state moved from function
+  attributes to a `RelayWorkerState` dataclass. Behavior is preserved; the
+  public `_ws_connect` entry point is unchanged. Adds ~890 lines of tests,
+  including first execution coverage of the PTY, WS/VNC, and HTTP-proxy paths.
+
+### Removed
+
+- Dead HTTP `FSRelayHandler` path in the relay worker (never invoked —
+  `worker_main` only calls `_ws_connect`).
+- Dormant HTTP remote-worker stack in the engine.
 
 ## [1.0.0-alpha.52] — 2026-06-19
 

@@ -24,15 +24,11 @@ import json
 import os
 import socket
 import struct
-import subprocess  # nosec B404
 import sys
 import tempfile
 import time
 from pathlib import Path
 
-from fs_common import (
-    _docker_cmd, _translate_path, _to_host_path,
-)
 from pawflow_relay.auth import (
     forward_to_host_helper as _forward_to_host_helper,
 )
@@ -80,6 +76,9 @@ from pawflow_relay.proc_registry import (  # noqa: E402
     kill_inflight_proc,
 )
 from pawflow_relay._relay_state import RelayWorkerState  # noqa: E402
+from pawflow_relay._relay_children import (  # noqa: E402
+    ChildRelayManager, ChildRelayConfig, DockerEnv,
+)
 from pawflow_relay._relay_terminal import TerminalManager  # noqa: E402
 from pawflow_relay._relay_dispatch import (  # noqa: E402
     DispatchCtx,
@@ -315,7 +314,14 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             _wd_thread = _threading.Thread(target=_watchdog, daemon=True, name="relay-watchdog")
             _wd_thread.start()
             _send_lock = _threading.Lock()
-            _child_relays = {}  # relay_id → thread (child relay instances)
+            # Child-relay tracking, recreated per connection (mirrors the old
+            # per-connection _child_relays = {} reset). cfg is stable across
+            # reconnects; the DockerEnv is resolved per spawn below.
+            _children = ChildRelayManager()
+            _child_cfg = ChildRelayConfig(
+                url=url, token=token, secret=secret, readonly=readonly,
+                allow_exec=allow_exec, allow_automation=allow_automation,
+                allow_local_screen=allow_local_screen, allow_local=allow_local)
 
             def _term_send(_frame):
                 # PTY reader threads stream output here; take the shared
@@ -477,101 +483,21 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                             name="remote-mount-reconcile").start()
                     continue
                 if _mtype == "spawn_relay":
-                    # Server asks us to create a child relay for a different root
-                    _sr_root = msg.get("root", "")
-                    _sr_id = msg.get("relay_id", "")
-                    _sr_token = msg.get("token", token)
-                    _sr_secret = msg.get("secret", secret)
-                    _sr_rid = msg.get("request_id", "")
-                    if not _sr_root or not os.path.isdir(_sr_root):
-                        _resp = json.dumps({"type": "result", "request_id": _sr_rid,
-                            "data": {"ok": False, "error": f"Directory not found: {_sr_root}"}}).encode("utf-8")
-                        with _send_lock:
-                            _ws_frame_send(sock, _resp)
-                    else:
-                        sys.stderr.write(f"[FSRelay] Spawning child relay: {_sr_id} -> {_sr_root}\n")
-                        # If parent uses Docker, child starts its own container
-                        _parent_docker = globals().get('_DOCKER_EXEC_CONTAINER') or \
-                                         getattr(__import__('fs_actions'), '_DOCKER_EXEC_CONTAINER', None) \
-                                         if 'fs_actions' in sys.modules else None
-                        _child_docker_image = msg.get("docker_image", "")
-
-                        _docker_cpus = getattr(globals().get('args', None), 'docker_cpus', '2')
-                        _docker_memory = getattr(globals().get('args', None), 'docker_memory', '4g')
-                        def _child_relay(_url, _tok, _sec, _rid, _root,
-                                         _docker_img="", _parent_has_docker=False,
-                                         _cpus=_docker_cpus, _mem=_docker_memory):
-                            _child_container = None
-                            try:
-                                # Start child Docker container if parent uses Docker
-                                if _docker_img or _parent_has_docker:
-                                    import uuid as _uuid_child
-                                    _img = _docker_img or "pawflow-relay-dev:latest"
-                                    _child_container = f"pawflow-relay-child-{_uuid_child.uuid4().hex[:8]}"
-                                    _dr = subprocess.run(_docker_cmd() + [  # nosec B603
-                                        "run", "-d",
-                                        "--name", _child_container,
-                                        "--init",
-                                        "-v", f"{_translate_path(_to_host_path(_root))}:/workspace",
-                                        "-w", "/workspace",
-                                        "--cpus", _cpus, "--memory", _mem,
-                                        "--security-opt", "no-new-privileges",
-                                        _img, "tail", "-f", "/dev/null",
-                                    ], capture_output=True, text=True)
-                                    if _dr.returncode == 0:
-                                        # Register container for this root dir
-                                        import fs_actions as _fsa
-                                        if not hasattr(_fsa, '_DOCKER_CONTAINERS'):
-                                            _fsa._DOCKER_CONTAINERS = {}
-                                        _fsa._DOCKER_CONTAINERS[str(Path(_root).resolve())] = _child_container
-                                        sys.stderr.write(f"[FSRelay] Child container: {_child_container}\n")
-                                    else:
-                                        _child_container = None
-                                _ws_connect(_url, _tok, _sec, _rid, _root,
-                                            readonly=readonly, allow_exec=allow_exec,
-                                            allow_automation=allow_automation,
-                                            allow_local_screen=allow_local_screen,
-                                            allow_local=allow_local)
-                            except Exception as _ce:
-                                sys.stderr.write(f"[FSRelay] Child {_rid} died: {_ce}\n")
-                            finally:
-                                if _child_container:
-                                    # Unregister from dict
-                                    try:
-                                        import fs_actions as _fsa2
-                                        _fsa2._DOCKER_CONTAINERS.pop(str(Path(_root).resolve()), None)
-                                    except Exception:
-                                        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-                                    try:
-                                        subprocess.run(_docker_cmd() + ["rm", "-f", _child_container],  # nosec B603
-                                                       capture_output=True, timeout=10)
-                                    except Exception:
-                                        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-                        _child_thread = _threading.Thread(
-                            target=_child_relay,
-                            args=(url, _sr_token, _sr_secret, _sr_id, _sr_root,
-                                  _child_docker_image, bool(_parent_docker)),
-                            daemon=True, name=f"relay-child-{_sr_id}")
-                        _child_thread.start()
-                        _child_relays[_sr_id] = _child_thread
-                        _resp = json.dumps({"type": "result", "request_id": _sr_rid,
-                            "data": {"ok": True, "relay_id": _sr_id, "root": _sr_root}}).encode("utf-8")
-                        with _send_lock:
-                            _ws_frame_send(sock, _resp)
+                    # Resolve the parent's Docker context here (globals()/args
+                    # must be read in worker module scope), then delegate.
+                    _parent_docker = globals().get('_DOCKER_EXEC_CONTAINER') or \
+                                     getattr(__import__('fs_actions'), '_DOCKER_EXEC_CONTAINER', None) \
+                                     if 'fs_actions' in sys.modules else None
+                    _docker_cpus = getattr(globals().get('args', None), 'docker_cpus', '2')
+                    _docker_memory = getattr(globals().get('args', None), 'docker_memory', '4g')
+                    _children.handle_spawn(
+                        msg, _child_cfg,
+                        DockerEnv(parent_docker=bool(_parent_docker),
+                                  cpus=_docker_cpus, memory=_docker_memory),
+                        _term_send)
 
                 elif msg.get("type") == "stop_relay":
-                    # Server asks us to stop a child relay
-                    _stop_id = msg.get("relay_id", "")
-                    _stop_rid = msg.get("request_id", "")
-                    _child = _child_relays.pop(_stop_id, None)
-                    # Child relays run _ws_connect which reconnects forever.
-                    # Signal them to stop by removing from tracking.
-                    # The child will die on next reconnect failure or be cleaned up.
-                    sys.stderr.write(f"[FSRelay] Stopping child relay: {_stop_id}\n")
-                    _resp = json.dumps({"type": "result", "request_id": _stop_rid,
-                        "data": {"ok": True, "stopped": _stop_id}}).encode("utf-8")
-                    with _send_lock:
-                        _ws_frame_send(sock, _resp)
+                    _children.handle_stop(msg, _term_send)
 
                 elif msg.get("type") == "terminal_input":
                     _tid = msg.get("session_id", "")

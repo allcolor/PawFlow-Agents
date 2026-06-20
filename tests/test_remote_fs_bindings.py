@@ -407,12 +407,14 @@ def test_container_launchers_request_docker_init():
         "core/server_relay_manager.py",
         "pawflow_relay/cli.py",
         "pawflow_relay/thread.py",
-        "pawflow_relay/worker.py",
+        # The relay worker's child-relay `docker run` moved to _relay_children
+        # (the worker no longer launches containers directly).
+        "pawflow_relay/_relay_children.py",
         "tools/fs_exec.py",
         "pawflow-relay-desktop/runtime/tools/fs_exec.py",
         "pawflow-relay-desktop/runtime/pawflow_relay/cli.py",
         "pawflow-relay-desktop/runtime/pawflow_relay/thread.py",
-        "pawflow-relay-desktop/runtime/pawflow_relay/worker.py",
+        "pawflow-relay-desktop/runtime/pawflow_relay/_relay_children.py",
     ):
         if path.endswith("thread.py"):
             src = "".join(q.read_text(encoding="utf-8") for q in sorted(Path(path).parent.glob("*thread*.py")))

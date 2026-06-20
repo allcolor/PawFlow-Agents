@@ -160,7 +160,7 @@ def desktop_ws_close(state, msg):
 
 
 def novnc_http_ready(state, port=None, timeout=1.0):
-    port = int(port or getattr(state, 'desktop_novnc_port', 0) or 0)
+    port = int(port or state.desktop_novnc_port or 0)
     if not port:
         return False
     try:
@@ -173,17 +173,17 @@ def novnc_http_ready(state, port=None, timeout=1.0):
         return False
 
 def desktop_is_healthy(state):
-    procs = getattr(state, 'desktop_procs', None)
+    procs = state.desktop_procs
     if not procs:
         return False
-    essential = getattr(state, 'desktop_essential_procs', None) or procs
+    essential = state.desktop_essential_procs or procs
     return all(p.poll() is None for p in essential) and novnc_http_ready(state)
 
 def desktop_cleanup(state, reason=""):
-    stop = getattr(state, 'desktop_watchdog_stop', None)
+    stop = state.desktop_watchdog_stop
     if stop:
         stop.set()
-    procs = getattr(state, 'desktop_procs', None) or []
+    procs = state.desktop_procs or []
     for p in procs:
         try:
             if p.poll() is None:
@@ -219,7 +219,7 @@ def start_desktop_watchdog(state, procs):
 
     def _watchdog():
         while not stop.wait(5):
-            if getattr(state, 'desktop_procs', None) is not procs:
+            if state.desktop_procs is not procs:
                 return
             if not desktop_is_healthy(state):
                 desktop_cleanup(state, "healthcheck failed")
@@ -232,7 +232,7 @@ def start_desktop_watchdog(state, procs):
 
 def start_desktop(state, msg):
     # Idempotent: if already running, return existing info
-    if hasattr(state, 'desktop_procs') and state.desktop_procs:
+    if state.desktop_procs:
         if desktop_is_healthy(state):
             return {"ok": True, "data": {
                 "vnc_port": state.desktop_vnc_port,
@@ -404,7 +404,7 @@ def start_desktop(state, msg):
 
 
 def stop_desktop(state):
-    if hasattr(state, 'desktop_procs') and state.desktop_procs:
+    if state.desktop_procs:
         desktop_cleanup(state, "requested")
         return {"ok": True}
     return {"ok": True, "data": {"was_running": False}}
@@ -412,26 +412,26 @@ def stop_desktop(state):
 
 def desktop_status(state):
     _running = desktop_is_healthy(state)
-    if getattr(state, 'desktop_procs', None) and not _running:
+    if state.desktop_procs and not _running:
         desktop_cleanup(state, "healthcheck failed")
     _local_running = False
-    if hasattr(state, 'local_desktop_procs') and state.local_desktop_procs:
+    if state.local_desktop_procs:
         _local_running = all(p.poll() is None for p in state.local_desktop_procs)
-    _novnc = getattr(state, 'desktop_novnc_port', None)
+    _novnc = state.desktop_novnc_port
     return {"ok": True, "data": {
         "running": _running,
-        "display": getattr(state, 'desktop_display', None),
-        "vnc_port": getattr(state, 'desktop_vnc_port', None),
+        "display": state.desktop_display,
+        "vnc_port": state.desktop_vnc_port,
         "novnc_port": _novnc,
         "audio_port": (_novnc + 100) if _novnc and _running else 0,
         "local_screen_running": _local_running,
-        "local_screen_novnc_port": getattr(state, 'local_desktop_novnc_port', None),
+        "local_screen_novnc_port": state.local_desktop_novnc_port,
     }}
 
 
 def start_local_desktop(state, msg):
     # Idempotent
-    if hasattr(state, 'local_desktop_procs') and state.local_desktop_procs:
+    if state.local_desktop_procs:
         _alive = all(p.poll() is None for p in state.local_desktop_procs)
         if _alive:
             return {"ok": True, "data": {
@@ -558,7 +558,7 @@ def start_local_desktop(state, msg):
 
 
 def stop_local_desktop(state):
-    if hasattr(state, 'local_desktop_procs') and state.local_desktop_procs:
+    if state.local_desktop_procs:
         for p in state.local_desktop_procs:
             if p.poll() is None:
                 p.terminate()

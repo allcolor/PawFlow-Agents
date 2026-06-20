@@ -28,7 +28,6 @@ import subprocess  # nosec B404
 import sys
 import tempfile
 import time
-from dataclasses import dataclass, field
 from pathlib import Path
 
 from fs_common import (
@@ -80,6 +79,7 @@ _TMP_ALLOWLIST = _tmp_allowlist()
 from pawflow_relay.proc_registry import (  # noqa: E402
     kill_inflight_proc,
 )
+from pawflow_relay._relay_state import RelayWorkerState  # noqa: E402
 from pawflow_relay._relay_terminal import TerminalManager  # noqa: E402
 from pawflow_relay._relay_dispatch import (  # noqa: E402
     DispatchCtx,
@@ -107,38 +107,6 @@ def _is_allowed_tmp_path(path: str) -> bool:
         except ValueError:
             continue
     return False
-
-
-@dataclass
-class RelayWorkerState:
-    """Per-connection mutable state for a WS relay worker.
-
-    Holds the long-lived process/session handles that the action
-    handlers in `_execute_command` read and mutate. Previously these
-    lived as ad-hoc attributes stashed on the `_execute_command`
-    function object; a fresh instance is created per `_ws_connect`
-    call so nothing leaks across connections. Defaults mirror the old
-    lazy-init values exactly (None for handles/ports, a fresh dict for
-    each WS-session map).
-    """
-    # code-server
-    code_server_proc: object = None
-    code_server_port: object = None
-    code_server_base_path: str = ""
-    cs_ws_sessions: dict = field(default_factory=dict)
-    # desktop (containerized)
-    desktop_procs: object = None
-    desktop_essential_procs: object = None
-    desktop_vnc_port: object = None
-    desktop_novnc_port: object = None
-    desktop_display: object = None
-    desktop_watchdog_stop: object = None
-    desktop_watchdog_thread: object = None
-    desktop_ws_sessions: dict = field(default_factory=dict)
-    # local desktop (host screen)
-    local_desktop_procs: object = None
-    local_desktop_vnc_port: object = None
-    local_desktop_novnc_port: object = None
 
 
 # ── WS Reverse client ─────────────────────────────────────────────

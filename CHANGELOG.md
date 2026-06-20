@@ -4,6 +4,27 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.0-alpha.53] — 2026-06-20
+
+### Changed
+
+- Refactored the relay worker for maintainability. `pawflow_relay/worker.py`
+  shrank from 2390 to 776 lines (−68 %) by extracting focused modules, all
+  ≤ 800 lines: `_relay_desktop` (VNC lifecycle + WS tunnel), `_relay_dispatch`
+  (the `execute_command` router), `_relay_codeserver` (code-server process +
+  WS tunnel), `_relay_terminal` (`TerminalManager` PTY), `_relay_actions`
+  (http_proxy + script sync), `_relay_fs_setup` (combined FUSE mount), and
+  `_relay_conn` (WS connect + handshake). Per-call state moved from function
+  attributes to a `RelayWorkerState` dataclass. Behavior is preserved; the
+  public `_ws_connect` entry point is unchanged. Adds ~890 lines of tests,
+  including first execution coverage of the PTY, WS/VNC, and HTTP-proxy paths.
+
+### Removed
+
+- Dead HTTP `FSRelayHandler` path in the relay worker (never invoked —
+  `worker_main` only calls `_ws_connect`).
+- Dormant HTTP remote-worker stack in the engine.
+
 ## [1.0.0-alpha.52] — 2026-06-19
 
 ### Fixed

@@ -22,7 +22,6 @@ import logging
 
 import json
 import os
-import socket
 import sys
 import tempfile
 import time
@@ -71,8 +70,8 @@ _TMP_ALLOWLIST = _tmp_allowlist()
 # Lives in `pawflow_relay.proc_registry` to avoid a circular import
 # with the action handlers (fs_actions/fs_exec/...). Re-exported here
 # so call sites that already import from `worker` don't have to change.
-from pawflow_relay.proc_registry import (  # noqa: E402
-    kill_inflight_proc,
+from pawflow_relay.proc_registry import (  # noqa: E402,F401
+    kill_inflight_proc,  # re-exported for external `from worker import` callers
 )
 from pawflow_relay._relay_state import RelayWorkerState  # noqa: E402
 from pawflow_relay._relay_children import (  # noqa: E402
@@ -87,10 +86,10 @@ from pawflow_relay._relay_fs_setup import setup_combined_fs as _setup_combined_f
 from pawflow_relay._relay_conn import connect_and_handshake as _connect_and_handshake  # noqa: E402
 from pawflow_relay._relay_session import (  # noqa: E402
     build_connection_params as _build_connection_params,
-    close_frame_info as _close_frame_info,
     attach_fuse_clients as _attach_fuse_clients,
     detach_fuse_clients as _detach_fuse_clients,
 )
+from pawflow_relay._relay_msg_loop import ConnContext, ConnSession  # noqa: E402
 
 
 def _is_allowed_tmp_path(path: str) -> bool:
@@ -304,21 +303,6 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 allow_local=allow_local, allow_local_screen=allow_local_screen,
                 allow_automation=allow_automation)
             _disconnect_reason = "unknown"
-            _close_info = ""
-            _inflight_cmds = {}
-            _inflight_lock = _threading.Lock()
-
-            def _active_cmd_summary():
-                with _inflight_lock:
-                    if not _inflight_cmds:
-                        return "none"
-                    now = time.time()
-                    parts = []
-                    for rid, item in list(_inflight_cmds.items())[:6]:
-                        parts.append(
-                            f"{item.get('action', '?')}:{rid[:8]}:{now - item.get('ts', now):.1f}s")
-                    extra = len(_inflight_cmds) - len(parts)
-                    return ",".join(parts) + (f",+{extra}" if extra > 0 else "")
 
             # ── Per-WS-connection FUSE clients ──────────────────────────
             # The FUSE mounts themselves were created once before the
@@ -329,194 +313,33 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             # of /cc_sessions and /filestore remain valid.
             _fuse_swaps = (_server_fs_swap, _filestore_fs_swap, _skills_fs_swap)
             _fuse_clients = _attach_fuse_clients(sock, _send_lock, _fuse_swaps)
-            (_server_fs_client, _filestore_fs_client,
-             _skills_fs_client) = _fuse_clients
 
-            while True:
-                try:
-                    opcode, payload = _ws_frame_recv(sock)
-                    _last_activity[0] = time.time()
-                except socket.timeout:
-                    # Send app-level ping to keep connection alive.
-                    # MUST hold _send_lock — worker threads from _pool also send
-                    # on this socket with the lock; concurrent writes on an SSL
-                    # socket interleave bytes mid-record and the server sees
-                    # WRONG_VERSION_NUMBER (ssl is not thread-safe for writes).
-                    try:
-                        with _send_lock:
-                            _ws_frame_send(sock, json.dumps({"type": "ping"}).encode("utf-8"))
-                        _last_activity[0] = time.time()  # successful send = connection alive
-                    except Exception as _ping_err:
-                        _disconnect_reason = f"ping send failed: {_ping_err}"
-                        _socket_diag["last_send_error"] = f"ping:{_ping_err}"
-                        break  # send failed → connection dead
-                    continue
+            def _resolve_spawn_docker_env():
+                # globals()/args must be read in this (worker) module scope;
+                # resolved fresh per spawn so a late-set Docker context is
+                # picked up. Mirrors the old inline spawn_relay resolution.
+                _parent_docker = globals().get('_DOCKER_EXEC_CONTAINER') or \
+                                 getattr(__import__('fs_actions'), '_DOCKER_EXEC_CONTAINER', None) \
+                                 if 'fs_actions' in sys.modules else None
+                _docker_cpus = getattr(globals().get('args', None), 'docker_cpus', '2')
+                _docker_memory = getattr(globals().get('args', None), 'docker_memory', '4g')
+                return DockerEnv(parent_docker=bool(_parent_docker),
+                                 cpus=_docker_cpus, memory=_docker_memory)
 
-                if opcode == 0x08:
-                    _close_info = _close_frame_info(payload)
-                    _disconnect_reason = f"server close frame {_close_info}"
-                    sys.stderr.write(
-                        f"[FSRelay] Disconnected: {_disconnect_reason} "
-                        f"inflight={_active_cmd_summary()}\n")
-                    break
-                elif opcode == 0x09:
-                    # Same reasoning as the ping above: SSL writes must be
-                    # serialized with worker-thread sends.
-                    with _send_lock:
-                        _ws_frame_send(sock, payload, opcode=0x0A)
-                    continue
-                elif opcode != 0x01:
-                    continue
-
-                msg = json.loads(payload.decode("utf-8"))
-                _mtype = msg.get("type")
-                if _mtype == "relay_response":
-                    # Inverse-direction reply for a relay→server FS op.
-                    # Wake the FUSE callback waiting on this request_id.
-                    # Try each client in turn — request_ids are uuids so
-                    # only one will own a given response.
-                    _delivered = False
-                    for _fsc in (_server_fs_client, _filestore_fs_client,
-                                 _skills_fs_client):
-                        if _fsc is not None and _fsc.dispatch_response(msg):
-                            _delivered = True
-                            break
-                    if not _delivered and (_server_fs_client is not None
-                                            or _filestore_fs_client is not None
-                                            or _skills_fs_client is not None):
-                        sys.stderr.write(
-                            f"[FSRelay] orphan relay_response: {msg.get('request_id', '?')}\n")
-                    continue
-                if _mtype == "cancel_request":
-                    # Server-initiated kill: a tool action that spawned a
-                    # Popen and registered it via register_inflight_proc()
-                    # gets terminated. After this returns, the action's
-                    # blocked `proc.wait()` unblocks and the action exits
-                    # — the original tool caller server-side has already
-                    # given up on the result, so we don't need to send a
-                    # response here.
-                    _rid = msg.get("request_id", "")
-                    if _rid:
-                        _ok = kill_inflight_proc(_rid)
-                        sys.stderr.write(
-                            f"[FSRelay] cancel_request rid={_rid} "
-                            f"hit={'yes' if _ok else 'no-such-proc'}\n")
-                    continue
-                if _mtype == "remote_mount_manifest":
-                    if _remote_mount_mgr is not None:
-                        _manifest = msg.get("manifest") or {}
-                        def _reconcile_remote_mounts(_m=_manifest):
-                            try:
-                                _remote_mount_mgr.reconcile(_m)
-                            except Exception as _rme:
-                                sys.stderr.write(f"[RemoteFS] reconcile failed: {_rme}\n")
-                        _threading.Thread(
-                            target=_reconcile_remote_mounts, daemon=True,
-                            name="remote-mount-reconcile").start()
-                    continue
-                if _mtype == "spawn_relay":
-                    # Resolve the parent's Docker context here (globals()/args
-                    # must be read in worker module scope), then delegate.
-                    _parent_docker = globals().get('_DOCKER_EXEC_CONTAINER') or \
-                                     getattr(__import__('fs_actions'), '_DOCKER_EXEC_CONTAINER', None) \
-                                     if 'fs_actions' in sys.modules else None
-                    _docker_cpus = getattr(globals().get('args', None), 'docker_cpus', '2')
-                    _docker_memory = getattr(globals().get('args', None), 'docker_memory', '4g')
-                    _children.handle_spawn(
-                        msg, _child_cfg,
-                        DockerEnv(parent_docker=bool(_parent_docker),
-                                  cpus=_docker_cpus, memory=_docker_memory),
-                        _term_send)
-
-                elif msg.get("type") == "stop_relay":
-                    _children.handle_stop(msg, _term_send)
-
-                elif msg.get("type") == "terminal_input":
-                    _tid = msg.get("session_id", "")
-                    if _tid in _term_mgr.sessions:
-                        _ok, _err = _term_mgr.write(_tid, msg.get("data", ""))
-                        if not _ok and _err:
-                            sys.stderr.write(f"[FSRelay] terminal write error: {_err}\n")
-
-                elif msg.get("type") == "terminal_resize":
-                    _tid = msg.get("session_id", "")
-                    if _tid in _term_mgr.sessions:
-                        _term_mgr.resize(_tid, cols=msg.get("cols", 80), rows=msg.get("rows", 24))
-
-                elif msg.get("type") == "command":
-                    request_id = msg.get("request_id", "")
-                    sys.stderr.write(f"[FSRelay] Command: {msg.get('action', '?')}\n")
-                    if msg.get("action") in ("cs_ws_send", "cs_ws_close"):
-                        try:
-                            _result = _execute_command(msg)
-                        except Exception as _e:
-                            _result = {"ok": False, "error": str(_e)}
-                        _resp = json.dumps({
-                            "type": "result",
-                            "request_id": request_id,
-                            "data": _result.get("data", _result),
-                        }).encode("utf-8")
-                        try:
-                            with _send_lock:
-                                _socket_diag["last_send"] = (
-                                    f"result:{msg.get('action', '?')}:{request_id[:8]}")
-                                _ws_frame_send(sock, _resp)
-                                _socket_diag["last_send_error"] = ""
-                        except Exception as _send_err:
-                            _socket_diag["last_send_error"] = (
-                                f"result:{msg.get('action', '?')}:{request_id[:8]}:{_send_err}")
-                            sys.stderr.write(
-                                f"[FSRelay] result send failed: action={msg.get('action', '?')} "
-                                f"rid={request_id[:8]} err={_send_err}\n")
-                        continue
-                    with _inflight_lock:
-                        _inflight_cmds[request_id] = {
-                            "action": msg.get('action', '?'),
-                            "ts": time.time(),
-                        }
-                    # Execute in thread pool for parallel command handling
-                    def _run_cmd(_msg, _rid, _sock, _send_fn):
-                        _action = _msg.get("action", "?")
-                        # Streaming callback for exec_stream
-                        _on_output = None
-                        if _msg.get("action") == "exec_stream":
-                            def _on_output(stream, data):
-                                _frame = json.dumps({
-                                    "type": "exec_output",
-                                    "request_id": _rid,
-                                    "stream": stream,
-                                    "data": data,
-                                }).encode("utf-8")
-                                with _send_lock:
-                                    _send_fn(_sock, _frame)
-                        try:
-                            _result = _execute_command(_msg, on_output=_on_output)
-                            _resp = json.dumps({
-                                "type": "result",
-                                "request_id": _rid,
-                                "data": _result.get("data", _result),
-                            }).encode("utf-8")
-                        except Exception as _e:
-                            _resp = json.dumps({
-                                "type": "result",
-                                "request_id": _rid,
-                                "data": {"ok": False, "error": str(_e)},
-                            }).encode("utf-8")
-                        try:
-                            with _send_lock:
-                                _socket_diag["last_send"] = f"result:{_action}:{_rid[:8]}"
-                                _send_fn(_sock, _resp)
-                                _socket_diag["last_send_error"] = ""
-                        except Exception as _send_err:
-                            _socket_diag["last_send_error"] = (
-                                f"result:{_action}:{_rid[:8]}:{_send_err}")
-                            sys.stderr.write(
-                                f"[FSRelay] result send failed: action={_action} "
-                                f"rid={_rid[:8]} err={_send_err}\n")
-                        finally:
-                            with _inflight_lock:
-                                _inflight_cmds.pop(_rid, None)
-                    _pool.submit(_run_cmd, msg, request_id, sock, _ws_frame_send)
+            # The inner recv/dispatch loop lives in ConnSession; bundle the
+            # connection-scoped resources and run it until disconnect.
+            _session = ConnSession(ConnContext(
+                sock=sock, send_lock=_send_lock,
+                ws_frame_send=_ws_frame_send, ws_frame_recv=_ws_frame_recv,
+                socket_diag=_socket_diag, last_activity=_last_activity,
+                pool=_pool, execute_command=_execute_command,
+                term_mgr=_term_mgr, children=_children, child_cfg=_child_cfg,
+                term_send=_term_send, fuse_clients=_fuse_clients,
+                remote_mount_mgr=_remote_mount_mgr,
+                resolve_spawn_docker_env=_resolve_spawn_docker_env))
+            # Exposed for the reconnect handler's diagnostic logging below.
+            _active_cmd_summary = _session.active_cmd_summary
+            _disconnect_reason = _session.run()
 
         except KeyboardInterrupt:
             sys.stderr.write("\n[FSRelay] Shutting down.\n")

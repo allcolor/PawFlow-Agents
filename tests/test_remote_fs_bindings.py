@@ -105,10 +105,11 @@ def test_link_rejects_sanitized_mount_collision(monkeypatch):
 
 
 def test_relay_worker_handles_remote_mount_manifest():
-    src = Path("pawflow_relay/worker.py").read_text(encoding="utf-8")
+    # Routing moved from worker._ws_connect into _relay_msg_loop.ConnSession.
+    src = Path("pawflow_relay/_relay_msg_loop.py").read_text(encoding="utf-8")
 
     assert "remote_mount_manifest" in src
-    assert "_remote_mount_mgr.reconcile" in src
+    assert "self.remote_mount_mgr.reconcile" in src
     assert "remote-mount-reconcile" in src
 
 
@@ -310,11 +311,18 @@ def test_manifest_skips_stale_non_rclone_bindings(monkeypatch):
 
 
 def test_relay_worker_reconciles_remote_mount_manifest_in_background_thread():
-    src = Path("pawflow_relay/worker.py").read_text(encoding="utf-8")
-    runtime = Path("pawflow-relay-desktop/runtime/pawflow_relay/worker.py").read_text(encoding="utf-8")
+    # Router lives in _relay_msg_loop.ConnSession. The desktop runtime copy is
+    # a vendored deployment artifact (gitignored, present only in a synced dev
+    # tree); when present it must stay in sync with the source.
+    paths = [Path("pawflow_relay/_relay_msg_loop.py")]
+    runtime = Path(
+        "pawflow-relay-desktop/runtime/pawflow_relay/_relay_msg_loop.py")
+    if runtime.exists():
+        paths.append(runtime)
 
-    for text in (src, runtime):
-        assert '_mtype == "remote_mount_manifest"' in text
+    for path in paths:
+        text = path.read_text(encoding="utf-8")
+        assert 'mtype == "remote_mount_manifest"' in text
         assert "target=_reconcile_remote_mounts" in text
         assert 'name="remote-mount-reconcile"' in text
 

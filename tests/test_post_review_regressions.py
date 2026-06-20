@@ -1066,15 +1066,21 @@ def test_code_server_worker_starts_with_isolated_profile_and_no_updates():
 
 
 def test_code_server_worker_keeps_ws_frames_ordered_outside_pool():
-    src = open("pawflow_relay/worker.py", encoding="utf-8").read()
-    start = src.index('elif msg.get("type") == "command":')
-    stop = src.index('with _inflight_lock:', start)
+    # The command router moved from worker._ws_connect into
+    # _relay_msg_loop.ConnSession; cs_ws_send/cs_ws_close must still run
+    # inline (ordered) and never go through the thread pool.
+    src = open("pawflow_relay/_relay_msg_loop.py", encoding="utf-8").read()
+    start = src.index("def _handle_command(")
+    stop = src.index("self.inflight_lock", start)
     command_prefix = src[start:stop]
 
     assert 'msg.get("action") in ("cs_ws_send", "cs_ws_close")' in command_prefix
-    assert "_execute_command(msg)" in command_prefix
-    assert "continue" in command_prefix
-    assert "_pool.submit" not in command_prefix
+    assert "_run_command_sync" in command_prefix
+    assert "return" in command_prefix
+    assert "self.pool.submit" not in command_prefix
+    # the inline sync path executes directly, not via the pool
+    sync = src[src.index("def _run_command_sync("):src.index("def _run_command(")]
+    assert "self.execute_command(msg)" in sync
 
 
 def test_code_server_worker_forwards_leftover_backend_ws_frames():

@@ -487,6 +487,85 @@ class TestSendUserMessageSentinel(unittest.TestCase):
         self.assertIn("hello live", sent)
 
 
+class TestSendUserMessageResolvesProcFromRegistry(unittest.TestCase):
+    """Bug 3b: the claude-code (-p) preempt must resolve the target subprocess
+    from the LiveSessionRegistry (source of truth), not self._claude_proc —
+    which is clobbered by concurrent background streams (memory-extract /
+    compact / sub-agent) reusing the same LLMClient singleton. CCI is unaffected
+    because it resolves via pool.find_session.
+    """
+
+    def setUp(self):
+        from core.cc_live_registry import LiveSessionRegistry
+        LiveSessionRegistry.instance()._sessions.clear()
+
+    def tearDown(self):
+        from core.cc_live_registry import LiveSessionRegistry
+        LiveSessionRegistry.instance()._sessions.clear()
+
+    @staticmethod
+    def _register_live(user_id, conv_id, agent, service_id):
+        from core.cc_live_registry import LiveSessionRegistry, CCLiveSession
+        proc = MagicMock()
+        proc.poll.return_value = None
+        proc.stdin = MagicMock()
+        proc.stdin.closed = False
+        session = CCLiveSession(
+            proc=proc, event_q=MagicMock(), reader_thread=MagicMock(),
+            stop_event=MagicMock(), pool_container=None,
+            workdir="/w", service_id=service_id, svc_pool_idx=0,
+            user_id=user_id, conv_id=conv_id)
+        reg = LiveSessionRegistry.instance()
+        reg._sessions[(user_id, conv_id, agent or "default", service_id, 0)] = session
+        return session, proc
+
+    def test_preempt_uses_registry_proc_when_singleton_clobbered(self):
+        client = LLMClient(provider="claude-code", config={"api_key": "sk-test"})
+        client._agent_service = "svc"
+        # self._claude_proc is absent (clobbered by a concurrent stream) — the
+        # bug condition. _conversation_id is intentionally NOT set either, so
+        # the only way to resolve the target is the explicit kwargs + registry.
+        client._claude_proc = None
+        _session, reg_proc = self._register_live("alice", "abc123", "agent", "svc")
+        ok = client.send_user_message(
+            "hello live", user_id="alice", conversation_id="abc123", agent_name="agent")
+        self.assertTrue(ok)
+        # Wrote to the REGISTRY-resolved proc, not the absent singleton one.
+        reg_proc.stdin.write.assert_called_once()
+        sent = reg_proc.stdin.write.call_args.args[0]
+        self.assertIn("hello live", sent)
+
+    def test_preempt_falls_back_to_singleton_when_no_live_session(self):
+        # Cold-start first turn: no live session registered yet → fall back to
+        # self._claude_proc (which is correctly set by the first stream).
+        client = LLMClient(provider="claude-code", config={"api_key": "sk-test"})
+        client._agent_service = "svc"
+        proc = MagicMock()
+        proc.poll.return_value = None
+        proc.stdin = MagicMock()
+        proc.stdin.closed = False
+        client._claude_proc = proc
+        ok = client.send_user_message(
+            "hello cold", user_id="alice", conversation_id="abc123", agent_name="agent")
+        self.assertTrue(ok)
+        proc.stdin.write.assert_called_once()
+
+    def test_find_for_agent_returns_alive_session_ignoring_pool_idx(self):
+        from core.cc_live_registry import LiveSessionRegistry, CCLiveSession
+        reg = LiveSessionRegistry.instance()
+        proc = MagicMock()
+        proc.poll.return_value = None
+        sess = CCLiveSession(
+            proc=proc, event_q=MagicMock(), reader_thread=MagicMock(),
+            stop_event=MagicMock(), pool_container=None,
+            workdir="/w", service_id="svc", svc_pool_idx=7,
+            user_id="alice", conv_id="abc123")
+        reg._sessions[("alice", "abc123", "agent", "svc", 7)] = sess
+        self.assertIs(reg.find_for_agent("alice", "abc123", "agent", "svc"), sess)
+        # Ignores pool_idx (caller doesn't know it) and misses other convs.
+        self.assertIsNone(reg.find_for_agent("alice", "other", "agent", "svc"))
+
+
 class TestCheckPreemptInJsonl(unittest.TestCase):
     """Deterministic check used at result-time to decide whether to break
     or wait for CC's next turn. Looks at preempt position vs. last

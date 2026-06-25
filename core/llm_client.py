@@ -516,7 +516,7 @@ class LLMClient(
             return False
         if fn is None:
             return False
-        if self.provider in ("claude-code-interactive", "antigravity-interactive", "codex-app-server"):
+        if self.provider in ("claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server"):
             return fn(text, attachments, **kwargs)
         return fn(text, attachments)
 

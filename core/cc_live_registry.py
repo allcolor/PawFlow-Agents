@@ -159,6 +159,34 @@ class LiveSessionRegistry:
                 return None
             return session
 
+    def find_for_agent(self, user_id: str, conversation_id: str,
+                       agent_name: str, service_id: str = ""
+                       ) -> Optional[CCLiveSession]:
+        """Return the live session for a (conversation, agent), ignoring pool_idx.
+
+        Used by the claude-code (-p) preempt path to resolve the target
+        subprocess from the registry — the source of truth — instead of the
+        shared client's ``_claude_proc``, which is clobbered by concurrent
+        background streams (memory-extract / compact / sub-agent) reusing the
+        same singleton. A (conversation, agent) has at most one live session,
+        so pool_idx is not needed to disambiguate. Returns None if no live
+        session matches.
+        """
+        agent = agent_name or "default"
+        with self._lock:
+            candidates = [
+                s for key, s in self._sessions.items()
+                if key[1] == conversation_id
+                and key[2] == agent
+                and (not user_id or key[0] == user_id)
+                and (not service_id or key[3] == service_id)
+            ]
+            candidates.sort(key=lambda s: s.last_used, reverse=True)
+            for s in candidates:
+                if s.is_alive():
+                    return s
+        return None
+
     def touch(self, key: LiveKey, bump_reuse: bool = True) -> None:
         """Bump ``last_used`` so the sweeper sees the session as active.
 

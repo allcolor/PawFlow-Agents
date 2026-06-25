@@ -69,7 +69,9 @@ class LLMClaudeCodeMixin(
 
     # ── Process management ──────────────────────────────────────────
 
-    def _cc_send_user_message(self, text: str, attachments: list = None):
+    def _cc_send_user_message(self, text: str, attachments: list = None, *,
+                               user_id: str = "", conversation_id: str = "",
+                               agent_name: str = ""):
         """Send a user message to the running Claude Code subprocess (preempt).
 
         Uses stream-json input format to inject a new user message while
@@ -89,7 +91,16 @@ class LLMClaudeCodeMixin(
         # spawned for that one-shot job. Writing a preempt to that stdin
         # would land in the wrong stream. Refuse so the caller routes via
         # the PendingQueue path.
-        _conv = getattr(self, '_conversation_id', '') or ''
+        # Prefer the explicit per-call identity (the dispatch passes the
+        # active conversation/agent/user). self._conversation_id /
+        # self._agent_name on the shared LLMClient singleton are clobbered by
+        # concurrent background streams (memory-extract / compact / sub-agent)
+        # — the same footgun the _stream_claude_code call_* kwargs fix exists
+        # for. self.* is only a fallback when the caller didn't pass them.
+        _conv = conversation_id or getattr(self, '_conversation_id', '') or ''
+        _agent = agent_name or getattr(self, '_agent_name', '') or ''
+        _uid = user_id or getattr(self, '_user_id', '') or ''
+        _svc = getattr(self, '_agent_service', '') or ''
         if _conv.startswith('_'):
             logger.info("Preempt arrived during sentinel '%s' — refusing send: %.100s",
                         _conv, text)
@@ -102,7 +113,24 @@ class LLMClaudeCodeMixin(
         if getattr(self, '_compacting', False):
             logger.info("Preempt arrived during CC compact — refusing send: %.100s", text)
             return False
-        proc = getattr(self, '_claude_proc', None)
+        # Resolve the target proc from the live registry (source of truth)
+        # instead of self._claude_proc, which is singleton state clobbered by
+        # concurrent streams — writing to a stale/wrong proc would corrupt
+        # another conversation's turn. The registry pins the live session by
+        # (user, conv, agent, service); fall back to self._claude_proc only
+        # when none is registered (cold-start first turn, which has no prior
+        # background stream to have clobbered it).
+        proc = None
+        try:
+            from core.cc_live_registry import LiveSessionRegistry
+            _live = LiveSessionRegistry.instance().find_for_agent(
+                _uid, _conv, _agent, _svc)
+            if _live is not None and _live.is_alive():
+                proc = _live.proc
+        except Exception:
+            logger.debug("live-registry preempt lookup failed", exc_info=True)
+        if proc is None:
+            proc = getattr(self, '_claude_proc', None)
         if not proc or proc.poll() is not None:
             logger.warning("No running Claude Code process to send message to")
             return False
@@ -118,8 +146,8 @@ class LLMClaudeCodeMixin(
         _original_text = text
         try:
             # Multi-agent catch-up: inject messages from other agents before user msg
-            conv_id = getattr(self, '_conversation_id', "")
-            agent_name = getattr(self, '_agent_name', "")
+            conv_id = _conv
+            agent_name = _agent
             if conv_id and agent_name:
                 catchup = self._build_catchup_context(conv_id, agent_name)
                 if catchup:

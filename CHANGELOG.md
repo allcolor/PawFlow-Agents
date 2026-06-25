@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-alpha.54] — 2026-06-25
+
 ### Fixed
 
 - Telegram: agent reasoning was duplicated — the live streamed preview
@@ -23,6 +25,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Text (and any pending thinking) is now persisted live in emission order —
   `thinking → text → tool_use` — mirroring the interactive provider, with no
   double-persist at the flush.
+- claude-code-interactive / claude-code: native file tools
+  (Read/Edit/Write/Glob/Grep/NotebookEdit) are no longer disallowed — the agent
+  can read its local PawFlow bootstrap and session files even with no relay
+  connected (mirrors the codex provider). Bash/WebFetch/WebSearch and the
+  MCP-shadowed tools stay blocked.
+- claude-code-interactive: each live container now claims an exclusive OAuth
+  credential slot (1 login = 1 concurrent container). Anthropic refresh tokens
+  are single-use, so two concurrent containers sharing one slot raced and
+  invalidated the loser's session; pool exhaustion now raises instead of
+  sharing, and teardown recovers any CLI-rotated token back to its slot.
+- claude-code (`-p`): the mid-turn preempt intermittently failed — it targeted
+  the subprocess via singleton state (`_claude_proc` / `_result_emitted`)
+  clobbered by concurrent background streams. It now resolves the target from
+  the live session registry, like claude-code-interactive's `find_session`.
 
 ## [1.0.0-alpha.53] — 2026-06-20
 

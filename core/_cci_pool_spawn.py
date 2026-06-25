@@ -64,6 +64,14 @@ class InteractiveContainer:
     # re-emitted and re-appended to the PawFlow context.
     emitted_tool_use_ids: set = field(default_factory=set)
     emitted_tool_result_ids: set = field(default_factory=set)
+    # Credential-pool coordinates captured at spawn so teardown can release the
+    # exclusive slot (1 login = 1 live container) and recover any CLI-rotated
+    # OAuth refresh_token back to the right pool slot. Defaults keep back-compat
+    # for tests that construct a bare InteractiveContainer.
+    service_id: str = ""
+    svc_pool_idx: int = -1
+    user_id: str = ""
+    conv_id: str = ""
 
 
 
@@ -71,11 +79,16 @@ class _InteractiveContainerSpawnMixin:
     """Container build/start machinery for InteractiveClaudeCodePool."""
 
     def _start_new(self, client, model: str, user_id: str, conversation_id: str,
-                   agent_name: str, key: tuple[str, str, str, str]) -> InteractiveContainer:
+                   agent_name: str, key: tuple[str, str, str, str],
+                   pool_index: int = -1) -> InteractiveContainer:
         from services.cc_interactive_event_service import get_or_create_cc_interactive_event_service
 
         workdir = client._get_session_workdir(conversation_id, agent_name, user_id)
-        client._setup_credentials(workdir)
+        # pool_index is claimed exclusively by ensure_started (1 login = 1 live
+        # container) so two concurrent containers never share a single-use OAuth
+        # refresh_token. -1 only when called outside the pool (legacy/tests).
+        client._setup_credentials(workdir, pool_index=pool_index,
+                                   user_id=user_id, conversation_id=conversation_id)
         mcp_path, internal_token = client._setup_mcp_config(workdir, user_id, conversation_id, agent_name)
         cert_dir = Path(workdir) / ".pawflow_cci" / "certs"
         generate_leaf(cert_dir)  # writes leaf cert/key + CA into cert_dir (side effect)
@@ -105,6 +118,10 @@ class _InteractiveContainerSpawnMixin:
             session_token=session_token,
             event_service_id=getattr(event_service, "service_id", ""),
             internal_token=internal_token,
+            service_id=getattr(client, "_agent_service", "") or "",
+            svc_pool_idx=pool_index,
+            user_id=user_id,
+            conv_id=conversation_id,
         )
 
         try:

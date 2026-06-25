@@ -1178,7 +1178,7 @@ def test_interactive_pool_preserves_existing_permissions_when_denying_agent(tmp_
     settings_path.parent.mkdir(parents=True)
     settings_path.write_text(json.dumps({
         "permissions": {
-            "allow": ["mcp__pawflow__*", "Read"],
+            "allow": ["mcp__pawflow__*", "Read", "Bash"],
             "deny": ["WebFetch"],
         },
         "env": {"EXISTING": "1"},
@@ -1187,7 +1187,7 @@ def test_interactive_pool_preserves_existing_permissions_when_denying_agent(tmp_
     InteractiveClaudeCodePool()._write_hook_settings(str(tmp_path))
 
     settings = json.loads(settings_path.read_text())
-    assert settings["permissions"]["allow"] == ["mcp__pawflow__*"]
+    assert settings["permissions"]["allow"] == ["mcp__pawflow__*", "Read"]
     assert set(settings["permissions"]["deny"]) == set(
         ClaudeCodeSessionMixin._DISALLOWED_BUILTIN_TOOLS.split(","))
     assert settings["env"]["EXISTING"] == "1"
@@ -1824,7 +1824,11 @@ def test_interactive_pool_starts_tmux_in_normal_provider_namespace(monkeypatch):
     assert "CLAUDE_CONFIG_DIR=/cc_sessions/c/a" in shell
     assert "--mcp-config /cc_sessions/c/a/.mcp.json" in shell
     assert "--disallowedTools" in shell
-    assert "Bash,Edit,Read,Write,Glob,Grep" in shell
+    # Bug 1 (codex mirror): native file-IO tools are ALLOWED — the block list
+    # no longer carries the file-IO family (Edit/Read/Write/Glob/Grep); only
+    # Bash/web/etc remain.
+    assert "Bash,WebFetch,WebSearch" in shell
+    assert "Edit,Read,Write,Glob,Grep" not in shell
     assert "--verbose" in shell
     assert "--thinking-display summarized" in shell
     assert "--effort high" in shell
@@ -2067,6 +2071,12 @@ def test_interactive_pool_passes_client_timeout_for_idle_ttl(monkeypatch):
     pool = InteractiveClaudeCodePool()
     seen = []
     monkeypatch.setattr(pool, "ensure_sweeper", lambda **kw: seen.append(kw))
+    # ensure_started now claims an exclusive credential slot before spawning;
+    # feed it a 1-slot pool so the claim succeeds and _start_new is reached.
+    monkeypatch.setattr(
+        "core.llm_providers._cc_credentials._load_credentials_pool",
+        lambda *a, **k: [{"access_token": "at", "refresh_token": "rt",
+                          "expires_at": 9999999999}])
     monkeypatch.setattr(pool, "_start_new", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("stop")))
 
     try:
@@ -2075,6 +2085,64 @@ def test_interactive_pool_passes_client_timeout_for_idle_ttl(monkeypatch):
         assert str(exc) == "stop"
 
     assert seen == [{"idle_ttl_seconds": 7200}]
+
+
+def test_cci_native_file_tools_allowed_bash_blocked():
+    """Bug 1: native file-IO tools are ALLOWED (codex mirror) so the agent can
+    read its local bootstrap/session files with no relay connected; Bash stays
+    blocked (container shell sees the wrong cwd, not the relay /workspace)."""
+    import core.claude_code_interactive_pool as cci
+    from core.llm_providers.claude_code_session import ClaudeCodeSessionMixin
+    for src in (cci._DISALLOWED_BUILTIN_TOOLS,
+                ClaudeCodeSessionMixin._DISALLOWED_BUILTIN_TOOLS):
+        disallow = set(src.split(","))
+        for allowed in ("Read", "Edit", "Write", "Glob", "Grep", "NotebookEdit"):
+            assert allowed not in disallow, f"{allowed} must be allowed (codex mirror)"
+        assert "Bash" in disallow
+        assert "WebFetch" in disallow
+
+
+def test_cci_claim_pool_slot_is_exclusive_and_errors_when_full(monkeypatch):
+    """Bug 2: 1 login = 1 live container. Concurrent claims take distinct pool
+    slots; once the pool is exhausted the next claim raises immediately."""
+    from core.claude_code_interactive_pool import InteractiveClaudeCodePool
+    from core.llm_client import LLMClientError
+    pool = InteractiveClaudeCodePool()
+    monkeypatch.setattr(
+        "core.llm_providers._cc_credentials._load_credentials_pool",
+        lambda *a, **k: [
+            {"access_token": "at0", "refresh_token": "rt0", "expires_at": 9},
+            {"access_token": "at1", "refresh_token": "rt1", "expires_at": 9},
+        ])
+    with pool._lock:
+        assert pool._claim_pool_slot_locked("svc", "u", "c1") == 0
+        assert pool._claim_pool_slot_locked("svc", "u", "c2") == 1
+        with pytest.raises(LLMClientError):
+            pool._claim_pool_slot_locked("svc", "u", "c3")
+
+
+def test_cci_teardown_recovers_rotated_token_to_pool_slot(monkeypatch):
+    """Bug 2: killing a live container recovers any CLI-rotated OAuth token
+    back to its pool slot, so the next container reusing the slot is fresh."""
+    from core.claude_code_interactive_pool import (
+        InteractiveClaudeCodePool, InteractiveContainer)
+    pool = InteractiveClaudeCodePool()
+    recovered = []
+    monkeypatch.setattr(
+        "core.llm_providers._cc_credentials.recover_tokens_from_workdir",
+        lambda *a, **k: recovered.append((a, k)) or True)
+    monkeypatch.setattr(pool, "_kill_container", lambda name: None)
+    state = InteractiveContainer(
+        key=("u", "c", "a", "svc"), name="n", workdir="/w",
+        container_workdir="/c", session_token="s", event_service_id="e",
+        internal_token="i", service_id="svc", svc_pool_idx=2,
+        user_id="u", conv_id="c")
+    pool._sessions[("u", "c", "a", "svc")] = state
+    assert pool.kill_session("u", "c", "a", "svc") is True
+    assert len(recovered) == 1
+    args, _kwargs = recovered[0]
+    # recover_tokens_from_workdir(workdir, service_id, pool_index, ...)
+    assert args[0] == "/w" and args[1] == "svc" and args[2] == 2
 
 
 def test_cc_interactive_timing_env_is_documented():

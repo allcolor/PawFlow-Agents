@@ -31,8 +31,15 @@ import core.paths as _paths  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
+# Native file-IO tools (Read/Edit/Write/Glob/Grep/NotebookEdit) are deliberately
+# ALLOWED (mirrors the codex provider): the agent must read its local PawFlow
+# bootstrap (/cc_sessions/.../initial_context.md) and session files even when no
+# relay is connected. Only tools that target the WRONG environment (Bash = the
+# container shell, not the relay /workspace) or shadow a PawFlow MCP equivalent
+# remain blocked; steering project work to the PawFlow MCP tools is done via the
+# system/bootstrap prompt, not a hard fs block.
 _DISALLOWED_BUILTIN_TOOLS = (
-    "Bash,Edit,Read,Write,Glob,Grep,NotebookEdit,WebFetch,WebSearch,"
+    "Bash,WebFetch,WebSearch,"
     "Task,Agent,ToolSearch,ListMcpResourcesTool,ReadMcpResourceTool,"
     "EnterPlanMode,ExitPlanMode,EnterWorktree,ExitWorktree,"
     "RemoteTrigger,Skill,TaskOutput,TaskStop,TodoWrite,"
@@ -59,6 +66,12 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
         self._lock = threading.RLock()
         self._sessions: Dict[tuple[str, str, str, str], InteractiveContainer] = {}
         self._disallowed_builtin_tools = _DISALLOWED_BUILTIN_TOOLS
+        # (service_id, pool_index) slots reserved by an in-flight _start_new —
+        # a slot has been claimed but the container is not yet registered in
+        # _sessions. Lets two concurrent ensure_started calls for different
+        # conversations claim DISTINCT credential slots, so they never share a
+        # single-use OAuth refresh_token (Anthropic rotates it on each refresh).
+        self._reserved_slots: set = set()
         self._sweeper_started = False
         self._sweeper_stop = threading.Event()
         self._tick_seconds = 60
@@ -149,15 +162,82 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
                 return existing
             if existing:
                 self._sessions.pop(key, None)
-
-        state = self._start_new(client, model, user_id, conversation_id, agent_name, key)
+            # Claim an exclusive credential slot BEFORE spawning: Anthropic
+            # refresh_tokens are single-use, so two concurrent containers on one
+            # slot race and invalidate the loser. Reserved under the lock so a
+            # concurrent ensure_started for another conversation sees it taken.
+            claimed_idx = self._claim_pool_slot_locked(
+                service_id, user_id, conversation_id)
+        try:
+            state = self._start_new(client, model, user_id, conversation_id,
+                                    agent_name, key, pool_index=claimed_idx)
+        except Exception:
+            # Spawn failed — release the reservation so the slot is reusable.
+            with self._lock:
+                self._reserved_slots.discard((service_id, claimed_idx))
+            raise
         with self._lock:
             self._sessions[key] = state
+            # Now tracked via _sessions; drop the in-flight reservation.
+            self._reserved_slots.discard((service_id, claimed_idx))
         return state
 
     def touch(self, state: InteractiveContainer) -> None:
         with self._lock:
             state.last_used = time.time()
+
+    def _claim_pool_slot_locked(self, service_id: str, user_id: str,
+                                conversation_id: str) -> int:
+        """Pick a credential slot not used by any live/reserved container.
+
+        MUST be called holding self._lock. Returns the slot index. Raises
+        LLMClientError when no credentials are configured, or when every slot is
+        busy — the hard cap that enforces 1 login = 1 concurrent container
+        (Anthropic refresh_tokens are single-use, so sharing a slot across two
+        live containers races and invalidates the loser's session).
+        """
+        from core.llm_client import LLMClientError
+        from core.llm_providers._cc_credentials import _load_credentials_pool
+        pool = _load_credentials_pool(
+            service_id, user_id=user_id, conv_id=conversation_id) or []
+        if not pool:
+            raise LLMClientError(
+                "Claude Code credentials not configured. "
+                "Use /cls to authenticate with your Claude subscription.")
+        occupied = {
+            s.svc_pool_idx for s in self._sessions.values()
+            if s.service_id == service_id and s.svc_pool_idx >= 0
+        }
+        occupied |= {idx for sid, idx in self._reserved_slots if sid == service_id}
+        free = [i for i in range(len(pool)) if i not in occupied]
+        if not free:
+            raise LLMClientError(
+                "All Claude Code credentials are in use by live sessions. "
+                "Add more logins (/cls) or wait for one to free up.")
+        idx = free[0]
+        self._reserved_slots.add((service_id, idx))
+        logger.info("[cci-live] claimed pool slot %d for %s (remaining free=%d)",
+                    idx, service_id, len(free) - 1)
+        return idx
+
+    def _recover_container_tokens(self, state: InteractiveContainer) -> None:
+        """Best-effort: copy any CLI-rotated OAuth token back to its pool slot.
+
+        Claude Code refreshes its own token in-container; without this, a slot
+        reused after a container that rotated its (single-use) refresh_token
+        would hand the next container a stale token. No-op for API-key mode
+        (svc_pool_idx<0) or when the credentials file is absent. Never raises.
+        """
+        if (not state or state.svc_pool_idx < 0
+                or not state.service_id or not state.workdir):
+            return
+        try:
+            from core.llm_providers._cc_credentials import recover_tokens_from_workdir
+            recover_tokens_from_workdir(
+                state.workdir, state.service_id, state.svc_pool_idx,
+                user_id=state.user_id, conv_id=state.conv_id)
+        except Exception:
+            logger.debug("[cci-live] token recover failed", exc_info=True)
 
     def find_session(self, user_id: str, conversation_id: str,
                      agent_name: str, service_id: str = "") -> Optional[InteractiveContainer]:
@@ -569,6 +649,7 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
             state = self._sessions.pop(key, None)
         if not state:
             return False
+        self._recover_container_tokens(state)
         self._kill_container(state.name)
         return True
 
@@ -582,6 +663,7 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
         for key, state in victims:
             logger.info("[cci-live] kill_by_conv %s (%s)",
                         self._fmt_key(key), reason)
+            self._recover_container_tokens(state)
             self._kill_container(state.name)
         return len(victims)
 
@@ -596,6 +678,7 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
         for key, state in victims:
             logger.info("[cci-live] kill_by_conv_agent %s (%s)",
                         self._fmt_key(key), reason)
+            self._recover_container_tokens(state)
             self._kill_container(state.name)
         return len(victims)
 
@@ -620,7 +703,7 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
     def sweep_idle(self, idle_ttl_seconds: Optional[float] = None) -> int:
         ttl = float(idle_ttl_seconds if idle_ttl_seconds is not None else self._idle_ttl)
         cutoff = time.time() - ttl
-        to_kill: list[tuple[str, str]] = []
+        to_kill: list[tuple[InteractiveContainer, str]] = []
         with self._lock:
             snapshot = list(self._sessions.items())
         dead: Dict[tuple[str, str, str, str], bool] = {}
@@ -638,19 +721,21 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
                     reason = f"idle>{int(ttl)}s"
                 if reason:
                     self._sessions.pop(key, None)
-                    to_kill.append((current.name, reason))
-        for name, reason in to_kill:
-            logger.info("[cci-live] evict %s (%s)", name, reason)
-            self._kill_container(name)
+                    to_kill.append((current, reason))
+        for state, reason in to_kill:
+            logger.info("[cci-live] evict %s (%s)", state.name, reason)
+            self._recover_container_tokens(state)
+            self._kill_container(state.name)
         return len(to_kill)
 
     def shutdown_all(self) -> None:
         self._sweeper_stop.set()
         with self._lock:
-            names = [state.name for state in self._sessions.values()]
+            states = list(self._sessions.values())
             self._sessions.clear()
-        for name in names:
-            self._kill_container(name)
+        for state in states:
+            self._recover_container_tokens(state)
+            self._kill_container(state.name)
 
     @staticmethod
     def _kill_container(name: str) -> None:

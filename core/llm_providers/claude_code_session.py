@@ -741,8 +741,14 @@ class ClaudeCodeSessionMixin:
     # core.handlers.push_notification). The built-ins are blocked so the
     # agent never falls through — it calls mcp__pawflow__use_tool(
     # ScheduleWakeup, ...) / (PushNotification, ...) instead.
+        # Native file-IO tools (Read/Edit/Write/Glob/Grep/NotebookEdit) are
+    # deliberately ALLOWED (mirrors the codex provider): the agent must read its
+    # local PawFlow bootstrap (/cc_sessions/.../initial_context.md) and session
+    # files even when no relay is connected. Bash stays blocked because the
+    # container shell sees the wrong cwd (not the relay /workspace); the rest
+    # shadow a PawFlow MCP equivalent. Steering to MCP is via the prompt.
     _DISALLOWED_BUILTIN_TOOLS = (
-        "Bash,Edit,Read,Write,Glob,Grep,NotebookEdit,WebFetch,WebSearch,"
+        "Bash,WebFetch,WebSearch,"
         "Task,Agent,ToolSearch,ListMcpResourcesTool,ReadMcpResourceTool,"
         "EnterPlanMode,ExitPlanMode,EnterWorktree,ExitWorktree,"
         "RemoteTrigger,Skill,TaskOutput,TaskStop,TodoWrite,"

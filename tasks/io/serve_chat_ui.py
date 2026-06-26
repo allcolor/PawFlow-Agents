@@ -29,7 +29,11 @@ _CHAT_UI_DIR = Path(__file__).parent / "chat_ui"
 # ext_runtime.js must load early so other modules can fire hooks safely.
 _JS_MODULES = [
     "i18n.js", "state.js", "rxbus.js", "ext_runtime.js",
-    "themes.js", "conversations.js", "messages.js",
+    "themes.js",
+    # conversations.js = list/state/render/history core (defines escapeHtml etc.,
+    # loads early); _io = delete/export/import; _menu = context menu + git dialogs.
+    "conversations.js", "conversations_io.js", "conversations_menu.js",
+    "messages.js",
     "active_agents.js", "typing.js", "notifications.js", "sse.js",
     "dialogs.js",
     "admin_settings.js",

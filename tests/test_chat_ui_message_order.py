@@ -4,7 +4,12 @@ from pathlib import Path
 from tests._agent_core_src import agent_core_src
 
 
-MESSAGES_JS = Path("tasks/io/chat_ui/messages.js").read_text(encoding="utf-8")
+# messages.js split (<=800 lines) → core + _render + _tools + _markdown;
+# concatenate in load order so structural string/slice assertions still resolve.
+MESSAGES_JS = "".join(
+    Path(f"tasks/io/chat_ui/{_m}").read_text(encoding="utf-8")
+    for _m in ("messages.js", "messages_render.js",
+               "messages_tools.js", "messages_markdown.js"))
 CONVERSATIONS_JS = Path("tasks/io/chat_ui/conversations.js").read_text(encoding="utf-8")
 RESOURCES_JS = "".join(p.read_text(encoding="utf-8") for p in sorted(Path("tasks/io/chat_ui").glob("resources*.js")))
 SSE_JS = Path("tasks/io/chat_ui/sse.js").read_text(encoding="utf-8")

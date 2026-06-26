@@ -28,7 +28,12 @@ _DIALOGS_JS = Path("tasks/io/chat_ui/dialogs.js").read_text(encoding="utf-8")
 _TERMINAL_JS = Path("tasks/io/chat_ui/terminal.js").read_text(encoding="utf-8")
 _TABS_JS = Path("tasks/io/chat_ui/tabs.js").read_text(encoding="utf-8")
 _FLOW_GRAPH_HTML = Path("tasks/io/chat_ui/flow_graph.html").read_text(encoding="utf-8")
-_MESSAGES_JS = Path("tasks/io/chat_ui/messages.js").read_text(encoding="utf-8")
+# messages.js was split (<=800 lines) into core + _render + _tools + _markdown;
+# read them concatenated in load order so structural assertions still resolve.
+_MESSAGES_JS = "".join(
+    Path(f"tasks/io/chat_ui/{_m}").read_text(encoding="utf-8")
+    for _m in ("messages.js", "messages_render.js",
+               "messages_tools.js", "messages_markdown.js"))
 _RXBUS_JS = Path("tasks/io/chat_ui/rxbus.js").read_text(encoding="utf-8")
 _AGENT_CONTEXT_PY = __import__("re").sub(r"\bst\.", "", "".join(
     Path(f"tasks/ai/{_f}").read_text(encoding="utf-8")  # split for <=800 lines; strip state-obj `st.` namespacing

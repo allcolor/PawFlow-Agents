@@ -226,7 +226,12 @@ def test_flow_graph_renders_runtime_port_links():
 
 
 def test_chat_ui_html_helpers_escape_attribute_and_js_contexts():
-    js = Path("tasks/io/chat_ui/messages.js").read_text(encoding="utf-8")
+    # messages.js split (<=800 lines); escape helpers live in messages_tools.js,
+    # their usages in _render — read the group concatenated.
+    js = "".join(
+        Path(f"tasks/io/chat_ui/{_m}").read_text(encoding="utf-8")
+        for _m in ("messages.js", "messages_render.js",
+                   "messages_tools.js", "messages_markdown.js"))
     conv_js = Path("tasks/io/chat_ui/conversations.js").read_text(encoding="utf-8")
 
     for src in (js, conv_js):

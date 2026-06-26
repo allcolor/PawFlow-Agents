@@ -33,6 +33,9 @@ _JS_MODULES = [
     "active_agents.js", "typing.js", "notifications.js", "sse.js",
     "dialogs.js",
     "admin_settings.js",
+    # commands_help.js (HELP_DATA) before the cmd_* group so /help's data
+    # exists before any command handler that reads it (define-before-use).
+    "commands_help.js",
     "cmd_agent.js", "cmd_context.js", "cmd_resources.js", "cmd_conversation.js", "cmd_misc.js",
     "commands.js", "file_mention.js", "context_editor.js", "memories.js", "diary.js", "knowledge_graph.js", "project_graph.js",
     "secrets.js", "files_panel.js", "plans_panel.js", "attachments.js",

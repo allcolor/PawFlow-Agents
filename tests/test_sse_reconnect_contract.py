@@ -3,7 +3,11 @@
 from pathlib import Path
 
 
-SSE_JS = Path("tasks/io/chat_ui/sse.js").read_text(encoding="utf-8")
+# sse.js was split into <=800-line files (state + handler wires + connectSSE
+# shell); introspection here needs the combined source in load order.
+SSE_JS = "".join(
+    Path(f"tasks/io/chat_ui/{_m}").read_text(encoding="utf-8")
+    for _m in ("sse_state.js", "sse_handlers_a.js", "sse_handlers_b.js", "sse.js"))
 ATTACHMENTS_JS = Path("tasks/io/chat_ui/attachments.js").read_text(encoding="utf-8")
 CMD_AGENT_JS = Path("tasks/io/chat_ui/cmd_agent.js").read_text(encoding="utf-8")
 

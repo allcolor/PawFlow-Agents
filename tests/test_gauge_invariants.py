@@ -19,7 +19,11 @@ from tests._agent_core_src import agent_core_src
 
 _ACTIVE_AGENTS_JS = Path(
     "tasks/io/chat_ui/active_agents.js").read_text(encoding="utf-8")
-_SSE_JS = Path("tasks/io/chat_ui/sse.js").read_text(encoding="utf-8")
+# sse.js was split into <=800-line files (state + handler wires + connectSSE
+# shell); introspection here needs the combined source in load order.
+_SSE_JS = "".join(
+    Path(f"tasks/io/chat_ui/{_m}").read_text(encoding="utf-8")
+    for _m in ("sse_state.js", "sse_handlers_a.js", "sse_handlers_b.js", "sse.js"))
 _RESOURCES_JS = "".join(
     p.read_text(encoding="utf-8")
     for p in sorted(Path("tasks/io/chat_ui").glob("resources*.js")))
@@ -593,7 +597,7 @@ def test_view_menu_has_three_grouping_toggles():
     template = Path("tasks/io/chat_ui/template.html").read_text(encoding="utf-8")
     convs = Path("tasks/io/chat_ui/conversations.js").read_text(encoding="utf-8")
     messages = Path("tasks/io/chat_ui/messages.js").read_text(encoding="utf-8")
-    sse = Path("tasks/io/chat_ui/sse.js").read_text(encoding="utf-8")
+    sse = _SSE_JS  # combined split source (state + handler wires + shell)
     conversation_py = "".join(
         Path(f"tasks/ai/actions/{_cf}").read_text(encoding="utf-8")
         for _cf in ("conversation.py", "_conv_base.py", "_conv_core.py",

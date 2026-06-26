@@ -277,7 +277,10 @@ def test_resource_panel_uses_safe_js_args_for_user_resource_names():
 
 
 def test_sse_plan_and_ask_user_events_escape_user_controlled_html():
-    js = Path("tasks/io/chat_ui/sse.js").read_text(encoding="utf-8")
+    # sse.js was split into <=800-line files; join the source in load order.
+    js = "".join(
+        Path(f"tasks/io/chat_ui/{_m}").read_text(encoding="utf-8")
+        for _m in ("sse_state.js", "sse_handlers_a.js", "sse_handlers_b.js", "sse.js"))
 
     assert "escapeHtml(title) + '</strong> ('" in js
     assert "planAction(\\'approve_plan\\',' + jsStringArg(planId)" in js

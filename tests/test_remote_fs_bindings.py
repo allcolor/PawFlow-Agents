@@ -229,7 +229,10 @@ def test_rclone_oauth_credentials_expose_login_action_and_sensitive_config():
 
 def test_chat_ui_routes_rclone_oauth_through_vnc_dialog():
     src = "".join(p.read_text(encoding="utf-8") for p in sorted(Path("tasks/io/chat_ui").glob("resources*.js")))
-    sse = Path("tasks/io/chat_ui/sse.js").read_text(encoding="utf-8")
+    # sse.js was split into <=800-line files; join the source in load order.
+    sse = "".join(
+        Path(f"tasks/io/chat_ui/{_m}").read_text(encoding="utf-8")
+        for _m in ("sse_state.js", "sse_handlers_a.js", "sse_handlers_b.js", "sse.js"))
 
     assert "svc-install-login-btn" in src
     assert "_submitServiceInstall(true)" in src

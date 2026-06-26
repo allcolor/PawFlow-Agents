@@ -333,3 +333,89 @@ def test_video_service_chat_completions_does_not_use_webhook(monkeypatch):
 def test_openai_compatible_media_services_are_registered():
     assert ServiceFactory.get("openaiCompatibleImageGeneration") is OpenAICompatibleImageGenerationService
     assert ServiceFactory.get("openaiCompatibleVideoGeneration") is OpenAICompatibleVideoGenerationService
+
+
+def test_video_service_atlascloud_predictions_poll_with_extension_less_output(monkeypatch):
+    # AtlasCloud-style: submit returns the id nested under data, poll exposes
+    # status + a signed result URL (no .mp4 extension) under data.outputs[].
+    svc = OpenAICompatibleVideoGenerationService({
+        "llm_service": "atlas_llm",
+        "protocol": "openai_video",
+        "model": "wan-2.7",
+        "poll_interval": 0,
+        "submit_path": "/model/generateVideo",
+        "status_path_template": "/model/prediction/{id}",
+    })
+    llm = FakeLLMService("https://api.atlascloud.ai/api/v1", "wan-2.7")
+    calls = []
+
+    def fake_request(resolved, method, path, body=None):
+        calls.append((method, path, body))
+        if method == "POST":
+            return {"data": {"id": "pred_42", "status": "queued"}}
+        return {"data": {"status": "completed",
+                         "outputs": ["https://cdn.atlascloud.ai/o/pred_42?sig=abc"]}}
+
+    monkeypatch.setattr(svc, "_resolve_llm_service", lambda: llm)
+    monkeypatch.setattr(svc, "_request_json", fake_request)
+    monkeypatch.setattr(
+        svc, "_download_url",
+        lambda url, default_content_type, timeout: (b"MP4", "video/mp4"),
+    )
+
+    result = svc.generate(prompt="a rocket launching")
+
+    assert result == {"video_bytes": b"MP4", "content_type": "video/mp4"}
+    assert calls[0][0:2] == ("POST", "/model/generateVideo")
+    assert calls[1][0:2] == ("GET", "/model/prediction/pred_42")
+
+
+def test_video_service_minimal_submit_body_sends_only_model_and_prompt(monkeypatch):
+    svc = OpenAICompatibleVideoGenerationService({
+        "llm_service": "atlas_llm",
+        "protocol": "openai_video",
+        "model": "wan-2.7",
+        "poll_interval": 0,
+        "minimal_submit_body": True,
+        "submit_path": "/model/generateVideo",
+        "status_path_template": "/model/prediction/{id}",
+    })
+    llm = FakeLLMService("https://api.atlascloud.ai/api/v1", "wan-2.7")
+    calls = []
+
+    def fake_request(resolved, method, path, body=None):
+        calls.append((method, path, body))
+        if method == "POST":
+            return {"data": {"id": "pred_7"}}
+        return {"data": {"status": "completed",
+                         "outputs": ["https://cdn.atlascloud.ai/o/pred_7"]}}
+
+    monkeypatch.setattr(svc, "_resolve_llm_service", lambda: llm)
+    monkeypatch.setattr(svc, "_request_json", fake_request)
+    monkeypatch.setattr(
+        svc, "_download_url",
+        lambda url, default_content_type, timeout: (b"MP4", "video/mp4"),
+    )
+
+    svc.generate(prompt="a rocket", duration=12, width=1920, height=1080,
+                 image_url="https://cdn.example.com/first.png", resolution="1080p")
+
+    submit_body = calls[0][2]
+    # Trimmed to the essentials; bulky fields the provider rejects are dropped.
+    assert submit_body["model"] == "wan-2.7"
+    assert submit_body["prompt"] == "a rocket"
+    assert submit_body["image_url"] == "https://cdn.example.com/first.png"
+    assert "duration" not in submit_body
+    assert "aspect_ratio" not in submit_body
+    assert "resolution" not in submit_body
+    assert svc.get_parameter_schema()["minimal_submit_body"]["default"] is False
+
+
+def test_image_service_extracts_extension_less_outputs_url():
+    # AtlasCloud generateImage returns the asset under data.outputs[] with a
+    # signed, extension-less URL — the regex path would miss it; the outputs
+    # fallback must still find it.
+    url = OpenAICompatibleImageGenerationService._extract_image_url(
+        {"data": {"status": "completed",
+                  "outputs": ["https://cdn.atlascloud.ai/o/img_1?sig=xyz"]}})
+    assert url == "https://cdn.atlascloud.ai/o/img_1?sig=xyz"

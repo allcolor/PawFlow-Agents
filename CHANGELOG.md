@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- openaiCompatibleVideoGeneration: `minimal_submit_body` option — when enabled,
+  the async submit sends only `{model, prompt}` (plus `image_url`/`end_image_url`,
+  `extra_body`, `callback_url`), omitting `duration`/`aspect_ratio`/`resolution`/etc.
+  for providers (e.g. AtlasCloud) that reject unknown body fields. Combined with
+  the configurable `submit_path` / `status_path_template`, AtlasCloud's Wan/Kling
+  Predictions API (`POST /model/generateVideo` → poll `GET /model/prediction/{id}`)
+  now works as a pure-config integration over an `openai` `llmConnection`.
+
+### Changed
+
+- openai-compatible media services: the image/video URL extractors now also
+  resolve a result URL from `outputs`/`output` arrays even when the (often
+  signed) URL carries no recognizable file extension — matching the response
+  shape of Predictions-style providers like AtlasCloud.
+
 ## [1.0.0-alpha.56] — 2026-06-26
 
 ### Security

@@ -75,6 +75,25 @@ def _walk_json(value: Any) -> Iterable[Any]:
             yield from _walk_json(child)
 
 
+def _first_http_url(value) -> str:
+    """First http(s) URL in a string, a list of strings, or a list of dicts.
+
+    Used for ``outputs``/``output`` result arrays (e.g. AtlasCloud's
+    ``data.outputs[0]``) whose signed URLs may carry no file extension, so the
+    extension-based regexes would otherwise miss them.
+    """
+    if isinstance(value, str) and value.startswith(("http://", "https://")):
+        return value
+    if isinstance(value, list):
+        for entry in value:
+            if isinstance(entry, dict):
+                entry = (entry.get("url") or entry.get("video_url")
+                         or entry.get("image_url") or entry.get("uri"))
+            if isinstance(entry, str) and entry.startswith(("http://", "https://")):
+                return entry
+    return ""
+
+
 class _OpenAICompatibleMediaMixin:
     """Shared helpers for OpenAI-compatible media services."""
 
@@ -402,6 +421,10 @@ class OpenAICompatibleImageGenerationService(_OpenAICompatibleMediaMixin, BaseIm
                         value = value.get("url")
                     if isinstance(value, str) and value.startswith(("http://", "https://", "data:")):
                         return value
+                for okey in ("outputs", "output"):
+                    url = _first_http_url(item.get(okey))
+                    if url:
+                        return url
             elif isinstance(item, str):
                 stripped = item.strip()
                 if stripped.startswith(("{", "[")):
@@ -464,6 +487,15 @@ class OpenAICompatibleVideoGenerationService(_OpenAICompatibleMediaMixin, BaseVi
                     "back to the agent runtime file_base_url when omitted."
                 ),
             },
+            "minimal_submit_body": {
+                "type": "boolean", "required": False, "default": False,
+                "description": (
+                    "Send only {model, prompt} (plus image_url/end_image_url, "
+                    "extra_body and callback_url) at submit, omitting "
+                    "duration/aspect_ratio/resolution/etc. Enable for providers "
+                    "like AtlasCloud that reject unknown body fields."
+                ),
+            },
             "extra_body": {"type": "json", "required": False, "default": {}, "description": "Additional provider-specific JSON body fields."},
             "extra_headers": {"type": "json", "required": False, "default": {}, "description": "Additional HTTP headers such as OpenRouter attribution headers."},
         }
@@ -472,6 +504,7 @@ class OpenAICompatibleVideoGenerationService(_OpenAICompatibleMediaMixin, BaseVi
         super().__init__(config)
         self._init_common()
         self.timeout = int(self.config.get("timeout", 900) or 900)
+        self.minimal_submit_body = _truthy(self.config.get("minimal_submit_body", False))
         self.max_duration = int(self.config.get("max_duration", 15) or 15)
         self.submit_path = (self.config.get("submit_path", "/videos/generations") or "/videos/generations").strip()
         self.status_path_template = (self.config.get("status_path_template", "/videos/{id}") or "/videos/{id}").strip()
@@ -554,19 +587,18 @@ class OpenAICompatibleVideoGenerationService(_OpenAICompatibleMediaMixin, BaseVi
     def _submit_openai_video(self, svc, model: str, prompt: str, duration: int,
                              width, height, image_url: str, end_image_url: str,
                              kwargs: dict) -> dict:
-        body = {
-            "model": model,
-            "prompt": prompt,
-            "duration": duration,
-            "aspect_ratio": kwargs.get("aspect_ratio") or self._aspect_ratio(width, height),
-        }
+        body = {"model": model, "prompt": prompt}
+        if not self.minimal_submit_body:
+            body["duration"] = duration
+            body["aspect_ratio"] = kwargs.get("aspect_ratio") or self._aspect_ratio(width, height)
         if image_url:
             body["image_url"] = image_url
         if end_image_url:
             body["end_image_url"] = end_image_url
-        for key in ("resolution", "quality", "seed", "with_audio"):
-            if key in kwargs and kwargs[key] not in (None, ""):
-                body[key] = kwargs[key]
+        if not self.minimal_submit_body:
+            for key in ("resolution", "quality", "seed", "with_audio"):
+                if key in kwargs and kwargs[key] not in (None, ""):
+                    body[key] = kwargs[key]
         body.update(self.extra_body)
         if kwargs.get("callback_url"):
             body["callback_url"] = kwargs["callback_url"]
@@ -695,6 +727,10 @@ class OpenAICompatibleVideoGenerationService(_OpenAICompatibleMediaMixin, BaseVi
                     if isinstance(value, str) and value.startswith(("http://", "https://")):
                         if _VIDEO_URL_RE.search(value) or key != "url":
                             return value
+                for okey in ("outputs", "output"):
+                    url = _first_http_url(item.get(okey))
+                    if url:
+                        return url
             elif isinstance(item, str):
                 stripped = item.strip()
                 if stripped.startswith(("{", "[")):

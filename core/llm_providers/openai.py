@@ -28,7 +28,10 @@ class LLMOpenaiMixin:
         path = urlparse(base_url or "").path.rstrip("/")
         if path.endswith("/chat/completions"):
             return ""  # caller already supplied the full endpoint path
-        if re.search(r"/v\d+$", path):
+        # Match a trailing version segment, including suffixed ones like
+        # /v1beta or /v2alpha (Gemini-compatible gateways), so we never
+        # re-append /v1 on top of an existing version.
+        if re.search(r"/v\d+[a-z]*$", path):
             return "/chat/completions"
         return "/v1/chat/completions"
 

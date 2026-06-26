@@ -1,15 +1,6 @@
 // \xe2\x94\x80\xe2\x94\x80 Tool-output / diff rendering + escape helpers + inline media \xe2\x94\x80\xe2\x94\x80
-// Split from messages.js (<=800 lines). Global. Defines escapeHtml/escapeAttr/
-// jsStringArg (override conversations.js copies, as before — loads after them).
-
-function escapeHtml(t) {
-  return String(t == null ? '' : t)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
+// Split from messages.js (<=800 lines). Global. escapeHtml is the canonical
+// definition in state.js (loads first); escapeAttr/jsStringArg wrap it here.
 
 function escapeAttr(t) {
   return escapeHtml(t);
@@ -569,11 +560,11 @@ function inlineAudioHtml(url, filename) {
 
 function inlineVideoHtml(url, filename) {
   return '<div class="video-wrapper" style="margin:6px 0;">'
-    + '<video controls preload="metadata" src="' + url + '" '
+    + '<video controls preload="metadata" src="' + escapeHtml(url) + '" '
     + 'style="max-width:512px;max-height:512px;border-radius:8px;border:1px solid #0f3460;"></video>'
     + '<div style="font-size:11px;color:#6c6c8a;margin-top:2px;">'
     + '\uD83C\uDFAC ' + escapeHtml(filename || 'video')
-    + ' <a class="flink" href="#" onclick="event.preventDefault();openFileViewer(\'' + url + '\')" style="color:#6c5ce7;">open</a>'
+    + ' <a class="flink" href="#" data-file-url="' + escapeHtml(url) + '" onclick="event.preventDefault();openFileViewer(this.dataset.fileUrl)" style="color:#6c5ce7;">open</a>'
     + '</div></div>';
 }
 
@@ -648,8 +639,8 @@ function inlineImageHtml(url, filename, sizeInfo) {
   if (_imageFlushTimer) clearTimeout(_imageFlushTimer);
   _imageFlushTimer = setTimeout(_flushPendingImages, 100);
   return '<div class="img-wrapper" style="margin:6px 0;">'
-    + '<img id="' + imgId + '" style="display:none;max-width:512px;max-height:512px;border-radius:8px;cursor:pointer;border:1px solid #0f3460;" '
-    + 'onclick="openFileViewer(\'' + url + '\')" title="' + t('clickFullSize') + '" />'
+    + '<img id="' + imgId + '" data-file-url="' + escapeHtml(url) + '" style="display:none;max-width:512px;max-height:512px;border-radius:8px;cursor:pointer;border:1px solid #0f3460;" '
+    + 'onclick="openFileViewer(this.dataset.fileUrl)" title="' + t('clickFullSize') + '" />'
     + '<div style="font-size:11px;color:#6c6c8a;margin-top:2px;">'
     + '\uD83D\uDCC4 ' + escapeHtml(filename || 'image') + (sizeInfo ? ' (' + sizeInfo + ')' : '')
     + '</div></div>';

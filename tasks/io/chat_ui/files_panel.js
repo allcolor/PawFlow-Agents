@@ -15,14 +15,19 @@ function showFileMenu(e, fileId, filename, access) {
   // public link) when it is currently shared — not both, which read as
   // contradictory.
   const isShared = access && access !== 'private';
+  // File id / href reach the handlers via HTML-escaped data-attributes, never
+  // interpolated into the inline onclick JS string (an HTML-decoded ' would
+  // break out of the string and inject script).
+  const idAttr = ' data-file-id="' + escapeHtml(fileId) + '"';
+  const hrefAttr = ' data-href="' + escapeHtml(href) + '"';
   const shareToggle = isShared
-    ? '<div class="ctx-menu-item" onclick="event.stopPropagation();makeFilePrivate(\'' + fileId + '\');closeFileMenu();">&#x1F512; ' + escapeHtml(t('makePrivate')) + '</div>'
-    : '<div class="ctx-menu-item" onclick="event.stopPropagation();shareFilePublic(\'' + fileId + '\');closeFileMenu();">&#x1F517; ' + escapeHtml(t('shareLink')) + '</div>';
+    ? '<div class="ctx-menu-item"' + idAttr + ' onclick="event.stopPropagation();makeFilePrivate(this.dataset.fileId);closeFileMenu();">&#x1F512; ' + escapeHtml(t('makePrivate')) + '</div>'
+    : '<div class="ctx-menu-item"' + idAttr + ' onclick="event.stopPropagation();shareFilePublic(this.dataset.fileId);closeFileMenu();">&#x1F517; ' + escapeHtml(t('shareLink')) + '</div>';
   menu.innerHTML =
-    '<div class="ctx-menu-item" onclick="event.stopPropagation();openFileViewer(\'' + href + '\');closeFileMenu();">&#x1F441; ' + escapeHtml(t('view')) + '</div>' +
-    '<div class="ctx-menu-item" onclick="event.stopPropagation();window.open(\'' + href + '\',\'_blank\');closeFileMenu();">&#x2B07; ' + escapeHtml(t('download')) + '</div>' +
+    '<div class="ctx-menu-item"' + hrefAttr + ' onclick="event.stopPropagation();openFileViewer(this.dataset.href);closeFileMenu();">&#x1F441; ' + escapeHtml(t('view')) + '</div>' +
+    '<div class="ctx-menu-item"' + hrefAttr + ' onclick="event.stopPropagation();window.open(this.dataset.href,\'_blank\');closeFileMenu();">&#x2B07; ' + escapeHtml(t('download')) + '</div>' +
     shareToggle +
-    '<div class="ctx-menu-item danger" onclick="event.stopPropagation();deleteFile(\'' + fileId + '\');closeFileMenu();">&#x1F5D1; ' + escapeHtml(t('delete')) + '</div>';
+    '<div class="ctx-menu-item danger"' + idAttr + ' onclick="event.stopPropagation();deleteFile(this.dataset.fileId);closeFileMenu();">&#x1F5D1; ' + escapeHtml(t('delete')) + '</div>';
   setTimeout(() => document.addEventListener('click', closeFileMenu, {once: true}), 0);
 }
 

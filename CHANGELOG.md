@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security
+
+- chat-ui: file URLs and ids are no longer interpolated into inline `onclick`
+  JS strings (`openFileViewer('…')`, download/share/delete in the file context
+  menu, inline image/video/markdown-file links). The browser HTML-decodes an
+  attribute before parsing its JS, so an escaped `'` (`&#39;`) decoded back and
+  could break out of the string — a DOM-XSS vector for attacker-influenced file
+  names/URLs. Values now reach the handlers via HTML-escaped `data-*`
+  attributes read from `dataset`, matching the existing inline-audio pattern.
+
+### Fixed
+
+- openai provider: `base_url` paths whose version segment carries a suffix
+  (e.g. `/v1beta`, `/v2alpha` on Gemini-compatible gateways) no longer get a
+  spurious `/v1` re-appended; a fully-qualified `…/chat/completions` base is
+  still used verbatim.
+
+### Changed
+
+- chat-ui: `escapeHtml` is now a single canonical definition in `state.js`
+  (loaded early) instead of duplicated in `conversations.js` and
+  `messages_tools.js`, so the escaper can't be silently shadowed by a stale
+  copy.
+
 ## [1.0.0-alpha.55] — 2026-06-26
 
 ### Fixed

@@ -226,7 +226,14 @@ def test_flow_graph_renders_runtime_port_links():
 
 
 def test_chat_ui_html_helpers_escape_attribute_and_js_contexts():
-    # messages.js split (<=800 lines); escape helpers live in messages_tools.js,
+    # escapeHtml is the single canonical definition in state.js (loads early);
+    # the escapeAttr/jsStringArg wrappers live in each group that needs them.
+    state_js = Path("tasks/io/chat_ui/state.js").read_text(encoding="utf-8")
+    assert "function escapeHtml(s) {" in state_js
+    assert ".replace(/\"/g, '&quot;')" in state_js
+    assert ".replace(/'/g, '&#39;')" in state_js
+
+    # messages.js split (<=800 lines); the wrappers live in messages_tools.js,
     # their usages in _render — read the group concatenated.
     js = "".join(
         Path(f"tasks/io/chat_ui/{_m}").read_text(encoding="utf-8")
@@ -237,8 +244,6 @@ def test_chat_ui_html_helpers_escape_attribute_and_js_contexts():
     for src in (js, conv_js):
         assert "function escapeAttr" in src
         assert "function jsStringArg" in src
-        assert ".replace(/\"/g, '&quot;')" in src
-        assert ".replace(/'/g, '&#39;')" in src
         assert "JSON.stringify(String(" in src
 
 

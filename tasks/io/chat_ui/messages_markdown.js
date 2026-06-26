@@ -24,7 +24,7 @@ function renderMarkdown(text) {
           return inlineVideoHtml(_httpUrl, parsed.filename);
         }
         setTimeout(() => openFileViewer(parsed.url), 100);
-        return '<span style="cursor:pointer;color:#6c5ce7;" onclick="openFileViewer(\'' + parsed.url + '\')">\uD83D\uDCC4 ' + parsed.filename + ' (' + parsed.size_kb + ' KB) \u2014 Click to view</span>';
+        return '<span style="cursor:pointer;color:#6c5ce7;" data-file-url="' + escapeHtml(parsed.url) + '" onclick="openFileViewer(this.dataset.fileUrl)">\uD83D\uDCC4 ' + escapeHtml(parsed.filename) + ' (' + escapeHtml(String(parsed.size_kb)) + ' KB) \u2014 Click to view</span>';
       }
     }
   } catch(e) {}
@@ -62,7 +62,7 @@ function renderMarkdown(text) {
       if (isVideoFile(label) || isVideoFile(url)) {
         return inlineVideoHtml(fileUrl, label);
       }
-      return '<a class="flink" href="' + fileUrl + '" style="color:#6c5ce7;cursor:pointer;" onclick="event.preventDefault();openFileViewer(\'' + fileUrl + '\')">\uD83D\uDCC4 ' + label + '</a>';
+      return '<a class="flink" href="' + fileUrl + '" style="color:#6c5ce7;cursor:pointer;" data-file-url="' + fileUrl + '" onclick="event.preventDefault();openFileViewer(this.dataset.fileUrl)">\uD83D\uDCC4 ' + label + '</a>';
     }
     return '<a href="' + url + '" target="_blank">' + label + '</a>';
   });
@@ -78,7 +78,7 @@ function renderMarkdown(text) {
     if (isVideoFile(fname)) {
       return pre + inlineVideoHtml(fileUrl, fname);
     }
-    return pre + '<a class="flink" href="' + fileUrl + '" style="color:#6c5ce7;cursor:pointer;" onclick="event.preventDefault();openFileViewer(\'' + fileUrl + '\')">\uD83D\uDCC4 ' + fname + '</a>';
+    return pre + '<a class="flink" href="' + fileUrl + '" style="color:#6c5ce7;cursor:pointer;" data-file-url="' + fileUrl + '" onclick="event.preventDefault();openFileViewer(this.dataset.fileUrl)">\uD83D\uDCC4 ' + fname + '</a>';
   });
   text = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
   text = text.replace(/\*(.+?)\*/g, '<em>$1</em>');

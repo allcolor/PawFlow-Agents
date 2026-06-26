@@ -75,14 +75,7 @@ function renderConvList(convs) {
   }
 }
 
-function escapeHtml(s) {
-  return String(s == null ? '' : s)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
+// escapeHtml is the canonical definition in state.js (loads first).
 function escapeAttr(s) { return escapeHtml(s); }
 function jsStringArg(s) { return escapeAttr(JSON.stringify(String(s == null ? '' : s))); }
 

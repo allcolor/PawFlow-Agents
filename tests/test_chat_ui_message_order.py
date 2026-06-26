@@ -470,6 +470,36 @@ def test_absolute_file_media_urls_are_normalized_to_same_origin():
     assert "normalizePawFlowFileUrl(rawImgSrc)" in ATTACHMENTS_JS
 
 
+def test_inline_media_file_urls_are_not_built_into_inline_onclick_js_strings():
+    # XSS hardening: a file URL interpolated into an inline onclick="openFileViewer('"+url+"')"
+    # is unsafe — the browser HTML-decodes the attribute before parsing the JS, so
+    # escapeHtml's &#39; turns back into ' and breaks out of the string. URLs must
+    # reach openFileViewer via a (HTML-escaped) data-attribute instead.
+    assert "openFileViewer(\\'" not in MESSAGES_JS
+    assert "openFileViewer(this.dataset.fileUrl)" in MESSAGES_JS
+    # URL-bearing attributes are HTML-escaped.
+    assert 'data-file-url="' + "' + escapeHtml(url)" in MESSAGES_JS
+    assert 'data-file-url="' + "' + escapeHtml(parsed.url)" in MESSAGES_JS
+    assert '<video controls preload="metadata" src="' + "' + escapeHtml(url)" in MESSAGES_JS
+    # show_file filename is escaped before it reaches innerHTML.
+    assert "escapeHtml(parsed.filename)" in MESSAGES_JS
+    # The file context menu (files_panel.js) shares the same hardening: ids and
+    # hrefs flow through data-attributes, not inline onclick JS strings.
+    assert "openFileViewer(\\'" not in FILES_PANEL_JS
+    assert "deleteFile(\\'" not in FILES_PANEL_JS
+    assert "makeFilePrivate(\\'" not in FILES_PANEL_JS
+    assert "openFileViewer(this.dataset.href)" in FILES_PANEL_JS
+    assert "deleteFile(this.dataset.fileId)" in FILES_PANEL_JS
+
+
+def test_escapeHtml_has_a_single_canonical_definition_in_state_js():
+    # Deduplicated: one source of truth in state.js (loads early), so a security
+    # hardening of the escaper can never be silently shadowed by a stale copy.
+    assert "function escapeHtml(s) {" in STATE_JS
+    assert "function escapeHtml(" not in CONVERSATIONS_JS
+    assert "function escapeHtml(" not in MESSAGES_JS
+
+
 def test_live_new_message_renders_event_attachments():
     assert "attachments: data.attachments || []" in SSE_JS
     assert "Array.isArray(extra.attachments)" in MESSAGES_JS

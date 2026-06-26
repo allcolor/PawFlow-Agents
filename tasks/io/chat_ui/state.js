@@ -6,6 +6,17 @@ const _selectedMsgIds = new Set();  // multiselect for batch delete
 let conversationId = null;
 let sending = false;
 
+// Canonical HTML escaper. Defined here (loads early, before any module that
+// renders user/agent-controlled text) so there is a single source of truth.
+function escapeHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function pawflowDebugEnabled(topic) {
   try {
     if (window.PAWFLOW_DEBUG_UI === true) return true;

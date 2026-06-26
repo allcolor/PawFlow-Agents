@@ -30,13 +30,14 @@ _CHAT_UI_DIR = Path(__file__).parent / "chat_ui"
 _JS_MODULES = [
     "i18n.js", "state.js", "rxbus.js", "ext_runtime.js",
     "themes.js",
-    # conversations.js = list/state/render/history core (defines escapeHtml etc.,
-    # loads early); _io = delete/export/import; _menu = context menu + git dialogs.
+    # conversations.js = list/state/render/history core (loads early);
+    # _io = delete/export/import; _menu = context menu + git dialogs.
+    # (escapeHtml is canonical in state.js, loaded earlier.)
     "conversations.js", "conversations_io.js", "conversations_menu.js",
     # messages.js = tool-summary/badges/technical-grouping core; _render = addMsg;
     # _tools = tool-output/diff/escape/media; _markdown = markdown/traces/scroll.
     # Order matters: core → render → tools → markdown (markdown holds load-time
-    # #messages scroll listeners; _tools' escapeHtml overrides conversations.js).
+    # #messages scroll listeners).
     "messages.js", "messages_render.js", "messages_tools.js", "messages_markdown.js",
     "active_agents.js", "typing.js", "notifications.js",
     # sse.js was split (<=800 lines each); load order matters: sse_state.js

@@ -484,9 +484,15 @@ class TestChatCompletionsEndpoint:
         ("https://dashscope.aliyuncs.com/compatible-mode/v1",
          "/compatible-mode/v1/chat/completions"),
         ("https://api.z.ai/api/paas/v4", "/api/paas/v4/chat/completions"),
-        # Already-complete endpoint is used verbatim (no duplication).
+        # Suffixed version segments (Gemini-compatible gateways) count too.
+        ("https://generativelanguage.googleapis.com/v1beta",
+         "/v1beta/chat/completions"),
+        # Already-complete endpoint is used verbatim (no duplication), whether
+        # the path carries a version segment or not.
         ("https://api.z.ai/api/paas/v4/chat/completions",
          "/api/paas/v4/chat/completions"),
+        ("https://proxy.example.com/openai/chat/completions",
+         "/openai/chat/completions"),
         # No version segment -> default /v1 (host-only or bare path).
         ("https://api.z.ai", "/v1/chat/completions"),
         ("", "/v1/chat/completions"),

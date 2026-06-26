@@ -156,7 +156,8 @@ def test_hook_conversation_changed_fires_in_resumeConv():
 
 
 def test_hook_message_appended_fires_in_addMsg():
-    assert _firing_in(_CHAT_UI / "messages.js", "message_appended")
+    # addMsg (and its message_appended hook) moved to messages_render.js (<=800 split).
+    assert _firing_in(_CHAT_UI / "messages_render.js", "message_appended")
 
 
 def test_hook_command_submitted_fires_in_handleSlashCommand():

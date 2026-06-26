@@ -29,10 +29,25 @@ _CHAT_UI_DIR = Path(__file__).parent / "chat_ui"
 # ext_runtime.js must load early so other modules can fire hooks safely.
 _JS_MODULES = [
     "i18n.js", "state.js", "rxbus.js", "ext_runtime.js",
-    "themes.js", "conversations.js", "messages.js",
-    "active_agents.js", "typing.js", "notifications.js", "sse.js",
+    "themes.js",
+    # conversations.js = list/state/render/history core (defines escapeHtml etc.,
+    # loads early); _io = delete/export/import; _menu = context menu + git dialogs.
+    "conversations.js", "conversations_io.js", "conversations_menu.js",
+    # messages.js = tool-summary/badges/technical-grouping core; _render = addMsg;
+    # _tools = tool-output/diff/escape/media; _markdown = markdown/traces/scroll.
+    # Order matters: core → render → tools → markdown (markdown holds load-time
+    # #messages scroll listeners; _tools' escapeHtml overrides conversations.js).
+    "messages.js", "messages_render.js", "messages_tools.js", "messages_markdown.js",
+    "active_agents.js", "typing.js", "notifications.js",
+    # sse.js was split (<=800 lines each); load order matters: sse_state.js
+    # (globals + per-connection state + shared helpers) before the wire
+    # files, then sse.js (connectSSE resets state + calls _sseWireA/B).
+    "sse_state.js", "sse_handlers_a.js", "sse_handlers_b.js", "sse.js",
     "dialogs.js",
     "admin_settings.js",
+    # commands_help.js (HELP_DATA) before the cmd_* group so /help's data
+    # exists before any command handler that reads it (define-before-use).
+    "commands_help.js",
     "cmd_agent.js", "cmd_context.js", "cmd_resources.js", "cmd_conversation.js", "cmd_misc.js",
     "commands.js", "file_mention.js", "context_editor.js", "memories.js", "diary.js", "knowledge_graph.js", "project_graph.js",
     "secrets.js", "files_panel.js", "plans_panel.js", "attachments.js",
@@ -45,7 +60,9 @@ _JS_MODULES = [
     "resources_service_dialogs.js", "resources_service_login.js",
     "services.js", "file_viewer.js", "file_explorer.js",
     "tabs.js",
-    "terminal.js",
+    # terminal.js = xterm engine; terminal_commands.js = /terminal,/code,
+    # /desktop,/audio,/port-forward,/vm + agent-tmux handlers (load right after).
+    "terminal.js", "terminal_commands.js",
     "audio.js",
     "conversation_tts.js",
     "conversation_stt.js",

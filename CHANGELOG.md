@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-alpha.55] — 2026-06-26
+
+### Fixed
+
+- openai provider: a `base_url` whose version segment is not `/v1` (e.g.
+  z.ai's `/api/paas/v4`) was rewritten down to `/v1`, breaking every request
+  to such gateways. The existing version segment is now preserved.
+
+### Changed
+
+- chat-ui / vscode webview: oversized JavaScript modules were split so every
+  file is ≤800 lines, with no behavior change (per-file `node --check` and the
+  full test suite stay green):
+  - `sse.js` (2034 lines) → `sse_state.js` + `sse_handlers_a.js` +
+    `sse_handlers_b.js` + a slim `sse.js` shell. `connectSSE`'s per-connection
+    state is hoisted to module globals and reset on each connect; the event
+    handlers are registered via `_sseWireA()` / `_sseWireB()` on the shared
+    `eventSource`.
+  - `messages.js` → core + `_render` + `_tools` + `_markdown`.
+  - `conversations.js` → core + `_io` + `_menu`.
+  - `terminal.js` → engine + `terminal_commands.js`.
+  - vscode webview `chat.js` → `chat.js` + `chat_handlers.js`.
+  - `HELP_DATA` extracted into `commands_help.js`.
+
 ## [1.0.0-alpha.54] — 2026-06-25
 
 ### Fixed

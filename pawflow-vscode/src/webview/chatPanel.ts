@@ -767,6 +767,11 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     const chatUri = webview.asWebviewUri(
       vscode.Uri.joinPath(extensionUri, 'media', 'webview', 'chat.js')
     ) + v;
+    // chat_handlers.js = SSE/approval/history message handlers split out of
+    // chat.js (<=800 lines); must load right after chat.js (shares globals).
+    const chatHandlersUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(extensionUri, 'media', 'webview', 'chat_handlers.js')
+    ) + v;
     const commandsUri = webview.asWebviewUri(
       vscode.Uri.joinPath(extensionUri, 'media', 'webview', 'commands.js')
     ) + v;
@@ -813,6 +818,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
   <button onclick="send()">Send</button>
 </div>
 <script src="${chatUri}"></script>
+<script src="${chatHandlersUri}"></script>
 <script src="${commandsUri}"></script>
 <script src="${panelsUri}"></script>
 <script src="${formsUri}"></script>

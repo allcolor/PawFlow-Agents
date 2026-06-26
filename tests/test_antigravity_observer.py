@@ -1051,7 +1051,9 @@ def test_antigravity_kill_sends_sigkill_before_remove(monkeypatch, tmp_path):
 
 
 def test_chat_ui_exposes_single_agent_tmux_action_for_antigravity():
-    terminal = Path("tasks/io/chat_ui/terminal.js").read_text(encoding="utf-8")
+    # Command handlers (cmdAgentTmux + antigravity tmux) moved from terminal.js
+    # into terminal_commands.js (<=800 split); engine stays in terminal.js.
+    terminal = Path("tasks/io/chat_ui/terminal_commands.js").read_text(encoding="utf-8")
     template = Path("tasks/io/chat_ui/template.html").read_text(encoding="utf-8")
     commands = Path("tasks/io/chat_ui/commands.js").read_text(encoding="utf-8")
     service_flow = "".join(

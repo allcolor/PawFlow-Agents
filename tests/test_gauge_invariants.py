@@ -19,7 +19,11 @@ from tests._agent_core_src import agent_core_src
 
 _ACTIVE_AGENTS_JS = Path(
     "tasks/io/chat_ui/active_agents.js").read_text(encoding="utf-8")
-_SSE_JS = Path("tasks/io/chat_ui/sse.js").read_text(encoding="utf-8")
+# sse.js was split into <=800-line files (state + handler wires + connectSSE
+# shell); introspection here needs the combined source in load order.
+_SSE_JS = "".join(
+    Path(f"tasks/io/chat_ui/{_m}").read_text(encoding="utf-8")
+    for _m in ("sse_state.js", "sse_handlers_a.js", "sse_handlers_b.js", "sse.js"))
 _RESOURCES_JS = "".join(
     p.read_text(encoding="utf-8")
     for p in sorted(Path("tasks/io/chat_ui").glob("resources*.js")))
@@ -28,7 +32,12 @@ _DIALOGS_JS = Path("tasks/io/chat_ui/dialogs.js").read_text(encoding="utf-8")
 _TERMINAL_JS = Path("tasks/io/chat_ui/terminal.js").read_text(encoding="utf-8")
 _TABS_JS = Path("tasks/io/chat_ui/tabs.js").read_text(encoding="utf-8")
 _FLOW_GRAPH_HTML = Path("tasks/io/chat_ui/flow_graph.html").read_text(encoding="utf-8")
-_MESSAGES_JS = Path("tasks/io/chat_ui/messages.js").read_text(encoding="utf-8")
+# messages.js was split (<=800 lines) into core + _render + _tools + _markdown;
+# read them concatenated in load order so structural assertions still resolve.
+_MESSAGES_JS = "".join(
+    Path(f"tasks/io/chat_ui/{_m}").read_text(encoding="utf-8")
+    for _m in ("messages.js", "messages_render.js",
+               "messages_tools.js", "messages_markdown.js"))
 _RXBUS_JS = Path("tasks/io/chat_ui/rxbus.js").read_text(encoding="utf-8")
 _AGENT_CONTEXT_PY = __import__("re").sub(r"\bst\.", "", "".join(
     Path(f"tasks/ai/{_f}").read_text(encoding="utf-8")  # split for <=800 lines; strip state-obj `st.` namespacing
@@ -568,7 +577,9 @@ def test_list_resources_uses_async_flow_template_cache():
 
 def test_audio_frontend_never_opens_stream_without_token():
     audio_src = Path("tasks/io/chat_ui/audio.js").read_text(encoding="utf-8")
-    terminal_src = Path("tasks/io/chat_ui/terminal.js").read_text(encoding="utf-8")
+    # /desktop + /audio handlers moved from terminal.js into terminal_commands.js
+    # (<=800 split); the audio-connect-needs-token invariant lives there now.
+    terminal_src = Path("tasks/io/chat_ui/terminal_commands.js").read_text(encoding="utf-8")
     tabs_src = Path("tasks/io/chat_ui/tabs.js").read_text(encoding="utf-8")
 
     assert "if (!sessionId || !_audioToken)" in audio_src
@@ -586,7 +597,7 @@ def test_view_menu_has_three_grouping_toggles():
     template = Path("tasks/io/chat_ui/template.html").read_text(encoding="utf-8")
     convs = Path("tasks/io/chat_ui/conversations.js").read_text(encoding="utf-8")
     messages = Path("tasks/io/chat_ui/messages.js").read_text(encoding="utf-8")
-    sse = Path("tasks/io/chat_ui/sse.js").read_text(encoding="utf-8")
+    sse = _SSE_JS  # combined split source (state + handler wires + shell)
     conversation_py = "".join(
         Path(f"tasks/ai/actions/{_cf}").read_text(encoding="utf-8")
         for _cf in ("conversation.py", "_conv_base.py", "_conv_core.py",
@@ -639,7 +650,10 @@ def test_view_menu_has_three_grouping_toggles():
 
 
 def test_terminal_frontend_keeps_scrollback_and_cci_tmux_mouse():
+    # xterm engine stays in terminal.js; command handlers (which size the
+    # terminal via termSize) moved to terminal_commands.js (<=800 split).
     terminal_src = Path("tasks/io/chat_ui/terminal.js").read_text(encoding="utf-8")
+    terminal_cmds_src = Path("tasks/io/chat_ui/terminal_commands.js").read_text(encoding="utf-8")
     service_flow_src = "".join(
     Path(f"tasks/ai/actions/{_sf}").read_text(encoding="utf-8")
     for _sf in (
@@ -663,8 +677,8 @@ def test_terminal_frontend_keeps_scrollback_and_cci_tmux_mouse():
     assert "_pasteClipboardToTerminal(ws)" in terminal_src
     assert "container.addEventListener('paste'" in terminal_src
     assert "function _estimateTerminalSize()" in terminal_src
-    assert "cols: termSize.cols" in terminal_src
-    assert "rows: termSize.rows" in terminal_src
+    assert "cols: termSize.cols" in terminal_cmds_src
+    assert "rows: termSize.rows" in terminal_cmds_src
     assert "_fitAndNotifyTerminal(container)" in terminal_src
     assert "container._fitAddon.fit()" in terminal_src
     assert '("mouse", "on")' in service_flow_src

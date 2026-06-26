@@ -3,6 +3,7 @@
 import json
 import http.client
 import logging
+import re
 import ssl
 import base64
 from typing import Any, Dict, List, Optional
@@ -16,9 +17,20 @@ class LLMOpenaiMixin:
 
     @staticmethod
     def _chat_completions_endpoint(base_url: str) -> str:
-        """Return the endpoint suffix without duplicating a base /v1 path."""
+        """Return the chat-completions suffix to append to base_url's path.
+
+        Most OpenAI-compatible bases already carry their own API version
+        segment (.../v1, .../v4, .../compatible-mode/v1). Only fall back to
+        the default /v1 when the base has no version of its own, so e.g.
+        z.ai's https://api.z.ai/api/paas/v4 -> /api/paas/v4/chat/completions
+        instead of /api/paas/v4/v1/chat/completions.
+        """
         path = urlparse(base_url or "").path.rstrip("/")
-        return "/chat/completions" if path.endswith("/v1") else "/v1/chat/completions"
+        if path.endswith("/chat/completions"):
+            return ""  # caller already supplied the full endpoint path
+        if re.search(r"/v\d+$", path):
+            return "/chat/completions"
+        return "/v1/chat/completions"
 
     def _stream_openai(self, messages, model, temperature, max_tokens, tools, callback,
                         thinking_callback=None, *,

@@ -4,10 +4,19 @@ from pathlib import Path
 from tests._agent_core_src import agent_core_src
 
 
-MESSAGES_JS = Path("tasks/io/chat_ui/messages.js").read_text(encoding="utf-8")
+# messages.js split (<=800 lines) → core + _render + _tools + _markdown;
+# concatenate in load order so structural string/slice assertions still resolve.
+MESSAGES_JS = "".join(
+    Path(f"tasks/io/chat_ui/{_m}").read_text(encoding="utf-8")
+    for _m in ("messages.js", "messages_render.js",
+               "messages_tools.js", "messages_markdown.js"))
 CONVERSATIONS_JS = Path("tasks/io/chat_ui/conversations.js").read_text(encoding="utf-8")
 RESOURCES_JS = "".join(p.read_text(encoding="utf-8") for p in sorted(Path("tasks/io/chat_ui").glob("resources*.js")))
-SSE_JS = Path("tasks/io/chat_ui/sse.js").read_text(encoding="utf-8")
+# sse.js was split into <=800-line files (state + handler wires + connectSSE
+# shell); introspection here needs the combined source in load order.
+SSE_JS = "".join(
+    Path(f"tasks/io/chat_ui/{_m}").read_text(encoding="utf-8")
+    for _m in ("sse_state.js", "sse_handlers_a.js", "sse_handlers_b.js", "sse.js"))
 CONVERSATION_TTS_JS = Path("tasks/io/chat_ui/conversation_tts.js").read_text(encoding="utf-8")
 STATE_JS = Path("tasks/io/chat_ui/state.js").read_text(encoding="utf-8")
 TEMPLATE_HTML = Path("tasks/io/chat_ui/template.html").read_text(encoding="utf-8")
@@ -294,7 +303,9 @@ def test_tool_results_carry_tc_id_for_reload_grouping():
 
 
 def test_live_tool_results_are_reconciled_when_sse_arrives_out_of_order():
-    assert "const _pendingToolResults = {};" in SSE_JS
+    # Hoisted to a global var in sse_state.js (was a connectSSE-local const);
+    # connectSSE() now resets it per connection via reassignment.
+    assert "var _pendingToolResults = {};" in SSE_JS
     assert "function _attachPendingToolResult(tcEl, tcId)" in SSE_JS
     assert "function _queueUnmatchedToolResult(tcId, data)" in SSE_JS
     tool_call_block = SSE_JS[
@@ -405,7 +416,8 @@ def test_delegate_thinking_chunks_split_after_delegate_non_thinking_events():
     delegate_block = SSE_JS[
         SSE_JS.index("eventSource.addEventListener('sub_agent_thinking'"):
         SSE_JS.index("eventSource.addEventListener('sub_agent_done'")]
-    assert "const delegateThinkingElements = {};" in SSE_JS
+    # Hoisted to a global var in sse_state.js (was a connectSSE-local const).
+    assert "var delegateThinkingElements = {};" in SSE_JS
     assert "te.text += data.thinking || '';" in delegate_block
     assert "finalizeDelegateThinking(data.task_id)" in delegate_block
     assert "for (const k in delegateThinkingElements) delete delegateThinkingElements[k];" in SSE_JS

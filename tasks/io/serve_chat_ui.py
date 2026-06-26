@@ -45,7 +45,9 @@ _JS_MODULES = [
     "resources_service_dialogs.js", "resources_service_login.js",
     "services.js", "file_viewer.js", "file_explorer.js",
     "tabs.js",
-    "terminal.js",
+    # terminal.js = xterm engine; terminal_commands.js = /terminal,/code,
+    # /desktop,/audio,/port-forward,/vm + agent-tmux handlers (load right after).
+    "terminal.js", "terminal_commands.js",
     "audio.js",
     "conversation_tts.js",
     "conversation_stt.js",

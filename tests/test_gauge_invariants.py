@@ -568,7 +568,9 @@ def test_list_resources_uses_async_flow_template_cache():
 
 def test_audio_frontend_never_opens_stream_without_token():
     audio_src = Path("tasks/io/chat_ui/audio.js").read_text(encoding="utf-8")
-    terminal_src = Path("tasks/io/chat_ui/terminal.js").read_text(encoding="utf-8")
+    # /desktop + /audio handlers moved from terminal.js into terminal_commands.js
+    # (<=800 split); the audio-connect-needs-token invariant lives there now.
+    terminal_src = Path("tasks/io/chat_ui/terminal_commands.js").read_text(encoding="utf-8")
     tabs_src = Path("tasks/io/chat_ui/tabs.js").read_text(encoding="utf-8")
 
     assert "if (!sessionId || !_audioToken)" in audio_src
@@ -639,7 +641,10 @@ def test_view_menu_has_three_grouping_toggles():
 
 
 def test_terminal_frontend_keeps_scrollback_and_cci_tmux_mouse():
+    # xterm engine stays in terminal.js; command handlers (which size the
+    # terminal via termSize) moved to terminal_commands.js (<=800 split).
     terminal_src = Path("tasks/io/chat_ui/terminal.js").read_text(encoding="utf-8")
+    terminal_cmds_src = Path("tasks/io/chat_ui/terminal_commands.js").read_text(encoding="utf-8")
     service_flow_src = "".join(
     Path(f"tasks/ai/actions/{_sf}").read_text(encoding="utf-8")
     for _sf in (
@@ -663,8 +668,8 @@ def test_terminal_frontend_keeps_scrollback_and_cci_tmux_mouse():
     assert "_pasteClipboardToTerminal(ws)" in terminal_src
     assert "container.addEventListener('paste'" in terminal_src
     assert "function _estimateTerminalSize()" in terminal_src
-    assert "cols: termSize.cols" in terminal_src
-    assert "rows: termSize.rows" in terminal_src
+    assert "cols: termSize.cols" in terminal_cmds_src
+    assert "rows: termSize.rows" in terminal_cmds_src
     assert "_fitAndNotifyTerminal(container)" in terminal_src
     assert "container._fitAddon.fit()" in terminal_src
     assert '("mouse", "on")' in service_flow_src

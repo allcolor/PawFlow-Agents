@@ -470,5 +470,35 @@ class TestInferLLMTask:
         assert "response_format" in schema
 
 
+class TestChatCompletionsEndpoint:
+    """base_url -> chat/completions suffix resolution.
+
+    Guards against re-appending /v1 onto bases that already carry a version
+    segment (e.g. z.ai's /api/paas/v4), which produced 404s on /v1/... paths.
+    """
+
+    @pytest.mark.parametrize("base_url,expected_full", [
+        # Bases ending in any /v<N> keep their own version, no /v1 re-append.
+        ("https://api.openai.com/v1", "/v1/chat/completions"),
+        ("https://openrouter.ai/api/v1", "/api/v1/chat/completions"),
+        ("https://dashscope.aliyuncs.com/compatible-mode/v1",
+         "/compatible-mode/v1/chat/completions"),
+        ("https://api.z.ai/api/paas/v4", "/api/paas/v4/chat/completions"),
+        # Already-complete endpoint is used verbatim (no duplication).
+        ("https://api.z.ai/api/paas/v4/chat/completions",
+         "/api/paas/v4/chat/completions"),
+        # No version segment -> default /v1 (host-only or bare path).
+        ("https://api.z.ai", "/v1/chat/completions"),
+        ("", "/v1/chat/completions"),
+        ("https://proxy.example.com/openai", "/openai/v1/chat/completions"),
+    ])
+    def test_endpoint_resolution(self, base_url, expected_full):
+        from urllib.parse import urlparse
+        from core.llm_providers.openai import LLMOpenaiMixin
+        suffix = LLMOpenaiMixin._chat_completions_endpoint(base_url)
+        full = (urlparse(base_url).path.rstrip("/") + suffix).replace("//", "/")
+        assert full == expected_full
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

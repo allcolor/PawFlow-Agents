@@ -6,17 +6,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Fixed
-
-- chat-ui: inline `show_file` video/audio previews rendered as a black box (and
-  audio failed to play) in bearer-only sessions. `/files/<id>` authenticates
-  only via the `pawflow_token` cookie or an `Authorization: Bearer` header, but a
-  native `<video>`/`<audio>` `src` (and `new Audio(url)`) sends neither when the
-  session token lives in storage with no cookie — so the request 401'd. Inline
-  video and audio now fetch the bytes with the bearer header and play from a
-  same-origin blob URL (deduped/cached), exactly like inline images already did;
-  the full-screen file viewer was unaffected.
-
 ## [1.0.0-alpha.57] — 2026-06-26
 
 ### Added

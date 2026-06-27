@@ -505,11 +505,8 @@ function _inlineAudioFor(url) {
     try { _inlineAudioEl.pause(); } catch(e) {}
     if (_inlineAudioUrl) _inlineAudioSync(_inlineAudioUrl);
   }
-  // No raw src: /files/<id> needs the bearer header a native media request
-  // omits. Load the bytes authed and assign a blob URL (deduped + cached).
-  const audio = new Audio();
+  const audio = new Audio(url);
   audio.preload = 'metadata';
-  _authedMediaBlobUrl(url).then(b => { if (_inlineAudioEl === audio && !audio.src) audio.src = b; }).catch(() => {});
   _inlineAudioEl = audio;
   _inlineAudioUrl = url;
   ['loadedmetadata', 'durationchange', 'timeupdate', 'play', 'pause', 'ended', 'error'].forEach(function(ev) {
@@ -528,19 +525,13 @@ function pawflowInlineAudioToggle(btn) {
     _inlineAudioSync(url);
     return;
   }
-  const _start = function() {
-    audio.play().then(function() {
-      _inlineAudioStartTimer();
-      _inlineAudioSync(url);
-    }).catch(function(err) {
-      console.warn('[inline-audio] play failed', err);
-      _inlineAudioSync(url);
-    });
-  };
-  // First click may land before the authed blob src resolved -- wait for it.
-  if (audio.src) { _start(); }
-  else { _authedMediaBlobUrl(url).then(function(b) { audio.src = b; _start(); })
-    .catch(function(err) { console.warn('[inline-audio] load failed', err); _inlineAudioSync(url); }); }
+  audio.play().then(function() {
+    _inlineAudioStartTimer();
+    _inlineAudioSync(url);
+  }).catch(function(err) {
+    console.warn('[inline-audio] play failed', err);
+    _inlineAudioSync(url);
+  });
 }
 
 function pawflowInlineAudioSeek(input) {
@@ -567,39 +558,9 @@ function inlineAudioHtml(url, filename) {
     + '</div></div>';
 }
 
-// /files/<id> authenticates only via the pawflow_token cookie or an
-// Authorization: Bearer header. A native <video>/<audio> src (or new
-// Audio(url)) sends neither in a bearer-only session (token in storage, no
-// cookie), so it 401s and renders a black box. Fetch the bytes with the
-// bearer header and hand the element a same-origin blob URL instead -- the
-// same path inline images already take. Cached per source URL (deduped).
-var _authedBlobCache = {};  // sourceUrl -> Promise<blobUrl>
-function _authedMediaBlobUrl(url) {
-  if (_authedBlobCache[url]) return _authedBlobCache[url];
-  const token = getToken();
-  const headers = {};
-  if (token) headers['Authorization'] = 'Bearer ' + token;
-  const p = fetch(url, { headers, credentials: 'same-origin' })
-    .then(r => { if (!r.ok) throw new Error(r.status); return r.blob(); })
-    .then(blob => URL.createObjectURL(blob));
-  _authedBlobCache[url] = p;
-  return p;
-}
-
 function inlineVideoHtml(url, filename) {
-  const vidId = 'vid_' + Math.random().toString(36).substring(2, 8);
-  // The element is inserted synchronously by the caller's innerHTML; the
-  // fetch round-trip guarantees it exists in the DOM by the time we resolve.
-  _authedMediaBlobUrl(url).then(blobUrl => {
-    const el = document.getElementById(vidId);
-    if (el) el.src = blobUrl;
-  }).catch(() => {
-    const el = document.getElementById(vidId);
-    const wrap = el && el.closest('.video-wrapper');
-    if (wrap) wrap.style.display = 'none';
-  });
   return '<div class="video-wrapper" style="margin:6px 0;">'
-    + '<video id="' + vidId + '" controls preload="metadata" '
+    + '<video controls preload="metadata" src="' + escapeHtml(url) + '" '
     + 'style="max-width:512px;max-height:512px;border-radius:8px;border:1px solid #0f3460;"></video>'
     + '<div style="font-size:11px;color:#6c6c8a;margin-top:2px;">'
     + '\uD83C\uDFAC ' + escapeHtml(filename || 'video')

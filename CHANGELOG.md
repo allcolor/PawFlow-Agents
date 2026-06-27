@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-alpha.59] — 2026-06-27
+
 ### Added
 
 - openaiCompatibleVideoGeneration: full support for every video mode, not just

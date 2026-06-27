@@ -455,7 +455,10 @@ def test_inline_audio_uses_stable_global_player():
     assert "function pawflowInlineAudioToggle(btn)" in MESSAGES_JS
     assert "function pawflowInlineAudioSeek(input)" in MESSAGES_JS
     assert "var _inlineAudioEl = null" in MESSAGES_JS
-    assert "new Audio(url)" in MESSAGES_JS
+    # Audio loads via an authed blob URL (no raw src that would skip the
+    # bearer header on /files/<id>), assigned after _authedMediaBlobUrl resolves.
+    assert "new Audio()" in MESSAGES_JS
+    assert "_authedMediaBlobUrl(url)" in MESSAGES_JS
     assert "data-audio-url" in MESSAGES_JS
     assert "<audio controls" not in MESSAGES_JS
 
@@ -480,7 +483,12 @@ def test_inline_media_file_urls_are_not_built_into_inline_onclick_js_strings():
     # URL-bearing attributes are HTML-escaped.
     assert 'data-file-url="' + "' + escapeHtml(url)" in MESSAGES_JS
     assert 'data-file-url="' + "' + escapeHtml(parsed.url)" in MESSAGES_JS
-    assert '<video controls preload="metadata" src="' + "' + escapeHtml(url)" in MESSAGES_JS
+    # Inline video no longer carries a raw url src (a native request would skip
+    # the bearer header on /files/<id> and 401 to a black box); the bytes are
+    # fetched authed and a blob URL is assigned to the element.
+    assert '<video controls preload="metadata" src="' + "' + escapeHtml(url)" not in MESSAGES_JS
+    assert "function _authedMediaBlobUrl(url)" in MESSAGES_JS
+    assert "_authedMediaBlobUrl(url).then(blobUrl =>" in MESSAGES_JS
     # show_file filename is escaped before it reaches innerHTML.
     assert "escapeHtml(parsed.filename)" in MESSAGES_JS
     # The file context menu (files_panel.js) shares the same hardening: ids and

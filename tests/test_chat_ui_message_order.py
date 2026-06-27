@@ -480,7 +480,14 @@ def test_inline_media_file_urls_are_not_built_into_inline_onclick_js_strings():
     # URL-bearing attributes are HTML-escaped.
     assert 'data-file-url="' + "' + escapeHtml(url)" in MESSAGES_JS
     assert 'data-file-url="' + "' + escapeHtml(parsed.url)" in MESSAGES_JS
-    assert '<video controls preload="metadata" src="' + "' + escapeHtml(url)" in MESSAGES_JS
+    # Inline video is lazy-loaded: the src is deferred to an IntersectionObserver
+    # (so grouping/reparenting settles and a collapsed panel loads on expand)
+    # instead of being assigned up-front, which left it black "parfois". The url
+    # rides in an HTML-escaped data-lazy-src and is assigned to .src when visible.
+    assert '<video controls preload="metadata" src="' + "' + escapeHtml(url)" not in MESSAGES_JS
+    assert 'data-lazy-src="' + "' + escapeHtml(url)" in MESSAGES_JS
+    assert "new IntersectionObserver" in MESSAGES_JS
+    assert "el.src = el.dataset.lazySrc" in MESSAGES_JS
     # show_file filename is escaped before it reaches innerHTML.
     assert "escapeHtml(parsed.filename)" in MESSAGES_JS
     # The file context menu (files_panel.js) shares the same hardening: ids and

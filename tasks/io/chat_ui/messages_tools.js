@@ -558,9 +558,41 @@ function inlineAudioHtml(url, filename) {
     + '</div></div>';
 }
 
+// Inline tool-result media is regrouped (technical/task grouping runs right
+// after each tool_result render) and may sit inside a collapsed panel. The
+// native <video> loader can skip an element that is hidden or being reparented
+// mid-load, leaving it black "parfois" -- while the file viewer (built once,
+// always visible) never hits this. Don't assign src up-front: defer it to an
+// IntersectionObserver that fires only once the element is visible and its DOM
+// position has settled, then load natively (range requests preserved, no blob).
+let _lazyVideoObserver = null;
+function _loadLazyVideo(el) {
+  if (!el || el.getAttribute('src') || !el.dataset.lazySrc) return;
+  el.src = el.dataset.lazySrc;
+  try { el.load(); } catch (_e) {}
+}
+function _observeLazyVideo(el) {
+  if (!el || el.getAttribute('src')) return;
+  if (!('IntersectionObserver' in window)) { _loadLazyVideo(el); return; }
+  if (!_lazyVideoObserver) {
+    _lazyVideoObserver = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        _lazyVideoObserver.unobserve(entry.target);
+        _loadLazyVideo(entry.target);
+      }
+    }, { rootMargin: '200px' });
+  }
+  _lazyVideoObserver.observe(el);
+}
+
 function inlineVideoHtml(url, filename) {
+  const vidId = 'vid_' + Math.random().toString(36).substring(2, 8);
+  // setTimeout(0) so grouping (synchronous, post-render) has reparented the
+  // element before we observe it; the IO callback then loads it once, settled.
+  setTimeout(() => _observeLazyVideo(document.getElementById(vidId)), 0);
   return '<div class="video-wrapper" style="margin:6px 0;">'
-    + '<video controls preload="metadata" src="' + escapeHtml(url) + '" '
+    + '<video id="' + vidId + '" controls preload="metadata" data-lazy-src="' + escapeHtml(url) + '" '
     + 'style="max-width:512px;max-height:512px;border-radius:8px;border:1px solid #0f3460;"></video>'
     + '<div style="font-size:11px;color:#6c6c8a;margin-top:2px;">'
     + '\uD83C\uDFAC ' + escapeHtml(filename || 'video')

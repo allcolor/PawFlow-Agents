@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- chat-ui: inline `show_file` video previews intermittently rendered as a black
+  box, while the full-screen file viewer always worked. The `<video>` carried
+  its `src` up-front, but inline tool-result media is regrouped (technical/task
+  grouping runs right after each render) and can sit in a collapsed panel — the
+  native loader would skip an element that was hidden or mid-reparent, so it
+  never painted a frame. The src is now deferred to an `IntersectionObserver`
+  that loads the video once it is visible and its DOM position has settled,
+  keeping native streaming (HTTP range requests, no in-memory blob).
+
 ## [1.0.0-alpha.57] — 2026-06-26
 
 ### Added

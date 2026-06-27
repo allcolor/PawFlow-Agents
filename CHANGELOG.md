@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- openaiCompatibleVideoGeneration: full support for every video mode, not just
+  text-to-video. The service now exposes `image_to_video`, `frame_to_video`
+  (first + last frame), `reference_to_video`, `video_edit`, `video_extend`, and
+  `speech_to_video`, so `generate_video` calls carrying an image/video/reference
+  are dispatched to the provider instead of being rejected by the handler's
+  capability gate. Source-media body field names are configurable
+  (`image_field`, `end_image_field`, `video_field`, `audio_field`,
+  `reference_field`) — defaults keep the generic OpenAI convention
+  (`image_url`/`end_image_url`); set them to `image`/`last_image`/`video`/`audio`
+  for AtlasCloud Wan 2.7.
+
 ## [1.0.0-alpha.58] — 2026-06-27
 
 ### Fixed

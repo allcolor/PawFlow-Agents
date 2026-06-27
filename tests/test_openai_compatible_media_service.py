@@ -419,3 +419,112 @@ def test_image_service_extracts_extension_less_outputs_url():
         {"data": {"status": "completed",
                   "outputs": ["https://cdn.atlascloud.ai/o/img_1?sig=xyz"]}})
     assert url == "https://cdn.atlascloud.ai/o/img_1?sig=xyz"
+
+
+def _atlas_video_service(extra_config=None):
+    config = {
+        "llm_service": "atlas_llm",
+        "protocol": "openai_video",
+        "model": "alibaba/wan-2.7/image-to-video",
+        "poll_interval": 0,
+        "submit_path": "/model/generateVideo",
+        "status_path_template": "/model/prediction/{id}",
+        # AtlasCloud Wan 2.7 body field names
+        "image_field": "image",
+        "end_image_field": "last_image",
+        "video_field": "video",
+        "audio_field": "audio",
+    }
+    config.update(extra_config or {})
+    return OpenAICompatibleVideoGenerationService(config)
+
+
+def _wire_atlas_video(monkeypatch, svc):
+    llm = FakeLLMService("https://api.atlascloud.ai/api/v1", "alibaba/wan-2.7/image-to-video")
+    calls = []
+
+    def fake_request(resolved, method, path, body=None):
+        calls.append((method, path, body))
+        if method == "POST":
+            return {"data": {"id": "pred_1"}}
+        return {"data": {"status": "completed",
+                         "outputs": ["https://cdn.atlascloud.ai/o/pred_1"]}}
+
+    monkeypatch.setattr(svc, "_resolve_llm_service", lambda: llm)
+    monkeypatch.setattr(svc, "_request_json", fake_request)
+    monkeypatch.setattr(
+        svc, "_download_url",
+        lambda url, default_content_type, timeout: (b"MP4", "video/mp4"),
+    )
+    return calls
+
+
+def test_video_service_exposes_all_mode_methods():
+    # media_av.py dispatches each video operation by hasattr — the openai-
+    # compatible service must advertise every mode so image/frame/reference/
+    # video-edit requests are not rejected before reaching the provider.
+    svc = _atlas_video_service()
+    for method in ("image_to_video", "frame_to_video", "reference_to_video",
+                   "video_edit", "video_extend", "speech_to_video"):
+        assert hasattr(svc, method)
+
+
+def test_video_service_image_to_video_uses_configured_image_field(monkeypatch):
+    svc = _atlas_video_service()
+    calls = _wire_atlas_video(monkeypatch, svc)
+
+    svc.image_to_video(prompt="she flies away", duration=10,
+                       image_url="https://cdn.example.com/girl.jpg")
+
+    method, path, body = calls[0]
+    assert (method, path) == ("POST", "/model/generateVideo")
+    # The source image must ride under AtlasCloud's `image` field, not image_url.
+    assert body["image"] == "https://cdn.example.com/girl.jpg"
+    assert "image_url" not in body
+    assert body["prompt"] == "she flies away"
+
+
+def test_video_service_frame_to_video_sends_first_and_last_fields(monkeypatch):
+    svc = _atlas_video_service()
+    calls = _wire_atlas_video(monkeypatch, svc)
+
+    svc.frame_to_video(prompt="morph", image_url="https://x/first.jpg",
+                       end_image_url="https://x/last.jpg")
+
+    body = calls[0][2]
+    assert body["image"] == "https://x/first.jpg"
+    assert body["last_image"] == "https://x/last.jpg"
+
+
+def test_video_service_reference_to_video_sends_reference_list(monkeypatch):
+    svc = _atlas_video_service({"reference_field": "reference_images"})
+    calls = _wire_atlas_video(monkeypatch, svc)
+
+    svc.reference_to_video(prompt="hero",
+                           reference_image_urls=["https://x/a.jpg", "https://x/b.jpg"])
+
+    body = calls[0][2]
+    assert body["reference_images"] == ["https://x/a.jpg", "https://x/b.jpg"]
+
+
+def test_video_service_video_edit_sends_video_field(monkeypatch):
+    svc = _atlas_video_service()
+    calls = _wire_atlas_video(monkeypatch, svc)
+
+    svc.video_edit(prompt="restyle", video_url="https://x/clip.mp4")
+
+    body = calls[0][2]
+    assert body["video"] == "https://x/clip.mp4"
+
+
+def test_video_service_image_field_defaults_to_image_url(monkeypatch):
+    # Without an override the generic OpenAI convention is preserved.
+    svc = OpenAICompatibleVideoGenerationService({
+        "llm_service": "llm", "protocol": "openai_video", "model": "sora",
+        "poll_interval": 0,
+    })
+    calls = _wire_atlas_video(monkeypatch, svc)
+    svc.image_to_video(prompt="p", image_url="https://x/i.png")
+    body = calls[0][2]
+    assert body["image_url"] == "https://x/i.png"
+    assert "image" not in body

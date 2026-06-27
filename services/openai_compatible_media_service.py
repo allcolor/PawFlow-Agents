@@ -496,6 +496,11 @@ class OpenAICompatibleVideoGenerationService(_OpenAICompatibleMediaMixin, BaseVi
                     "like AtlasCloud that reject unknown body fields."
                 ),
             },
+            "image_field": {"type": "string", "required": False, "default": "image_url", "description": "Submit-body field name for the source/first-frame image (image-to-video). AtlasCloud Wan 2.7 uses 'image'."},
+            "end_image_field": {"type": "string", "required": False, "default": "end_image_url", "description": "Submit-body field name for the last-frame image (frame-to-video). AtlasCloud Wan 2.7 uses 'last_image'."},
+            "video_field": {"type": "string", "required": False, "default": "video", "description": "Submit-body field name for the source video (video continuation/edit). AtlasCloud Wan 2.7 uses 'video'."},
+            "audio_field": {"type": "string", "required": False, "default": "audio", "description": "Submit-body field name for the driving audio (audio-driven modes). AtlasCloud Wan 2.7 uses 'audio'."},
+            "reference_field": {"type": "string", "required": False, "default": "reference_images", "description": "Submit-body field name for reference image URLs (reference-to-video). Sent as a list."},
             "extra_body": {"type": "json", "required": False, "default": {}, "description": "Additional provider-specific JSON body fields."},
             "extra_headers": {"type": "json", "required": False, "default": {}, "description": "Additional HTTP headers such as OpenRouter attribution headers."},
         }
@@ -509,6 +514,11 @@ class OpenAICompatibleVideoGenerationService(_OpenAICompatibleMediaMixin, BaseVi
         self.submit_path = (self.config.get("submit_path", "/videos/generations") or "/videos/generations").strip()
         self.status_path_template = (self.config.get("status_path_template", "/videos/{id}") or "/videos/{id}").strip()
         self.openrouter_generation_path_template = (self.config.get("openrouter_generation_path_template", "/videos/{id}") or "/videos/{id}").strip()
+        self.image_field = (self.config.get("image_field", "image_url") or "image_url").strip()
+        self.end_image_field = (self.config.get("end_image_field", "end_image_url") or "end_image_url").strip()
+        self.video_field = (self.config.get("video_field", "video") or "video").strip()
+        self.audio_field = (self.config.get("audio_field", "audio") or "audio").strip()
+        self.reference_field = (self.config.get("reference_field", "reference_images") or "reference_images").strip()
         self.use_webhook = _truthy(self.config.get("use_webhook", False))
         self.public_callback_base_url = (
             self.config.get("public_callback_base_url", "") or "").strip().rstrip("/")
@@ -548,10 +558,26 @@ class OpenAICompatibleVideoGenerationService(_OpenAICompatibleMediaMixin, BaseVi
         return "4:3"
 
     def generate(self, prompt="", duration=5, width=None, height=None,
-                 image_url: str = "", end_image_url: str = "", model: str = "",
+                 image_url: str = "", end_image_url: str = "",
+                 video_url: str = "", audio_url: str = "",
+                 reference_image_urls=None, model: str = "",
                  **kwargs) -> dict:
-        if not prompt:
+        # A prompt is required for pure text-to-video, but the media-conditioned
+        # modes (image/frame/reference/video-edit) can legitimately run with an
+        # empty prompt -- the source media drives the generation.
+        has_media = bool(image_url or end_image_url or video_url
+                         or audio_url or reference_image_urls)
+        if not prompt and not has_media:
             raise ServiceError("No prompt provided")
+        if isinstance(reference_image_urls, str):
+            reference_image_urls = [reference_image_urls]
+        media = {
+            "image_url": image_url,
+            "end_image_url": end_image_url,
+            "video_url": video_url,
+            "audio_url": audio_url,
+            "reference_image_urls": list(reference_image_urls or []),
+        }
         self.ensure_connected()
         svc = self._resolve_llm_service()
         selected_model = model or self._model_for(svc)
@@ -569,32 +595,97 @@ class OpenAICompatibleVideoGenerationService(_OpenAICompatibleMediaMixin, BaseVi
             if protocol == "openrouter_video":
                 data = self._submit_openrouter_video(
                     svc, selected_model, prompt, bounded_duration, width, height,
-                    image_url, end_image_url, kwargs)
+                    media, kwargs)
                 status_template = self._extract_polling_url(data) or self.openrouter_generation_path_template
                 return self._resolve_video_result(svc, data, status_template, webhook_ticket=webhook_ticket)
             if protocol == "chat_completions":
-                data = self._submit_chat_video(svc, selected_model, prompt, bounded_duration, width, height, image_url, end_image_url, kwargs)
+                data = self._submit_chat_video(svc, selected_model, prompt, bounded_duration, width, height, media, kwargs)
                 status_template = self.openrouter_generation_path_template
                 return self._resolve_video_result(svc, data, status_template)
 
             status_template = self.status_path_template
-            data = self._submit_openai_video(svc, selected_model, prompt, bounded_duration, width, height, image_url, end_image_url, kwargs)
+            data = self._submit_openai_video(svc, selected_model, prompt, bounded_duration, width, height, media, kwargs)
             return self._resolve_video_result(svc, data, status_template, webhook_ticket=webhook_ticket)
         finally:
             if webhook_ticket is not None:
                 webhook_ticket.close()
 
+    def _apply_media_fields(self, body: dict, media: dict) -> None:
+        """Attach source media to a submit body under the configured field
+        names. Field names are provider-tunable (AtlasCloud Wan 2.7 expects
+        image/last_image/video/audio; the generic OpenAI default is
+        image_url/end_image_url)."""
+        if media.get("image_url"):
+            body[self.image_field] = media["image_url"]
+        if media.get("end_image_url"):
+            body[self.end_image_field] = media["end_image_url"]
+        if media.get("video_url"):
+            body[self.video_field] = media["video_url"]
+        if media.get("audio_url"):
+            body[self.audio_field] = media["audio_url"]
+        if media.get("reference_image_urls"):
+            body[self.reference_field] = list(media["reference_image_urls"])
+
+    # ── Mode methods (duck-typed; core/handlers/media_av.py dispatches on
+    # hasattr). Each maps a video operation onto the unified generate().
+    def image_to_video(self, prompt: str = "", image_url: str = "",
+                       duration: int = 5, model: str = "", **kwargs) -> dict:
+        if not image_url:
+            raise ServiceError("image_to_video requires `image_url`.")
+        return self.generate(prompt=prompt, duration=duration,
+                             image_url=image_url, model=model, **kwargs)
+
+    def frame_to_video(self, prompt: str = "", image_url: str = "",
+                       end_image_url: str = "", duration: int = 5,
+                       model: str = "", **kwargs) -> dict:
+        if not image_url or not end_image_url:
+            raise ServiceError(
+                "frame_to_video requires `image_url` and `end_image_url`.")
+        return self.generate(prompt=prompt, duration=duration,
+                             image_url=image_url, end_image_url=end_image_url,
+                             model=model, **kwargs)
+
+    def reference_to_video(self, prompt: str = "", reference_image_urls=None,
+                           image_url: str = "", duration: int = 5,
+                           model: str = "", **kwargs) -> dict:
+        refs = reference_image_urls or ([image_url] if image_url else [])
+        if not refs:
+            raise ServiceError(
+                "reference_to_video requires `reference_image_urls`.")
+        return self.generate(prompt=prompt, duration=duration,
+                             reference_image_urls=refs, model=model, **kwargs)
+
+    def video_edit(self, prompt: str = "", video_url: str = "",
+                   duration: int = 0, model: str = "", **kwargs) -> dict:
+        if not video_url:
+            raise ServiceError("video_edit requires `video_url`.")
+        return self.generate(prompt=prompt, duration=duration or 5,
+                             video_url=video_url, model=model, **kwargs)
+
+    def video_extend(self, prompt: str = "", video_url: str = "",
+                     duration: int = 0, model: str = "", **kwargs) -> dict:
+        if not video_url:
+            raise ServiceError("video_extend requires `video_url`.")
+        return self.generate(prompt=prompt, duration=duration or 5,
+                             video_url=video_url, model=model, **kwargs)
+
+    def speech_to_video(self, prompt: str = "", image_url: str = "",
+                        audio_url: str = "", model: str = "", **kwargs) -> dict:
+        if not image_url:
+            raise ServiceError("speech_to_video requires `image_url`.")
+        if not audio_url:
+            raise ServiceError("speech_to_video requires `audio_url`.")
+        return self.generate(prompt=prompt, image_url=image_url,
+                             audio_url=audio_url, model=model, **kwargs)
+
     def _submit_openai_video(self, svc, model: str, prompt: str, duration: int,
-                             width, height, image_url: str, end_image_url: str,
+                             width, height, media: dict,
                              kwargs: dict) -> dict:
         body = {"model": model, "prompt": prompt}
         if not self.minimal_submit_body:
             body["duration"] = duration
             body["aspect_ratio"] = kwargs.get("aspect_ratio") or self._aspect_ratio(width, height)
-        if image_url:
-            body["image_url"] = image_url
-        if end_image_url:
-            body["end_image_url"] = end_image_url
+        self._apply_media_fields(body, media)
         if not self.minimal_submit_body:
             for key in ("resolution", "quality", "seed", "with_audio"):
                 if key in kwargs and kwargs[key] not in (None, ""):
@@ -605,8 +696,10 @@ class OpenAICompatibleVideoGenerationService(_OpenAICompatibleMediaMixin, BaseVi
         return self._request_json(svc, "POST", self.submit_path, body)
 
     def _submit_openrouter_video(self, svc, model: str, prompt: str, duration: int,
-                                 width, height, image_url: str, end_image_url: str,
+                                 width, height, media: dict,
                                  kwargs: dict) -> dict:
+        image_url = media.get("image_url", "")
+        end_image_url = media.get("end_image_url", "")
         body = {
             "model": model,
             "prompt": prompt,
@@ -636,8 +729,18 @@ class OpenAICompatibleVideoGenerationService(_OpenAICompatibleMediaMixin, BaseVi
                 "image_url": {"url": end_image_url},
                 "frame_type": "last_frame",
             })
+        for ref in media.get("reference_image_urls") or []:
+            frame_images.append({
+                "type": "image_url",
+                "image_url": {"url": ref},
+                "frame_type": "reference",
+            })
         if frame_images:
             body["frame_images"] = frame_images
+        if media.get("video_url"):
+            body[self.video_field] = media["video_url"]
+        if media.get("audio_url"):
+            body[self.audio_field] = media["audio_url"]
         for key in ("input_references", "provider", "callback_url"):
             if key in kwargs and kwargs[key] not in (None, ""):
                 body[key] = kwargs[key]
@@ -645,8 +748,10 @@ class OpenAICompatibleVideoGenerationService(_OpenAICompatibleMediaMixin, BaseVi
         return self._request_json(svc, "POST", "/videos", body)
 
     def _submit_chat_video(self, svc, model: str, prompt: str, duration: int,
-                           width, height, image_url: str, end_image_url: str,
+                           width, height, media: dict,
                            kwargs: dict) -> dict:
+        image_url = media.get("image_url", "")
+        end_image_url = media.get("end_image_url", "")
         text = (
             f"{prompt}\n"
             f"Generate a video. Duration: {duration}s. "

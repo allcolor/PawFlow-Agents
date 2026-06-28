@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-alpha.60] — 2026-06-28
+
 ### Fixed
 
 - chat-ui: `show_file` video previews still rendered as a permanent black box

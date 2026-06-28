@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- chat-ui: `show_file` video previews still rendered as a permanent black box
+  while the same video from `generate_video` played fine. The `.58` lazy-load
+  fix deferred wiring via a captured element id (`getElementById('vid_...')`),
+  but inline tool-result media is reparented by technical grouping and can be
+  re-rendered/replaced before the deferred pass runs — the captured id then
+  pointed at an orphaned node while the *visible* `<video>` was never observed.
+  Wiring is now a DOM sweep (`hydrateLazyVideos`) that observes whatever lazy
+  `<video[data-lazy-src]:not([src])>` is actually present, re-run after every
+  regrouping, so it survives reparenting and re-render.
+
 ## [1.0.0-alpha.59] — 2026-06-27
 
 ### Added

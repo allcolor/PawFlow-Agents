@@ -490,6 +490,24 @@ def test_inline_media_file_urls_are_not_built_into_inline_onclick_js_strings():
     assert "el.src = el.dataset.lazySrc" in MESSAGES_JS
     # show_file filename is escaped before it reaches innerHTML.
     assert "escapeHtml(parsed.filename)" in MESSAGES_JS
+
+
+def test_inline_video_lazy_loading_is_wired_by_dom_sweep_not_captured_id():
+    # The deferred wiring must not depend on a captured element id
+    # (getElementById('vid_...')): inline tool-result media is reparented by
+    # technical grouping and can be re-rendered/replaced before the deferred pass
+    # runs, orphaning that id while the *visible* <video> never gets observed —
+    # the show_file video stayed a permanent black box. Wire via a DOM sweep that
+    # observes whatever lazy <video> is actually present now.
+    assert "function hydrateLazyVideos(" in MESSAGES_JS
+    assert "video[data-lazy-src]:not([src])" in MESSAGES_JS
+    assert "document.getElementById(vidId)" not in MESSAGES_JS
+    assert "setTimeout(hydrateLazyVideos, 0)" in MESSAGES_JS
+    # Regrouping reparents media, so it must re-sweep afterwards.
+    grouping = MESSAGES_JS[
+        MESSAGES_JS.index("function applyTechnicalMessageGrouping()"):
+        MESSAGES_JS.index("function _toolCallSelector(")]
+    assert "hydrateLazyVideos(container)" in grouping
     # The file context menu (files_panel.js) shares the same hardening: ids and
     # hrefs flow through data-attributes, not inline onclick JS strings.
     assert "openFileViewer(\\'" not in FILES_PANEL_JS

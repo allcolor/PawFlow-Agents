@@ -586,13 +586,24 @@ function _observeLazyVideo(el) {
   _lazyVideoObserver.observe(el);
 }
 
+// Wire every not-yet-loaded lazy <video> currently in the DOM to the
+// IntersectionObserver. Sweep-based (not a captured element id) because inline
+// tool-result media is reparented by technical grouping and can be re-rendered
+// or replaced before deferred wiring runs -- a captured id then points at an
+// orphaned node while the *visible* <video> is never observed and stays a black
+// box (the show_file path lost this race reliably). Idempotent: _observeLazyVideo
+// skips elements that already carry a src, and re-observing is a no-op.
+function hydrateLazyVideos(root) {
+  const base = (root && root.querySelectorAll) ? root : document;
+  base.querySelectorAll('video[data-lazy-src]:not([src])').forEach(_observeLazyVideo);
+}
+
 function inlineVideoHtml(url, filename) {
-  const vidId = 'vid_' + Math.random().toString(36).substring(2, 8);
-  // setTimeout(0) so grouping (synchronous, post-render) has reparented the
-  // element before we observe it; the IO callback then loads it once, settled.
-  setTimeout(() => _observeLazyVideo(document.getElementById(vidId)), 0);
+  // setTimeout(0) so synchronous post-render grouping/reparenting settles first,
+  // then sweep the DOM for whatever lazy <video> is actually present now.
+  setTimeout(hydrateLazyVideos, 0);
   return '<div class="video-wrapper" style="margin:6px 0;">'
-    + '<video id="' + vidId + '" controls preload="metadata" data-lazy-src="' + escapeHtml(url) + '" '
+    + '<video controls preload="metadata" data-lazy-src="' + escapeHtml(url) + '" '
     + 'style="max-width:512px;max-height:512px;border-radius:8px;border:1px solid #0f3460;"></video>'
     + '<div style="font-size:11px;color:#6c6c8a;margin-top:2px;">'
     + '\uD83C\uDFAC ' + escapeHtml(filename || 'video')

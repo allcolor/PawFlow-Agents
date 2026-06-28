@@ -526,6 +526,9 @@ function applyTechnicalMessageGrouping() {
   }
   _groupTechnicalIn(container);
   for (const inner of _nestedTechnicalScopes(container)) _groupTechnicalIn(inner);
+  // Grouping reparents tool-result media; re-wire any lazy <video> that a
+  // deferred per-element pass may have missed (orphaned id after re-render).
+  if (typeof hydrateLazyVideos === 'function') hydrateLazyVideos(container);
 }
 
 function _toolCallSelector(tcId) {

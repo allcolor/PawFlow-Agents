@@ -336,7 +336,51 @@ def test_describe_image_handler_schema():
     h = DescribeImageHandler()
     assert h.name == "describe_image"
     assert "image_url" in h.parameters_schema["properties"]
+    assert "llm_service" in h.parameters_schema["properties"]
     assert "image_url" in h.parameters_schema["required"]
+
+
+def test_describe_image_handler_can_use_pawflow_vision_llm_service(monkeypatch):
+    from types import SimpleNamespace
+
+    class FakeClient:
+        supports_vision = True
+
+    class FakeLLMService:
+        TYPE = "llmConnection"
+        default_model = "vision-model"
+
+        def __init__(self):
+            self.calls = []
+
+        def get_client(self):
+            return FakeClient()
+
+        def complete(self, messages, **kwargs):
+            self.calls.append((messages, kwargs))
+            return SimpleNamespace(content="a chart with blue bars")
+
+    svc = FakeLLMService()
+    monkeypatch.setattr(
+        "core.service_registry.ServiceRegistry.get_instance",
+        lambda: SimpleNamespace(resolve=lambda service_id, user_id="", conv_id="": svc),
+    )
+    h = DescribeImageHandler()
+    h.set_user_id("alice")
+    h.set_conversation_id("conv1")
+    h.set_agent_name("assistant")
+
+    result = h.execute({
+        "image_url": "https://example.test/image.png",
+        "llm_service": "vision_llm",
+        "prompt": "Describe the data.",
+    })
+
+    assert result == "Image description: a chart with blue bars"
+    messages, kwargs = svc.calls[0]
+    assert kwargs["call_user_id"] == "alice"
+    assert messages[0].content[0]["text"] == "Describe the data."
+    assert messages[0].content[1]["image_url"]["url"] == "https://example.test/image.png"
 
 
 def test_remix_image_handler_schema():

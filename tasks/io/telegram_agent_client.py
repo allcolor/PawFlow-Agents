@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import base64
 import json
+import mimetypes
 from typing import Any, Dict, List, Optional
 
 from core import FlowFile, TaskFactory
@@ -151,6 +152,52 @@ class TelegramAgentClientTask(BaseTask):
             except Exception as exc:
                 logger.warning("Telegram image FileStore materialization failed: %s", exc, exc_info=True)
             attachments.append(attachment)
+
+        if flowfile.get_attribute("telegram.message_type") == "document":
+            try:
+                payload = json.loads(text) if text else {}
+            except json.JSONDecodeError:
+                payload = {}
+            if isinstance(payload, dict) and payload.get("type") == "document":
+                filename = str(payload.get("file_name") or "telegram_document")
+                mime_type = str(
+                    payload.get("mime_type")
+                    or mimetypes.guess_type(filename)[0]
+                    or "application/octet-stream")
+                data_b64 = str(payload.get("data_base64") or "")
+                attachment = {
+                    "filename": filename,
+                    "mime_type": mime_type,
+                    "data": data_b64,
+                }
+                if data_b64:
+                    try:
+                        raw = base64.b64decode(data_b64)
+                        from core.file_store import FileStore
+                        from core.file_ttl import resolve_ttl_seconds
+                        _doc_ttl = resolve_ttl_seconds(
+                            conversation_id=conversation_id or "",
+                            conv_keys=("attachment_ttl_seconds", "webchat_upload_ttl_seconds"),
+                            env_key="PAWFLOW_ATTACHMENT_TTL_SECONDS",
+                            default=86400,
+                        )
+                        file_id = FileStore.instance().store(
+                            filename, raw, mime_type,
+                            conversation_id=conversation_id,
+                            user_id=user_id,
+                            agent_name=target_agent,
+                            ttl=_doc_ttl,
+                            category="attachment",
+                        )
+                        attachment["file_id"] = file_id
+                        attachment["url"] = f"/files/{file_id}/{filename}"
+                    except Exception as exc:
+                        logger.warning(
+                            "Telegram document FileStore materialization failed: %s",
+                            exc, exc_info=True)
+                attachments.append(attachment)
+                caption = str(payload.get("caption") or "").strip()
+                text = caption or f"[Document attached: {filename}]"
 
         msg_id = f"telegram:{chat_id}:{flowfile.get_attribute('telegram.message_id') or ''}"
         request = AgentRequest(

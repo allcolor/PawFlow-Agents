@@ -17,6 +17,7 @@ The task sets these FlowFile attributes:
 
 import json
 import logging
+import mimetypes
 import queue
 from typing import Any, Dict, List, Optional
 
@@ -150,11 +151,15 @@ class TelegramReceiverTask(BaseTask):
             caption = msg.get("caption", "")
             file_id = msg["document"].get("file_id", "")
             file_name = msg["document"].get("file_name", "unknown")
+            mime_type = (msg["document"].get("mime_type", "")
+                         or mimetypes.guess_type(file_name)[0]
+                         or "application/octet-stream")
             file_data = self._try_download(file_id, bot_token=bot_token)
             content = json.dumps({
                 "type": "document",
                 "file_id": file_id,
                 "file_name": file_name,
+                "mime_type": mime_type,
                 "caption": caption,
                 "data_base64": file_data,
             }).encode("utf-8")

@@ -6,6 +6,8 @@ core.handlers.capabilities.
 """
 
 import logging
+import base64
+import mimetypes
 import time
 from typing import Any, Dict
 
@@ -187,10 +189,10 @@ class DescribeImageHandler(_CapabilityHandlerBase):
     @property
     def description(self) -> str:
         return (
-            "Describe the content of an image using an AI model "
-            "(Ideogram v2 / Turbo). Returns a text description of the "
+            "Describe the content of an image using an AI model. Returns a text description of the "
             "image content, style, and composition. Pass the source via "
-            "`image_url` (HTTP or fs://filestore/<id>/<name>)."
+            "`image_url` (HTTP or fs://filestore/<id>/<name>). Pass `llm_service` "
+            "to use a PawFlow vision-enabled llmConnection instead of the active image service."
         )
 
     @property
@@ -199,12 +201,19 @@ class DescribeImageHandler(_CapabilityHandlerBase):
             "type": "object",
             "properties": {
                 "image_url": {"type": "string", "description": "Source image URL to describe"},
-                "model": {"type": "string", "description": "Override the model (e.g. 'ideogram', 'ideogram-turbo')."},
+                "prompt": {"type": "string", "description": "Optional instruction for the description."},
+                "llm_service": {"type": "string", "description": "Optional PawFlow llmConnection service id with vision enabled."},
+                "llmservice": {"type": "string", "description": "Alias for llm_service."},
+                "model": {"type": "string", "description": "Override the model. For image services, e.g. 'ideogram'. For llm_service, the LLM model override."},
             },
             "required": ["image_url"],
         }
 
     def execute(self, arguments: Dict[str, Any]) -> str:
+        llm_service = str(
+            arguments.get("llm_service") or arguments.get("llmservice") or "")
+        if llm_service.strip():
+            return self._describe_with_llm(arguments, llm_service.strip())
         svc, err = self._get_service(arguments)
         if not svc:
             return f"Error: {err or 'no image service available'}"
@@ -220,6 +229,63 @@ class DescribeImageHandler(_CapabilityHandlerBase):
             return f"Image description: {r.get('description', '(no description)')}"
         except Exception as e:
             return f"Error describing image: {e}"
+
+    def _describe_with_llm(self, arguments: Dict[str, Any], service_id: str) -> str:
+        image_url = str(arguments.get("image_url") or "").strip()
+        if not image_url:
+            return "Error: `image_url` is required"
+        try:
+            from core.service_registry import ServiceRegistry
+            svc = ServiceRegistry.get_instance().resolve(
+                service_id, user_id=self._user_id, conv_id=self._conversation_id)
+        except Exception as exc:
+            return f"Error: llm_service '{service_id}' failed to resolve: {exc}"
+        if not svc or getattr(svc, "TYPE", "") != "llmConnection":
+            return f"Error: llm_service '{service_id}' is not an llmConnection service"
+        client = svc.get_client() if hasattr(svc, "get_client") else None
+        if not client or not getattr(client, "supports_vision", False):
+            return f"Error: llm_service '{service_id}' does not have vision enabled"
+        prompt = str(arguments.get("prompt") or "Describe this image precisely.")
+        image_part = self._llm_image_part(image_url)
+        try:
+            from core.llm_client import LLMMessage
+            response = svc.complete(
+                [LLMMessage(
+                    role="user",
+                    content=[{"type": "text", "text": prompt}, image_part],
+                    conversation_id=self._conversation_id or "describe_image",
+                )],
+                model=str(arguments.get("model") or "") or None,
+                temperature=0,
+                max_tokens=int(arguments.get("max_tokens", 1200) or 1200),
+                call_user_id=self._user_id,
+                call_conversation_id=self._conversation_id,
+                call_agent_name=self._agent_name,
+            )
+            return f"Image description: {(response.content or '').strip() or '(no description)'}"
+        except Exception as exc:
+            return f"Error describing image with llm_service '{service_id}': {exc}"
+
+    def _llm_image_part(self, image_url: str) -> Dict[str, Any]:
+        raw = ""
+        if image_url.startswith("fs://filestore/"):
+            raw = image_url[len("fs://filestore/"):].split("/", 1)[0]
+        elif image_url.startswith("/files/"):
+            raw = image_url[len("/files/"):].split("/", 1)[0]
+        if raw:
+            from core.file_store import FileStore
+            result = FileStore.instance().get(raw, user_id=self._user_id)
+            if result is None:
+                raise FileNotFoundError(raw)
+            filename, data, content_type = result
+            mime = (content_type or mimetypes.guess_type(filename)[0]
+                    or "image/png")
+            b64 = base64.b64encode(data).decode("ascii")
+            return {
+                "type": "image_url",
+                "image_url": {"url": f"data:{mime};base64,{b64}"},
+            }
+        return {"type": "image_url", "image_url": {"url": image_url}}
 
 
 # ── Remix Image ─────────────────────────────────────────────────────

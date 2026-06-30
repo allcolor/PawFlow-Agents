@@ -127,3 +127,34 @@ def test_preuploaded_oversized_jpeg_is_restored_after_downscale():
     w, h = Image.open(io.BytesIO(raw)).size
     assert max(w, h) == MAX_DIM
     assert len(raw) == ref["size"]
+
+
+def test_document_attachment_keeps_file_ref_and_adds_extracted_text(monkeypatch):
+    import base64
+    from core.file_store import FileStore
+    from tasks.ai.agent_context import AgentContextMixin
+
+    monkeypatch.setattr(
+        AgentContextMixin,
+        "_convert_with_markitdown",
+        lambda self, raw, filename, mime, conversation_id="", user_id="": "# Report\nExtracted text",
+    )
+    ctx = object.__new__(AgentContextMixin)
+    ctx.config = {}
+    content = AgentContextMixin._build_user_content(
+        ctx,
+        "read this",
+        [{
+            "filename": "report.pdf",
+            "mime_type": "application/pdf",
+            "data": base64.b64encode(b"%PDF").decode("ascii"),
+        }],
+        conversation_id="c_doc",
+        user_id="u_doc",
+    )
+
+    file_refs = [p for p in content if isinstance(p, dict) and p.get("type") == "file_ref"]
+    extracted = [p for p in content if isinstance(p, dict) and "Extracted Markdown" in p.get("text", "")]
+    assert len(file_refs) == 1
+    assert extracted and "# Report" in extracted[0]["text"]
+    assert FileStore.instance().get(file_refs[0]["file_id"], user_id="u_doc") is not None

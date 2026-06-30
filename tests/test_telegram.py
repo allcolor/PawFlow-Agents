@@ -1113,6 +1113,75 @@ class TestTelegramAgentClientTask(unittest.TestCase):
             _p.USER_CONFIG_DIR = orig_ucd
             shutil.rmtree(tmp, ignore_errors=True)
 
+    def test_agent_client_forwards_telegram_document_as_attachment_not_base64_text(self):
+        import shutil
+        import tempfile
+        from unittest.mock import patch
+
+        from core.identity_service import IdentityService
+        from core.agent_runtime_api import AgentFinalResult
+        from tasks.io.telegram_agent_client import TelegramAgentClientTask
+
+        tmp = tempfile.mkdtemp()
+        IdentityService.reset()
+        import core.paths as _p
+        orig_ucd = _p.USER_CONFIG_DIR
+        _p.USER_CONFIG_DIR = Path(tmp) / "users"
+        try:
+            ids = IdentityService()
+            IdentityService._instance = ids
+            ids.link("alice", "telegram", "111111")
+            ids.set_active_conv("alice", "telegram", "conv1")
+            captured = {}
+
+            def submit(req):
+                captured["message"] = req.message
+                captured["attachments"] = req.attachments
+                return type("Submission", (), {
+                    "conversation_id": "conv1",
+                    "turn_id": "telegram:111111:m-doc",
+                    "wait_for_done": True,
+                    "status": "accepted",
+                })()
+
+            payload = {
+                "type": "document",
+                "file_name": "report.pdf",
+                "mime_type": "application/pdf",
+                "caption": "Please review",
+                "data_base64": base64.b64encode(b"%PDF-1.4").decode("ascii"),
+            }
+            task = TelegramAgentClientTask({"agent_runtime_port": "pawflow_agent.agent_runtime_in"})
+            ff = FlowFile(content=json.dumps(payload).encode("utf-8"))
+            ff.set_attribute("telegram.user_id", "111111")
+            ff.set_attribute("telegram.chat_id", "111111")
+            ff.set_attribute("telegram.message_id", "m-doc")
+            ff.set_attribute("telegram.message_type", "document")
+
+            with patch.object(TelegramAgentClientTask, "_selected_agent_for_conversation", return_value="assistant"), \
+                    patch("core.file_store.FileStore.instance") as fs_instance, \
+                    patch("core.agent_runtime_api.AgentRuntimeAPI.submit_message", side_effect=submit), \
+                    patch("core.agent_runtime_api.AgentRuntimeAPI.wait_for_done", return_value=AgentFinalResult("conv1", "telegram:111111:m-doc", response="ok")):
+                fs = MagicMock()
+                fs.store.return_value = "file-doc"
+                fs_instance.return_value = fs
+                task.execute(ff)
+
+            assert captured["message"] == "Please review"
+            assert "data_base64" not in captured["message"]
+            assert captured["attachments"] == [{
+                "filename": "report.pdf",
+                "mime_type": "application/pdf",
+                "data": payload["data_base64"],
+                "file_id": "file-doc",
+                "url": "/files/file-doc/report.pdf",
+            }]
+            fs.store.assert_called_once()
+        finally:
+            IdentityService.reset()
+            _p.USER_CONFIG_DIR = orig_ucd
+            shutil.rmtree(tmp, ignore_errors=True)
+
     def test_agent_client_does_not_mirror_dispatch_command_to_conversation(self):
         """Slash commands are client-internal: they must never appear in the
         shared conversation (webchat, VS Code, PawCode)."""

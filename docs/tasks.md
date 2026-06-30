@@ -126,7 +126,15 @@ unformatted instead of lost. The Telegram client task is concurrent so a second
 Telegram message can reach the running agent and preempt or queue while an older
 Telegram request is still waiting for its final response. Runtime ACKs that are
 only preemption or queue acknowledgements do not wait for a separate `done`
-event.
+event. Telegram document messages are normalized as agent attachments: the
+caption is used as the user text, the downloaded Telegram file is stored in
+FileStore with the attachment TTL, and the shared agent runtime receives a
+`file_ref` instead of a JSON/base64 blob. Document attachments are also converted
+to bounded Markdown context with MarkItDown when available, while retaining the
+original file reference for tools and clients. Configure
+`attachment_ocr_llm_service` on the agent task, or
+`PAWFLOW_MARKITDOWN_OCR_LLM_SERVICE`, to let MarkItDown OCR plugins use a
+PawFlow vision-enabled `llmConnection`.
 
 `telegramConversationBridge` listens to shared conversation events from webchat,
 PawCode, and other non-Telegram clients and forwards user messages, final agent
@@ -150,6 +158,11 @@ and tool calls so Telegram users are not silent until the final response.
 Telegram text replies longer than the Bot API message limit are split into
 multiple complete messages before sending while preserving the configured
 Telegram parse mode for each part.
+
+The `describe_image` tool accepts `llm_service` (alias `llmservice`) to describe
+an image through a PawFlow `llmConnection` with `supports_vision` enabled. When
+that parameter is omitted, the tool keeps using the active image capability
+service that implements `describe_image`.
 
 ---
 

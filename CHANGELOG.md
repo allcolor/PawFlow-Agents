@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-alpha.61] — 2026-06-30
+
+### Added
+
+- attachments: document payloads are converted to bounded Markdown context with
+  MarkItDown when available, including PDF/DOCX/XLSX/PPTX-style inputs, and the
+  dependency is declared in both `requirements.txt` and `pyproject.toml`.
+
+### Fixed
+
+- Telegram: document attachments and vision descriptions are preserved through
+  the agent handoff instead of losing context before the model sees them.
+- web_search: Claude-style `q` and `maxResults` arguments are accepted, Google
+  search falls back to Chromium when static Google HTML is no longer parseable,
+  and the server image installs the Patchright browser runtime needed by that
+  fallback.
+
 ## [1.0.0-alpha.60] — 2026-06-28
 
 ### Fixed

@@ -31,7 +31,8 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Browser automation / Scrapling support.
-RUN python -m playwright install --with-deps chromium
+RUN python -m playwright install --with-deps chromium \
+    && python -m patchright install chromium
 
 # App code
 COPY . .

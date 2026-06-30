@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import re
+import shutil
 from typing import Any, Dict, List, Optional
 
 from core.tool_handler import ToolHandler
@@ -66,9 +67,17 @@ class WebSearchHandler(ToolHandler):
                     "type": "string",
                     "description": "The search query",
                 },
+                "q": {
+                    "type": "string",
+                    "description": "Alias for query.",
+                },
                 "max_results": {
                     "type": "integer",
                     "description": "Max number of results to return (default 5)",
+                },
+                "maxResults": {
+                    "type": "integer",
+                    "description": "Alias for max_results.",
                 },
                 "provider": {
                     "type": "string",
@@ -83,12 +92,15 @@ class WebSearchHandler(ToolHandler):
                     "description": "Alias for provider.",
                 },
             },
-            "required": ["query"],
+            "required": [],
         }
 
     def execute(self, arguments: Dict[str, Any]) -> str:
-        query = arguments.get("query", "")
-        max_results = max(1, min(20, int(arguments.get("max_results", 5))))
+        query = arguments.get("query") or arguments.get("q") or ""
+        raw_max_results = arguments.get("max_results")
+        if raw_max_results is None:
+            raw_max_results = arguments.get("maxResults", 5)
+        max_results = max(1, min(20, int(raw_max_results)))
         if not query:
             return "Error: no query provided"
 
@@ -142,7 +154,7 @@ class WebSearchHandler(ToolHandler):
             return None
 
         remote_args = {
-            "query": arguments.get("query", ""),
+            "query": arguments.get("query") or arguments.get("q") or "",
             "max_results": max_results,
             "provider": ",".join(providers),
             "_pawflow_web_search_local": True,
@@ -439,7 +451,12 @@ class WebSearchHandler(ToolHandler):
         from patchright.sync_api import sync_playwright
         from urllib.parse import urlparse
 
-        executable_path = os.environ.get("PAWFLOW_CHROMIUM_EXECUTABLE") or None
+        executable_path = (
+            os.environ.get("PAWFLOW_CHROMIUM_EXECUTABLE")
+            or shutil.which("chromium")
+            or shutil.which("chromium-browser")
+            or None
+        )
         with sync_playwright() as p:
             browser = p.chromium.launch(
                 headless=True,

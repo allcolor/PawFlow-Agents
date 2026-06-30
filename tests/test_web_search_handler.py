@@ -61,6 +61,30 @@ def test_web_search_provider_override_uses_only_requested_provider(monkeypatch):
     assert "providers: bing" in out
 
 
+def test_web_search_accepts_claude_style_query_aliases(monkeypatch):
+    handler = WebSearchHandler()
+    calls = []
+
+    def fake_search(provider, query, max_results):
+        calls.append((provider, query, max_results))
+        return [{"title": "Result", "url": "https://example.com", "snippet": "Snippet"}]
+
+    monkeypatch.setattr(handler, "_search_provider", fake_search)
+    monkeypatch.setattr("core.handlers.web_fetch.WebSearchHandler._find_default_relay", lambda self: None)
+
+    out = handler.execute({"q": "test", "provider": "duckduckgo", "maxResults": 3})
+
+    assert calls == [("duckduckgo", "test", 3)]
+    assert "providers: duckduckgo" in out
+
+
+def test_web_search_schema_allows_q_alias_without_query():
+    handler = WebSearchHandler()
+
+    assert "q" in handler.parameters_schema["properties"]
+    assert "query" not in handler.parameters_schema.get("required", [])
+
+
 def test_web_search_delegates_to_relay_when_available(monkeypatch):
     handler = WebSearchHandler()
     files = {}
@@ -259,3 +283,10 @@ Amazon Web Services (AWS) Brand Color Codes Brand Color Code</div>
 
     assert len(calls) == 2
     assert results[0]["url"] == "https://www.brandcolorcode.com/amazon-web-services-aws"
+
+
+def test_google_browser_fallback_uses_system_chromium():
+    src = inspect.getsource(WebSearchHandler._fetch_search_browser)
+
+    assert "PAWFLOW_CHROMIUM_EXECUTABLE" in src
+    assert "shutil.which(\"chromium\")" in src

@@ -21,6 +21,7 @@ def test_server_dockerfile_supports_bootstrap_docker_builds():
     assert "build-essential" in src
     assert "PLAYWRIGHT_BROWSERS_PATH" in src
     assert "python -m playwright install --with-deps chromium" in src
+    assert "python -m patchright install chromium" in src
     assert "useradd -u 1000 -g 1000" in src
     assert "/app/data /app/certs" in src
     assert "/app/default-data" in src

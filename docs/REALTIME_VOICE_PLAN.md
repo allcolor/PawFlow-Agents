@@ -133,12 +133,14 @@ Frames:
   the bridge forwards to the adapter which resamples/encodes if needed).
 - **binary downlink**: raw PCM16 mono 24 kHz agent audio chunks.
 - **text frames**: JSON control events, `{"type": …}`:
-  - client→server: `start` (optional overrides), `commit` (manual VAD),
+  - client→server: `start` (optional overrides), `commit` (manual VAD —
+    the overlay shows a "Send" button when the session is manual),
     `interrupt`, `stop`.
-  - server→client: `ready`, `transcript_user`, `transcript_agent`
-    (`{text, final}` — drives live captions), `speech_started` (flush local
-    playback for barge-in), `state` (`listening|thinking|speaking`),
-    `usage`, `error`, `closed` (`{reason}`).
+  - server→client: `ready` (`{state, vad}` — `vad: "manual"` makes the
+    client show the push-to-talk Send control), `transcript_user`,
+    `transcript_agent` (`{text, final}` — drives live captions),
+    `speech_started` (flush local playback for barge-in), `state`
+    (`listening|thinking|speaking`), `usage`, `error`, `closed` (`{reason}`).
 
 ### 4. RealtimeSessionBridge
 

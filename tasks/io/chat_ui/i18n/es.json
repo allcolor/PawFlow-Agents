@@ -1328,6 +1328,7 @@
   "voicePickService": "Servicio de voz:",
   "voiceLinkedTitle": "Agente de voz — iniciar conversación de voz",
   "voiceHangUp": "Terminar",
+  "voiceSendTurn": "Enviar",
   "voiceMute": "Silenciar",
   "voiceUnmute": "Activar",
   "voiceStateConnecting": "Conectando…",

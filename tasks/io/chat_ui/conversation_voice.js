@@ -127,6 +127,7 @@ function _voiceShowOverlay() {
     + '<div id="voiceCaptions"></div>'
     + '<div class="voice-ctl">'
     + '<button id="voiceMuteBtn"></button>'
+    + '<button id="voiceCommitBtn" style="display:none"></button>'
     + '<button id="voiceHangupBtn" class="danger"></button>'
     + '</div>';
   document.body.appendChild(ov);
@@ -134,10 +135,22 @@ function _voiceShowOverlay() {
     + (_voiceSelectedService ? ' · ' + _voiceSelectedService : '');
   const muteBtn = ov.querySelector('#voiceMuteBtn');
   muteBtn.onclick = function() { _voiceToggleMute(); };
+  const commitBtn = ov.querySelector('#voiceCommitBtn');
+  commitBtn.textContent = '📤 ' + _voiceT('voiceSendTurn', 'Send');
+  commitBtn.onclick = function() { _voiceCommitTurn(); };
   ov.querySelector('#voiceHangupBtn').textContent = '⏹ ' + _voiceT('voiceHangUp', 'End');
   ov.querySelector('#voiceHangupBtn').onclick = function() { stopVoiceMode('user'); };
   _voiceRenderMute();
   return ov;
+}
+
+function _voiceCommitTurn() {
+  // Manual VAD (push-to-talk): the user finished speaking — commit the
+  // audio buffer so the agent answers. Hidden in server-VAD sessions.
+  if (_voiceWs && _voiceWs.readyState === WebSocket.OPEN) {
+    _voiceWs.send(JSON.stringify({ type: 'commit' }));
+    _voiceSetState('thinking');
+  }
 }
 
 function _voiceHideOverlay() {
@@ -344,6 +357,8 @@ async function toggleVoiceMode() {
 }
 
 async function _toggleVoiceModeStart(cid) {
+  const pick = document.getElementById('voiceServicePick');
+  if (pick) pick.remove();
   // Fresh fetch: the agent link depends on the current conversation/agent,
   // and the action lazily registers the /ws/realtime route on the listener.
   await new Promise(resolve => refreshRealtimeVoiceServices(resolve));
@@ -372,7 +387,13 @@ async function _toggleVoiceModeStart(cid) {
     if (e.data instanceof ArrayBuffer) { _voicePlayChunk(e.data); return; }
     let msg = {};
     try { msg = JSON.parse(e.data); } catch (_err) { return; }
-    if (msg.type === 'ready') { _voiceSetState('listening'); }
+    if (msg.type === 'ready') {
+      _voiceSetState('listening');
+      // Manual VAD: the provider never auto-detects end of turn — show the
+      // explicit "send" control the user presses after speaking.
+      const commitBtn = document.getElementById('voiceCommitBtn');
+      if (commitBtn) commitBtn.style.display = (msg.vad === 'manual') ? '' : 'none';
+    }
     else if (msg.type === 'state') { _voiceSetState(msg.state || _voiceState); }
     else if (msg.type === 'speech_started') { _voiceFlushPlayback(); }
     else if (msg.type === 'transcript_user') { _voiceCaption('user', msg.text || '', !!msg.final); }
@@ -409,11 +430,35 @@ function stopVoiceMode(reason) {
 function showVoiceServiceDialog() {
   if (_voiceLinkedService) return; // voice-native agent: service is pinned
   if (_voiceServices.length < 2) return;
-  const names = _voiceServices.map(s => s.id + (s.model ? ' (' + s.model + ')' : ''));
-  const pick = prompt(_voiceT('voicePickService', 'Voice service:') + '\n' + names.join('\n'), _voiceSelectedService);
-  if (pick && _voiceServices.some(s => s.id === pick.split(' ')[0])) {
-    _voiceSelectedService = pick.split(' ')[0];
-  }
+  const old = document.getElementById('voiceServicePick');
+  if (old) { old.remove(); return; } // toggle
+  const panel = document.createElement('div');
+  panel.id = 'voiceServicePick';
+  panel.style.cssText = 'position:fixed;bottom:70px;right:16px;z-index:9999;'
+    + 'background:var(--pf-sidebar,#1c1e2a);border:1px solid var(--pf-border,#444);'
+    + 'border-radius:8px;padding:8px;display:flex;flex-direction:column;gap:2px;'
+    + 'box-shadow:0 4px 18px rgba(0,0,0,.5);';
+  const title = document.createElement('div');
+  title.textContent = _voiceT('voicePickService', 'Voice service:');
+  title.style.cssText = 'font-size:11px;color:var(--pf-muted,#8f96ad);padding:2px 6px 6px;';
+  panel.appendChild(title);
+  _voiceServices.forEach(function(s) {
+    const b = document.createElement('button');
+    b.textContent = (s.id === _voiceSelectedService ? '✓ ' : '\u2003') + s.id
+      + (s.model ? ' (' + s.model + ')' : '');
+    b.style.cssText = 'text-align:left;background:none;border:none;'
+      + 'color:var(--pf-text,#e8ebf5);padding:6px 10px;border-radius:4px;'
+      + 'cursor:pointer;font-size:13px;';
+    b.onmouseenter = function() { b.style.background = 'rgba(255,255,255,.08)'; };
+    b.onmouseleave = function() { b.style.background = 'none'; };
+    b.onclick = function() {
+      _voiceSelectedService = s.id;
+      panel.remove();
+      _voiceUpdateButton();
+    };
+    panel.appendChild(b);
+  });
+  document.body.appendChild(panel);
 }
 
 document.addEventListener('DOMContentLoaded', function() {

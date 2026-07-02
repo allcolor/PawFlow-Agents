@@ -266,8 +266,11 @@ class RealtimeSessionBridge:
             return
 
         # `ready` goes out before the provider pump starts so the client
-        # never sees session events ahead of the ready handshake.
-        self._emit({"type": "ready", "state": "listening"})
+        # never sees session events ahead of the ready handshake. `vad`
+        # tells the client whether to show the manual push-to-talk control.
+        self._emit({"type": "ready", "state": "listening",
+                    "vad": (getattr(self._service, "vad", "server")
+                            or "server")})
         # The deadline is enforced in the provider pump (loops every ≤1 s
         # regardless of traffic): this handler thread blocks in _ws_recv,
         # so a silent client (muted mic) would starve a check placed here.

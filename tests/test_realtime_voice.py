@@ -572,6 +572,8 @@ class TestRealtimeSessionBridge:
         try:
             msg, _ = self._read_until(client, "ready")
             assert msg["state"] == "listening"
+            # The client shows the manual push-to-talk control from this.
+            assert msg["vad"] == "server"
             assert service.opened_with == "Be brief."
             # mic uplink → adapter
             _client_send_frame(client, 0x2, b"\x11\x22")
@@ -595,6 +597,28 @@ class TestRealtimeSessionBridge:
             assert adapter.closed
         finally:
             client.close()
+
+    def test_ready_reports_manual_vad(self):
+        """A manual-VAD service must be announced in `ready` so the client
+        shows the push-to-talk Send control (otherwise the session is mute
+        — nothing ever commits the audio buffer)."""
+        server_sock, client_sock = socket.socketpair()
+        adapter = _FakeAdapter([])
+        service = _FakeService(adapter)
+        service.vad = "manual"
+        bridge = RealtimeSessionBridge(server_sock, "conv1", "claude",
+                                       "quentin", service)
+        bridge._persist = lambda role, text: None
+        thread = threading.Thread(target=bridge.run, daemon=True)
+        thread.start()
+        try:
+            msg, _ = self._read_until(client_sock, "ready")
+            assert msg["vad"] == "manual"
+            _client_send_frame(client_sock, 0x1, b'{"type": "stop"}')
+            self._read_until(client_sock, "closed")
+            thread.join(timeout=5)
+        finally:
+            client_sock.close()
 
     def test_late_user_transcript_keeps_question_answer_order(self):
         """The whisper user transcript usually lands AFTER the agent
@@ -948,6 +972,13 @@ def test_chat_ui_voice_mode_is_wired():
     assert "if (_voiceStarting) return;" in js  # double-start guard
     # Partial capture failure (post-getUserMedia) must release the mic.
     assert js.index("_voiceStopCapture(); //") < js.index("voiceMicDenied")
+    # Manual-VAD push-to-talk: send button wired to the commit control.
+    assert 'id="voiceCommitBtn"' in js
+    assert "{ type: 'commit' }" in js
+    assert "msg.vad === 'manual'" in js
+    # Service picker is a clickable list, not a prompt().
+    assert "prompt(" not in js
+    assert 'voiceServicePick' in js
 
     for lang in ("en", "fr", "es"):
         data = json.loads(Path(f"tasks/io/chat_ui/i18n/{lang}.json")
@@ -955,6 +986,7 @@ def test_chat_ui_voice_mode_is_wired():
         assert "voiceModeStartTitle" in data
         assert "voiceStateListening" in data
         assert "realtimeVoiceService" in data
+        assert "voiceSendTurn" in data  # manual-VAD send button
 
 
 def test_agent_editor_exposes_realtime_voice_link():

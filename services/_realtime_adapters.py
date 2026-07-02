@@ -61,37 +61,46 @@ class RealtimeWSClient:
         if parsed.query:
             path += "?" + parsed.query
         sock = socket.create_connection((host, port), timeout=timeout)
+        # Any failure past this point (TLS, send, rejected/garbled handshake)
+        # must close the socket — connect() raising leaves no owner for it.
         try:
-            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-        except OSError:
-            pass
-        if parsed.scheme == "wss":
-            ctx = ssl.create_default_context()
-            sock = ctx.wrap_socket(sock, server_hostname=host)
-        ws_key = base64.b64encode(os.urandom(16)).decode()
-        lines = [
-            f"GET {path} HTTP/1.1",
-            f"Host: {host}:{port}" if port not in (80, 443) else f"Host: {host}",
-            "Upgrade: websocket",
-            "Connection: Upgrade",
-            f"Sec-WebSocket-Key: {ws_key}",
-            "Sec-WebSocket-Version: 13",
-        ]
-        for k, v in self._headers.items():
-            lines.append(f"{k}: {v}")
-        sock.sendall(("\r\n".join(lines) + "\r\n\r\n").encode())
+            try:
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            except OSError:
+                pass
+            if parsed.scheme == "wss":
+                ctx = ssl.create_default_context()
+                sock = ctx.wrap_socket(sock, server_hostname=host)
+            ws_key = base64.b64encode(os.urandom(16)).decode()
+            lines = [
+                f"GET {path} HTTP/1.1",
+                f"Host: {host}:{port}" if port not in (80, 443) else f"Host: {host}",
+                "Upgrade: websocket",
+                "Connection: Upgrade",
+                f"Sec-WebSocket-Key: {ws_key}",
+                "Sec-WebSocket-Version: 13",
+            ]
+            for k, v in self._headers.items():
+                lines.append(f"{k}: {v}")
+            sock.sendall(("\r\n".join(lines) + "\r\n\r\n").encode())
 
-        resp = b""
-        while b"\r\n\r\n" not in resp:
-            chunk = sock.recv(4096)
-            if not chunk:
-                raise ConnectionError("Realtime WS handshake failed (EOF)")
-            resp += chunk
-        status = resp.split(b"\r\n", 1)[0]
-        if b"101" not in status:
-            body_preview = resp[:400].decode("latin-1", errors="replace")
-            raise ConnectionError(
-                f"Realtime WS handshake rejected: {body_preview}")
+            resp = b""
+            while b"\r\n\r\n" not in resp:
+                chunk = sock.recv(4096)
+                if not chunk:
+                    raise ConnectionError("Realtime WS handshake failed (EOF)")
+                resp += chunk
+            status = resp.split(b"\r\n", 1)[0]
+            if b"101" not in status:
+                body_preview = resp[:400].decode("latin-1", errors="replace")
+                raise ConnectionError(
+                    f"Realtime WS handshake rejected: {body_preview}")
+        except Exception:
+            try:
+                sock.close()
+            except OSError:
+                pass
+            raise
         # Bytes after the 101 headers are the start of the first frame.
         leftover = resp[resp.index(b"\r\n\r\n") + 4:]
         self._sock = sock
@@ -427,9 +436,14 @@ class OpenAIRealtimeAdapter(RealtimeAdapter):
         if etype == "error":
             err = evt.get("error") or {}
             msg = err.get("message", "") if isinstance(err, dict) else str(err)
-            # Cancel-without-active-response and similar races are benign.
+            # Benign races: cancel without an active response (barge-in
+            # timing), and response.create colliding with a response that is
+            # still active (send_tool_result / inject_context each trigger
+            # one — the created item stays in the conversation and is picked
+            # up on the next turn, so the session must survive).
             code = err.get("code", "") if isinstance(err, dict) else ""
-            fatal = code not in ("response_cancel_not_active",)
+            fatal = code not in ("response_cancel_not_active",
+                                 "conversation_already_has_active_response")
             return {"type": "error", "message": msg or "provider error",
                     "fatal": fatal}
         return None  # session.created / rate_limits / deltas we don't consume

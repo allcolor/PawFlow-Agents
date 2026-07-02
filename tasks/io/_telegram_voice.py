@@ -326,6 +326,7 @@ def _telegram_realtime_voice_reply(
         return False
     if not audio_bytes:
         return False
+    turn_done = False
     try:
         from core.service_registry import ServiceRegistry
         reg = ServiceRegistry.get_instance()
@@ -356,6 +357,7 @@ def _telegram_realtime_voice_reply(
         result = run_voice_turn(
             service, conversation_id=conversation_id, agent_name=agent_name,
             user_id=user_id, pcm16=pcm_in, user_channel="telegram")
+        turn_done = True
 
         # The turn succeeded: transcripts are already persisted, so from
         # here on we NEVER fall back to the STT pipeline (it would process
@@ -386,6 +388,14 @@ def _telegram_realtime_voice_reply(
             agent_name, len(result.get("audio") or b""))
         return True
     except Exception as exc:
+        if turn_done:
+            # Transcripts are already persisted — an STT fallback would
+            # answer the same voice note twice. The assistant text still
+            # reaches Telegram through the persisted message.
+            logger.warning(
+                "Telegram realtime voice: post-turn delivery failed — "
+                "suppressing STT fallback: %s", exc, exc_info=True)
+            return True
         logger.warning(
             "Telegram realtime voice turn failed (falling back to STT): %s",
             exc, exc_info=True)

@@ -130,6 +130,17 @@ class TestOpenAIRealtimeAdapter:
             "code": "response_cancel_not_active"}})
         assert benign["fatal"] is False
 
+    def test_normalize_active_response_collision_is_benign(self):
+        """send_tool_result/inject_context each fire response.create; when
+        one collides with a still-active response the provider rejects it —
+        that race must NOT kill the session (regression: treated as fatal,
+        a fast tool result could tear down a live conversation)."""
+        a = self._adapter()
+        evt = a._normalize({"type": "error", "error": {
+            "message": "already has an active response",
+            "code": "conversation_already_has_active_response"}})
+        assert evt["fatal"] is False
+
     def test_normalize_ignores_unknown_events(self):
         a = self._adapter()
         assert a._normalize({"type": "session.created"}) is None
@@ -272,6 +283,34 @@ def test_recv_frame_reassembles_fragmented_message():
     client._rxbuf = bytearray()
     assert client.recv_frame(timeout=0.01) == (0x9, b"p")
     assert client.recv_frame(timeout=0.01) == (0x1, b"hello")
+
+
+def test_connect_closes_socket_on_rejected_handshake(monkeypatch):
+    """A non-101 handshake raises out of connect() — the TCP socket has no
+    owner then and must be closed, not leaked until GC."""
+    class _FakeSock:
+        closed = False
+
+        def setsockopt(self, *a):
+            pass
+
+        def sendall(self, data):
+            pass
+
+        def recv(self, n):
+            return b"HTTP/1.1 403 Forbidden\r\n\r\n"
+
+        def close(self):
+            self.closed = True
+
+    fake = _FakeSock()
+    monkeypatch.setattr(socket, "create_connection",
+                        lambda *a, **kw: fake)
+    client = RealtimeWSClient("ws://x/realtime", {})
+    with pytest.raises(ConnectionError):
+        client.connect(timeout=0.1)
+    assert fake.closed
+    assert client._sock is None
 
 
 def test_recv_frame_rejects_insane_frame_length():

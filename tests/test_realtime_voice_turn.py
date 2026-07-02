@@ -279,6 +279,44 @@ class TestTelegramRealtimeVoiceReply:
         assert ff.get_content() == b"bonjour"
         assert not ff.get_attribute("telegram.tts_audio_base64")
 
+    def test_post_turn_failure_never_falls_back_to_stt(self, monkeypatch):
+        """An exception AFTER a successful turn (delivery/attribute stage)
+        must still return True: transcripts are persisted, so an STT
+        fallback would answer the same voice note twice."""
+        import tasks.io._telegram_voice as tv
+        import services._realtime_turn as turn_mod
+
+        class _SvcDef:
+            service_type = "realtimeVoiceConnection"
+
+        class _Reg:
+            def resolve_definition(self, sid, **kw):
+                return _SvcDef()
+
+            def resolve(self, sid, **kw):
+                return object()
+
+        monkeypatch.setattr(tv, "_agent_realtime_service_id",
+                            lambda cid, agent: "rt-voice")
+        monkeypatch.setattr(
+            "core.service_registry.ServiceRegistry.get_instance",
+            staticmethod(lambda: _Reg()))
+        monkeypatch.setattr(tv, "_decode_audio_to_pcm16",
+                            lambda audio, suffix=".ogg": b"PCMIN")
+        monkeypatch.setattr(tv, "_encode_pcm16_to_ogg", lambda pcm: b"OGGOUT")
+        monkeypatch.setattr(
+            turn_mod, "run_voice_turn",
+            lambda service, **kw: {"audio": b"PCMOUT", "user_text": "salut",
+                                   "agent_text": "bonjour"})
+
+        class _BoomFF(FlowFile):
+            def set_attribute(self, key, value):
+                raise RuntimeError("attribute store down")
+
+        ff = _BoomFF(content=b"")
+        assert tv._telegram_realtime_voice_reply(
+            ff, self._payload(), "quentin", "conv1", "claude") is True
+
     def test_turn_failure_falls_back(self, monkeypatch):
         import tasks.io._telegram_voice as tv
         import services._realtime_turn as turn_mod

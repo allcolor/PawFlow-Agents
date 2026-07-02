@@ -620,6 +620,38 @@ class TestRealtimeSessionBridge:
         finally:
             client_sock.close()
 
+    def test_manual_commit_holds_assistant_until_user_transcript(self):
+        """Manual VAD emits no speech_started — the client's commit control
+        must mark the pending user transcription so the question→answer
+        persistence order holds in push-to-talk sessions too."""
+        persisted = []
+        bridge, adapter, service, client, thread = self._run_bridge(
+            [], persisted)
+        try:
+            self._read_until(client, "ready")
+            _client_send_frame(client, 0x1, b'{"type": "commit"}')
+            for _ in range(50):
+                if adapter.commits:
+                    break
+                time.sleep(0.05)
+            assert adapter.commits == 1
+            # Agent answers first; whisper transcript of the user lands late.
+            adapter._events.put({"type": "transcript_agent",
+                                 "text": "réponse", "final": True})
+            adapter._events.put({"type": "transcript_user",
+                                 "text": "question", "final": True})
+            for _ in range(50):
+                if len(persisted) >= 2:
+                    break
+                time.sleep(0.05)
+            assert persisted == [("user", "question"),
+                                 ("assistant", "réponse")]
+            _client_send_frame(client, 0x1, b'{"type": "stop"}')
+            self._read_until(client, "closed")
+            thread.join(timeout=5)
+        finally:
+            client.close()
+
     def test_late_user_transcript_keeps_question_answer_order(self):
         """The whisper user transcript usually lands AFTER the agent
         transcript of the same turn (regression: persisted in arrival

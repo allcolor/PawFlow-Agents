@@ -307,6 +307,13 @@ class RealtimeSessionBridge:
         ctype = ctl.get("type", "")
         try:
             if ctype == "commit":
+                # Manual VAD has no speech_started: the commit marks the
+                # user utterance whose transcription is now pending, so the
+                # question→answer persistence ordering holds here too.
+                # (Counted first: a failed commit resolves via the grace
+                # flush, while counting after would race the agent reply.)
+                with self._transcript_lock:
+                    self._pending_user += 1
                 self._adapter.commit_input()
             elif ctype == "interrupt":
                 self._adapter.interrupt()

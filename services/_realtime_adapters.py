@@ -91,42 +91,52 @@ class RealtimeWSClient:
 
     # -- frame I/O ----------------------------------------------------
 
-    def _recv_exact(self, n: int):
-        while len(self._rxbuf) < n:
-            chunk = self._sock.recv(65536)
-            if not chunk:
+    def _try_parse_frame(self):
+        """Parse ONE complete frame from the buffer, or None if incomplete.
+
+        Nothing is consumed until the whole frame is buffered — a timeout
+        mid-frame must leave the stream intact. (Consuming the header and
+        then timing out on the payload desynchronizes the stream: the next
+        read would parse payload bytes as a header.)
+        """
+        buf = self._rxbuf
+        if len(buf) < 2:
+            return None
+        opcode = buf[0] & 0x0F
+        length = buf[1] & 0x7F
+        off = 2
+        if length == 126:
+            if len(buf) < 4:
                 return None
-            self._rxbuf.extend(chunk)
-        out = bytes(self._rxbuf[:n])
-        del self._rxbuf[:n]
-        return out
+            length = struct.unpack("!H", bytes(buf[2:4]))[0]
+            off = 4
+        elif length == 127:
+            if len(buf) < 10:
+                return None
+            length = struct.unpack("!Q", bytes(buf[2:10]))[0]
+            off = 10
+        # Server frames are unmasked (RFC 6455 §5.1) — no mask key bytes.
+        if len(buf) < off + length:
+            return None
+        payload = bytes(buf[off:off + length])
+        del buf[:off + length]
+        return opcode, payload
 
     def recv_frame(self, timeout: float = None):
-        """Return (opcode, payload) or (None, b"") on EOF/timeout."""
+        """Return (opcode, payload), or (None, b"") on EOF. Raises
+        socket.timeout with the partial frame preserved in the buffer."""
         if self._sock is None:
             return None, b""
         try:
             self._sock.settimeout(timeout)
-            hdr = self._recv_exact(2)
-            if hdr is None:
-                return None, b""
-            opcode = hdr[0] & 0x0F
-            length = hdr[1] & 0x7F
-            if length == 126:
-                ext = self._recv_exact(2)
-                if ext is None:
+            while True:
+                frame = self._try_parse_frame()
+                if frame is not None:
+                    return frame
+                chunk = self._sock.recv(65536)
+                if not chunk:
                     return None, b""
-                length = struct.unpack("!H", ext)[0]
-            elif length == 127:
-                ext = self._recv_exact(8)
-                if ext is None:
-                    return None, b""
-                length = struct.unpack("!Q", ext)[0]
-            # Server frames are unmasked (RFC 6455 §5.1).
-            payload = self._recv_exact(length) if length else b""
-            if payload is None:
-                return None, b""
-            return opcode, payload
+                self._rxbuf.extend(chunk)
         except socket.timeout:
             raise
         except (OSError, ValueError):

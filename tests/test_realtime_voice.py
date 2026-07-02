@@ -210,6 +210,55 @@ class TestRealtimeWSClient:
         client.close()
 
 
+# ── frame parser resilience ──────────────────────────────────────────
+
+class _JitterySock:
+    """Delivers scripted byte bursts; raises socket.timeout when drained."""
+
+    def __init__(self, bursts):
+        self._bursts = list(bursts)
+
+    def settimeout(self, t):
+        pass
+
+    def recv(self, n):
+        if not self._bursts:
+            raise socket.timeout()
+        return self._bursts.pop(0)
+
+
+def test_recv_frame_survives_timeout_mid_frame():
+    """A timeout between the header and the payload must NOT desync the
+    stream (regression: the consumed header bytes were lost, so the next
+    read parsed payload bytes as a header)."""
+    payload = json.dumps({"type": "session.created"}).encode()
+    frame = bytes([0x81, len(payload)]) + payload
+    client = RealtimeWSClient("ws://x/", {})
+    client._sock = _JitterySock([frame[:2]])  # header only, then timeout
+    client._rxbuf = bytearray()
+    with pytest.raises(socket.timeout):
+        client.recv_frame(timeout=0.01)
+    # Rest of the frame arrives — the parse must resume cleanly.
+    client._sock._bursts.append(frame[2:])
+    opcode, got = client.recv_frame(timeout=0.01)
+    assert opcode == 0x1
+    assert got == payload
+
+
+def test_recv_frame_reassembles_split_extended_frame():
+    payload = b"x" * 300  # forces the 126 extended-length header
+    frame = bytes([0x82, 126]) + struct.pack("!H", 300) + payload
+    client = RealtimeWSClient("ws://x/", {})
+    client._sock = _JitterySock([frame[:3]])  # split inside the ext length
+    client._rxbuf = bytearray()
+    with pytest.raises(socket.timeout):
+        client.recv_frame(timeout=0.01)
+    client._sock._bursts.extend([frame[3:150], frame[150:]])
+    opcode, got = client.recv_frame(timeout=0.01)
+    assert opcode == 0x2
+    assert got == payload
+
+
 # ── service config validation ────────────────────────────────────────
 
 class TestRealtimeVoiceService:
@@ -463,6 +512,38 @@ class TestRealtimeSessionBridge:
             assert ("system", "bash finished: ok") in persisted
         finally:
             client.close()
+
+    def test_session_cap_enforced_with_silent_client(self):
+        """max_session_seconds must fire even when the browser sends nothing
+        (muted mic): the handler thread blocks in _ws_recv, so the deadline
+        lives in the provider pump."""
+        persisted = []
+        server_sock, client = socket.socketpair()
+        adapter = _FakeAdapter([])
+        service = _FakeService(adapter)
+        service.max_session_seconds = 1
+        bridge = RealtimeSessionBridge(server_sock, "conv1", "claude",
+                                       "quentin", service)
+        bridge._persist = lambda role, text: persisted.append((role, text))
+        thread = threading.Thread(target=bridge.run, daemon=True)
+        thread.start()
+        try:
+            self._read_until(client, "ready")
+            # Send NOTHING — just wait for the cap to close the session.
+            closed, _ = self._read_until(client, "closed", limit=10)
+            assert closed["reason"] == "max_session_seconds"
+            thread.join(timeout=5)
+            assert not thread.is_alive()
+            assert adapter.closed
+        finally:
+            client.close()
+
+    def test_force_stop_wired_into_cancel_action(self):
+        """The conversation force-stop path must kill the voice session."""
+        from pathlib import Path
+        src = Path("tasks/ai/actions/cancel_interrupt.py").read_text(
+            encoding="utf-8")
+        assert "stop_realtime_session" in src
 
     def test_p1_refuses_stray_tool_calls(self):
         persisted = []

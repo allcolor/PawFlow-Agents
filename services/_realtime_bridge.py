@@ -163,6 +163,7 @@ class RealtimeSessionBridge:
         self._agent_text_parts = []
         self._tools = None
         self._tools_inflight = 0
+        self._deadline = float("inf")  # set in run() before the pump starts
 
     # -- client frame helpers -------------------------------------------
 
@@ -225,14 +226,17 @@ class RealtimeSessionBridge:
         # `ready` goes out before the provider pump starts so the client
         # never sees session events ahead of the ready handshake.
         self._emit({"type": "ready", "state": "listening"})
+        # The deadline is enforced in the provider pump (loops every ≤1 s
+        # regardless of traffic): this handler thread blocks in _ws_recv,
+        # so a silent client (muted mic) would starve a check placed here.
+        self._deadline = self._started_at + max_seconds
         pump = threading.Thread(target=self._provider_pump,
                                 name=f"realtime-pump-{self._cid[:8]}",
                                 daemon=True)
         pump.start()
-        deadline = self._started_at + max_seconds
         try:
             while not self._stop_ev.is_set():
-                if time.monotonic() > deadline:
+                if time.monotonic() > self._deadline:
                     self.stop("max_session_seconds")
                     break
                 opcode, payload = _ws_recv(self._sock)
@@ -269,6 +273,11 @@ class RealtimeSessionBridge:
 
     def _provider_pump(self):
         while not self._stop_ev.is_set():
+            if time.monotonic() > self._deadline:
+                # stop() shuts down the browser socket's read side, which
+                # also unblocks the handler thread stuck in _ws_recv.
+                self.stop("max_session_seconds")
+                break
             try:
                 evt = self._adapter.recv_event(timeout=1.0)
             except ConnectionError:

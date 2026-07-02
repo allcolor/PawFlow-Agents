@@ -263,6 +263,16 @@ def _handle_cancel_interrupt(self, action, body, store, user_id, flowfile):
         if _live_killed:
             logger.info("[agent:%s] force-stopped %d live CLI container(s)",
                         conv_id[:8], _live_killed)
+        # Kill the conversation's active realtime voice session, if any —
+        # a voice session is agent activity too and must not survive a
+        # force-stop (it holds an open provider session that costs money).
+        try:
+            from services._realtime_bridge import stop_realtime_session
+            if stop_realtime_session(conv_id):
+                logger.info("[agent:%s] force-stopped active realtime "
+                            "voice session", conv_id[:8])
+        except Exception:
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
         # Kill Claude Code subprocess (check keyed entries)
         with _exec._active_contexts_lock:

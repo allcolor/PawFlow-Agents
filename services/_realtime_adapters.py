@@ -284,6 +284,16 @@ class OpenAIRealtimeAdapter(RealtimeAdapter):
         self._extra_headers = dict(extra_headers or {})
         self._ws = None
         self._vad = "server"
+        # The provider rejects `response.create` while a response is active
+        # (send_tool_result / inject_context race against the function-call
+        # response's own lifecycle) and the rejected create is simply lost —
+        # the agent would never speak the tool result. Track the active
+        # response from provider events and defer creates until it is done.
+        # Guarded by _resp_lock: sends come from tool threads, events from
+        # the pump thread.
+        self._resp_lock = threading.Lock()
+        self._response_active = False
+        self._response_pending = False
 
     # -- helpers -------------------------------------------------------
 
@@ -300,6 +310,20 @@ class OpenAIRealtimeAdapter(RealtimeAdapter):
 
     def _send_json(self, obj: dict):
         self._ws.send_text(json.dumps(obj))
+
+    def _create_response(self):
+        """`response.create`, serialized against the active response.
+
+        A create sent while a response is active is rejected by the
+        provider (benign error) and silently lost; deferring it until the
+        `response.done` of the active response keeps the follow-up spoken
+        response alive.
+        """
+        with self._resp_lock:
+            if self._response_active:
+                self._response_pending = True
+                return
+        self._send_json({"type": "response.create"})
 
     # -- RealtimeAdapter -----------------------------------------------
 
@@ -335,7 +359,7 @@ class OpenAIRealtimeAdapter(RealtimeAdapter):
 
     def commit_input(self):
         self._send_json({"type": "input_audio_buffer.commit"})
-        self._send_json({"type": "response.create"})
+        self._create_response()
 
     def send_tool_result(self, call_id: str, result: str):
         self._send_json({
@@ -346,7 +370,7 @@ class OpenAIRealtimeAdapter(RealtimeAdapter):
                 "output": result,
             },
         })
-        self._send_json({"type": "response.create"})
+        self._create_response()
 
     def interrupt(self):
         self._send_json({"type": "response.cancel"})
@@ -360,7 +384,7 @@ class OpenAIRealtimeAdapter(RealtimeAdapter):
                 "content": [{"type": "input_text", "text": text}],
             },
         })
-        self._send_json({"type": "response.create"})
+        self._create_response()
 
     def close(self):
         ws, self._ws = self._ws, None
@@ -426,7 +450,22 @@ class OpenAIRealtimeAdapter(RealtimeAdapter):
                     "call_id": evt.get("call_id", "") or "",
                     "name": evt.get("name", "") or "",
                     "arguments": evt.get("arguments", "") or ""}
+        if etype == "response.created":
+            with self._resp_lock:
+                self._response_active = True
+            return None
         if etype == "response.done":
+            with self._resp_lock:
+                self._response_active = False
+                pending, self._response_pending = self._response_pending, False
+            if pending:
+                # A create deferred while this response was active — send it
+                # now so the follow-up spoken response actually happens.
+                try:
+                    self._send_json({"type": "response.create"})
+                except Exception:
+                    logger.debug("Realtime: deferred response.create failed",
+                                 exc_info=True)
             usage = {}
             try:
                 usage = (evt.get("response") or {}).get("usage") or {}

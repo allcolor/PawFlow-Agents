@@ -130,6 +130,36 @@ class TestOpenAIRealtimeAdapter:
             "code": "response_cancel_not_active"}})
         assert benign["fatal"] is False
 
+    def test_response_create_deferred_while_response_active(self):
+        """A response.create fired while a response is active is rejected by
+        the provider and lost (regression: after a fast tool call the agent
+        never spoke the result — the live session went silent, the Telegram
+        turn hung to its 120s timeout). The adapter must defer the create
+        until the active response's `response.done`, then send it."""
+        a = self._adapter()
+        sent = []
+
+        class _WS:
+            def send_text(self, t):
+                sent.append(json.loads(t))
+
+        a._ws = _WS()
+        # No response active → create goes out immediately.
+        a.commit_input()
+        assert [m["type"] for m in sent] == ["input_audio_buffer.commit",
+                                             "response.create"]
+        sent.clear()
+        # Response active → the tool result's create is deferred...
+        a._normalize({"type": "response.created"})
+        a.send_tool_result("c1", "42")
+        assert [m["type"] for m in sent] == ["conversation.item.create"]
+        # ...and flushed exactly once when the active response finishes.
+        a._normalize({"type": "response.done", "response": {"usage": {}}})
+        assert [m["type"] for m in sent] == ["conversation.item.create",
+                                             "response.create"]
+        a._normalize({"type": "response.done", "response": {"usage": {}}})
+        assert [m["type"] for m in sent].count("response.create") == 1
+
     def test_normalize_active_response_collision_is_benign(self):
         """send_tool_result/inject_context each fire response.create; when
         one collides with a still-active response the provider rejects it —

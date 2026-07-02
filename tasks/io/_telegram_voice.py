@@ -229,6 +229,10 @@ def _configured_tts_service_id(conversation_id: str, agent_name: str) -> str:
 # falls back to the STT pipeline.
 
 _REALTIME_TURN_RATE = 24000  # PCM16 mono, OpenAI realtime native rate
+# A hung ffmpeg (pathological container) must not pin a Telegram worker
+# thread forever — a timeout degrades into the normal fallback paths
+# (decode → STT pipeline, encode → text-only reply).
+_FFMPEG_TIMEOUT_S = 60
 
 
 def _ffmpeg_bin() -> str:
@@ -253,7 +257,8 @@ def _decode_audio_to_pcm16(audio_bytes: bytes, suffix: str = ".ogg") -> bytes:
             [ffmpeg, "-hide_banner", "-loglevel", "error", "-i", src,
              "-f", "s16le", "-acodec", "pcm_s16le", "-ac", "1",
              "-ar", str(_REALTIME_TURN_RATE), "pipe:1"],
-            check=True, capture_output=True).stdout
+            check=True, capture_output=True,
+            timeout=_FFMPEG_TIMEOUT_S).stdout
         if not out:
             raise RuntimeError("ffmpeg produced no PCM output")
         return out
@@ -281,7 +286,8 @@ def _encode_pcm16_to_ogg(pcm: bytes) -> bytes:
             [ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
              "-f", "s16le", "-ar", str(_REALTIME_TURN_RATE), "-ac", "1",
              "-i", "pipe:0", "-c:a", "libopus", "-b:a", "32k", dst],
-            check=True, input=pcm, capture_output=True)
+            check=True, input=pcm, capture_output=True,
+            timeout=_FFMPEG_TIMEOUT_S)
         with open(dst, "rb") as fh:
             return fh.read()
     finally:

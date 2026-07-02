@@ -198,6 +198,11 @@ class RealtimeAdapter:
         """Barge-in: cancel the in-flight agent response."""
         raise NotImplementedError
 
+    def inject_context(self, text: str) -> None:
+        """Add out-of-band context (delegated tool result, note) to the
+        session and prompt the model to speak about it."""
+        raise NotImplementedError
+
     def recv_event(self, timeout: float = 1.0):
         """Next normalized event dict, None on timeout, or raises
         ConnectionError when the provider socket is gone."""
@@ -290,6 +295,17 @@ class OpenAIRealtimeAdapter(RealtimeAdapter):
 
     def interrupt(self):
         self._send_json({"type": "response.cancel"})
+
+    def inject_context(self, text: str):
+        self._send_json({
+            "type": "conversation.item.create",
+            "item": {
+                "type": "message",
+                "role": "system",
+                "content": [{"type": "input_text", "text": text}],
+            },
+        })
+        self._send_json({"type": "response.create"})
 
     def close(self):
         ws, self._ws = self._ws, None

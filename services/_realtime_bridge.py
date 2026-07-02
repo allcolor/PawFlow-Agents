@@ -61,6 +61,87 @@ def stop_realtime_session(conversation_id: str) -> bool:
     return True
 
 
+def resolve_session_instructions(service, conversation_id: str,
+                                 agent_name: str) -> str:
+    """Session instructions for a voice session/turn.
+
+    `instructions_mode == 'custom'` uses the service's own text; 'agent'
+    reuses the conversation agent's system prompt (best effort). Shared by
+    the live bridge and the turn-based runner (Telegram voice notes).
+    """
+    if getattr(service, "instructions_mode", "agent") == "custom":
+        return getattr(service, "instructions", "") or ""
+    prompt = ""
+    try:
+        from core.conv_agent_config import get_agent_config
+        cfg = get_agent_config(conversation_id, agent_name) or {}
+        for key in ("system_prompt", "systemPrompt", "prompt",
+                    "instructions"):
+            if cfg.get(key):
+                prompt = str(cfg[key])
+                break
+    except Exception:
+        logger.debug("[realtime] agent prompt lookup failed", exc_info=True)
+    if not prompt:
+        prompt = (f"You are {agent_name or 'the assistant'}, a helpful "
+                  "voice assistant. Keep spoken answers concise.")
+    return prompt
+
+
+def persist_voice_transcript(conversation_id: str, agent_name: str,
+                             user_id: str, role: str, text: str) -> None:
+    """Persist one final voice transcript as a normal conversation message.
+
+    Messages carry msg_id + ts at creation (store convention) and are
+    routed/published by ConversationWriter, so every attached client
+    (webchat SSE, Telegram bridge, PawCode) sees the voice exchange and
+    the text agent resumes seamlessly after the session. `role` may be
+    'user', 'assistant', or 'system' (delegated tool results landing after
+    the session ended).
+    """
+    text = (text or "").strip()
+    if not text:
+        return
+    try:
+        from core.llm_client import LLMMessage
+        from core.conversation_writer import ConversationWriter
+        if role == "user":
+            source = {"type": "user", "name": user_id or "user",
+                      "target_agent": agent_name, "channel": "voice"}
+        elif role == "system":
+            source = {"type": "system", "name": "realtime_voice",
+                      "channel": "voice"}
+        else:
+            source = {"type": "agent", "name": agent_name,
+                      "channel": "voice"}
+        msg = LLMMessage(role=role, content=text, source=source,
+                         conversation_id=conversation_id)
+        store_msg = {
+            "role": role,
+            "content": text,
+            "source": source,
+            "msg_id": msg.msg_id,
+            "ts": msg.timestamp,
+            "seq": None,
+        }
+        ConversationWriter.for_conversation(conversation_id).enqueue_message(
+            store_msg,
+            agent_name=agent_name if role == "assistant" else "",
+            user_id=user_id,
+            sse_events=[{"type": "new_message", "data": {
+                "role": role,
+                "content": text,
+                "msg_id": msg.msg_id,
+                "ts": msg.timestamp,
+                "source": source,
+                "agent_name": agent_name if role == "assistant" else "",
+            }}],
+        )
+    except Exception:
+        logger.error("[realtime] transcript persistence failed for %s",
+                     conversation_id[:8], exc_info=True)
+
+
 class RealtimeSessionBridge:
     def __init__(self, sock, conversation_id: str, agent_name: str,
                  user_id: str, service):
@@ -75,6 +156,7 @@ class RealtimeSessionBridge:
         self._send_lock = threading.Lock()
         self._started_at = time.monotonic()
         self._agent_text_parts = []
+        self._tools = None
 
     # -- client frame helpers -------------------------------------------
 
@@ -95,82 +177,38 @@ class RealtimeSessionBridge:
     # -- transcript persistence ------------------------------------------
 
     def _persist(self, role: str, text: str):
-        """Persist one final transcript as a normal conversation message.
-
-        Messages carry msg_id + ts at creation (store convention) and are
-        routed/published by ConversationWriter, so every attached client
-        (webchat SSE, Telegram bridge, PawCode) sees the voice exchange and
-        the text agent resumes seamlessly after the session.
-        """
-        text = (text or "").strip()
-        if not text:
-            return
-        try:
-            from core.llm_client import LLMMessage
-            from core.conversation_writer import ConversationWriter
-            if role == "user":
-                source = {"type": "user", "name": self._user_id or "user",
-                          "target_agent": self._agent, "channel": "voice"}
-            else:
-                source = {"type": "agent", "name": self._agent,
-                          "channel": "voice"}
-            msg = LLMMessage(role=role, content=text, source=source,
-                             conversation_id=self._cid)
-            store_msg = {
-                "role": role,
-                "content": text,
-                "source": source,
-                "msg_id": msg.msg_id,
-                "ts": msg.timestamp,
-                "seq": None,
-            }
-            ConversationWriter.for_conversation(self._cid).enqueue_message(
-                store_msg,
-                agent_name=self._agent if role == "assistant" else "",
-                user_id=self._user_id,
-                sse_events=[{"type": "new_message", "data": {
-                    "role": role,
-                    "content": text,
-                    "msg_id": msg.msg_id,
-                    "ts": msg.timestamp,
-                    "source": source,
-                    "agent_name": self._agent if role == "assistant" else "",
-                }}],
-            )
-        except Exception:
-            logger.error("[realtime] transcript persistence failed for %s",
-                         self._cid[:8], exc_info=True)
+        persist_voice_transcript(self._cid, self._agent, self._user_id,
+                                 role, text)
 
     # -- lifecycle ----------------------------------------------------------
 
     def _instructions(self) -> str:
-        if getattr(self._service, "instructions_mode", "agent") == "custom":
-            return getattr(self._service, "instructions", "") or ""
-        # agent mode: best-effort reuse of the conversation agent's prompt.
-        prompt = ""
+        return resolve_session_instructions(self._service, self._cid,
+                                            self._agent)
+
+    def _build_tool_bridge(self):
+        """Tool bridge + provider definitions when tool_profile is set."""
+        profile = (getattr(self._service, "tool_profile", "") or "").strip()
+        if not profile:
+            return None, []
         try:
-            from core.conv_agent_config import get_agent_config
-            cfg = get_agent_config(self._cid, self._agent) or {}
-            for key in ("system_prompt", "systemPrompt", "prompt",
-                        "instructions"):
-                if cfg.get(key):
-                    prompt = str(cfg[key])
-                    break
+            from services._realtime_tools import RealtimeToolBridge
+            tools = RealtimeToolBridge(profile, self._cid, self._agent,
+                                       self._user_id)
+            return tools, tools.tool_definitions()
         except Exception:
-            logger.debug("[realtime] agent prompt lookup failed",
-                         exc_info=True)
-        if not prompt:
-            prompt = (f"You are {self._agent or 'the assistant'}, a helpful "
-                      "voice assistant. Keep spoken answers concise.")
-        return prompt
+            logger.warning("[realtime] tool bridge init failed — session "
+                           "continues without tools", exc_info=True)
+            return None, []
 
     def run(self):
         """Blocking session loop; owns the browser socket until teardown."""
         max_seconds = int(getattr(self._service, "max_session_seconds", 600)
                           or 600)
+        self._tools, tool_defs = self._build_tool_bridge()
         try:
             self._adapter = self._service.open_session(
-                instructions=self._instructions())
+                instructions=self._instructions(), tools=tool_defs)
         except Exception as exc:
             logger.warning("[realtime] session open failed for %s: %s",
                            self._cid[:8], exc)
@@ -269,21 +307,72 @@ class RealtimeSessionBridge:
                             "usage": evt.get("usage") or {}})
                 self._emit({"type": "state", "state": "listening"})
             elif etype == "tool_call":
-                # P1 exposes no tools; a stray provider call gets an
-                # explicit refusal so the session keeps flowing.
-                try:
-                    self._adapter.send_tool_result(
-                        evt.get("call_id", ""),
-                        "Tool execution is not enabled for this voice session.")
-                except Exception:
-                    logger.debug("[realtime] tool refusal failed",
-                                 exc_info=True)
+                self._handle_tool_call(evt)
             elif etype == "error":
                 self._emit({"type": "error",
                             "message": evt.get("message", "provider error")})
                 if evt.get("fatal"):
                     self.stop("provider_error")
                     break
+
+    # -- tools -----------------------------------------------------------
+
+    def _handle_tool_call(self, evt: dict):
+        """Dispatch one provider tool call without blocking the pump."""
+        call_id = evt.get("call_id", "")
+        name = evt.get("name", "") or "?"
+        if self._tools is None:
+            # No tool_profile on the service; a stray provider call gets an
+            # explicit refusal so the session keeps flowing.
+            try:
+                self._adapter.send_tool_result(
+                    call_id,
+                    "Tool execution is not enabled for this voice session.")
+            except Exception:
+                logger.debug("[realtime] tool refusal failed", exc_info=True)
+            return
+        self._emit({"type": "tool", "name": name, "status": "running"})
+        self._emit({"type": "state", "state": "tool"})
+        adapter = self._adapter
+        arguments = evt.get("arguments", "")
+
+        def _run():
+            try:
+                status = self._tools.handle_call(
+                    call_id, name, arguments,
+                    send_result=adapter.send_tool_result,
+                    announce=self._announce_tool_result)
+            except Exception:
+                logger.warning("[realtime] tool call '%s' failed", name,
+                               exc_info=True)
+                status = "error"
+                try:
+                    adapter.send_tool_result(
+                        call_id, f"Error: tool '{name}' execution failed.")
+                except Exception:
+                    logger.debug("[realtime] tool error result failed",
+                                 exc_info=True)
+            self._emit({"type": "tool", "name": name, "status": status})
+
+        threading.Thread(target=_run,
+                         name=f"realtime-tool-{self._cid[:8]}",
+                         daemon=True).start()
+
+    def _announce_tool_result(self, text: str):
+        """Deliver a delegated (long) tool result.
+
+        Live session → inject into the provider session so the agent speaks
+        it. Session gone → persist as a system message so the text agent
+        picks it up next turn instead of the result being lost.
+        """
+        if not self._stop_ev.is_set() and self._adapter is not None:
+            try:
+                self._adapter.inject_context(text)
+                return
+            except Exception:
+                logger.debug("[realtime] tool result injection failed — "
+                             "persisting instead", exc_info=True)
+        self._persist("system", text)
 
     def stop(self, reason: str):
         if not self._stop_ev.is_set():

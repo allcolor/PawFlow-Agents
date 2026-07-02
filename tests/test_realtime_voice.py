@@ -284,13 +284,16 @@ class _FakeService:
     instructions_mode = "custom"
     instructions = "Be brief."
     max_session_seconds = 30
+    tool_profile = ""
 
     def __init__(self, adapter):
         self._adapter = adapter
         self.opened_with = None
+        self.opened_tools = None
 
-    def open_session(self, instructions="", tools=None):
+    def open_session(self, instructions="", tools=None, vad=""):
         self.opened_with = instructions
+        self.opened_tools = tools
         return self._adapter
 
 
@@ -395,6 +398,69 @@ class TestRealtimeSessionBridge:
             thread.join(timeout=5)
             assert not thread.is_alive()
             assert adapter.closed
+        finally:
+            client.close()
+
+    def test_tool_call_executes_through_tool_bridge(self, monkeypatch):
+        """tool_profile set → provider tool_call runs through the bridge:
+        definitions sent at open, result returned, UI status events."""
+        class _FakeToolBridge:
+            def __init__(self, profile, cid, agent, user):
+                assert profile == "echo"
+
+            def tool_definitions(self):
+                return [{"type": "function", "name": "echo",
+                         "description": "d", "parameters": {}}]
+
+            def handle_call(self, call_id, name, arguments, *,
+                            send_result, announce=None, **kw):
+                send_result(call_id, f"echoed:{name}")
+                return "done"
+
+        import services._realtime_tools as rt_tools
+        monkeypatch.setattr(rt_tools, "RealtimeToolBridge", _FakeToolBridge)
+        persisted = []
+        events = [{"type": "tool_call", "call_id": "c7", "name": "echo",
+                   "arguments": "{}"}]
+        server_sock, client = socket.socketpair()
+        adapter = _FakeAdapter(events)
+        service = _FakeService(adapter)
+        service.tool_profile = "echo"
+        bridge = RealtimeSessionBridge(server_sock, "conv1", "claude",
+                                       "quentin", service)
+        bridge._persist = lambda role, text: persisted.append((role, text))
+        thread = threading.Thread(target=bridge.run, daemon=True)
+        thread.start()
+        try:
+            self._read_until(client, "ready")
+            assert service.opened_tools and \
+                service.opened_tools[0]["name"] == "echo"
+            for _ in range(50):
+                if adapter.tool_results:
+                    break
+                time.sleep(0.05)
+            assert adapter.tool_results == [("c7", "echoed:echo")]
+            # UI got running → done status events
+            done_evt, _ = self._read_until(client, "tool")
+            assert done_evt["name"] == "echo"
+            _client_send_frame(client, 0x1, b'{"type": "stop"}')
+            self._read_until(client, "closed")
+            thread.join(timeout=5)
+        finally:
+            client.close()
+
+    def test_late_tool_result_persists_as_system_after_session_end(self):
+        """A delegated tool finishing after teardown must not be lost."""
+        persisted = []
+        bridge, adapter, service, client, thread = self._run_bridge(
+            [], persisted)
+        try:
+            self._read_until(client, "ready")
+            _client_send_frame(client, 0x1, b'{"type": "stop"}')
+            self._read_until(client, "closed")
+            thread.join(timeout=5)
+            bridge._announce_tool_result("bash finished: ok")
+            assert ("system", "bash finished: ok") in persisted
         finally:
             client.close()
 

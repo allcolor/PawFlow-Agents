@@ -118,12 +118,15 @@ class RealtimeVoiceConnectionService(BaseService):
 
     # -- sessions ---------------------------------------------------------
 
-    def open_session(self, *, instructions: str = "", tools: list = None):
+    def open_session(self, *, instructions: str = "", tools: list = None,
+                     vad: str = ""):
         """Connect a provider session and return the live adapter.
 
         `instructions` overrides the config-level instructions (the bridge
         passes the conversation agent's system prompt when
-        `instructions_mode == 'agent'`).
+        `instructions_mode == 'agent'`). `vad` overrides the configured
+        turn detection — turn-based callers (Telegram voice notes) force
+        'manual' regardless of the live-session setting.
         """
         self._create_connection()  # re-validate on every session
         svc = self._resolve_llm_service()
@@ -138,7 +141,7 @@ class RealtimeVoiceConnectionService(BaseService):
             voice=self.voice,
             instructions=instructions or self.instructions,
             tools=tools or [],
-            vad=self.vad,
+            vad=(vad or self.vad),
             input_format=self.input_audio_format,
             output_format=self.output_audio_format,
         )
@@ -183,7 +186,7 @@ class RealtimeVoiceConnectionService(BaseService):
             "max_session_seconds": {"type": "integer", "required": False, "default": 600,
                                      "description": "Hard cap on a single voice session; the bridge closes the session when reached."},
             "tool_profile": {"type": "string", "required": False, "default": "",
-                              "description": "Reserved (P2): comma-separated PawFlow tools exposed to the voice model."},
+                              "description": "Comma-separated PawFlow tools exposed to the voice model (e.g. 'recall,remember,web_search,read'). Approval is silent: exempt/pre-approved tools run, anything needing a dialog is refused; long tools detach to the background and announce their result. Empty = no tools."},
         }
 
 

@@ -147,10 +147,14 @@ class ToolApprovalGate:
         conversation_id: str, user_id: str,
         arguments: dict = None,
         agent_name: str = "",
+        allow_prompt: bool = True,
     ) -> str:
         """Check if tool execution is approved.
 
-        Returns "approved" or "denied" or "timeout".
+        Returns "approved" or "denied" or "timeout" — or "needs_approval"
+        when allow_prompt=False and the decision would require the
+        interactive dialog (voice sessions and other UX-less callers probe
+        this way instead of blocking on a dialog nobody can answer).
         Permissions are scoped per (conversation, agent). Agent A's approval
         does not carry over to agent B.
         For filesystem/see tools, arguments determine the approval level.
@@ -251,6 +255,10 @@ class ToolApprovalGate:
 
         if not needs_ask:
             return "approved"
+
+        if not allow_prompt:
+            # Probe mode: the caller has no approval UX to offer.
+            return "needs_approval"
 
         # Need to ask the user
         if not conversation_id:

@@ -259,6 +259,47 @@ def test_recv_frame_reassembles_split_extended_frame():
     assert got == payload
 
 
+def test_recv_frame_reassembles_fragmented_message():
+    """FIN=0 fragments + continuation frames form ONE message (RFC 6455
+    §5.4), and an interleaved ping passes through without breaking the
+    assembly (regression: fragments were returned as broken standalone
+    frames, so a fragmented provider event was silently dropped)."""
+    frag1 = bytes([0x01, 3]) + b"hel"   # text, FIN=0
+    ping = bytes([0x89, 1]) + b"p"      # control frame, interleaved
+    frag2 = bytes([0x80, 2]) + b"lo"    # continuation, FIN=1
+    client = RealtimeWSClient("ws://x/", {})
+    client._sock = _JitterySock([frag1 + ping + frag2])
+    client._rxbuf = bytearray()
+    assert client.recv_frame(timeout=0.01) == (0x9, b"p")
+    assert client.recv_frame(timeout=0.01) == (0x1, b"hello")
+
+
+def test_recv_frame_rejects_insane_frame_length():
+    """A corrupted/hostile 64-bit length field must raise instead of
+    buffering gigabytes waiting for a payload that never comes."""
+    frame = bytes([0x82, 127]) + struct.pack("!Q", 1 << 40)
+    client = RealtimeWSClient("ws://x/", {})
+    client._sock = _JitterySock([frame])
+    client._rxbuf = bytearray()
+    with pytest.raises(ConnectionError):
+        client.recv_frame(timeout=0.01)
+
+
+def test_browser_ws_recv_rejects_insane_frame_length():
+    """Same guard on the browser leg: an authenticated client claiming a
+    huge frame is treated as a disconnect, not buffered."""
+    from services.audio_proxy import _ws_recv
+    server_sock, client_sock = socket.socketpair()
+    try:
+        client_sock.sendall(bytes([0x82, 0x80 | 127])
+                            + struct.pack("!Q", 1 << 40))
+        opcode, payload = _ws_recv(server_sock)
+        assert opcode is None and payload == b""
+    finally:
+        server_sock.close()
+        client_sock.close()
+
+
 # ── service config validation ────────────────────────────────────────
 
 class TestRealtimeVoiceService:
@@ -594,6 +635,50 @@ def test_stop_realtime_session_without_active_returns_false():
     assert stop_realtime_session("nope") is False
 
 
+def test_open_failure_does_not_leak_active_bridge(monkeypatch):
+    """open_session failure exits run() without _teardown — the handler
+    must still deregister the bridge, or stop_realtime_session would
+    report killing a session that is already dead."""
+    import services._realtime_bridge as rb
+    monkeypatch.setattr("core.flow_runtime_access.conversation_owner",
+                        lambda cid: "alice")
+
+    class _Svc:
+        max_session_seconds = 5
+        tool_profile = ""
+
+        def set_runtime_context(self, **kw):
+            pass
+
+        def open_session(self, **kw):
+            raise RuntimeError("provider down")
+
+    class _Def:
+        service_type = "realtimeVoiceConnection"
+
+    class _Reg:
+        def resolve_definition(self, sid, **kw):
+            return _Def()
+
+        def resolve(self, sid, **kw):
+            return _Svc()
+
+    monkeypatch.setattr("core.service_registry.ServiceRegistry.get_instance",
+                        staticmethod(lambda: _Reg()))
+    server_sock, client_sock = socket.socketpair()
+    try:
+        rb.realtime_ws_handler(
+            server_sock, {"conversation_id": "conv-openfail"},
+            {"query": "service=rt&agent=claude",
+             "auth_user_id": "alice", "auth_role": "user"})
+        with rb._bridges_lock:
+            assert "conv-openfail" not in rb._active_bridges
+        assert rb.stop_realtime_session("conv-openfail") is False
+    finally:
+        server_sock.close()
+        client_sock.close()
+
+
 def test_ws_handler_rejects_identityless_caller(monkeypatch):
     """API-key / internal-auth WS connections carry no auth_user_id; a voice
     session must refuse them even on an ownerless conversation."""
@@ -663,6 +748,7 @@ def test_chat_ui_voice_mode_is_wired():
     assert "_voiceToggleMute" in js
     assert "_voiceToolActivity" in js
     assert "_voiceLinkedService" in js
+    assert "if (_voiceStarting) return;" in js  # double-start guard
 
     for lang in ("en", "fr", "es"):
         data = json.loads(Path(f"tasks/io/chat_ui/i18n/{lang}.json")

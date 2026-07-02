@@ -11,6 +11,7 @@ var _voiceServices = [];
 var _voiceSelectedService = '';
 var _voiceLinkedService = '';
 var _voiceActive = false;
+var _voiceStarting = false; // a second click while connecting must not open a parallel capture/session
 var _voiceMuted = false;
 var _voiceWs = null;
 var _voiceStream = null;
@@ -330,9 +331,19 @@ function _voiceStopCapture() {
 // ── session lifecycle ────────────────────────────────────────────────
 
 async function toggleVoiceMode() {
+  if (_voiceStarting) return;
   if (_voiceActive) { stopVoiceMode('user'); return; }
   const cid = _voiceConversationId();
   if (!cid) { addMsg('error', _voiceT('voiceNoConversation', 'Open a conversation first')); return; }
+  _voiceStarting = true;
+  try {
+    await _toggleVoiceModeStart(cid);
+  } finally {
+    _voiceStarting = false;
+  }
+}
+
+async function _toggleVoiceModeStart(cid) {
   // Fresh fetch: the agent link depends on the current conversation/agent,
   // and the action lazily registers the /ws/realtime route on the listener.
   await new Promise(resolve => refreshRealtimeVoiceServices(resolve));

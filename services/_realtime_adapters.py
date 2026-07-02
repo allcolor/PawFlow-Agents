@@ -30,6 +30,11 @@ import urllib.parse
 
 logger = logging.getLogger(__name__)
 
+# Sanity cap on a single WS message (frame or reassembled fragments): a
+# corrupted/hostile length field must not grow the buffer without bound.
+# The largest legitimate payloads are base64 audio deltas — a few 100 KiB.
+_WS_MAX_MESSAGE_BYTES = 32 * 1024 * 1024
+
 
 # ── Minimal RFC 6455 client ─────────────────────────────────────────
 
@@ -41,6 +46,10 @@ class RealtimeWSClient:
         self._headers = dict(headers or {})
         self._sock = None
         self._send_lock = threading.Lock()
+        # In-flight fragmented message (RFC 6455 §5.4): first-frame opcode
+        # and accumulated payload, preserved across recv_frame timeouts.
+        self._frag_opcode = 0
+        self._frag = bytearray()
 
     def connect(self, timeout: float = 15.0):
         parsed = urllib.parse.urlparse(self._url)
@@ -92,7 +101,8 @@ class RealtimeWSClient:
     # -- frame I/O ----------------------------------------------------
 
     def _try_parse_frame(self):
-        """Parse ONE complete frame from the buffer, or None if incomplete.
+        """Parse ONE complete frame → (fin, opcode, payload), or None if
+        incomplete.
 
         Nothing is consumed until the whole frame is buffered — a timeout
         mid-frame must leave the stream intact. (Consuming the header and
@@ -102,6 +112,7 @@ class RealtimeWSClient:
         buf = self._rxbuf
         if len(buf) < 2:
             return None
+        fin = bool(buf[0] & 0x80)
         opcode = buf[0] & 0x0F
         length = buf[1] & 0x7F
         off = 2
@@ -115,16 +126,22 @@ class RealtimeWSClient:
                 return None
             length = struct.unpack("!Q", bytes(buf[2:10]))[0]
             off = 10
+        if length > _WS_MAX_MESSAGE_BYTES:
+            raise ConnectionError(
+                f"Realtime WS frame too large ({length} bytes)")
         # Server frames are unmasked (RFC 6455 §5.1) — no mask key bytes.
         if len(buf) < off + length:
             return None
         payload = bytes(buf[off:off + length])
         del buf[:off + length]
-        return opcode, payload
+        return fin, opcode, payload
 
     def recv_frame(self, timeout: float = None):
-        """Return (opcode, payload), or (None, b"") on EOF. Raises
-        socket.timeout with the partial frame preserved in the buffer."""
+        """Return (opcode, payload) for one complete MESSAGE — fragmented
+        data frames are reassembled (RFC 6455 §5.4), control frames pass
+        through immediately (they may interleave with fragments and never
+        fragment themselves, §5.5). Returns (None, b"") on EOF; raises
+        socket.timeout with any partial frame/message preserved."""
         if self._sock is None:
             return None, b""
         try:
@@ -132,12 +149,31 @@ class RealtimeWSClient:
             while True:
                 frame = self._try_parse_frame()
                 if frame is not None:
-                    return frame
+                    fin, opcode, payload = frame
+                    if opcode >= 0x8:
+                        return opcode, payload
+                    if opcode:  # text/binary: first (or only) fragment
+                        self._frag_opcode = opcode
+                        self._frag = bytearray(payload)
+                    elif not self._frag_opcode:
+                        continue  # stray continuation — drop
+                    else:
+                        self._frag.extend(payload)
+                        if len(self._frag) > _WS_MAX_MESSAGE_BYTES:
+                            raise ConnectionError(
+                                "Realtime WS message too large")
+                    if fin:
+                        opcode = self._frag_opcode
+                        payload = bytes(self._frag)
+                        self._frag_opcode = 0
+                        self._frag = bytearray()
+                        return opcode, payload
+                    continue
                 chunk = self._sock.recv(65536)
                 if not chunk:
                     return None, b""
                 self._rxbuf.extend(chunk)
-        except socket.timeout:
+        except (socket.timeout, ConnectionError):
             raise
         except (OSError, ValueError):
             return None, b""

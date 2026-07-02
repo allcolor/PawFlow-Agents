@@ -343,6 +343,12 @@ def _recv_or_stop(sock, n: int, stop_ev: threading.Event) -> Optional[bytes]:
     return bytes(buf)
 
 
+# Largest client frame we accept (mic PCM chunks are a few KiB; JSON
+# control frames are tiny). A hostile length field must not make
+# _recv_exact buffer without bound.
+_WS_MAX_CLIENT_FRAME = 16 * 1024 * 1024
+
+
 def _ws_recv(sock) -> Tuple[Optional[int], bytes]:
     hdr = _recv_exact(sock, 2)
     if not hdr:
@@ -360,6 +366,8 @@ def _ws_recv(sock) -> Tuple[Optional[int], bytes]:
         if not ext:
             return None, b""
         length = struct.unpack("!Q", ext)[0]
+    if length > _WS_MAX_CLIENT_FRAME:
+        return None, b""  # treated as disconnect by every caller
     mask_key = b""
     if masked:
         mask_key = _recv_exact(sock, 4)

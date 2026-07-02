@@ -162,7 +162,10 @@ class RealtimeSessionBridge:
         self._started_at = time.monotonic()
         self._agent_text_parts = []
         self._tools = None
+        # Guarded by _tools_lock: incremented on the pump thread,
+        # decremented on per-call tool threads.
         self._tools_inflight = 0
+        self._tools_lock = threading.Lock()
         self._deadline = float("inf")  # set in run() before the pump starts
 
     # -- client frame helpers -------------------------------------------
@@ -322,7 +325,9 @@ class RealtimeSessionBridge:
                             "usage": evt.get("usage") or {}})
                 # A function-call response also ends with `response_done`;
                 # keep the tool state until the dispatched call resolves.
-                if self._tools_inflight <= 0:
+                with self._tools_lock:
+                    inflight = self._tools_inflight
+                if inflight <= 0:
                     self._emit({"type": "state", "state": "listening"})
             elif etype == "tool_call":
                 self._handle_tool_call(evt)
@@ -351,7 +356,8 @@ class RealtimeSessionBridge:
             return
         self._emit({"type": "tool", "name": name, "status": "running"})
         self._emit({"type": "state", "state": "tool"})
-        self._tools_inflight += 1
+        with self._tools_lock:
+            self._tools_inflight += 1
         adapter = self._adapter
         arguments = evt.get("arguments", "")
 
@@ -372,7 +378,8 @@ class RealtimeSessionBridge:
                     logger.debug("[realtime] tool error result failed",
                                  exc_info=True)
             finally:
-                self._tools_inflight = max(0, self._tools_inflight - 1)
+                with self._tools_lock:
+                    self._tools_inflight = max(0, self._tools_inflight - 1)
             self._emit({"type": "tool", "name": name, "status": status})
 
         threading.Thread(target=_run,
@@ -511,7 +518,15 @@ def realtime_ws_handler(sock, path_params: dict, meta: dict):
         previous.stop("superseded")
     logger.info("[realtime] session start cid=%s agent=%s service=%s user=%s",
                 conversation_id[:8], agent_name, service_id, user_id or "?")
-    bridge.run()
+    try:
+        bridge.run()
+    finally:
+        # run() exits without _teardown when open_session fails (and on any
+        # unexpected raise) — never leave a dead bridge registered, or
+        # stop_realtime_session would report killing a session that is gone.
+        with _bridges_lock:
+            if _active_bridges.get(conversation_id) is bridge:
+                del _active_bridges[conversation_id]
 
 
 def register_realtime_route(http_service) -> None:

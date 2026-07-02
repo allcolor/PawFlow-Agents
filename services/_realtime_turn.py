@@ -56,6 +56,7 @@ def run_voice_turn(service, *, conversation_id: str, agent_name: str,
             service, conversation_id, agent_name),
         tools=tool_defs,
         vad="manual",  # one committed turn, no live VAD
+        user_id=user_id, conversation_id=conversation_id,
     )
 
     audio_out = bytearray()

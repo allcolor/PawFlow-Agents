@@ -427,6 +427,54 @@ class TestRealtimeVoiceService:
         assert ServiceFactory.get("realtimeVoiceConnection") \
             is RealtimeVoiceConnectionService
 
+    def test_open_session_uses_explicit_identity_not_runtime_state(
+            self, monkeypatch):
+        """Registry service instances are SHARED: a concurrent session's
+        set_runtime_context can overwrite the runtime fields between this
+        session's set_runtime_context and open_session (regression: the
+        llmConnection then resolved in the OTHER user's scope — wrong
+        user-scoped API key). Identity passed to open_session must win."""
+        seen = {}
+
+        class _LLM:
+            provider = "openai"
+            api_key = "sk-a"
+            base_url = "https://api.openai.com/v1"
+
+        class _Def:
+            service_type = "llmConnection"
+
+        class _Reg:
+            def resolve_definition(self, sid, *, user_id="", conv_id=""):
+                seen["definition"] = (user_id, conv_id)
+                return _Def()
+
+            def resolve(self, sid, *, user_id="", conv_id=""):
+                seen["resolve"] = (user_id, conv_id)
+                return _LLM()
+
+        monkeypatch.setattr(
+            "core.service_registry.ServiceRegistry.get_instance",
+            staticmethod(lambda: _Reg()))
+
+        class _Adapter:
+            def connect(self, **kw):
+                pass
+
+        monkeypatch.setattr("services.realtime_voice_service.build_adapter",
+                            lambda *a, **kw: _Adapter())
+        svc = RealtimeVoiceConnectionService(
+            {"llm_service": "llm", "model": "gpt-realtime"})
+        svc.set_runtime_context(user_id="alice", conversation_id="conv-a")
+        # A concurrent session on the shared instance clobbers the fields.
+        svc.set_runtime_context(user_id="bob", conversation_id="conv-b")
+        svc.open_session(user_id="alice", conversation_id="conv-a")
+        assert seen["definition"] == ("alice", "conv-a")
+        assert seen["resolve"] == ("alice", "conv-a")
+        # Legacy callers without explicit identity still get the fields.
+        svc.open_session()
+        assert seen["resolve"] == ("bob", "conv-b")
+
 
 # ── bridge over a socketpair with a scripted adapter ─────────────────
 
@@ -474,9 +522,10 @@ class _FakeService:
         self.opened_with = None
         self.opened_tools = None
 
-    def open_session(self, instructions="", tools=None, vad=""):
+    def open_session(self, instructions="", tools=None, vad="", **kw):
         self.opened_with = instructions
         self.opened_tools = tools
+        self.opened_identity = (kw.get("user_id"), kw.get("conversation_id"))
         return self._adapter
 
 

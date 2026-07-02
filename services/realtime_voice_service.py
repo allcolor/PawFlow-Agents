@@ -85,24 +85,17 @@ class RealtimeVoiceConnectionService(BaseService):
 
     # -- credentials -----------------------------------------------------
 
-    def _resolve_llm_service(self):
+    def _resolve_llm_service(self, user_id: str = "", conv_id: str = ""):
         from core.service_registry import ServiceRegistry
         reg = ServiceRegistry.get_instance()
         svc_def = reg.resolve_definition(
-            self.llm_service,
-            user_id=self._runtime_user_id,
-            conv_id=self._runtime_conversation_id,
-        )
+            self.llm_service, user_id=user_id, conv_id=conv_id)
         if svc_def is None:
             raise ServiceError(f"LLM service '{self.llm_service}' not found")
         if getattr(svc_def, "service_type", "") != "llmConnection":
             raise ServiceError(
                 f"Service '{self.llm_service}' is not an llmConnection service")
-        svc = reg.resolve(
-            self.llm_service,
-            user_id=self._runtime_user_id,
-            conv_id=self._runtime_conversation_id,
-        )
+        svc = reg.resolve(self.llm_service, user_id=user_id, conv_id=conv_id)
         if svc is None:
             raise ServiceError(
                 f"LLM service '{self.llm_service}' could not connect")
@@ -119,7 +112,8 @@ class RealtimeVoiceConnectionService(BaseService):
     # -- sessions ---------------------------------------------------------
 
     def open_session(self, *, instructions: str = "", tools: list = None,
-                     vad: str = ""):
+                     vad: str = "", user_id: str = None,
+                     conversation_id: str = None):
         """Connect a provider session and return the live adapter.
 
         `instructions` overrides the config-level instructions (the bridge
@@ -127,9 +121,19 @@ class RealtimeVoiceConnectionService(BaseService):
         `instructions_mode == 'agent'`). `vad` overrides the configured
         turn detection — turn-based callers (Telegram voice notes) force
         'manual' regardless of the live-session setting.
+
+        `user_id`/`conversation_id` scope the llmConnection lookup. Pass
+        them explicitly: registry instances are SHARED across sessions, so
+        the set_runtime_context fields can be overwritten by a concurrent
+        session on another conversation before this one resolves — the
+        fields are only a fallback for legacy callers.
         """
         self._create_connection()  # re-validate on every session
-        svc = self._resolve_llm_service()
+        svc = self._resolve_llm_service(
+            user_id=(self._runtime_user_id if user_id is None else user_id),
+            conv_id=(self._runtime_conversation_id
+                     if conversation_id is None else conversation_id),
+        )
         adapter = build_adapter(
             self.protocol,
             base_url=getattr(svc, "base_url", "") or "",

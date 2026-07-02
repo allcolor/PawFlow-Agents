@@ -51,9 +51,10 @@ class _TurnService:
         self.opened_vad = None
         self.opened_tools = None
 
-    def open_session(self, instructions="", tools=None, vad=""):
+    def open_session(self, instructions="", tools=None, vad="", **kw):
         self.opened_vad = vad
         self.opened_tools = tools
+        self.opened_identity = (kw.get("user_id"), kw.get("conversation_id"))
         return self._adapter
 
 

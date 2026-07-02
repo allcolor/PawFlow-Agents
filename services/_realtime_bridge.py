@@ -218,7 +218,8 @@ class RealtimeSessionBridge:
         self._tools, tool_defs = self._build_tool_bridge()
         try:
             self._adapter = self._service.open_session(
-                instructions=self._instructions(), tools=tool_defs)
+                instructions=self._instructions(), tools=tool_defs,
+                user_id=self._user_id, conversation_id=self._cid)
         except Exception as exc:
             logger.warning("[realtime] session open failed for %s: %s",
                            self._cid[:8], exc)

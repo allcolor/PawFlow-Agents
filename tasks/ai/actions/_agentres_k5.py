@@ -211,7 +211,8 @@ def _handle_agentres_k5(self, action, body, store, user_id, flowfile):
             return [flowfile]
         # Merge — only update known runtime fields. Skills live on the agent
         # definition (`assigned_skills`), not in conv_agent_config.
-        _allowed = {"llm_service", "model", "tools", "max_depth", "params"}
+        _allowed = {"llm_service", "model", "tools", "max_depth", "params",
+                    "realtime_voice_service"}
         merged = dict(configs[aname])
         for k, v in cfg.items():
             if k in _allowed:

@@ -551,8 +551,47 @@ def test_chat_ui_voice_mode_is_wired():
     assert "'/ws/realtime/' + encodeURIComponent(cid)" in js
     assert "list_realtime_services" in js
     assert "_voiceFlushPlayback" in js  # barge-in path
+    # P2b voice-mode overlay + linked-agent treatment
+    assert "_voiceShowOverlay" in js
+    assert "_voiceToggleMute" in js
+    assert "_voiceToolActivity" in js
+    assert "_voiceLinkedService" in js
 
     for lang in ("en", "fr", "es"):
         data = json.loads(Path(f"tasks/io/chat_ui/i18n/{lang}.json")
                           .read_text(encoding="utf-8"))
         assert "voiceModeStartTitle" in data
+        assert "voiceStateListening" in data
+        assert "realtimeVoiceService" in data
+
+
+def test_agent_editor_exposes_realtime_voice_link():
+    menus = Path("tasks/io/chat_ui/resources_menus.js").read_text(encoding="utf-8")
+    assert "acc-rtvoice" in menus
+    assert "realtime_voice_service" in menus
+
+
+# ── voice-native agent link (P2b) ────────────────────────────────────
+
+def test_agent_config_carries_realtime_voice_service():
+    from core.conv_agent_config import AGENT_CONFIG_DEFAULTS
+    assert AGENT_CONFIG_DEFAULTS.get("realtime_voice_service") == ""
+
+
+def test_update_agent_conv_config_accepts_realtime_voice_service():
+    src = Path("tasks/ai/actions/_agentres_k5.py").read_text(encoding="utf-8")
+    assert '"realtime_voice_service"' in src
+
+
+def test_get_agent_config_returns_link(monkeypatch):
+    import core.conv_agent_config as cac
+    monkeypatch.setattr(
+        cac, "get_all_agent_configs",
+        lambda cid: {"claude": {"llm_service": "llm",
+                                "realtime_voice_service": "rt-voice"}})
+    cfg = cac.get_agent_config("conv1", "claude")
+    assert cfg["realtime_voice_service"] == "rt-voice"
+    # absent → default empty, never KeyError
+    monkeypatch.setattr(cac, "get_all_agent_configs", lambda cid: {})
+    assert cac.get_agent_config("conv1", "claude")[
+        "realtime_voice_service"] == ""

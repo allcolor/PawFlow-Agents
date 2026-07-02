@@ -506,8 +506,10 @@ function _showAgentConvConfigDialog(agentName) {
   Promise.all([
     rxjs.firstValueFrom(action$('get_agent_conv_config', { name: agentName, conversation_id: conversationId })),
     rxjs.firstValueFrom(listServices$('llmConnection')),
+    rxjs.firstValueFrom(action$('list_realtime_services', { conversation_id: conversationId }, { silent: true })).catch(function() { return {}; }),
   ]).then(function(results) {
     var data = results[0], svcData = results[1];
+    var rtServices = (results[2] && results[2].services) || [];
     if (data.error) { addMsg('error', data.error); return; }
     var cfg = data.config || {};
     var paramsSchema = data.parameters_schema || {};
@@ -559,7 +561,20 @@ function _showAgentConvConfigDialog(agentName) {
       + '<div style="margin-bottom:8px;">'
       + '<label style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('maxIterationsAgentLoop')) + '</label>'
       + '<input id="acc-depth" type="number" value="' + (cfg.max_depth || 1000) + '" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;"/>'
-      + '</div>'
+      + '</div>';
+    // Realtime voice link — only offered when at least one service exists
+    if (rtServices.length) {
+      var rtOpts = '<option value="">' + escapeHtml(t('realtimeVoiceNone')) + '</option>'
+        + rtServices.map(function(s) {
+            var sel = s.id === cfg.realtime_voice_service ? ' selected' : '';
+            return '<option value="' + escapeHtml(s.id) + '"' + sel + '>'
+              + escapeHtml(s.id) + (s.model ? ' (' + escapeHtml(s.model) + ')' : '') + '</option>';
+          }).join('');
+      html += '<div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('realtimeVoiceService')) + '</label>'
+        + '<select id="acc-rtvoice" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;">'
+        + rtOpts + '</select></div>';
+    }
+    html += ''
       + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">'
       + '<button onclick="document.getElementById(\'agentConvConfigOverlay\').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">' + escapeHtml(t('contextCancel')) + '</button>'
       + '<button id="acc-save" style="background:var(--pf-accent);color:var(--pf-bg);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">' + escapeHtml(t('contextSave')) + '</button>'
@@ -573,15 +588,18 @@ function _showAgentConvConfigDialog(agentName) {
       var tools = document.getElementById('acc-tools').value
         .split(',').map(function(s) { return s.trim(); }).filter(function(s) { return s; });
       var depth = parseInt(document.getElementById('acc-depth').value) || 1000;
+      var rtSel = document.getElementById('acc-rtvoice');
       // Collect params — name is always the instance name
       var params = { name: agentName };
       panel.querySelectorAll('[data-param]').forEach(function(inp) {
         params[inp.dataset.param] = inp.value;
       });
+      var newCfg = { llm_service: llm, model: model, tools: tools,
+                     max_depth: depth, params: params };
+      if (rtSel) newCfg.realtime_voice_service = rtSel.value;
       action$('update_agent_conv_config', {
         name: agentName, conversation_id: conversationId,
-        config: { llm_service: llm, model: model, tools: tools,
-                   max_depth: depth, params: params },
+        config: newCfg,
       }).subscribe(function(r) {
         if (r.error) { addMsg('error', r.error); return; }
         addMsg('system', t('agentConfigUpdated', { agent: agentName }));

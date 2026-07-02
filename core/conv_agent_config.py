@@ -33,6 +33,10 @@ AGENT_CONFIG_DEFAULTS = {
     "model": "",
     "tools": [],
     "max_depth": 1000,
+    # Optional realtimeVoiceConnection service id. When set the agent is
+    # "voice-native": the webchat auto-selects it for voice mode and
+    # Telegram voice notes go through a realtime speech-to-speech turn.
+    "realtime_voice_service": "",
 }
 
 

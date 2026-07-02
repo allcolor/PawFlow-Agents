@@ -442,7 +442,23 @@ def _handle_media(self, action, body, store, user_id, flowfile):
                     _rt.append({"id": _sid, "scope": _scope,
                                 "model": (_sdef.config or {}).get("model", ""),
                                 "voice": (_sdef.config or {}).get("voice", "")})
-            flowfile.set_content(json.dumps(_rt, ensure_ascii=False).encode())
+            # Agent link: a voice-native agent pins its service (no picker,
+            # voice-first UI treatment in the webchat).
+            _linked = ""
+            _agent = body.get("agent_name", "") or ""
+            if conv_id and _agent:
+                try:
+                    from core.conv_agent_config import get_agent_config
+                    _linked = str(get_agent_config(conv_id, _agent).get(
+                        "realtime_voice_service", "") or "").strip()
+                except Exception:
+                    logger.debug("[realtime] agent link lookup failed",
+                                 exc_info=True)
+            if _linked and not any(e["id"] == _linked for e in _rt):
+                _linked = ""  # linked service no longer exists — ignore
+            flowfile.set_content(json.dumps(
+                {"services": _rt, "linked": _linked},
+                ensure_ascii=False).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
         return [flowfile]

@@ -123,6 +123,11 @@ STATIC_MODELS = {
         ("google/veo-3", "OpenRouter video model."),
         ("minimax/hailuo-02", "OpenRouter video model."),
     ],
+    "realtimeVoiceConnection": [
+        ("gpt-realtime", "OpenAI realtime speech-to-speech model."),
+        ("gpt-realtime-mini", "Smaller/cheaper OpenAI realtime model."),
+        ("gpt-4o-realtime-preview", "Earlier OpenAI realtime preview model."),
+    ],
     "grokImageGeneration": [
         ("grok-imagine-image-quality", "xAI image generation and editing model."),
         ("grok-imagine-image-quality-latest", "Latest xAI image generation model alias."),

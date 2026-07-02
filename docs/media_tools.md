@@ -71,6 +71,34 @@ Example chain:
 3. `generate_image` for a face/character or provide an existing image.
 4. `speech_to_video` with the image and synthesized audio.
 
+## Realtime Voice Conversation
+
+The `realtimeVoiceConnection` service type enables full-duplex voice
+conversations with an agent: continuous microphone streaming, streamed agent
+speech, live captions, and barge-in (speaking over the agent cancels its
+answer). This is speech-to-speech through a provider realtime session — not
+the STT → text agent → TTS pipeline below, which remains available.
+
+Configure a `realtimeVoiceConnection` service referencing an `openai`
+`llmConnection` for credentials (`llm_service`), a `model` such as
+`gpt-realtime` or `gpt-4o-realtime-preview`, and optionally `voice`, `vad`
+(`server` or `manual` push-to-talk), `instructions_mode` (`agent` reuses the
+conversation agent's system prompt), `transcription_model`, and
+`max_session_seconds` (default 600 — hard session cap). The
+`protocol=openai_realtime` adapter also covers Azure OpenAI and any
+OpenAI-realtime-compatible endpoint through the llmConnection `base_url`;
+further protocols plug in as adapters (`services/_realtime_adapters.py`).
+
+Once at least one service exists, the webchat input row shows a microphone
+voice-mode button. It opens an authenticated WebSocket to
+`/ws/realtime/{conversation_id}` — session token + private gateway checks
+apply, and only the conversation owner (or an admin) may attach. Final
+transcripts of both sides are persisted as normal conversation messages, so
+every attached client (webchat, Telegram bridge, PawCode) sees the voice
+exchange live and the text agent resumes with full context after the
+session. Raw audio is not persisted. Tool execution inside voice sessions is
+not enabled yet (planned; see `docs/REALTIME_VOICE_PLAN.md`).
+
 ## Audio and Voice Tools
 
 | Tool | Purpose |

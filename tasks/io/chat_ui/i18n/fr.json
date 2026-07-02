@@ -1317,5 +1317,14 @@
   "recoveryAdded": "Phrase secrète de récupération ajoutée.",
   "enterRecovery": "Saisissez la phrase secrète de récupération",
   "relayBound": "Relais de clé de confiance lié (key_id {key_id}).",
-  "relayUsage": "Utilisation : /encrypt relay <clé-publique-base64 | off>  (obtenez la clé via : pawflow-relay key export-pubkey)"
+  "relayUsage": "Utilisation : /encrypt relay <clé-publique-base64 | off>  (obtenez la clé via : pawflow-relay key export-pubkey)",
+  "voiceModeStartTitle": "Démarrer la conversation vocale temps réel",
+  "voiceModeStopTitle": "Arrêter la conversation vocale",
+  "voiceNoConversation": "Ouvre d'abord une conversation",
+  "voiceNoService": "Aucun service vocal temps réel configuré",
+  "voiceMicDenied": "Accès micro refusé : ",
+  "voiceError": "Erreur de session vocale : ",
+  "voiceWsError": "Connexion de la session vocale échouée",
+  "voicePickService": "Service vocal :",
+  "you": "Toi"
 }

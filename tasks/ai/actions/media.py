@@ -404,6 +404,49 @@ def _handle_media(self, action, body, store, user_id, flowfile):
         flowfile.set_content(json.dumps(result, ensure_ascii=False).encode())
         return [flowfile]
 
+    if action == "list_realtime_services":
+        # Realtime voice services for the webchat voice mode. Also lazily
+        # registers the /ws/realtime route on the request's HTTP listener
+        # (same pattern as the desktop VNC/audio routes) so the browser
+        # can open the session socket right after this call.
+        _req_port = flowfile.get_attribute("http.listener.port") or ""
+        if _req_port:
+            try:
+                from services.http_listener_service import _instances
+                from services._realtime_bridge import register_realtime_route
+                _http_svc = _instances.get(int(_req_port))
+                if _http_svc:
+                    register_realtime_route(_http_svc)
+            except Exception:
+                logger.warning("[realtime] route registration failed",
+                               exc_info=True)
+        try:
+            from core.service_registry import ServiceRegistry
+            _reg = ServiceRegistry.get_instance()
+            conv_id = body.get("conversation_id", "")
+            _rt = []
+            for _scope, _sid_scope in (("conv", conv_id), ("user", user_id),
+                                       ("global", "")):
+                if _scope in ("conv", "user") and not _sid_scope:
+                    continue
+                try:
+                    _defs = _reg.get_all(_scope, _sid_scope)
+                except Exception:
+                    continue
+                for _sid, _sdef in sorted(_defs.items()):
+                    if getattr(_sdef, "service_type", "") != \
+                            "realtimeVoiceConnection":
+                        continue
+                    if any(e["id"] == _sid for e in _rt):
+                        continue
+                    _rt.append({"id": _sid, "scope": _scope,
+                                "model": (_sdef.config or {}).get("model", ""),
+                                "voice": (_sdef.config or {}).get("voice", "")})
+            flowfile.set_content(json.dumps(_rt, ensure_ascii=False).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+        return [flowfile]
+
     if action == "list_stt_services":
         from services.base_stt import BaseSTTService
         conv_id = body.get("conversation_id", "")

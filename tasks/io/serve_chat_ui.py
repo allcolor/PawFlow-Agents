@@ -67,6 +67,7 @@ _JS_MODULES = [
     "audio.js",
     "conversation_tts.js",
     "conversation_stt.js",
+    "conversation_voice.js",
 ]
 
 _html_cache: str = ""

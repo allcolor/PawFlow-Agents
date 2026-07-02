@@ -1317,5 +1317,14 @@
   "recoveryAdded": "Frase de recuperación añadida.",
   "enterRecovery": "Introduce la frase de recuperación",
   "relayBound": "Relay de clave de confianza vinculado (key_id {key_id}).",
-  "relayUsage": "Uso: /encrypt relay <clave-pública-base64 | off>  (obtén la clave con: pawflow-relay key export-pubkey)"
+  "relayUsage": "Uso: /encrypt relay <clave-pública-base64 | off>  (obtén la clave con: pawflow-relay key export-pubkey)",
+  "voiceModeStartTitle": "Iniciar conversación de voz en tiempo real",
+  "voiceModeStopTitle": "Detener conversación de voz",
+  "voiceNoConversation": "Abre primero una conversación",
+  "voiceNoService": "Ningún servicio de voz en tiempo real configurado",
+  "voiceMicDenied": "Acceso al micrófono denegado: ",
+  "voiceError": "Error de sesión de voz: ",
+  "voiceWsError": "Fallo de conexión de la sesión de voz",
+  "voicePickService": "Servicio de voz:",
+  "you": "Tú"
 }

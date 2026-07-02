@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Realtime voice conversation (P1): new `realtimeVoiceConnection` LLM-family
+  service type — speech-to-speech sessions with a PawFlow agent through
+  provider realtime APIs. Multi-provider by protocol adapter
+  (`openai_realtime` covers OpenAI, Azure OpenAI, and compatible endpoints;
+  credentials/base URL come from an existing `llmConnection`). The webchat
+  gains a voice-mode button: continuous mic streaming and agent audio over an
+  authenticated `/ws/realtime/{conversation_id}` WebSocket, live captions,
+  barge-in, session/duration caps, and conversation-ownership enforcement.
+  Final transcripts persist as normal messages so all attached clients see
+  the exchange and the text agent resumes seamlessly. Design and phasing in
+  `docs/REALTIME_VOICE_PLAN.md`.
+
 ## [1.0.0-beta.1] — 2026-07-02
 
 ### Security

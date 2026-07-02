@@ -1,0 +1,492 @@
+"""Tests for the realtime voice stack — adapters, service, bridge, route.
+
+No live provider API: the adapter is tested against a local fake WS server
+and the bridge against a scripted fake adapter over a socketpair.
+"""
+
+import base64
+import json
+import os
+import queue
+import socket
+import struct
+import threading
+import time
+from pathlib import Path
+
+import pytest
+
+from core import ServiceError
+from services._realtime_adapters import (
+    OpenAIRealtimeAdapter, RealtimeWSClient, build_adapter)
+from services._realtime_bridge import (
+    RealtimeSessionBridge, _active_bridges, register_realtime_route,
+    stop_realtime_session)
+from services.realtime_voice_service import RealtimeVoiceConnectionService
+
+
+# ── helpers ─────────────────────────────────────────────────────────
+
+def _client_send_frame(sock, opcode, payload: bytes):
+    """Send a masked client frame (RFC 6455 §5.1 — clients MUST mask)."""
+    mask = os.urandom(4)
+    hdr = bytearray([0x80 | opcode])
+    n = len(payload)
+    if n < 126:
+        hdr.append(0x80 | n)
+    elif n < 65536:
+        hdr.append(0x80 | 126)
+        hdr.extend(struct.pack("!H", n))
+    else:
+        hdr.append(0x80 | 127)
+        hdr.extend(struct.pack("!Q", n))
+    hdr.extend(mask)
+    sock.sendall(bytes(hdr) + bytes(b ^ mask[i % 4] for i, b in enumerate(payload)))
+
+
+def _client_recv_frame(sock, timeout=5.0):
+    """Receive one (unmasked) server frame."""
+    sock.settimeout(timeout)
+
+    def rx(n):
+        buf = b""
+        while len(buf) < n:
+            chunk = sock.recv(n - len(buf))
+            if not chunk:
+                return None
+            buf += chunk
+        return buf
+
+    hdr = rx(2)
+    if hdr is None:
+        return None, b""
+    opcode = hdr[0] & 0x0F
+    length = hdr[1] & 0x7F
+    if length == 126:
+        length = struct.unpack("!H", rx(2))[0]
+    elif length == 127:
+        length = struct.unpack("!Q", rx(8))[0]
+    payload = rx(length) if length else b""
+    return opcode, payload
+
+
+# ── adapter: URL derivation & event normalization ───────────────────
+
+class TestOpenAIRealtimeAdapter:
+
+    def _adapter(self, base="https://api.openai.com/v1"):
+        return OpenAIRealtimeAdapter(base, "sk-test")
+
+    @pytest.mark.parametrize("base,expected", [
+        ("https://api.openai.com/v1",
+         "wss://api.openai.com/v1/realtime?model=gpt-realtime"),
+        ("https://my-azure.openai.azure.com/openai/v1",
+         "wss://my-azure.openai.azure.com/openai/v1/realtime?model=gpt-realtime"),
+        ("https://api.openai.com",
+         "wss://api.openai.com/v1/realtime?model=gpt-realtime"),
+    ])
+    def test_realtime_url_from_base_url(self, base, expected):
+        assert self._adapter(base)._realtime_url("gpt-realtime") == expected
+
+    def test_normalize_audio_delta_both_names(self):
+        a = self._adapter()
+        raw = base64.b64encode(b"\x01\x02").decode()
+        for name in ("response.output_audio.delta", "response.audio.delta"):
+            evt = a._normalize({"type": name, "delta": raw})
+            assert evt == {"type": "audio", "data": b"\x01\x02"}
+
+    def test_normalize_transcripts(self):
+        a = self._adapter()
+        assert a._normalize({
+            "type": "response.audio_transcript.delta", "delta": "He",
+        }) == {"type": "transcript_agent", "text": "He", "final": False}
+        assert a._normalize({
+            "type": "response.output_audio_transcript.done",
+            "transcript": "Hello.",
+        }) == {"type": "transcript_agent", "text": "Hello.", "final": True}
+        assert a._normalize({
+            "type": "conversation.item.input_audio_transcription.completed",
+            "transcript": "Hi agent",
+        }) == {"type": "transcript_user", "text": "Hi agent", "final": True}
+
+    def test_normalize_speech_started_tool_call_done_error(self):
+        a = self._adapter()
+        assert a._normalize({"type": "input_audio_buffer.speech_started"}) == \
+            {"type": "speech_started"}
+        tc = a._normalize({"type": "response.function_call_arguments.done",
+                           "call_id": "c1", "name": "read",
+                           "arguments": "{}"})
+        assert tc == {"type": "tool_call", "call_id": "c1", "name": "read",
+                      "arguments": "{}"}
+        done = a._normalize({"type": "response.done",
+                             "response": {"usage": {"total_tokens": 5}}})
+        assert done == {"type": "response_done",
+                        "usage": {"total_tokens": 5}}
+        err = a._normalize({"type": "error",
+                            "error": {"message": "boom", "code": "x"}})
+        assert err == {"type": "error", "message": "boom", "fatal": True}
+        benign = a._normalize({"type": "error", "error": {
+            "message": "no active response",
+            "code": "response_cancel_not_active"}})
+        assert benign["fatal"] is False
+
+    def test_normalize_ignores_unknown_events(self):
+        a = self._adapter()
+        assert a._normalize({"type": "session.created"}) is None
+        assert a._normalize({"type": "rate_limits.updated"}) is None
+
+    def test_build_adapter_unknown_protocol(self):
+        with pytest.raises(ValueError):
+            build_adapter("quantum_voice", base_url="", api_key="")
+
+
+# ── WS client against a local fake server ───────────────────────────
+
+class TestRealtimeWSClient:
+
+    def _fake_server(self, received):
+        """Minimal RFC 6455 server: handshake, echo one event, read frames."""
+        srv = socket.socket()
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(1)
+        port = srv.getsockname()[1]
+        ready = threading.Event()
+
+        def run():
+            ready.set()
+            conn, _ = srv.accept()
+            data = b""
+            while b"\r\n\r\n" not in data:
+                data += conn.recv(4096)
+            received["handshake"] = data.decode("latin-1")
+            import hashlib
+            key = ""
+            for line in data.decode("latin-1").split("\r\n"):
+                if line.lower().startswith("sec-websocket-key:"):
+                    key = line.split(":", 1)[1].strip()
+            accept = base64.b64encode(hashlib.sha1(
+                (key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode(),
+                usedforsecurity=False).digest()).decode()
+            conn.sendall((
+                "HTTP/1.1 101 Switching Protocols\r\n"
+                "Upgrade: websocket\r\nConnection: Upgrade\r\n"
+                f"Sec-WebSocket-Accept: {accept}\r\n\r\n").encode())
+            # Server → client: one unmasked text frame.
+            payload = json.dumps({"type": "session.created"}).encode()
+            conn.sendall(bytes([0x81, len(payload)]) + payload)
+            # Client → server: read one masked frame.
+            hdr = conn.recv(2)
+            length = hdr[1] & 0x7F
+            assert hdr[1] & 0x80, "client frames must be masked"
+            mask = conn.recv(4)
+            body = b""
+            while len(body) < length:
+                body += conn.recv(length - len(body))
+            received["frame"] = bytes(
+                b ^ mask[i % 4] for i, b in enumerate(body))
+            conn.close()
+            srv.close()
+
+        threading.Thread(target=run, daemon=True).start()
+        ready.wait(2)
+        return port
+
+    def test_handshake_frames_and_masking(self):
+        received = {}
+        port = self._fake_server(received)
+        client = RealtimeWSClient(
+            f"ws://127.0.0.1:{port}/v1/realtime?model=m",
+            {"Authorization": "Bearer sk-test"}).connect()
+        assert "Authorization: Bearer sk-test" in received["handshake"]
+        opcode, payload = client.recv_frame(timeout=5)
+        assert opcode == 0x1
+        assert json.loads(payload) == {"type": "session.created"}
+        client.send_text('{"type":"ping"}')
+        for _ in range(50):
+            if "frame" in received:
+                break
+            time.sleep(0.05)
+        assert received["frame"] == b'{"type":"ping"}'
+        client.close()
+
+
+# ── service config validation ────────────────────────────────────────
+
+class TestRealtimeVoiceService:
+
+    def test_requires_llm_service_and_model(self):
+        svc = RealtimeVoiceConnectionService({"model": "gpt-realtime"})
+        with pytest.raises(ServiceError):
+            svc._create_connection()
+        svc = RealtimeVoiceConnectionService({"llm_service": "llm"})
+        with pytest.raises(ServiceError):
+            svc._create_connection()
+
+    def test_rejects_unknown_protocol(self):
+        svc = RealtimeVoiceConnectionService({
+            "llm_service": "llm", "model": "m", "protocol": "nope"})
+        with pytest.raises(ServiceError):
+            svc._create_connection()
+
+    def test_valid_config_and_schema(self):
+        svc = RealtimeVoiceConnectionService({
+            "llm_service": "llm", "model": "gpt-realtime"})
+        assert svc._create_connection() == {"ready": True}
+        schema = svc.get_parameter_schema()
+        for key in ("llm_service", "protocol", "model", "voice", "vad",
+                    "instructions_mode", "max_session_seconds"):
+            assert key in schema
+        assert svc.TYPE == "realtimeVoiceConnection"
+
+    def test_registered_in_service_factory(self):
+        from core import ServiceFactory
+        import tasks  # noqa: F401 — triggers _register_all_services
+        assert ServiceFactory.get("realtimeVoiceConnection") \
+            is RealtimeVoiceConnectionService
+
+
+# ── bridge over a socketpair with a scripted adapter ─────────────────
+
+class _FakeAdapter:
+    def __init__(self, events):
+        self._events = queue.Queue()
+        for e in events:
+            self._events.put(e)
+        self.sent_audio = []
+        self.interrupts = 0
+        self.commits = 0
+        self.tool_results = []
+        self.closed = False
+
+    def send_audio(self, chunk):
+        self.sent_audio.append(bytes(chunk))
+
+    def commit_input(self):
+        self.commits += 1
+
+    def send_tool_result(self, call_id, result):
+        self.tool_results.append((call_id, result))
+
+    def interrupt(self):
+        self.interrupts += 1
+
+    def recv_event(self, timeout=1.0):
+        try:
+            return self._events.get(timeout=min(timeout, 0.1))
+        except queue.Empty:
+            return None
+
+    def close(self):
+        self.closed = True
+
+
+class _FakeService:
+    instructions_mode = "custom"
+    instructions = "Be brief."
+    max_session_seconds = 30
+
+    def __init__(self, adapter):
+        self._adapter = adapter
+        self.opened_with = None
+
+    def open_session(self, instructions="", tools=None):
+        self.opened_with = instructions
+        return self._adapter
+
+
+class TestRealtimeSessionBridge:
+
+    def _run_bridge(self, events, persisted):
+        server_sock, client_sock = socket.socketpair()
+        adapter = _FakeAdapter(events)
+        service = _FakeService(adapter)
+        bridge = RealtimeSessionBridge(server_sock, "conv1", "claude",
+                                       "quentin", service)
+        bridge._persist = lambda role, text: persisted.append((role, text))
+        thread = threading.Thread(target=bridge.run, daemon=True)
+        thread.start()
+        return bridge, adapter, service, client_sock, thread
+
+    def _read_until(self, sock, want_type, limit=30):
+        """Read frames until a JSON control of `want_type`; collect audio."""
+        audio = []
+        for _ in range(limit):
+            opcode, payload = _client_recv_frame(sock)
+            if opcode is None:
+                break
+            if opcode == 0x2:
+                audio.append(payload)
+                continue
+            if opcode == 0x1:
+                msg = json.loads(payload)
+                if msg.get("type") == want_type:
+                    return msg, audio
+        raise AssertionError(f"never received {want_type}")
+
+    def test_full_session_flow(self):
+        persisted = []
+        events = [
+            {"type": "transcript_user", "text": "hello", "final": True},
+            {"type": "audio", "data": b"\x00\x01\x02\x03"},
+            {"type": "transcript_agent", "text": "hi ", "final": False},
+            {"type": "transcript_agent", "text": "hi there", "final": True},
+            {"type": "response_done", "usage": {"total_tokens": 7}},
+        ]
+        bridge, adapter, service, client, thread = self._run_bridge(
+            events, persisted)
+        try:
+            msg, _ = self._read_until(client, "ready")
+            assert msg["state"] == "listening"
+            assert service.opened_with == "Be brief."
+            # mic uplink → adapter
+            _client_send_frame(client, 0x2, b"\x11\x22")
+            usage, audio = self._read_until(client, "usage")
+            assert usage["usage"] == {"total_tokens": 7}
+            assert b"\x00\x01\x02\x03" in audio
+            for _ in range(50):
+                if adapter.sent_audio:
+                    break
+                time.sleep(0.05)
+            assert adapter.sent_audio == [b"\x11\x22"]
+            # transcripts persisted with roles
+            assert ("user", "hello") in persisted
+            assert ("assistant", "hi there") in persisted
+            # stop control → closed + adapter closed
+            _client_send_frame(client, 0x1, b'{"type": "stop"}')
+            closed, _ = self._read_until(client, "closed")
+            assert closed["reason"] == "client_stop"
+            thread.join(timeout=5)
+            assert not thread.is_alive()
+            assert adapter.closed
+        finally:
+            client.close()
+
+    def test_barge_in_interrupts_and_notifies(self):
+        persisted = []
+        events = [{"type": "speech_started"}]
+        bridge, adapter, service, client, thread = self._run_bridge(
+            events, persisted)
+        try:
+            self._read_until(client, "ready")
+            self._read_until(client, "speech_started")
+            assert adapter.interrupts >= 1
+            _client_send_frame(client, 0x1, b'{"type": "stop"}')
+            self._read_until(client, "closed")
+            thread.join(timeout=5)
+        finally:
+            client.close()
+
+    def test_fatal_provider_error_closes_session(self):
+        persisted = []
+        events = [{"type": "error", "message": "quota", "fatal": True}]
+        bridge, adapter, service, client, thread = self._run_bridge(
+            events, persisted)
+        try:
+            self._read_until(client, "ready")
+            err, _ = self._read_until(client, "error")
+            assert err["message"] == "quota"
+            # The bridge tears down; the client socket sees the close.
+            client.settimeout(5)
+            # drain until socket closes
+            for _ in range(20):
+                opcode, _p = _client_recv_frame(client)
+                if opcode is None or opcode == 0x8:
+                    break
+            thread.join(timeout=5)
+            assert not thread.is_alive()
+            assert adapter.closed
+        finally:
+            client.close()
+
+    def test_p1_refuses_stray_tool_calls(self):
+        persisted = []
+        events = [{"type": "tool_call", "call_id": "c9", "name": "bash",
+                   "arguments": "{}"}]
+        bridge, adapter, service, client, thread = self._run_bridge(
+            events, persisted)
+        try:
+            self._read_until(client, "ready")
+            for _ in range(50):
+                if adapter.tool_results:
+                    break
+                time.sleep(0.05)
+            assert adapter.tool_results
+            assert adapter.tool_results[0][0] == "c9"
+            assert "not enabled" in adapter.tool_results[0][1]
+            _client_send_frame(client, 0x1, b'{"type": "stop"}')
+            self._read_until(client, "closed")
+            thread.join(timeout=5)
+        finally:
+            client.close()
+
+
+# ── route + registry ─────────────────────────────────────────────────
+
+class _FakeHttpService:
+    def __init__(self):
+        self.routes = []
+
+    def get_routes(self):
+        return [{"pattern": p} for (_m, p) in self.routes]
+
+    def register_route(self, method, pattern, owner, callback=None,
+                       ws_handler=None, **kw):
+        assert ws_handler is not None
+        self.routes.append((method, pattern))
+
+
+def test_register_realtime_route_is_idempotent():
+    svc = _FakeHttpService()
+    register_realtime_route(svc)
+    register_realtime_route(svc)
+    assert svc.routes == [("GET", "/ws/realtime/{conversation_id}")]
+
+
+def test_stop_realtime_session_without_active_returns_false():
+    _active_bridges.clear()
+    assert stop_realtime_session("nope") is False
+
+
+def test_ws_handler_rejects_foreign_conversation(monkeypatch):
+    import services._realtime_bridge as rb
+    monkeypatch.setattr("core.flow_runtime_access.conversation_owner",
+                        lambda cid: "alice")
+    server_sock, client_sock = socket.socketpair()
+    try:
+        handler = threading.Thread(
+            target=rb.realtime_ws_handler,
+            args=(server_sock, {"conversation_id": "conv1"},
+                  {"query": "service=rt&agent=claude",
+                   "auth_user_id": "mallory", "auth_role": "user"}),
+            daemon=True)
+        handler.start()
+        opcode, payload = _client_recv_frame(client_sock)
+        assert opcode == 0x1
+        assert json.loads(payload)["type"] == "error"
+        assert "not your conversation" in json.loads(payload)["message"]
+        handler.join(timeout=5)
+        assert not handler.is_alive()
+    finally:
+        client_sock.close()
+
+
+# ── UI wiring (static introspection, house pattern) ─────────────────
+
+def test_chat_ui_voice_mode_is_wired():
+    template = Path("tasks/io/chat_ui/template.html").read_text(encoding="utf-8")
+    assert 'id="voiceModeBtn"' in template
+    assert 'onclick="toggleVoiceMode()"' in template
+
+    serve = Path("tasks/io/serve_chat_ui.py").read_text(encoding="utf-8")
+    assert '"conversation_voice.js",' in serve
+
+    js = Path("tasks/io/chat_ui/conversation_voice.js").read_text(encoding="utf-8")
+    assert "function toggleVoiceMode()" in js
+    assert "'/ws/realtime/' + encodeURIComponent(cid)" in js
+    assert "list_realtime_services" in js
+    assert "_voiceFlushPlayback" in js  # barge-in path
+
+    for lang in ("en", "fr", "es"):
+        data = json.loads(Path(f"tasks/io/chat_ui/i18n/{lang}.json")
+                          .read_text(encoding="utf-8"))
+        assert "voiceModeStartTitle" in data

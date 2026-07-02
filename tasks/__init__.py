@@ -60,6 +60,7 @@ def _register_all_services():
     import services.openai_image_service      # noqa: F401
     import services.codex_image_service       # noqa: F401
     import services.openai_compatible_media_service  # noqa: F401
+    import services.realtime_voice_service   # noqa: F401
 
     # Video generation services
     import services.kling_video_service       # noqa: F401

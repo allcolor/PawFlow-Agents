@@ -1317,5 +1317,14 @@
   "recoveryAdded": "Recovery passphrase added.",
   "enterRecovery": "Enter recovery passphrase",
   "relayBound": "Trusted key-relay bound (key_id {key_id}).",
-  "relayUsage": "Usage: /encrypt relay <relay-pubkey-base64 | off>  (get the key via: pawflow-relay key export-pubkey)"
+  "relayUsage": "Usage: /encrypt relay <relay-pubkey-base64 | off>  (get the key via: pawflow-relay key export-pubkey)",
+  "voiceModeStartTitle": "Start realtime voice conversation",
+  "voiceModeStopTitle": "Stop voice conversation",
+  "voiceNoConversation": "Open a conversation first",
+  "voiceNoService": "No realtime voice service configured",
+  "voiceMicDenied": "Microphone access denied: ",
+  "voiceError": "Voice session error: ",
+  "voiceWsError": "Voice session connection failed",
+  "voicePickService": "Voice service:",
+  "you": "You"
 }

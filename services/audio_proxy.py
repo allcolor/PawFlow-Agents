@@ -349,36 +349,68 @@ def _recv_or_stop(sock, n: int, stop_ev: threading.Event) -> Optional[bytes]:
 _WS_MAX_CLIENT_FRAME = 16 * 1024 * 1024
 
 
-def _ws_recv(sock) -> Tuple[Optional[int], bytes]:
+def _ws_recv_frame(sock) -> Tuple[Optional[bool], int, bytes]:
+    """Read ONE raw frame → (fin, opcode, payload); (None, 0, b"") on EOF
+    or protocol garbage (treated as disconnect by every caller)."""
     hdr = _recv_exact(sock, 2)
     if not hdr:
-        return None, b""
+        return None, 0, b""
+    fin = bool(hdr[0] & 0x80)
     opcode = hdr[0] & 0x0F
     masked = bool(hdr[1] & 0x80)
     length = hdr[1] & 0x7F
     if length == 126:
         ext = _recv_exact(sock, 2)
         if not ext:
-            return None, b""
+            return None, 0, b""
         length = struct.unpack("!H", ext)[0]
     elif length == 127:
         ext = _recv_exact(sock, 8)
         if not ext:
-            return None, b""
+            return None, 0, b""
         length = struct.unpack("!Q", ext)[0]
     if length > _WS_MAX_CLIENT_FRAME:
-        return None, b""  # treated as disconnect by every caller
+        return None, 0, b""
     mask_key = b""
     if masked:
         mask_key = _recv_exact(sock, 4)
         if not mask_key:
-            return None, b""
+            return None, 0, b""
     payload = _recv_exact(sock, length) if length else b""
     if payload is None:
-        return None, b""
+        return None, 0, b""
     if masked and mask_key:
         payload = bytes(b ^ mask_key[i % 4] for i, b in enumerate(payload))
-    return opcode, payload
+    return fin, opcode, payload
+
+
+def _ws_recv(sock) -> Tuple[Optional[int], bytes]:
+    """Return (opcode, payload) for one complete MESSAGE.
+
+    Fragmented data frames (FIN=0 + continuations, RFC 6455 §5.4 — browsers
+    fragment large sends) are reassembled; interleaved pings/pongs are
+    dropped (no caller ever answered them); close and EOF surface
+    immediately. The reassembled message shares the per-frame size cap.
+    """
+    msg_opcode = 0
+    msg = bytearray()
+    while True:
+        fin, opcode, payload = _ws_recv_frame(sock)
+        if fin is None or opcode == 0x8:
+            return (None, b"") if fin is None else (opcode, payload)
+        if opcode >= 0x8:  # ping/pong — never fragmented (§5.5), skip
+            continue
+        if opcode:  # text/binary: first (or only) fragment
+            msg_opcode = opcode
+            msg = bytearray(payload)
+        elif not msg_opcode:
+            return None, b""  # stray continuation — protocol violation
+        else:
+            msg.extend(payload)
+            if len(msg) > _WS_MAX_CLIENT_FRAME:
+                return None, b""
+        if fin:
+            return msg_opcode, bytes(msg)
 
 
 def _ws_send_binary(sock, data: bytes):

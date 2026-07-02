@@ -300,6 +300,30 @@ def test_browser_ws_recv_rejects_insane_frame_length():
         client_sock.close()
 
 
+def _masked_client_frame(first_byte, payload):
+    mask = b"\x01\x02\x03\x04"
+    masked = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
+    return bytes([first_byte, 0x80 | len(payload)]) + mask + masked
+
+
+def test_browser_ws_recv_reassembles_fragmented_message():
+    """Browsers fragment large sends (RFC 6455 §5.4): FIN=0 fragments plus
+    continuation frames must come back as ONE message, with an interleaved
+    ping dropped (regression: fragments were returned as broken standalone
+    frames — truncated audio, unparseable control JSON)."""
+    from services.audio_proxy import _ws_recv
+    server_sock, client_sock = socket.socketpair()
+    try:
+        client_sock.sendall(
+            _masked_client_frame(0x02, b"hel")      # binary, FIN=0
+            + _masked_client_frame(0x89, b"p")      # interleaved ping
+            + _masked_client_frame(0x80, b"lo"))    # continuation, FIN=1
+        assert _ws_recv(server_sock) == (0x2, b"hello")
+    finally:
+        server_sock.close()
+        client_sock.close()
+
+
 # ── service config validation ────────────────────────────────────────
 
 class TestRealtimeVoiceService:
@@ -749,6 +773,8 @@ def test_chat_ui_voice_mode_is_wired():
     assert "_voiceToolActivity" in js
     assert "_voiceLinkedService" in js
     assert "if (_voiceStarting) return;" in js  # double-start guard
+    # Partial capture failure (post-getUserMedia) must release the mic.
+    assert js.index("_voiceStopCapture(); //") < js.index("voiceMicDenied")
 
     for lang in ("en", "fr", "es"):
         data = json.loads(Path(f"tasks/io/chat_ui/i18n/{lang}.json")

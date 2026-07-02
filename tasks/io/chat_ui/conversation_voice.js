@@ -356,6 +356,7 @@ async function _toggleVoiceModeStart(cid) {
   try {
     await _voiceStartCapture();
   } catch (err) {
+    _voiceStopCapture(); // a failure after getUserMedia must not leave the mic held
     addMsg('error', _voiceT('voiceMicDenied', 'Microphone access denied: ') + (err && err.message ? err.message : err));
     return;
   }

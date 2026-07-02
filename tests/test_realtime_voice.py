@@ -596,6 +596,61 @@ class TestRealtimeSessionBridge:
         finally:
             client.close()
 
+    def test_late_user_transcript_keeps_question_answer_order(self):
+        """The whisper user transcript usually lands AFTER the agent
+        transcript of the same turn (regression: persisted in arrival
+        order, the conversation history read answer-before-question)."""
+        persisted = []
+        events = [
+            {"type": "speech_started"},
+            {"type": "transcript_agent", "text": "il fait beau",
+             "final": True},
+            {"type": "transcript_user", "text": "quel temps ?",
+             "final": True},
+            {"type": "response_done", "usage": {}},
+        ]
+        bridge, adapter, service, client, thread = self._run_bridge(
+            events, persisted)
+        try:
+            self._read_until(client, "usage")
+            for _ in range(50):
+                if len(persisted) >= 2:
+                    break
+                time.sleep(0.05)
+            assert persisted == [("user", "quel temps ?"),
+                                 ("assistant", "il fait beau")]
+            _client_send_frame(client, 0x1, b'{"type": "stop"}')
+            self._read_until(client, "closed")
+            thread.join(timeout=5)
+        finally:
+            client.close()
+
+    def test_held_assistant_transcript_persists_when_user_never_arrives(
+            self, monkeypatch):
+        """If whisper never delivers the user transcript, the held assistant
+        final must persist after the grace window instead of never."""
+        import services._realtime_bridge as rb
+        monkeypatch.setattr(rb, "_ASSISTANT_ORDER_GRACE_S", 0.2)
+        persisted = []
+        events = [
+            {"type": "speech_started"},
+            {"type": "transcript_agent", "text": "hello", "final": True},
+        ]
+        bridge, adapter, service, client, thread = self._run_bridge(
+            events, persisted)
+        try:
+            self._read_until(client, "speech_started")
+            for _ in range(60):
+                if persisted:
+                    break
+                time.sleep(0.05)
+            assert persisted == [("assistant", "hello")]
+            _client_send_frame(client, 0x1, b'{"type": "stop"}')
+            self._read_until(client, "closed")
+            thread.join(timeout=5)
+        finally:
+            client.close()
+
     def test_barge_in_interrupts_and_notifies(self):
         persisted = []
         events = [{"type": "speech_started"}]

@@ -34,6 +34,11 @@ logger = logging.getLogger(__name__)
 _active_bridges = {}
 _bridges_lock = threading.Lock()
 
+# How long an assistant transcript waits for the user transcript of the
+# same turn before persisting anyway (user transcription is a separate
+# async whisper pass and may fail or never arrive).
+_ASSISTANT_ORDER_GRACE_S = 5.0
+
 
 def _ws_send_text(sock, text: str):
     """Send an unmasked server text frame (mirror of _ws_send_binary)."""
@@ -167,6 +172,14 @@ class RealtimeSessionBridge:
         self._tools_inflight = 0
         self._tools_lock = threading.Lock()
         self._deadline = float("inf")  # set in run() before the pump starts
+        # The user transcript (async whisper pass) usually lands AFTER the
+        # agent transcript of the same turn; persisting in arrival order
+        # would invert question/answer in the conversation history.
+        # Assistant finals wait (bounded) for the pending user transcript.
+        # Guarded by _transcript_lock (pump thread + teardown).
+        self._transcript_lock = threading.Lock()
+        self._pending_user = 0        # utterances awaiting transcription
+        self._assistant_backlog = []  # [(monotonic_ts, text)]
 
     # -- client frame helpers -------------------------------------------
 
@@ -189,6 +202,31 @@ class RealtimeSessionBridge:
     def _persist(self, role: str, text: str):
         persist_voice_transcript(self._cid, self._agent, self._user_id,
                                  role, text)
+
+    def _persist_assistant(self, text: str):
+        """Persist an assistant final, or hold it while the user transcript
+        of the turn is still pending so the order stays question→answer."""
+        with self._transcript_lock:
+            if self._pending_user > 0:
+                self._assistant_backlog.append((time.monotonic(), text))
+                return
+        self._persist("assistant", text)
+
+    def _flush_assistant_backlog(self, only_expired: bool = False):
+        with self._transcript_lock:
+            if not self._assistant_backlog:
+                return
+            if only_expired and (time.monotonic()
+                                 - self._assistant_backlog[0][0]
+                                 < _ASSISTANT_ORDER_GRACE_S):
+                return
+            backlog, self._assistant_backlog = self._assistant_backlog, []
+            if only_expired:
+                # The user transcript never arrived (whisper failed/slow) —
+                # stop holding new assistant finals for it.
+                self._pending_user = 0
+        for _, text in backlog:
+            self._persist("assistant", text)
 
     # -- lifecycle ----------------------------------------------------------
 
@@ -282,6 +320,9 @@ class RealtimeSessionBridge:
                 # also unblocks the handler thread stuck in _ws_recv.
                 self.stop("max_session_seconds")
                 break
+            # Assistant finals held for a user transcript that never came
+            # (whisper failed) persist after a bounded grace, not never.
+            self._flush_assistant_backlog(only_expired=True)
             try:
                 evt = self._adapter.recv_event(timeout=1.0)
             except ConnectionError:
@@ -304,6 +345,8 @@ class RealtimeSessionBridge:
                     self._adapter.interrupt()
                 except Exception:
                     logger.debug("[realtime] interrupt failed", exc_info=True)
+                with self._transcript_lock:
+                    self._pending_user += 1
                 self._emit({"type": "speech_started"})
                 self._emit({"type": "state", "state": "listening"})
             elif etype == "transcript_user":
@@ -312,13 +355,18 @@ class RealtimeSessionBridge:
                             "final": bool(evt.get("final"))})
                 if evt.get("final"):
                     self._persist("user", evt.get("text", ""))
+                    with self._transcript_lock:
+                        self._pending_user = max(0, self._pending_user - 1)
+                        drained = self._pending_user == 0
+                    if drained:
+                        self._flush_assistant_backlog()
                     self._emit({"type": "state", "state": "thinking"})
             elif etype == "transcript_agent":
                 self._emit({"type": "transcript_agent",
                             "text": evt.get("text", ""),
                             "final": bool(evt.get("final"))})
                 if evt.get("final"):
-                    self._persist("assistant", evt.get("text", ""))
+                    self._persist_assistant(evt.get("text", ""))
                 else:
                     self._emit({"type": "state", "state": "speaking"})
             elif etype == "response_done":
@@ -424,6 +472,12 @@ class RealtimeSessionBridge:
             logger.debug("Ignored exception", exc_info=True)
         try:
             pump.join(timeout=3)
+        except Exception:
+            logger.debug("Ignored exception", exc_info=True)
+        # Assistant finals still waiting for a user transcript must not be
+        # lost when the session ends.
+        try:
+            self._flush_assistant_backlog()
         except Exception:
             logger.debug("Ignored exception", exc_info=True)
         self._emit({"type": "closed",

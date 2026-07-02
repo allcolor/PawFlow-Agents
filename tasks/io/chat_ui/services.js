@@ -99,7 +99,7 @@ function _showFlowStartDialog(instanceId, editOnly) {
   document.body.appendChild(overlay);
   action$('get_flow_instance', { instance_id: instanceId }).subscribe({
     next: async (data) => {
-      if (data.error) { panel.querySelector('div:last-child').innerHTML = `<div style="color:#e94560;">${data.error}</div>`; return; }
+      if (data.error) { panel.querySelector('div:last-child').innerHTML = `<div style="color:#e94560;">${escapeHtml(data.error)}</div>`; return; }
       let fieldsHtml = '';
       try {
         fieldsHtml = await _renderFlowDeploymentConfig(data);

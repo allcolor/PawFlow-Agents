@@ -267,3 +267,57 @@ class TestEdgeCases:
         assert store.find_by_name("report") == fid
         # No match
         assert store.find_by_name("nonexistent.xyz") is None
+
+
+# -- check_access() ----------------------------------------------------------
+
+class TestCheckAccess:
+    """check_access across the five access levels."""
+
+    def _fid(self, store):
+        return store.store("f.txt", b"x", "text/plain",
+                           conversation_id="c1", user_id="owner")
+
+    def test_private_owner_only(self, store):
+        fid = self._fid(store)
+        assert store.get_access_level(fid) == "private"
+        assert store.check_access(fid, user_id="owner")
+        assert not store.check_access(fid, user_id="intruder")
+        assert not store.check_access(fid)
+
+    def test_public_allows_anyone(self, store):
+        fid = self._fid(store)
+        store.set_access(fid, "public")
+        assert store.check_access(fid)
+        assert store.check_access(fid, user_id="anybody")
+
+    def test_authenticated_requires_any_user(self, store):
+        fid = self._fid(store)
+        store.set_access(fid, "authenticated")
+        assert store.check_access(fid, user_id="anybody")
+        assert not store.check_access(fid)
+
+    def test_shared_owner_and_listed_users(self, store):
+        fid = self._fid(store)
+        store.set_access(fid, "shared", shared_with=["friend"])
+        assert store.check_access(fid, user_id="owner")
+        assert store.check_access(fid, user_id="friend")
+        assert not store.check_access(fid, user_id="intruder")
+        assert not store.check_access(fid)
+
+    def test_gateway_key_accepts_valid_key(self, store):
+        fid = self._fid(store)
+        store.set_access(fid, "gateway_key")
+        key = store._derive_gateway_key(fid)
+        assert store.check_access(fid, gateway_key=key)
+        assert not store.check_access(fid, gateway_key="wrong")
+        assert not store.check_access(fid)
+
+    def test_gateway_key_does_not_lock_out_owner(self, store):
+        # Regression: sharing a public link (gateway_key) must not break
+        # the owner's own authenticated access without ?k= (files panel
+        # "View" returned 403 after "Share public link").
+        fid = self._fid(store)
+        store.set_access(fid, "gateway_key")
+        assert store.check_access(fid, user_id="owner")
+        assert not store.check_access(fid, user_id="intruder")

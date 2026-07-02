@@ -25,6 +25,10 @@ venv/
 .venv/
 .pylib/
 .pawflow-runtime/
+# Conversation scratch workspaces created at the repo root by relay
+# sessions (dir name = conversation id). May contain personal data —
+# never track them.
+/[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]/
 
 # Node
 node_modules/

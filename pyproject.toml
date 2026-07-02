@@ -14,7 +14,7 @@ authors = [
 ]
 keywords = ["ai", "agents", "orchestration", "nifi", "llm", "claude-code", "workflow"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Framework :: FastAPI",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",

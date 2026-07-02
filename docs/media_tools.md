@@ -164,6 +164,28 @@ models such as `google/veo-3.1` use `POST /videos` and poll the returned
 `max_tokens` and `max_output_tokens` for chat-completions media responses, plus
 provider escape hatches through `extra_body` and `extra_headers`.
 
+`openaiCompatibleVideoGeneration` dispatches every `generate_video` mode, not
+only text-to-video: `image_to_video`, `frame_to_video` (first + last frame),
+`reference_to_video`, `video_edit`, `video_extend`, and `speech_to_video`
+(audio-driven) all route through the unified submit/poll pipeline. Because
+providers disagree on submit-body field names for source media, they are
+configurable on the service: `image_field` (default `image_url`),
+`end_image_field` (default `end_image_url`), `video_field` (default `video`),
+`audio_field` (default `audio`), and `reference_field` (default
+`reference_images`, sent as a list). The defaults keep the generic
+OpenAI/Sora convention.
+
+AtlasCloud Predictions-style APIs (Wan 2.x, Kling, ...) work with this service
+using config only — no dedicated provider. Recipe for AtlasCloud Wan 2.7: on
+the underlying `llmConnection` set
+`base_url=https://api.atlascloud.ai/api/v1`; on the video service set
+`protocol=openai_video`, `submit_path=/model/generateVideo`,
+`status_path_template=/model/prediction/{id}`, `image_field=image`,
+`end_image_field=last_image`, `video_field=video`, `audio_field=audio`, and a
+model id such as `alibaba/wan-2.7/text-to-video` or
+`alibaba/wan-2.7/image-to-video`. This exact setup is locked by the
+AtlasCloud regression tests in `tests/test_openai_compatible_media_service.py`.
+
 `grokImageGeneration` and `grokVideoGeneration` call xAI directly at
 `https://api.x.ai/v1`. The image service defaults to
 `grok-imagine-image-quality`, supports text generation and `edit_image`, and

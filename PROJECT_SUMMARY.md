@@ -1,8 +1,8 @@
 # PawFlow Project Summary — Current State
 
-**Last updated**: 2026-04-27  
-**Package version**: `1.0.0a1`  
-**Status**: functional alpha, APIs may still evolve
+**Last updated**: 2026-07-02  
+**Package version**: `1.0.0b1` (beta.1)  
+**Status**: functional beta, remaining API changes before 1.0.0 expected to be minor
 
 ## Overview
 
@@ -164,7 +164,7 @@ The README also advertises:
 
 ## Watch-outs
 
-- The project is explicitly in **alpha**: the public API, JSON formats, and internal contracts may still shift.
+- The project is in **beta**: the public API, JSON formats, and internal contracts are stabilizing; changes before 1.0.0 should be minor and noted in the CHANGELOG.
 - Documentation freshness is uneven. Some older documents still describe an MVP-era state.
 - The functional surface is very wide: distinguish between modules that are present, paths that are tested, and integrations actually validated in production.
 - Some capabilities depend on secrets, external providers, an active relay, or a properly configured Docker/local environment.

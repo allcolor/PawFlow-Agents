@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security
+
+- chat-ui: the flow-instance editor error message is now HTML-escaped before
+  being injected into the panel (last unescaped `innerHTML` error sink).
+
+### Fixed
+
+- FileStore: "Share public link" (`gateway_key` access) locked the owner out
+  of their own authenticated access — the files panel "View" returned 403
+  until the file was made private again. The gateway-key check now falls back
+  to the owner check when no `?k=` is presented; `check_access` is covered by
+  tests across all five access levels.
+
+### Changed
+
+- Project status: alpha → beta (README badge, PyPI classifier, ROADMAP,
+  PROJECT_SUMMARY, website fallback version metadata).
+- `/rewind`: removed the dead, never-wired `summarize` mode stub that
+  answered "Not implemented yet"; summarize-from-checkpoint remains covered
+  by `/compact`.
+- docs: `media_tools.md` documents all `openaiCompatibleVideoGeneration`
+  video modes, the configurable source-media body field names, and the
+  config-only AtlasCloud Wan 2.7 recipe.
+
 ## [1.0.0-alpha.61] — 2026-06-30
 
 ### Added

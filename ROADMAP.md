@@ -2,13 +2,13 @@
 
 This document outlines the direction for PawFlow. Items are grouped by priority and roughly ordered within each group. Completed items are listed at the bottom for transparency.
 
-> **Status**: PawFlow is in **alpha**. The core platform is functional and tested, but APIs may change between releases.
+> **Status**: PawFlow is in **beta**. The core platform is functional and tested; remaining API changes before 1.0.0 are expected to be minor.
 
 ---
 
-## What's shipping now (v1.0.0-alpha)
+## What's shipping now (v1.0.0-beta)
 
-The alpha release includes:
+The beta release includes:
 
 - **AI Agent Orchestration** — Multi-agent conversations with Claude Code, Codex CLI, Gemini CLI, Anthropic API, OpenAI API, and OpenAI-compatible endpoints. Tool-use loops, delegation, plans, streaming, and provider-specific sessions.
 - **Pipeline Engine** — 100+ task types, DAG execution, backpressure, checkpointing, crash recovery, CRON scheduling, triggers, debugger, and flow versioning.

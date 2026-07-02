@@ -22,7 +22,7 @@
   <a href="https://github.com/allcolor/PawFlow-Agents/actions"><img src="https://github.com/allcolor/PawFlow-Agents/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
   <a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.10%2B-blue.svg" alt="Python 3.10+"></a>
-  <a href="https://github.com/allcolor/PawFlow-Agents/releases"><img src="https://img.shields.io/badge/status-alpha-orange.svg" alt="Alpha"></a>
+  <a href="https://github.com/allcolor/PawFlow-Agents/releases"><img src="https://img.shields.io/badge/status-beta-blue.svg" alt="Beta"></a>
 </p>
 
 <p align="center">

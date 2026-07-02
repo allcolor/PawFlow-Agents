@@ -284,7 +284,15 @@ class FileStore:
 
         if access == ACCESS_GATEWAY_KEY:
             expected = self._derive_gateway_key(file_id)
-            return gateway_key and hmac.compare_digest(gateway_key, expected)
+            if gateway_key and hmac.compare_digest(gateway_key, expected):
+                return True
+            # Sharing a public link grants extra access; it must never lock
+            # the owner out of their own authenticated access (the files
+            # panel "View" fetches /files/<id> without ?k=).
+            owner = entry.get("user_id", "")
+            if not owner:
+                return True
+            return user_id == owner
 
         if access == ACCESS_AUTHENTICATED:
             return bool(user_id)

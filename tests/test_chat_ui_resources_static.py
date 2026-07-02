@@ -294,6 +294,13 @@ def test_sse_plan_and_ask_user_events_escape_user_controlled_html():
     assert "opt.replace(/'/g" not in js
 
 
+def test_flow_instance_error_message_is_escaped_before_innerHTML():
+    js = Path("tasks/io/chat_ui/services.js").read_text(encoding="utf-8")
+
+    assert "${escapeHtml(data.error)}</div>`; return; }" in js
+    assert "${data.error}</div>" not in js
+
+
 def test_param_secret_scope_actions_do_not_force_conversation_scope():
     js = Path("tasks/io/chat_ui/file_viewer.js").read_text(encoding="utf-8")
 

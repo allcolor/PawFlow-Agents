@@ -111,7 +111,7 @@ def _handle_ctxops_k1(self, action, body, store, user_id, flowfile, _helpers):
     if action == "rewind":
         conv_id = body.get("conversation_id", "")
         checkpoint_arg = body.get("checkpoint", "").strip()
-        mode = body.get("mode", "")  # "code", "conversation", "both", "summarize"
+        mode = body.get("mode", "")  # "code", "conversation", "both"
         if not conv_id:
             flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
             return [flowfile]
@@ -211,11 +211,6 @@ def _handle_ctxops_k1(self, action, body, store, user_id, flowfile, _helpers):
                     "messages_before": len(all_msgs) if all_msgs else 0,
                     "messages_after": target_msg_count,
                 }
-
-        # Summarize mode (compact from checkpoint point)
-        if mode == "summarize":
-            # TODO: implement summarize-from-here
-            results["summarize"] = "Not implemented yet"
 
         # Build response message
         lines = [f"## Rewound to checkpoint {target_cp['id']}"]
